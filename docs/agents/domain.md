@@ -23,15 +23,15 @@ This is a **multi-context** repo — a pnpm workspace whose two halves are the s
 │   └── docs/adr/
 └── packages/
     ├── cli/
-    │   ├── CONTEXT.md                 ← publishing context (the npx package)
+    │   ├── CONTEXT.md                 ← publishing context (the `patchy` CLI)
     │   └── docs/adr/
     └── core/                          ← shared kernel: html-policy, crypto, ids, types
 ```
 
 ### Contexts
 
-- **Hosting** — `apps/server`. Receives uploads and serves published pages. Owns `@patchpage/db`, `@patchpage/storage`, and `@patchpage/config` as supporting packages; treat changes in those as part of this context.
-- **Publishing** — `packages/cli`. The `npx patchpage` package people use to put pages up. Its own vocabulary (drafts, uploads, auth tokens) lives here.
+- **Hosting** — `apps/server`. Receives uploads and serves published pages. Owns `@patchy/db`, `@patchy/storage`, and `@patchy/config` as supporting packages; treat changes in those as part of this context.
+- **Publishing** — `packages/cli`. The `patchy` CLI package agents use to put pages up. Its own vocabulary (drafts, uploads, auth tokens) lives here.
 - **Shared kernel** — `packages/core`. The safe-HTML policy and the ID/crypto primitives both contexts depend on. It has no `CONTEXT.md` of its own; terms it defines belong to whichever context introduced them. Changes here ripple both ways, so decisions touching it go in the root `docs/adr/`, not a context-scoped one.
 
 ## Use the glossary's vocabulary

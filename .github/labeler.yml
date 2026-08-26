@@ -14,8 +14,6 @@
           - "packages/db/**"
           - "packages/storage/**"
           - "packages/config/**"
-          # OpenTofu that deploys the hosting context.
-          - "infra/**"
 
 "area:cli":
   - changed-files:

@@ -1,7 +1,8 @@
 {
-  "name": "patchpage-monorepo",
+  "name": "patchy-cloud",
   "version": "0.0.0",
   "private": true,
+  "license": "UNLICENSED",
   "type": "module",
   "packageManager": "pnpm@11.5.2",
   "scripts": {
@@ -9,11 +10,6 @@
     "dev": "turbo run dev --parallel",
     "test": "turbo run test",
     "test:packed-cli-e2e": "node scripts/packed-cli-e2e.mjs",
-    "test:public-surfaces": "node scripts/public-surface-contract.test.mjs",
-    "test:release-workflow": "node scripts/verify-release-workflow.mjs",
-    "test:release-privacy": "node --test scripts/verify-release-privacy.test.mjs",
-    "test:exact-npm-publisher": "node --test scripts/publish-exact-npm-artifact.test.mjs",
-    "test:ghcr-oci": "node scripts/ghcr-oci-release.test.mjs",
     "test:docker-save": "node scripts/validate-docker-save-artifact.test.mjs",
     "test:server-image": "bash scripts/verify-server-image.sh",
     "lint": "turbo run lint",
@@ -33,7 +29,6 @@
     "turbo": "^2.10.8",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.65.0",
-    "vitest": "^4.1.10",
-    "yaml": "2.9.0"
+    "vitest": "^4.1.10"
   }
 }

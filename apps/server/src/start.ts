@@ -1,11 +1,11 @@
-import { getServerConfig } from "@patchpage/config";
-import { createPatchPageDb } from "@patchpage/db";
-import { createHtmlStorage } from "@patchpage/storage";
+import { getServerConfig } from "@patchy/config";
+import { createPatchyDb } from "@patchy/db";
+import { createHtmlStorage } from "@patchy/storage";
 import { createAnalytics } from "./analytics.js";
 import { createApp } from "./app.js";
 
 const config = getServerConfig();
-const db = createPatchPageDb({
+const db = createPatchyDb({
   driver: config.dbDriver,
   databaseUrl: config.databaseUrl,
   jsonDbFile: config.jsonDbFile
@@ -69,7 +69,7 @@ process.on("SIGTERM", () => {
 });
 
 await app.listen({ host: "0.0.0.0", port: config.port });
-console.log(`PatchPage server listening on http://0.0.0.0:${config.port}`);
+console.log(`Patchy Cloud server listening on http://0.0.0.0:${config.port}`);
 
 // A restart is exactly when a backlog is most likely, so sweep once on the way
 // up rather than waiting out the first interval.

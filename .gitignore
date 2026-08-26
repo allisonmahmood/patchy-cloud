@@ -10,8 +10,8 @@ coverage/
 tmp/
 .local/
 
-# Local PatchPage HTML plan artifacts.
-.local/patchpage-plans/
+# Local Patchy HTML plan artifacts.
+.local/patchy-plans/
 
 # Generated at build time from root skills/ and LICENSE.
 packages/cli/skills/

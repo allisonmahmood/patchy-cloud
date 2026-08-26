@@ -2,7 +2,6 @@ import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import { escapeHtml, renderHome } from "./render.js";
 
-const maintainerDefault = "https://post.patchyhq.com";
 const configuredUrl = "https://self-host.example.test/base?tenant=O'Reilly&mode=review";
 const setupToken = "render-setup-sentinel";
 const inheritedOrigin = "https://hostile-inherited.example.test";
@@ -15,12 +14,14 @@ describe("renderHome", () => {
     const commands = extractQuickStart(html);
 
     expect(html).toContain(`Endpoint: <code>${escapeHtml(configuredUrl)}</code>`);
-    expect(html).not.toContain(maintainerDefault);
-    expect(html.indexOf("Requires Node.js 22 or newer.")).toBeLessThan(
-      html.indexOf("data-patchpage-quick-start")
+    // The page pins the configured origin and nothing else: no instance URL is
+    // baked into the rendered quick start.
+    expect(html).not.toContain("patchyhq.com");
+    expect(html.indexOf("Requires the <code>patchy</code> CLI")).toBeLessThan(
+      html.indexOf("data-patchy-quick-start")
     );
     expect(commands).toContain(
-      'npx --yes patchpage auth set --token-stdin --api-url "$PATCHPAGE_API_URL"'
+      'patchy auth set --token-stdin --api-url "$PATCHY_API_URL"'
     );
     expect(commandNames(commands)).toEqual(["auth", "whoami", "validate", "upload"]);
 
@@ -31,13 +32,13 @@ describe("renderHome", () => {
     expect(success.status, success.stderr).toBe(0);
     expect(observedCommands(success.stdout)).toEqual(["auth", "whoami", "validate", "upload"]);
     expect(success.stdout).toContain(
-      `PATCHPAGE_PROBE:auth|set|--token-stdin|--api-url|${configuredUrl}`
+      `PATCHY_PROBE:auth|set|--token-stdin|--api-url|${configuredUrl}`
     );
     expect(success.stdout).toContain(
-      `PATCHPAGE_ENV:auth|url=${configuredUrl}|api=unset|token=unset|setup=set`
+      `PATCHY_ENV:auth|url=${configuredUrl}|api=unset|token=unset|setup=set`
     );
     expect(success.stdout).toContain(
-      `PATCHPAGE_ENV:whoami|url=${configuredUrl}|api=unset|token=unset|setup=unset`
+      `PATCHY_ENV:whoami|url=${configuredUrl}|api=unset|token=unset|setup=unset`
     );
     expect(success.stderr).not.toContain(setupToken);
     expect(success.stderr).not.toContain(inheritedApiToken);
@@ -60,7 +61,7 @@ describe("renderHome", () => {
 
 function extractQuickStart(html: string): string {
   const matches = [
-    ...html.matchAll(/<pre><code data-patchpage-quick-start>([\s\S]*?)<\/code><\/pre>/g)
+    ...html.matchAll(/<pre><code data-patchy-quick-start>([\s\S]*?)<\/code><\/pre>/g)
   ];
   expect(matches).toHaveLength(1);
   return decodeHtml(matches[0][1]);
@@ -85,49 +86,45 @@ function decodeHtml(source: string): string {
 type QuickStartCommand = "auth" | "whoami" | "validate" | "upload";
 
 function commandNames(commands: string): QuickStartCommand[] {
-  return [...commands.matchAll(/\bnpx --yes patchpage (auth|whoami|validate|upload)\b/g)].map(
+  return [...commands.matchAll(/\bpatchy (auth|whoami|validate|upload)\b/g)].map(
     (match) => match[1] as QuickStartCommand
   );
 }
 
 function runWithStubCli(commands: string, failOn: QuickStartCommand | "" = "") {
   const stub = `
-npx() {
-  if [ "\${1-}" != --yes ] || [ "\${2-}" != patchpage ]; then
-    return 91
-  fi
-  shift 2
+patchy() {
   command_name=$1
 
-  if [ "\${PATCHPAGE_API_URL-}" != "$PATCHPAGE_EXPECTED_URL" ]; then
+  if [ "\${PATCHY_API_URL-}" != "$PATCHY_EXPECTED_URL" ]; then
     return 92
   fi
-  if [ "\${PATCHPAGE_API_TOKEN+x}" = x ] || [ "\${TOKEN+x}" = x ]; then
+  if [ "\${PATCHY_API_TOKEN+x}" = x ] || [ "\${TOKEN+x}" = x ]; then
     return 93
   fi
 
   setup_state=unset
-  if [ "\${PATCHPAGE_SETUP_TOKEN+x}" = x ]; then
+  if [ "\${PATCHY_SETUP_TOKEN+x}" = x ]; then
     setup_state=set
   fi
   if [ "$command_name" = auth ]; then
     token_input=$(cat)
-    if [ "$token_input" != "$PATCHPAGE_EXPECTED_SETUP_TOKEN" ]; then
+    if [ "$token_input" != "$PATCHY_EXPECTED_SETUP_TOKEN" ]; then
       return 94
     fi
   elif [ "$setup_state" != unset ]; then
     return 95
   fi
 
-  printf 'PATCHPAGE_ENV:%s|url=%s|api=unset|token=unset|setup=%s\\n' \\
-    "$command_name" "$PATCHPAGE_API_URL" "$setup_state"
-  printf 'PATCHPAGE_PROBE:%s' "$command_name"
+  printf 'PATCHY_ENV:%s|url=%s|api=unset|token=unset|setup=%s\\n' \\
+    "$command_name" "$PATCHY_API_URL" "$setup_state"
+  printf 'PATCHY_PROBE:%s' "$command_name"
   shift
   for argument do
     printf '|%s' "$argument"
   done
   printf '\\n'
-  if [ "$command_name" = "$PATCHPAGE_FAIL_ON" ]; then
+  if [ "$command_name" = "$PATCHY_FAIL_ON" ]; then
     return 97
   fi
 }
@@ -136,19 +133,19 @@ npx() {
     encoding: "utf8",
     env: {
       ...process.env,
-      PATCHPAGE_API_TOKEN: inheritedApiToken,
-      PATCHPAGE_API_URL: inheritedOrigin,
-      PATCHPAGE_EXPECTED_SETUP_TOKEN: setupToken,
-      PATCHPAGE_EXPECTED_URL: configuredUrl,
-      PATCHPAGE_FAIL_ON: failOn,
-      PATCHPAGE_SETUP_TOKEN: setupToken,
+      PATCHY_API_TOKEN: inheritedApiToken,
+      PATCHY_API_URL: inheritedOrigin,
+      PATCHY_EXPECTED_SETUP_TOKEN: setupToken,
+      PATCHY_EXPECTED_URL: configuredUrl,
+      PATCHY_FAIL_ON: failOn,
+      PATCHY_SETUP_TOKEN: setupToken,
       TOKEN: inheritedToken
     }
   });
 }
 
 function observedCommands(output: string): QuickStartCommand[] {
-  return [...output.matchAll(/^PATCHPAGE_PROBE:(auth|whoami|validate|upload)(?:\||$)/gm)].map(
+  return [...output.matchAll(/^PATCHY_PROBE:(auth|whoami|validate|upload)(?:\||$)/gm)].map(
     (match) => match[1] as QuickStartCommand
   );
 }

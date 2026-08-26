@@ -1,5 +1,5 @@
-import type { PatchPageDb } from "@patchpage/db";
-import type { HtmlStorage } from "@patchpage/storage";
+import type { PatchyDb } from "@patchy/db";
+import type { HtmlStorage } from "@patchy/storage";
 import type { Analytics } from "./analytics.js";
 
 /**
@@ -49,7 +49,7 @@ export interface ExpirySweepLog {
 }
 
 export interface ExpirySweepOptions {
-  db: PatchPageDb;
+  db: PatchyDb;
   storage: HtmlStorage;
   /**
    * Where a taken draft is reported. Left out, the sweep reports nothing and

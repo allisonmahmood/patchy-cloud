@@ -7,7 +7,7 @@ import { FileSystemHtmlStorage } from "./filesystem.js";
 let tempDir: string;
 
 beforeEach(async () => {
-  tempDir = await mkdtemp(path.join(os.tmpdir(), "patchpage-storage-"));
+  tempDir = await mkdtemp(path.join(os.tmpdir(), "patchy-storage-"));
 });
 
 afterEach(async () => {

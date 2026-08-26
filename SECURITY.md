@@ -2,15 +2,15 @@
 
 ## Supported versions
 
-PatchPage is pre-1.0. Only the latest published release receives security fixes.
+Patchy Cloud is pre-launch and publishes no releases. Fixes land on `main`; there is no supported older version to back-port to.
 
 ## Reporting a vulnerability
 
-Report vulnerabilities privately through [GitHub Private Vulnerability Reporting](https://github.com/allisonmahmood/PatchPage/security/advisories/new). Do not open a public issue or publish unpatched vulnerability details.
+Report vulnerabilities privately through [GitHub Private Vulnerability Reporting](https://github.com/allisonmahmood/patchy-cloud/security/advisories/new). Do not open a public issue or publish unpatched vulnerability details.
 
 Please include:
 
-- The affected PatchPage version or deployment.
+- The affected commit or deployment.
 - Clear reproduction steps.
 - The potential impact.
 - Relevant, redacted logs, screenshots, configuration, or other artifacts.
@@ -20,4 +20,4 @@ Do not include live secrets or unnecessary personal data. Redact sensitive artif
 
 ## What to expect
 
-PatchPage is a small side project, and security reports are handled on a best-effort basis. There is no guaranteed acknowledgment, update, fix, or disclosure timeline.
+Patchy Cloud is a small project under active construction, and security reports are handled on a best-effort basis. There is no guaranteed acknowledgment, update, fix, or disclosure timeline.

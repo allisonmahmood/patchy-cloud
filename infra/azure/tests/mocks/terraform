@@ -1,8 +1,0 @@
-#!/bin/sh
-# Tripwire, not a shim. The runbooks reach OpenTofu as `tofu`; nothing in the
-# guide may still call `terraform`. A restricted-PATH scenario that resolves this
-# file has found a stale invocation the mocks/tofu shim would never see, so fail
-# loudly rather than let the harness pass on a command that does not exist.
-
-printf 'guide mock: `terraform` was invoked; the runbooks use `tofu`: %s\n' "$*" >&2
-exit 127

@@ -1,12 +1,12 @@
-import { requireConfigValue } from "@patchpage/config";
-import { JsonFilePatchPageDb } from "./json-db.js";
-import { PostgresPatchPageDb } from "./postgres-db.js";
-import type { DbFactoryOptions, PatchPageDb } from "./types.js";
+import { requireConfigValue } from "@patchy/config";
+import { JsonFilePatchyDb } from "./json-db.js";
+import { PostgresPatchyDb } from "./postgres-db.js";
+import type { DbFactoryOptions, PatchyDb } from "./types.js";
 
-export function createPatchPageDb(options: DbFactoryOptions): PatchPageDb {
+export function createPatchyDb(options: DbFactoryOptions): PatchyDb {
   if (options.driver === "postgres") {
-    return new PostgresPatchPageDb(requireConfigValue("DATABASE_URL", options.databaseUrl));
+    return new PostgresPatchyDb(requireConfigValue("DATABASE_URL", options.databaseUrl));
   }
 
-  return new JsonFilePatchPageDb(options.jsonDbFile);
+  return new JsonFilePatchyDb(options.jsonDbFile);
 }

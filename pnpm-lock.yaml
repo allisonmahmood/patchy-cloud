@@ -41,22 +41,19 @@ importers:
       vitest:
         specifier: ^4.1.10
         version: 4.1.10(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.1)(yaml@2.9.0))
-      yaml:
-        specifier: 2.9.0
-        version: 2.9.0
 
   apps/server:
     dependencies:
-      '@patchpage/config':
+      '@patchy/config':
         specifier: workspace:*
         version: link:../../packages/config
-      '@patchpage/core':
+      '@patchy/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@patchpage/db':
+      '@patchy/db':
         specifier: workspace:*
         version: link:../../packages/db
-      '@patchpage/storage':
+      '@patchy/storage':
         specifier: workspace:*
         version: link:../../packages/storage
       fastify:
@@ -85,10 +82,10 @@ importers:
 
   packages/db:
     dependencies:
-      '@patchpage/config':
+      '@patchy/config':
         specifier: workspace:*
         version: link:../config
-      '@patchpage/core':
+      '@patchy/core':
         specifier: workspace:*
         version: link:../core
       pg:
@@ -107,7 +104,7 @@ importers:
       '@azure/storage-blob':
         specifier: ^12.27.0
         version: 12.33.0
-      '@patchpage/config':
+      '@patchy/config':
         specifier: workspace:*
         version: link:../config
 
@@ -2905,6 +2902,7 @@ snapshots:
 
   xtend@4.0.2: {}
 
-  yaml@2.9.0: {}
+  yaml@2.9.0:
+    optional: true
 
   yocto-queue@0.1.0: {}

@@ -20,7 +20,7 @@ RUN pnpm install --frozen-lockfile
 
 COPY . .
 
-RUN pnpm --filter @patchpage/server... build \
+RUN pnpm --filter @patchy/server... build \
   && find \
     apps/server/dist \
     packages/config/dist \
@@ -28,22 +28,22 @@ RUN pnpm --filter @patchpage/server... build \
     packages/db/dist \
     packages/storage/dist \
     -type f \( -name '*.d.ts' -o -name '*.map' \) -delete \
-  && pnpm --filter @patchpage/server deploy --prod --legacy /runtime
+  && pnpm --filter @patchy/server deploy --prod --legacy /runtime
 
 FROM node:24-slim AS runner
 
 ARG VERSION=0.0.0-dev
 ARG REVISION=unknown
 
-LABEL org.opencontainers.image.source="https://github.com/allisonmahmood/PatchPage" \
-  org.opencontainers.image.licenses="MIT" \
+LABEL org.opencontainers.image.source="https://github.com/allisonmahmood/patchy-cloud" \
+  org.opencontainers.image.licenses="UNLICENSED" \
   org.opencontainers.image.version="$VERSION" \
   org.opencontainers.image.revision="$REVISION"
 
 ENV NODE_ENV=production
 ENV PORT=3000
-ENV PATCHPAGE_DB_FILE=/data/patchpage-db.json
-ENV PATCHPAGE_STORAGE_DIR=/data/drafts
+ENV PATCHY_DB_FILE=/data/patchy-db.json
+ENV PATCHY_STORAGE_DIR=/data/drafts
 
 WORKDIR /app
 

@@ -9,7 +9,7 @@ import test from "node:test";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const cli = path.join(repoRoot, "scripts/validate-docker-save-artifact.mjs");
-const imageName = "ghcr.io/allisonmahmood/patchpage-server";
+const imageName = "patchy-server";
 const version = "1.2.3";
 const revision = "0123456789abcdef0123456789abcdef01234567";
 const repoTag = `${imageName}:${version}`;
@@ -181,7 +181,7 @@ function fixtureTar({
       Cmd: ["node", "dist/start.js"],
       WorkingDir: "/app",
       Labels: {
-        "org.opencontainers.image.source": "https://github.com/allisonmahmood/PatchPage",
+        "org.opencontainers.image.source": "https://github.com/allisonmahmood/patchy-cloud",
         "org.opencontainers.image.version": version,
         "org.opencontainers.image.revision": revision,
       },
@@ -336,7 +336,7 @@ function validateTarInTemp(tmp, tar, configDigest) {
 }
 
 async function withImageTar(fn) {
-  const tmp = await mkdtemp(path.join(os.tmpdir(), "patchpage-image-artifact-"));
+  const tmp = await mkdtemp(path.join(os.tmpdir(), "patchy-image-artifact-"));
   try {
     await fn(tmp);
   } finally {
@@ -941,7 +941,7 @@ test("rejects extra files or symlinks in the downloaded artifact directory", asy
 
   await withImageTar(async (tmp) => {
     const { tar, configDigest } = fixtureTar();
-    const targetDir = await mkdtemp(path.join(os.tmpdir(), "patchpage-image-target-"));
+    const targetDir = await mkdtemp(path.join(os.tmpdir(), "patchy-image-target-"));
     try {
       const target = path.join(targetDir, "target.tar");
       await writeFile(target, tar);
@@ -957,7 +957,7 @@ test("rejects extra files or symlinks in the downloaded artifact directory", asy
 
   await withImageTar(async (tmp) => {
     const { tar, configDigest } = fixtureTar();
-    const targetDir = await mkdtemp(path.join(os.tmpdir(), "patchpage-image-target-"));
+    const targetDir = await mkdtemp(path.join(os.tmpdir(), "patchy-image-target-"));
     try {
       const target = path.join(targetDir, "target.tar");
       await writeFile(target, tar);

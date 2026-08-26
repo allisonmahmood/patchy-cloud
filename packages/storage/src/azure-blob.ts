@@ -1,6 +1,6 @@
 import { DefaultAzureCredential } from "@azure/identity";
 import { BlobServiceClient, ContainerClient } from "@azure/storage-blob";
-import { requireConfigValue } from "@patchpage/config";
+import { requireConfigValue } from "@patchy/config";
 import type { HtmlStorage } from "./types.js";
 
 export interface AzureBlobStorageOptions {

@@ -1,5 +1,4 @@
 export * from "./factory.js";
-export * from "./go-public-flip.js";
 export * from "./internal-principals.js";
 export * from "./json-db.js";
 export * from "./migrations.js";

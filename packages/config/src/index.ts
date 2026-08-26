@@ -18,32 +18,8 @@ interface TrustedProxyRange {
   end: bigint;
 }
 
-/**
- * The single source for the acceptable-use policy URL. Every later consumer —
- * the self-service mint response, the served-draft footer, and the README —
- * reads this constant rather than repeating the literal.
- *
- * Working value pending operator confirmation before the public flip; the
- * source copy is `docs/ACCEPTABLE_USE.md`.
- */
-export const ACCEPTABLE_USE_URL = "https://patchyhq.com/acceptable-use";
-
 /** Where server-side analytics report when an instance configures a key but no host. */
 const DEFAULT_POSTHOG_HOST = "https://us.i.posthog.com";
-
-/**
- * Environment variables retired by the trust-model cutover, each mapped to the
- * successor that replaces it. Setting a retired variable is a hard startup
- * failure: a self-hoster's deliberate security posture must never be silently
- * ignored. See `docs/adr/ADR-0001-trust-model-no-tokenless-upload.md`.
- */
-const RETIRED_ENV_VARS: ReadonlyArray<readonly [retired: string, successor: string]> = [
-  ["PATCHPAGE_ALLOW_ANONYMOUS_UPLOADS", "PATCHPAGE_ALLOW_SELF_SERVICE_TOKENS"],
-  [
-    "PATCHPAGE_ANONYMOUS_CREATE_RATE_LIMIT_PER_MINUTE",
-    "PATCHPAGE_SELF_SERVICE_MINT_RATE_LIMIT_PER_MINUTE"
-  ]
-];
 
 export interface ServerConfig {
   port: number;
@@ -92,47 +68,45 @@ export interface ServerConfig {
 }
 
 export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
-  assertNoRetiredEnvVars(env);
-
   const databaseUrl = stringValue(env.DATABASE_URL);
-  const dbDriver = enumValue(env.PATCHPAGE_DB_DRIVER, ["postgres", "json"] as const) ??
+  const dbDriver = enumValue(env.PATCHY_DB_DRIVER, ["postgres", "json"] as const) ??
     (databaseUrl ? "postgres" : "json");
 
   return {
     port: intValue(env.PORT, 3000),
-    publicBaseUrl: stringValue(env.PATCHPAGE_PUBLIC_BASE_URL) ?? "http://localhost:3000",
-    trustProxy: trustProxyValue(env.PATCHPAGE_TRUST_PROXY),
-    bootstrapApiToken: stringValue(env.PATCHPAGE_BOOTSTRAP_API_TOKEN),
+    publicBaseUrl: stringValue(env.PATCHY_PUBLIC_BASE_URL) ?? "http://localhost:3000",
+    trustProxy: trustProxyValue(env.PATCHY_TRUST_PROXY),
+    bootstrapApiToken: stringValue(env.PATCHY_BOOTSTRAP_API_TOKEN),
     allowSelfServiceTokens: strictBoolValue(
-      "PATCHPAGE_ALLOW_SELF_SERVICE_TOKENS",
-      env.PATCHPAGE_ALLOW_SELF_SERVICE_TOKENS,
+      "PATCHY_ALLOW_SELF_SERVICE_TOKENS",
+      env.PATCHY_ALLOW_SELF_SERVICE_TOKENS,
       false
     ),
-    maxHtmlBytes: intValue(env.PATCHPAGE_MAX_HTML_BYTES, 512 * 1024),
+    maxHtmlBytes: intValue(env.PATCHY_MAX_HTML_BYTES, 512 * 1024),
     protectedApiRateLimitPerMinute: rateLimitPerMinuteValue(
-      "PATCHPAGE_PROTECTED_API_RATE_LIMIT_PER_MINUTE",
-      env.PATCHPAGE_PROTECTED_API_RATE_LIMIT_PER_MINUTE,
+      "PATCHY_PROTECTED_API_RATE_LIMIT_PER_MINUTE",
+      env.PATCHY_PROTECTED_API_RATE_LIMIT_PER_MINUTE,
       60
     ),
     authenticatedUploadRateLimitPerMinute: rateLimitPerMinuteValue(
-      "PATCHPAGE_AUTHENTICATED_UPLOAD_RATE_LIMIT_PER_MINUTE",
-      env.PATCHPAGE_AUTHENTICATED_UPLOAD_RATE_LIMIT_PER_MINUTE,
+      "PATCHY_AUTHENTICATED_UPLOAD_RATE_LIMIT_PER_MINUTE",
+      env.PATCHY_AUTHENTICATED_UPLOAD_RATE_LIMIT_PER_MINUTE,
       20
     ),
     selfServiceMintRateLimitPerMinute: rateLimitPerMinuteValue(
-      "PATCHPAGE_SELF_SERVICE_MINT_RATE_LIMIT_PER_MINUTE",
-      env.PATCHPAGE_SELF_SERVICE_MINT_RATE_LIMIT_PER_MINUTE,
+      "PATCHY_SELF_SERVICE_MINT_RATE_LIMIT_PER_MINUTE",
+      env.PATCHY_SELF_SERVICE_MINT_RATE_LIMIT_PER_MINUTE,
       5
     ),
     selfServiceMintsPerIpPerDay: boundedIntegerValue(
-      "PATCHPAGE_SELF_SERVICE_MINTS_PER_IP_PER_DAY",
-      env.PATCHPAGE_SELF_SERVICE_MINTS_PER_IP_PER_DAY,
+      "PATCHY_SELF_SERVICE_MINTS_PER_IP_PER_DAY",
+      env.PATCHY_SELF_SERVICE_MINTS_PER_IP_PER_DAY,
       5,
       MAX_SELF_SERVICE_MINTS_PER_IP_PER_DAY
     ),
     draftCreateRateLimitPerMinute: rateLimitPerMinuteValue(
-      "PATCHPAGE_DRAFT_CREATE_RATE_LIMIT_PER_MINUTE",
-      env.PATCHPAGE_DRAFT_CREATE_RATE_LIMIT_PER_MINUTE,
+      "PATCHY_DRAFT_CREATE_RATE_LIMIT_PER_MINUTE",
+      env.PATCHY_DRAFT_CREATE_RATE_LIMIT_PER_MINUTE,
       10
     ),
     // Ten, not five: a reported page is often shared, and several readers
@@ -140,29 +114,29 @@ export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCon
     // ordinary case, not the attack. The attack it does stop is one address
     // writing rows without end.
     reportRateLimitPerMinute: rateLimitPerMinuteValue(
-      "PATCHPAGE_REPORT_RATE_LIMIT_PER_MINUTE",
-      env.PATCHPAGE_REPORT_RATE_LIMIT_PER_MINUTE,
+      "PATCHY_REPORT_RATE_LIMIT_PER_MINUTE",
+      env.PATCHY_REPORT_RATE_LIMIT_PER_MINUTE,
       10
     ),
     liveDraftsPerToken: boundedIntegerValue(
-      "PATCHPAGE_LIVE_DRAFTS_PER_TOKEN",
-      env.PATCHPAGE_LIVE_DRAFTS_PER_TOKEN,
+      "PATCHY_LIVE_DRAFTS_PER_TOKEN",
+      env.PATCHY_LIVE_DRAFTS_PER_TOKEN,
       1_000,
       MAX_LIVE_DRAFTS_PER_TOKEN
     ),
-    posthogApiKey: stringValue(env.PATCHPAGE_POSTHOG_API_KEY),
+    posthogApiKey: stringValue(env.PATCHY_POSTHOG_API_KEY),
     posthogHost: httpUrlValue(
-      "PATCHPAGE_POSTHOG_HOST",
-      env.PATCHPAGE_POSTHOG_HOST,
+      "PATCHY_POSTHOG_HOST",
+      env.PATCHY_POSTHOG_HOST,
       DEFAULT_POSTHOG_HOST
     ),
     dbDriver,
     databaseUrl,
-    jsonDbFile: stringValue(env.PATCHPAGE_DB_FILE) ?? ".local/patchpage-db.json",
+    jsonDbFile: stringValue(env.PATCHY_DB_FILE) ?? ".local/patchy-db.json",
     storageDriver:
-      enumValue(env.PATCHPAGE_STORAGE_DRIVER, ["filesystem", "azure-blob"] as const) ??
+      enumValue(env.PATCHY_STORAGE_DRIVER, ["filesystem", "azure-blob"] as const) ??
       "filesystem",
-    storageDir: stringValue(env.PATCHPAGE_STORAGE_DIR) ?? ".local/drafts",
+    storageDir: stringValue(env.PATCHY_STORAGE_DIR) ?? ".local/drafts",
     azureStorageAccount: stringValue(env.AZURE_STORAGE_ACCOUNT),
     azureStorageContainer: stringValue(env.AZURE_STORAGE_CONTAINER),
     azureStorageConnectionString: stringValue(env.AZURE_STORAGE_CONNECTION_STRING)
@@ -174,19 +148,6 @@ export function requireConfigValue(name: string, value: string | null | undefine
     throw new Error(`Missing required environment variable: ${name}`);
   }
   return value;
-}
-
-function assertNoRetiredEnvVars(env: NodeJS.ProcessEnv): void {
-  for (const [retired, successor] of RETIRED_ENV_VARS) {
-    // An empty or whitespace-only value is treated as unset, matching how every
-    // other value in this module reads its environment.
-    if (stringValue(env[retired]) === null) continue;
-    throw new Error(
-      `${retired} has been retired and is no longer honored. ` +
-        `PatchPage never accepts an upload without a bearer token. ` +
-        `Remove ${retired} and use ${successor} instead.`
-    );
-  }
 }
 
 function stringValue(value: string | undefined): string | null {
@@ -207,13 +168,13 @@ function trustProxyValue(value: string | undefined): false | number | string[] {
   for (const entry of entries) {
     const range = trustedProxyRange(entry);
     if (!range) {
-      throw new Error(`Invalid PATCHPAGE_TRUST_PROXY value: ${value}`);
+      throw new Error(`Invalid PATCHY_TRUST_PROXY value: ${value}`);
     }
     ranges.push(range);
   }
 
   if (coversFullAddressFamily(ranges, 4) || coversFullAddressFamily(ranges, 6)) {
-    throw new Error(`Invalid PATCHPAGE_TRUST_PROXY value: ${value}`);
+    throw new Error(`Invalid PATCHY_TRUST_PROXY value: ${value}`);
   }
 
   return entries;

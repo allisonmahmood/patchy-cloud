@@ -15,13 +15,13 @@ Closes #
 
 <!--
 Area and size labels are applied automatically. This section is the part no
-automation can decide: whether the change breaks anyone already depending on
-PatchPage, which is what drives the version bump and the changelog entry.
+automation can decide: whether the change breaks anyone already running Patchy
+Cloud, which is what an upgrade note has to cover.
 -->
 
 Tick exactly one.
 
-- [ ] **Breaking** — requires action from existing users
+- [ ] **Breaking** — requires action from anyone already running this
 - [ ] **Not breaking** — no action required
 
 <!--

@@ -29,11 +29,11 @@ body:
   - type: dropdown
     id: area
     attributes:
-      label: Which part of PatchPage would this touch?
+      label: Which part of Patchy Cloud would this touch?
       description: A rough guess is fine, and "Not sure" is a perfectly good answer.
       options:
         - Not sure
-        - The CLI (npx patchpage)
+        - The CLI (patchy)
         - The server / hosting a published page
         - HTML validation and safety rules
         - Documentation

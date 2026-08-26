@@ -1,17 +1,18 @@
 {
-  "name": "patchpage",
-  "version": "0.2.1",
-  "description": "Upload static HTML drafts to PatchPage.",
+  "name": "@patchy/cli",
+  "version": "0.0.1",
+  "description": "Upload static HTML drafts to a Patchy Cloud instance.",
   "type": "module",
-  "license": "MIT",
+  "private": true,
+  "license": "UNLICENSED",
   "author": "Allison Mahmood",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/allisonmahmood/PatchPage.git",
+    "url": "git+https://github.com/allisonmahmood/patchy-cloud.git",
     "directory": "packages/cli"
   },
-  "homepage": "https://github.com/allisonmahmood/PatchPage#readme",
-  "bugs": "https://github.com/allisonmahmood/PatchPage/issues",
+  "homepage": "https://github.com/allisonmahmood/patchy-cloud#readme",
+  "bugs": "https://github.com/allisonmahmood/patchy-cloud/issues",
   "keywords": [
     "html",
     "static-html",
@@ -27,20 +28,16 @@
     "node": ">=22"
   },
   "bin": {
-    "patchpage": "./dist/index.js"
+    "patchy": "./dist/index.js"
   },
   "files": [
     "dist",
     "README.md",
     "skills"
   ],
-  "publishConfig": {
-    "provenance": true
-  },
   "scripts": {
     "build": "node ../../scripts/build-cli-bundle.mjs",
     "prepack": "node ../../scripts/build-cli-bundle.mjs",
-    "prepublishOnly": "pnpm run lint && pnpm run typecheck && pnpm run test",
     "test": "vitest run --passWithNoTests",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"

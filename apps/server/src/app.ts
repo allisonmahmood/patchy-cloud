@@ -1,18 +1,17 @@
 import type { IncomingMessage } from "node:http";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import Fastify from "fastify";
-import { ACCEPTABLE_USE_URL } from "@patchpage/config";
-import type { ServerConfig } from "@patchpage/config";
-import { isUploadTargetError } from "@patchpage/db";
+import type { ServerConfig } from "@patchy/config";
+import { isUploadTargetError } from "@patchy/db";
 import type {
   ApiTokenAuth,
   DraftRecord,
   ModeratedDraftRecord,
-  PatchPageDb,
+  PatchyDb,
   RecordUploadInput,
   RecordUploadResult
-} from "@patchpage/db";
-import type { HtmlStorage } from "@patchpage/storage";
+} from "@patchy/db";
+import type { HtmlStorage } from "@patchy/storage";
 import {
   contentHash,
   isDraftId,
@@ -20,8 +19,8 @@ import {
   newInternalId,
   randomToken,
   validateHtml
-} from "@patchpage/core";
-import type { UploadMetadata } from "@patchpage/core";
+} from "@patchy/core";
+import type { UploadMetadata } from "@patchy/core";
 import { DisabledAnalytics, type Analytics } from "./analytics.js";
 import { createExpirySweep, type ExpirySweepResult } from "./expiry-sweep.js";
 import { getDraftPublicUrl } from "./public-url.js";
@@ -48,7 +47,7 @@ import {
 
 export interface CreateAppOptions {
   config: ServerConfig;
-  db: PatchPageDb;
+  db: PatchyDb;
   storage: HtmlStorage;
   clock?: () => number;
   /**
@@ -148,7 +147,7 @@ const REGISTERED_DRAFT_POST_SUFFIXES = new Set(["disable", "pin", "unpin"]);
  * to come back and delete.
  */
 const MODERATION_DRAFT_LIST_LIMIT = 200;
-const PRE_ROUTING_API_ERROR_TARGET = "/api/__patchpage_pre_routing_error__";
+const PRE_ROUTING_API_ERROR_TARGET = "/api/__patchy_pre_routing_error__";
 const preRoutingApiErrorStatus = Symbol("preRoutingApiErrorStatus");
 
 type PreRoutingApiErrorStatus = 400 | 404 | 414;
@@ -704,8 +703,7 @@ async function mintSelfServiceToken(
   // stored, so no later response — and no operator — can produce it again.
   return reply.status(201).send({
     ok: true,
-    token,
-    aupUrl: ACCEPTABLE_USE_URL
+    token
   });
 }
 
@@ -802,7 +800,7 @@ function sendDraftNotFound(reply: FastifyReply): FastifyReply {
 }
 
 function protectedApiPrefixGuard(
-  db: PatchPageDb,
+  db: PatchyDb,
   protectedApiLimiter: FixedWindowRateLimiter,
   authenticatedUploadLimiter: FixedWindowRateLimiter
 ) {
@@ -1089,7 +1087,7 @@ function sendApiNotFound(reply: FastifyReply): void {
 }
 
 async function authenticateApiRequest(
-  db: PatchPageDb,
+  db: PatchyDb,
   request: FastifyRequest
 ): Promise<ApiRequestAuthState> {
   const credential = authorizationCredential(request);

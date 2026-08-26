@@ -38,6 +38,6 @@ describe("validateHtml", () => {
     const result = validateHtml("<main>No title</main>");
 
     expect(result.ok).toBe(true);
-    expect(result.warnings).toContain("No <title> found; PatchPage will use a generic title.");
+    expect(result.warnings).toContain("No <title> found; Patchy Cloud will use a generic title.");
   });
 });

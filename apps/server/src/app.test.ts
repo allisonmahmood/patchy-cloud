@@ -4,12 +4,12 @@ import os from "node:os";
 import path from "node:path";
 import type { AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ACCEPTABLE_USE_URL, getServerConfig } from "@patchpage/config";
-import type { ServerConfig } from "@patchpage/config";
-import { sha256 } from "@patchpage/core";
-import { JsonFilePatchPageDb } from "@patchpage/db";
-import type { RecordUploadInput, RecordUploadResult } from "@patchpage/db";
-import { FileSystemHtmlStorage } from "@patchpage/storage";
+import { getServerConfig } from "@patchy/config";
+import type { ServerConfig } from "@patchy/config";
+import { sha256 } from "@patchy/core";
+import { JsonFilePatchyDb } from "@patchy/db";
+import type { RecordUploadInput, RecordUploadResult } from "@patchy/db";
+import { FileSystemHtmlStorage } from "@patchy/storage";
 import { classifyAuthorizationHeader, createApp, isProtectedApiPath } from "./app.js";
 
 let tempDir: string;
@@ -44,14 +44,14 @@ const uploadLikeApiTargets: ApiTargetCase[] = [
 ];
 
 beforeEach(async () => {
-  tempDir = await mkdtemp(path.join(os.tmpdir(), "patchpage-server-"));
+  tempDir = await mkdtemp(path.join(os.tmpdir(), "patchy-server-"));
 });
 
 afterEach(async () => {
   await rm(tempDir, { recursive: true, force: true });
 });
 
-describe("PatchPage server", () => {
+describe("Patchy Cloud server", () => {
   it("classifies only an absent Authorization header as missing", () => {
     expect(classifyAuthorizationHeader(undefined)).toEqual({ kind: "missing" });
     expect(classifyAuthorizationHeader("")).toEqual({ kind: "invalid" });
@@ -91,9 +91,9 @@ describe("PatchPage server", () => {
     const publicBaseUrl = "https://drafts.self-hoster.dev";
     const apiToken = "configured-origin-token";
     const config = getServerConfig({
-      PATCHPAGE_PUBLIC_BASE_URL: publicBaseUrl
+      PATCHY_PUBLIC_BASE_URL: publicBaseUrl
     });
-    const db = new JsonFilePatchPageDb(path.join(tempDir, "configured-origin-db.json"));
+    const db = new JsonFilePatchyDb(path.join(tempDir, "configured-origin-db.json"));
     await db.initialize(apiToken);
     const storage = new FileSystemHtmlStorage(path.join(tempDir, "configured-origin-drafts"));
     const app = createApp({ config, db, storage });
@@ -123,7 +123,7 @@ describe("PatchPage server", () => {
 
   it("requires auth for upload and renders uploaded drafts publicly", async () => {
     const config = testConfig();
-    const db = new JsonFilePatchPageDb(path.join(tempDir, "db.json"));
+    const db = new JsonFilePatchyDb(path.join(tempDir, "db.json"));
     await db.initialize("dev-token");
     const storage = new FileSystemHtmlStorage(path.join(tempDir, "drafts"));
     const app = createApp({ config, db, storage });
@@ -154,7 +154,7 @@ describe("PatchPage server", () => {
     expect(viewer.body).toContain("Test Draft");
     expect(viewer.body).toContain("class=\"draft-frame\"");
     expect(viewer.body).toContain("&lt;h1&gt;Hello&lt;/h1&gt;");
-    expect(viewer.body).not.toContain("patchpage-banner");
+    expect(viewer.body).not.toContain("patchy-banner");
 
     await app.close();
     await db.close();
@@ -164,7 +164,7 @@ describe("PatchPage server", () => {
     for (const allowSelfServiceTokens of [false, true]) {
       const label = `allowSelfServiceTokens=${allowSelfServiceTokens}`;
       const config = { ...testConfig(), allowSelfServiceTokens };
-      const db = new JsonFilePatchPageDb(
+      const db = new JsonFilePatchyDb(
         path.join(tempDir, `tokenless-db-${allowSelfServiceTokens}.json`)
       );
       await db.initialize(null);
@@ -202,7 +202,7 @@ describe("PatchPage server", () => {
 
   it("does not admit an absent credential on a non-create upload method", async () => {
     const config = { ...testConfig(), allowSelfServiceTokens: true };
-    const db = new JsonFilePatchPageDb(path.join(tempDir, "tokenless-method-db.json"));
+    const db = new JsonFilePatchyDb(path.join(tempDir, "tokenless-method-db.json"));
     await db.initialize(null);
     const storage = new FileSystemHtmlStorage(
       path.join(tempDir, "tokenless-method-drafts")
@@ -228,7 +228,7 @@ describe("PatchPage server", () => {
 
   it("keeps every upload-like POST target authenticated", async () => {
     const config = { ...testConfig(), allowSelfServiceTokens: true };
-    const db = new JsonFilePatchPageDb(path.join(tempDir, "upload-route-db.json"));
+    const db = new JsonFilePatchyDb(path.join(tempDir, "upload-route-db.json"));
     await db.initialize(null);
     const storage = new FileSystemHtmlStorage(path.join(tempDir, "upload-route-drafts"));
     const app = createApp({ config, db, storage });
@@ -256,7 +256,7 @@ describe("PatchPage server", () => {
 
   it("lets admin credentials alone moderate another principal's draft", async () => {
     const config = testConfig();
-    const db = new JsonFilePatchPageDb(path.join(tempDir, "moderation-db.json"));
+    const db = new JsonFilePatchyDb(path.join(tempDir, "moderation-db.json"));
     await db.initialize("admin-token");
     const admin = await db.findApiTokenByToken("admin-token");
     if (!admin) throw new Error("Expected bootstrap authentication.");
@@ -347,7 +347,7 @@ describe("PatchPage server", () => {
   it("does not downgrade present bad credentials when self-service tokens are allowed", async () => {
     const config = { ...testConfig(), allowSelfServiceTokens: true };
     const dbFile = path.join(tempDir, "pre-body-auth-db.json");
-    const db = new JsonFilePatchPageDb(dbFile);
+    const db = new JsonFilePatchyDb(dbFile);
     await db.initialize("admin-token");
     const adminAuth = await db.findApiTokenByToken("admin-token");
     expect(adminAuth).not.toBeNull();
@@ -641,8 +641,8 @@ describe("PatchPage server", () => {
 
   it("limits protected API attempts by canonical request IP", async () => {
     let now = 1_000;
-    const config = getServerConfig({ PATCHPAGE_TRUST_PROXY: "1" });
-    const db = new JsonFilePatchPageDb(path.join(tempDir, "protected-limit-db.json"));
+    const config = getServerConfig({ PATCHY_TRUST_PROXY: "1" });
+    const db = new JsonFilePatchyDb(path.join(tempDir, "protected-limit-db.json"));
     await db.initialize("unused-token");
     const storage = new FileSystemHtmlStorage(path.join(tempDir, "protected-limit-drafts"));
     const app = createApp({ config, db, storage, clock: () => now });
@@ -709,7 +709,7 @@ describe("PatchPage server", () => {
   it("protects unmatched API paths before parsing and counts them once per IP", async () => {
     let now = 1_000;
     const config = testConfig();
-    const db = new JsonFilePatchPageDb(path.join(tempDir, "unmatched-api-limit-db.json"));
+    const db = new JsonFilePatchyDb(path.join(tempDir, "unmatched-api-limit-db.json"));
     await db.initialize("dev-token");
     const storage = new FileSystemHtmlStorage(path.join(tempDir, "unmatched-api-limit-drafts"));
     const app = createApp({ config, db, storage, clock: () => now });
@@ -820,7 +820,7 @@ describe("PatchPage server", () => {
     async ({ rawHttp, url }) => {
       let now = 1_000;
       const config = testConfig();
-      const db = new JsonFilePatchPageDb(path.join(tempDir, `${url.replaceAll(/[^a-z0-9]/gi, "-")}-db.json`));
+      const db = new JsonFilePatchyDb(path.join(tempDir, `${url.replaceAll(/[^a-z0-9]/gi, "-")}-db.json`));
       await db.initialize("dev-token");
       const storage = new FileSystemHtmlStorage(
         path.join(tempDir, `${url.replaceAll(/[^a-z0-9]/gi, "-")}-drafts`)
@@ -969,7 +969,7 @@ describe("PatchPage server", () => {
       let now = 1_000;
       const config = testConfig();
       const caseName = label.replaceAll(/[^a-z0-9]/gi, "-");
-      const db = new JsonFilePatchPageDb(
+      const db = new JsonFilePatchyDb(
         path.join(tempDir, `${caseName}-pre-routing-db.json`)
       );
       await db.initialize("dev-token");
@@ -1035,7 +1035,7 @@ describe("PatchPage server", () => {
 
   it("preserves authenticated 404s for long unmatched API route shapes", async () => {
     const config = testConfig();
-    const db = new JsonFilePatchPageDb(path.join(tempDir, "long-unmatched-api-db.json"));
+    const db = new JsonFilePatchyDb(path.join(tempDir, "long-unmatched-api-db.json"));
     await db.initialize("dev-token");
     const storage = new FileSystemHtmlStorage(
       path.join(tempDir, "long-unmatched-api-drafts")
@@ -1077,7 +1077,7 @@ describe("PatchPage server", () => {
 
   it("does not classify an absolute URI query as an API path or consume its bucket", async () => {
     const config = testConfig();
-    const db = new JsonFilePatchPageDb(path.join(tempDir, "absolute-query-db.json"));
+    const db = new JsonFilePatchyDb(path.join(tempDir, "absolute-query-db.json"));
     await db.initialize("dev-token");
     const storage = new FileSystemHtmlStorage(path.join(tempDir, "absolute-query-drafts"));
     const app = createApp({ config, db, storage });
@@ -1103,7 +1103,7 @@ describe("PatchPage server", () => {
   it("limits authenticated upload attempts by stable token identity", async () => {
     let now = 1_000;
     const config = testConfig();
-    const db = new JsonFilePatchPageDb(path.join(tempDir, "upload-limit-db.json"));
+    const db = new JsonFilePatchyDb(path.join(tempDir, "upload-limit-db.json"));
     await db.initialize("upload-token");
     const auth = await db.findApiTokenByToken("upload-token");
     expect(auth).not.toBeNull();
@@ -1199,7 +1199,7 @@ describe("PatchPage server", () => {
       protectedApiRateLimitPerMinute: 2,
       authenticatedUploadRateLimitPerMinute: 1
     };
-    const db = new JsonFilePatchPageDb(path.join(tempDir, "upload-limit-db.json"));
+    const db = new JsonFilePatchyDb(path.join(tempDir, "upload-limit-db.json"));
     await db.initialize("upload-token");
     const storage = new FileSystemHtmlStorage(path.join(tempDir, "upload-limit-drafts"));
     const app = createApp({ config, db, storage, clock: () => now });
@@ -1250,7 +1250,7 @@ describe("PatchPage server", () => {
   it("limits draft creates per minute per token without counting updates", async () => {
     let now = 1_000;
     const config = { ...testConfig(), draftCreateRateLimitPerMinute: 2 };
-    const db = new JsonFilePatchPageDb(path.join(tempDir, "create-limit-db.json"));
+    const db = new JsonFilePatchyDb(path.join(tempDir, "create-limit-db.json"));
     await db.initialize("dev-token");
     const storage = new FileSystemHtmlStorage(path.join(tempDir, "create-limit-drafts"));
     const app = createApp({ config, db, storage, clock: () => now });
@@ -1298,7 +1298,7 @@ describe("PatchPage server", () => {
     const dbFile = path.join(tempDir, "live-cap-db.json");
     const storage = new FileSystemHtmlStorage(path.join(tempDir, "live-cap-drafts"));
     // `dev-token` is the admin bootstrap token: the cap has no admin exemption.
-    const db = new JsonFilePatchPageDb(dbFile);
+    const db = new JsonFilePatchyDb(dbFile);
     await db.initialize("dev-token");
     const app = createApp({ config, db, storage });
 
@@ -1330,7 +1330,7 @@ describe("PatchPage server", () => {
 
     // A restart drops every in-memory bucket. The cap is recounted from the
     // database, so it is still there.
-    const restartedDb = new JsonFilePatchPageDb(dbFile);
+    const restartedDb = new JsonFilePatchyDb(dbFile);
     await restartedDb.initialize("dev-token");
     const restarted = createApp({ config, db: restartedDb, storage });
 
@@ -1349,7 +1349,7 @@ describe("PatchPage server", () => {
 
   it("returns live-draft cap room when a draft is disabled or deleted", async () => {
     const config = { ...testConfig(), liveDraftsPerToken: 1 };
-    const db = new JsonFilePatchPageDb(path.join(tempDir, "live-cap-release-db.json"));
+    const db = new JsonFilePatchyDb(path.join(tempDir, "live-cap-release-db.json"));
     await db.initialize("dev-token");
     const auth = await db.findApiTokenByToken("dev-token");
     expect(auth).not.toBeNull();
@@ -1500,12 +1500,12 @@ describe("PatchPage server", () => {
           remoteAddress: "192.0.2.10",
           forwardedFor: "203.0.113.9"
         })
-      ).rejects.toThrow(/Invalid PATCHPAGE_TRUST_PROXY/);
+      ).rejects.toThrow(/Invalid PATCHY_TRUST_PROXY/);
     }
   );
   it("rejects an unknown client-supplied draft ID without creating a public draft", async () => {
     const config = testConfig();
-    const db = new JsonFilePatchPageDb(path.join(tempDir, "unknown-update-db.json"));
+    const db = new JsonFilePatchyDb(path.join(tempDir, "unknown-update-db.json"));
     await db.initialize("dev-token");
     const storage = new FileSystemHtmlStorage(path.join(tempDir, "unknown-update-drafts"));
     const app = createApp({ config, db, storage });
@@ -1533,7 +1533,7 @@ describe("PatchPage server", () => {
 
   it("returns the same response for unavailable update targets", async () => {
     const config = testConfig();
-    const db = new JsonFilePatchPageDb(path.join(tempDir, "unavailable-update-db.json"));
+    const db = new JsonFilePatchyDb(path.join(tempDir, "unavailable-update-db.json"));
     await db.initialize("dev-token");
     const auth = await db.findApiTokenByToken("dev-token");
     if (!auth) throw new Error("Expected bootstrap authentication.");
@@ -1593,7 +1593,7 @@ describe("PatchPage server", () => {
 
   it("updates an existing owned draft and preserves its previous version", async () => {
     const config = testConfig();
-    const db = new JsonFilePatchPageDb(path.join(tempDir, "owned-update-db.json"));
+    const db = new JsonFilePatchyDb(path.join(tempDir, "owned-update-db.json"));
     await db.initialize("dev-token");
     const storage = new FileSystemHtmlStorage(path.join(tempDir, "owned-update-drafts"));
     const app = createApp({ config, db, storage });
@@ -1648,7 +1648,7 @@ describe("PatchPage server", () => {
 
   it("does not hold metadata locks while object storage is slow", async () => {
     const config = testConfig();
-    const db = new JsonFilePatchPageDb(path.join(tempDir, "slow-storage-db.json"));
+    const db = new JsonFilePatchyDb(path.join(tempDir, "slow-storage-db.json"));
     await db.initialize("dev-token");
     const auth = await db.findApiTokenByToken("dev-token");
     if (!auth) throw new Error("Expected bootstrap authentication.");
@@ -1719,7 +1719,7 @@ describe("PatchPage server", () => {
 
   it("removes only the new object when final eligibility recheck rejects", async () => {
     const config = testConfig();
-    const db = new JsonFilePatchPageDb(path.join(tempDir, "race-cleanup-db.json"));
+    const db = new JsonFilePatchyDb(path.join(tempDir, "race-cleanup-db.json"));
     await db.initialize("dev-token");
     const auth = await db.findApiTokenByToken("dev-token");
     if (!auth) throw new Error("Expected bootstrap authentication.");
@@ -1761,7 +1761,7 @@ describe("PatchPage server", () => {
 
   it("does not mutate metadata when object storage fails", async () => {
     const config = testConfig();
-    const db = new JsonFilePatchPageDb(path.join(tempDir, "storage-failure-db.json"));
+    const db = new JsonFilePatchyDb(path.join(tempDir, "storage-failure-db.json"));
     await db.initialize("dev-token");
     const storage = new ControlledHtmlStorage(path.join(tempDir, "storage-failure-drafts"));
     const app = createApp({ config, db, storage });
@@ -1799,7 +1799,7 @@ describe("PatchPage server", () => {
 
   it("surfaces cleanup failure instead of masking an orphan as a safe rejection", async () => {
     const config = testConfig();
-    const db = new JsonFilePatchPageDb(path.join(tempDir, "cleanup-failure-db.json"));
+    const db = new JsonFilePatchyDb(path.join(tempDir, "cleanup-failure-db.json"));
     await db.initialize("dev-token");
     const auth = await db.findApiTokenByToken("dev-token");
     if (!auth) throw new Error("Expected bootstrap authentication.");
@@ -1879,7 +1879,7 @@ describe("PatchPage server", () => {
 
   it("accepts the released CLI null draft marker as server-generated create intent", async () => {
     const config = testConfig();
-    const db = new JsonFilePatchPageDb(path.join(tempDir, "legacy-null-db.json"));
+    const db = new JsonFilePatchyDb(path.join(tempDir, "legacy-null-db.json"));
     await db.initialize("dev-token");
     const storage = new FileSystemHtmlStorage(path.join(tempDir, "legacy-null-drafts"));
     const app = createApp({ config, db, storage });
@@ -1910,7 +1910,7 @@ describe("PatchPage server", () => {
 
   it("rejects invalid non-null draft IDs instead of treating them as creates", async () => {
     const config = testConfig();
-    const db = new JsonFilePatchPageDb(path.join(tempDir, "explicit-intent-db.json"));
+    const db = new JsonFilePatchyDb(path.join(tempDir, "explicit-intent-db.json"));
     await db.initialize("dev-token");
     const storage = new FileSystemHtmlStorage(path.join(tempDir, "explicit-intent-drafts"));
     const app = createApp({ config, db, storage });
@@ -2029,7 +2029,7 @@ describe("PatchPage server", () => {
     await served.close();
   });
 
-  it("footers every served draft with the report link and the acceptable use policy", async () => {
+  it("footers every served draft with the report link", async () => {
     const served = await createServedDraft("report-footer");
 
     for (const url of [served.latestUrl, served.versionUrl]) {
@@ -2037,10 +2037,9 @@ describe("PatchPage server", () => {
       expect(response.statusCode).toBe(200);
 
       // The reader's channel to the operator, on both URL shapes. The footer
-      // carries these two links and no others.
+      // carries this one link and no others.
       expect(response.body).toContain(`href="/report/${served.draftId}"`);
       expect(response.body).toContain("Report this page");
-      expect(response.body).toContain(`href="${ACCEPTABLE_USE_URL}"`);
       expect(response.headers["referrer-policy"]).toBe("no-referrer");
 
       // The footer is links, not script, because the draft policy forbids
@@ -3190,13 +3189,12 @@ describe("self-service minting", () => {
       const mint = await minting.mint("198.51.100.20");
 
       expect(mint.statusCode).toBe(201);
-      const body = mint.json() as { ok: boolean; token: string; aupUrl: string };
+      const body = mint.json() as { ok: boolean; token: string };
       expect(body.ok).toBe(true);
       expect(body.token).toMatch(/^pp_[A-Za-z0-9_-]{43}$/);
-      expect(body.aupUrl).toBe(ACCEPTABLE_USE_URL);
-      // The pinned success body is exactly these three keys — nothing about the
+      // The pinned success body is exactly these two keys — nothing about the
       // principal, the mint record, or the quota leaks into it.
-      expect(Object.keys(body).sort()).toEqual(["aupUrl", "ok", "token"]);
+      expect(Object.keys(body).sort()).toEqual(["ok", "token"]);
       // No credential was offered and none was asked for: this is how a caller
       // with nothing gets its first token.
       expect(mint.headers["cache-control"]).toBe("no-store");
@@ -3529,7 +3527,7 @@ describe("self-service minting", () => {
 interface ServedDraft {
   app: ReturnType<typeof createApp>;
   /** The store behind the app, for reading what a request left behind. */
-  db: JsonFilePatchPageDb;
+  db: JsonFilePatchyDb;
   draftId: string;
   latestUrl: string;
   versionUrl: string;
@@ -3550,7 +3548,7 @@ async function createServedDraft(
   const config: ServerConfig = { ...testConfig(), ...overrides };
   let now = Date.UTC(2026, 0, 1);
   const clock = (): number => now;
-  const db = new JsonFilePatchPageDb(path.join(tempDir, `${safeLabel}-db.json`), { clock });
+  const db = new JsonFilePatchyDb(path.join(tempDir, `${safeLabel}-db.json`), { clock });
   await db.initialize("dev-token");
   const storage = new FileSystemHtmlStorage(path.join(tempDir, `${safeLabel}-drafts`));
   const app = createApp({ config, db, storage, clock });
@@ -3594,10 +3592,10 @@ async function uploadSourceIp(options: {
 }): Promise<SourceIpAttribution> {
   const apiToken = "trusted-proxy-token";
   const config = getServerConfig(
-    options.trustProxy === undefined ? {} : { PATCHPAGE_TRUST_PROXY: options.trustProxy }
+    options.trustProxy === undefined ? {} : { PATCHY_TRUST_PROXY: options.trustProxy }
   );
   const dbFile = path.join(tempDir, "trusted-proxy-db.json");
-  const db = new JsonFilePatchPageDb(dbFile);
+  const db = new JsonFilePatchyDb(dbFile);
   await db.initialize(apiToken);
   const storage = new FileSystemHtmlStorage(path.join(tempDir, "trusted-proxy-drafts"));
   const app = createApp({ config, db, storage });
@@ -3647,7 +3645,7 @@ async function markJsonTokenRevoked(filePath: string, name: string): Promise<voi
 async function createScopedTokenApp(label: string, clock?: () => number): Promise<ScopedTokenApp> {
   const safeLabel = label.replaceAll(/[^a-z0-9]/gi, "-");
   const config = testConfig();
-  const db = new JsonFilePatchPageDb(path.join(tempDir, `${safeLabel}-db.json`));
+  const db = new JsonFilePatchyDb(path.join(tempDir, `${safeLabel}-db.json`));
   await db.initialize("admin-token");
   const adminAuth = await db.findApiTokenByToken("admin-token");
   expect(adminAuth).not.toBeNull();
@@ -3866,7 +3864,7 @@ type ApiTargetCase = {
 
 type ScopedTokenApp = {
   app: ReturnType<typeof createApp>;
-  db: JsonFilePatchPageDb;
+  db: JsonFilePatchyDb;
 };
 
 type ClockedApp = {
@@ -3879,7 +3877,7 @@ type ClockedApp = {
 };
 
 type ClockedAppOptions = {
-  openDb?: (file: string, clock: () => number) => JsonFilePatchPageDb;
+  openDb?: (file: string, clock: () => number) => JsonFilePatchyDb;
   openStorage?: (storageDir: string) => FileSystemHtmlStorage;
   /** Overrides `testConfig()`, for a clocked app that needs a posture changed. */
   config?: ServerConfig;
@@ -3956,9 +3954,9 @@ async function createMintApp(
 
   const open = async (): Promise<{
     app: ReturnType<typeof createApp>;
-    db: JsonFilePatchPageDb;
+    db: JsonFilePatchyDb;
   }> => {
-    const db = new JsonFilePatchPageDb(dbFile, { clock });
+    const db = new JsonFilePatchyDb(dbFile, { clock });
     await db.initialize("dev-token");
     return { app: createApp({ config, db, storage, clock }), db };
   };
@@ -4029,7 +4027,7 @@ async function createClockedApp(
   options: ClockedAppOptions = {}
 ): Promise<ClockedApp> {
   const openDb =
-    options.openDb ?? ((file, clock) => new JsonFilePatchPageDb(file, { clock }));
+    options.openDb ?? ((file, clock) => new JsonFilePatchyDb(file, { clock }));
   const openStorage = options.openStorage ?? ((dir) => new FileSystemHtmlStorage(dir));
   let now = Date.UTC(2026, 0, 1);
   const clock = (): number => now;
@@ -4107,7 +4105,7 @@ async function publishDraft(
 }
 
 /** A store that can serve a draft but cannot record the visit that follows. */
-class VisitFailingJsonDb extends JsonFilePatchPageDb {
+class VisitFailingJsonDb extends JsonFilePatchyDb {
   override async recordDraftVisit(): Promise<void> {
     throw new Error("Forced visit top-up failure.");
   }
@@ -4158,7 +4156,7 @@ class ControlledHtmlStorage extends FileSystemHtmlStorage {
   }
 }
 
-class CommitIndeterminateJsonDb extends JsonFilePatchPageDb {
+class CommitIndeterminateJsonDb extends JsonFilePatchyDb {
   throwAfterRecord = false;
 
   override async recordUpload(input: RecordUploadInput): Promise<RecordUploadResult> {

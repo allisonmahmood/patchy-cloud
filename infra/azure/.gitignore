@@ -1,7 +1,0 @@
-.terraform/
-*.tfvars
-!*.tfvars.example
-*.tfplan
-backend*.hcl
-crash.log
-crash.*.log

@@ -19,14 +19,9 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const cliPath = path.join(packageDir, "dist/index.js");
-const DEFAULT_API_URL = "https://post.patchyhq.com";
+const DEFAULT_API_URL = "http://localhost:3000";
 const MINT_PATH = "/api/tokens/self-service";
 const MINTED_TOKEN = "pp_minted_publishing_key";
-const AUP_URL = "https://patchyhq.com/acceptable-use";
-// Not spec-pinned copy: the mint response carries the URL and acceptance is
-// implied by publishing, so the CLI surfaces it. Asserted separately from the
-// pinned announcement paragraph so the two can never be edited as one string.
-const AUP_NOTICE = `Publishing here accepts the acceptable use policy: ${AUP_URL}\n`;
 const DEPRECATED_ANONYMOUS_NOTICE =
   "Warning: --anonymous is deprecated and ignored. Uploads always use a publishing token; " +
   "one is minted automatically when none is stored for the instance.\n";
@@ -63,7 +58,7 @@ afterEach(() => {
   }
 });
 
-describe("patchpage auth set", () => {
+describe("patchy auth set", () => {
   it("saves a token from explicit stdin without exposing it in arguments or output", () => {
     const token = "pp_stdin_secret";
     const args = ["auth", "set", "--token-stdin"];
@@ -71,7 +66,7 @@ describe("patchpage auth set", () => {
 
     expect(result.argv.join("\0")).not.toContain(token);
     expect(result.status).toBe(0);
-    expect(result.stdout).toBe(`PatchPage credentials saved for ${DEFAULT_API_URL}.\n`);
+    expect(result.stdout).toBe(`Patchy Cloud credentials saved for ${DEFAULT_API_URL}.\n`);
     expect(result.stderr).toBe("");
     expect(`${result.stdout}${result.stderr}`).not.toContain(token);
     expect(readHostCredential(result.stateDir)).toMatchObject({
@@ -122,8 +117,8 @@ describe("patchpage auth set", () => {
       const result = runCliInPty(["auth", "set"], "line", token);
 
       expect(result.status).toBe(0);
-      expect(result.output).toContain("PatchPage API token:");
-      expect(result.output).toContain(`PatchPage credentials saved for ${DEFAULT_API_URL}.`);
+      expect(result.output).toContain("Patchy Cloud API token:");
+      expect(result.output).toContain(`Patchy Cloud credentials saved for ${DEFAULT_API_URL}.`);
       expect(result.output).not.toContain(token);
       expect(result.terminalRestored).toBe(true);
       expect(readHostCredential(result.stateDir)).toMatchObject({ token });
@@ -136,7 +131,7 @@ describe("patchpage auth set", () => {
     expect(result.status).toBe(1);
     expect(result.stdout).toBe("");
     expect(result.stderr).toBe(
-      "Interactive token entry requires a terminal. For automation, pipe the token to patchpage auth set --token-stdin.\n"
+      "Interactive token entry requires a terminal. For automation, pipe the token to patchy auth set --token-stdin.\n"
     );
     expect(existsSync(path.join(result.stateDir, "credentials.json"))).toBe(false);
   });
@@ -148,7 +143,7 @@ describe("patchpage auth set", () => {
 
       expect(result.status).toBe(1);
       expect(result.output).toContain(
-        "--token-stdin requires redirected input. Run patchpage auth set to use the hidden interactive prompt."
+        "--token-stdin requires redirected input. Run patchy auth set to use the hidden interactive prompt."
       );
       expect(result.terminalRestored).toBe(true);
       expect(existsSync(path.join(result.stateDir, "credentials.json"))).toBe(false);
@@ -200,8 +195,8 @@ describe("patchpage auth set", () => {
       const signalReportPath = path.join(stateDir, "signal-listener.json");
       const result = runCliInPty(["auth", "set"], "signal:SIGTERM", "", stateDir, {
         NODE_OPTIONS: `--import=${signalListenerPreloadUrl}`,
-        PATCHPAGE_TEST_SIGNAL_ACTION: "exit",
-        PATCHPAGE_TEST_SIGNAL_REPORT: signalReportPath
+        PATCHY_TEST_SIGNAL_ACTION: "exit",
+        PATCHY_TEST_SIGNAL_REPORT: signalReportPath
       });
 
       expect(result.rawDuringInteraction).toBe(true);
@@ -223,7 +218,7 @@ describe("patchpage auth set", () => {
       const signalReportPath = path.join(stateDir, "signal-listener.json");
       const result = runCliInPty(["auth", "set"], "signal:SIGTERM", "", stateDir, {
         NODE_OPTIONS: `--import=${signalListenerPreloadUrl}`,
-        PATCHPAGE_TEST_SIGNAL_REPORT: signalReportPath
+        PATCHY_TEST_SIGNAL_REPORT: signalReportPath
       });
 
       expect(result.rawDuringInteraction).toBe(true);
@@ -302,7 +297,7 @@ describe("patchpage auth set", () => {
     }
   );
 
-  it("keeps PATCHPAGE_API_TOKEN authentication compatible for ordinary commands", async () => {
+  it("keeps PATCHY_API_TOKEN authentication compatible for ordinary commands", async () => {
     const token = "pp_ci_environment_secret";
     let authorization: string | undefined;
     const server = createServer((request, response) => {
@@ -324,7 +319,7 @@ describe("patchpage auth set", () => {
       const address = server.address();
       if (!address || typeof address === "string") throw new Error("Expected a TCP test server");
       const args = ["whoami", "--api-url", `http://127.0.0.1:${address.port}`];
-      const result = await runCliAsync(args, { PATCHPAGE_API_TOKEN: token });
+      const result = await runCliAsync(args, { PATCHY_API_TOKEN: token });
 
       expect(result.argv.join("\0")).not.toContain(token);
       expect(result.status).toBe(0);
@@ -339,9 +334,9 @@ describe("patchpage auth set", () => {
     }
   });
 
-  it("does not treat PATCHPAGE_API_TOKEN as an auth-set input", async () => {
+  it("does not treat PATCHY_API_TOKEN as an auth-set input", async () => {
     const token = "pp_environment_not_for_auth_set";
-    const result = await runCliAsync(["auth", "set"], { PATCHPAGE_API_TOKEN: token });
+    const result = await runCliAsync(["auth", "set"], { PATCHY_API_TOKEN: token });
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("Interactive token entry requires a terminal.");
@@ -350,13 +345,13 @@ describe("patchpage auth set", () => {
   });
 });
 
-describe("patchpage auth set terminal boundary", () => {
+describe("patchy auth set terminal boundary", () => {
   it("keeps prompted input out of output and argv and restores cooked mode", () => {
     const token = "pp_portable_prompt_secret";
     const result = runCliWithMockTty(["auth", "set"], `${token}\n`);
 
     expect(result.status).toBe(0);
-    expect(result.stderr).toContain("PatchPage API token:");
+    expect(result.stderr).toContain("Patchy Cloud API token:");
     expect(`${result.stdout}${result.stderr}`).not.toContain(token);
     expect(result.argv.join("\0")).not.toContain(token);
     expectTerminalRestored(result.terminal);
@@ -382,12 +377,12 @@ describe("patchpage auth set terminal boundary", () => {
   it("handles readline input errors through the CLI boundary and restores cooked mode", async () => {
     const errorDetail = "injected stream failure must stay private";
     const result = await runCliWithMockTtyAsync(["auth", "set"], {
-      PATCHPAGE_TEST_TTY_INPUT_ERROR: errorDetail
+      PATCHY_TEST_TTY_INPUT_ERROR: errorDetail
     });
 
     expect(result.status).toBe(1);
     expect(result.stdout).toBe("");
-    expect(result.stderr).toBe("PatchPage API token: \nCould not read the API token.\n");
+    expect(result.stderr).toBe("Patchy Cloud API token: \nCould not read the API token.\n");
     expect(result.stderr).not.toContain(errorDetail);
     expect(result.stderr).not.toContain("Unhandled 'error' event");
     expectTerminalRestored(result.terminal);
@@ -403,11 +398,11 @@ describe("patchpage auth set terminal boundary", () => {
       await expect(
         runCliWithMockTtyAsync(
           ["auth", "set"],
-          { PATCHPAGE_TEST_TTY_TIMEOUT_SIGNAL_REPORT: timeoutSignalReportPath },
+          { PATCHY_TEST_TTY_TIMEOUT_SIGNAL_REPORT: timeoutSignalReportPath },
           stateDir,
           1_000
         )
-      ).rejects.toThrow("CLI timed out: patchpage auth set");
+      ).rejects.toThrow("CLI timed out: patchy auth set");
       expect(JSON.parse(readFileSync(timeoutSignalReportPath, "utf8"))).toEqual({
         ready: true,
         sigtermReceived: false,
@@ -422,7 +417,7 @@ describe("patchpage auth set terminal boundary", () => {
   ] as const) {
     it(`controls Windows ${signalName} termination after restoring cooked mode`, async () => {
       const result = await runCliWithMockTtyAsync(["auth", "set"], {
-        PATCHPAGE_TEST_WINDOWS_SIGNAL: signalName
+        PATCHY_TEST_WINDOWS_SIGNAL: signalName
       });
 
       expect(result.stderr).not.toContain("ENOSYS");
@@ -483,7 +478,7 @@ describe("CLI auth guidance", () => {
     expect(result.stderr).toBe(
       "No publishing token is stored for http://127.0.0.1:1.\n" +
         "One is minted automatically on your first upload, or save an existing one with: " +
-        "patchpage auth set --api-url http://127.0.0.1:1\n"
+        "patchy auth set --api-url http://127.0.0.1:1\n"
     );
     expect(result.stderr).not.toContain("<api-token>");
   });
@@ -492,7 +487,7 @@ describe("CLI auth guidance", () => {
     const result = runCli(["auth", "set", "--help"]);
 
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain("Usage: patchpage auth set [options]");
+    expect(result.stdout).toContain("Usage: patchy auth set [options]");
     expect(result.stdout).toContain("--token-stdin");
     expect(`${result.stdout}${result.stderr}`).not.toContain("<api-token>");
   });
@@ -508,7 +503,7 @@ describe("CLI auth guidance", () => {
   });
 });
 
-describe("patchpage upload", () => {
+describe("patchy upload", () => {
   it("documents --draft as update-only in command help", () => {
     const result = runCli(["upload", "--help"]);
 
@@ -607,7 +602,7 @@ describe("patchpage upload", () => {
       expect(result.status).toBe(0);
       expect(result.stderr).toBe(DEPRECATED_ANONYMOUS_NOTICE);
       expect(result.stdout).toBe(
-        `${mintAnnouncement(server.apiUrl, stateDir)}${AUP_NOTICE}Uploaded draft\n` +
+        `${mintAnnouncement(server.apiUrl, stateDir)}Uploaded draft\n` +
           "URL: http://example.test/d/mnopqrstuvwx\n" +
           "Draft ID: mnopqrstuvwx\n" +
           "Version: 1\n"
@@ -659,7 +654,7 @@ describe("patchpage upload", () => {
       );
       const environmentResult = await runCliAsync(
         ["upload", environmentHtml, "--new", ...apiArgs],
-        { PATCHPAGE_API_TOKEN: "environment-token" },
+        { PATCHY_API_TOKEN: "environment-token" },
         environmentState
       );
 
@@ -750,7 +745,7 @@ describe("patchpage upload", () => {
         expect(result.status, label).toBe(1);
         expect(result.stdout, label).toBe("");
         expect(result.stderr, label).toBe(
-          "Stored credentials are invalid. Run: patchpage auth set to replace them.\n"
+          "Stored credentials are invalid. Run: patchy auth set to replace them.\n"
         );
         expect(existsSync(path.join(stateDir, "drafts.json")), label).toBe(false);
       }
@@ -766,7 +761,7 @@ describe("patchpage upload", () => {
         expect(result.status, label).toBe(1);
         expect(result.stdout, label).toBe("");
         expect(result.stderr, label).toBe(
-          `Stored credentials for ${apiUrl} are invalid. Run: patchpage auth set --api-url ${apiUrl} to replace them.\n`
+          `Stored credentials for ${apiUrl} are invalid. Run: patchy auth set --api-url ${apiUrl} to replace them.\n`
         );
         expect(existsSync(path.join(stateDir, "drafts.json")), label).toBe(false);
       }
@@ -788,7 +783,7 @@ describe("patchpage upload", () => {
       expect(unreadableResult.status).toBe(1);
       expect(unreadableResult.stdout).toBe("");
       expect(unreadableResult.stderr).toBe(
-        "Stored credentials could not be read. Check permissions or run: patchpage auth set to replace them.\n"
+        "Stored credentials could not be read. Check permissions or run: patchy auth set to replace them.\n"
       );
       expect(existsSync(path.join(unreadableStateDir, "drafts.json"))).toBe(false);
       expect(requestCount).toBe(0);
@@ -838,7 +833,7 @@ describe("patchpage upload", () => {
     try {
       const result = await runCliAsync(
         ["upload", htmlPath, "--api-url", server.apiUrl],
-        { PATCHPAGE_API_TOKEN: "" },
+        { PATCHY_API_TOKEN: "" },
         stateDir
       );
 
@@ -889,7 +884,7 @@ describe("patchpage upload", () => {
 
       const result = await runCliAsync(
         ["upload", htmlPath],
-        { PATCHPAGE_API_URL: "" },
+        { PATCHY_API_URL: "" },
         stateDir
       );
 
@@ -918,7 +913,7 @@ describe("patchpage upload", () => {
       writeFileSync(environmentHtml, "<!doctype html><title>Rejected environment</title>");
       const environmentResult = await runCliAsync(
         ["upload", environmentHtml, "--api-url", server.apiUrl],
-        { PATCHPAGE_API_TOKEN: environmentToken },
+        { PATCHY_API_TOKEN: environmentToken },
         environmentState
       );
 
@@ -995,7 +990,7 @@ describe("patchpage upload", () => {
       if (!address || typeof address === "string") throw new Error("Expected a TCP test server");
       const result = await runCliAsync(
         ["upload", htmlPath, "--new", "--api-url", `http://127.0.0.1:${address.port}`],
-        { PATCHPAGE_API_TOKEN: token }
+        { PATCHY_API_TOKEN: token }
       );
 
       expect(result.status).toBe(0);
@@ -1047,7 +1042,7 @@ describe("patchpage upload", () => {
           "--api-url",
           `http://127.0.0.1:${address.port}`
         ],
-        { PATCHPAGE_API_TOKEN: token }
+        { PATCHY_API_TOKEN: token }
       );
 
       expect(result.status).toBe(1);
@@ -1101,7 +1096,7 @@ describe("patchpage upload", () => {
 
       const result = await runCliAsync(
         ["upload", htmlPath, "--api-url", apiUrl],
-        { PATCHPAGE_API_TOKEN: token },
+        { PATCHY_API_TOKEN: token },
         stateDir
       );
 
@@ -1139,7 +1134,7 @@ describe("auto-mint on first upload", () => {
       expect(result.stderr).toBe("");
       // The announcement is pinned byte-for-byte and precedes the upload result.
       expect(result.stdout).toBe(
-        `${mintAnnouncement(server.apiUrl, stateDir)}${AUP_NOTICE}Uploaded draft\n` +
+        `${mintAnnouncement(server.apiUrl, stateDir)}Uploaded draft\n` +
           "URL: http://example.test/d/mnopqrstuvwx\n" +
           "Draft ID: mnopqrstuvwx\n" +
           "Version: 1\n"
@@ -1234,7 +1229,7 @@ describe("auto-mint on first upload", () => {
       expect(whoami.stderr).toBe(
         `No publishing token is stored for ${server.apiUrl}.\n` +
           "One is minted automatically on your first upload, or save an existing one with: " +
-          `patchpage auth set --api-url ${server.apiUrl}\n`
+          `patchy auth set --api-url ${server.apiUrl}\n`
       );
       expect(validate.status).toBe(0);
       expect(server.mints).toEqual([]);
@@ -1251,49 +1246,6 @@ describe("auto-mint on first upload", () => {
       expect(server.mints).toHaveLength(1);
     } finally {
       await server.close();
-    }
-  });
-
-  it("relays the acceptable use policy only when the instance names one", async () => {
-    const withPolicy = await startUploadServer(createOnly("mnopqrstuvwx"));
-    const withoutPolicy = await startUploadServer(createOnly("yzabcdefghij"), () => ({
-      status: 201,
-      body: { ok: true, token: MINTED_TOKEN }
-    }));
-
-    try {
-      const policyState = makeStateDir();
-      const policyHtml = path.join(policyState, "aup.html");
-      writeFileSync(policyHtml, "<!doctype html><title>Policy</title>");
-      const announced = await runCliAsync(
-        ["upload", policyHtml, "--api-url", withPolicy.apiUrl],
-        {},
-        policyState
-      );
-
-      const silentState = makeStateDir();
-      const silentHtml = path.join(silentState, "no-aup.html");
-      writeFileSync(silentHtml, "<!doctype html><title>No policy</title>");
-      const silent = await runCliAsync(
-        ["upload", silentHtml, "--api-url", withoutPolicy.apiUrl],
-        {},
-        silentState
-      );
-
-      expect([announced.status, silent.status]).toEqual([0, 0]);
-      // Acceptance is implied by publishing, so the link is shown when offered.
-      expect(announced.stdout).toContain(AUP_NOTICE);
-      // An instance that names no policy gets no invented one, and minting
-      // still succeeds: the URL is relayed, never required.
-      expect(silent.stdout).not.toContain("acceptable use policy");
-      expect(silent.stdout).toContain(mintAnnouncement(withoutPolicy.apiUrl, silentState));
-      expect(readHostCredential(silentState, withoutPolicy.apiUrl)).toMatchObject({
-        token: MINTED_TOKEN,
-        source: "mint"
-      });
-    } finally {
-      await withPolicy.close();
-      await withoutPolicy.close();
     }
   });
 
@@ -1351,7 +1303,7 @@ describe("auto-mint on first upload", () => {
       expect(result.stderr).toBe(
         `Could not get a publishing token: ${server.apiUrl} does not hand them out on request.\n` +
           "Ask that instance's operator for a token and save it with: " +
-          `patchpage auth set --api-url ${server.apiUrl}\n`
+          `patchy auth set --api-url ${server.apiUrl}\n`
       );
       // One attempt, no fallback instance, and nothing written.
       expect(server.mints).toHaveLength(1);
@@ -1384,7 +1336,7 @@ describe("auto-mint on first upload", () => {
       expect(result.stderr).toBe(
         `Could not get a publishing token: ${server.apiUrl} has reached its limit of new tokens ` +
           "for your network over the last 24 hours.\nCopy an existing token from another " +
-          `machine and save it with: patchpage auth set --api-url ${server.apiUrl}, or try ` +
+          `machine and save it with: patchy auth set --api-url ${server.apiUrl}, or try ` +
           "again once the oldest of those tokens is 24 hours old.\n"
       );
       expect(server.mints).toHaveLength(1);
@@ -1438,7 +1390,7 @@ describe("auto-mint on first upload", () => {
       `Could not get a publishing token: ${apiUrl} could not be reached.\n` +
         "Check the address and your network connection, then run the same command again.\n"
     );
-    // Never the official instance as a consolation prize.
+    // Never the default instance as a consolation prize.
     expect(result.stderr).not.toContain(DEFAULT_API_URL);
     expect(existsSync(path.join(stateDir, "credentials.json"))).toBe(false);
   });
@@ -1464,7 +1416,7 @@ describe("auto-mint on first upload", () => {
       expect(result.stderr).toBe(
         `Could not get a publishing token from ${server.apiUrl}: Not found.\n` +
           "If that instance does not hand out tokens, ask its operator for one and save it " +
-          `with: patchpage auth set --api-url ${server.apiUrl}\n`
+          `with: patchy auth set --api-url ${server.apiUrl}\n`
       );
       expect(server.requests).toEqual([]);
     } finally {
@@ -1550,9 +1502,9 @@ describe("host-keyed local state", () => {
     );
 
     expect([first.status, second.status, again.status]).toEqual([0, 0, 0]);
-    expect(first.stdout).toBe(`PatchPage credentials saved for ${firstUrl}.\n`);
-    expect(second.stdout).toBe(`PatchPage credentials saved for ${secondUrl}.\n`);
-    expect(again.stdout).toBe(`PatchPage credentials saved for ${firstUrl}.\n`);
+    expect(first.stdout).toBe(`Patchy Cloud credentials saved for ${firstUrl}.\n`);
+    expect(second.stdout).toBe(`Patchy Cloud credentials saved for ${secondUrl}.\n`);
+    expect(again.stdout).toBe(`Patchy Cloud credentials saved for ${firstUrl}.\n`);
 
     const { hosts } = readCredentials(stateDir);
     expect(Object.keys(hosts).sort()).toEqual([firstUrl, secondUrl].sort());
@@ -1564,11 +1516,11 @@ describe("host-keyed local state", () => {
   it("saves auth set credentials under the instance the environment selects", () => {
     const stateDir = makeStateDir();
     const result = runCli(["auth", "set", "--token-stdin"], "pp_from_environment\n", stateDir, {
-      PATCHPAGE_API_URL: "https://environment.test"
+      PATCHY_API_URL: "https://environment.test"
     });
 
     expect(result.status).toBe(0);
-    expect(result.stdout).toBe("PatchPage credentials saved for https://environment.test.\n");
+    expect(result.stdout).toBe("Patchy Cloud credentials saved for https://environment.test.\n");
     expect(Object.keys(readCredentials(stateDir).hosts)).toEqual(["https://environment.test"]);
     // Without --api-url the instance choice is not persisted.
     expect(existsSync(path.join(stateDir, "config.json"))).toBe(false);
@@ -1819,7 +1771,7 @@ describe("host-keyed local state", () => {
     expect(result.stderr).toBe(
       `No publishing token is stored for ${DEFAULT_API_URL}.\n` +
         "One is minted automatically on your first upload, or save an existing one with: " +
-        `patchpage auth set --api-url ${DEFAULT_API_URL}\n`
+        `patchy auth set --api-url ${DEFAULT_API_URL}\n`
     );
     // True whether or not the instance allows self-service minting yet: if it
     // does not, the refused-mint error on the first upload says so with its
@@ -1856,8 +1808,8 @@ describe("host-keyed local state", () => {
 
       const expected =
         `Stored credentials use the retired single-instance format: ${credentialsPath}\n` +
-        "PatchPage now stores one token per instance and does not migrate the old file.\n" +
-        "Copy the token out of that file if you still need it, delete the file, then run: patchpage auth set\n";
+        "Patchy Cloud now stores one token per instance and does not migrate the old file.\n" +
+        "Copy the token out of that file if you still need it, delete the file, then run: patchy auth set\n";
       for (const result of [upload, whoami, authSet]) {
         expect(result.status).toBe(1);
         expect(result.stdout).toBe("");
@@ -1897,7 +1849,7 @@ describe("host-keyed local state", () => {
     try {
       const result = await runCliAsync(
         ["upload", htmlPath, "--api-url", server.apiUrl],
-        { PATCHPAGE_API_TOKEN: "environment-token" },
+        { PATCHY_API_TOKEN: "environment-token" },
         stateDir
       );
 
@@ -1905,7 +1857,7 @@ describe("host-keyed local state", () => {
       expect(result.stdout).toBe("");
       expect(result.stderr).toBe(
         `The stored draft cache uses the retired single-instance format: ${draftsPath}\n` +
-          "PatchPage now caches drafts per instance and does not migrate the old file.\n" +
+          "Patchy Cloud now caches drafts per instance and does not migrate the old file.\n" +
           "Delete that file to start a fresh cache. Drafts already published are unaffected.\n"
       );
       expect(server.requests).toEqual([]);
@@ -1926,7 +1878,7 @@ describe("host-keyed local state", () => {
       writeFileSync(invalidDraftsPath, "not-json\n");
       const invalid = await runCliAsync(
         ["upload", invalidHtmlPath, "--api-url", server.apiUrl],
-        { PATCHPAGE_API_TOKEN: "environment-token" },
+        { PATCHY_API_TOKEN: "environment-token" },
         invalidStateDir
       );
 
@@ -1937,7 +1889,7 @@ describe("host-keyed local state", () => {
       mkdirSync(unreadableDraftsPath);
       const unreadable = await runCliAsync(
         ["upload", unreadableHtmlPath, "--api-url", server.apiUrl],
-        { PATCHPAGE_API_TOKEN: "environment-token" },
+        { PATCHY_API_TOKEN: "environment-token" },
         unreadableStateDir
       );
 
@@ -1987,7 +1939,7 @@ describe("host-keyed local state", () => {
   );
 });
 
-describe("patchpage status", () => {
+describe("patchy status", () => {
   const packageVersion = (
     JSON.parse(readFileSync(path.join(packageDir, "package.json"), "utf8")) as { version: string }
   ).version;
@@ -2036,14 +1988,14 @@ describe("patchpage status", () => {
     );
     const byConfig = runCli(["status", "--json"], undefined, stateDir);
     const byEmptyEnvironment = runCli(["status", "--json"], undefined, stateDir, {
-      PATCHPAGE_API_URL: ""
+      PATCHY_API_URL: ""
     });
     const byEnvironment = runCli(["status", "--json"], undefined, stateDir, {
-      PATCHPAGE_API_URL: environmentUrl
+      PATCHY_API_URL: environmentUrl
     });
     // A trailing slash normalizes to the host key state is stored under.
     const byFlag = runCli(["status", "--json", "--api-url", `${flagUrl}/`], undefined, stateDir, {
-      PATCHPAGE_API_URL: environmentUrl
+      PATCHY_API_URL: environmentUrl
     });
 
     const runs = [byDefault, byConfig, byEmptyEnvironment, byEnvironment, byFlag];
@@ -2123,7 +2075,7 @@ describe("patchpage status", () => {
     );
 
     const result = runCli(["status", "--json"], undefined, stateDir, {
-      PATCHPAGE_API_TOKEN: environmentToken
+      PATCHY_API_TOKEN: environmentToken
     });
 
     expect(result.status).toBe(0);
@@ -2250,7 +2202,7 @@ describe("PTY test driver", () => {
       [ptyDriverPath, "none", process.execPath, cliPath, "auth", "set"],
       {
         encoding: "utf8",
-        env: cliEnv({ PATCHPAGE_STATE_DIR: stateDir }),
+        env: cliEnv({ PATCHY_STATE_DIR: stateDir }),
         timeout: 10_000
       }
     );
@@ -2273,8 +2225,8 @@ function runCli(
     encoding: "utf8",
     env: cliEnv({
       ...envOverrides,
-      PATCHPAGE_STATE_DIR: stateDir,
-      PATCHPAGE_TEST_ARGV_RECORD: argvOutputPath
+      PATCHY_STATE_DIR: stateDir,
+      PATCHY_TEST_ARGV_RECORD: argvOutputPath
     }),
     input,
     timeout: 10_000
@@ -2300,8 +2252,8 @@ function runCliAsync(
     const child = spawn(process.execPath, ["--import", argvPreloadUrl, cliPath, ...args], {
       env: cliEnv({
         ...envOverrides,
-        PATCHPAGE_STATE_DIR: stateDir,
-        PATCHPAGE_TEST_ARGV_RECORD: argvOutputPath
+        PATCHY_STATE_DIR: stateDir,
+        PATCHY_TEST_ARGV_RECORD: argvOutputPath
       }),
       stdio: ["ignore", "pipe", "pipe"]
     });
@@ -2325,7 +2277,7 @@ function runCliAsync(
     child.once("close", (status) => {
       clearTimeout(timeout);
       if (timedOut) {
-        reject(new Error(`CLI timed out: patchpage ${args.join(" ")}`));
+        reject(new Error(`CLI timed out: patchy ${args.join(" ")}`));
         return;
       }
       resolve({ argv: readArgv(argvOutputPath), status, stdout, stderr, stateDir });
@@ -2403,9 +2355,9 @@ async function startUploadServer(
   };
 }
 
-/** The pinned 201: plaintext exactly once, alongside the AUP URL constant. */
+/** The pinned 201: the plaintext token exactly once, and nothing else. */
 function mintsToken(token: string): MintResponder {
-  return () => ({ status: 201, body: { ok: true, token, aupUrl: AUP_URL } });
+  return () => ({ status: 201, body: { ok: true, token } });
 }
 
 /** The pinned refusals, verbatim from the mint wire contract. */
@@ -2473,20 +2425,20 @@ function createOrUpdate(createdDraftId: string) {
 
 function cliEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   const env = { ...process.env };
-  delete env.PATCHPAGE_API_TOKEN;
-  delete env.PATCHPAGE_API_URL;
-  delete env.PATCHPAGE_TEST_ARGV_RECORD;
-  delete env.PATCHPAGE_TEST_TTY_INPUT_ERROR;
-  delete env.PATCHPAGE_TEST_TTY_REPORT;
-  delete env.PATCHPAGE_TEST_TTY_TIMEOUT_SIGNAL_REPORT;
-  delete env.PATCHPAGE_TEST_SIGNAL_ACTION;
-  delete env.PATCHPAGE_TEST_SIGNAL_REPORT;
-  delete env.PATCHPAGE_TEST_WINDOWS_SIGNAL;
+  delete env.PATCHY_API_TOKEN;
+  delete env.PATCHY_API_URL;
+  delete env.PATCHY_TEST_ARGV_RECORD;
+  delete env.PATCHY_TEST_TTY_INPUT_ERROR;
+  delete env.PATCHY_TEST_TTY_REPORT;
+  delete env.PATCHY_TEST_TTY_TIMEOUT_SIGNAL_REPORT;
+  delete env.PATCHY_TEST_SIGNAL_ACTION;
+  delete env.PATCHY_TEST_SIGNAL_REPORT;
+  delete env.PATCHY_TEST_WINDOWS_SIGNAL;
   return { ...env, ...overrides };
 }
 
 function makeStateDir(): string {
-  const stateDir = mkdtempSync(path.join(os.tmpdir(), "patchpage-cli-test-"));
+  const stateDir = mkdtempSync(path.join(os.tmpdir(), "patchy-cli-test-"));
   stateDirs.push(stateDir);
   return stateDir;
 }
@@ -2587,9 +2539,9 @@ function runCliWithMockTty(args: string[], input: string, stateDir = makeStateDi
     {
       encoding: "utf8",
       env: cliEnv({
-        PATCHPAGE_STATE_DIR: stateDir,
-        PATCHPAGE_TEST_ARGV_RECORD: argvOutputPath,
-        PATCHPAGE_TEST_TTY_REPORT: ttyReportPath
+        PATCHY_STATE_DIR: stateDir,
+        PATCHY_TEST_ARGV_RECORD: argvOutputPath,
+        PATCHY_TEST_TTY_REPORT: ttyReportPath
       }),
       input,
       timeout: 10_000
@@ -2629,9 +2581,9 @@ function runCliWithMockTtyAsync(
       ["--import", argvPreloadUrl, "--import", ttyPreloadUrl, cliPath, ...args],
       {
         env: cliEnv({
-          PATCHPAGE_STATE_DIR: stateDir,
-          PATCHPAGE_TEST_ARGV_RECORD: argvOutputPath,
-          PATCHPAGE_TEST_TTY_REPORT: ttyReportPath,
+          PATCHY_STATE_DIR: stateDir,
+          PATCHY_TEST_ARGV_RECORD: argvOutputPath,
+          PATCHY_TEST_TTY_REPORT: ttyReportPath,
           ...envOverrides
         }),
         stdio: ["pipe", "pipe", "pipe"]
@@ -2657,7 +2609,7 @@ function runCliWithMockTtyAsync(
     child.once("close", (status, signal) => {
       clearTimeout(timeout);
       if (timedOut) {
-        reject(new Error(`CLI timed out: patchpage ${args.join(" ")}`));
+        reject(new Error(`CLI timed out: patchy ${args.join(" ")}`));
         return;
       }
       resolve({
@@ -2697,7 +2649,7 @@ function runCliInPty(
     [ptyDriverPath, interaction, process.execPath, cliPath, ...args],
     {
       encoding: "utf8",
-      env: cliEnv({ ...envOverrides, PATCHPAGE_STATE_DIR: stateDir }),
+      env: cliEnv({ ...envOverrides, PATCHY_STATE_DIR: stateDir }),
       input,
       timeout: 10_000
     }

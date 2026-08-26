@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { JsonFilePatchPageDb } from "./json-db.js";
+import { JsonFilePatchyDb } from "./json-db.js";
 import {
   BACKFILL_DISABLED_REASON_MIGRATION,
   deployedJsonStateFixture,
@@ -36,16 +36,16 @@ const supportsPosixPermissionTest =
   process.platform !== "win32" && typeof process.getuid === "function" && process.getuid() !== 0;
 
 beforeEach(async () => {
-  tempDir = await mkdtemp(path.join(os.tmpdir(), "patchpage-db-"));
+  tempDir = await mkdtemp(path.join(os.tmpdir(), "patchy-db-"));
 });
 
 afterEach(async () => {
   await rm(tempDir, { recursive: true, force: true });
 });
 
-describe("JsonFilePatchPageDb", () => {
+describe("JsonFilePatchyDb", () => {
   it("initializes bootstrap auth and records draft uploads", async () => {
-    const db = new JsonFilePatchPageDb(path.join(tempDir, "db.json"));
+    const db = new JsonFilePatchyDb(path.join(tempDir, "db.json"));
     await db.initialize("dev-token");
 
     const auth = await db.findApiTokenByToken("dev-token");
@@ -81,14 +81,14 @@ describe("JsonFilePatchPageDb", () => {
 
     // The shipped guards describe the current schema, so a row missing a field
     // they require is unreadable until a migration default-fills it.
-    const unmigrated = new JsonFilePatchPageDb(filePath);
+    const unmigrated = new JsonFilePatchyDb(filePath);
     const error = await unmigrated.initialize(null).then(
       () => null,
       (reason: unknown) => reason
     );
     expect((error as Error).message).toBe("JSON metadata file has an invalid state shape.");
 
-    const migrated = new JsonFilePatchPageDb(filePath, {
+    const migrated = new JsonFilePatchyDb(filePath, {
       migrations: [...SCHEMA_MIGRATIONS, BACKFILL_DISABLED_REASON_MIGRATION]
     });
     await migrated.initialize(null);
@@ -124,7 +124,7 @@ describe("JsonFilePatchPageDb", () => {
   it("preserves concurrent uploads made through database instances sharing one file", async () => {
     const filePath = path.join(tempDir, "db.json");
     const aliasedFilePath = `${tempDir}${path.sep}.${path.sep}db.json`;
-    const setupDb = new JsonFilePatchPageDb(filePath);
+    const setupDb = new JsonFilePatchyDb(filePath);
     await setupDb.initialize("dev-token");
 
     const auth = await setupDb.findApiTokenByToken("dev-token");
@@ -133,7 +133,7 @@ describe("JsonFilePatchPageDb", () => {
     const uploads = Array.from({ length: 8 }, (_, index) => {
       const draftId = `draft_${index}`;
       const versionId = `ver_${index}`;
-      const db = new JsonFilePatchPageDb(index % 2 === 0 ? filePath : aliasedFilePath);
+      const db = new JsonFilePatchyDb(index % 2 === 0 ? filePath : aliasedFilePath);
 
       return {
         draftId,
@@ -174,11 +174,11 @@ describe("JsonFilePatchPageDb", () => {
       const realFilePath = path.join(realParent, "db.json");
       const aliasedFilePath = path.join(aliasedParent, "db.json");
       await mkdir(realParent);
-      await new JsonFilePatchPageDb(realFilePath).initialize("original-secret");
+      await new JsonFilePatchyDb(realFilePath).initialize("original-secret");
       const original = await readFile(realFilePath);
       await symlink(realParent, aliasedParent, "dir");
 
-      const error = await new JsonFilePatchPageDb(aliasedFilePath)
+      const error = await new JsonFilePatchyDb(aliasedFilePath)
         .initialize("replacement-secret")
         .then(
           () => null,
@@ -222,13 +222,13 @@ describe("JsonFilePatchPageDb", () => {
       const aliasedFilePath = path.join(aliasedParent, "db.json");
       try {
         // The lstat mock models a bind mount, which is not a symbolic-link parent.
-        const { JsonFilePatchPageDb: IdentityJsonFilePatchPageDb } = await import(
+        const { JsonFilePatchyDb: IdentityJsonFilePatchyDb } = await import(
           "./json-db.js"
         );
         const uploads = Array.from({ length: 8 }, (_, index) => {
           const draftId = `identity_draft_${index}`;
           const versionId = `identity_ver_${index}`;
-          const db = new IdentityJsonFilePatchPageDb(
+          const db = new IdentityJsonFilePatchyDb(
             index % 2 === 0 ? realFilePath : aliasedFilePath
           );
           return db.recordUpload({
@@ -253,7 +253,7 @@ describe("JsonFilePatchPageDb", () => {
         vi.resetModules();
       }
 
-      const db = new JsonFilePatchPageDb(realFilePath);
+      const db = new JsonFilePatchyDb(realFilePath);
       for (let index = 0; index < 8; index += 1) {
         const lookup = await db.findDraftVersion(`identity_draft_${index}`);
         expect(lookup.version?.id).toBe(`identity_ver_${index}`);
@@ -294,10 +294,10 @@ describe("JsonFilePatchPageDb", () => {
 
       try {
         // A static import cannot observe the per-test mocked filesystem boundary.
-        const { JsonFilePatchPageDb: StaggeredJsonFilePatchPageDb } = await import(
+        const { JsonFilePatchyDb: StaggeredJsonFilePatchyDb } = await import(
           "./json-db.js"
         );
-        const firstDb = new StaggeredJsonFilePatchPageDb(filePath);
+        const firstDb = new StaggeredJsonFilePatchyDb(filePath);
         const first = firstDb.recordUpload({
           intent: "create",
           draftId: "staggered_first",
@@ -315,7 +315,7 @@ describe("JsonFilePatchPageDb", () => {
         });
         await mkdirStarted;
 
-        const secondError = await new StaggeredJsonFilePatchPageDb(aliasedFilePath)
+        const secondError = await new StaggeredJsonFilePatchyDb(aliasedFilePath)
           .recordUpload({
             intent: "create",
             draftId: "staggered_second",
@@ -368,12 +368,12 @@ describe("JsonFilePatchPageDb", () => {
     );
     if (!aliasesShareDirectory) return;
 
-    const upperFilePath = path.join(parentPath, "PatchPage.JSON");
-    const lowerFilePath = path.join(parentAlias, "patchpage.json");
+    const upperFilePath = path.join(parentPath, "Patchy.JSON");
+    const lowerFilePath = path.join(parentAlias, "patchy.json");
     const uploads = Array.from({ length: 12 }, (_, index) => {
       const draftId = `case_draft_${index}`;
       const versionId = `case_ver_${index}`;
-      const db = new JsonFilePatchPageDb(index % 2 === 0 ? upperFilePath : lowerFilePath);
+      const db = new JsonFilePatchyDb(index % 2 === 0 ? upperFilePath : lowerFilePath);
 
       return db.recordUpload({
         intent: "create",
@@ -394,7 +394,7 @@ describe("JsonFilePatchPageDb", () => {
 
     await Promise.all(uploads);
 
-    const db = new JsonFilePatchPageDb(upperFilePath);
+    const db = new JsonFilePatchyDb(upperFilePath);
     for (let index = 0; index < uploads.length; index += 1) {
       const lookup = await db.findDraftVersion(`case_draft_${index}`);
       expect(lookup.version?.id).toBe(`case_ver_${index}`);
@@ -419,7 +419,7 @@ describe("JsonFilePatchPageDb", () => {
     const uploads = Array.from({ length: 8 }, (_, index) => {
       const draftId = `unicode_case_draft_${index}`;
       const versionId = `unicode_case_ver_${index}`;
-      const db = new JsonFilePatchPageDb(
+      const db = new JsonFilePatchyDb(
         index % 2 === 0 ? mixedCaseFilePath : foldedFilePath
       );
 
@@ -442,7 +442,7 @@ describe("JsonFilePatchPageDb", () => {
 
     await Promise.all(uploads);
 
-    const db = new JsonFilePatchPageDb(mixedCaseFilePath);
+    const db = new JsonFilePatchyDb(mixedCaseFilePath);
     for (let index = 0; index < uploads.length; index += 1) {
       const lookup = await db.findDraftVersion(`unicode_case_draft_${index}`);
       expect(lookup.version?.id).toBe(`unicode_case_ver_${index}`);
@@ -451,19 +451,19 @@ describe("JsonFilePatchPageDb", () => {
 
   it("preserves concurrent token creates and successful token-use updates", async () => {
     const filePath = path.join(tempDir, "db.json");
-    const setupDb = new JsonFilePatchPageDb(filePath);
+    const setupDb = new JsonFilePatchyDb(filePath);
     await setupDb.initialize("dev-token");
 
     const tokens = Array.from({ length: 6 }, (_, index) => `created-token-${index}`);
     const mutations = tokens.map((token, index) =>
-      new JsonFilePatchPageDb(filePath).createApiToken({
+      new JsonFilePatchyDb(filePath).createApiToken({
         accountId: "acct_bootstrap",
         name: `Token ${index}`,
         token,
         scopes: ["upload"]
       })
     );
-    const bootstrapUse = new JsonFilePatchPageDb(filePath).findApiTokenByToken("dev-token");
+    const bootstrapUse = new JsonFilePatchyDb(filePath).findApiTokenByToken("dev-token");
 
     const [createdTokens, bootstrapAuth] = await Promise.all([
       Promise.all(mutations),
@@ -487,11 +487,11 @@ describe("JsonFilePatchPageDb", () => {
 
   it("preserves a concurrent bootstrap update and token create", async () => {
     const filePath = path.join(tempDir, "db.json");
-    const setupDb = new JsonFilePatchPageDb(filePath);
+    const setupDb = new JsonFilePatchyDb(filePath);
     await setupDb.initialize("dev-token");
 
-    const bootstrapUpdate = new JsonFilePatchPageDb(filePath).initialize("rotated-token");
-    const tokenCreate = new JsonFilePatchPageDb(filePath).createApiToken({
+    const bootstrapUpdate = new JsonFilePatchyDb(filePath).initialize("rotated-token");
+    const tokenCreate = new JsonFilePatchyDb(filePath).createApiToken({
       accountId: "acct_bootstrap",
       name: "Concurrent token",
       token: "concurrent-token",
@@ -507,7 +507,7 @@ describe("JsonFilePatchPageDb", () => {
 
   it("preserves concurrent successful draft disables and deletes", async () => {
     const filePath = path.join(tempDir, "db.json");
-    const setupDb = new JsonFilePatchPageDb(filePath);
+    const setupDb = new JsonFilePatchyDb(filePath);
     await setupDb.initialize("dev-token");
     const auth = await setupDb.findApiTokenByToken("dev-token");
     expect(auth).not.toBeNull();
@@ -531,12 +531,12 @@ describe("JsonFilePatchPageDb", () => {
     }
 
     const [disabled, deleted] = await Promise.all([
-      new JsonFilePatchPageDb(filePath).disableDraft(
+      new JsonFilePatchyDb(filePath).disableDraft(
         "draft_to_disable",
         auth!.accountId,
         "policy"
       ),
-      new JsonFilePatchPageDb(filePath).deleteDraft("draft_to_delete", auth!.accountId)
+      new JsonFilePatchyDb(filePath).deleteDraft("draft_to_delete", auth!.accountId)
     ]);
     expect(disabled).toBe(true);
     expect(deleted).toBe(true);
@@ -552,7 +552,7 @@ describe("JsonFilePatchPageDb", () => {
     const original = Buffer.from('{"accounts":[{"name":"persisted-secret"}');
     await writeFile(filePath, original);
 
-    const error = await new JsonFilePatchPageDb(filePath)
+    const error = await new JsonFilePatchyDb(filePath)
       .initialize("bootstrap-secret")
       .then(
         () => null,
@@ -572,7 +572,7 @@ describe("JsonFilePatchPageDb", () => {
     );
     await writeFile(filePath, original);
 
-    const error = await new JsonFilePatchPageDb(filePath)
+    const error = await new JsonFilePatchyDb(filePath)
       .initialize("bootstrap-secret")
       .then(
         () => null,
@@ -596,7 +596,7 @@ describe("JsonFilePatchPageDb", () => {
     ]);
     await writeFile(filePath, original);
 
-    const error = await new JsonFilePatchPageDb(filePath)
+    const error = await new JsonFilePatchyDb(filePath)
       .initialize(null)
       .then(
         () => null,
@@ -621,7 +621,7 @@ describe("JsonFilePatchPageDb", () => {
     );
     await writeFile(filePath, original);
 
-    const error = await new JsonFilePatchPageDb(filePath)
+    const error = await new JsonFilePatchyDb(filePath)
       .initialize(null)
       .then(
         () => null,
@@ -638,13 +638,13 @@ describe("JsonFilePatchPageDb", () => {
     async () => {
       const targetPath = path.join(tempDir, "target.json");
       const filePath = path.join(tempDir, "db.json");
-      await new JsonFilePatchPageDb(targetPath).initialize("target-secret");
+      await new JsonFilePatchyDb(targetPath).initialize("target-secret");
       const originalTarget = await readFile(targetPath);
       await symlink(path.basename(targetPath), filePath);
       const originalLink = await lstat(filePath);
       const originalLinkTarget = await readlink(filePath);
 
-      const error = await new JsonFilePatchPageDb(filePath)
+      const error = await new JsonFilePatchyDb(filePath)
         .initialize("replacement-secret")
         .then(
           () => null,
@@ -675,7 +675,7 @@ describe("JsonFilePatchPageDb", () => {
       const originalLink = await lstat(filePath);
       const originalLinkTarget = await readlink(filePath);
 
-      const error = await new JsonFilePatchPageDb(filePath)
+      const error = await new JsonFilePatchyDb(filePath)
         .initialize("replacement-secret")
         .then(
           () => null,
@@ -701,12 +701,12 @@ describe("JsonFilePatchPageDb", () => {
     async () => {
       const filePath = path.join(tempDir, "db.json");
       const aliasPath = path.join(tempDir, "db-alias.json");
-      await new JsonFilePatchPageDb(filePath).initialize("original-secret");
+      await new JsonFilePatchyDb(filePath).initialize("original-secret");
       await link(filePath, aliasPath);
       const original = await readFile(filePath);
       const originalStats = await lstat(filePath);
 
-      const error = await new JsonFilePatchPageDb(aliasPath)
+      const error = await new JsonFilePatchyDb(aliasPath)
         .initialize("replacement-secret")
         .then(
           () => null,
@@ -734,7 +734,7 @@ describe("JsonFilePatchPageDb", () => {
       await execFile("mkfifo", [filePath]);
       const originalStats = await lstat(filePath);
 
-      const error = await new JsonFilePatchPageDb(filePath)
+      const error = await new JsonFilePatchyDb(filePath)
         .initialize("replacement-secret")
         .then(
           () => null,
@@ -755,7 +755,7 @@ describe("JsonFilePatchPageDb", () => {
 
   it("rejects mutation state that cannot survive JSON persistence losslessly", async () => {
     const filePath = path.join(tempDir, "db.json");
-    const db = new JsonFilePatchPageDb(filePath);
+    const db = new JsonFilePatchyDb(filePath);
     await db.initialize("dev-token");
     const auth = await db.findApiTokenByToken("dev-token");
     expect(auth).not.toBeNull();
@@ -862,7 +862,7 @@ describe("JsonFilePatchPageDb", () => {
 
   it("rejects unsafe metadata accessors without invoking or disclosing them", async () => {
     const filePath = path.join(tempDir, "db.json");
-    const db = new JsonFilePatchPageDb(filePath);
+    const db = new JsonFilePatchyDb(filePath);
     await db.initialize("dev-token");
     const original = await readFile(filePath);
     let accessorCalls = 0;
@@ -907,7 +907,7 @@ describe("JsonFilePatchPageDb", () => {
 
   it("rejects unsafe token mutation state without disclosing the raw token", async () => {
     const filePath = path.join(tempDir, "db.json");
-    const db = new JsonFilePatchPageDb(filePath);
+    const db = new JsonFilePatchyDb(filePath);
     await db.initialize("dev-token");
     const original = await readFile(filePath);
 
@@ -934,7 +934,7 @@ describe("JsonFilePatchPageDb", () => {
 
   it("rejects unsafe state before opening a temporary commit file", async () => {
     const filePath = path.join(tempDir, "db.json");
-    await new JsonFilePatchPageDb(filePath).initialize("dev-token");
+    await new JsonFilePatchyDb(filePath).initialize("dev-token");
     const original = await readFile(filePath);
     const actualFs = fsPromises;
     const temporaryOpens: string[] = [];
@@ -949,10 +949,10 @@ describe("JsonFilePatchPageDb", () => {
     let error: unknown;
     try {
       // A static import cannot observe the per-test mocked filesystem boundary.
-      const { JsonFilePatchPageDb: TrackedJsonFilePatchPageDb } = await import(
+      const { JsonFilePatchyDb: TrackedJsonFilePatchyDb } = await import(
         "./json-db.js"
       );
-      error = await new TrackedJsonFilePatchPageDb(filePath)
+      error = await new TrackedJsonFilePatchyDb(filePath)
         .recordUpload({
           intent: "create",
           draftId: "unsafe_before_temp",
@@ -1011,10 +1011,10 @@ describe("JsonFilePatchPageDb", () => {
       const filePath = path.join(directoryPath, "db.json");
       try {
         // A static import cannot observe the per-test mocked filesystem boundary.
-        const { JsonFilePatchPageDb: TrackedJsonFilePatchPageDb } = await import(
+        const { JsonFilePatchyDb: TrackedJsonFilePatchyDb } = await import(
           "./json-db.js"
         );
-        await new TrackedJsonFilePatchPageDb(filePath).initialize("dev-token");
+        await new TrackedJsonFilePatchyDb(filePath).initialize("dev-token");
       } finally {
         vi.doUnmock("node:fs/promises");
         vi.resetModules();
@@ -1027,7 +1027,7 @@ describe("JsonFilePatchPageDb", () => {
           directoryPath
         ])
       );
-      const auth = await new JsonFilePatchPageDb(filePath).findApiTokenByToken(
+      const auth = await new JsonFilePatchyDb(filePath).findApiTokenByToken(
         "dev-token"
       );
       expect(auth?.id).toBe("tok_bootstrap");
@@ -1060,10 +1060,10 @@ describe("JsonFilePatchPageDb", () => {
       let error: unknown;
       try {
         // A static import cannot observe the per-test mocked filesystem boundary.
-        const { JsonFilePatchPageDb: FailingJsonFilePatchPageDb } = await import(
+        const { JsonFilePatchyDb: FailingJsonFilePatchyDb } = await import(
           "./json-db.js"
         );
-        error = await new FailingJsonFilePatchPageDb(filePath)
+        error = await new FailingJsonFilePatchyDb(filePath)
           .initialize("dev-token")
           .then(
             () => null,
@@ -1098,10 +1098,10 @@ describe("JsonFilePatchPageDb", () => {
 
       try {
         // A static import cannot observe the per-test mocked filesystem boundary.
-        const { JsonFilePatchPageDb: RetryingJsonFilePatchPageDb } = await import(
+        const { JsonFilePatchyDb: RetryingJsonFilePatchyDb } = await import(
           "./json-db.js"
         );
-        const db = new RetryingJsonFilePatchPageDb(filePath);
+        const db = new RetryingJsonFilePatchyDb(filePath);
         await db.initialize("dev-token");
         expect((await db.findApiTokenByToken("dev-token"))?.id).toBe("tok_bootstrap");
       } finally {
@@ -1116,7 +1116,7 @@ describe("JsonFilePatchPageDb", () => {
 
   it("fails before commit when the target directory cannot be opened", async () => {
     const filePath = path.join(tempDir, "db.json");
-    const db = new JsonFilePatchPageDb(filePath);
+    const db = new JsonFilePatchyDb(filePath);
     await db.initialize("dev-token");
     const original = await readFile(filePath);
     const actualFs = fsPromises;
@@ -1133,10 +1133,10 @@ describe("JsonFilePatchPageDb", () => {
     let error: unknown;
     try {
       // A static import cannot observe the per-test mocked filesystem boundary.
-      const { JsonFilePatchPageDb: FailingJsonFilePatchPageDb } = await import(
+      const { JsonFilePatchyDb: FailingJsonFilePatchyDb } = await import(
         "./json-db.js"
       );
-      error = await new FailingJsonFilePatchPageDb(filePath)
+      error = await new FailingJsonFilePatchyDb(filePath)
         .initialize("replacement-secret")
         .then(
           () => null,
@@ -1159,7 +1159,7 @@ describe("JsonFilePatchPageDb", () => {
     "reuses the precommit target directory handle after rename",
     async () => {
       const filePath = path.join(tempDir, "db.json");
-      await new JsonFilePatchPageDb(filePath).initialize("dev-token");
+      await new JsonFilePatchyDb(filePath).initialize("dev-token");
       const actualFs = fsPromises;
       let targetDirectoryOpens = 0;
       let targetDirectorySyncs = 0;
@@ -1192,10 +1192,10 @@ describe("JsonFilePatchPageDb", () => {
 
       try {
         // A static import cannot observe the per-test mocked filesystem boundary.
-        const { JsonFilePatchPageDb: SingleOpenJsonFilePatchPageDb } = await import(
+        const { JsonFilePatchyDb: SingleOpenJsonFilePatchyDb } = await import(
           "./json-db.js"
         );
-        await new SingleOpenJsonFilePatchPageDb(filePath).initialize(
+        await new SingleOpenJsonFilePatchyDb(filePath).initialize(
           "replacement-secret"
         );
       } finally {
@@ -1206,7 +1206,7 @@ describe("JsonFilePatchPageDb", () => {
       expect(targetDirectoryOpens).toBe(1);
       expect(targetDirectorySyncs).toBe(1);
       expect(await readdir(tempDir)).toEqual(["db.json"]);
-      const auth = await new JsonFilePatchPageDb(filePath).findApiTokenByToken(
+      const auth = await new JsonFilePatchyDb(filePath).findApiTokenByToken(
         "replacement-secret"
       );
       expect(auth?.id).toBe("tok_bootstrap");
@@ -1215,7 +1215,7 @@ describe("JsonFilePatchPageDb", () => {
 
   it("reports an indeterminate outcome when directory fsync fails after rename", async () => {
     const filePath = path.join(tempDir, "db.json");
-    await new JsonFilePatchPageDb(filePath).initialize("dev-token");
+    await new JsonFilePatchyDb(filePath).initialize("dev-token");
     const original = await readFile(filePath);
     const actualFs = fsPromises;
     const failingOpen = (async (...args: Parameters<typeof actualFs.open>) => {
@@ -1234,10 +1234,10 @@ describe("JsonFilePatchPageDb", () => {
     let error: unknown;
     try {
       // A static import cannot observe the per-test mocked filesystem boundary.
-      const { JsonFilePatchPageDb: FailingJsonFilePatchPageDb } = await import(
+      const { JsonFilePatchyDb: FailingJsonFilePatchyDb } = await import(
         "./json-db.js"
       );
-      error = await new FailingJsonFilePatchPageDb(filePath)
+      error = await new FailingJsonFilePatchyDb(filePath)
         .initialize("replacement-secret")
         .then(
           () => null,
@@ -1254,7 +1254,7 @@ describe("JsonFilePatchPageDb", () => {
     expect(String(error)).not.toContain("replacement-secret");
     expect(await readFile(filePath)).not.toEqual(original);
     expect(await readdir(tempDir)).toEqual(["db.json"]);
-    const auth = await new JsonFilePatchPageDb(filePath).findApiTokenByToken(
+    const auth = await new JsonFilePatchyDb(filePath).findApiTokenByToken(
       "replacement-secret"
     );
     expect(auth?.id).toBe("tok_bootstrap");
@@ -1262,7 +1262,7 @@ describe("JsonFilePatchPageDb", () => {
 
   it("rejects Linux single-file mounts without changing the mounted file", async () => {
     const filePath = path.join(tempDir, "db.json");
-    await new JsonFilePatchPageDb(filePath).initialize("dev-token");
+    await new JsonFilePatchyDb(filePath).initialize("dev-token");
     const original = await readFile(filePath);
     const actualFs = fsPromises;
     const busyRename = (async () => {
@@ -1291,10 +1291,10 @@ describe("JsonFilePatchPageDb", () => {
     let error: unknown;
     try {
       // A static import cannot observe the per-test mocked filesystem boundary.
-      const { JsonFilePatchPageDb: MountedJsonFilePatchPageDb } = await import(
+      const { JsonFilePatchyDb: MountedJsonFilePatchyDb } = await import(
         "./json-db.js"
       );
-      error = await new MountedJsonFilePatchPageDb(filePath)
+      error = await new MountedJsonFilePatchyDb(filePath)
         .initialize("replacement-secret")
         .then(
           () => null,
@@ -1320,7 +1320,7 @@ describe("JsonFilePatchPageDb", () => {
     "rejects an unreadable state without replacing it",
     async () => {
       const filePath = path.join(tempDir, "db.json");
-      const db = new JsonFilePatchPageDb(filePath);
+      const db = new JsonFilePatchyDb(filePath);
       await db.initialize("dev-token");
       const original = await readFile(filePath);
 
@@ -1345,7 +1345,7 @@ describe("JsonFilePatchPageDb", () => {
     "preserves existing file permissions across an atomic commit",
     async () => {
       const filePath = path.join(tempDir, "db.json");
-      const db = new JsonFilePatchPageDb(filePath);
+      const db = new JsonFilePatchyDb(filePath);
       await db.initialize("dev-token");
       await chmod(filePath, 0o700);
 
@@ -1357,8 +1357,8 @@ describe("JsonFilePatchPageDb", () => {
 
   it("never exposes a partially written primary file to readers", async () => {
     const filePath = path.join(tempDir, "db.json");
-    const writerDb = new JsonFilePatchPageDb(filePath);
-    const readerDb = new JsonFilePatchPageDb(filePath);
+    const writerDb = new JsonFilePatchyDb(filePath);
+    const readerDb = new JsonFilePatchyDb(filePath);
     await writerDb.initialize("dev-token");
     const auth = await writerDb.findApiTokenByToken("dev-token");
     expect(auth).not.toBeNull();

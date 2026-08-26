@@ -1,5 +1,4 @@
-import { ACCEPTABLE_USE_URL } from "@patchpage/config";
-import type { DraftRecord, DraftVersionRecord } from "@patchpage/db";
+import type { DraftRecord, DraftVersionRecord } from "@patchy/db";
 import { getDraftPublicUrl, getDraftReportPath } from "./public-url.js";
 
 export function renderHome(options: { publicBaseUrl: string }): string {
@@ -7,16 +6,16 @@ export function renderHome(options: { publicBaseUrl: string }): string {
   const shellPublicBaseUrl = escapeHtml(quoteShellArgument(options.publicBaseUrl));
 
   return htmlPage({
-    title: "PatchPage",
+    title: "Patchy",
     body: `
       <main class="wrap">
         <header class="doc-head">
           <div class="head-line">
-            <span class="brand"><span class="glyph" aria-hidden="true"></span>PatchPage</span>
+            <span class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</span>
             <span class="kicker">Live draft host</span>
           </div>
           <h1>Upload-gated HTML draft hosting.</h1>
-          <p class="lede">PatchPage turns one validated static HTML file into a public review link. Publishing is authenticated by default; viewing is public and unlisted.</p>
+          <p class="lede">Patchy Cloud turns one validated static HTML file into a public review link. Publishing is authenticated by default; viewing is public and unlisted.</p>
           <div class="meta">
             <span class="pill pill-progress">Upload auth</span>
             <span class="pill pill-done">Sandboxed view</span>
@@ -27,24 +26,24 @@ export function renderHome(options: { publicBaseUrl: string }): string {
         <section class="panel">
           <div>
             <h2>Publish a draft</h2>
-            <p>Requires Node.js 22 or newer.</p>
-            <p>Provide <code>PATCHPAGE_SETUP_TOKEN</code> through a secret environment. This scoped workflow pins this endpoint, clears inherited credential overrides, and verifies the stored token before validation or upload.</p>
+            <p>Requires the <code>patchy</code> CLI on Node.js 22 or newer.</p>
+            <p>Provide <code>PATCHY_SETUP_TOKEN</code> through a secret environment. This scoped workflow pins this endpoint, clears inherited credential overrides, and verifies the stored token before validation or upload.</p>
           </div>
-          <pre><code data-patchpage-quick-start>(
+          <pre><code data-patchy-quick-start>(
   set +x
   set -eu
-  PATCHPAGE_API_URL=${shellPublicBaseUrl}
-  export PATCHPAGE_API_URL
-  unset PATCHPAGE_API_TOKEN
+  PATCHY_API_URL=${shellPublicBaseUrl}
+  export PATCHY_API_URL
+  unset PATCHY_API_TOKEN
   unset TOKEN
-  : "\${PATCHPAGE_SETUP_TOKEN:?Set PATCHPAGE_SETUP_TOKEN to a PatchPage API token}"
+  : "\${PATCHY_SETUP_TOKEN:?Set PATCHY_SETUP_TOKEN to a Patchy Cloud API token}"
   ARTIFACT_PATH='./plan.html'
 
-  printf '%s' "$PATCHPAGE_SETUP_TOKEN" | npx --yes patchpage auth set --token-stdin --api-url "$PATCHPAGE_API_URL"
-  unset PATCHPAGE_SETUP_TOKEN
-  npx --yes patchpage whoami &amp;&amp;
-    npx --yes patchpage validate "$ARTIFACT_PATH" &amp;&amp;
-    npx --yes patchpage upload "$ARTIFACT_PATH"
+  printf '%s' "$PATCHY_SETUP_TOKEN" | patchy auth set --token-stdin --api-url "$PATCHY_API_URL"
+  unset PATCHY_SETUP_TOKEN
+  patchy whoami &amp;&amp;
+    patchy validate "$ARTIFACT_PATH" &amp;&amp;
+    patchy upload "$ARTIFACT_PATH"
 )</code></pre>
         </section>
 
@@ -55,7 +54,7 @@ export function renderHome(options: { publicBaseUrl: string }): string {
           </article>
           <article class="task">
             <h3><span class="num">2</span> Review link <span class="pill pill-progress">Public</span></h3>
-            <p>Anyone with the draft URL can view it. Use PatchPage for material that is acceptable as an unlisted public link.</p>
+            <p>Anyone with the draft URL can view it. Use Patchy Cloud for material that is acceptable as an unlisted public link.</p>
           </article>
         </section>
 
@@ -64,7 +63,7 @@ export function renderHome(options: { publicBaseUrl: string }): string {
           <p>Upload controls govern publishing; they do not make draft viewers private.</p>
         </div>
 
-        <p class="foot">Health check: <a href="/healthz">/healthz</a>. Inspired by Postplan, the static HTML draft publishing pattern created by Theo.</p>
+        <p class="foot">Health check: <a href="/healthz">/healthz</a>.</p>
       </main>
     `
   });
@@ -76,14 +75,12 @@ export function renderHome(options: { publicBaseUrl: string }): string {
  *
  * The footer is the reader's only channel to the operator, so it has to work
  * under the draft's own locked CSP: no script anywhere, and `form-action 'none'`
- * ruling out a form here. Both are plain links — one navigation to a report page
- * that carries the form under its own headers, one to the acceptable use policy.
- * With JavaScript disabled this footer is unchanged, because there is no
- * JavaScript in it to disable.
+ * ruling out a form here. It is one plain link — a navigation to a report page
+ * that carries the form under its own headers. With JavaScript disabled this
+ * footer is unchanged, because there is no JavaScript in it to disable.
  *
- * Exactly those two links, and no brand credit: this is someone else's published
- * page, and the spec asks the footer for a report path and the policy behind it.
- * The welcome draft carries the patchyhq.com credit in its own content.
+ * That one link, and no brand credit: this is someone else's published page, and
+ * all the footer owes its reader is a way to reach the operator.
  */
 export function renderDraftWrapper(options: {
   draft: DraftRecord;
@@ -91,7 +88,7 @@ export function renderDraftWrapper(options: {
   html: string;
   homeUrl: string;
 }): string {
-  const title = escapeHtml(options.draft.title || "PatchPage Draft");
+  const title = escapeHtml(options.draft.title || "Patchy draft");
   const reportPath = escapeHtml(getDraftReportPath(options.draft.id));
 
   return `<!doctype html>
@@ -144,10 +141,6 @@ export function renderDraftWrapper(options: {
       text-decoration: underline;
       text-underline-offset: 2px;
     }
-
-    .draft-footer .sep {
-      color: rgba(18, 17, 15, .30);
-    }
   </style>
 </head>
 <body>
@@ -158,8 +151,6 @@ export function renderDraftWrapper(options: {
     referrerpolicy="no-referrer"
     srcdoc="${escapeAttribute(options.html)}"></iframe>
   <footer class="draft-footer">
-    <a href="${escapeHtml(ACCEPTABLE_USE_URL)}">Acceptable use</a>
-    <span class="sep" aria-hidden="true">&middot;</span>
     <a href="${reportPath}">Report this page</a>
   </footer>
   <!-- draft:${escapeHtml(options.draft.id)} version:${Number(options.version.versionNumber)} -->
@@ -178,7 +169,7 @@ export function renderDraftReportForm(options: {
   draft: DraftRecord;
   publicBaseUrl: string;
 }): string {
-  const title = escapeHtml(options.draft.title || "PatchPage Draft");
+  const title = escapeHtml(options.draft.title || "Patchy draft");
   const reportPath = escapeHtml(getDraftReportPath(options.draft.id));
   const draftUrl = escapeHtml(
     getDraftPublicUrl({ draftId: options.draft.id, publicBaseUrl: options.publicBaseUrl })
@@ -190,7 +181,7 @@ export function renderDraftReportForm(options: {
       <main class="wrap compact">
         <header class="doc-head">
           <div class="head-line">
-            <span class="brand"><span class="glyph" aria-hidden="true"></span>PatchPage</span>
+            <span class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</span>
             <span class="kicker">Report</span>
           </div>
           <h1>Report this page.</h1>
@@ -215,7 +206,7 @@ export function renderDraftReportForm(options: {
           <p>It stores your report — the page, the time, the address this request came from, and anything you wrote — for a person to read. It does nothing to the page on its own: taking a page down is always an operator's decision, so no number of reports can remove one.</p>
         </div>
 
-        <p class="foot">Back to <a href="${draftUrl}">the page</a>. Read the <a href="${escapeHtml(ACCEPTABLE_USE_URL)}">acceptable use policy</a>.</p>
+        <p class="foot">Back to <a href="${draftUrl}">the page</a>.</p>
       </main>
     `
   });
@@ -236,14 +227,14 @@ export function renderDraftReportAcknowledgement(options: {
       <main class="wrap compact">
         <header class="doc-head">
           <div class="head-line">
-            <span class="brand"><span class="glyph" aria-hidden="true"></span>PatchPage</span>
+            <span class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</span>
             <span class="kicker">Report received</span>
           </div>
           <h1>Report received.</h1>
           <p class="lede">Thank you. Your report is stored and an operator will read it. Nothing about the page changes automatically, and there is nothing further for you to do.</p>
         </header>
 
-        <p class="foot">Back to <a href="${draftUrl}">the page</a>. Read the <a href="${escapeHtml(ACCEPTABLE_USE_URL)}">acceptable use policy</a>.</p>
+        <p class="foot">Back to <a href="${draftUrl}">the page</a>.</p>
       </main>
     `
   });
@@ -256,7 +247,7 @@ export function renderNotFound(): string {
       <main class="wrap compact">
         <header class="doc-head">
           <div class="head-line">
-            <span class="brand"><span class="glyph" aria-hidden="true"></span>PatchPage</span>
+            <span class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</span>
             <span class="kicker">Missing draft</span>
           </div>
           <h1>Draft not found.</h1>

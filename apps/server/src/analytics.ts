@@ -1,5 +1,5 @@
 import { PostHog } from "posthog-node";
-import type { ServerConfig } from "@patchpage/config";
+import type { ServerConfig } from "@patchy/config";
 
 /**
  * Server-side analytics — the seam every business event the instance reports
@@ -64,7 +64,7 @@ export interface AnalyticsLog {
  * than a per-draft or per-address id: the alternative is inventing a person out
  * of a reader, which is exactly what the serving guarantee forbids.
  */
-export const INSTANCE_DISTINCT_ID = "patchpage-instance";
+export const INSTANCE_DISTINCT_ID = "patchy-instance";
 
 /**
  * How long a capture request may take before it is abandoned. Short by design:
