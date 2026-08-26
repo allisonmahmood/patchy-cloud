@@ -1,5 +1,12 @@
 # Patchy Cloud
 
+## Dependencies
+
+- `esbuild` is exact because its output is the shipped CLI bundle.
+- `npm` is exact because the packed-CLI test invokes its `install` command directly.
+- `typescript` stays on the v6 range so every workspace package uses one compiler baseline.
+- `parse5` comes from the workspace catalog because the CLI externalizes the parser used by core.
+
 ## Agent skills
 
 Review notes belong in PR comments, not in the working tree.

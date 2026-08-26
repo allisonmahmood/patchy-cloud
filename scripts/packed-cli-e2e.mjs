@@ -21,8 +21,8 @@ import { fileURLToPath } from "node:url";
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const cliPackageDir = path.join(repoRoot, "packages/cli");
 const serverEntry = path.join(repoRoot, "apps/server/dist/start.js");
-// npm is a pinned root devDependency purely so this test can pack and install the CLI
-// tarball hermetically; the CLI itself is private and is never published to a registry.
+// npm is a pinned root devDependency so this test can install the CLI tarball
+// hermetically; the CLI itself is private and is never published to a registry.
 const npmCliEntry = path.join(repoRoot, "node_modules/npm/bin/npm-cli.js");
 const bootstrapToken = "patchy-packed-e2e-bootstrap-token";
 const packedCliTempRootBasePrefix = "patchy-packed-cli-e2e-";
@@ -212,17 +212,27 @@ try {
 
   console.log("[packed-cli-e2e] packing one exact tarball without rerunning prepack");
   const packed = await run(
-    "npm",
-    ["pack", "--ignore-scripts", "--json", "--pack-destination", packDir],
+    "pnpm",
+    [
+      "--config.ignore-scripts=true",
+      "pack",
+      "--json",
+      "--pack-destination",
+      packDir
+    ],
     { cwd: cliPackageDir }
   );
-  const packResult = parseNpmPackResult(packed.stdout);
-  assert.equal(packResult.length, 1, "npm pack must produce exactly one artifact");
+  const packResult = parsePackResult(packed.stdout);
+  assert.equal(packResult.length, 1, "pnpm pack must produce exactly one artifact");
 
   const tarballs = (await checkedCall(() => readdir(packDir))).filter((entry) =>
     entry.endsWith(".tgz")
   );
-  assert.deepEqual(tarballs, [packResult[0].filename], "npm pack must create one exact tarball");
+  assert.deepEqual(
+    tarballs,
+    [path.basename(packResult[0].filename)],
+    "pnpm pack must create one exact tarball"
+  );
   const packedFiles = new Set(packResult[0].files.map((file) => file.path));
   for (const requiredFile of [
     "dist/index.js",
@@ -2165,11 +2175,10 @@ function validHtml(title, marker) {
   return `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title></head><body><h1>${marker}</h1></body></html>`;
 }
 
-function parseNpmPackResult(stdout) {
+function parsePackResult(stdout) {
   const parsed = JSON.parse(stdout);
-  if (Array.isArray(parsed)) return parsed;
-  assert.ok(parsed && typeof parsed === "object", `unexpected npm pack JSON: ${stdout}`);
-  return Object.values(parsed);
+  assert.ok(parsed && typeof parsed === "object", `unexpected pnpm pack JSON: ${stdout}`);
+  return Array.isArray(parsed) ? parsed : [parsed];
 }
 
 async function reserveLoopbackPort() {

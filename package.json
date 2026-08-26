@@ -4,6 +4,10 @@
   "private": true,
   "license": "UNLICENSED",
   "type": "module",
+  "engines": {
+    "node": ">=22",
+    "pnpm": "11.5.2"
+  },
   "packageManager": "pnpm@11.5.2",
   "scripts": {
     "build": "turbo run build",
