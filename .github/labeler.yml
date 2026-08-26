@@ -43,7 +43,6 @@
           - "*.config.js"
           - "skills-lock.json"
           - ".dockerignore"
-          - ".env.example"
 
 "area:docs":
   - changed-files:
