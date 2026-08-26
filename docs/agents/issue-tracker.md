@@ -1,6 +1,6 @@
 # Issue tracker: GitHub
 
-Issues and PRDs for this repo live as GitHub issues in [`allisonmahmood/PatchPage`](https://github.com/allisonmahmood/PatchPage). Use the `gh` CLI for all operations.
+Issues and PRDs for this repo live as GitHub issues in [`allisonmahmood/patchy-cloud`](https://github.com/allisonmahmood/patchy-cloud). Use the `gh` CLI for all operations.
 
 ## Conventions
 

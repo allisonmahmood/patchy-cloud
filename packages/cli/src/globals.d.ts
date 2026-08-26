@@ -1,1 +1,1 @@
-declare const __PATCHPAGE_VERSION__: string;
+declare const __PATCHY_VERSION__: string;

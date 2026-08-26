@@ -18,12 +18,12 @@ import path from "node:path";
 import { createInterface } from "node:readline/promises";
 import { Writable } from "node:stream";
 import { Command } from "commander";
-import { sha256, validateHtml } from "@patchpage/core";
+import { sha256, validateHtml } from "@patchy/core";
 
-const VERSION = typeof __PATCHPAGE_VERSION__ === "string" ? __PATCHPAGE_VERSION__ : "0.0.0-dev";
-const DEFAULT_API_URL = "https://post.patchyhq.com";
-const SELF_HOST_DOCS_URL = "https://github.com/allisonmahmood/PatchPage/blob/main/docs/SELF_HOSTING.md";
-const STATE_DIR = readEnv("PATCHPAGE_STATE_DIR") ?? path.join(os.homedir(), ".patchpage");
+const VERSION = typeof __PATCHY_VERSION__ === "string" ? __PATCHY_VERSION__ : "0.0.0-dev";
+const DEFAULT_API_URL = "http://localhost:3000";
+const SELF_HOST_DOCS_URL = "https://github.com/allisonmahmood/patchy-cloud/blob/main/docs/SELF_HOSTING.md";
+const STATE_DIR = readEnv("PATCHY_STATE_DIR") ?? path.join(os.homedir(), ".patchy");
 const CONFIG_PATH = path.join(STATE_DIR, "config.json");
 const CREDENTIALS_PATH = path.join(STATE_DIR, "credentials.json");
 const DRAFTS_PATH = path.join(STATE_DIR, "drafts.json");
@@ -48,12 +48,12 @@ interface HostKeyedErrors {
 
 const CREDENTIAL_ERRORS: HostKeyedErrors = {
   unreadable:
-    "Stored credentials could not be read. Check permissions or run: patchpage auth set to replace them.",
-  invalid: "Stored credentials are invalid. Run: patchpage auth set to replace them.",
+    "Stored credentials could not be read. Check permissions or run: patchy auth set to replace them.",
+  invalid: "Stored credentials are invalid. Run: patchy auth set to replace them.",
   legacy:
     `Stored credentials use the retired single-instance format: ${CREDENTIALS_PATH}\n` +
-    "PatchPage now stores one token per instance and does not migrate the old file.\n" +
-    "Copy the token out of that file if you still need it, delete the file, then run: patchpage auth set"
+    "Patchy Cloud now stores one token per instance and does not migrate the old file.\n" +
+    "Copy the token out of that file if you still need it, delete the file, then run: patchy auth set"
 };
 
 const DRAFT_CACHE_ERRORS: HostKeyedErrors = {
@@ -61,7 +61,7 @@ const DRAFT_CACHE_ERRORS: HostKeyedErrors = {
   invalid: `The stored draft cache is invalid: ${DRAFTS_PATH}\nDelete that file to start a fresh cache. Drafts already published are unaffected.`,
   legacy:
     `The stored draft cache uses the retired single-instance format: ${DRAFTS_PATH}\n` +
-    "PatchPage now caches drafts per instance and does not migrate the old file.\n" +
+    "Patchy Cloud now caches drafts per instance and does not migrate the old file.\n" +
     "Delete that file to start a fresh cache. Drafts already published are unaffected."
 };
 
@@ -115,18 +115,21 @@ program.configureOutput({
   }
 });
 
-program.name("patchpage").description("Upload static HTML drafts to PatchPage.").version(VERSION);
+program
+  .name("patchy")
+  .description("Upload static HTML drafts to a Patchy Cloud instance.")
+  .version(VERSION);
 
 program
   .command("auth")
   .description("Manage CLI authentication.")
   .command("set")
-  .option("--token-stdin", "Read the PatchPage API token from stdin")
-  .option("--api-url <url>", "Override the default PatchPage API base URL")
+  .option("--token-stdin", "Read the Patchy Cloud API token from stdin")
+  .option("--api-url <url>", "Override the default Patchy Cloud API base URL")
   .action(async (options: { tokenStdin?: boolean; apiUrl?: string }) => {
     if (options.tokenStdin && process.stdin.isTTY) {
       throw new CliError(
-        "--token-stdin requires redirected input. Run patchpage auth set to use the hidden interactive prompt."
+        "--token-stdin requires redirected input. Run patchy auth set to use the hidden interactive prompt."
       );
     }
 
@@ -151,13 +154,13 @@ program
     const apiUrl = resolveApiUrl(options.apiUrl);
     saveHostCredential(credentials, apiUrl, apiToken, "auth-set");
 
-    console.log(`PatchPage credentials saved for ${apiUrl}.`);
+    console.log(`Patchy Cloud credentials saved for ${apiUrl}.`);
   });
 
 program
   .command("whoami")
-  .description("Check the configured PatchPage credentials.")
-  .option("--api-url <url>", "Override the configured PatchPage API base URL")
+  .description("Check the configured Patchy Cloud credentials.")
+  .option("--api-url <url>", "Override the configured Patchy Cloud API base URL")
   .action(async (options: { apiUrl?: string }) => {
     const { apiUrl, apiToken } = readAuth(options.apiUrl);
     const response = await fetch(`${apiUrl}/api/me`, {
@@ -178,7 +181,7 @@ program
   .command("status")
   .description("Report local publishing state for the resolved instance. Never uses the network.")
   .requiredOption("--json", "Print the report as JSON")
-  .option("--api-url <url>", "Override the configured PatchPage API base URL")
+  .option("--api-url <url>", "Override the configured Patchy Cloud API base URL")
   .action((options: { apiUrl?: string }) => {
     console.log(JSON.stringify(buildStatusReport(options.apiUrl), null, 2));
   });
@@ -192,10 +195,10 @@ program
     const validation = validateHtml(html);
 
     if (!validation.ok) {
-      throw new CliError(`HTML failed PatchPage validation:\n- ${validation.errors.join("\n- ")}`);
+      throw new CliError(`HTML failed Patchy Cloud validation:\n- ${validation.errors.join("\n- ")}`);
     }
 
-    console.log("HTML passed PatchPage validation.");
+    console.log("HTML passed Patchy Cloud validation.");
     for (const warning of validation.warnings) {
       console.warn(`Warning: ${warning}`);
     }
@@ -207,7 +210,7 @@ program
   .option("--draft <draft-id>", "Update an existing draft only; never creates a draft")
   .option("--new", "Always create a new draft")
   .option("--anonymous", "Deprecated and ignored; uploads always use a token")
-  .option("--api-url <url>", "Override the configured PatchPage API base URL")
+  .option("--api-url <url>", "Override the configured Patchy Cloud API base URL")
   .description("Upload or update an HTML draft.")
   .action(async (
     file: string,
@@ -230,7 +233,7 @@ program
     const validation = validateHtml(html);
 
     if (!validation.ok) {
-      throw new CliError(`HTML failed PatchPage validation:\n- ${validation.errors.join("\n- ")}`);
+      throw new CliError(`HTML failed Patchy Cloud validation:\n- ${validation.errors.join("\n- ")}`);
     }
 
     // Local validation gates the network, so an unpublishable file never costs
@@ -246,7 +249,7 @@ program
 
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
-      "User-Agent": `patchpage/${VERSION}`,
+      "User-Agent": `patchy/${VERSION}`,
       Authorization: `Bearer ${apiToken}`
     };
 
@@ -352,7 +355,7 @@ function resolveInstance(apiUrlOverride?: string): {
 } {
   if (apiUrlOverride) return { apiUrl: normalizeApiUrl(apiUrlOverride), source: "flag" };
 
-  const environmentUrl = readEnv("PATCHPAGE_API_URL");
+  const environmentUrl = readEnv("PATCHY_API_URL");
   if (environmentUrl) return { apiUrl: normalizeApiUrl(environmentUrl), source: "env" };
 
   const configUrl = readJson<CliConfig>(CONFIG_PATH, {}).apiUrl;
@@ -369,7 +372,7 @@ function resolveInstance(apiUrlOverride?: string): {
  */
 function buildStatusReport(apiUrlOverride?: string): StatusReport {
   const instance = resolveInstance(apiUrlOverride);
-  const environmentToken = readEnv("PATCHPAGE_API_TOKEN");
+  const environmentToken = readEnv("PATCHY_API_TOKEN");
   const stored = environmentToken === undefined ? readProbeCredential(instance.apiUrl) : undefined;
 
   return {
@@ -409,7 +412,7 @@ function readProbeCredential(apiUrl: string): HostCredential | undefined {
 function readAuth(apiUrlOverride?: string): { apiUrl: string; apiToken: string } {
   const apiUrl = resolveApiUrl(apiUrlOverride);
   const apiToken =
-    readEnv("PATCHPAGE_API_TOKEN") ??
+    readEnv("PATCHY_API_TOKEN") ??
     readStoredCredential(readCredentialFile().hosts, apiUrl)?.token;
 
   if (!apiToken) {
@@ -418,7 +421,7 @@ function readAuth(apiUrlOverride?: string): { apiUrl: string; apiToken: string }
     throw new CliError(
       `No publishing token is stored for ${apiUrl}.\n` +
         "One is minted automatically on your first upload, or save an existing one with: " +
-        `patchpage auth set --api-url ${apiUrl}`
+        `patchy auth set --api-url ${apiUrl}`
     );
   }
 
@@ -436,7 +439,7 @@ function readUploadAuth(apiUrlOverride: string | undefined): {
 } {
   const apiUrl = resolveApiUrl(apiUrlOverride);
 
-  const environmentToken = readEnv("PATCHPAGE_API_TOKEN");
+  const environmentToken = readEnv("PATCHY_API_TOKEN");
   if (environmentToken !== undefined) return { apiUrl, apiToken: environmentToken };
 
   const stored = readStoredCredential(readCredentialFile().hosts, apiUrl);
@@ -458,7 +461,7 @@ async function mintPublishingToken(apiUrl: string): Promise<string> {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "User-Agent": `patchpage/${VERSION}`
+        "User-Agent": `patchy/${VERSION}`
       },
       body: "{}"
     });
@@ -476,7 +479,7 @@ async function mintPublishingToken(apiUrl: string): Promise<string> {
   if (token.length === 0) {
     throw new CliError(
       `Could not get a publishing token: ${apiUrl} answered without one.\n` +
-        `Ask that instance's operator for a token and save it with: patchpage auth set --api-url ${apiUrl}`
+        `Ask that instance's operator for a token and save it with: patchy auth set --api-url ${apiUrl}`
     );
   }
 
@@ -491,16 +494,13 @@ async function mintPublishingToken(apiUrl: string): Promise<string> {
       "those pages belong to that machine's token — ask your agent to help copy it over instead " +
       "of using this new one."
   );
-  if (typeof body.aupUrl === "string" && body.aupUrl.length > 0) {
-    console.log(`Publishing here accepts the acceptable use policy: ${body.aupUrl}`);
-  }
 
   return token;
 }
 
 /** One plain-language failure per pinned mint response, cause then next action. */
 function mintFailureMessage(apiUrl: string, response: Response, body: any): string {
-  const authSetAction = `patchpage auth set --api-url ${apiUrl}`;
+  const authSetAction = `patchy auth set --api-url ${apiUrl}`;
 
   if (body?.code === "self_service_disabled") {
     return (
@@ -582,7 +582,7 @@ function readStoredCredential(
   const token = entry?.token;
   if (entry === null || typeof token !== "string" || token.length === 0) {
     throw new CliError(
-      `Stored credentials for ${apiUrl} are invalid. Run: patchpage auth set --api-url ${apiUrl} to replace them.`
+      `Stored credentials for ${apiUrl} are invalid. Run: patchy auth set --api-url ${apiUrl} to replace them.`
     );
   }
   // Metadata is descriptive, not load-bearing: an unrecognized value is
@@ -697,14 +697,14 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 }
 
 /**
- * Appended to a 401/403 from the default instance only. Like whoami's
- * no-token copy, this must never claim the instance's minting posture: a
- * rejected request here means the key that was sent is bad, whatever the
- * instance's policy on handing out new ones.
+ * Appended to a 401/403 from the default instance only — the local server this
+ * repo runs. Like whoami's no-token copy, this must never claim the instance's
+ * minting posture: a rejected request here means the key that was sent is bad,
+ * whatever the instance's policy on handing out new ones.
  */
 function defaultHostHint(apiUrl: string): string {
   if (apiUrl !== DEFAULT_API_URL) return "";
-  return `\nThe publishing key sent to ${DEFAULT_API_URL} was not accepted. Save a working one with: patchpage auth set --api-url ${DEFAULT_API_URL}\nTo run your own instance instead, see ${SELF_HOST_DOCS_URL} and point the CLI at it with --api-url or PATCHPAGE_API_URL.`;
+  return `\nThe publishing key sent to ${DEFAULT_API_URL} was not accepted. Save a working one with: patchy auth set --api-url ${DEFAULT_API_URL}\nTo publish to an instance somewhere else, point the CLI at it with --api-url or PATCHY_API_URL; see ${SELF_HOST_DOCS_URL} to run one.`;
 }
 
 function readHtmlFile(file: string): string {
@@ -725,7 +725,7 @@ async function promptForApiToken(): Promise<string> {
 
   if (!input.isTTY || !output.isTTY || typeof input.setRawMode !== "function") {
     throw new CliError(
-      "Interactive token entry requires a terminal. For automation, pipe the token to patchpage auth set --token-stdin."
+      "Interactive token entry requires a terminal. For automation, pipe the token to patchy auth set --token-stdin."
     );
   }
 
@@ -810,7 +810,7 @@ async function promptForApiToken(): Promise<string> {
     readline.once("close", onClose);
     readline.once("error", onError);
     promptStarted = true;
-    output.write("PatchPage API token: ");
+    output.write("Patchy Cloud API token: ");
 
     try {
       return await readline.question("", { signal: abortController.signal });

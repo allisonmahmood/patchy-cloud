@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>PatchPage artifact workflow</title>
+  <title>Patchy Cloud artifact workflow</title>
   <style>
     :root {
       --paper: #fffdf4;
@@ -387,11 +387,6 @@
       background: var(--paper-blue);
     }
 
-    .note-warn {
-      border-left-color: var(--yellow);
-      background: var(--paper-amber);
-    }
-
     .tbl-wrap {
       overflow-x: auto;
       margin: 1.25rem 0;
@@ -542,11 +537,11 @@
   <main class="wrap">
     <header class="doc-head">
       <div class="head-line">
-        <span class="brand"><span class="glyph" aria-hidden="true"></span>PatchPage</span>
+        <span class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</span>
         <span class="kicker">Artifact workflow</span>
       </div>
       <h1>A static artifact, ready to share.</h1>
-      <p class="lede">PatchPage validates one self-contained HTML document, gates publishing with token authentication by default, and returns a public, unlisted review URL.</p>
+      <p class="lede">Patchy Cloud validates one self-contained HTML document, gates publishing with token authentication by default, and returns a public, unlisted review URL.</p>
       <div class="meta">
         <span class="pill pill-progress">Token default</span>
         <span class="pill pill-done">Public, unlisted views</span>
@@ -563,7 +558,7 @@
 
     <section id="overview">
       <h2>One file, one review link</h2>
-      <p>PatchPage turns plans, briefs, architecture notes, and reports into durable single-file HTML artifacts. The service rejects active content such as scripts, forms, embeds, and unsafe URL schemes before storing the document.</p>
+      <p>Patchy Cloud turns plans, briefs, architecture notes, and reports into durable single-file HTML artifacts. The service rejects active content such as scripts, forms, embeds, and unsafe URL schemes before storing the document.</p>
       <div class="note note-info">
         <span class="note-title">Public by link</span>
         <p>Draft viewer URLs are public and unlisted. Anyone with the link can open the rendered artifact, so publish only material that is safe to share with every link holder.</p>
@@ -572,7 +567,7 @@
 
     <section id="flow">
       <h2>Publish from a server you control</h2>
-      <p>Requires Node.js 22 or newer. Provide <code>PATCHPAGE_SETUP_TOKEN</code> through a secret environment. The scoped flow pins the self-hosted origin, clears inherited credential overrides, and verifies the stored token before validation or upload.</p>
+      <p>Requires the <code>patchy</code> CLI on Node.js 22 or newer. Provide <code>PATCHY_SETUP_TOKEN</code> through a secret environment. The scoped flow pins the self-hosted origin, clears inherited credential overrides, and verifies the stored token before validation or upload.</p>
       <div class="flow" role="img" aria-label="Flow: Write, configure, verify, validate, upload, review">
         <span class="node">Write HTML</span>
         <span class="arrow" aria-hidden="true">&rarr;</span>
@@ -589,23 +584,19 @@
       <pre><code>(
   set +x
   set -eu
-  PATCHPAGE_API_URL='https://patchpage.example.com'
-  export PATCHPAGE_API_URL
-  unset PATCHPAGE_API_TOKEN
+  PATCHY_API_URL='https://patchy.example.com'
+  export PATCHY_API_URL
+  unset PATCHY_API_TOKEN
   unset TOKEN
-  : "${PATCHPAGE_SETUP_TOKEN:?Set PATCHPAGE_SETUP_TOKEN to a PatchPage API token}"
+  : "${PATCHY_SETUP_TOKEN:?Set PATCHY_SETUP_TOKEN to a Patchy Cloud API token}"
   ARTIFACT_PATH='./plan.html'
 
-  printf '%s' "$PATCHPAGE_SETUP_TOKEN" | npx --yes patchpage auth set --token-stdin --api-url "$PATCHPAGE_API_URL"
-  unset PATCHPAGE_SETUP_TOKEN
-  npx --yes patchpage whoami &amp;&amp;
-    npx --yes patchpage validate "$ARTIFACT_PATH" &amp;&amp;
-    npx --yes patchpage upload "$ARTIFACT_PATH"
+  printf '%s' "$PATCHY_SETUP_TOKEN" | patchy auth set --token-stdin --api-url "$PATCHY_API_URL"
+  unset PATCHY_SETUP_TOKEN
+  patchy whoami &amp;&amp;
+    patchy validate "$ARTIFACT_PATH" &amp;&amp;
+    patchy upload "$ARTIFACT_PATH"
 )</code></pre>
-      <div class="note note-warn">
-        <span class="note-title">About the hosted default</span>
-        <p>The CLI defaults to <code>https://post.patchyhq.com</code>, the free official instance: the first upload mints a publishing key automatically, and publishing accepts the acceptable use policy.</p>
-      </div>
     </section>
 
     <section id="access">
@@ -645,7 +636,7 @@
             <tr>
               <td>Viewer</td>
               <td>Sandboxed frame</td>
-              <td>The uploaded artifact is isolated from the PatchPage wrapper.</td>
+              <td>The uploaded artifact is isolated from the Patchy Cloud wrapper.</td>
             </tr>
           </tbody>
         </table>

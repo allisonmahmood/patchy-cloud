@@ -27,9 +27,9 @@ fi
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 suffix="${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}-$$"
-inspect_container="patchpage-server-inspect-${suffix}"
-runtime_container="patchpage-server-runtime-${suffix}"
-data_volume="patchpage-server-data-${suffix}"
+inspect_container="patchy-server-inspect-${suffix}"
+runtime_container="patchy-server-runtime-${suffix}"
+data_volume="patchy-server-data-${suffix}"
 temp_dir="$(mktemp -d)"
 
 cleanup() {
@@ -49,10 +49,10 @@ label_value() {
   docker image inspect --format "{{ index .Config.Labels \"$1\" }}" "$image"
 }
 
-[[ "$(label_value org.opencontainers.image.source)" == "https://github.com/allisonmahmood/PatchPage" ]] ||
-  fail "OCI source label is not the PatchPage repository"
-[[ "$(label_value org.opencontainers.image.licenses)" == "MIT" ]] ||
-  fail "OCI licenses label is not MIT"
+[[ "$(label_value org.opencontainers.image.source)" == "https://github.com/allisonmahmood/patchy-cloud" ]] ||
+  fail "OCI source label is not the patchy-cloud repository"
+[[ "$(label_value org.opencontainers.image.licenses)" == "UNLICENSED" ]] ||
+  fail "OCI licenses label is not UNLICENSED"
 [[ "$(label_value org.opencontainers.image.version)" == "$expected_version" ]] ||
   fail "OCI version label does not match $expected_version"
 [[ "$(label_value org.opencontainers.image.revision)" == "$expected_revision" ]] ||
@@ -69,8 +69,8 @@ volume_config="$(docker image inspect --format '{{json .Config.Volumes}}' "$imag
 image_env="$(docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$image")"
 for expected_env in \
   "NODE_ENV=production" \
-  "PATCHPAGE_DB_FILE=/data/patchpage-db.json" \
-  "PATCHPAGE_STORAGE_DIR=/data/drafts"; do
+  "PATCHY_DB_FILE=/data/patchy-db.json" \
+  "PATCHY_STORAGE_DIR=/data/drafts"; do
   grep -Fxq "$expected_env" <<<"$image_env" || fail "image is missing $expected_env"
 done
 
@@ -134,10 +134,10 @@ if (fs.existsSync("/opt") && fs.readdirSync("/opt").some((entry) => entry.starts
 
 const firstPartyRoots = ["/app/dist"];
 for (const packageName of [
-  "@patchpage/config",
-  "@patchpage/core",
-  "@patchpage/db",
-  "@patchpage/storage",
+  "@patchy/config",
+  "@patchy/core",
+  "@patchy/db",
+  "@patchy/storage",
 ]) {
   const entrypoint = fs.realpathSync(fileURLToPath(import.meta.resolve(packageName)));
   firstPartyRoots.push(path.dirname(path.dirname(entrypoint)));
@@ -187,7 +187,7 @@ for (const packagePrefix of [
   }
 }
 
-const writeProbe = "/data/.patchpage-write-contract";
+const writeProbe = "/data/.patchy-write-contract";
 fs.writeFileSync(writeProbe, "ok\n", "utf8");
 if (fs.readFileSync(writeProbe, "utf8") !== "ok\n") {
   fail("runtime user could not round-trip a write under /data");
@@ -199,7 +199,7 @@ start_runtime_container() {
   docker run -d \
     --name "$runtime_container" \
     --mount "type=volume,source=${data_volume},target=/data" \
-    -e PATCHPAGE_BOOTSTRAP_API_TOKEN=server-image-contract-token \
+    -e PATCHY_BOOTSTRAP_API_TOKEN=server-image-contract-token \
     -p 127.0.0.1::3000 \
     "$image" >/dev/null
 
@@ -232,7 +232,7 @@ verify_persisted_drivers() {
   docker exec "$runtime_container" node -e '
     const fs = require("node:fs");
     const path = require("node:path");
-    const state = JSON.parse(fs.readFileSync("/data/patchpage-db.json", "utf8"));
+    const state = JSON.parse(fs.readFileSync("/data/patchy-db.json", "utf8"));
     if (!Array.isArray(state.drafts) || state.drafts.length === 0) process.exit(1);
     if (!Array.isArray(state.draftVersions) || state.draftVersions.length === 0) process.exit(1);
 
@@ -260,7 +260,7 @@ docker exec "$runtime_container" node -e '
   const status = fs.readFileSync("/proc/1/status", "utf8");
   const uid = Number(status.match(/^Uid:\s+(\d+)/m)?.[1]);
   if (!Number.isInteger(uid) || uid === 0) process.exit(1);
-  JSON.parse(fs.readFileSync("/data/patchpage-db.json", "utf8"));
+  JSON.parse(fs.readFileSync("/data/patchy-db.json", "utf8"));
 ' || fail "service process is root or JSON metadata is not writable under /data"
 
 upload_status="$(
@@ -270,7 +270,7 @@ upload_status="$(
     -X POST "http://127.0.0.1:${host_port}/api/uploads" \
     -H 'Authorization: Bearer server-image-contract-token' \
     -H 'Content-Type: application/json' \
-    --data '{"html":"<!doctype html><html><head><title>Image contract</title></head><body>patchpage-persisted-body-marker</body></html>","filename":"image-contract.html"}'
+    --data '{"html":"<!doctype html><html><head><title>Image contract</title></head><body>patchy-persisted-body-marker</body></html>","filename":"image-contract.html"}'
 )"
 [[ "$upload_status" == "201" ]] || {
   cat "$temp_dir/upload-response.json" >&2
@@ -287,14 +287,14 @@ verify_persisted_drivers
 draft_id="$(
   docker exec "$runtime_container" node -e '
     const fs = require("node:fs");
-    const state = JSON.parse(fs.readFileSync("/data/patchpage-db.json", "utf8"));
+    const state = JSON.parse(fs.readFileSync("/data/patchy-db.json", "utf8"));
     process.stdout.write(state.drafts[0]?.id ?? "");
   '
 )"
 [[ -n "$draft_id" ]] || fail "persisted JSON metadata has no draft ID after remount"
 viewer_body="$(curl -fsS "http://127.0.0.1:${host_port}/d/${draft_id}")" ||
   fail "persisted draft was not readable after remount"
-[[ "$viewer_body" == *"patchpage-persisted-body-marker"* ]] ||
+[[ "$viewer_body" == *"patchy-persisted-body-marker"* ]] ||
   fail "persisted draft content changed after remount"
 
 echo "Verified server image $image ($expected_version, $expected_revision)."

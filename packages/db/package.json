@@ -1,7 +1,8 @@
 {
-  "name": "@patchpage/db",
+  "name": "@patchy/db",
   "version": "0.0.0",
   "private": true,
+  "license": "UNLICENSED",
   "type": "module",
   "exports": {
     ".": {
@@ -15,12 +16,11 @@
     "test": "vitest run",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "db:migrate": "tsx src/migrate.ts",
-    "db:go-public-flip": "tsx src/go-public-flip-command.ts"
+    "db:migrate": "tsx src/migrate.ts"
   },
   "dependencies": {
-    "@patchpage/config": "workspace:*",
-    "@patchpage/core": "workspace:*",
+    "@patchy/config": "workspace:*",
+    "@patchy/core": "workspace:*",
     "pg": "^8.16.3"
   },
   "devDependencies": {

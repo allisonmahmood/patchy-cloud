@@ -30,7 +30,7 @@ process = subprocess.Popen(
 )
 
 output = bytearray()
-prompt = b"PatchPage API token:"
+prompt = b"Patchy Cloud API token:"
 deadline = time.monotonic() + (3 if interaction == "none" else 5)
 raw_during_interaction = None
 

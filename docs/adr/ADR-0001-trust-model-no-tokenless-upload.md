@@ -5,12 +5,21 @@
 - **Contexts**: Hosting (`apps/server`) and Publishing (`packages/cli`) — the decision spans both, so it lives in the root ADR home.
 - **Source**: resolution of #90, from Wayfinder map #87; implemented by #108 and its successors under spec #106.
 
+_Inherited from PatchPage; issue numbers refer to the upstream tracker — see [ADR-0000](./ADR-0000-origin-grown-from-patchpage.md)._
+
+_Amended by the split. The trust model below is what this server implements, with
+two exceptions. Decision 8's startup refusal is gone: `PATCHY_ALLOW_ANONYMOUS_UPLOADS`
+and `PATCHY_ANONYMOUS_CREATE_RATE_LIMIT_PER_MINUTE` are now simply unread names, because
+the operators that refusal protected are all upstream's. And the "official instance"
+named in decision 8 is upstream PatchPage's — this repo runs no instance and ships no
+production default._
+
 ## Context
 
 PatchPage is becoming a free, first-party-hosted service that is signup-less by
 design. The obvious way to get there — letting anyone POST an upload with no
 credential at all — is the posture the server already shipped behind
-`PATCHPAGE_ALLOW_ANONYMOUS_UPLOADS`, off by default.
+`PATCHY_ALLOW_ANONYMOUS_UPLOADS`, off by default.
 
 That posture does not survive contact with a public instance. A tokenless
 upload produces a draft with no controller: nothing to rate-limit per author,
@@ -67,11 +76,11 @@ Separate the two ideas. Keep the bearer token; delete the signup.
    drafts — the operator's moderation reach is unchanged by this decision.
 
 8. **Retiring the old configuration is a startup failure, not a silent
-   ignore.** `PATCHPAGE_ALLOW_ANONYMOUS_UPLOADS` is replaced by
-   `PATCHPAGE_ALLOW_SELF_SERVICE_TOKENS` (strict bool, default `false`; the
+   ignore.** `PATCHY_ALLOW_ANONYMOUS_UPLOADS` is replaced by
+   `PATCHY_ALLOW_SELF_SERVICE_TOKENS` (strict bool, default `false`; the
    official instance turns it on), and
-   `PATCHPAGE_ANONYMOUS_CREATE_RATE_LIMIT_PER_MINUTE` by
-   `PATCHPAGE_SELF_SERVICE_MINT_RATE_LIMIT_PER_MINUTE`, which governs mint rate.
+   `PATCHY_ANONYMOUS_CREATE_RATE_LIMIT_PER_MINUTE` by
+   `PATCHY_SELF_SERVICE_MINT_RATE_LIMIT_PER_MINUTE`, which governs mint rate.
    If either retired variable is set, the server refuses to start and names its
    successor.
 
@@ -79,7 +88,7 @@ Separate the two ideas. Keep the bearer token; delete the signup.
 
 **A self-hoster's deliberate security posture is never silently reinterpreted.**
 This is the whole reason the rename breaks startup rather than falling back to a
-default. Someone who wrote `PATCHPAGE_ALLOW_ANONYMOUS_UPLOADS=false` chose a
+default. Someone who wrote `PATCHY_ALLOW_ANONYMOUS_UPLOADS=false` chose a
 posture; silently dropping that line and booting anyway would be the one failure
 mode worse than downtime. The breaking rename is accepted deliberately: this
 lands pre-launch, when there are effectively no self-hosters to break.

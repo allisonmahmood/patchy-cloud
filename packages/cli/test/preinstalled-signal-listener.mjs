@@ -1,7 +1,7 @@
 import { writeFileSync } from "node:fs";
 
-const reportPath = process.env.PATCHPAGE_TEST_SIGNAL_REPORT;
-const signalAction = process.env.PATCHPAGE_TEST_SIGNAL_ACTION;
+const reportPath = process.env.PATCHY_TEST_SIGNAL_REPORT;
+const signalAction = process.env.PATCHY_TEST_SIGNAL_ACTION;
 let count = 0;
 let keepAlive;
 

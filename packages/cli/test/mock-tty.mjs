@@ -1,9 +1,9 @@
 import { writeFileSync } from "node:fs";
 
-const reportPath = process.env.PATCHPAGE_TEST_TTY_REPORT;
-const inputError = process.env.PATCHPAGE_TEST_TTY_INPUT_ERROR;
-const timeoutSignalReportPath = process.env.PATCHPAGE_TEST_TTY_TIMEOUT_SIGNAL_REPORT;
-const simulatedWindowsSignal = process.env.PATCHPAGE_TEST_WINDOWS_SIGNAL;
+const reportPath = process.env.PATCHY_TEST_TTY_REPORT;
+const inputError = process.env.PATCHY_TEST_TTY_INPUT_ERROR;
+const timeoutSignalReportPath = process.env.PATCHY_TEST_TTY_TIMEOUT_SIGNAL_REPORT;
+const simulatedWindowsSignal = process.env.PATCHY_TEST_WINDOWS_SIGNAL;
 const input = process.stdin;
 const output = process.stderr;
 const rawModeChanges = [];

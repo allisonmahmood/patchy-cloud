@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ACCEPTABLE_USE_URL, getServerConfig } from "./index.js";
+import { getServerConfig } from "./index.js";
 
 describe("getServerConfig", () => {
   it("defaults to json db when DATABASE_URL is absent", () => {
@@ -24,86 +24,62 @@ describe("getServerConfig", () => {
   it("defaults the live-draft quota to a thousand per token", () => {
     expect(getServerConfig({}).liveDraftsPerToken).toBe(1_000);
     expect(
-      getServerConfig({ PATCHPAGE_LIVE_DRAFTS_PER_TOKEN: "25" }).liveDraftsPerToken
+      getServerConfig({ PATCHY_LIVE_DRAFTS_PER_TOKEN: "25" }).liveDraftsPerToken
     ).toBe(25);
     expect(
-      getServerConfig({ PATCHPAGE_LIVE_DRAFTS_PER_TOKEN: "1000000" }).liveDraftsPerToken
+      getServerConfig({ PATCHY_LIVE_DRAFTS_PER_TOKEN: "1000000" }).liveDraftsPerToken
     ).toBe(1_000_000);
 
     for (const value of ["0", "-1", "+1", "01", "1.5", "1e2", "1000001"]) {
       expect(() =>
-        getServerConfig({ PATCHPAGE_LIVE_DRAFTS_PER_TOKEN: value })
-      ).toThrow(/PATCHPAGE_LIVE_DRAFTS_PER_TOKEN/);
+        getServerConfig({ PATCHY_LIVE_DRAFTS_PER_TOKEN: value })
+      ).toThrow(/PATCHY_LIVE_DRAFTS_PER_TOKEN/);
     }
   });
 
   it("defaults the self-service mint quota to five per address per day", () => {
     expect(getServerConfig({}).selfServiceMintsPerIpPerDay).toBe(5);
     expect(
-      getServerConfig({ PATCHPAGE_SELF_SERVICE_MINTS_PER_IP_PER_DAY: "2" })
+      getServerConfig({ PATCHY_SELF_SERVICE_MINTS_PER_IP_PER_DAY: "2" })
         .selfServiceMintsPerIpPerDay
     ).toBe(2);
     expect(
-      getServerConfig({ PATCHPAGE_SELF_SERVICE_MINTS_PER_IP_PER_DAY: "1000000" })
+      getServerConfig({ PATCHY_SELF_SERVICE_MINTS_PER_IP_PER_DAY: "1000000" })
         .selfServiceMintsPerIpPerDay
     ).toBe(1_000_000);
 
     for (const value of ["0", "-1", "+1", "01", "1.5", "1e2", "1000001"]) {
       expect(() =>
-        getServerConfig({ PATCHPAGE_SELF_SERVICE_MINTS_PER_IP_PER_DAY: value })
-      ).toThrow(/PATCHPAGE_SELF_SERVICE_MINTS_PER_IP_PER_DAY/);
+        getServerConfig({ PATCHY_SELF_SERVICE_MINTS_PER_IP_PER_DAY: value })
+      ).toThrow(/PATCHY_SELF_SERVICE_MINTS_PER_IP_PER_DAY/);
     }
   });
 
   it("requires an explicit true boolean to allow self-service tokens", () => {
     expect(getServerConfig({}).allowSelfServiceTokens).toBe(false);
     expect(
-      getServerConfig({ PATCHPAGE_ALLOW_SELF_SERVICE_TOKENS: "false" })
+      getServerConfig({ PATCHY_ALLOW_SELF_SERVICE_TOKENS: "false" })
         .allowSelfServiceTokens
     ).toBe(false);
     expect(
-      getServerConfig({ PATCHPAGE_ALLOW_SELF_SERVICE_TOKENS: "true" })
+      getServerConfig({ PATCHY_ALLOW_SELF_SERVICE_TOKENS: "true" })
         .allowSelfServiceTokens
     ).toBe(true);
 
     for (const value of ["1", "0", "yes", "no", "on", "off", "enabled"]) {
       expect(() =>
-        getServerConfig({ PATCHPAGE_ALLOW_SELF_SERVICE_TOKENS: value })
-      ).toThrow(/PATCHPAGE_ALLOW_SELF_SERVICE_TOKENS/);
-    }
-  });
-
-  it("refuses to start when a retired anonymous-upload variable is set", () => {
-    const retired = [
-      ["PATCHPAGE_ALLOW_ANONYMOUS_UPLOADS", "PATCHPAGE_ALLOW_SELF_SERVICE_TOKENS"],
-      [
-        "PATCHPAGE_ANONYMOUS_CREATE_RATE_LIMIT_PER_MINUTE",
-        "PATCHPAGE_SELF_SERVICE_MINT_RATE_LIMIT_PER_MINUTE"
-      ]
-    ] as const;
-
-    for (const [retiredName, successorName] of retired) {
-      // Any value at all is a failure, including the one that used to mean
-      // "keep the safe posture" — a deliberate setting is never ignored.
-      for (const value of ["true", "false", "5", "not-a-value"]) {
-        expect(() => getServerConfig({ [retiredName]: value })).toThrow(
-          new RegExp(`${retiredName}[\\s\\S]*${successorName}`)
-        );
-      }
-
-      // An empty or whitespace-only value reads as unset, as everywhere else.
-      expect(() => getServerConfig({ [retiredName]: "" })).not.toThrow();
-      expect(() => getServerConfig({ [retiredName]: "   " })).not.toThrow();
+        getServerConfig({ PATCHY_ALLOW_SELF_SERVICE_TOKENS: value })
+      ).toThrow(/PATCHY_ALLOW_SELF_SERVICE_TOKENS/);
     }
   });
 
   it("parses configured abuse-protection limits per minute", () => {
     const config = getServerConfig({
-      PATCHPAGE_PROTECTED_API_RATE_LIMIT_PER_MINUTE: "120",
-      PATCHPAGE_AUTHENTICATED_UPLOAD_RATE_LIMIT_PER_MINUTE: "40",
-      PATCHPAGE_SELF_SERVICE_MINT_RATE_LIMIT_PER_MINUTE: "10",
-      PATCHPAGE_DRAFT_CREATE_RATE_LIMIT_PER_MINUTE: "30",
-      PATCHPAGE_REPORT_RATE_LIMIT_PER_MINUTE: "50"
+      PATCHY_PROTECTED_API_RATE_LIMIT_PER_MINUTE: "120",
+      PATCHY_AUTHENTICATED_UPLOAD_RATE_LIMIT_PER_MINUTE: "40",
+      PATCHY_SELF_SERVICE_MINT_RATE_LIMIT_PER_MINUTE: "10",
+      PATCHY_DRAFT_CREATE_RATE_LIMIT_PER_MINUTE: "30",
+      PATCHY_REPORT_RATE_LIMIT_PER_MINUTE: "50"
     });
 
     expect(config.protectedApiRateLimitPerMinute).toBe(120);
@@ -116,22 +92,22 @@ describe("getServerConfig", () => {
   it("requires abuse-protection limits to be decimal integers from 1 through 10000", () => {
     const settings = [
       [
-        "PATCHPAGE_PROTECTED_API_RATE_LIMIT_PER_MINUTE",
+        "PATCHY_PROTECTED_API_RATE_LIMIT_PER_MINUTE",
         "protectedApiRateLimitPerMinute"
       ],
       [
-        "PATCHPAGE_AUTHENTICATED_UPLOAD_RATE_LIMIT_PER_MINUTE",
+        "PATCHY_AUTHENTICATED_UPLOAD_RATE_LIMIT_PER_MINUTE",
         "authenticatedUploadRateLimitPerMinute"
       ],
       [
-        "PATCHPAGE_SELF_SERVICE_MINT_RATE_LIMIT_PER_MINUTE",
+        "PATCHY_SELF_SERVICE_MINT_RATE_LIMIT_PER_MINUTE",
         "selfServiceMintRateLimitPerMinute"
       ],
       [
-        "PATCHPAGE_DRAFT_CREATE_RATE_LIMIT_PER_MINUTE",
+        "PATCHY_DRAFT_CREATE_RATE_LIMIT_PER_MINUTE",
         "draftCreateRateLimitPerMinute"
       ],
-      ["PATCHPAGE_REPORT_RATE_LIMIT_PER_MINUTE", "reportRateLimitPerMinute"]
+      ["PATCHY_REPORT_RATE_LIMIT_PER_MINUTE", "reportRateLimitPerMinute"]
     ] as const;
 
     for (const [envName, configName] of settings) {
@@ -148,8 +124,8 @@ describe("getServerConfig", () => {
 
   it("leaves server-side analytics unconfigured unless a key is set", () => {
     expect(getServerConfig({}).posthogApiKey).toBeNull();
-    expect(getServerConfig({ PATCHPAGE_POSTHOG_API_KEY: "   " }).posthogApiKey).toBeNull();
-    expect(getServerConfig({ PATCHPAGE_POSTHOG_API_KEY: "phc_key" }).posthogApiKey).toBe(
+    expect(getServerConfig({ PATCHY_POSTHOG_API_KEY: "   " }).posthogApiKey).toBeNull();
+    expect(getServerConfig({ PATCHY_POSTHOG_API_KEY: "phc_key" }).posthogApiKey).toBe(
       "phc_key"
     );
   });
@@ -157,15 +133,15 @@ describe("getServerConfig", () => {
   it("defaults the analytics host and requires a configured one to be an http URL", () => {
     expect(getServerConfig({}).posthogHost).toBe("https://us.i.posthog.com");
     expect(
-      getServerConfig({ PATCHPAGE_POSTHOG_HOST: "https://eu.i.posthog.com" }).posthogHost
+      getServerConfig({ PATCHY_POSTHOG_HOST: "https://eu.i.posthog.com" }).posthogHost
     ).toBe("https://eu.i.posthog.com");
     expect(
-      getServerConfig({ PATCHPAGE_POSTHOG_HOST: "http://posthog.internal:8000" }).posthogHost
+      getServerConfig({ PATCHY_POSTHOG_HOST: "http://posthog.internal:8000" }).posthogHost
     ).toBe("http://posthog.internal:8000");
 
     for (const value of ["us.i.posthog.com", "ftp://posthog.example", "javascript:0", "//x"]) {
-      expect(() => getServerConfig({ PATCHPAGE_POSTHOG_HOST: value })).toThrow(
-        /PATCHPAGE_POSTHOG_HOST/
+      expect(() => getServerConfig({ PATCHY_POSTHOG_HOST: value })).toThrow(
+        /PATCHY_POSTHOG_HOST/
       );
     }
   });
@@ -177,14 +153,14 @@ describe("getServerConfig", () => {
   });
 
   it("parses a positive trusted-proxy hop count as a number", () => {
-    const config = getServerConfig({ PATCHPAGE_TRUST_PROXY: "2" });
+    const config = getServerConfig({ PATCHY_TRUST_PROXY: "2" });
 
     expect(config.trustProxy).toBe(2);
   });
 
   it("parses trusted proxy addresses and CIDR networks as a list", () => {
     const config = getServerConfig({
-      PATCHPAGE_TRUST_PROXY: "127.0.0.1, 10.0.0.0/8, 2001:db8::/32"
+      PATCHY_TRUST_PROXY: "127.0.0.1, 10.0.0.0/8, 2001:db8::/32"
     });
 
     expect(config.trustProxy).toEqual(["127.0.0.1", "10.0.0.0/8", "2001:db8::/32"]);
@@ -199,15 +175,15 @@ describe("getServerConfig", () => {
     "::/96",
     "0:0:0:0:0:0:c000:200/120"
   ])("parses partial trusted-proxy network sets %j", (value) => {
-    expect(getServerConfig({ PATCHPAGE_TRUST_PROXY: value }).trustProxy).toEqual(
+    expect(getServerConfig({ PATCHY_TRUST_PROXY: value }).trustProxy).toEqual(
       value.split(",").map((entry) => entry.trim())
     );
   });
 
   it("bounds trusted-proxy hop counts", () => {
-    expect(getServerConfig({ PATCHPAGE_TRUST_PROXY: "32" }).trustProxy).toBe(32);
-    expect(() => getServerConfig({ PATCHPAGE_TRUST_PROXY: "33" })).toThrow(
-      /Invalid PATCHPAGE_TRUST_PROXY/
+    expect(getServerConfig({ PATCHY_TRUST_PROXY: "32" }).trustProxy).toBe(32);
+    expect(() => getServerConfig({ PATCHY_TRUST_PROXY: "33" })).toThrow(
+      /Invalid PATCHY_TRUST_PROXY/
     );
   });
 
@@ -246,8 +222,8 @@ describe("getServerConfig", () => {
     "2001:db8::192.168.001.001/120",
     "::/0"
   ])("rejects an unsafe or malformed trusted-proxy value %j", (value) => {
-    expect(() => getServerConfig({ PATCHPAGE_TRUST_PROXY: value })).toThrow(
-      /Invalid PATCHPAGE_TRUST_PROXY/
+    expect(() => getServerConfig({ PATCHY_TRUST_PROXY: value })).toThrow(
+      /Invalid PATCHY_TRUST_PROXY/
     );
   });
 
@@ -260,15 +236,8 @@ describe("getServerConfig", () => {
     "::/1,8000::/1",
     "8000::/1,::/2,4000::/2"
   ])("rejects trusted-proxy network sets covering a full address family %j", (value) => {
-    expect(() => getServerConfig({ PATCHPAGE_TRUST_PROXY: value })).toThrow(
-      /Invalid PATCHPAGE_TRUST_PROXY/
+    expect(() => getServerConfig({ PATCHY_TRUST_PROXY: value })).toThrow(
+      /Invalid PATCHY_TRUST_PROXY/
     );
-  });
-});
-
-describe("ACCEPTABLE_USE_URL", () => {
-  it("is the one absolute https URL every acceptable-use consumer reads", () => {
-    expect(ACCEPTABLE_USE_URL).toBe("https://patchyhq.com/acceptable-use");
-    expect(new URL(ACCEPTABLE_USE_URL).protocol).toBe("https:");
   });
 });

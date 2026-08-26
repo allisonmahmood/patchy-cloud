@@ -109,7 +109,7 @@ export function validateHtml(html: string, options: ValidateHtmlOptions = {}): H
   walk(document);
 
   if (!title) {
-    warnings.push("No <title> found; PatchPage will use a generic title.");
+    warnings.push("No <title> found; Patchy Cloud will use a generic title.");
   }
 
   return {

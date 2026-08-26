@@ -1,10 +1,10 @@
-# PatchPage
+# Patchy Cloud
 
 ## Agent skills
 
 ### Issue tracker
 
-Issues live in the `allisonmahmood/PatchPage` GitHub repo, managed with the `gh` CLI. See `docs/agents/issue-tracker.md`.
+Issues live in the `allisonmahmood/patchy-cloud` GitHub repo, managed with the `gh` CLI. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
@@ -12,4 +12,4 @@ The five canonical triage roles, each label string equal to its name. See `docs/
 
 ### Domain docs
 
-Multi-context — a root `CONTEXT-MAP.md` pointing at one `CONTEXT.md` per context (hosting server, npx publisher). See `docs/agents/domain.md`.
+Multi-context — a root `CONTEXT-MAP.md` pointing at one `CONTEXT.md` per context (hosting server, CLI publisher). See `docs/agents/domain.md`.

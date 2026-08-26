@@ -21,10 +21,12 @@ import { fileURLToPath } from "node:url";
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const cliPackageDir = path.join(repoRoot, "packages/cli");
 const serverEntry = path.join(repoRoot, "apps/server/dist/start.js");
+// npm is a pinned root devDependency purely so this test can pack and install the CLI
+// tarball hermetically; the CLI itself is private and is never published to a registry.
 const npmCliEntry = path.join(repoRoot, "node_modules/npm/bin/npm-cli.js");
-const bootstrapToken = "patchpage-packed-e2e-bootstrap-token";
-const packedCliTempRootBasePrefix = "patchpage-packed-cli-e2e-";
-const probeOwnerEnvName = "PATCHPAGE_PACKED_CLI_E2E_PROBE_OWNER_ID";
+const bootstrapToken = "patchy-packed-e2e-bootstrap-token";
+const packedCliTempRootBasePrefix = "patchy-packed-cli-e2e-";
+const probeOwnerEnvName = "PATCHY_PACKED_CLI_E2E_PROBE_OWNER_ID";
 const expectedViewerCsp = [
   "default-src 'none'",
   "style-src 'unsafe-inline'",
@@ -37,18 +39,18 @@ const activeChildren = new Set();
 const childProcessGroupOwnership = new WeakMap();
 const trackedProcessGroups = new Set();
 const signalProbe = {
-  target: process.env.PATCHPAGE_PACKED_CLI_E2E_SIGNAL_PROBE,
-  childMarkerPath: process.env.PATCHPAGE_PACKED_CLI_E2E_SIGNAL_PROBE_CHILDREN,
+  target: process.env.PATCHY_PACKED_CLI_E2E_SIGNAL_PROBE,
+  childMarkerPath: process.env.PATCHY_PACKED_CLI_E2E_SIGNAL_PROBE_CHILDREN,
   stubRunAfterSignal:
-    process.env.PATCHPAGE_PACKED_CLI_E2E_SIGNAL_PROBE_STUB_RUN_AFTER_SIGNAL === "1",
+    process.env.PATCHY_PACKED_CLI_E2E_SIGNAL_PROBE_STUB_RUN_AFTER_SIGNAL === "1",
   observedSignal: undefined
 };
 const outerSignalProbe = {
-  target: process.env.PATCHPAGE_PACKED_CLI_E2E_OUTER_SIGNAL_PROBE
+  target: process.env.PATCHY_PACKED_CLI_E2E_OUTER_SIGNAL_PROBE
 };
 const lifecycleProbe = {
-  mode: process.env.PATCHPAGE_PACKED_CLI_E2E_LIFECYCLE_PROBE,
-  markerPath: process.env.PATCHPAGE_PACKED_CLI_E2E_LIFECYCLE_MARKER,
+  mode: process.env.PATCHY_PACKED_CLI_E2E_LIFECYCLE_PROBE,
+  markerPath: process.env.PATCHY_PACKED_CLI_E2E_LIFECYCLE_MARKER,
   cleanupCount: 0
 };
 const probeOwnerId = readProbeOwnerIdFromEnv();
@@ -187,7 +189,7 @@ try {
 
   if (signalProbe.target === "after-real-server-ready") {
     console.log("[packed-cli-e2e] building the real server for signal probe");
-    await run("pnpm", ["--filter", "@patchpage/server...", "build"], { cwd: repoRoot });
+    await run("pnpm", ["--filter", "@patchy/server...", "build"], { cwd: repoRoot });
     portReservation = await reserveLoopbackPort();
     let publicBaseUrl = `http://127.0.0.1:${portReservation.port}`;
     const startedServer = await startServer({ publicBaseUrl, metadataPath, objectDir });
@@ -203,10 +205,10 @@ try {
   await signalProbeCheckpoint("before-first-child-spawn");
   throwIfSignalLatched();
   console.log("[packed-cli-e2e] building the real server");
-  await run("pnpm", ["--filter", "@patchpage/server...", "build"], { cwd: repoRoot });
+  await run("pnpm", ["--filter", "@patchy/server...", "build"], { cwd: repoRoot });
 
   console.log("[packed-cli-e2e] building CLI once");
-  await run("pnpm", ["--filter", "patchpage", "build"], { cwd: repoRoot });
+  await run("pnpm", ["--filter", "@patchy/cli", "build"], { cwd: repoRoot });
 
   console.log("[packed-cli-e2e] packing one exact tarball without rerunning prepack");
   const packed = await run(
@@ -224,7 +226,7 @@ try {
   const packedFiles = new Set(packResult[0].files.map((file) => file.path));
   for (const requiredFile of [
     "dist/index.js",
-    "skills/patchpage/SKILL.md",
+    "skills/patchy/SKILL.md",
     "LICENSE",
     "README.md"
   ]) {
@@ -243,7 +245,7 @@ try {
   await checkedCall(() => access(cliPath));
   const installedManifest = JSON.parse(
     await checkedCall(() =>
-      readFile(path.join(consumerDir, "node_modules/patchpage/package.json"), "utf8")
+      readFile(path.join(consumerDir, "node_modules/@patchy/cli/package.json"), "utf8")
     )
   );
   const version = await run(cliPath, ["--version"], { cwd: consumerDir });
@@ -266,9 +268,9 @@ try {
 
   const cliEnv = environment(
     {
-      PATCHPAGE_STATE_DIR: cliStateDir
+      PATCHY_STATE_DIR: cliStateDir
     },
-    ["PATCHPAGE_API_TOKEN", "PATCHPAGE_API_URL"]
+    ["PATCHY_API_TOKEN", "PATCHY_API_URL"]
   );
 
   console.log("[packed-cli-e2e] configuring packed CLI auth through stdin");
@@ -277,7 +279,7 @@ try {
     env: cliEnv,
     input: `${bootstrapToken}\n`
   });
-  assert.equal(auth.stdout, `PatchPage credentials saved for ${publicBaseUrl}.\n`);
+  assert.equal(auth.stdout, `Patchy Cloud credentials saved for ${publicBaseUrl}.\n`);
   assert.equal(auth.stderr, "");
   assert.ok(!`${auth.stdout}${auth.stderr}`.includes(bootstrapToken), "token leaked in CLI output");
 
@@ -301,7 +303,7 @@ try {
   await checkedCall(() => writeFile(fixturePath, firstHtml, "utf8"));
   const publicShellSequence = decodePackedCliWorkflow(
     await checkedCall(() =>
-      readFile(path.join(consumerDir, "node_modules/patchpage/README.md"), "utf8")
+      readFile(path.join(consumerDir, "node_modules/@patchy/cli/README.md"), "utf8")
     )
   );
   const hostileInheritedApiToken = "hostile-inherited-api-token";
@@ -313,11 +315,11 @@ try {
       env: {
         ...cliEnv,
         PATH: [path.dirname(cliPath), cliEnv.PATH].filter(Boolean).join(path.delimiter),
-        PATCHPAGE_API_URL: "https://hostile.invalid",
-        PATCHPAGE_API_TOKEN: hostileInheritedApiToken,
+        PATCHY_API_URL: "https://hostile.invalid",
+        PATCHY_API_TOKEN: hostileInheritedApiToken,
         TOKEN: hostileInheritedToken,
-        PATCHPAGE_SETUP_URL: publicBaseUrl,
-        PATCHPAGE_SETUP_TOKEN: bootstrapToken
+        PATCHY_SETUP_URL: publicBaseUrl,
+        PATCHY_SETUP_TOKEN: bootstrapToken
       },
       sensitiveValues: [bootstrapToken, hostileInheritedApiToken, hostileInheritedToken]
     })
@@ -403,8 +405,8 @@ try {
     args: ["upload", fixtureArgument],
     cwd: consumerDir,
     env: environment({
-      PATCHPAGE_STATE_DIR: unsafeValidationStateDir,
-      PATCHPAGE_API_URL: publicBaseUrl
+      PATCHY_STATE_DIR: unsafeValidationStateDir,
+      PATCHY_API_URL: publicBaseUrl
     }),
     cliStateDir: unsafeValidationStateDir,
     metadataPath,
@@ -421,7 +423,7 @@ try {
     cliPath,
     args: ["upload", fixtureArgument],
     cwd: consumerDir,
-    env: { ...cliEnv, PATCHPAGE_API_TOKEN: "invalid-env-credential" },
+    env: { ...cliEnv, PATCHY_API_TOKEN: "invalid-env-credential" },
     cliStateDir,
     metadataPath,
     objectDir,
@@ -434,13 +436,13 @@ try {
   const invalidStoredToken = "invalid-stored-credential";
   await runCli(cliPath, ["auth", "set", "--token-stdin", "--api-url", publicBaseUrl], {
     cwd: consumerDir,
-    env: environment({ PATCHPAGE_STATE_DIR: invalidStoredStateDir }, ["PATCHPAGE_API_TOKEN"]),
+    env: environment({ PATCHY_STATE_DIR: invalidStoredStateDir }, ["PATCHY_API_TOKEN"]),
     input: `${invalidStoredToken}\n`,
     sensitiveValues: [invalidStoredToken]
   });
-  const invalidStoredEnv = environment({ PATCHPAGE_STATE_DIR: invalidStoredStateDir }, [
-    "PATCHPAGE_API_TOKEN",
-    "PATCHPAGE_API_URL"
+  const invalidStoredEnv = environment({ PATCHY_STATE_DIR: invalidStoredStateDir }, [
+    "PATCHY_API_TOKEN",
+    "PATCHY_API_URL"
   ]);
   await assertCliFailureNoMutation({
     cliPath,
@@ -461,9 +463,9 @@ try {
   console.log("[packed-cli-e2e] proving a tokenless upload auto-mints and publishes");
   const mintStateDir = path.join(tempRoot, "cli state auto mint");
   await checkedCall(() => mkdir(mintStateDir));
-  const mintEnv = environment({ PATCHPAGE_STATE_DIR: mintStateDir }, [
-    "PATCHPAGE_API_TOKEN",
-    "PATCHPAGE_API_URL"
+  const mintEnv = environment({ PATCHY_STATE_DIR: mintStateDir }, [
+    "PATCHY_API_TOKEN",
+    "PATCHY_API_URL"
   ]);
   const mintedHtml = validHtml("Auto minted", "auto-minted-self-service-principal");
   await checkedCall(() => writeFile(fixturePath, mintedHtml, "utf8"));
@@ -479,12 +481,6 @@ try {
     mintedResult.stdout.includes(`Minted a new publishing token for ${publicBaseUrl};`),
     `expected the mint announcement naming the instance:\n${mintedResult.stdout}`
   );
-  assert.match(
-    mintedResult.stdout,
-    /Publishing here accepts the acceptable use policy: https:\/\//,
-    "expected the mint response's acceptable-use link to be relayed"
-  );
-
   // The key is on disk, host-keyed and marked as minted.
   const mintedCredentials = JSON.parse(
     await checkedCall(() => readFile(path.join(mintStateDir, "credentials.json"), "utf8"))
@@ -540,7 +536,7 @@ try {
   const deprecatedFlagResult = await runCli(
     cliPath,
     ["upload", fixtureArgument, "--anonymous", "--new"],
-    { cwd: consumerDir, env: { ...cliEnv, PATCHPAGE_API_TOKEN: bootstrapToken } }
+    { cwd: consumerDir, env: { ...cliEnv, PATCHY_API_TOKEN: bootstrapToken } }
   );
   assert.match(
     deprecatedFlagResult.stderr,
@@ -580,7 +576,7 @@ try {
   const envPrecedence = parseUpload(
     await runCli(cliPath, ["upload", fixtureArgument], {
       cwd: consumerDir,
-      env: { ...invalidStoredEnv, PATCHPAGE_API_TOKEN: bootstrapToken }
+      env: { ...invalidStoredEnv, PATCHY_API_TOKEN: bootstrapToken }
     })
   );
 
@@ -701,8 +697,8 @@ async function runPlatformProbes() {
   const fakePnpmEntry = path.win32.join("C:\\tools", "pnpm", "pnpm.cjs");
   const winEnv = sanitizedProcessEnv({
     PATH: "C:\\Windows\\System32",
-    PATCHPAGE_API_TOKEN: "ambient-token",
-    PATCHPAGE_UNKNOWN_POISON: "ambient-poison",
+    PATCHY_API_TOKEN: "ambient-token",
+    PATCHY_UNKNOWN_POISON: "ambient-poison",
     npm_execpath: fakePnpmEntry
   });
 
@@ -713,19 +709,19 @@ async function runPlatformProbes() {
   assert.equal(npmInvocation.command, process.execPath);
   assert.deepEqual(npmInvocation.args, [npmCliEntry, "pack"]);
 
-  const pnpmInvocation = resolveSpawnInvocation("pnpm", ["--filter", "patchpage", "build"], {
+  const pnpmInvocation = resolveSpawnInvocation("pnpm", ["--filter", "@patchy/cli", "build"], {
     platform: "win32",
     env: winEnv
   });
   assert.equal(pnpmInvocation.command, process.execPath);
-  assert.deepEqual(pnpmInvocation.args, [fakePnpmEntry, "--filter", "patchpage", "build"]);
+  assert.deepEqual(pnpmInvocation.args, [fakePnpmEntry, "--filter", "@patchy/cli", "build"]);
 
   const winCliBin = path.win32.join(
     "C:\\workspace",
     "consumer",
     "node_modules",
     ".bin",
-    "patchpage.cmd"
+    "patchy.cmd"
   );
   const winCliInvocation = resolveSpawnInvocation(winCliBin, ["--version"], {
     platform: "win32",
@@ -733,11 +729,19 @@ async function runPlatformProbes() {
   });
   assert.equal(winCliInvocation.command, process.execPath);
   assert.deepEqual(winCliInvocation.args, [
-    path.win32.join("C:\\workspace", "consumer", "node_modules", "patchpage", "dist", "index.js"),
+    path.win32.join(
+      "C:\\workspace",
+      "consumer",
+      "node_modules",
+      "@patchy",
+      "cli",
+      "dist",
+      "index.js"
+    ),
     "--version"
   ]);
 
-  const posixCliBin = "/tmp/consumer/node_modules/.bin/patchpage";
+  const posixCliBin = "/tmp/consumer/node_modules/.bin/patchy";
   const posixCliInvocation = resolveSpawnInvocation(posixCliBin, ["--version"], {
     platform: "linux",
     env: sanitizedProcessEnv()
@@ -745,8 +749,8 @@ async function runPlatformProbes() {
   assert.equal(posixCliInvocation.command, posixCliBin);
   assert.deepEqual(posixCliInvocation.args, ["--version"]);
 
-  assert.equal(winEnv.PATCHPAGE_API_TOKEN, undefined);
-  assert.equal(winEnv.PATCHPAGE_UNKNOWN_POISON, undefined);
+  assert.equal(winEnv.PATCHY_API_TOKEN, undefined);
+  assert.equal(winEnv.PATCHY_UNKNOWN_POISON, undefined);
   assert.equal(winEnv.PATH, "C:\\Windows\\System32");
 
   assert.throws(
@@ -754,7 +758,7 @@ async function runPlatformProbes() {
     /npm_execpath/
   );
 
-  console.log("[platform-probe] PASS win32 lifecycle rejection, command resolution, and PATCHPAGE env stripping");
+  console.log("[platform-probe] PASS win32 lifecycle rejection, command resolution, and PATCHY env stripping");
 }
 
 function assertWin32LifecycleRejectionContract() {
@@ -802,7 +806,7 @@ async function runLifecycleProbes() {
       mode: "server-spawn-error",
       expectFailure: true,
       expectedStderr:
-        /server spawn failed before ready stdout \(ENOENT .*patchpage-packed-cli-e2e-missing-server-spawn/
+        /server spawn failed before ready stdout \(ENOENT .*patchy-packed-cli-e2e-missing-server-spawn/
     },
     {
       mode: "server-bind-race-retry",
@@ -813,8 +817,8 @@ async function runLifecycleProbes() {
       mode: "missing-server-entry-negative-control",
       expectFailure: true,
       expectedStderr:
-        /server entry missing before spawn .*patchpage-packed-cli-e2e-missing-server-entry-negative-control/,
-      unexpectedStderr: /patchpage-packed-cli-e2e-missing-server-spawn/
+        /server entry missing before spawn .*patchy-packed-cli-e2e-missing-server-entry-negative-control/,
+      unexpectedStderr: /patchy-packed-cli-e2e-missing-server-spawn/
     },
     {
       mode: "term-orphaned-process-group",
@@ -833,11 +837,11 @@ async function runLifecycleTimeoutCleanupProbe() {
   const foreignOwnerId = createProbeOwnerId();
   const targetMarkerPath = path.join(
     os.tmpdir(),
-    `patchpage-packed-cli-e2e-lifecycle-probe-${process.pid}-${targetOwnerId}-timeout-owned-temp-root.jsonl`
+    `patchy-packed-cli-e2e-lifecycle-probe-${process.pid}-${targetOwnerId}-timeout-owned-temp-root.jsonl`
   );
   const foreignMarkerPath = path.join(
     os.tmpdir(),
-    `patchpage-packed-cli-e2e-signal-probe-${process.pid}-${foreignOwnerId}-timeout-foreign.jsonl`
+    `patchy-packed-cli-e2e-signal-probe-${process.pid}-${foreignOwnerId}-timeout-foreign.jsonl`
   );
   await Promise.all([rm(targetMarkerPath, { force: true }), rm(foreignMarkerPath, { force: true })]);
 
@@ -846,8 +850,8 @@ async function runLifecycleTimeoutCleanupProbe() {
     env: {
       ...process.env,
       [probeOwnerEnvName]: targetOwnerId,
-      PATCHPAGE_PACKED_CLI_E2E_LIFECYCLE_PROBE: "timeout-owned-temp-root",
-      PATCHPAGE_PACKED_CLI_E2E_LIFECYCLE_MARKER: targetMarkerPath
+      PATCHY_PACKED_CLI_E2E_LIFECYCLE_PROBE: "timeout-owned-temp-root",
+      PATCHY_PACKED_CLI_E2E_LIFECYCLE_MARKER: targetMarkerPath
     },
     detached: process.platform !== "win32",
     stdio: ["ignore", "pipe", "pipe"],
@@ -1025,7 +1029,7 @@ async function runLifecycleProbe(probe) {
   const ownerId = createProbeOwnerId();
   const markerPath = path.join(
     os.tmpdir(),
-    `patchpage-packed-cli-e2e-lifecycle-probe-${process.pid}-${ownerId}-${probe.mode}.jsonl`
+    `patchy-packed-cli-e2e-lifecycle-probe-${process.pid}-${ownerId}-${probe.mode}.jsonl`
   );
   await rm(markerPath, { force: true });
 
@@ -1034,8 +1038,8 @@ async function runLifecycleProbe(probe) {
     env: {
       ...process.env,
       [probeOwnerEnvName]: ownerId,
-      PATCHPAGE_PACKED_CLI_E2E_LIFECYCLE_PROBE: probe.mode,
-      PATCHPAGE_PACKED_CLI_E2E_LIFECYCLE_MARKER: markerPath
+      PATCHY_PACKED_CLI_E2E_LIFECYCLE_PROBE: probe.mode,
+      PATCHY_PACKED_CLI_E2E_LIFECYCLE_MARKER: markerPath
     },
     detached: process.platform !== "win32",
     stdio: ["ignore", "pipe", "pipe"],
@@ -1128,7 +1132,7 @@ async function runSignalProbe(probe) {
   const ownerId = createProbeOwnerId();
   const markerPath = path.join(
     os.tmpdir(),
-    `patchpage-packed-cli-e2e-signal-probe-${process.pid}-${ownerId}-${probe.checkpoint}.jsonl`
+    `patchy-packed-cli-e2e-signal-probe-${process.pid}-${ownerId}-${probe.checkpoint}.jsonl`
   );
   await rm(markerPath, { force: true });
 
@@ -1137,10 +1141,10 @@ async function runSignalProbe(probe) {
     env: {
       ...process.env,
       [probeOwnerEnvName]: ownerId,
-      PATCHPAGE_PACKED_CLI_E2E_SIGNAL_PROBE: probe.checkpoint,
-      PATCHPAGE_PACKED_CLI_E2E_SIGNAL_PROBE_CHILDREN: markerPath,
+      PATCHY_PACKED_CLI_E2E_SIGNAL_PROBE: probe.checkpoint,
+      PATCHY_PACKED_CLI_E2E_SIGNAL_PROBE_CHILDREN: markerPath,
       ...(probe.stubRunAfterSignal
-        ? { PATCHPAGE_PACKED_CLI_E2E_SIGNAL_PROBE_STUB_RUN_AFTER_SIGNAL: "1" }
+        ? { PATCHY_PACKED_CLI_E2E_SIGNAL_PROBE_STUB_RUN_AFTER_SIGNAL: "1" }
         : {})
     },
     detached: process.platform !== "win32",
@@ -1216,7 +1220,7 @@ async function runOuterSignalRunnerProbe(probe) {
     cwd: repoRoot,
     env: {
       ...process.env,
-      PATCHPAGE_PACKED_CLI_E2E_OUTER_SIGNAL_PROBE: probe.checkpoint
+      PATCHY_PACKED_CLI_E2E_OUTER_SIGNAL_PROBE: probe.checkpoint
     },
     detached: process.platform !== "win32",
     stdio: ["ignore", "pipe", "pipe"],
@@ -1307,7 +1311,7 @@ async function runOuterSignalProbeRunnerTarget(checkpoint) {
   const ownerId = createProbeOwnerId();
   const markerPath = path.join(
     os.tmpdir(),
-    `patchpage-packed-cli-e2e-outer-signal-probe-${process.pid}-${ownerId}-${checkpoint}.jsonl`
+    `patchy-packed-cli-e2e-outer-signal-probe-${process.pid}-${ownerId}-${checkpoint}.jsonl`
   );
   await rm(markerPath, { force: true });
 
@@ -1320,7 +1324,7 @@ async function runOuterSignalProbeRunnerTarget(checkpoint) {
       checkpoint === "after-real-server-ready" ? 180_000 : 30_000
     );
     console.log(
-      `__PATCHPAGE_OUTER_SIGNAL_PROBE__${JSON.stringify({
+      `__PATCHY_OUTER_SIGNAL_PROBE__${JSON.stringify({
         checkpoint,
         ownerId,
         markerPath,
@@ -1357,11 +1361,11 @@ async function runSignalOverlapProbe() {
   const bOwnerId = createProbeOwnerId();
   const aMarkerPath = path.join(
     os.tmpdir(),
-    `patchpage-packed-cli-e2e-signal-probe-${process.pid}-${aOwnerId}-overlap-a.jsonl`
+    `patchy-packed-cli-e2e-signal-probe-${process.pid}-${aOwnerId}-overlap-a.jsonl`
   );
   const bMarkerPath = path.join(
     os.tmpdir(),
-    `patchpage-packed-cli-e2e-signal-probe-${process.pid}-${bOwnerId}-overlap-b.jsonl`
+    `patchy-packed-cli-e2e-signal-probe-${process.pid}-${bOwnerId}-overlap-b.jsonl`
   );
   await Promise.all([rm(aMarkerPath, { force: true }), rm(bMarkerPath, { force: true })]);
 
@@ -1496,8 +1500,8 @@ function spawnSignalProbeChild(checkpoint, markerPath, ownerId) {
     env: {
       ...process.env,
       [probeOwnerEnvName]: ownerId,
-      PATCHPAGE_PACKED_CLI_E2E_SIGNAL_PROBE: checkpoint,
-      PATCHPAGE_PACKED_CLI_E2E_SIGNAL_PROBE_CHILDREN: markerPath
+      PATCHY_PACKED_CLI_E2E_SIGNAL_PROBE: checkpoint,
+      PATCHY_PACKED_CLI_E2E_SIGNAL_PROBE_CHILDREN: markerPath
     },
     detached: process.platform !== "win32",
     stdio: ["ignore", "pipe", "pipe"],
@@ -1574,19 +1578,19 @@ async function waitForSignalProbeChildEvent(child, events, waiters, predicate, t
 
 
 function parseSignalProbeEvent(line) {
-  const prefix = "__PATCHPAGE_SIGNAL_PROBE__";
+  const prefix = "__PATCHY_SIGNAL_PROBE__";
   if (!line.startsWith(prefix)) return undefined;
   return JSON.parse(line.slice(prefix.length));
 }
 
 function parseLifecycleProbeEvent(line) {
-  const prefix = "__PATCHPAGE_LIFECYCLE_PROBE__";
+  const prefix = "__PATCHY_LIFECYCLE_PROBE__";
   if (!line.startsWith(prefix)) return undefined;
   return JSON.parse(line.slice(prefix.length));
 }
 
 function parseOuterSignalProbeEvent(line) {
-  const prefix = "__PATCHPAGE_OUTER_SIGNAL_PROBE__";
+  const prefix = "__PATCHY_OUTER_SIGNAL_PROBE__";
   if (!line.startsWith(prefix)) return undefined;
   return JSON.parse(line.slice(prefix.length));
 }
@@ -1771,7 +1775,7 @@ async function readJsonlRecords(markerPath) {
 
 async function runServerBindRaceRetryProbe({ metadataPath, objectDir }) {
   console.log("[lifecycle-probe] building real server for bind race probe");
-  await run("pnpm", ["--filter", "@patchpage/server...", "build"], { cwd: repoRoot });
+  await run("pnpm", ["--filter", "@patchy/server...", "build"], { cwd: repoRoot });
 
   serverBindCollisionProbe = {
     armed: true,
@@ -1807,7 +1811,7 @@ async function runServerBindRaceRetryProbe({ metadataPath, objectDir }) {
 async function runMissingServerEntryNegativeControl({ metadataPath, objectDir }) {
   const missingServerEntry = path.join(
     tempRoot,
-    "patchpage-packed-cli-e2e-missing-server-entry-negative-control",
+    "patchy-packed-cli-e2e-missing-server-entry-negative-control",
     "start.js"
   );
   portReservation = await reserveLoopbackPort();
@@ -1840,7 +1844,7 @@ async function maybeStartServerBindCollisionProbe(publicBaseUrl) {
     collisionServer.listen({ host: "0.0.0.0", port, exclusive: true }, resolve);
   });
   console.log(
-    `__PATCHPAGE_LIFECYCLE_PROBE__${JSON.stringify({
+    `__PATCHY_LIFECYCLE_PROBE__${JSON.stringify({
       type: "bind-collision-service",
       port
     })}`
@@ -1878,7 +1882,7 @@ async function runTermOrphanedProcessGroupWorkload() {
     5_000
   );
   console.log(
-    `__PATCHPAGE_LIFECYCLE_PROBE__${JSON.stringify({
+    `__PATCHY_LIFECYCLE_PROBE__${JSON.stringify({
       type: "descendant-ready",
       launcherPid: launcher.pid,
       descendantPid: descendant.pid,
@@ -1950,7 +1954,7 @@ async function runTimeoutOwnedTempRootWorkload() {
     port: descendantRecord.port
   };
   await recordLifecycleProbe(readyRecord);
-  console.log(`__PATCHPAGE_LIFECYCLE_PROBE__${JSON.stringify(readyRecord)}`);
+  console.log(`__PATCHY_LIFECYCLE_PROBE__${JSON.stringify(readyRecord)}`);
   const keepAlive = setInterval(() => {}, 1000);
   try {
     await new Promise(() => {});
@@ -2121,7 +2125,7 @@ function isTcpPortOpen(port) {
 async function signalProbeCheckpoint(checkpoint, details = {}) {
   if (signalProbe.target !== checkpoint) return;
   console.log(
-    `__PATCHPAGE_SIGNAL_PROBE__${JSON.stringify({ checkpoint, details, pid: process.pid })}`
+    `__PATCHY_SIGNAL_PROBE__${JSON.stringify({ checkpoint, details, pid: process.pid })}`
   );
   const keepAlive = setInterval(() => {}, 1000);
   try {
@@ -2245,21 +2249,21 @@ async function startServerAttempt({ publicBaseUrl, metadataPath, objectDir, serv
   const serverEnv = environment(
     {
       PORT: new URL(publicBaseUrl).port,
-      PATCHPAGE_PUBLIC_BASE_URL: publicBaseUrl,
-      PATCHPAGE_BOOTSTRAP_API_TOKEN: bootstrapToken,
-      PATCHPAGE_ALLOW_SELF_SERVICE_TOKENS: "true",
-      PATCHPAGE_MAX_HTML_BYTES: String(512 * 1024),
-      PATCHPAGE_DB_DRIVER: "json",
-      PATCHPAGE_DB_FILE: metadataPath,
-      PATCHPAGE_STORAGE_DRIVER: "filesystem",
-      PATCHPAGE_STORAGE_DIR: objectDir,
-      PATCHPAGE_PROTECTED_API_RATE_LIMIT_PER_MINUTE: "10000",
-      PATCHPAGE_AUTHENTICATED_UPLOAD_RATE_LIMIT_PER_MINUTE: "10000",
-      PATCHPAGE_SELF_SERVICE_MINT_RATE_LIMIT_PER_MINUTE: "10000"
+      PATCHY_PUBLIC_BASE_URL: publicBaseUrl,
+      PATCHY_BOOTSTRAP_API_TOKEN: bootstrapToken,
+      PATCHY_ALLOW_SELF_SERVICE_TOKENS: "true",
+      PATCHY_MAX_HTML_BYTES: String(512 * 1024),
+      PATCHY_DB_DRIVER: "json",
+      PATCHY_DB_FILE: metadataPath,
+      PATCHY_STORAGE_DRIVER: "filesystem",
+      PATCHY_STORAGE_DIR: objectDir,
+      PATCHY_PROTECTED_API_RATE_LIMIT_PER_MINUTE: "10000",
+      PATCHY_AUTHENTICATED_UPLOAD_RATE_LIMIT_PER_MINUTE: "10000",
+      PATCHY_SELF_SERVICE_MINT_RATE_LIMIT_PER_MINUTE: "10000"
     },
     [
       "DATABASE_URL",
-      "PATCHPAGE_TRUST_PROXY",
+      "PATCHY_TRUST_PROXY",
       "AZURE_STORAGE_ACCOUNT",
       "AZURE_STORAGE_CONTAINER",
       "AZURE_STORAGE_CONNECTION_STRING"
@@ -2432,7 +2436,7 @@ function isEaddrInUseServerStartupError(error) {
 }
 
 function expectedServerReadyLine(publicBaseUrl) {
-  return `PatchPage server listening on http://0.0.0.0:${new URL(publicBaseUrl).port}`;
+  return `Patchy Cloud server listening on http://0.0.0.0:${new URL(publicBaseUrl).port}`;
 }
 
 function hasExactLine(output, expectedLine) {
@@ -2448,8 +2452,8 @@ function assertSpacedPath(label, candidatePath) {
 }
 
 function decodePackedCliWorkflow(readme) {
-  const startMarker = "<!-- patchpage-packed-cli-e2e:start -->";
-  const endMarker = "<!-- patchpage-packed-cli-e2e:end -->";
+  const startMarker = "<!-- patchy-packed-cli-e2e:start -->";
+  const endMarker = "<!-- patchy-packed-cli-e2e:end -->";
   assert.equal(
     readme.split(startMarker).length - 1,
     1,
@@ -2468,15 +2472,13 @@ function decodePackedCliWorkflow(readme) {
   const fence = marked.match(/^\s*```sh[^\S\r\n]*\r?\n([\s\S]*?)\r?\n```\s*$/);
   assert.ok(fence, "packed CLI README workflow marker must wrap exactly one sh fence");
   const workflow = fence[1].replaceAll("\r\n", "\n");
-  const npxCount = [...workflow.matchAll(/\bnpx\b/g)].length;
-  const noninteractiveNpxCount = [...workflow.matchAll(/\bnpx\s+--yes\s+patchpage\b/g)].length;
-  assert.ok(npxCount > 0, "packed CLI README workflow must invoke npx");
-  assert.equal(
-    noninteractiveNpxCount,
-    npxCount,
-    "packed CLI README workflow must use npx --yes patchpage for every invocation"
+  // The package is private and never published, so the workflow must drive the
+  // installed `patchy` bin on PATH. A registry fetcher would test nothing here.
+  assert.ok(
+    [...workflow.matchAll(/\bpatchy\b/g)].length > 0,
+    "packed CLI README workflow must invoke patchy"
   );
-  assert.doesNotMatch(workflow, /\bnpx\s+patchpage\b/, "packed CLI workflow must reject bare npx");
+  assert.doesNotMatch(workflow, /\bnpx\b/, "packed CLI workflow must never fetch from a registry");
   return workflow;
 }
 
@@ -2695,7 +2697,7 @@ function environment(overrides, unset = []) {
 function sanitizedProcessEnv(source = process.env) {
   const env = { ...source };
   for (const name of Object.keys(env)) {
-    if (name.startsWith("PATCHPAGE_")) delete env[name];
+    if (name.startsWith("PATCHY_")) delete env[name];
   }
   return env;
 }
@@ -2710,7 +2712,7 @@ async function run(command, args, options = {}) {
         [
           "const fs = require('node:fs');",
           "const net = require('node:net');",
-          "const marker = process.env.PATCHPAGE_PACKED_CLI_E2E_SENTINEL_MARKER;",
+          "const marker = process.env.PATCHY_PACKED_CLI_E2E_SENTINEL_MARKER;",
           "const server = net.createServer();",
           "server.listen(0, '127.0.0.1', () => {",
           "  const port = server.address().port;",
@@ -2724,7 +2726,7 @@ async function run(command, args, options = {}) {
   const effectiveEnv = probeCommand
     ? {
         ...(options.env ?? sanitizedProcessEnv()),
-        PATCHPAGE_PACKED_CLI_E2E_SENTINEL_MARKER: signalProbe.childMarkerPath
+        PATCHY_PACKED_CLI_E2E_SENTINEL_MARKER: signalProbe.childMarkerPath
       }
     : (options.env ?? sanitizedProcessEnv());
   const invocation = resolveSpawnInvocation(effectiveCommand, effectiveArgs, {
@@ -2796,7 +2798,7 @@ function resolveSpawnInvocation(command, args, options = {}) {
 
   if (shouldInjectServerSpawnError(command, args)) {
     return {
-      command: path.join(os.tmpdir(), "patchpage-packed-cli-e2e-missing-server-spawn"),
+      command: path.join(os.tmpdir(), "patchy-packed-cli-e2e-missing-server-spawn"),
       args: []
     };
   }
@@ -2810,10 +2812,10 @@ function resolveSpawnInvocation(command, args, options = {}) {
     return { command: process.execPath, args: [pnpmEntry, ...args] };
   }
 
-  if (platform === "win32" && isPatchpageBinPath(command)) {
+  if (platform === "win32" && isPatchyBinPath(command)) {
     return {
       command: process.execPath,
-      args: [installedPatchpageJsForBin(command, platform), ...args]
+      args: [installedPatchyJsForBin(command, platform), ...args]
     };
   }
 
@@ -2841,22 +2843,22 @@ function resolvePnpmJsEntry(env) {
   return entry;
 }
 
-function isPatchpageBinPath(command) {
-  return /[\\/]node_modules[\\/]\.bin[\\/]patchpage(?:\.cmd)?$/i.test(command);
+function isPatchyBinPath(command) {
+  return /[\\/]node_modules[\\/]\.bin[\\/]patchy(?:\.cmd)?$/i.test(command);
 }
 
-function installedPatchpageJsForBin(command, platform = process.platform) {
+function installedPatchyJsForBin(command, platform = process.platform) {
   const pathApi = platform === "win32" ? path.win32 : path;
   const binDir = pathApi.dirname(command);
   const nodeModulesDir = pathApi.dirname(binDir);
-  return pathApi.join(nodeModulesDir, "patchpage", "dist", "index.js");
+  return pathApi.join(nodeModulesDir, "@patchy", "cli", "dist", "index.js");
 }
 
 function installedCliBinPath(consumerDir) {
   return path.join(
     consumerDir,
     "node_modules/.bin",
-    process.platform === "win32" ? "patchpage.cmd" : "patchpage"
+    process.platform === "win32" ? "patchy.cmd" : "patchy"
   );
 }
 

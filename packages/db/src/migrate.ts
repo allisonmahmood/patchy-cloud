@@ -1,8 +1,8 @@
-import { getServerConfig } from "@patchpage/config";
-import { createPatchPageDb } from "./factory.js";
+import { getServerConfig } from "@patchy/config";
+import { createPatchyDb } from "./factory.js";
 
 const config = getServerConfig();
-const db = createPatchPageDb({
+const db = createPatchyDb({
   driver: config.dbDriver,
   databaseUrl: config.databaseUrl,
   jsonDbFile: config.jsonDbFile
@@ -10,7 +10,7 @@ const db = createPatchPageDb({
 
 try {
   await db.initialize(config.bootstrapApiToken);
-  console.log(`PatchPage ${config.dbDriver} database is initialized.`);
+  console.log(`Patchy Cloud ${config.dbDriver} database is initialized.`);
 } finally {
   await db.close();
 }

@@ -1,6 +1,6 @@
 # Hosting
 
-The service that receives uploads and serves published pages. Includes its supporting packages `@patchpage/db`, `@patchpage/storage`, and `@patchpage/config`.
+The service that receives uploads and serves published pages. Includes its supporting packages `@patchy/db`, `@patchy/storage`, and `@patchy/config`.
 
 ## Language
 
@@ -61,13 +61,5 @@ A fixed promise about how a published draft reaches its reader, binding on every
 _Avoid_: hardening, bot protection (the serving surface is deliberately open to machines), private (unlisted is not private)
 
 **Analytics event**:
-One business moment the instance reports to itself: a token minted, a draft created, updated, reported, disabled, deleted, or expired. Server-side and nothing else — a served draft carries no analytics JavaScript, so a **visit is never one**, and no event carries a reader's address, the sentence they typed, page content, a filename, or a URL. Reporting is fire-and-forget: a failure is a line in the log and no difference at all to the response. An instance with no key configured reports nothing, which is the default and the private-instance posture.
+One business moment the instance reports to itself: a token minted, a draft created, updated, reported, disabled, deleted, or expired. Server-side and nothing else — a served draft carries no analytics JavaScript, so a **visit is never one**, and no event carries a reader's address, the sentence they typed, page content, a filename, or a URL. Reporting is fire-and-forget: a failure is a line in the log and no difference at all to the response. An instance with no key configured reports nothing, and that is the default: reporting is something an operator switches on, never something an instance starts doing on its own.
 _Avoid_: telemetry, tracking, pageview, metric (an analytics event names what happened in the domain, not what the process measured)
-
-**Circuit breaker**:
-The spend threshold beyond which the instance is no longer willing to operate. Crossing it fires the kill switch automatically; no human confirms first.
-_Avoid_: budget alert (an alert informs; the breaker acts)
-
-**Kill switch**:
-The automated act that takes the public instance fully offline — serving and uploads both — the moment the circuit breaker trips. Fail-closed by design: the instance goes dark rather than absorbing unbounded cost. Bringing it back is always an operator decision.
-_Avoid_: maintenance mode, degraded mode (the kill switch is total, not partial)

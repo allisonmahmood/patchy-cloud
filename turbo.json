@@ -11,7 +11,7 @@
     },
     "test": {
       "dependsOn": ["build"],
-      "env": ["PATCHPAGE_REQUIRE_POSTGRES_TESTS", "PATCHPAGE_TEST_DATABASE_URL"],
+      "env": ["PATCHY_REQUIRE_POSTGRES_TESTS", "PATCHY_TEST_DATABASE_URL"],
       "outputs": []
     },
     "lint": {

@@ -1,7 +1,8 @@
 {
-  "name": "@patchpage/config",
+  "name": "@patchy/config",
   "version": "0.0.0",
   "private": true,
+  "license": "UNLICENSED",
   "type": "module",
   "exports": {
     ".": {

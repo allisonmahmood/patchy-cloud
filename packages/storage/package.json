@@ -1,7 +1,8 @@
 {
-  "name": "@patchpage/storage",
+  "name": "@patchy/storage",
   "version": "0.0.0",
   "private": true,
+  "license": "UNLICENSED",
   "type": "module",
   "exports": {
     ".": {
@@ -19,6 +20,6 @@
   "dependencies": {
     "@azure/identity": "^4.10.2",
     "@azure/storage-blob": "^12.27.0",
-    "@patchpage/config": "workspace:*"
+    "@patchy/config": "workspace:*"
   }
 }

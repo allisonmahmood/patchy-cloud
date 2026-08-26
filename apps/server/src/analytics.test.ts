@@ -2,9 +2,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { ServerConfig } from "@patchpage/config";
-import { JsonFilePatchPageDb } from "@patchpage/db";
-import { FileSystemHtmlStorage } from "@patchpage/storage";
+import type { ServerConfig } from "@patchy/config";
+import { JsonFilePatchyDb } from "@patchy/db";
+import { FileSystemHtmlStorage } from "@patchy/storage";
 import {
   Analytics,
   createAnalytics,
@@ -21,7 +21,7 @@ const MINT_PATH = "/api/tokens/self-service";
 let tempDir: string;
 
 beforeEach(async () => {
-  tempDir = await mkdtemp(path.join(os.tmpdir(), "patchpage-analytics-"));
+  tempDir = await mkdtemp(path.join(os.tmpdir(), "patchy-analytics-"));
 });
 
 afterEach(async () => {
@@ -123,7 +123,7 @@ async function createWatchedApp(
   let now = Date.UTC(2026, 0, 1);
   const clock = (): number => now;
   const analytics = options.analytics ?? new RecordingAnalytics();
-  const db = new JsonFilePatchPageDb(path.join(tempDir, `${label}-db.json`), { clock });
+  const db = new JsonFilePatchyDb(path.join(tempDir, `${label}-db.json`), { clock });
   await db.initialize("dev-token");
   const storage = new FileSystemHtmlStorage(path.join(tempDir, `${label}-drafts`));
   const config = testConfig({

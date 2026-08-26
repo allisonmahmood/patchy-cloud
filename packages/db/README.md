@@ -1,8 +1,8 @@
-# @patchpage/db
+# @patchy/db
 
 The metadata store behind the hosting context, with two drivers: `postgres` for
 deployed instances and `json` for a single-file store. Both implement the same
-`PatchPageDb` port and are held to the same driver-parametrized contract suite
+`PatchyDb` port and are held to the same driver-parametrized contract suite
 in `src/upload-contract.test.ts`.
 
 ## The retention clock
@@ -70,44 +70,6 @@ Operator review at launch is a direct read of this table — deliberately with n
 endpoint in front of it. `listDraftReports` exists so the report path is observable
 through the port rather than by reading storage.
 
-## The go-public flip
-
-`src/go-public-flip.ts` owns the one-shot data surgery that turns the
-maintainer's private instance into the public one, and `inspectGoPublicFlip` /
-`applyGoPublicFlip` are how it reaches the store. It re-homes named tokens onto
-fresh 1:1 principals, re-arms every draft in service to a full retention window
-from the flip moment, and assert-and-drops the retired anonymous sentinel rows.
-
-**It is not a migration, and must never become one.** A migration is a property
-of the schema every deployment shares and runs on a self-hoster's database the
-next time their server starts. This re-homes three named tokens on one
-instance, re-arms one instance's clocks, and drops rows only that instance ever
-had. It belongs to an operator, not to `initialize()`: `pnpm db:migrate` does
-not reach it and the server never calls it.
-
-Two properties are worth stating because they are easy to get wrong later:
-
-- **Only drafts in service are re-armed.** Deleted and disabled drafts keep the
-  clock they had, so the sweep still reclaims their storage on schedule.
-  Re-arming those would hold content nobody can reach for another 90 days.
-- **Every precondition is checked before the first write**, inside the same
-  transaction or state mutation the surgery would have used, so a
-  `GoPublicFlipPreconditionError` leaves the store exactly as it found it. The
-  sentinel drop is the one refusal that is *not* fatal: it defers and the rest
-  of the surgery lands, because unexpected anonymous drafts are something an
-  operator resolves afterwards rather than a reason to abandon the flip.
-
-The operator entry point is `pnpm --filter @patchpage/db db:go-public-flip`,
-which inspects by default and writes only with `--apply`. The runbook around it
-is `docs/GO_PUBLIC_FLIP.md`; `src/go-public-flip-command.test.ts` pins that
-document's command names and flags against the real surface, the same bargain
-`infra/azure/tests/guide_commands_test.sh` strikes for the Azure guide.
-
-`src/internal-principals.ts` names the four fixed IDs any of this depends on —
-the bootstrap pair the drivers seed, and the retired anonymous sentinel pair the
-flip drops. A fixed ID is a contract with a deployed database, so it is spelled
-once.
-
 ## Schema migrations
 
 One ordered list in `src/migrations.ts` — `SCHEMA_MIGRATIONS` — is the schema for
@@ -138,8 +100,10 @@ normally prevents a second run.
 
 `initialize()` migrates, then seeds the bootstrap token when one is configured.
 Seeding is not a migration: it re-runs on every startup and must stay idempotent.
-(The retired anonymous owner/audit actor used to be seeded here too; the
-trust-model cutover removed it, and no sentinel principal is seeded now.)
+`src/internal-principals.ts` names the two fixed IDs it seeds — a fixed ID is a
+contract with a deployed database, so it is spelled once. (The retired anonymous
+owner/audit actor used to be seeded here too; the trust-model cutover removed
+it, and no sentinel principal is seeded now.)
 
 Two objects are easy to confuse, so they are named here. **`0002_drafts_account_id_index`,
 `0003_drafts_expiry_columns`, `0004_drafts_pinned_at`,
@@ -198,7 +162,7 @@ never rewrites the file.
    `src/types.ts` and the Postgres row mappers in `src/postgres-db.ts`.
 6. **Test it through the contract suite.** Add the behavior your columns enable
    to `src/upload-contract.test.ts`, which runs on JSON always and on Postgres
-   when `PATCHPAGE_TEST_DATABASE_URL` is set. Assert through the port only —
+   when `PATCHY_TEST_DATABASE_URL` is set. Assert through the port only —
    never by reading the state file or selecting the column directly. The
    mechanism itself is already covered ("records every shipped migration once,
    in order, and re-migrates as a no-op", "resumes from a partly applied
@@ -210,9 +174,9 @@ never rewrites the file.
 7. **Run both drivers** before opening the PR:
 
    ```sh
-   pnpm --filter @patchpage/db test
-   PATCHPAGE_TEST_DATABASE_URL=postgres://... \
-     PATCHPAGE_REQUIRE_POSTGRES_TESTS=1 pnpm --filter @patchpage/db test
+   pnpm --filter @patchy/db test
+   PATCHY_TEST_DATABASE_URL=postgres://... \
+     PATCHY_REQUIRE_POSTGRES_TESTS=1 pnpm --filter @patchy/db test
    ```
 
 Deployed Postgres instances pick the migration up by running `pnpm db:migrate`
