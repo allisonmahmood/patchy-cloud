@@ -1,13 +1,8 @@
 ---
 name: patchy-mint-token
-description: Mint Patchy Cloud API tokens as the server operator and wire them into the CLI.
+description: Mint Patchy Cloud API tokens as the server operator and wire them into the CLI. Use when the user says "mint a patchy token", "patchy token", "patchy auth is not set up", or "patchy upload is unauthorized".
 metadata:
-  internal: true
-triggers:
-  - "mint a patchy token"
-  - "patchy token"
-  - "patchy auth is not set up"
-  - "patchy upload is unauthorized"
+  internal: "true"
 ---
 
 # Minting Patchy Cloud API Tokens

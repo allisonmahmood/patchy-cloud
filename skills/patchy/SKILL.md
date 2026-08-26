@@ -1,12 +1,6 @@
 ---
 name: patchy
-description: Publish content as a polished single-file HTML page on a Patchy Cloud instance, and run Patchy Cloud's onboarding.
-triggers:
-  - "patchy"
-  - "publish this with patchy"
-  - "patchy page"
-  - "walk me through Patchy Cloud's onboarding"
-  - "shareable HTML page"
+description: Publish content as a polished, shareable HTML page on a Patchy Cloud instance and run Patchy Cloud's onboarding. Use when the user says "patchy", "publish this with patchy", "patchy page", "walk me through Patchy Cloud's onboarding", or asks for a "shareable HTML page".
 ---
 
 # Patchy
