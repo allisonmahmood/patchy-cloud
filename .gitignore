@@ -16,3 +16,4 @@ tmp/
 # Generated at build time from root skills/ and LICENSE.
 packages/cli/skills/
 packages/cli/LICENSE
+.local/

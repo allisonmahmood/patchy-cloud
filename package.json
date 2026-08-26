@@ -19,8 +19,11 @@
     "format": "prettier --write ."
   },
   "devDependencies": {
+    "@effect/platform-node": "4.0.0-rc.112",
     "@eslint/js": "^10.0.1",
     "@types/node": "^22",
+    "effect": "4.0.0-rc.112",
+    "embedded-postgres": "18.4.0-beta.17",
     "esbuild": "0.28.1",
     "eslint": "^10.8.0",
     "npm": "12.0.2",
