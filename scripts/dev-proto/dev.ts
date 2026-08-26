@@ -72,7 +72,7 @@ const postmasterPid = () => {
 };
 // Every process whose cmdline mentions this worktree's state — the orphan detector.
 const strays = () => {
-  const out = spawnSync("pgrep", ["-af", root], { encoding: "utf8" }).stdout ?? "";
+  const out = spawnSync("pgrep", ["-af", root + "/"], { encoding: "utf8" }).stdout ?? "";
   return out.split("\n").filter((l) => l && !l.includes("pgrep") && !l.includes("dev-proto/dev.ts " + variant + " st"));
 };
 const healthy = async () => {
