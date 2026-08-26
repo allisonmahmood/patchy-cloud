@@ -9,6 +9,8 @@ coverage/
 *.log
 tmp/
 .local/
+.scratch/
+.plans/
 
 # Local Patchy HTML plan artifacts.
 .local/patchy-plans/
