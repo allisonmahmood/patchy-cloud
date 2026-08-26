@@ -6,17 +6,20 @@
   "type": "module",
   "exports": {
     ".": {
+      "development": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "db:migrate": "tsx src/migrate.ts"
+    "db:migrate": "tsx --conditions=development src/migrate.ts"
   },
   "dependencies": {
     "@patchy/config": "workspace:*",

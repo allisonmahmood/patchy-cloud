@@ -22,6 +22,7 @@ import {
 import { SCHEMA_MIGRATION_IDS, SCHEMA_MIGRATIONS } from "./migrations.js";
 import { PostgresPatchyDb } from "./postgres-db.js";
 import { isUploadTargetError } from "./types.js";
+import { createPostgresTestDatabase } from "../../../test/postgres.js";
 import type {
   ApiTokenAuth,
   DbDriverOptions,
@@ -67,12 +68,9 @@ type ContractHarnessFactory = () => Promise<ContractHarness>;
 
 function describeUploadContract(
   driverName: string,
-  createHarness: ContractHarnessFactory,
-  enabled = true
+  createHarness: ContractHarnessFactory
 ): void {
-  const suite = enabled ? describe : describe.skip;
-
-  suite(`${driverName} draft upload contract`, () => {
+  describe(`${driverName} draft upload contract`, () => {
     it("records every shipped migration once, in order, and re-migrates as a no-op", async () => {
       const harness = await createHarness();
       const draftId = newDraftId();
@@ -1531,23 +1529,11 @@ function describeUploadContract(
 
 describeUploadContract("JSON", createJsonHarness);
 
-const postgresTestUrl = process.env.PATCHY_TEST_DATABASE_URL;
-const requirePostgresTests = process.env.PATCHY_REQUIRE_POSTGRES_TESTS === "1";
-if (requirePostgresTests && !postgresTestUrl) {
-  throw new Error(
-    "PATCHY_REQUIRE_POSTGRES_TESTS=1 requires PATCHY_TEST_DATABASE_URL."
-  );
-}
-describeUploadContract(
-  "Postgres",
-  () => createPostgresHarness(postgresTestUrl!),
-  Boolean(postgresTestUrl)
-);
+describeUploadContract("Postgres", createPostgresHarness);
 
-const postgresSuite = postgresTestUrl ? describe : describe.skip;
-postgresSuite("Postgres rollback error handling", () => {
+describe("Postgres rollback error handling", () => {
   it("preserves a typed final rejection when rollback also fails", async () => {
-    const harness = await createPostgresHarness(postgresTestUrl!);
+    const harness = await createPostgresHarness();
     const db = harness.db as PostgresPatchyDb;
     const draftId = newDraftId();
     const updateInput = uploadInput("update", draftId, harness.auth);
@@ -1615,7 +1601,9 @@ async function createJsonHarness(): Promise<ContractHarness> {
   };
 }
 
-async function createPostgresHarness(connectionString: string): Promise<ContractHarness> {
+async function createPostgresHarness(): Promise<ContractHarness> {
+  const testDatabase = await createPostgresTestDatabase();
+  const connectionString = testDatabase.connectionString;
   const opened: PatchyDb[] = [];
   const openDb = (options: DbDriverOptions = {}): PatchyDb => {
     const opening = new PostgresPatchyDb(connectionString, options);
@@ -1668,14 +1656,13 @@ async function createPostgresHarness(connectionString: string): Promise<Contract
     },
     async close() {
       await Promise.all(opened.map((opening) => opening.close()));
+      await testDatabase.drop();
     }
   };
 }
 
 /**
- * A token nobody else in the suite shares. The Postgres harness reuses one
- * database across runs, so a per-token tally is only assertable from zero when
- * the token itself is new.
+ * A token nobody else in the test shares, so its tally starts from zero.
  */
 async function createUploadToken(
   harness: ContractHarness,
@@ -1694,10 +1681,9 @@ async function createUploadToken(
 }
 
 /**
- * A source address nobody else in the suite shares. The Postgres harness reuses
- * one database across runs, so a per-address tally is only assertable from zero
- * when the address itself is new. The column is text, so this has to be unique,
- * not routable — hence the documentation range with a random host part.
+ * A source address no other scenario in the test shares, so its quota tally
+ * starts from zero. The column is text, so this has to be unique, not routable —
+ * hence the documentation range with a random host part.
  */
 function uniqueSourceIp(): string {
   return `2001:db8::${randomUUID().slice(0, 8)}`;

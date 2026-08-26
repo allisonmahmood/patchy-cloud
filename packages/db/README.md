@@ -36,7 +36,7 @@ risks a live draft whose content vanished. `deleteExpiredDraft` re-checks expiry
 under a row lock, so a pin landing mid-sweep saves the draft rather than racing
 it, and answers `null` when there was nothing to take.
 
-The sweep is what frees storage *and* quota in one event: an expired draft still
+The sweep is what frees storage _and_ quota in one event: an expired draft still
 counts against `countLiveDraftsByCreatorApiToken` until its row is gone. Who
 calls the sweep, and how often, is the hosting app's business — see
 `apps/server/src/expiry-sweep.ts`.
@@ -132,7 +132,7 @@ failed step leaves neither half-applied schema nor a ledger row claiming it.
 
 The JSON driver's row guards describe the **current** schema only — they are
 deliberately strict, and they reject a row shape they don't know. Migrations are
-what make an older state readable: they run against the parsed state *before*
+what make an older state readable: they run against the parsed state _before_
 the guards, so a migration's job is to default-fill the fields its guard will
 then require. A field that later tickets treat as nullable is filled with
 `null`; a field with a Postgres `DEFAULT` is filled with that same default.
@@ -161,8 +161,8 @@ never rewrites the file.
    the row interfaces to require the new fields, plus the record types in
    `src/types.ts` and the Postgres row mappers in `src/postgres-db.ts`.
 6. **Test it through the contract suite.** Add the behavior your columns enable
-   to `src/upload-contract.test.ts`, which runs on JSON always and on Postgres
-   when `PATCHY_TEST_DATABASE_URL` is set. Assert through the port only —
+   to `src/upload-contract.test.ts`, which runs every assertion against both
+   JSON and an isolated embedded Postgres database. Assert through the port only —
    never by reading the state file or selecting the column directly. The
    mechanism itself is already covered ("records every shipped migration once,
    in order, and re-migrates as a no-op", "resumes from a partly applied
@@ -175,8 +175,6 @@ never rewrites the file.
 
    ```sh
    pnpm --filter @patchy/db test
-   PATCHY_TEST_DATABASE_URL=postgres://... \
-     PATCHY_REQUIRE_POSTGRES_TESTS=1 pnpm --filter @patchy/db test
    ```
 
 Deployed Postgres instances pick the migration up by running `pnpm db:migrate`
