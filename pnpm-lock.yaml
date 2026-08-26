@@ -4,6 +4,12 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+catalogs:
+  default:
+    parse5:
+      specifier: ^7.3.0
+      version: 7.3.0
+
 importers:
 
   .:
@@ -69,7 +75,7 @@ importers:
         specifier: ^15.0.0
         version: 15.0.0
       parse5:
-        specifier: ^7.3.0
+        specifier: 'catalog:'
         version: 7.3.0
 
   packages/config: {}
@@ -77,7 +83,7 @@ importers:
   packages/core:
     dependencies:
       parse5:
-        specifier: ^7.3.0
+        specifier: 'catalog:'
         version: 7.3.0
 
   packages/db:

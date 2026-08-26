@@ -1,5 +1,9 @@
 packages:
   - "apps/*"
   - "packages/*"
+catalog:
+  parse5: ^7.3.0
+# Wait one day before resolving new releases so compromised versions have time to be removed.
+minimumReleaseAge: 1440
 allowBuilds:
   esbuild: true
