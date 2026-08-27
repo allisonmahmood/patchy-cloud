@@ -18,6 +18,13 @@ PATCHY_STATE_DIR=.local/cli node packages/cli/dist/index.js auth set --api-url h
 PATCHY_STATE_DIR=.local/cli node packages/cli/dist/index.js upload examples/plan.html
 ```
 
+To populate the local server with the accepted HTML fixture corpus used by the
+server policy tests:
+
+```sh
+pnpm seed:dev
+```
+
 Once the package is linked, the same commands are available as `patchy auth set` and `patchy upload`.
 
 The server stores local state under `.local/` unless configured otherwise.

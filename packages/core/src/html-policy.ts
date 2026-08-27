@@ -1,7 +1,7 @@
 import * as parse5 from "parse5";
 import type { HtmlValidationResult } from "./types.js";
 
-const BLOCKED_TAGS = new Set([
+export const BLOCKED_TAGS = [
   "script",
   "form",
   "iframe",
@@ -10,7 +10,7 @@ const BLOCKED_TAGS = new Set([
   "applet",
   "base",
   "link"
-]);
+] as const;
 
 const URL_ATTRS = new Set([
   "href",
@@ -22,13 +22,16 @@ const URL_ATTRS = new Set([
   "xlink:href"
 ]);
 
-const BLOCKED_PROTOCOLS = ["javascript:", "vbscript:", "file:"];
+export const BLOCKED_PROTOCOLS = ["javascript:", "vbscript:", "file:"] as const;
 
 export interface ValidateHtmlOptions {
   maxBytes?: number;
 }
 
-export function validateHtml(html: string, options: ValidateHtmlOptions = {}): HtmlValidationResult {
+export function validateHtml(
+  html: string,
+  options: ValidateHtmlOptions = {}
+): HtmlValidationResult {
   const maxBytes = options.maxBytes ?? 512 * 1024;
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -57,7 +60,7 @@ export function validateHtml(html: string, options: ValidateHtmlOptions = {}): H
     if ("tagName" in node && node.tagName) {
       const tagName = node.tagName.toLowerCase();
 
-      if (BLOCKED_TAGS.has(tagName)) {
+      if (BLOCKED_TAGS.some((blockedTag) => blockedTag === tagName)) {
         errors.push(`Blocked <${tagName}> tag found.`);
       }
 
@@ -80,7 +83,10 @@ export function validateHtml(html: string, options: ValidateHtmlOptions = {}): H
           }
         }
 
-        if (name === "style" && /expression\s*\(|behavior\s*:|url\s*\(\s*javascript:/i.test(value)) {
+        if (
+          name === "style" &&
+          /expression\s*\(|behavior\s*:|url\s*\(\s*javascript:/i.test(value)
+        ) {
           errors.push("Blocked unsafe inline CSS.");
         }
       }
