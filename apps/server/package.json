@@ -21,6 +21,6 @@
     "@patchy/db": "workspace:*",
     "@patchy/storage": "workspace:*",
     "fastify": "^5.12.1",
-    "posthog-node": "^5.51.1"
+    "posthog-node": "^5.51.2"
   }
 }

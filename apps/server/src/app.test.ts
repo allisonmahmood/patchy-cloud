@@ -640,7 +640,7 @@ describe("Patchy Cloud server", () => {
 
   it("limits protected API attempts by canonical request IP", async () => {
     let now = 1_000;
-    const config = getServerConfig({ PATCHY_TRUST_PROXY: "1" });
+    const config = getServerConfig({ PATCHY_TRUST_PROXY: "10.0.0.0/8" });
     const db = new JsonFilePatchyDb(path.join(tempDir, "protected-limit-db.json"));
     await db.initialize("unused-token");
     const storage = new FileSystemHtmlStorage(path.join(tempDir, "protected-limit-drafts"));
@@ -1063,7 +1063,11 @@ describe("Patchy Cloud server", () => {
 
     try {
       const publicQuery = await rawHttpRequest(app, "http://host?x=/api/%");
-      expect(publicQuery.statusCode).toBe(400);
+      // find-my-way 9.9 (Fastify 5.12) keeps `?x=/api/%` as query on `/`.
+      // POST `/` is unregistered, so this is the public HTML 404 — not the
+      // 9.7 onBadUrl 400 that treated the query slash as path `/api/%`.
+      expect(publicQuery.statusCode).toBe(404);
+      expect(publicQuery.headers["content-type"]).toMatch(/text\/html/);
 
       for (let attempt = 1; attempt <= 60; attempt += 1) {
         const response = await rawHttpRequest(app, "/api/does-not-exist");
@@ -1387,18 +1391,18 @@ describe("Patchy Cloud server", () => {
     });
   });
 
-  it("persists the client address attributed through a trusted multi-hop proxy chain", async () => {
-    const sourceIp = await uploadSourceIp({
-      trustProxy: "2",
-      remoteAddress: "10.0.0.5",
-      forwardedFor: "203.0.113.9, 198.51.100.7"
-    });
-
-    expect(sourceIp).toEqual({
-      versionSourceIp: "203.0.113.9",
-      eventSourceIp: "203.0.113.9"
-    });
-  });
+  it.each(["1", "2", "32"])(
+    "rejects hop-count PATCHY_TRUST_PROXY %s before attributing a forwarded address",
+    async (trustProxy) => {
+      await expect(
+        uploadSourceIp({
+          trustProxy,
+          remoteAddress: "10.0.0.5",
+          forwardedFor: "203.0.113.9, 198.51.100.7"
+        })
+      ).rejects.toThrow(/Invalid PATCHY_TRUST_PROXY/);
+    }
+  );
 
   it("ignores a spoofed forwarding header on a direct request by default", async () => {
     const sourceIp = await uploadSourceIp({
@@ -1412,9 +1416,9 @@ describe("Patchy Cloud server", () => {
     });
   });
 
-  it("attributes the rightmost forwarded address through one trusted proxy hop", async () => {
+  it("attributes the rightmost forwarded address through one trusted proxy network", async () => {
     const sourceIp = await uploadSourceIp({
-      trustProxy: "1",
+      trustProxy: "10.0.0.0/8",
       remoteAddress: "10.0.0.5",
       forwardedFor: "203.0.113.9, 198.51.100.7"
     });
