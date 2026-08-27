@@ -53,7 +53,7 @@ pnpm --filter @patchy/cli build &&
 
 Put `packages/cli/dist/index.js` on your `PATH` as `patchy` and the same commands run as `patchy whoami`, `patchy validate`, `patchy upload`. The CLI defaults to `http://localhost:3000`; `--api-url` or `PATCHY_API_URL` points it at another instance. Full command and flag reference: [packages/cli/README.md](packages/cli/README.md).
 
-Other commands: `pnpm test`, `pnpm typecheck`, `pnpm build`.
+Run all locally supported test suites with `pnpm test:all`; CI-only suites are reported as skipped with the reason. Other commands: `pnpm test`, `pnpm typecheck`, `pnpm build`.
 
 See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for Postgres mode and storage notes, and [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md) for running an instance, configuration, database migration, and minting tokens.
 
