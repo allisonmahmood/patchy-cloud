@@ -230,7 +230,7 @@ export class FixedWindowRateLimiter {
 
     this.buckets.delete(key);
     this.nextExpirationAt = this.expirationHead
-      ? this.buckets.get(this.expirationHead)?.resetAt ?? null
+      ? (this.buckets.get(this.expirationHead)?.resetAt ?? null)
       : null;
   }
 }

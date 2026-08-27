@@ -22,7 +22,8 @@ import { sha256, validateHtml } from "@patchy/core";
 
 const VERSION = typeof __PATCHY_VERSION__ === "string" ? __PATCHY_VERSION__ : "0.0.0-dev";
 const DEFAULT_API_URL = "http://localhost:3000";
-const SELF_HOST_DOCS_URL = "https://github.com/allisonmahmood/patchy-cloud/blob/main/docs/SELF_HOSTING.md";
+const SELF_HOST_DOCS_URL =
+  "https://github.com/allisonmahmood/patchy-cloud/blob/main/docs/SELF_HOSTING.md";
 const STATE_DIR = readEnv("PATCHY_STATE_DIR") ?? path.join(os.homedir(), ".patchy");
 const CONFIG_PATH = path.join(STATE_DIR, "config.json");
 const CREDENTIALS_PATH = path.join(STATE_DIR, "credentials.json");
@@ -98,6 +99,22 @@ interface CachedDraft {
   latestVersionNumber: number;
   updatedAt: string;
 }
+type ApiResponseBody = Record<string, unknown>;
+
+interface WhoamiResponse {
+  accountName: string;
+  accountId: string;
+  apiTokenName: string;
+  apiTokenId: string;
+  scopes: string[];
+}
+
+interface UploadResponse {
+  draftId: string;
+  publicUrl: string;
+  versionNumber: number;
+  warnings: string[];
+}
 
 const program = new Command();
 
@@ -168,13 +185,21 @@ program
     });
     const body = await readResponseJson(response);
     if (!response.ok) {
-      const hint = response.status === 401 || response.status === 403 ? defaultHostHint(apiUrl) : "";
-      throw new CliError(`${body.error || "Authentication failed."}${hint}`);
+      const hint =
+        response.status === 401 || response.status === 403 ? defaultHostHint(apiUrl) : "";
+      const error = typeof body.error === "string" ? body.error : "Authentication failed.";
+      throw new CliError(`${error}${hint}`);
     }
 
-    console.log(`Account: ${body.accountName} (${body.accountId})`);
-    console.log(`API token: ${body.apiTokenName} (${body.apiTokenId})`);
-    console.log(`Scopes: ${(body.scopes || []).join(", ")}`);
+    const identity = parseWhoamiResponse(body);
+    if (!identity) {
+      throw new CliError(
+        `Authentication succeeded, but ${apiUrl} returned invalid account details.`
+      );
+    }
+    console.log(`Account: ${identity.accountName} (${identity.accountId})`);
+    console.log(`API token: ${identity.apiTokenName} (${identity.apiTokenId})`);
+    console.log(`Scopes: ${identity.scopes.join(", ")}`);
   });
 
 program
@@ -195,7 +220,9 @@ program
     const validation = validateHtml(html);
 
     if (!validation.ok) {
-      throw new CliError(`HTML failed Patchy Cloud validation:\n- ${validation.errors.join("\n- ")}`);
+      throw new CliError(
+        `HTML failed Patchy Cloud validation:\n- ${validation.errors.join("\n- ")}`
+      );
     }
 
     console.log("HTML passed Patchy Cloud validation.");
@@ -212,98 +239,109 @@ program
   .option("--anonymous", "Deprecated and ignored; uploads always use a token")
   .option("--api-url <url>", "Override the configured Patchy Cloud API base URL")
   .description("Upload or update an HTML draft.")
-  .action(async (
-    file: string,
-    options: { draft?: string; new?: boolean; anonymous?: boolean; apiUrl?: string }
-  ) => {
-    if (options.draft !== undefined && options.new) {
-      throw new CliError("--draft and --new cannot be used together.");
-    }
-    // A no-op rather than an error: the flag's old invocations must keep
-    // working through the transition, so it is announced and then ignored.
-    if (options.anonymous) {
-      console.warn(
-        "Warning: --anonymous is deprecated and ignored. Uploads always use a publishing token; " +
-          "one is minted automatically when none is stored for the instance."
-      );
-    }
-
-    const resolvedFile = path.resolve(file);
-    const html = readHtmlFile(resolvedFile);
-    const validation = validateHtml(html);
-
-    if (!validation.ok) {
-      throw new CliError(`HTML failed Patchy Cloud validation:\n- ${validation.errors.join("\n- ")}`);
-    }
-
-    // Local validation gates the network, so an unpublishable file never costs
-    // a mint against the instance's per-network quota.
-    const { apiUrl, apiToken: configuredToken } = readUploadAuth(options.apiUrl);
-    const apiToken = configuredToken ?? (await mintPublishingToken(apiUrl));
-
-    const drafts = readDraftFile();
-    const cachedDrafts = readCachedDrafts(drafts.hosts, apiUrl);
-    const knownDraft = cachedDrafts[resolvedFile];
-    const draftId = options.new ? null : (options.draft ?? knownDraft?.draftId ?? null);
-    const isUpdateAttempt = draftId !== null;
-
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-      "User-Agent": `patchy/${VERSION}`,
-      Authorization: `Bearer ${apiToken}`
-    };
-
-    const response = await fetch(`${apiUrl}/api/uploads`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        html,
-        filename: path.basename(resolvedFile),
-        ...(draftId !== null ? { draftId } : {}),
-        metadata: {
-          ...collectGitMetadata(path.dirname(resolvedFile)),
-          cliVersion: VERSION,
-          fileSha256: sha256(html)
-        }
-      })
-    });
-
-    const body = await readResponseJson(response);
-    if (!response.ok) {
-      if (response.status === 404 && isUpdateAttempt) {
-        if (options.draft === undefined) {
-          throw new CliError(
-            "Cached draft is unavailable for update. Use --new to create a new draft."
-          );
-        }
-        throw new CliError(
-          "Draft is unavailable for update. --draft never creates a new draft."
+  .action(
+    async (
+      file: string,
+      options: { draft?: string; new?: boolean; anonymous?: boolean; apiUrl?: string }
+    ) => {
+      if (options.draft !== undefined && options.new) {
+        throw new CliError("--draft and --new cannot be used together.");
+      }
+      // A no-op rather than an error: the flag's old invocations must keep
+      // working through the transition, so it is announced and then ignored.
+      if (options.anonymous) {
+        console.warn(
+          "Warning: --anonymous is deprecated and ignored. Uploads always use a publishing token; " +
+            "one is minted automatically when none is stored for the instance."
         );
       }
-      const details = body.errors?.length ? `\n- ${body.errors.join("\n- ")}` : "";
-      const hint = response.status === 401 || response.status === 403 ? defaultHostHint(apiUrl) : "";
-      throw new CliError(`${body.error || "Upload failed."}${details}${hint}`);
-    }
 
-    cachedDrafts[resolvedFile] = {
-      draftId: body.draftId,
-      publicUrl: body.publicUrl,
-      latestVersionNumber: body.versionNumber,
-      updatedAt: new Date().toISOString()
-    };
-    // Only this instance's entry is rewritten; every other instance's cache
-    // is carried across exactly as it was stored.
-    drafts.hosts[apiUrl] = { files: cachedDrafts };
-    writeJson(DRAFTS_PATH, drafts, 0o600);
+      const resolvedFile = path.resolve(file);
+      const html = readHtmlFile(resolvedFile);
+      const validation = validateHtml(html);
 
-    console.log(isUpdateAttempt ? "Updated draft" : "Uploaded draft");
-    console.log(`URL: ${body.publicUrl}`);
-    console.log(`Draft ID: ${body.draftId}`);
-    console.log(`Version: ${body.versionNumber}`);
-    for (const warning of body.warnings || []) {
-      console.warn(`Warning: ${warning}`);
+      if (!validation.ok) {
+        throw new CliError(
+          `HTML failed Patchy Cloud validation:\n- ${validation.errors.join("\n- ")}`
+        );
+      }
+
+      // Local validation gates the network, so an unpublishable file never costs
+      // a mint against the instance's per-network quota.
+      const { apiUrl, apiToken: configuredToken } = readUploadAuth(options.apiUrl);
+      const apiToken = configuredToken ?? (await mintPublishingToken(apiUrl));
+
+      const drafts = readDraftFile();
+      const cachedDrafts = readCachedDrafts(drafts.hosts, apiUrl);
+      const knownDraft = cachedDrafts[resolvedFile];
+      const draftId = options.new ? null : (options.draft ?? knownDraft?.draftId ?? null);
+      const isUpdateAttempt = draftId !== null;
+
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        "User-Agent": `patchy/${VERSION}`,
+        Authorization: `Bearer ${apiToken}`
+      };
+
+      const response = await fetch(`${apiUrl}/api/uploads`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          html,
+          filename: path.basename(resolvedFile),
+          ...(draftId !== null ? { draftId } : {}),
+          metadata: {
+            ...collectGitMetadata(path.dirname(resolvedFile)),
+            cliVersion: VERSION,
+            fileSha256: sha256(html)
+          }
+        })
+      });
+
+      const body = await readResponseJson(response);
+      if (!response.ok) {
+        if (response.status === 404 && isUpdateAttempt) {
+          if (options.draft === undefined) {
+            throw new CliError(
+              "Cached draft is unavailable for update. Use --new to create a new draft."
+            );
+          }
+          throw new CliError("Draft is unavailable for update. --draft never creates a new draft.");
+        }
+        const errors = Array.isArray(body.errors)
+          ? body.errors.filter((error) => typeof error === "string")
+          : [];
+        const details = errors.length > 0 ? `\n- ${errors.join("\n- ")}` : "";
+        const hint =
+          response.status === 401 || response.status === 403 ? defaultHostHint(apiUrl) : "";
+        const error = typeof body.error === "string" ? body.error : "Upload failed.";
+        throw new CliError(`${error}${details}${hint}`);
+      }
+
+      const upload = parseUploadResponse(body);
+      if (!upload) {
+        throw new CliError(`Upload succeeded, but ${apiUrl} returned invalid upload details.`);
+      }
+      cachedDrafts[resolvedFile] = {
+        draftId: upload.draftId,
+        publicUrl: upload.publicUrl,
+        latestVersionNumber: upload.versionNumber,
+        updatedAt: new Date().toISOString()
+      };
+      // Only this instance's entry is rewritten; every other instance's cache
+      // is carried across exactly as it was stored.
+      drafts.hosts[apiUrl] = { files: cachedDrafts };
+      writeJson(DRAFTS_PATH, drafts, 0o600);
+
+      console.log(isUpdateAttempt ? "Updated draft" : "Uploaded draft");
+      console.log(`URL: ${upload.publicUrl}`);
+      console.log(`Draft ID: ${upload.draftId}`);
+      console.log(`Version: ${upload.versionNumber}`);
+      for (const warning of upload.warnings) {
+        console.warn(`Warning: ${warning}`);
+      }
     }
-  });
+  );
 
 program.exitOverride();
 
@@ -412,8 +450,7 @@ function readProbeCredential(apiUrl: string): HostCredential | undefined {
 function readAuth(apiUrlOverride?: string): { apiUrl: string; apiToken: string } {
   const apiUrl = resolveApiUrl(apiUrlOverride);
   const apiToken =
-    readEnv("PATCHY_API_TOKEN") ??
-    readStoredCredential(readCredentialFile().hosts, apiUrl)?.token;
+    readEnv("PATCHY_API_TOKEN") ?? readStoredCredential(readCredentialFile().hosts, apiUrl)?.token;
 
   if (!apiToken) {
     // `whoami` is read-only, so it reports the absence rather than minting:
@@ -499,7 +536,7 @@ async function mintPublishingToken(apiUrl: string): Promise<string> {
 }
 
 /** One plain-language failure per pinned mint response, cause then next action. */
-function mintFailureMessage(apiUrl: string, response: Response, body: any): string {
+function mintFailureMessage(apiUrl: string, response: Response, body: ApiResponseBody): string {
   const authSetAction = `patchy auth set --api-url ${apiUrl}`;
 
   if (body?.code === "self_service_disabled") {
@@ -778,8 +815,7 @@ async function promptForApiToken(): Promise<string> {
       process.listenerCount(signal) > 1 ||
       (process.platform === "win32" && (signal === "SIGHUP" || signal === "SIGBREAK"));
     if (requiresControlledExit) {
-      const signalNumber =
-        os.constants.signals[signal] ?? (signal === "SIGBREAK" ? 21 : 1);
+      const signalNumber = os.constants.signals[signal] ?? (signal === "SIGBREAK" ? 21 : 1);
       queueMicrotask(() => process.exit(128 + signalNumber));
     }
 
@@ -863,11 +899,7 @@ function writeJson<T>(file: string, value: T, mode = 0o600): void {
   );
   let fd: number | undefined;
   try {
-    fd = openSync(
-      tempFile,
-      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL,
-      mode
-    );
+    fd = openSync(tempFile, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, mode);
     if (process.platform !== "win32") fchmodSync(fd, mode);
     writeFileSync(fd, `${JSON.stringify(value, null, 2)}\n`);
     if (process.platform !== "win32") fchmodSync(fd, mode);
@@ -946,9 +978,43 @@ function normalizeApiUrl(value: string): string {
   return value.trim().replace(/\/+$/, "");
 }
 
-async function readResponseJson(response: Response): Promise<any> {
+function isApiResponseBody(value: unknown): value is ApiResponseBody {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseWhoamiResponse(body: ApiResponseBody): WhoamiResponse | null {
+  const { accountName, accountId, apiTokenName, apiTokenId, scopes } = body;
+  if (
+    typeof accountName !== "string" ||
+    typeof accountId !== "string" ||
+    typeof apiTokenName !== "string" ||
+    typeof apiTokenId !== "string" ||
+    !Array.isArray(scopes) ||
+    !scopes.every((scope) => typeof scope === "string")
+  ) {
+    return null;
+  }
+  return { accountName, accountId, apiTokenName, apiTokenId, scopes };
+}
+
+function parseUploadResponse(body: ApiResponseBody): UploadResponse | null {
+  const { draftId, publicUrl, versionNumber, warnings } = body;
+  if (
+    typeof draftId !== "string" ||
+    typeof publicUrl !== "string" ||
+    typeof versionNumber !== "number" ||
+    (warnings !== undefined &&
+      (!Array.isArray(warnings) || !warnings.every((warning) => typeof warning === "string")))
+  ) {
+    return null;
+  }
+  return { draftId, publicUrl, versionNumber, warnings: warnings ?? [] };
+}
+
+async function readResponseJson(response: Response): Promise<ApiResponseBody> {
   try {
-    return await response.json();
+    const body: unknown = await response.json();
+    return isApiResponseBody(body) ? body : { error: `${response.status} ${response.statusText}` };
   } catch {
     return { error: `${response.status} ${response.statusText}` };
   }

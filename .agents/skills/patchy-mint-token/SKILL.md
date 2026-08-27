@@ -234,7 +234,7 @@ Revoked is a **state, never a deletion**. The row survives with its mint provena
 later review, and the endpoint never removes it — `draft_versions` references the token, so
 postgres would reject the delete for anything that has ever uploaded anyway.
 
-Revoking is idempotent: a second call returns `alreadyRevoked: true` and the *original*
+Revoking is idempotent: a second call returns `alreadyRevoked: true` and the _original_
 `revokedAt`, because that moment is when the token's drafts stopped receiving visit
 top-ups. Their clocks only run down from there — the pages stay up until draft expiry
 takes them, and no visit extends them again. There is no un-revoke; a replacement

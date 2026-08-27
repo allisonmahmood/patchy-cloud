@@ -23,25 +23,22 @@ describe("getServerConfig", () => {
 
   it("defaults the live-draft quota to a thousand per token", () => {
     expect(getServerConfig({}).liveDraftsPerToken).toBe(1_000);
-    expect(
-      getServerConfig({ PATCHY_LIVE_DRAFTS_PER_TOKEN: "25" }).liveDraftsPerToken
-    ).toBe(25);
-    expect(
-      getServerConfig({ PATCHY_LIVE_DRAFTS_PER_TOKEN: "1000000" }).liveDraftsPerToken
-    ).toBe(1_000_000);
+    expect(getServerConfig({ PATCHY_LIVE_DRAFTS_PER_TOKEN: "25" }).liveDraftsPerToken).toBe(25);
+    expect(getServerConfig({ PATCHY_LIVE_DRAFTS_PER_TOKEN: "1000000" }).liveDraftsPerToken).toBe(
+      1_000_000
+    );
 
     for (const value of ["0", "-1", "+1", "01", "1.5", "1e2", "1000001"]) {
-      expect(() =>
-        getServerConfig({ PATCHY_LIVE_DRAFTS_PER_TOKEN: value })
-      ).toThrow(/PATCHY_LIVE_DRAFTS_PER_TOKEN/);
+      expect(() => getServerConfig({ PATCHY_LIVE_DRAFTS_PER_TOKEN: value })).toThrow(
+        /PATCHY_LIVE_DRAFTS_PER_TOKEN/
+      );
     }
   });
 
   it("defaults the self-service mint quota to five per address per day", () => {
     expect(getServerConfig({}).selfServiceMintsPerIpPerDay).toBe(5);
     expect(
-      getServerConfig({ PATCHY_SELF_SERVICE_MINTS_PER_IP_PER_DAY: "2" })
-        .selfServiceMintsPerIpPerDay
+      getServerConfig({ PATCHY_SELF_SERVICE_MINTS_PER_IP_PER_DAY: "2" }).selfServiceMintsPerIpPerDay
     ).toBe(2);
     expect(
       getServerConfig({ PATCHY_SELF_SERVICE_MINTS_PER_IP_PER_DAY: "1000000" })
@@ -49,27 +46,25 @@ describe("getServerConfig", () => {
     ).toBe(1_000_000);
 
     for (const value of ["0", "-1", "+1", "01", "1.5", "1e2", "1000001"]) {
-      expect(() =>
-        getServerConfig({ PATCHY_SELF_SERVICE_MINTS_PER_IP_PER_DAY: value })
-      ).toThrow(/PATCHY_SELF_SERVICE_MINTS_PER_IP_PER_DAY/);
+      expect(() => getServerConfig({ PATCHY_SELF_SERVICE_MINTS_PER_IP_PER_DAY: value })).toThrow(
+        /PATCHY_SELF_SERVICE_MINTS_PER_IP_PER_DAY/
+      );
     }
   });
 
   it("requires an explicit true boolean to allow self-service tokens", () => {
     expect(getServerConfig({}).allowSelfServiceTokens).toBe(false);
     expect(
-      getServerConfig({ PATCHY_ALLOW_SELF_SERVICE_TOKENS: "false" })
-        .allowSelfServiceTokens
+      getServerConfig({ PATCHY_ALLOW_SELF_SERVICE_TOKENS: "false" }).allowSelfServiceTokens
     ).toBe(false);
     expect(
-      getServerConfig({ PATCHY_ALLOW_SELF_SERVICE_TOKENS: "true" })
-        .allowSelfServiceTokens
+      getServerConfig({ PATCHY_ALLOW_SELF_SERVICE_TOKENS: "true" }).allowSelfServiceTokens
     ).toBe(true);
 
     for (const value of ["1", "0", "yes", "no", "on", "off", "enabled"]) {
-      expect(() =>
-        getServerConfig({ PATCHY_ALLOW_SELF_SERVICE_TOKENS: value })
-      ).toThrow(/PATCHY_ALLOW_SELF_SERVICE_TOKENS/);
+      expect(() => getServerConfig({ PATCHY_ALLOW_SELF_SERVICE_TOKENS: value })).toThrow(
+        /PATCHY_ALLOW_SELF_SERVICE_TOKENS/
+      );
     }
   });
 
@@ -91,22 +86,13 @@ describe("getServerConfig", () => {
 
   it("requires abuse-protection limits to be decimal integers from 1 through 10000", () => {
     const settings = [
-      [
-        "PATCHY_PROTECTED_API_RATE_LIMIT_PER_MINUTE",
-        "protectedApiRateLimitPerMinute"
-      ],
+      ["PATCHY_PROTECTED_API_RATE_LIMIT_PER_MINUTE", "protectedApiRateLimitPerMinute"],
       [
         "PATCHY_AUTHENTICATED_UPLOAD_RATE_LIMIT_PER_MINUTE",
         "authenticatedUploadRateLimitPerMinute"
       ],
-      [
-        "PATCHY_SELF_SERVICE_MINT_RATE_LIMIT_PER_MINUTE",
-        "selfServiceMintRateLimitPerMinute"
-      ],
-      [
-        "PATCHY_DRAFT_CREATE_RATE_LIMIT_PER_MINUTE",
-        "draftCreateRateLimitPerMinute"
-      ],
+      ["PATCHY_SELF_SERVICE_MINT_RATE_LIMIT_PER_MINUTE", "selfServiceMintRateLimitPerMinute"],
+      ["PATCHY_DRAFT_CREATE_RATE_LIMIT_PER_MINUTE", "draftCreateRateLimitPerMinute"],
       ["PATCHY_REPORT_RATE_LIMIT_PER_MINUTE", "reportRateLimitPerMinute"]
     ] as const;
 
@@ -115,9 +101,7 @@ describe("getServerConfig", () => {
       expect(getServerConfig({ [envName]: "10000" })[configName]).toBe(10000);
 
       for (const value of ["0", "-1", "+1", "01", "1.5", "1e2", "10001"]) {
-        expect(() => getServerConfig({ [envName]: value })).toThrow(
-          new RegExp(envName)
-        );
+        expect(() => getServerConfig({ [envName]: value })).toThrow(new RegExp(envName));
       }
     }
   });
@@ -125,24 +109,20 @@ describe("getServerConfig", () => {
   it("leaves server-side analytics unconfigured unless a key is set", () => {
     expect(getServerConfig({}).posthogApiKey).toBeNull();
     expect(getServerConfig({ PATCHY_POSTHOG_API_KEY: "   " }).posthogApiKey).toBeNull();
-    expect(getServerConfig({ PATCHY_POSTHOG_API_KEY: "phc_key" }).posthogApiKey).toBe(
-      "phc_key"
-    );
+    expect(getServerConfig({ PATCHY_POSTHOG_API_KEY: "phc_key" }).posthogApiKey).toBe("phc_key");
   });
 
   it("defaults the analytics host and requires a configured one to be an http URL", () => {
     expect(getServerConfig({}).posthogHost).toBe("https://us.i.posthog.com");
-    expect(
-      getServerConfig({ PATCHY_POSTHOG_HOST: "https://eu.i.posthog.com" }).posthogHost
-    ).toBe("https://eu.i.posthog.com");
+    expect(getServerConfig({ PATCHY_POSTHOG_HOST: "https://eu.i.posthog.com" }).posthogHost).toBe(
+      "https://eu.i.posthog.com"
+    );
     expect(
       getServerConfig({ PATCHY_POSTHOG_HOST: "http://posthog.internal:8000" }).posthogHost
     ).toBe("http://posthog.internal:8000");
 
     for (const value of ["us.i.posthog.com", "ftp://posthog.example", "javascript:0", "//x"]) {
-      expect(() => getServerConfig({ PATCHY_POSTHOG_HOST: value })).toThrow(
-        /PATCHY_POSTHOG_HOST/
-      );
+      expect(() => getServerConfig({ PATCHY_POSTHOG_HOST: value })).toThrow(/PATCHY_POSTHOG_HOST/);
     }
   });
 

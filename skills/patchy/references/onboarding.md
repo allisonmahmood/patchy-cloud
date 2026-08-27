@@ -4,7 +4,7 @@ Agent-led first-time setup: capture how the user's pages should look, then publi
 welcome draft. One question, then a live link.
 
 The user's own words for it are "my welcome page" — that is what to say out loud.
-*Welcome draft* is the term for it here.
+_Welcome draft_ is the term for it here.
 
 Onboarding is always optional. It makes later publishing nicer; publishing works fine
 without it.
@@ -40,19 +40,19 @@ patchy status --json
 It is local-only and answers rather than passes or fails. All seven keys, and what each one
 settles:
 
-| Key | Values | Use it to |
-| --- | --- | --- |
-| `instanceUrl` | the resolved instance URL | Know where the welcome draft would go. Trust it only when `instanceSource` is not `default`. |
-| `instanceSource` | `flag` \| `env` \| `config` \| `default` | Settle step 2. `config` is a saved choice — confirm it, do not ask. `env` and `flag` came from this session's environment and will not persist, so say that. `default` means nothing has been chosen: the URL shown is only the local fallback, so ask. |
-| `hasToken` | boolean | `true` → they already publish. The welcome upload reuses that key, so nothing is minted and there is no announcement to relay. |
-| `tokenSource` | `mint` \| `auth-set` \| `null` | Tell a key this machine minted (`mint`) from one saved by hand for their own instance (`auth-set`). `null` with `hasToken: true` means the key comes from the environment, not the state dir — say so rather than promising the saved-file story. |
-| `stateDir` | absolute path | Locate `style.md` — it goes in this directory. |
-| `hasDefaultStyle` | boolean | `true` → onboarding already ran. Say what the current default look is and ask keep-or-redo instead of asking cold. |
-| `cliVersion` | version string | Only worth mentioning if something later misbehaves. |
+| Key               | Values                                   | Use it to                                                                                                                                                                                                                                               |
+| ----------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `instanceUrl`     | the resolved instance URL                | Know where the welcome draft would go. Trust it only when `instanceSource` is not `default`.                                                                                                                                                            |
+| `instanceSource`  | `flag` \| `env` \| `config` \| `default` | Settle step 2. `config` is a saved choice — confirm it, do not ask. `env` and `flag` came from this session's environment and will not persist, so say that. `default` means nothing has been chosen: the URL shown is only the local fallback, so ask. |
+| `hasToken`        | boolean                                  | `true` → they already publish. The welcome upload reuses that key, so nothing is minted and there is no announcement to relay.                                                                                                                          |
+| `tokenSource`     | `mint` \| `auth-set` \| `null`           | Tell a key this machine minted (`mint`) from one saved by hand for their own instance (`auth-set`). `null` with `hasToken: true` means the key comes from the environment, not the state dir — say so rather than promising the saved-file story.       |
+| `stateDir`        | absolute path                            | Locate `style.md` — it goes in this directory.                                                                                                                                                                                                          |
+| `hasDefaultStyle` | boolean                                  | `true` → onboarding already ran. Say what the current default look is and ask keep-or-redo instead of asking cold.                                                                                                                                      |
+| `cliVersion`      | version string                           | Only worth mentioning if something later misbehaves.                                                                                                                                                                                                    |
 
 ## The conversation
 
-One question at a time. The user is not technical. *Token*, *instance*, *mint*, and *API*
+One question at a time. The user is not technical. _Token_, _instance_, _mint_, and _API_
 never reach them outside the own-instance path; the credential is their **publishing key**.
 
 ### 1. Style — the only question

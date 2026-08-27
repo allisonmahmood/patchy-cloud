@@ -69,7 +69,8 @@ export interface ServerConfig {
 
 export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   const databaseUrl = stringValue(env.DATABASE_URL);
-  const dbDriver = enumValue(env.PATCHY_DB_DRIVER, ["postgres", "json"] as const) ??
+  const dbDriver =
+    enumValue(env.PATCHY_DB_DRIVER, ["postgres", "json"] as const) ??
     (databaseUrl ? "postgres" : "json");
 
   return {
@@ -125,17 +126,12 @@ export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCon
       MAX_LIVE_DRAFTS_PER_TOKEN
     ),
     posthogApiKey: stringValue(env.PATCHY_POSTHOG_API_KEY),
-    posthogHost: httpUrlValue(
-      "PATCHY_POSTHOG_HOST",
-      env.PATCHY_POSTHOG_HOST,
-      DEFAULT_POSTHOG_HOST
-    ),
+    posthogHost: httpUrlValue("PATCHY_POSTHOG_HOST", env.PATCHY_POSTHOG_HOST, DEFAULT_POSTHOG_HOST),
     dbDriver,
     databaseUrl,
     jsonDbFile: stringValue(env.PATCHY_DB_FILE) ?? ".local/patchy-db.json",
     storageDriver:
-      enumValue(env.PATCHY_STORAGE_DRIVER, ["filesystem", "azure-blob"] as const) ??
-      "filesystem",
+      enumValue(env.PATCHY_STORAGE_DRIVER, ["filesystem", "azure-blob"] as const) ?? "filesystem",
     storageDir: stringValue(env.PATCHY_STORAGE_DIR) ?? ".local/drafts",
     azureStorageAccount: stringValue(env.AZURE_STORAGE_ACCOUNT),
     azureStorageContainer: stringValue(env.AZURE_STORAGE_CONTAINER),
@@ -219,12 +215,7 @@ function cidrRange(address: string, family: 4 | 6, prefixLength: number): Truste
 }
 
 function overlapsIpv4MappedIpv6Alias(range: TrustedProxyRange): boolean {
-  return rangesOverlap(
-    range.start,
-    range.end,
-    IPV4_MAPPED_IPV6_START,
-    IPV4_MAPPED_IPV6_END
-  );
+  return rangesOverlap(range.start, range.end, IPV4_MAPPED_IPV6_START, IPV4_MAPPED_IPV6_END);
 }
 
 function rangesOverlap(start: bigint, end: bigint, otherStart: bigint, otherEnd: bigint): boolean {
@@ -332,9 +323,7 @@ function boundedIntegerValue(
   const trimmed = stringValue(value);
   if (!trimmed) return fallback;
   if (!/^[1-9]\d*$/.test(trimmed) || Number(trimmed) > max) {
-    throw new Error(
-      `${name} must be a decimal integer from 1 through ${max}, received: ${value}`
-    );
+    throw new Error(`${name} must be a decimal integer from 1 through ${max}, received: ${value}`);
   }
   return Number(trimmed);
 }
@@ -360,11 +349,7 @@ function httpUrlValue(name: string, value: string | undefined, fallback: string)
   return trimmed;
 }
 
-function strictBoolValue(
-  name: string,
-  value: string | undefined,
-  fallback: boolean
-): boolean {
+function strictBoolValue(name: string, value: string | undefined, fallback: boolean): boolean {
   const trimmed = stringValue(value);
   if (!trimmed) return fallback;
   if (trimmed.toLowerCase() === "true") return true;

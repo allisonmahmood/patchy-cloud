@@ -88,14 +88,10 @@ declare module "fastify" {
 }
 
 type ApiRequestAuthState =
-  | { kind: "missing" }
-  | { kind: "invalid" }
-  | { kind: "authenticated"; auth: ApiTokenAuth };
+  { kind: "missing" } | { kind: "invalid" } | { kind: "authenticated"; auth: ApiTokenAuth };
 
 export type AuthorizationCredential =
-  | { kind: "missing" }
-  | { kind: "invalid" }
-  | { kind: "bearer"; token: string };
+  { kind: "missing" } | { kind: "invalid" } | { kind: "bearer"; token: string };
 
 interface ProtectedApiHookOptions {
   uploadLimiter?: FixedWindowRateLimiter;
@@ -175,11 +171,7 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
 
   app.addHook(
     "onRequest",
-    protectedApiPrefixGuard(
-      options.db,
-      rateLimiters.protectedApi,
-      rateLimiters.authenticatedUpload
-    )
+    protectedApiPrefixGuard(options.db, rateLimiters.protectedApi, rateLimiters.authenticatedUpload)
   );
 
   const protectedApi = (requiredScope?: string, hookOptions: ProtectedApiHookOptions = {}) =>
@@ -196,7 +188,9 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
   app.decorate("sweepExpiredDrafts", () => expirySweep.run());
 
   app.get("/", async (_request, reply) => {
-    return reply.type("text/html").send(renderHome({ publicBaseUrl: options.config.publicBaseUrl }));
+    return reply
+      .type("text/html")
+      .send(renderHome({ publicBaseUrl: options.config.publicBaseUrl }));
   });
 
   app.get("/healthz", async () => ({ ok: true }));
@@ -270,14 +264,7 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
     );
 
     mintScope.post(SELF_SERVICE_MINT_PATH, async (request, reply) =>
-      mintSelfServiceToken(
-        options,
-        analytics,
-        rateLimiters.selfServiceMint,
-        clock,
-        request,
-        reply
-      )
+      mintSelfServiceToken(options, analytics, rateLimiters.selfServiceMint, clock, request, reply)
     );
   });
 
@@ -511,26 +498,22 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
     );
   }
 
-  app.delete(
-    "/api/drafts/:draftId",
-    { onRequest: protectedApi() },
-    async (request, reply) => {
-      const auth = authenticatedRequest(request);
+  app.delete("/api/drafts/:draftId", { onRequest: protectedApi() }, async (request, reply) => {
+    const auth = authenticatedRequest(request);
 
-      const draftId = (request.params as { draftId: string }).draftId;
-      const deleted = await options.db.deleteDraft(draftId, auth.accountId, {
-        canModerateAnyPrincipal: hasScope(auth, "admin")
-      });
-      if (!deleted) return reply.status(404).send({ ok: false, error: "Draft not found." });
+    const draftId = (request.params as { draftId: string }).draftId;
+    const deleted = await options.db.deleteDraft(draftId, auth.accountId, {
+      canModerateAnyPrincipal: hasScope(auth, "admin")
+    });
+    if (!deleted) return reply.status(404).send({ ok: false, error: "Draft not found." });
 
-      analytics.capture({
-        name: "draft.deleted",
-        principalId: auth.accountId,
-        properties: { draftId, admin: hasScope(auth, "admin") }
-      });
-      return { ok: true };
-    }
-  );
+    analytics.capture({
+      name: "draft.deleted",
+      principalId: auth.accountId,
+      properties: { draftId, admin: hasScope(auth, "admin") }
+    });
+    return { ok: true };
+  });
 
   app.get("/d/:draftId", async (request, reply) => {
     const draftId = (request.params as { draftId: string }).draftId;
@@ -602,14 +585,12 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
       });
 
       applyReportPageHeaders(reply);
-      return reply
-        .type("text/html")
-        .send(
-          renderDraftReportAcknowledgement({
-            draft,
-            publicBaseUrl: options.config.publicBaseUrl
-          })
-        );
+      return reply.type("text/html").send(
+        renderDraftReportAcknowledgement({
+          draft,
+          publicBaseUrl: options.config.publicBaseUrl
+        })
+      );
     });
   });
 
@@ -652,8 +633,7 @@ async function mintSelfServiceToken(
   if (!options.config.allowSelfServiceTokens) {
     return reply.status(403).send({
       ok: false,
-      error:
-        "This instance does not issue self-service tokens. Ask its operator for a token.",
+      error: "This instance does not issue self-service tokens. Ask its operator for a token.",
       code: "self_service_disabled"
     });
   }
@@ -826,9 +806,7 @@ function protectedApiPrefixGuard(
 
     request.auth = authState.auth;
 
-    const routingErrorStatus = (request.raw as MarkedIncomingMessage)[
-      preRoutingApiErrorStatus
-    ];
+    const routingErrorStatus = (request.raw as MarkedIncomingMessage)[preRoutingApiErrorStatus];
     if (routingErrorStatus) {
       sendPreRoutingApiError(reply, routingErrorStatus);
       return;
@@ -858,7 +836,10 @@ function protectedApiPrefixGuard(
   };
 }
 
-function protectedApiRouteHook(requiredScope: string | undefined, options: ProtectedApiHookOptions) {
+function protectedApiRouteHook(
+  requiredScope: string | undefined,
+  options: ProtectedApiHookOptions
+) {
   return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
     const auth = request.auth;
     if (!auth) {
@@ -939,9 +920,7 @@ function rewriteProtectedApiRoutingFailure(request: IncomingMessage): string {
   const rawPath = rawRequestTargetPath(requestTarget);
   const pathname = canonicalRequestTargetPath(requestTarget);
   const routeErrorStatus =
-    pathname === null
-      ? undefined
-      : registeredApiParamRoutingErrorStatus(request.method, rawPath);
+    pathname === null ? undefined : registeredApiParamRoutingErrorStatus(request.method, rawPath);
   let errorStatus: PreRoutingApiErrorStatus | undefined;
 
   if (pathname === null) {
@@ -1018,10 +997,7 @@ function markPreBodyAuthorizedScope(request: FastifyRequest, scope: string): voi
   request.preBodyAuthorizedScopes.add(scope);
 }
 
-function sendPreRoutingApiError(
-  reply: FastifyReply,
-  status: PreRoutingApiErrorStatus
-): void {
+function sendPreRoutingApiError(reply: FastifyReply, status: PreRoutingApiErrorStatus): void {
   const error =
     status === 400
       ? "Malformed request target."
@@ -1098,9 +1074,7 @@ async function authenticateApiRequest(
   return auth ? { kind: "authenticated", auth } : { kind: "invalid" };
 }
 
-function authorizationCredential(
-  request: FastifyRequest
-): AuthorizationCredential {
+function authorizationCredential(request: FastifyRequest): AuthorizationCredential {
   return classifyAuthorizationHeader(request.headers.authorization);
 }
 
@@ -1121,32 +1095,21 @@ export function classifyAuthorizationHeader(
   if (!isAuthorizationWhitespace(authHeader.charCodeAt(cursor))) {
     return { kind: "invalid" };
   }
-  while (
-    cursor < authHeader.length &&
-    isAuthorizationWhitespace(authHeader.charCodeAt(cursor))
-  ) {
+  while (cursor < authHeader.length && isAuthorizationWhitespace(authHeader.charCodeAt(cursor))) {
     cursor += 1;
   }
 
   const tokenStart = cursor;
-  while (
-    cursor < authHeader.length &&
-    !isAuthorizationWhitespace(authHeader.charCodeAt(cursor))
-  ) {
+  while (cursor < authHeader.length && !isAuthorizationWhitespace(authHeader.charCodeAt(cursor))) {
     cursor += 1;
   }
   if (cursor === tokenStart) return { kind: "invalid" };
 
   const token = authHeader.slice(tokenStart, cursor);
-  while (
-    cursor < authHeader.length &&
-    isAuthorizationWhitespace(authHeader.charCodeAt(cursor))
-  ) {
+  while (cursor < authHeader.length && isAuthorizationWhitespace(authHeader.charCodeAt(cursor))) {
     cursor += 1;
   }
-  return cursor === authHeader.length
-    ? { kind: "bearer", token }
-    : { kind: "invalid" };
+  return cursor === authHeader.length ? { kind: "bearer", token } : { kind: "invalid" };
 }
 
 function isAuthorizationWhitespace(charCode: number): boolean {

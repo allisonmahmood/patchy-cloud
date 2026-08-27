@@ -65,9 +65,7 @@ describe("Patchy Cloud server", () => {
       token: "dev-token"
     });
     const longPadding = " ".repeat(100_000);
-    expect(
-      classifyAuthorizationHeader(`bEaReR${longPadding}dev-token${longPadding}`)
-    ).toEqual({
+    expect(classifyAuthorizationHeader(`bEaReR${longPadding}dev-token${longPadding}`)).toEqual({
       kind: "bearer",
       token: "dev-token"
     });
@@ -152,7 +150,7 @@ describe("Patchy Cloud server", () => {
     expect(viewer.statusCode).toBe(200);
     expect(viewer.headers["content-security-policy"]).toContain("default-src 'none'");
     expect(viewer.body).toContain("Test Draft");
-    expect(viewer.body).toContain("class=\"draft-frame\"");
+    expect(viewer.body).toContain('class="draft-frame"');
     expect(viewer.body).toContain("&lt;h1&gt;Hello&lt;/h1&gt;");
     expect(viewer.body).not.toContain("patchy-banner");
 
@@ -204,9 +202,7 @@ describe("Patchy Cloud server", () => {
     const config = { ...testConfig(), allowSelfServiceTokens: true };
     const db = new JsonFilePatchyDb(path.join(tempDir, "tokenless-method-db.json"));
     await db.initialize(null);
-    const storage = new FileSystemHtmlStorage(
-      path.join(tempDir, "tokenless-method-drafts")
-    );
+    const storage = new FileSystemHtmlStorage(path.join(tempDir, "tokenless-method-drafts"));
     const app = createApp({ config, db, storage });
 
     const response = await app.inject({
@@ -234,7 +230,10 @@ describe("Patchy Cloud server", () => {
     const app = createApp({ config, db, storage });
 
     try {
-      for (const target of [...uploadLikeApiTargets, { label: "exact upload route", url: "/api/uploads" }]) {
+      for (const target of [
+        ...uploadLikeApiTargets,
+        { label: "exact upload route", url: "/api/uploads" }
+      ]) {
         const response = target.rawHttp
           ? await rawHttpRequest(app, target.url)
           : await app.inject({
@@ -820,7 +819,9 @@ describe("Patchy Cloud server", () => {
     async ({ rawHttp, url }) => {
       let now = 1_000;
       const config = testConfig();
-      const db = new JsonFilePatchyDb(path.join(tempDir, `${url.replaceAll(/[^a-z0-9]/gi, "-")}-db.json`));
+      const db = new JsonFilePatchyDb(
+        path.join(tempDir, `${url.replaceAll(/[^a-z0-9]/gi, "-")}-db.json`)
+      );
       await db.initialize("dev-token");
       const storage = new FileSystemHtmlStorage(
         path.join(tempDir, `${url.replaceAll(/[^a-z0-9]/gi, "-")}-drafts`)
@@ -833,7 +834,7 @@ describe("Patchy Cloud server", () => {
           ? await rawHttpRequest(
               app,
               url,
-              "{\"html\":\"",
+              '{"html":"',
               {
                 "Content-Type": "application/json",
                 "Content-Length": String(2 * 1024 * 1024 + 1)
@@ -959,19 +960,11 @@ describe("Patchy Cloud server", () => {
     }
   ])(
     "authenticates and limits pre-routing API failure: $label",
-    async ({
-      label,
-      protectedTarget,
-      method,
-      authenticatedStatus,
-      authenticatedError
-    }) => {
+    async ({ label, protectedTarget, method, authenticatedStatus, authenticatedError }) => {
       let now = 1_000;
       const config = testConfig();
       const caseName = label.replaceAll(/[^a-z0-9]/gi, "-");
-      const db = new JsonFilePatchyDb(
-        path.join(tempDir, `${caseName}-pre-routing-db.json`)
-      );
+      const db = new JsonFilePatchyDb(path.join(tempDir, `${caseName}-pre-routing-db.json`));
       await db.initialize("dev-token");
       const storage = new FileSystemHtmlStorage(
         path.join(tempDir, `${caseName}-pre-routing-drafts`)
@@ -983,13 +976,7 @@ describe("Patchy Cloud server", () => {
         expect(publicMalformed.statusCode).toBe(400);
 
         for (let attempt = 1; attempt <= 60; attempt += 1) {
-          const response = await rawHttpRequest(
-            app,
-            protectedTarget,
-            "",
-            {},
-            { method }
-          );
+          const response = await rawHttpRequest(app, protectedTarget, "", {}, { method });
           expect(response.statusCode).toBe(401);
           expect(response.json()).toEqual({
             ok: false,
@@ -997,13 +984,7 @@ describe("Patchy Cloud server", () => {
           });
         }
 
-        const limited = await rawHttpRequest(
-          app,
-          protectedTarget,
-          "",
-          {},
-          { method }
-        );
+        const limited = await rawHttpRequest(app, protectedTarget, "", {}, { method });
         expect(limited.statusCode).toBe(429);
         expect(limited.headers["retry-after"]).toBe("60");
         expect(limited.json()).toEqual({
@@ -1037,9 +1018,7 @@ describe("Patchy Cloud server", () => {
     const config = testConfig();
     const db = new JsonFilePatchyDb(path.join(tempDir, "long-unmatched-api-db.json"));
     await db.initialize("dev-token");
-    const storage = new FileSystemHtmlStorage(
-      path.join(tempDir, "long-unmatched-api-drafts")
-    );
+    const storage = new FileSystemHtmlStorage(path.join(tempDir, "long-unmatched-api-drafts"));
     const app = createApp({ config, db, storage });
     const longSegment = "x".repeat(101);
 
@@ -1280,9 +1259,7 @@ describe("Patchy Cloud server", () => {
       });
 
       // An update still succeeds once the create bucket is empty.
-      expect(
-        (await updateDraft(app, "dev-token", draftId, "First again")).statusCode
-      ).toBe(200);
+      expect((await updateDraft(app, "dev-token", draftId, "First again")).statusCode).toBe(200);
 
       now = 61_000;
       const afterWindow = await createDraft(app, "dev-token", "Fourth");
@@ -1320,9 +1297,7 @@ describe("Patchy Cloud server", () => {
 
       // The quota bounds creates only: at the ceiling, rewriting a draft the
       // token already holds still succeeds.
-      expect(
-        (await updateDraft(app, "dev-token", draftId, "One revised")).statusCode
-      ).toBe(200);
+      expect((await updateDraft(app, "dev-token", draftId, "One revised")).statusCode).toBe(200);
     } finally {
       await app.close();
       await db.close();
@@ -1359,9 +1334,7 @@ describe("Patchy Cloud server", () => {
       token: "sibling-token",
       scopes: ["upload"]
     });
-    const storage = new FileSystemHtmlStorage(
-      path.join(tempDir, "live-cap-release-drafts")
-    );
+    const storage = new FileSystemHtmlStorage(path.join(tempDir, "live-cap-release-drafts"));
     const app = createApp({ config, db, storage });
 
     try {
@@ -1396,9 +1369,7 @@ describe("Patchy Cloud server", () => {
 
       expect((await createDraft(app, "dev-token", "After delete")).statusCode).toBe(201);
       // Nothing the first token did moved the sibling's own tally.
-      expect((await createDraft(app, "sibling-token", "Sibling blocked")).statusCode).toBe(
-        403
-      );
+      expect((await createDraft(app, "sibling-token", "Sibling blocked")).statusCode).toBe(403);
     } finally {
       await app.close();
       await db.close();
@@ -1699,11 +1670,7 @@ describe("Patchy Cloud server", () => {
       });
       await writeStarted.promise;
 
-      const disable = db.disableDraft(
-        unrelatedDraftId,
-        auth.accountId,
-        "unrelated policy action"
-      );
+      const disable = db.disableDraft(unrelatedDraftId, auth.accountId, "unrelated policy action");
       // Await the operation itself rather than racing the filesystem against a
       // short wall-clock deadline. The test timeout remains the deadlock watchdog.
       await expect(disable).resolves.toBe(true);
@@ -1734,8 +1701,7 @@ describe("Patchy Cloud server", () => {
       }
     });
     const createdBody = created.json();
-    const originalKey =
-      `drafts/${createdBody.draftId}/versions/${createdBody.versionId}.html`;
+    const originalKey = `drafts/${createdBody.draftId}/versions/${createdBody.versionId}.html`;
     storage.afterPut = async () => {
       await db.disableDraft(createdBody.draftId, auth.accountId, "policy race");
     };
@@ -1869,9 +1835,7 @@ describe("Patchy Cloud server", () => {
     expect(current.version?.versionNumber).toBe(2);
     if (!current.version) throw new Error("Expected committed version.");
     expect(await listFiles(storage.rootDir)).toHaveLength(2);
-    await expect(storage.getHtmlObject(current.version.objectKey)).resolves.toContain(
-      "committed"
-    );
+    await expect(storage.getHtmlObject(current.version.objectKey)).resolves.toContain("committed");
 
     await app.close();
     await db.close();
@@ -2000,7 +1964,9 @@ describe("Patchy Cloud server", () => {
         method: "POST",
         url: "/api/uploads",
         headers: { authorization: "Bearer dev-token" },
-        payload: { html: "<!doctype html><html><head><title>Second</title></head><body></body></html>" }
+        payload: {
+          html: "<!doctype html><html><head><title>Second</title></head><body></body></html>"
+        }
       }),
       await served.app.inject({ method: "GET", url: "/healthz" }),
       await served.app.inject({ method: "GET", url: "/" })
@@ -2068,7 +2034,9 @@ describe("Patchy Cloud server", () => {
     const form = await served.app.inject({ method: "GET", url: reportUrl });
     expect(form.statusCode).toBe(200);
     expect(form.headers["content-type"]).toContain("text/html");
-    expect(form.body).toContain(`<form class="panel panel-form" method="post" action="${reportUrl}"`);
+    expect(form.body).toContain(
+      `<form class="panel panel-form" method="post" action="${reportUrl}"`
+    );
     expect(form.body).toContain('name="reason"');
     expect(form.body).not.toContain("<script");
     expect(form.headers["content-security-policy"]).toBe(
@@ -2173,9 +2141,9 @@ describe("Patchy Cloud server", () => {
       });
       expect(overrun.statusCode).toBe(429);
       expect(overrun.json()).toMatchObject({ ok: false, code: "rate_limited" });
-      expect(
-        (await served.app.inject({ method: "GET", url: served.latestUrl })).statusCode
-      ).toBe(200);
+      expect((await served.app.inject({ method: "GET", url: served.latestUrl })).statusCode).toBe(
+        200
+      );
 
       served.advanceMs(60_000);
     }
@@ -2198,9 +2166,9 @@ describe("Patchy Cloud server", () => {
       payload: { reason: "Operator reviewed the reports." }
     });
     expect(disabled.statusCode).toBe(200);
-    expect(
-      (await served.app.inject({ method: "GET", url: served.latestUrl })).statusCode
-    ).toBe(404);
+    expect((await served.app.inject({ method: "GET", url: served.latestUrl })).statusCode).toBe(
+      404
+    );
 
     await served.close();
   });
@@ -2288,8 +2256,7 @@ describe("Patchy Cloud server", () => {
         const response = await served.app.inject({
           method,
           url: `/report/${encodeURIComponent(draftId)}`,
-          headers:
-            method === "POST" ? { "content-type": "application/x-www-form-urlencoded" } : {},
+          headers: method === "POST" ? { "content-type": "application/x-www-form-urlencoded" } : {},
           payload: method === "POST" ? "reason=Nothing+here" : undefined
         });
         expect(response.statusCode).toBe(404);
@@ -2369,9 +2336,9 @@ describe("Patchy Cloud server", () => {
       // Reporting a page is not reading it, so none of that bought the draft a
       // single day: the original 90-day clock still runs out on time.
       clocked.advanceDays(16);
-      expect(
-        (await clocked.app.inject({ method: "GET", url: `/d/${draftId}` })).statusCode
-      ).toBe(404);
+      expect((await clocked.app.inject({ method: "GET", url: `/d/${draftId}` })).statusCode).toBe(
+        404
+      );
     } finally {
       await clocked.close();
     }
@@ -2764,8 +2731,9 @@ describe("Patchy Cloud server", () => {
         headers: { authorization: "Bearer dev-token" }
       });
       expect(afterDisable.statusCode).toBe(200);
-      expect((afterDisable.json() as { draft: { disabledReason: string } }).draft
-        .disabledReason).toBe("operator policy");
+      expect(
+        (afterDisable.json() as { draft: { disabledReason: string } }).draft.disabledReason
+      ).toBe("operator policy");
     } finally {
       await moderated.close();
     }
@@ -2954,8 +2922,9 @@ describe("Patchy Cloud server", () => {
         headers: { authorization: "Bearer dev-token" }
       });
       expect(read.statusCode).toBe(200);
-      expect((read.json() as { draft: { createdByApiTokenId: string } }).draft
-        .createdByApiTokenId).toBe(moderated.publisherApiTokenId);
+      expect(
+        (read.json() as { draft: { createdByApiTokenId: string } }).draft.createdByApiTokenId
+      ).toBe(moderated.publisherApiTokenId);
     } finally {
       await moderated.close();
     }
@@ -2981,9 +2950,9 @@ describe("Patchy Cloud server", () => {
       // Day 80, ten days left: a visit before the revocation tops the clock up
       // to day 110, and that extension is not taken away afterwards.
       clocked.advanceDays(80);
-      expect(
-        (await clocked.app.inject({ method: "GET", url: `/d/${draftId}` })).statusCode
-      ).toBe(200);
+      expect((await clocked.app.inject({ method: "GET", url: `/d/${draftId}` })).statusCode).toBe(
+        200
+      );
 
       clocked.advanceDays(1);
       const revoked = await clocked.app.inject({
@@ -3006,15 +2975,15 @@ describe("Patchy Cloud server", () => {
       }
 
       clocked.advanceDays(4);
-      expect(
-        (await clocked.app.inject({ method: "GET", url: `/d/${draftId}` })).statusCode
-      ).toBe(200);
+      expect((await clocked.app.inject({ method: "GET", url: `/d/${draftId}` })).statusCode).toBe(
+        200
+      );
 
       // Day 111: the clock only ran down, and it has run out.
       clocked.advanceDays(2);
-      expect(
-        (await clocked.app.inject({ method: "GET", url: `/d/${draftId}` })).statusCode
-      ).toBe(404);
+      expect((await clocked.app.inject({ method: "GET", url: `/d/${draftId}` })).statusCode).toBe(
+        404
+      );
     } finally {
       await clocked.close();
     }
@@ -3051,9 +3020,9 @@ describe("Patchy Cloud server", () => {
         payload: "reason=This+is+abuse"
       });
       expect(filed.statusCode).toBe(200);
-      expect(
-        (await clocked.app.inject({ method: "GET", url: `/d/${draftId}` })).statusCode
-      ).toBe(200);
+      expect((await clocked.app.inject({ method: "GET", url: `/d/${draftId}` })).statusCode).toBe(
+        200
+      );
 
       // Step 1 — the reported URL names the principal and the token to revoke.
       const read = await clocked.app.inject({
@@ -3075,9 +3044,7 @@ describe("Patchy Cloud server", () => {
         url: "/api/me",
         headers: { authorization: "Bearer dev-token" }
       });
-      expect(reported.principalId).not.toBe(
-        (operator.json() as { accountId: string }).accountId
-      );
+      expect(reported.principalId).not.toBe((operator.json() as { accountId: string }).accountId);
 
       // Step 2 — and the sibling page comes with it.
       const listed = await clocked.app.inject({
@@ -3087,9 +3054,7 @@ describe("Patchy Cloud server", () => {
       });
       expect(listed.statusCode).toBe(200);
       const held = (listed.json() as { drafts: { id: string }[] }).drafts;
-      expect([...held.map((draft) => draft.id)].sort()).toEqual(
-        [draftId, siblingDraftId].sort()
-      );
+      expect([...held.map((draft) => draft.id)].sort()).toEqual([draftId, siblingDraftId].sort());
 
       // Step 3 — revoke. Provenance makes no difference to it: this is the same
       // endpoint, the same answer shape, and the same effect as on a token the
@@ -3112,22 +3077,20 @@ describe("Patchy Cloud server", () => {
       // The key is dead everywhere, and because the principal was its alone,
       // nothing else can reach the pages it left behind.
       expect((await createDraft(clocked.app, token, "Another")).statusCode).toBe(401);
-      expect(
-        (await updateDraft(clocked.app, token, draftId, "Rewritten")).statusCode
-      ).toBe(401);
+      expect((await updateDraft(clocked.app, token, draftId, "Rewritten")).statusCode).toBe(401);
 
       // The pages stay up and keep their remaining clock — and the freeze holds
       // for a self-service token exactly as it does for an operator's.
       clocked.advanceDays(80);
-      expect(
-        (await clocked.app.inject({ method: "GET", url: `/d/${draftId}` })).statusCode
-      ).toBe(200);
+      expect((await clocked.app.inject({ method: "GET", url: `/d/${draftId}` })).statusCode).toBe(
+        200
+      );
 
       clocked.advanceDays(11);
       for (const gone of [draftId, siblingDraftId]) {
-        expect(
-          (await clocked.app.inject({ method: "GET", url: `/d/${gone}` })).statusCode
-        ).toBe(404);
+        expect((await clocked.app.inject({ method: "GET", url: `/d/${gone}` })).statusCode).toBe(
+          404
+        );
       }
     } finally {
       await clocked.close();
@@ -3266,20 +3229,19 @@ describe("self-service minting", () => {
     const minting = await createMintApp("mint-bodies");
 
     try {
-      const shapes: Array<{ label: string; headers?: Record<string, string>; payload?: string }> =
-        [
-          { label: "no body and no content type" },
-          {
-            label: "empty JSON object",
-            headers: { "content-type": "application/json" },
-            payload: "{}"
-          },
-          {
-            label: "JSON content type with nothing in the body",
-            headers: { "content-type": "application/json" },
-            payload: ""
-          }
-        ];
+      const shapes: Array<{ label: string; headers?: Record<string, string>; payload?: string }> = [
+        { label: "no body and no content type" },
+        {
+          label: "empty JSON object",
+          headers: { "content-type": "application/json" },
+          payload: "{}"
+        },
+        {
+          label: "JSON content type with nothing in the body",
+          headers: { "content-type": "application/json" },
+          payload: ""
+        }
+      ];
 
       const minted = new Set<string>();
       for (const shape of shapes) {
@@ -3324,9 +3286,7 @@ describe("self-service minting", () => {
         payload: ""
       });
       expect(emptyUpload.statusCode).toBe(400);
-      expect((emptyUpload.json() as { error: string }).error).toMatch(
-        /Body cannot be empty/i
-      );
+      expect((emptyUpload.json() as { error: string }).error).toMatch(/Body cannot be empty/i);
     } finally {
       await minting.close();
     }
@@ -3497,16 +3457,16 @@ describe("self-service minting", () => {
       const { token } = await minting.mintedToken("203.0.113.60");
       const draftId = await minting.uploadAs(token, "Minted and mortal");
 
-      expect(
-        (await minting.app.inject({ method: "GET", url: `/d/${draftId}` })).statusCode
-      ).toBe(200);
+      expect((await minting.app.inject({ method: "GET", url: `/d/${draftId}` })).statusCode).toBe(
+        200
+      );
 
       // Minting buys no exemption: the retention clock runs on this draft
       // exactly as it does on the operator's, and the sweep takes it.
       minting.advanceMs(91 * DAY_MS);
-      expect(
-        (await minting.app.inject({ method: "GET", url: `/d/${draftId}` })).statusCode
-      ).toBe(404);
+      expect((await minting.app.inject({ method: "GET", url: `/d/${draftId}` })).statusCode).toBe(
+        404
+      );
       expect(await minting.app.sweepExpiredDrafts()).toMatchObject({ deleted: 1 });
 
       // And pinning stays an operator's act — a self-service token cannot buy
@@ -3676,11 +3636,7 @@ function draftHtml(title: string): string {
   return `<!doctype html><html><head><title>${title}</title></head><body><h1>${title}</h1></body></html>`;
 }
 
-async function createDraft(
-  app: ReturnType<typeof createApp>,
-  token: string,
-  title: string
-) {
+async function createDraft(app: ReturnType<typeof createApp>, token: string, title: string) {
   return app.inject({
     method: "POST",
     url: "/api/uploads",
@@ -3712,7 +3668,7 @@ async function oversizedJsonApiRequest(
     return rawHttpRequest(
       app,
       options.target.url,
-      "{\"html\":\"",
+      '{"html":"',
       {
         Authorization: authorization,
         "Content-Type": "application/json",
@@ -3741,10 +3697,7 @@ async function rawHttpRequest(
   options: { closeAfterWrite?: boolean; method?: string } = {}
 ): Promise<RawHttpResponse> {
   const address = app.server.address();
-  const port =
-    address && typeof address !== "string"
-      ? address.port
-      : await listenOnLoopback(app);
+  const port = address && typeof address !== "string" ? address.port : await listenOnLoopback(app);
 
   const raw = await new Promise<string>((resolve, reject) => {
     const socket = createConnection({ host: "127.0.0.1", port });
@@ -4026,8 +3979,7 @@ async function createClockedApp(
   label: string,
   options: ClockedAppOptions = {}
 ): Promise<ClockedApp> {
-  const openDb =
-    options.openDb ?? ((file, clock) => new JsonFilePatchyDb(file, { clock }));
+  const openDb = options.openDb ?? ((file, clock) => new JsonFilePatchyDb(file, { clock }));
   const openStorage = options.openStorage ?? ((dir) => new FileSystemHtmlStorage(dir));
   let now = Date.UTC(2026, 0, 1);
   const clock = (): number => now;
@@ -4088,10 +4040,7 @@ async function createModerationApp(label: string): Promise<ModerationApp> {
   };
 }
 
-async function publishDraft(
-  app: ReturnType<typeof createApp>,
-  title: string
-): Promise<string> {
+async function publishDraft(app: ReturnType<typeof createApp>, title: string): Promise<string> {
   const upload = await app.inject({
     method: "POST",
     url: "/api/uploads",

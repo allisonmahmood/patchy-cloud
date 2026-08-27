@@ -60,7 +60,7 @@ Behavior:
   replacement, because a fresh key would not control the pages the old one created.
 - Relay the mint announcement to the user in plain words — their publishing key is saved
   on this machine, and copying that file to another computer is how they publish from
-  there with the same editing rights. *Token*, *instance*, and *mint* are vocabulary for
+  there with the same editing rights. _Token_, _instance_, and _mint_ are vocabulary for
   you, not for them: off the own-instance path the user hears **publishing key**, and
   nothing is a token, an instance, or a mint. `references/onboarding.md` §3 has the
   wording.

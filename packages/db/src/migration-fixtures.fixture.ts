@@ -112,9 +112,7 @@ VALUES (
  * row collections, no ledger. `omitDraftField` drops a field the current guards
  * require, standing in for a state written by an earlier schema version.
  */
-export function deployedJsonStateFixture(
-  omitDraftField?: string
-): Record<string, unknown> {
+export function deployedJsonStateFixture(omitDraftField?: string): Record<string, unknown> {
   const draft: Record<string, unknown> = {
     id: LEGACY_DRAFT_ID,
     accountId: LEGACY_ACCOUNT_ID,
@@ -215,8 +213,7 @@ export const PROBE_REQUIRE_MIGRATION: SchemaMigration = {
 };
 
 /** Undoes both probes so a reused Postgres database stays at the shipped schema. */
-export const REVERT_PROBE_MIGRATIONS_SQL =
-  "ALTER TABLE drafts DROP COLUMN IF EXISTS review_note;";
+export const REVERT_PROBE_MIGRATIONS_SQL = "ALTER TABLE drafts DROP COLUMN IF EXISTS review_note;";
 
 /**
  * Backfills a field the current row guards require. A state missing it is only

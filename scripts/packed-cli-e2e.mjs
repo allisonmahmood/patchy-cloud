@@ -41,8 +41,7 @@ const trackedProcessGroups = new Set();
 const signalProbe = {
   target: process.env.PATCHY_PACKED_CLI_E2E_SIGNAL_PROBE,
   childMarkerPath: process.env.PATCHY_PACKED_CLI_E2E_SIGNAL_PROBE_CHILDREN,
-  stubRunAfterSignal:
-    process.env.PATCHY_PACKED_CLI_E2E_SIGNAL_PROBE_STUB_RUN_AFTER_SIGNAL === "1",
+  stubRunAfterSignal: process.env.PATCHY_PACKED_CLI_E2E_SIGNAL_PROBE_STUB_RUN_AFTER_SIGNAL === "1",
   observedSignal: undefined
 };
 const outerSignalProbe = {
@@ -213,13 +212,7 @@ try {
   console.log("[packed-cli-e2e] packing one exact tarball without rerunning prepack");
   const packed = await run(
     "pnpm",
-    [
-      "--config.ignore-scripts=true",
-      "pack",
-      "--json",
-      "--pack-destination",
-      packDir
-    ],
+    ["--config.ignore-scripts=true", "pack", "--json", "--pack-destination", packDir],
     { cwd: cliPackageDir }
   );
   const packResult = parsePackResult(packed.stdout);
@@ -234,12 +227,7 @@ try {
     "pnpm pack must create one exact tarball"
   );
   const packedFiles = new Set(packResult[0].files.map((file) => file.path));
-  for (const requiredFile of [
-    "dist/index.js",
-    "skills/patchy/SKILL.md",
-    "LICENSE",
-    "README.md"
-  ]) {
+  for (const requiredFile of ["dist/index.js", "skills/patchy/SKILL.md", "LICENSE", "README.md"]) {
     assert.ok(packedFiles.has(requiredFile), `packed CLI is missing ${requiredFile}`);
   }
 
@@ -768,7 +756,9 @@ async function runPlatformProbes() {
     /npm_execpath/
   );
 
-  console.log("[platform-probe] PASS win32 lifecycle rejection, command resolution, and PATCHY env stripping");
+  console.log(
+    "[platform-probe] PASS win32 lifecycle rejection, command resolution, and PATCHY env stripping"
+  );
 }
 
 function assertWin32LifecycleRejectionContract() {
@@ -853,7 +843,10 @@ async function runLifecycleTimeoutCleanupProbe() {
     os.tmpdir(),
     `patchy-packed-cli-e2e-signal-probe-${process.pid}-${foreignOwnerId}-timeout-foreign.jsonl`
   );
-  await Promise.all([rm(targetMarkerPath, { force: true }), rm(foreignMarkerPath, { force: true })]);
+  await Promise.all([
+    rm(targetMarkerPath, { force: true }),
+    rm(foreignMarkerPath, { force: true })
+  ]);
 
   const target = spawn(process.execPath, [fileURLToPath(import.meta.url)], {
     cwd: repoRoot,
@@ -919,7 +912,10 @@ async function runLifecycleTimeoutCleanupProbe() {
 
     foreign = spawnSignalProbeChild("after-temp-created", foreignMarkerPath, foreignOwnerId);
     const foreignCheckpoint = await foreign.waitForCheckpoint("after-temp-created", 30_000);
-    foreignTempRoot = validateOwnedTempRootPath(foreignOwnerId, foreignCheckpoint.details?.tempRoot);
+    foreignTempRoot = validateOwnedTempRootPath(
+      foreignOwnerId,
+      foreignCheckpoint.details?.tempRoot
+    );
     assert.ok(
       await pathExists(foreignTempRoot),
       `foreign probe root should exist before target timeout cleanup: ${foreignTempRoot}`
@@ -1014,7 +1010,8 @@ async function runLifecycleTimeoutCleanupProbe() {
     if (!targetCleanupComplete) {
       terminateProcessGroup(target, "SIGKILL");
       await Promise.race([waitForProbeChild(target, 1_000).catch(() => undefined), delay(1_000)]);
-      targetRecords = targetRecords.length > 0 ? targetRecords : await readJsonlRecords(targetMarkerPath);
+      targetRecords =
+        targetRecords.length > 0 ? targetRecords : await readJsonlRecords(targetMarkerPath);
       await emergencyCleanupLifecycleProbe({
         ownerId: targetOwnerId,
         markerPath: targetMarkerPath,
@@ -1101,8 +1098,14 @@ async function runLifecycleProbe(probe) {
       1,
       `${probe.mode} should finish cleanup exactly once\nrecords:\n${JSON.stringify(records, null, 2)}\nstdout:\n${stdout}\nstderr:\n${stderr}`
     );
-    assert.deepEqual(cleanupStarts.map((record) => record.count), [1]);
-    assert.deepEqual(cleanupEnds.map((record) => record.count), [1]);
+    assert.deepEqual(
+      cleanupStarts.map((record) => record.count),
+      [1]
+    );
+    assert.deepEqual(
+      cleanupEnds.map((record) => record.count),
+      [1]
+    );
 
     if (probe.expectFailure) {
       assert.notEqual(
@@ -1215,7 +1218,8 @@ async function runSignalProbe(probe) {
       `${probe.checkpoint} ${probe.signal} leaked state:\n${leakFailures.messages.join("\n")}\nstdout:\n${stdout}\nstderr:\n${stderr}`
     );
   } finally {
-    const cleanupRecords = childRecords.length > 0 ? childRecords : await readJsonlRecords(markerPath);
+    const cleanupRecords =
+      childRecords.length > 0 ? childRecords : await readJsonlRecords(markerPath);
     await cleanupSignalProbeArtifacts(
       markerPath,
       cleanupRecords,
@@ -1299,10 +1303,7 @@ async function runOuterSignalRunnerProbe(probe) {
   } finally {
     if (outer.exitCode === null && outer.signalCode === null) {
       terminateProcessGroup(outer, "SIGKILL");
-      await Promise.race([
-        waitForProbeChild(outer, 1_000).catch(() => undefined),
-        delay(1_000)
-      ]);
+      await Promise.race([waitForProbeChild(outer, 1_000).catch(() => undefined), delay(1_000)]);
     }
     if (checkpointEvent) {
       const cleanupRecords =
@@ -1491,7 +1492,13 @@ async function runSignalOverlapProbe() {
   }
 }
 
-async function forceCleanupSignalProbeChild(probeChild, markerPath, records, leakedTempRoots, ownerId) {
+async function forceCleanupSignalProbeChild(
+  probeChild,
+  markerPath,
+  records,
+  leakedTempRoots,
+  ownerId
+) {
   if (probeChild?.child.exitCode === null && probeChild.child.signalCode === null) {
     terminateProcessGroup(probeChild.child, "SIGKILL");
     await Promise.race([
@@ -1583,9 +1590,10 @@ async function waitForSignalProbeChildEvent(child, events, waiters, predicate, t
   }
   const { stdout, stderr } = output();
   terminateProcessGroup(child, "SIGKILL");
-  throw new Error(`timed out waiting for signal probe checkpoint\nstdout:\n${stdout}\nstderr:\n${stderr}`);
+  throw new Error(
+    `timed out waiting for signal probe checkpoint\nstdout:\n${stdout}\nstderr:\n${stderr}`
+  );
 }
-
 
 function parseSignalProbeEvent(line) {
   const prefix = "__PATCHY_SIGNAL_PROBE__";
@@ -1660,7 +1668,13 @@ async function collectLifecycleProbeLeaks({ ownerId, records, events }) {
   return { messages, leakedTempRoots };
 }
 
-async function emergencyCleanupLifecycleProbe({ ownerId, markerPath, records, events, leakedTempRoots }) {
+async function emergencyCleanupLifecycleProbe({
+  ownerId,
+  markerPath,
+  records,
+  events,
+  leakedTempRoots
+}) {
   assertValidProbeOwnerId(ownerId);
   for (const record of records) {
     if (Number.isInteger(record.pid)) {
@@ -1870,13 +1884,17 @@ async function closeServerBindCollisionProbe() {
 
 async function runTermOrphanedProcessGroupWorkload() {
   assert.ok(lifecycleProbe.markerPath, "term orphan lifecycle probe requires a marker path");
-  const launcher = spawn(process.execPath, ["-e", termOrphanLauncherScript(), lifecycleProbe.markerPath], {
-    cwd: repoRoot,
-    env: sanitizedProcessEnv(),
-    detached: process.platform !== "win32",
-    stdio: ["ignore", "ignore", "pipe"],
-    shell: false
-  });
+  const launcher = spawn(
+    process.execPath,
+    ["-e", termOrphanLauncherScript(), lifecycleProbe.markerPath],
+    {
+      cwd: repoRoot,
+      env: sanitizedProcessEnv(),
+      detached: process.platform !== "win32",
+      stdio: ["ignore", "ignore", "pipe"],
+      shell: false
+    }
+  );
   const launcherLifecycle = registerSpawnedChild(launcher);
   launcherLifecycle.errorPromise.catch(() => {});
 
@@ -2021,7 +2039,11 @@ function ownedTempRootPrefix(ownerId) {
 }
 
 function validateOwnedTempRootName(ownerId, tempRootName) {
-  assert.equal(path.basename(tempRootName), tempRootName, "owned temp root name must be a basename");
+  assert.equal(
+    path.basename(tempRootName),
+    tempRootName,
+    "owned temp root name must be a basename"
+  );
   const prefix = ownedTempRootPrefix(ownerId);
   assert.ok(
     tempRootName.startsWith(prefix),
@@ -2204,7 +2226,12 @@ async function reserveLoopbackPort() {
   return { server, port: address.port };
 }
 
-async function startServer({ publicBaseUrl, metadataPath, objectDir, serverEntryPath = serverEntry }) {
+async function startServer({
+  publicBaseUrl,
+  metadataPath,
+  objectDir,
+  serverEntryPath = serverEntry
+}) {
   let nextPublicBaseUrl = publicBaseUrl;
   const maxAttempts = 3;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -2233,9 +2260,7 @@ async function startServer({ publicBaseUrl, metadataPath, objectDir, serverEntry
       }
       portReservation = await reserveLoopbackPort();
       nextPublicBaseUrl = `http://127.0.0.1:${portReservation.port}`;
-      console.log(
-        `[packed-cli-e2e] retrying real server at ${nextPublicBaseUrl} after EADDRINUSE`
-      );
+      console.log(`[packed-cli-e2e] retrying real server at ${nextPublicBaseUrl} after EADDRINUSE`);
     }
   }
   throw new Error("unreachable server startup retry state");
@@ -2906,11 +2931,7 @@ function registerSpawnedChild(child, options = {}) {
 }
 
 function trackProcessGroup(child) {
-  if (
-    process.platform !== "win32" &&
-    Number.isInteger(child.pid) &&
-    childOwnsProcessGroup(child)
-  ) {
+  if (process.platform !== "win32" && Number.isInteger(child.pid) && childOwnsProcessGroup(child)) {
     trackedProcessGroups.add(child.pid);
   }
 }

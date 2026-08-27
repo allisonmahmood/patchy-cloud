@@ -1,9 +1,6 @@
 import pg from "pg";
 import { newInternalId, sha256 } from "@patchy/core";
-import {
-  BOOTSTRAP_API_TOKEN_ID,
-  BOOTSTRAP_PRINCIPAL_ID
-} from "./internal-principals.js";
+import { BOOTSTRAP_API_TOKEN_ID, BOOTSTRAP_PRINCIPAL_ID } from "./internal-principals.js";
 import { SCHEMA_MIGRATIONS } from "./migrations.js";
 import { mintQuotaWindowStart } from "./mint-quota.js";
 import { DRAFT_VISIT_EXTENSION_WINDOW_MS, expiryAfterUpload } from "./retention.js";
@@ -49,6 +46,51 @@ const MIGRATION_ADVISORY_LOCK_KEY = 5150324118422001n;
 
 /** A draft's creating token is the one recorded on its first version. */
 const FIRST_VERSION_NUMBER = 1;
+interface DraftRow extends pg.QueryResultRow {
+  id: string;
+  account_id: string;
+  title: string;
+  visibility: DraftRecord["visibility"];
+  current_version_id: string | null;
+  repo_org: string | null;
+  repo_name: string | null;
+  created_at: unknown;
+  updated_at: unknown;
+  expires_at: unknown;
+  pinned_at: unknown | null;
+  deleted_at: unknown | null;
+  disabled_at: unknown | null;
+  disabled_reason: string | null;
+}
+
+interface ModeratedDraftRow extends DraftRow {
+  created_by_api_token_id: string | null;
+}
+
+interface DraftVersionRow extends pg.QueryResultRow {
+  id: string;
+  draft_id: string;
+  version_number: string | number;
+  object_key: string;
+  content_hash: string;
+  file_size: string | number;
+  created_by_api_token_id: string;
+  source_ip: string | null;
+  user_agent: string | null;
+  cli_version: string | null;
+  git_branch: string | null;
+  git_commit_sha: string | null;
+  original_filename: string | null;
+  created_at: unknown;
+}
+
+interface DraftReportRow extends pg.QueryResultRow {
+  id: string;
+  draft_id: string;
+  source_ip: string | null;
+  reason: string | null;
+  created_at: unknown;
+}
 
 /**
  * A draft with the token that created it, for the moderation loop. `$2` is the
@@ -360,15 +402,7 @@ export class PostgresPatchyDb implements PatchyDb {
             ON CONFLICT (id) DO NOTHING
             RETURNING id
           `,
-          [
-            input.draftId,
-            input.accountId,
-            title,
-            input.versionId,
-            repoOrg,
-            repoName,
-            expiresAt
-          ]
+          [input.draftId, input.accountId, title, input.versionId, repoOrg, repoName, expiresAt]
         );
         if (!createdDraft.rowCount) {
           throw new UploadTargetError("draft_conflict");
@@ -456,7 +490,7 @@ export class PostgresPatchyDb implements PatchyDb {
   }
 
   async findDraftVersion(draftId: string, versionNumber?: number): Promise<DraftVersionLookup> {
-    const draftResult = await this.pool.query(
+    const draftResult = await this.pool.query<DraftRow>(
       `
         SELECT *
         FROM drafts
@@ -472,7 +506,7 @@ export class PostgresPatchyDb implements PatchyDb {
     if (!draft) return { draft: null, version: null };
 
     const versionResult = versionNumber
-      ? await this.pool.query(
+      ? await this.pool.query<DraftVersionRow>(
           `
             SELECT *
             FROM draft_versions
@@ -481,9 +515,10 @@ export class PostgresPatchyDb implements PatchyDb {
           `,
           [draft.id, versionNumber]
         )
-      : await this.pool.query("SELECT * FROM draft_versions WHERE id = $1 LIMIT 1", [
-          draft.currentVersionId
-        ]);
+      : await this.pool.query<DraftVersionRow>(
+          "SELECT * FROM draft_versions WHERE id = $1 LIMIT 1",
+          [draft.currentVersionId]
+        );
 
     return {
       draft,
@@ -492,7 +527,7 @@ export class PostgresPatchyDb implements PatchyDb {
   }
 
   async findDraftForModeration(draftId: string): Promise<ModeratedDraftRecord | null> {
-    const result = await this.pool.query(
+    const result = await this.pool.query<ModeratedDraftRow>(
       `
         ${MODERATED_DRAFT_SELECT}
         WHERE drafts.id = $1
@@ -503,13 +538,10 @@ export class PostgresPatchyDb implements PatchyDb {
     return result.rows[0] ? mapModeratedDraft(result.rows[0]) : null;
   }
 
-  async listDraftsByPrincipal(
-    principalId: string,
-    limit: number
-  ): Promise<PrincipalDraftListing> {
+  async listDraftsByPrincipal(principalId: string, limit: number): Promise<PrincipalDraftListing> {
     const capped = Math.max(0, limit);
     // One row past the limit is how truncation is detected without a count.
-    const result = await this.pool.query(
+    const result = await this.pool.query<ModeratedDraftRow>(
       `
         ${MODERATED_DRAFT_SELECT}
         WHERE drafts.account_id = $1
@@ -578,10 +610,9 @@ export class PostgresPatchyDb implements PatchyDb {
           `,
           [draftId, this.nowIso()]
         )
-      : await this.pool.query(
-          "UPDATE drafts SET pinned_at = NULL WHERE id = $1 RETURNING id",
-          [draftId]
-        );
+      : await this.pool.query("UPDATE drafts SET pinned_at = NULL WHERE id = $1 RETURNING id", [
+          draftId
+        ]);
     return Boolean(result.rowCount);
   }
 
@@ -691,7 +722,7 @@ export class PostgresPatchyDb implements PatchyDb {
   async recordDraftReport(input: RecordDraftReportInput): Promise<DraftReportRecord> {
     // One INSERT and nothing else: no trigger, no cascade, no UPDATE of the
     // draft. That is what makes report volume unable to move any state.
-    const result = await this.pool.query(
+    const result = await this.pool.query<DraftReportRow>(
       `
         INSERT INTO draft_reports (id, draft_id, source_ip, reason)
         VALUES ($1, $2, $3, $4)
@@ -699,11 +730,13 @@ export class PostgresPatchyDb implements PatchyDb {
       `,
       [newInternalId("rpt"), input.draftId, input.sourceIp, cleanText(input.reason)]
     );
-    return mapDraftReport(result.rows[0]);
+    const report = result.rows[0];
+    if (!report) throw new Error("Postgres did not return the inserted draft report.");
+    return mapDraftReport(report);
   }
 
   async listDraftReports(draftId: string): Promise<DraftReportRecord[]> {
-    const result = await this.pool.query(
+    const result = await this.pool.query<DraftReportRow>(
       "SELECT * FROM draft_reports WHERE draft_id = $1 ORDER BY created_at, id",
       [draftId]
     );
@@ -717,9 +750,7 @@ export class PostgresPatchyDb implements PatchyDb {
   private async migrate(): Promise<void> {
     const client = await this.pool.connect();
     try {
-      await client.query("SELECT pg_advisory_lock($1)", [
-        MIGRATION_ADVISORY_LOCK_KEY.toString()
-      ]);
+      await client.query("SELECT pg_advisory_lock($1)", [MIGRATION_ADVISORY_LOCK_KEY.toString()]);
       await client.query(`
         CREATE TABLE IF NOT EXISTS schema_migrations (
           id TEXT PRIMARY KEY,
@@ -728,9 +759,7 @@ export class PostgresPatchyDb implements PatchyDb {
       `);
 
       const applied = new Set(
-        (await client.query("SELECT id FROM schema_migrations")).rows.map((row) =>
-          String(row.id)
-        )
+        (await client.query("SELECT id FROM schema_migrations")).rows.map((row) => String(row.id))
       );
 
       for (const migration of this.migrations) {
@@ -783,7 +812,7 @@ export class PostgresPatchyDb implements PatchyDb {
   }
 }
 
-function mapDraft(row: any): DraftRecord {
+function mapDraft(row: DraftRow): DraftRecord {
   return {
     id: row.id,
     accountId: row.account_id,
@@ -802,11 +831,11 @@ function mapDraft(row: any): DraftRecord {
   };
 }
 
-function mapModeratedDraft(row: any): ModeratedDraftRecord {
+function mapModeratedDraft(row: ModeratedDraftRow): ModeratedDraftRecord {
   return { ...mapDraft(row), createdByApiTokenId: row.created_by_api_token_id ?? null };
 }
 
-function mapDraftVersion(row: any): DraftVersionRecord {
+function mapDraftVersion(row: DraftVersionRow): DraftVersionRecord {
   return {
     id: row.id,
     draftId: row.draft_id,
@@ -825,7 +854,7 @@ function mapDraftVersion(row: any): DraftVersionRecord {
   };
 }
 
-function mapDraftReport(row: any): DraftReportRecord {
+function mapDraftReport(row: DraftReportRow): DraftReportRecord {
   return {
     id: row.id,
     draftId: row.draft_id,

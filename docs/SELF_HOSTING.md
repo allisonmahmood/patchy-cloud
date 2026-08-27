@@ -105,8 +105,8 @@ The server applies deterministic fixed-window in-memory limits inside each serve
 - Protected `/api` requests are limited to `PATCHY_PROTECTED_API_RATE_LIMIT_PER_MINUTE` attempts per minute per canonical Fastify `request.ip`. That IP follows `PATCHY_TRUST_PROXY`, so configure the proxy boundary before relying on IP-based buckets.
 - Authenticated upload requests are limited to `PATCHY_AUTHENTICATED_UPLOAD_RATE_LIMIT_PER_MINUTE` attempts per minute per API token database identity. Rotating the raw bearer secret for the same token record does not create a fresh upload bucket.
 - `PATCHY_SELF_SERVICE_MINT_RATE_LIMIT_PER_MINUTE` limits self-service mints per minute per canonical Fastify `request.ip`, on instances where minting is enabled. It is keyed by address rather than by token because a caller asking for its first token has no token to key on.
-- Draft *creates* are additionally limited to `PATCHY_DRAFT_CREATE_RATE_LIMIT_PER_MINUTE` per minute per creating token. An upload carrying a `draftId` is an update and never consumes this bucket. Because the request body decides create versus update, this bucket is consumed after body parsing, unlike the buckets above.
-- `PATCHY_REPORT_RATE_LIMIT_PER_MINUTE` limits filed reports (`POST /report/:draftId`) per minute per canonical Fastify `request.ip`. This is the service's other unauthenticated write, and like the mint route it is keyed by address because a reader flagging a page carries no credential. The bucket is consumed *before* the draft is looked up, so a flood costs neither a metadata read nor a stored row. Reports the server cannot attribute to an address share one bucket rather than each escaping the count, as mints do. Opening the report form (`GET /report/:draftId`) consumes nothing. The limit bounds write volume and nothing else: a report has no automatic consequence at any volume, so hitting it never affects the reported page. See [Moderation](#moderation).
+- Draft _creates_ are additionally limited to `PATCHY_DRAFT_CREATE_RATE_LIMIT_PER_MINUTE` per minute per creating token. An upload carrying a `draftId` is an update and never consumes this bucket. Because the request body decides create versus update, this bucket is consumed after body parsing, unlike the buckets above.
+- `PATCHY_REPORT_RATE_LIMIT_PER_MINUTE` limits filed reports (`POST /report/:draftId`) per minute per canonical Fastify `request.ip`. This is the service's other unauthenticated write, and like the mint route it is keyed by address because a reader flagging a page carries no credential. The bucket is consumed _before_ the draft is looked up, so a flood costs neither a metadata read nor a stored row. Reports the server cannot attribute to an address share one bucket rather than each escaping the count, as mints do. Opening the report form (`GET /report/:draftId`) consumes nothing. The limit bounds write volume and nothing else: a report has no automatic consequence at any volume, so hitting it never affects the reported page. See [Moderation](#moderation).
 
 When a bucket is exceeded, the server returns HTTP `429` with JSON `{ "ok": false, "code": "rate_limited", ... }` and an integer `Retry-After` header. Each limiter tracks up to `10000` live keys in memory. If all live key slots are occupied, an unseen key receives the same bounded `429` response until the earliest live bucket resets. Live buckets are never evicted to make room for an unseen key, because eviction would let an attacker bypass limits by cycling key values.
 
@@ -118,7 +118,7 @@ These counters are process-local and memory-only. They reset on restart and are 
 
 Only per-minute limits live in memory. A long-window quota is derived from the database on every attempt, so restarting the process never hands anyone a fresh allowance.
 
-`PATCHY_LIVE_DRAFTS_PER_TOKEN` caps how many *live* drafts one token may hold at once. A draft is live while it is neither deleted nor disabled, and it belongs to the token that created it — a later update by a different token never moves it between tallies. Deleting or disabling a draft returns its slot immediately.
+`PATCHY_LIVE_DRAFTS_PER_TOKEN` caps how many _live_ drafts one token may hold at once. A draft is live while it is neither deleted nor disabled, and it belongs to the token that created it — a later update by a different token never moves it between tallies. Deleting or disabling a draft returns its slot immediately.
 
 The cap is per token, not per account: two tokens on one account each get the full allowance. It applies uniformly, with no exemption for `admin`-scoped tokens.
 
@@ -181,15 +181,15 @@ Off by default. Leave `PATCHY_POSTHOG_API_KEY` unset and your instance builds no
 
 Setting a key turns on capture for seven business events, and only those seven:
 
-| Event | When | Properties |
-| --- | --- | --- |
-| `token.minted` | A token is issued, self-service or by an operator | `apiTokenId`, `selfService` |
-| `draft.created` | An upload creates a draft | `draftId`, `apiTokenId`, `versionNumber`, `htmlBytes` |
-| `draft.updated` | An upload adds a version | `draftId`, `apiTokenId`, `versionNumber`, `htmlBytes` |
-| `draft.reported` | A reader files a report | `draftId`, `reasonGiven` |
-| `draft.disabled` | A draft is disabled | `draftId`, `admin` |
-| `draft.deleted` | A draft is deleted | `draftId`, `admin` |
-| `draft.expired` | The expiry sweep takes a draft | `draftId`, `versionsRemoved` |
+| Event            | When                                              | Properties                                            |
+| ---------------- | ------------------------------------------------- | ----------------------------------------------------- |
+| `token.minted`   | A token is issued, self-service or by an operator | `apiTokenId`, `selfService`                           |
+| `draft.created`  | An upload creates a draft                         | `draftId`, `apiTokenId`, `versionNumber`, `htmlBytes` |
+| `draft.updated`  | An upload adds a version                          | `draftId`, `apiTokenId`, `versionNumber`, `htmlBytes` |
+| `draft.reported` | A reader files a report                           | `draftId`, `reasonGiven`                              |
+| `draft.disabled` | A draft is disabled                               | `draftId`, `admin`                                    |
+| `draft.deleted`  | A draft is deleted                                | `draftId`, `admin`                                    |
+| `draft.expired`  | The expiry sweep takes a draft                    | `draftId`, `versionsRemoved`                          |
 
 Two properties of this are load-bearing rather than incidental:
 
