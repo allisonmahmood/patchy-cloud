@@ -1,5 +1,5 @@
 import * as parse5 from "parse5";
-import type { HtmlValidationResult } from "./types.js";
+import type { HtmlValidationResult } from "./wire.js";
 
 const BLOCKED_TAG_LOOKUP = {
   script: true,

@@ -16,6 +16,17 @@ import path from "node:path";
 import { createServer } from "node:http";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import {
+  ApiErrorResponseSchema,
+  decodeWire,
+  encodeWire,
+  MeResponseSchema,
+  SelfServiceTokenRequestSchema,
+  SelfServiceTokenResponseSchema,
+  StatusReportSchema,
+  UploadRequestSchema,
+  UploadResponseSchema
+} from "@patchy/core";
 
 const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const cliPath = path.join(packageDir, "dist/index.js");
@@ -70,6 +81,17 @@ describe("patchy auth set", () => {
     expect(readHostCredential(result.stateDir)).toMatchObject({
       token,
       source: "auth-set"
+    });
+  });
+
+  it("prints the shared credential result with --json", () => {
+    const result = runCli(["auth", "set", "--token-stdin", "--json"], "pp_json_secret\n");
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(result.stdout)).toEqual({
+      ok: true,
+      instanceUrl: DEFAULT_API_URL
     });
   });
 
@@ -296,13 +318,15 @@ describe("patchy auth set", () => {
       authorization = request.headers.authorization;
       response.setHeader("Content-Type", "application/json");
       response.end(
-        JSON.stringify({
-          accountName: "CI account",
-          accountId: "acct_ci",
-          apiTokenName: "CI token",
-          apiTokenId: "tok_ci",
-          scopes: ["upload"]
-        })
+        JSON.stringify(
+          encodeWire(MeResponseSchema, {
+            accountName: "CI account",
+            accountId: "acct_ci",
+            apiTokenName: "CI token",
+            apiTokenId: "tok_ci",
+            scopes: ["upload"]
+          })
+        )
       );
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -310,13 +334,19 @@ describe("patchy auth set", () => {
     try {
       const address = server.address();
       if (!address || typeof address === "string") throw new Error("Expected a TCP test server");
-      const args = ["whoami", "--api-url", `http://127.0.0.1:${address.port}`];
+      const args = ["whoami", "--json", "--api-url", `http://127.0.0.1:${address.port}`];
       const result = await runCliAsync(args, { PATCHY_API_TOKEN: token });
 
       expect(result.argv.join("\0")).not.toContain(token);
       expect(result.status).toBe(0);
       expect(authorization).toBe(`Bearer ${token}`);
-      expect(result.stdout).toContain("Account: CI account (acct_ci)");
+      expect(JSON.parse(result.stdout)).toEqual({
+        accountName: "CI account",
+        accountId: "acct_ci",
+        apiTokenName: "CI token",
+        apiTokenId: "tok_ci",
+        scopes: ["upload"]
+      });
       expect(`${result.stdout}${result.stderr}`).not.toContain(token);
       expect(existsSync(path.join(result.stateDir, "credentials.json"))).toBe(false);
     } finally {
@@ -488,6 +518,42 @@ describe("CLI auth guidance", () => {
   });
 });
 
+describe("patchy validate", () => {
+  it("prints the shared validation result with --json", () => {
+    const stateDir = makeStateDir();
+    const htmlPath = path.join(stateDir, "valid.html");
+    writeFileSync(htmlPath, "<!doctype html><title>Valid draft</title>");
+
+    const result = runCli(["validate", htmlPath, "--json"], undefined, stateDir);
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(result.stdout)).toEqual({
+      ok: true,
+      errors: [],
+      warnings: [],
+      title: "Valid draft"
+    });
+  });
+
+  it("returns only the shared result for invalid HTML with --json", () => {
+    const stateDir = makeStateDir();
+    const htmlPath = path.join(stateDir, "invalid.html");
+    writeFileSync(htmlPath, "");
+
+    const result = runCli(["validate", htmlPath, "--json"], undefined, stateDir);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(result.stdout)).toEqual({
+      ok: false,
+      errors: ["HTML document is empty."],
+      warnings: [],
+      title: null
+    });
+  });
+});
+
 describe("patchy upload", () => {
   it("documents --draft as update-only in command help", () => {
     const result = runCli(["upload", "--help"]);
@@ -499,6 +565,39 @@ describe("patchy upload", () => {
     expect(result.stdout).toContain(
       "--anonymous         Deprecated and ignored; uploads always use a token"
     );
+  });
+
+  it("prints the shared upload response with --json", async () => {
+    const stateDir = makeStateDir();
+    const htmlPath = path.join(stateDir, "json-upload.html");
+    writeFileSync(htmlPath, "<!doctype html><title>JSON upload</title>");
+    const server = await startUploadServer(createOnly("abcdefghijkl"));
+
+    try {
+      writeFileSync(
+        path.join(stateDir, "credentials.json"),
+        hostKeyedCredentials({ [server.apiUrl]: "stored-token" })
+      );
+      const result = await runCliAsync(
+        ["upload", htmlPath, "--json", "--api-url", server.apiUrl],
+        {},
+        stateDir
+      );
+
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(JSON.parse(result.stdout)).toEqual({
+        ok: true,
+        draftId: "abcdefghijkl",
+        versionId: "ver_abcdefghijkl",
+        versionNumber: 1,
+        title: "Test draft",
+        publicUrl: "http://example.test/d/abcdefghijkl",
+        warnings: []
+      });
+    } finally {
+      await server.close();
+    }
   });
 
   it("rejects combining the update-only and create-only options", () => {
@@ -668,15 +767,7 @@ describe("patchy upload", () => {
       requestCount += 1;
       response.statusCode = 201;
       response.setHeader("Content-Type", "application/json");
-      response.end(
-        JSON.stringify({
-          ok: true,
-          draftId: "mnopqrstuvwx",
-          publicUrl: "http://example.test/d/mnopqrstuvwx",
-          versionNumber: 1,
-          warnings: []
-        })
-      );
+      response.end(JSON.stringify(uploadSuccess("mnopqrstuvwx", 1)));
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 
@@ -821,15 +912,7 @@ describe("patchy upload", () => {
       authorization = request.headers.authorization;
       response.statusCode = 201;
       response.setHeader("Content-Type", "application/json");
-      response.end(
-        JSON.stringify({
-          ok: true,
-          draftId: "mnopqrstuvwx",
-          publicUrl: "http://example.test/d/mnopqrstuvwx",
-          versionNumber: 1,
-          warnings: []
-        })
-      );
+      response.end(JSON.stringify(uploadSuccess("mnopqrstuvwx", 1)));
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 
@@ -860,7 +943,10 @@ describe("patchy upload", () => {
     const storedToken = "pp_rejected_stored_token";
     const reject = (): UploadResponse => ({
       status: 401,
-      body: { ok: false, error: "Missing or invalid API token." }
+      body: encodeWire(ApiErrorResponseSchema, {
+        ok: false,
+        error: "Missing or invalid API token."
+      })
     });
     const server = await startUploadServer(reject);
 
@@ -930,15 +1016,7 @@ describe("patchy upload", () => {
       requestBody = JSON.parse(body) as Record<string, unknown>;
       response.statusCode = 201;
       response.setHeader("Content-Type", "application/json");
-      response.end(
-        JSON.stringify({
-          ok: true,
-          draftId: "abcdefghijkl",
-          publicUrl: "http://example.test/d/abcdefghijkl",
-          versionNumber: 1,
-          warnings: []
-        })
-      );
+      response.end(JSON.stringify(uploadSuccess("abcdefghijkl", 1)));
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 
@@ -983,7 +1061,9 @@ describe("patchy upload", () => {
       requestBody = JSON.parse(body) as Record<string, unknown>;
       response.statusCode = 404;
       response.setHeader("Content-Type", "application/json");
-      response.end(JSON.stringify({ ok: false, error: "Draft not found." }));
+      response.end(
+        JSON.stringify(encodeWire(ApiErrorResponseSchema, { ok: false, error: "Draft not found." }))
+      );
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 
@@ -1031,7 +1111,9 @@ describe("patchy upload", () => {
       requestBody = JSON.parse(body) as Record<string, unknown>;
       response.statusCode = 404;
       response.setHeader("Content-Type", "application/json");
-      response.end(JSON.stringify({ ok: false, error: "Draft not found." }));
+      response.end(
+        JSON.stringify(encodeWire(ApiErrorResponseSchema, { ok: false, error: "Draft not found." }))
+      );
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 
@@ -1347,7 +1429,7 @@ describe("auto-mint on first upload", () => {
     writeFileSync(htmlPath, "<!doctype html><title>Mint absent</title>");
     const server = await startUploadServer(createOnly("mnopqrstuvwx"), () => ({
       status: 404,
-      body: { ok: false, error: "Not found." }
+      body: encodeWire(ApiErrorResponseSchema, { ok: false, error: "Not found." })
     }));
 
     try {
@@ -1399,7 +1481,10 @@ describe("auto-mint on first upload", () => {
     writeFileSync(htmlPath, "<!doctype html><title>Mint then fail</title>");
     const server = await startUploadServer(() => ({
       status: 500,
-      body: { ok: false, error: "Storage unavailable." }
+      body: encodeWire(ApiErrorResponseSchema, {
+        ok: false,
+        error: "Storage unavailable."
+      })
     }));
 
     try {
@@ -1894,16 +1979,9 @@ describe("patchy status", () => {
 
     expect(result.status).toBe(0);
     expect(result.stderr).toBe("");
-    // The skill quotes these names, so the key set is part of the interface.
-    expect(Object.keys(report)).toEqual([
-      "instanceUrl",
-      "instanceSource",
-      "hasToken",
-      "tokenSource",
-      "stateDir",
-      "hasDefaultStyle",
-      "cliVersion"
-    ]);
+    // Read the public key set from a real CLI process and pin it to the shared
+    // schema instead of restating the contract as a second literal array.
+    expect(Object.keys(report)).toEqual(Object.keys(StatusReportSchema.fields));
     expect(report).toEqual({
       instanceUrl: DEFAULT_API_URL,
       instanceSource: "default",
@@ -2117,12 +2195,13 @@ describe("patchy status", () => {
     }
   });
 
-  it("offers JSON as its only reporting format", () => {
+  it("keeps a human-readable default while making JSON optional", () => {
     const result = runCli(["status"]);
 
-    expect(result.status).toBe(1);
-    expect(result.stdout).toBe("");
-    expect(result.stderr).toBe("error: required option '--json' not specified\n");
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain(`Instance: ${DEFAULT_API_URL} (default)\n`);
+    expect(result.stdout.trimStart().startsWith("{")).toBe(false);
   });
 
   it("documents itself as local-only in command help", () => {
@@ -2229,24 +2308,25 @@ function runCliAsync(
 
 interface UploadRequest {
   authorization: string | undefined;
-  body: Record<string, unknown>;
+  body: typeof UploadRequestSchema.Type;
 }
 
 interface UploadResponse {
   status: number;
-  body: Record<string, unknown>;
+  body: unknown;
 }
 
 /** What a mint attempt saw, so a test can assert the pinned request shape. */
 interface MintRequest {
   authorization: string | undefined;
   raw: string;
+  body: typeof SelfServiceTokenRequestSchema.Type;
 }
 
 /** A mint reply is its own contract, not an upload reply that happens to fit. */
 interface MintResponse {
   status: number;
-  body: Record<string, unknown>;
+  body: unknown;
 }
 
 type MintResponder = () => MintResponse;
@@ -2267,16 +2347,21 @@ async function startUploadServer(
     for await (const chunk of incoming) raw += chunk;
 
     const isMint = incoming.url === MINT_PATH;
-    const { status, body } = isMint
-      ? (mints.push({ authorization: incoming.headers.authorization, raw }), mint())
+    const result = isMint
+      ? (() => {
+          const body = decodeWire(SelfServiceTokenRequestSchema, JSON.parse(raw) as unknown);
+          mints.push({ authorization: incoming.headers.authorization, raw, body });
+          return mint();
+        })()
       : (() => {
           const request: UploadRequest = {
             authorization: incoming.headers.authorization,
-            body: JSON.parse(raw) as Record<string, unknown>
+            body: decodeWire(UploadRequestSchema, JSON.parse(raw) as unknown)
           };
           requests.push(request);
           return respond(request);
         })();
+    const { status, body } = result;
 
     response.statusCode = status;
     response.setHeader("Content-Type", "application/json");
@@ -2299,7 +2384,10 @@ async function startUploadServer(
 
 /** The pinned 201: the plaintext token exactly once, and nothing else. */
 function mintsToken(token: string): MintResponder {
-  return () => ({ status: 201, body: { ok: true, token } });
+  return () => ({
+    status: 201,
+    body: encodeWire(SelfServiceTokenResponseSchema, { ok: true, token })
+  });
 }
 
 /** The pinned refusals, verbatim from the mint wire contract. */
@@ -2310,12 +2398,12 @@ function refusesMint(
   const status = code === "self_service_disabled" ? 403 : 429;
   return () => ({
     status,
-    body: {
+    body: encodeWire(ApiErrorResponseSchema, {
       ok: false,
       error: `Mint refused: ${code}.`,
       code,
       ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds })
-    }
+    })
   });
 }
 
@@ -2334,16 +2422,22 @@ function mintAnnouncement(apiUrl: string, stateDir: string): string {
   );
 }
 
+function uploadSuccess(draftId: string, versionNumber: number) {
+  return encodeWire(UploadResponseSchema, {
+    ok: true,
+    draftId,
+    versionId: `ver_${draftId}`,
+    versionNumber,
+    title: "Test draft",
+    publicUrl: `http://example.test/d/${draftId}`,
+    warnings: []
+  });
+}
+
 function createOnly(draftId: string) {
   return (): UploadResponse => ({
     status: 201,
-    body: {
-      ok: true,
-      draftId,
-      publicUrl: `http://example.test/d/${draftId}`,
-      versionNumber: 1,
-      warnings: []
-    }
+    body: uploadSuccess(draftId, 1)
   });
 }
 
@@ -2354,13 +2448,7 @@ function createOrUpdate(createdDraftId: string) {
     const draftId = isUpdate ? requested : createdDraftId;
     return {
       status: isUpdate ? 200 : 201,
-      body: {
-        ok: true,
-        draftId,
-        publicUrl: `http://example.test/d/${draftId}`,
-        versionNumber: isUpdate ? 2 : 1,
-        warnings: []
-      }
+      body: uploadSuccess(draftId, isUpdate ? 2 : 1)
     };
   };
 }

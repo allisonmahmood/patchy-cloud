@@ -13,14 +13,30 @@ import type {
 } from "@patchy/db";
 import type { HtmlStorage } from "@patchy/storage";
 import {
+  ApiErrorResponseSchema,
   contentHash,
+  DisableDraftRequestSchema,
   isDraftId,
+  MeResponseSchema,
+  ModerationDraftResponseSchema,
   newDraftId,
   newInternalId,
+  OkResponseSchema,
+  PinDraftResponseSchema,
+  PrincipalDraftsResponseSchema,
   randomToken,
+  makeWireDecoder,
+  makeWireEncoder,
+  SelfServiceTokenRequestSchema,
+  SelfServiceTokenResponseSchema,
+  TokenCreateRequestSchema,
+  TokenCreateResponseSchema,
+  TokenRevokeResponseSchema,
+  UploadRequestSchema,
+  UploadResponseSchema,
   validateHtml
 } from "@patchy/core";
-import type { UploadMetadata } from "@patchy/core";
+import type { ModerationDraft, UploadMetadata } from "@patchy/core";
 import { DisabledAnalytics, type Analytics } from "./analytics.js";
 import { createExpirySweep, type ExpirySweepResult } from "./expiry-sweep.js";
 import { getDraftPublicUrl } from "./public-url.js";
@@ -57,17 +73,20 @@ export interface CreateAppOptions {
   analytics?: Analytics;
 }
 
-interface UploadBody {
-  html?: unknown;
-  filename?: unknown;
-  draftId?: unknown;
-  metadata?: unknown;
-}
-
-interface TokenBody {
-  name?: unknown;
-  scopes?: unknown;
-}
+const decodeTokenCreateRequest = makeWireDecoder(TokenCreateRequestSchema);
+const decodeSelfServiceTokenRequest = makeWireDecoder(SelfServiceTokenRequestSchema);
+const decodeUploadRequest = makeWireDecoder(UploadRequestSchema);
+const decodeDisableDraftRequest = makeWireDecoder(DisableDraftRequestSchema);
+const encodeApiError = makeWireEncoder(ApiErrorResponseSchema);
+const encodeMeResponse = makeWireEncoder(MeResponseSchema);
+const encodeTokenCreateResponse = makeWireEncoder(TokenCreateResponseSchema);
+const encodeSelfServiceTokenResponse = makeWireEncoder(SelfServiceTokenResponseSchema);
+const encodeTokenRevokeResponse = makeWireEncoder(TokenRevokeResponseSchema);
+const encodeModerationDraftResponse = makeWireEncoder(ModerationDraftResponseSchema);
+const encodePrincipalDraftsResponse = makeWireEncoder(PrincipalDraftsResponseSchema);
+const encodeUploadResponse = makeWireEncoder(UploadResponseSchema);
+const encodeOkResponse = makeWireEncoder(OkResponseSchema);
+const encodePinDraftResponse = makeWireEncoder(PinDraftResponseSchema);
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -193,24 +212,31 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
       .send(renderHome({ publicBaseUrl: options.config.publicBaseUrl }));
   });
 
-  app.get("/healthz", async () => ({ ok: true }));
+  app.get("/healthz", async () => encodeOkResponse({ ok: true }));
 
   app.get("/api/me", { onRequest: protectedApi() }, async (request) => {
     const auth = authenticatedRequest(request);
 
-    return {
+    return encodeMeResponse({
       accountId: auth.accountId,
       accountName: auth.accountName,
       apiTokenId: auth.id,
       apiTokenName: auth.name,
       scopes: auth.scopes
-    };
+    });
   });
 
   app.post("/api/tokens", { onRequest: protectedApi("admin") }, async (request, reply) => {
     const auth = authenticatedRequest(request);
 
-    const body = (request.body || {}) as TokenBody;
+    let body;
+    try {
+      body = decodeTokenCreateRequest(request.body ?? {});
+    } catch {
+      return reply
+        .status(400)
+        .send(encodeApiError({ ok: false, error: "Invalid token request body." }));
+    }
     const token = `pp_${randomToken(32)}`;
     const scopes = normalizeScopes(body.scopes);
     const apiToken = await options.db.createApiToken({
@@ -229,11 +255,13 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
       properties: { apiTokenId: apiToken.id, selfService: false }
     });
 
-    return reply.status(201).send({
-      ok: true,
-      apiToken,
-      token
-    });
+    return reply.status(201).send(
+      encodeTokenCreateResponse({
+        ok: true,
+        apiToken,
+        token
+      })
+    );
   });
 
   // The mint route parses its own body. The operation takes no input at all, so
@@ -280,12 +308,12 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
       const apiTokenId = (request.params as { apiTokenId: string }).apiTokenId;
       const revocation = await options.db.revokeApiToken(apiTokenId);
       if (!revocation) {
-        return reply.status(404).send({ ok: false, error: "API token not found." });
+        return reply.status(404).send(encodeApiError({ ok: false, error: "API token not found." }));
       }
 
       // Idempotent: revoking twice is the same answer, with the original
       // moment intact, because that moment is when the freeze began.
-      return {
+      return encodeTokenRevokeResponse({
         ok: true,
         alreadyRevoked: revocation.alreadyRevoked,
         apiToken: {
@@ -294,7 +322,7 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
           principalId: revocation.accountId,
           revokedAt: revocation.revokedAt
         }
-      };
+      });
     }
   );
 
@@ -305,8 +333,10 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
   app.get("/api/drafts/:draftId", { onRequest: protectedApi("admin") }, async (request, reply) => {
     const draftId = (request.params as { draftId: string }).draftId;
     const draft = await options.db.findDraftForModeration(draftId);
-    if (!draft) return reply.status(404).send({ ok: false, error: "Draft not found." });
-    return { ok: true, draft: moderationDraftView(draft) };
+    if (!draft) {
+      return reply.status(404).send(encodeApiError({ ok: false, error: "Draft not found." }));
+    }
+    return encodeModerationDraftResponse({ ok: true, draft: moderationDraftView(draft) });
   });
 
   // The second step: everything else that principal is holding, so one report
@@ -321,12 +351,12 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
         MODERATION_DRAFT_LIST_LIMIT
       );
 
-      return {
+      return encodePrincipalDraftsResponse({
         ok: true,
         principalId,
         drafts: listing.drafts.map(moderationDraftView),
         truncated: listing.truncated
-      };
+      });
     }
   );
 
@@ -340,28 +370,47 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
     async (request, reply) => {
       const auth = authenticatedRequest(request);
 
-      const body = (request.body || {}) as UploadBody;
-      if (typeof body.html !== "string") {
-        return reply.status(400).send({ ok: false, error: "Missing HTML document." });
+      const rawBody =
+        request.body !== null && typeof request.body === "object" && !Array.isArray(request.body)
+          ? (request.body as Record<string, unknown>)
+          : {};
+      if (typeof rawBody.html !== "string") {
+        return reply
+          .status(400)
+          .send(encodeApiError({ ok: false, error: "Missing HTML document." }));
+      }
+      const rawDraftId = rawBody.draftId;
+      if (
+        rawDraftId !== undefined &&
+        rawDraftId !== null &&
+        (typeof rawDraftId !== "string" || !isDraftId(rawDraftId))
+      ) {
+        return reply.status(400).send(encodeApiError({ ok: false, error: "Invalid draft ID." }));
+      }
+      let body;
+      try {
+        body = decodeUploadRequest(rawBody);
+      } catch {
+        return reply
+          .status(400)
+          .send(encodeApiError({ ok: false, error: "Missing or invalid upload body." }));
       }
       const html = body.html;
 
       const validation = validateHtml(html, { maxBytes: options.config.maxHtmlBytes });
       if (!validation.ok) {
-        return reply.status(422).send({
-          ok: false,
-          errors: validation.errors,
-          warnings: validation.warnings
-        });
+        return reply.status(422).send(
+          encodeApiError({
+            ok: false,
+            errors: validation.errors,
+            warnings: validation.warnings
+          })
+        );
       }
 
-      const requestedDraftId =
-        body.draftId === undefined || body.draftId === null ? null : body.draftId;
-      if (
-        requestedDraftId !== null &&
-        (typeof requestedDraftId !== "string" || !isDraftId(requestedDraftId))
-      ) {
-        return reply.status(400).send({ ok: false, error: "Invalid draft ID." });
+      const requestedDraftId = body.draftId ?? null;
+      if (requestedDraftId !== null && !isDraftId(requestedDraftId)) {
+        return reply.status(400).send(encodeApiError({ ok: false, error: "Invalid draft ID." }));
       }
 
       // Only creates are quota-bearing. An update rewrites a draft the token
@@ -444,12 +493,14 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
         }
       });
 
-      return reply.status(requestedDraftId ? 200 : 201).send({
-        ok: true,
-        ...upload,
-        publicUrl,
-        warnings: validation.warnings
-      });
+      return reply.status(requestedDraftId ? 200 : 201).send(
+        encodeUploadResponse({
+          ok: true,
+          ...upload,
+          publicUrl,
+          warnings: validation.warnings
+        })
+      );
     }
   );
 
@@ -460,19 +511,28 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
       const auth = authenticatedRequest(request);
 
       const draftId = (request.params as { draftId: string }).draftId;
-      const reason =
-        cleanText((request.body as { reason?: unknown } | null)?.reason) || "Disabled.";
+      let body;
+      try {
+        body = decodeDisableDraftRequest(request.body ?? {});
+      } catch {
+        return reply
+          .status(400)
+          .send(encodeApiError({ ok: false, error: "Invalid disable request body." }));
+      }
+      const reason = cleanText(body.reason) || "Disabled.";
       const disabled = await options.db.disableDraft(draftId, auth.accountId, reason, {
         canModerateAnyPrincipal: hasScope(auth, "admin")
       });
-      if (!disabled) return reply.status(404).send({ ok: false, error: "Draft not found." });
+      if (!disabled) {
+        return reply.status(404).send(encodeApiError({ ok: false, error: "Draft not found." }));
+      }
 
       analytics.capture({
         name: "draft.disabled",
         principalId: auth.accountId,
         properties: { draftId, admin: hasScope(auth, "admin") }
       });
-      return { ok: true };
+      return encodeOkResponse({ ok: true });
     }
   );
 
@@ -492,8 +552,10 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
       async (request, reply) => {
         const draftId = (request.params as { draftId: string }).draftId;
         const applied = await options.db.setDraftPinned(draftId, route.pinned);
-        if (!applied) return reply.status(404).send({ ok: false, error: "Draft not found." });
-        return { ok: true, pinned: route.pinned };
+        if (!applied) {
+          return reply.status(404).send(encodeApiError({ ok: false, error: "Draft not found." }));
+        }
+        return encodePinDraftResponse({ ok: true, pinned: route.pinned });
       }
     );
   }
@@ -505,14 +567,16 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
     const deleted = await options.db.deleteDraft(draftId, auth.accountId, {
       canModerateAnyPrincipal: hasScope(auth, "admin")
     });
-    if (!deleted) return reply.status(404).send({ ok: false, error: "Draft not found." });
+    if (!deleted) {
+      return reply.status(404).send(encodeApiError({ ok: false, error: "Draft not found." }));
+    }
 
     analytics.capture({
       name: "draft.deleted",
       principalId: auth.accountId,
       properties: { draftId, admin: hasScope(auth, "admin") }
     });
-    return { ok: true };
+    return encodeOkResponse({ ok: true });
   });
 
   app.get("/d/:draftId", async (request, reply) => {
@@ -605,7 +669,7 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
     if (statusCode >= 500) {
       app.log.error(error);
     }
-    return reply.status(statusCode).send({ ok: false, error: message });
+    return reply.status(statusCode).send(encodeApiError({ ok: false, error: message }));
   });
 
   return app;
@@ -615,12 +679,13 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
  * Self-service minting: the zero-input operation that hands a caller a token
  * and the fresh principal that token controls.
  *
- * Three refusals guard it, and the order they run in is the point. The enabled
- * flag first, because a private instance owes an unauthenticated caller nothing
- * but "no". The per-minute rate next, before the quota is counted, for the same
- * reason draft creates do it in that order: a caller parked at the daily
+ * Three policy refusals guard it, and the order they run in is the point. The
+ * enabled flag comes before request decoding because a private instance owes
+ * an unauthenticated caller nothing but "no". The per-minute rate comes after
+ * the zero-input request is decoded and before the quota is counted, for the
+ * same reason draft creates do it in that order: a caller parked at the daily
  * ceiling should be throttled rather than left free to re-count the database as
- * fast as it can ask. The daily quota last, because it is the expensive one.
+ * fast as it can ask. The daily quota remains last because it is expensive.
  */
 async function mintSelfServiceToken(
   options: CreateAppOptions,
@@ -631,11 +696,21 @@ async function mintSelfServiceToken(
   reply: FastifyReply
 ): Promise<FastifyReply> {
   if (!options.config.allowSelfServiceTokens) {
-    return reply.status(403).send({
-      ok: false,
-      error: "This instance does not issue self-service tokens. Ask its operator for a token.",
-      code: "self_service_disabled"
-    });
+    return reply.status(403).send(
+      encodeApiError({
+        ok: false,
+        error: "This instance does not issue self-service tokens. Ask its operator for a token.",
+        code: "self_service_disabled"
+      })
+    );
+  }
+
+  try {
+    decodeSelfServiceTokenRequest(request.body ?? {});
+  } catch {
+    return reply
+      .status(400)
+      .send(encodeApiError({ ok: false, error: "Self-service minting takes no input." }));
   }
 
   const sourceIp = request.ip || null;
@@ -652,15 +727,17 @@ async function mintSelfServiceToken(
   const quota = options.config.selfServiceMintsPerIpPerDay;
   const recentMints = await options.db.countSelfServiceMintsBySourceIp(sourceIp);
   if (recentMints >= quota) {
-    return reply.status(429).send({
-      ok: false,
-      // "Within a day", not "tomorrow": the window rolls off each mint 24 hours
-      // after it happened, so the next slot opens on the oldest mint's clock
-      // rather than at midnight.
-      error: `Mint quota reached: ${quota} self-service tokens per address per 24 hours. Reuse the token you already hold, or retry once the oldest of those mints is a day old.`,
-      code: "mint_quota_exceeded",
-      quota
-    });
+    return reply.status(429).send(
+      encodeApiError({
+        ok: false,
+        // "Within a day", not "tomorrow": the window rolls off each mint 24 hours
+        // after it happened, so the next slot opens on the oldest mint's clock
+        // rather than at midnight.
+        error: `Mint quota reached: ${quota} self-service tokens per address per 24 hours. Reuse the token you already hold, or retry once the oldest of those mints is a day old.`,
+        code: "mint_quota_exceeded",
+        quota
+      })
+    );
   }
 
   const token = `pp_${randomToken(32)}`;
@@ -681,10 +758,7 @@ async function mintSelfServiceToken(
 
   // The plaintext appears here and nowhere else, exactly once. Only its hash is
   // stored, so no later response — and no operator — can produce it again.
-  return reply.status(201).send({
-    ok: true,
-    token
-  });
+  return reply.status(201).send(encodeSelfServiceTokenResponse({ ok: true, token }));
 }
 
 /**
@@ -800,7 +874,7 @@ function protectedApiPrefixGuard(
     // No configuration admits a tokenless request: a missing credential and a
     // present-but-invalid one are indistinguishable from here on.
     if (authState.kind === "missing" || authState.kind === "invalid") {
-      reply.status(401).send({ ok: false, error: "Missing or invalid API token." });
+      reply.status(401).send(encodeApiError({ ok: false, error: "Missing or invalid API token." }));
       return;
     }
 
@@ -814,7 +888,11 @@ function protectedApiPrefixGuard(
 
     if (targetPolicy.requiredScope) {
       if (!hasScope(authState.auth, targetPolicy.requiredScope)) {
-        reply.status(403).send({ ok: false, error: "API token does not have the required scope." });
+        reply
+          .status(403)
+          .send(
+            encodeApiError({ ok: false, error: "API token does not have the required scope." })
+          );
         return;
       }
       markPreBodyAuthorizedScope(request, targetPolicy.requiredScope);
@@ -843,14 +921,16 @@ function protectedApiRouteHook(
   return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
     const auth = request.auth;
     if (!auth) {
-      reply.status(401).send({ ok: false, error: "Missing or invalid API token." });
+      reply.status(401).send(encodeApiError({ ok: false, error: "Missing or invalid API token." }));
       return;
     }
 
     const scopeAlreadyChecked =
       requiredScope && request.preBodyAuthorizedScopes?.has(requiredScope);
     if (requiredScope && !scopeAlreadyChecked && !hasScope(auth, requiredScope)) {
-      reply.status(403).send({ ok: false, error: "API token does not have the required scope." });
+      reply
+        .status(403)
+        .send(encodeApiError({ ok: false, error: "API token does not have the required scope." }));
       return;
     }
 
@@ -1004,29 +1084,33 @@ function sendPreRoutingApiError(reply: FastifyReply, status: PreRoutingApiErrorS
       : status === 404
         ? "Not found."
         : "Request target is too long.";
-  reply.status(status).send({ ok: false, error });
+  reply.status(status).send(encodeApiError({ ok: false, error }));
 }
 
 function sendRateLimited(reply: FastifyReply, decision: RateLimitDecision): void {
   const retryAfterSeconds = decision.retryAfterSeconds ?? 1;
   reply.header("Retry-After", String(retryAfterSeconds));
-  reply.status(429).send({
-    ok: false,
-    error: "Rate limit exceeded.",
-    code: "rate_limited",
-    retryAfterSeconds
-  });
+  reply.status(429).send(
+    encodeApiError({
+      ok: false,
+      error: "Rate limit exceeded.",
+      code: "rate_limited",
+      retryAfterSeconds
+    })
+  );
 }
 
 // "Draft quota", not "draft limit": the glossary reserves limit-shaped wording
 // for the per-minute create limit, which is a different rejection.
 function sendLiveDraftQuotaExceeded(reply: FastifyReply, quota: number): FastifyReply {
-  return reply.status(403).send({
-    ok: false,
-    error: `Draft quota reached: ${quota} live drafts per token. Delete or let a draft expire before creating another.`,
-    code: "live_draft_quota_exceeded",
-    quota
-  });
+  return reply.status(403).send(
+    encodeApiError({
+      ok: false,
+      error: `Draft quota reached: ${quota} live drafts per token. Delete or let a draft expire before creating another.`,
+      code: "live_draft_quota_exceeded",
+      quota
+    })
+  );
 }
 
 /**
@@ -1037,7 +1121,7 @@ function sendLiveDraftQuotaExceeded(reply: FastifyReply, quota: number): Fastify
  * "Principal" rather than "account" — the moderation loop is operator-facing,
  * and the glossary's word for the ownership row is what it should hear.
  */
-function moderationDraftView(draft: ModeratedDraftRecord): Record<string, unknown> {
+function moderationDraftView(draft: ModeratedDraftRecord): ModerationDraft {
   return {
     id: draft.id,
     principalId: draft.accountId,
@@ -1056,10 +1140,7 @@ function moderationDraftView(draft: ModeratedDraftRecord): Record<string, unknow
 }
 
 function sendApiNotFound(reply: FastifyReply): void {
-  reply.status(404).send({
-    ok: false,
-    error: "Not found."
-  });
+  reply.status(404).send(encodeApiError({ ok: false, error: "Not found." }));
 }
 
 async function authenticateApiRequest(

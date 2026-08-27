@@ -20,6 +20,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "effect": "4.0.0-rc.112",
     "parse5": "catalog:"
   }
 }

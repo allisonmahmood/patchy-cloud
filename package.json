@@ -12,6 +12,7 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev --parallel",
+    "docs:api": "tsx scripts/generate-api-docs.ts",
     "seed:dev": "node scripts/seed-dev.mjs",
     "test": "vitest run",
     "test:all": "sh scripts/test-all.sh",

@@ -3272,6 +3272,19 @@ describe("self-service minting", () => {
       expect(malformed.statusCode).toBe(400);
       expect(malformed.json()).toMatchObject({ ok: false, error: "Malformed JSON body." });
 
+      const withInput = await minting.app.inject({
+        method: "POST",
+        url: MINT_PATH,
+        headers: { "content-type": "application/json" },
+        payload: JSON.stringify({ name: "not accepted" }),
+        remoteAddress: "198.51.100.24"
+      });
+      expect(withInput.statusCode).toBe(400);
+      expect(withInput.json()).toEqual({
+        ok: false,
+        error: "Self-service minting takes no input."
+      });
+
       // And the leniency belongs to this route alone. An empty upload body is
       // still refused by Fastify's own parser before the handler sees it —
       // which is also what proves the mint route's parser stayed encapsulated

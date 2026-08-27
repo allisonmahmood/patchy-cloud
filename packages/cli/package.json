@@ -44,5 +44,8 @@
   "dependencies": {
     "commander": "^15.0.0",
     "parse5": "catalog:"
+  },
+  "devDependencies": {
+    "@patchy/core": "workspace:*"
   }
 }
