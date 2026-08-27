@@ -132,10 +132,10 @@ describe("getServerConfig", () => {
     expect(config.dbDriver).toBe("postgres");
   });
 
-  it("parses a positive trusted-proxy hop count as a number", () => {
-    const config = getServerConfig({ PATCHY_TRUST_PROXY: "2" });
-
-    expect(config.trustProxy).toBe(2);
+  it.each(["1", "2", "32", "33"])("rejects trusted-proxy hop counts %j", (value) => {
+    expect(() => getServerConfig({ PATCHY_TRUST_PROXY: value })).toThrow(
+      /Invalid PATCHY_TRUST_PROXY/
+    );
   });
 
   it("parses trusted proxy addresses and CIDR networks as a list", () => {
@@ -157,13 +157,6 @@ describe("getServerConfig", () => {
   ])("parses partial trusted-proxy network sets %j", (value) => {
     expect(getServerConfig({ PATCHY_TRUST_PROXY: value }).trustProxy).toEqual(
       value.split(",").map((entry) => entry.trim())
-    );
-  });
-
-  it("bounds trusted-proxy hop counts", () => {
-    expect(getServerConfig({ PATCHY_TRUST_PROXY: "32" }).trustProxy).toBe(32);
-    expect(() => getServerConfig({ PATCHY_TRUST_PROXY: "33" })).toThrow(
-      /Invalid PATCHY_TRUST_PROXY/
     );
   });
 

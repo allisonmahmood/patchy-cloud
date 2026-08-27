@@ -1,6 +1,5 @@
 import { isIP } from "node:net";
 
-const MAX_TRUST_PROXY_HOPS = 32;
 const MAX_RATE_LIMIT_PER_MINUTE = 10_000;
 const MAX_LIVE_DRAFTS_PER_TOKEN = 1_000_000;
 const MAX_SELF_SERVICE_MINTS_PER_IP_PER_DAY = 1_000_000;
@@ -24,7 +23,7 @@ const DEFAULT_POSTHOG_HOST = "https://us.i.posthog.com";
 export interface ServerConfig {
   port: number;
   publicBaseUrl: string;
-  trustProxy: false | number | string[];
+  trustProxy: false | string[];
   bootstrapApiToken: string | null;
   allowSelfServiceTokens: boolean;
   maxHtmlBytes: number;
@@ -151,14 +150,10 @@ function stringValue(value: string | undefined): string | null {
   return trimmed ? trimmed : null;
 }
 
-function trustProxyValue(value: string | undefined): false | number | string[] {
+function trustProxyValue(value: string | undefined): false | string[] {
   if (value === undefined) return false;
 
   const trimmed = value.trim();
-  if (/^[1-9]\d*$/.test(trimmed) && Number(trimmed) <= MAX_TRUST_PROXY_HOPS) {
-    return Number(trimmed);
-  }
-
   const entries = trimmed.split(",").map((entry) => entry.trim());
   const ranges: TrustedProxyRange[] = [];
   for (const entry of entries) {
