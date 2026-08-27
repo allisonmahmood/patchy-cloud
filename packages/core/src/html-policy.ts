@@ -1,16 +1,20 @@
 import * as parse5 from "parse5";
 import type { HtmlValidationResult } from "./types.js";
 
-const BLOCKED_TAGS = new Set([
-  "script",
-  "form",
-  "iframe",
-  "object",
-  "embed",
-  "applet",
-  "base",
-  "link"
-]);
+const BLOCKED_TAG_LOOKUP = {
+  script: true,
+  form: true,
+  iframe: true,
+  object: true,
+  embed: true,
+  applet: true,
+  base: true,
+  link: true
+} as const satisfies Record<string, true>;
+
+type BlockedTag = keyof typeof BLOCKED_TAG_LOOKUP;
+
+export const BLOCKED_TAGS = Object.freeze(Object.keys(BLOCKED_TAG_LOOKUP) as BlockedTag[]);
 
 const URL_ATTRS = new Set([
   "href",
@@ -22,13 +26,16 @@ const URL_ATTRS = new Set([
   "xlink:href"
 ]);
 
-const BLOCKED_PROTOCOLS = ["javascript:", "vbscript:", "file:"];
+export const BLOCKED_PROTOCOLS = ["javascript:", "vbscript:", "file:"] as const;
 
 export interface ValidateHtmlOptions {
   maxBytes?: number;
 }
 
-export function validateHtml(html: string, options: ValidateHtmlOptions = {}): HtmlValidationResult {
+export function validateHtml(
+  html: string,
+  options: ValidateHtmlOptions = {}
+): HtmlValidationResult {
   const maxBytes = options.maxBytes ?? 512 * 1024;
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -57,7 +64,7 @@ export function validateHtml(html: string, options: ValidateHtmlOptions = {}): H
     if ("tagName" in node && node.tagName) {
       const tagName = node.tagName.toLowerCase();
 
-      if (BLOCKED_TAGS.has(tagName)) {
+      if (Object.hasOwn(BLOCKED_TAG_LOOKUP, tagName)) {
         errors.push(`Blocked <${tagName}> tag found.`);
       }
 
@@ -80,7 +87,10 @@ export function validateHtml(html: string, options: ValidateHtmlOptions = {}): H
           }
         }
 
-        if (name === "style" && /expression\s*\(|behavior\s*:|url\s*\(\s*javascript:/i.test(value)) {
+        if (
+          name === "style" &&
+          /expression\s*\(|behavior\s*:|url\s*\(\s*javascript:/i.test(value)
+        ) {
           errors.push("Blocked unsafe inline CSS.");
         }
       }
