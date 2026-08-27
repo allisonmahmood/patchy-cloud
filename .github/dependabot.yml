@@ -4,10 +4,13 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # Patch releases are low-risk enough to review together. Minor and major
+    # releases stay ungrouped, so each dependency gets its own pull request.
+    versioning-strategy: increase
+    open-pull-requests-limit: 20
     groups:
-      minor-and-patch:
+      patch-updates:
         update-types:
-          - minor
           - patch
     ignore:
       # Deliberately pinned to the minimum supported runtime (engines >=22);
