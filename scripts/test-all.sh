@@ -17,17 +17,13 @@ run_suite() {
   fi
 }
 
-skip_suite() {
-  suites=$((suites + 1))
-  printf '\nSKIP %s: %s\n' "$1" "$2"
-}
-
 run_suite "turbo run test" turbo run test --continue
 run_suite "test:packed-cli-e2e" pnpm run test:packed-cli-e2e
 run_suite "test:docker-save" pnpm run test:docker-save
 
 # CI builds the tagged image and supplies the provenance values required by this verifier.
-skip_suite "test:server-image" "CI-only server image build"
+suites=$((suites + 1))
+printf '\nSKIP test:server-image: CI-only server image build\n'
 
 printf '\n%s of %s suites failed\n' "$failures" "$suites"
 [ "$failures" -eq 0 ]
