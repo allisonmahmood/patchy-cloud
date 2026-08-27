@@ -52,16 +52,24 @@ export default tseslint.config(
   },
   {
     files: [
-      // Test modules and Vitest global setup are executable composition roots.
-      "**/*.test.{ts,mts,cts,tsx}",
-      "test/postgres.ts",
       "apps/server/src/start.ts",
       "packages/cli/src/index.ts",
       "packages/db/src/migrate.ts",
+      "test/postgres.ts"
+    ],
+    rules: {
+      "no-console": "off"
+    }
+  },
+  {
+    files: [
+      // These test entrypoints clone the host environment before launching child processes.
+      "apps/server/src/render.test.ts",
+      "packages/cli/src/index.test.ts",
+      "packages/cli/src/index.ts",
       "packages/config/**/*.ts"
     ],
     rules: {
-      "no-console": "off",
       "no-restricted-properties": "off"
     }
   }
