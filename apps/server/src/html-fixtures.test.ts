@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { getServerConfig } from "@patchy/config";
 import { JsonFilePatchyDb } from "@patchy/db";
 import { FileSystemHtmlStorage } from "@patchy/storage";
-import { readFixtureCorpus } from "../../../packages/core/fixtures/corpus.mjs";
+import { readFixtureCorpus } from "../../../test/html-fixtures.mjs";
 import { createApp } from "./app.js";
 
 let tempDir: string;
@@ -39,6 +39,12 @@ describe("HTML fixture corpus", () => {
         });
 
         expect(response.statusCode, fixture.filename).toBe(statusCode);
+        if (kind === "reject") {
+          expect(response.json(), fixture.filename).toMatchObject({
+            ok: false,
+            errors: expect.arrayContaining([expect.any(String)])
+          });
+        }
       }
     } finally {
       await app.close();

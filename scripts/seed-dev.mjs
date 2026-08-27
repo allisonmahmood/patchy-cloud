@@ -1,4 +1,4 @@
-import { readFixtureCorpus } from "../packages/core/fixtures/corpus.mjs";
+import { readFixtureCorpus } from "../test/html-fixtures.mjs";
 
 const apiUrl = process.env.PATCHY_API_URL ?? "http://localhost:3000";
 const apiToken = process.env.PATCHY_API_TOKEN ?? "dev-token";

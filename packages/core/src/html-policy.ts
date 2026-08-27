@@ -1,16 +1,20 @@
 import * as parse5 from "parse5";
 import type { HtmlValidationResult } from "./types.js";
 
-export const BLOCKED_TAGS = [
-  "script",
-  "form",
-  "iframe",
-  "object",
-  "embed",
-  "applet",
-  "base",
-  "link"
-] as const;
+const BLOCKED_TAG_LOOKUP = {
+  script: true,
+  form: true,
+  iframe: true,
+  object: true,
+  embed: true,
+  applet: true,
+  base: true,
+  link: true
+} as const satisfies Record<string, true>;
+
+type BlockedTag = keyof typeof BLOCKED_TAG_LOOKUP;
+
+export const BLOCKED_TAGS = Object.freeze(Object.keys(BLOCKED_TAG_LOOKUP) as BlockedTag[]);
 
 const URL_ATTRS = new Set([
   "href",
@@ -60,7 +64,7 @@ export function validateHtml(
     if ("tagName" in node && node.tagName) {
       const tagName = node.tagName.toLowerCase();
 
-      if (BLOCKED_TAGS.some((blockedTag) => blockedTag === tagName)) {
+      if (Object.hasOwn(BLOCKED_TAG_LOOKUP, tagName)) {
         errors.push(`Blocked <${tagName}> tag found.`);
       }
 
