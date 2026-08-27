@@ -48,7 +48,7 @@ interface ContractHarness {
   resetToDeployedSchema(): Promise<void>;
   /** Rewrites the ledger, to resume from a prefix of the migration list. */
   setAppliedLedger(ids: readonly string[]): Promise<void>;
-  /** Undoes the probe migrations so the store stays reusable across runs. */
+  /** Undoes the probe migrations so later assertions in the test see the base schema. */
   revertProbeMigrations(): Promise<void>;
   close(): Promise<void>;
 }

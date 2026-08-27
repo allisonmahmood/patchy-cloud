@@ -15,7 +15,6 @@ const TEMPLATE_DATABASE = "patchy_test_template";
 
 interface PostgresTestContext {
   adminUrl: string;
-  templateDatabase: string;
 }
 
 declare module "vitest" {
@@ -61,10 +60,7 @@ export default async function setup(project: TestProject): Promise<() => Promise
       await templateDb.close();
     }
 
-    project.provide("postgres", {
-      adminUrl,
-      templateDatabase: TEMPLATE_DATABASE
-    });
+    project.provide("postgres", { adminUrl });
   } catch (error) {
     await embedded.stop();
     await rm(databaseDir, { recursive: true, force: true });
@@ -84,13 +80,13 @@ export interface PostgresTestDatabase {
 
 /** Clones the migrated template so every test starts with the same isolated store. */
 export async function createPostgresTestDatabase(): Promise<PostgresTestDatabase> {
-  const { adminUrl, templateDatabase } = inject("postgres");
+  const { adminUrl } = inject("postgres");
   const databaseName = `patchy_test_${randomUUID().replaceAll("-", "")}`;
   const admin = new pg.Client({ connectionString: adminUrl });
   await admin.connect();
   try {
     await admin.query(
-      `CREATE DATABASE ${quoteIdentifier(databaseName)} TEMPLATE ${quoteIdentifier(templateDatabase)}`
+      `CREATE DATABASE ${quoteIdentifier(databaseName)} TEMPLATE ${quoteIdentifier(TEMPLATE_DATABASE)}`
     );
   } finally {
     await admin.end();
@@ -102,14 +98,14 @@ export async function createPostgresTestDatabase(): Promise<PostgresTestDatabase
   return {
     connectionString: url.toString(),
     async drop() {
-      const dropping = new pg.Client({ connectionString: adminUrl });
-      await dropping.connect();
+      const databaseAdmin = new pg.Client({ connectionString: adminUrl });
+      await databaseAdmin.connect();
       try {
-        await dropping.query(
+        await databaseAdmin.query(
           `DROP DATABASE IF EXISTS ${quoteIdentifier(databaseName)} WITH (FORCE)`
         );
       } finally {
-        await dropping.end();
+        await databaseAdmin.end();
       }
     }
   };

@@ -5,7 +5,7 @@ export default mergeConfig(
   postgresConfig,
   defineConfig({
     test: {
-      include: ["apps/**/*.test.ts", "packages/**/*.test.ts"]
+      include: ["**/src/**/*.test.ts"]
     }
   })
 );
