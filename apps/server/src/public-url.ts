@@ -17,7 +17,11 @@ export function getDraftReportPath(draftId: string): string {
   return `/report/${draftId}`;
 }
 
-export function getRequestBaseUrl(request: { protocol: string; hostname: string; port?: number }): string {
+export function getRequestBaseUrl(request: {
+  protocol: string;
+  hostname: string;
+  port?: number;
+}): string {
   const port = request.port ? `:${request.port}` : "";
   return `${request.protocol}://${request.hostname}${port}`;
 }

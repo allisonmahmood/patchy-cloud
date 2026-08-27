@@ -24,7 +24,7 @@ checks whether it exists. There is one file, not one per instance.
 
 `patchy-plan-style.md` is the detail bar. That is how much a session gets about the
 default look, so a captured style needs comparable depth — a thin palette note drifts
-off-brand within a page or two. Capture the design *system*:
+off-brand within a page or two. Capture the design _system_:
 
 - **Read the code, and look at the page.** Fetch the HTML and CSS and mine them for
   tokens, fonts, spacing, and repeated class patterns. Then render or screenshot the site
@@ -99,7 +99,7 @@ rendered screenshots.
   weight from size and space, not boldness.
 - H1 large and unhurried (~3rem, line-height 1.1); body 17px/1.7, max ~65ch.
 - Section labels: 12px letterspaced small caps (`letter-spacing: .14em;
-  text-transform: uppercase`) in --accent, sitting above the serif heading.
+text-transform: uppercase`) in --accent, sitting above the serif heading.
 
 ## Layout & components
 

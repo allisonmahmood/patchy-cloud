@@ -39,7 +39,6 @@
     "build": "node ../../scripts/build-cli-bundle.mjs",
     "prepack": "node ../../scripts/build-cli-bundle.mjs",
     "test": "vitest run --passWithNoTests",
-    "lint": "eslint src --ext .ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

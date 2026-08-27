@@ -1,587 +1,619 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Patchy Cloud artifact workflow</title>
-  <style>
-    :root {
-      --paper: #fffdf4;
-      --paper-blue: #eaf5ff;
-      --paper-green: #eff9e8;
-      --paper-amber: #fff7e4;
-      --paper-red: #fdece8;
-      --white: #fffefa;
-      --ink: #12110f;
-      --ink-soft: #36332d;
-      --muted: #69645a;
-      --line: rgba(18, 17, 15, .14);
-      --line-strong: rgba(18, 17, 15, .30);
-      --blue: #1263e6;
-      --blue-dark: #093b92;
-      --green: #64c83f;
-      --green-ink: #2f6a17;
-      --yellow: #ffbf35;
-      --amber-ink: #8a5a00;
-      --red: #e94b35;
-      --red-ink: #b4220f;
-      --shadow-hard: 4px 4px 0 var(--ink);
-      --shadow-soft: 0 18px 50px rgba(18, 17, 15, .08);
-      --radius: 8px;
-      --radius-pill: 999px;
-      --font-sans: system-ui, -apple-system, "Segoe UI", "Helvetica Neue", Arial, "Liberation Sans", sans-serif;
-      --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", Menlo, Consolas, "Liberation Mono", monospace;
-    }
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Patchy Cloud artifact workflow</title>
+    <style>
+      :root {
+        --paper: #fffdf4;
+        --paper-blue: #eaf5ff;
+        --paper-green: #eff9e8;
+        --paper-amber: #fff7e4;
+        --paper-red: #fdece8;
+        --white: #fffefa;
+        --ink: #12110f;
+        --ink-soft: #36332d;
+        --muted: #69645a;
+        --line: rgba(18, 17, 15, 0.14);
+        --line-strong: rgba(18, 17, 15, 0.3);
+        --blue: #1263e6;
+        --blue-dark: #093b92;
+        --green: #64c83f;
+        --green-ink: #2f6a17;
+        --yellow: #ffbf35;
+        --amber-ink: #8a5a00;
+        --red: #e94b35;
+        --red-ink: #b4220f;
+        --shadow-hard: 4px 4px 0 var(--ink);
+        --shadow-soft: 0 18px 50px rgba(18, 17, 15, 0.08);
+        --radius: 8px;
+        --radius-pill: 999px;
+        --font-sans:
+          system-ui, -apple-system, "Segoe UI", "Helvetica Neue", Arial, "Liberation Sans",
+          sans-serif;
+        --font-mono:
+          ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", Menlo, Consolas,
+          "Liberation Mono", monospace;
+      }
 
-    * {
-      box-sizing: border-box;
-    }
+      * {
+        box-sizing: border-box;
+      }
 
-    html {
-      background: var(--paper-blue);
-      scroll-behavior: smooth;
-    }
+      html {
+        background: var(--paper-blue);
+        scroll-behavior: smooth;
+      }
 
-    body {
-      margin: 0;
-      background:
-        linear-gradient(rgba(18, 17, 15, .035) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(18, 17, 15, .035) 1px, transparent 1px),
-        linear-gradient(180deg, var(--paper-blue) 0%, var(--paper) 34%, var(--paper-green) 78%, #fef7ef 100%);
-      background-size: 32px 32px, 32px 32px, auto;
-      color: var(--ink-soft);
-      font-family: var(--font-sans);
-      font-size: 17px;
-      font-weight: 450;
-      line-height: 1.65;
-      text-rendering: optimizeLegibility;
-      -webkit-font-smoothing: antialiased;
-    }
+      body {
+        margin: 0;
+        background:
+          linear-gradient(rgba(18, 17, 15, 0.035) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(18, 17, 15, 0.035) 1px, transparent 1px),
+          linear-gradient(
+            180deg,
+            var(--paper-blue) 0%,
+            var(--paper) 34%,
+            var(--paper-green) 78%,
+            #fef7ef 100%
+          );
+        background-size:
+          32px 32px,
+          32px 32px,
+          auto;
+        color: var(--ink-soft);
+        font-family: var(--font-sans);
+        font-size: 17px;
+        font-weight: 450;
+        line-height: 1.65;
+        text-rendering: optimizeLegibility;
+        -webkit-font-smoothing: antialiased;
+      }
 
-    body::before {
-      content: "";
-      position: fixed;
-      inset: 0;
-      z-index: -1;
-      pointer-events: none;
-      opacity: .22;
-      mix-blend-mode: multiply;
-      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 160 160' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.95' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='.36'/%3E%3C/svg%3E");
-    }
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        z-index: -1;
+        pointer-events: none;
+        opacity: 0.22;
+        mix-blend-mode: multiply;
+        background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 160 160' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.95' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='.36'/%3E%3C/svg%3E");
+      }
 
-    ::selection {
-      background: rgba(255, 191, 53, .6);
-      color: var(--ink);
-    }
+      ::selection {
+        background: rgba(255, 191, 53, 0.6);
+        color: var(--ink);
+      }
 
-    :focus-visible {
-      outline: 3px solid var(--blue);
-      outline-offset: 3px;
-      border-radius: 6px;
-    }
+      :focus-visible {
+        outline: 3px solid var(--blue);
+        outline-offset: 3px;
+        border-radius: 6px;
+      }
 
-    .wrap {
-      width: min(900px, calc(100% - 40px));
-      margin: 0 auto;
-      padding: 42px 0 96px;
-    }
-
-    .doc-head {
-      margin-bottom: 2.5rem;
-      padding-bottom: 1.5rem;
-      border-bottom: 2px solid var(--line-strong);
-    }
-
-    .head-line {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 18px 36px;
-      margin-bottom: 2.5rem;
-    }
-
-    .brand {
-      display: inline-flex;
-      align-items: center;
-      gap: 10px;
-      color: var(--ink);
-      font-size: 1.05rem;
-      font-weight: 900;
-    }
-
-    .glyph {
-      position: relative;
-      width: 30px;
-      height: 30px;
-      flex: none;
-      border: 2px solid var(--ink);
-      border-radius: 8px;
-      background: var(--green);
-      box-shadow: 3px 3px 0 var(--ink);
-      transform: rotate(-5deg);
-    }
-
-    .glyph::after {
-      content: "";
-      position: absolute;
-      top: 6px;
-      right: 5px;
-      width: 10px;
-      height: 10px;
-      border-top: 2px solid var(--ink);
-      border-right: 2px solid var(--ink);
-    }
-
-    .kicker,
-    .pill {
-      display: inline-flex;
-      align-items: center;
-      border: 2px solid var(--ink);
-      border-radius: var(--radius-pill);
-      color: var(--ink);
-      font-weight: 850;
-      line-height: 1;
-      text-transform: uppercase;
-      letter-spacing: 0;
-      white-space: nowrap;
-    }
-
-    .kicker {
-      min-height: 30px;
-      padding: 5px 18px;
-      background: var(--yellow);
-      box-shadow: 3px 3px 0 var(--ink);
-      font-size: .78rem;
-    }
-
-    .pill {
-      gap: 6px;
-      min-height: 28px;
-      padding: 3px 11px;
-      font-size: .76rem;
-    }
-
-    .pill::before {
-      content: "";
-      width: 8px;
-      height: 8px;
-      border-radius: 999px;
-      background: currentColor;
-    }
-
-    .pill-progress {
-      background: var(--paper-blue);
-      color: var(--blue-dark);
-    }
-
-    .pill-done {
-      background: var(--paper-green);
-      color: var(--green-ink);
-    }
-
-    .pill-planned {
-      background: var(--white);
-      color: var(--muted);
-    }
-
-    .pill-warn {
-      background: var(--paper-amber);
-      color: var(--amber-ink);
-    }
-
-    h1,
-    h2,
-    h3 {
-      margin: 0 0 .5em;
-      color: var(--ink);
-      font-weight: 850;
-      line-height: 1.04;
-      letter-spacing: 0;
-      text-wrap: balance;
-    }
-
-    h1 {
-      max-width: 12ch;
-      font-size: 3.35rem;
-      font-weight: 900;
-      line-height: .98;
-    }
-
-    h2 {
-      margin-top: 2.4rem;
-      font-size: 2rem;
-    }
-
-    h3 {
-      margin-top: 1.6rem;
-      font-size: 1.28rem;
-    }
-
-    p {
-      max-width: 70ch;
-      margin: 0 0 1rem;
-    }
-
-    strong {
-      color: var(--ink);
-      font-weight: 800;
-    }
-
-    a {
-      color: var(--blue-dark);
-      font-weight: 750;
-      text-decoration: underline;
-      text-underline-offset: 2px;
-    }
-
-    .lede {
-      max-width: 64ch;
-      color: var(--ink-soft);
-      font-size: 1.08rem;
-    }
-
-    .meta {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 10px;
-      margin-top: .95rem;
-      color: var(--muted);
-      font-size: .92rem;
-      font-weight: 650;
-    }
-
-    .toc {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin: 0 0 2.5rem;
-      padding: 0;
-      list-style: none;
-    }
-
-    .toc a {
-      display: inline-flex;
-      align-items: center;
-      min-height: 34px;
-      padding: 0 14px;
-      border: 1.5px solid var(--line-strong);
-      border-radius: var(--radius-pill);
-      background: var(--white);
-      color: var(--ink);
-      font-size: .9rem;
-      font-weight: 760;
-      text-decoration: none;
-    }
-
-    .toc a:hover {
-      border-color: var(--ink);
-      background: var(--blue);
-      color: var(--white);
-    }
-
-    .flow {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 10px;
-      margin: 1.5rem 0;
-      padding: 18px;
-      border: 2px dashed var(--line-strong);
-      border-radius: var(--radius);
-      background: rgba(255, 254, 250, .6);
-    }
-
-    .node {
-      display: inline-flex;
-      align-items: center;
-      min-height: 40px;
-      padding: 0 16px;
-      border: 2px solid var(--ink);
-      border-radius: var(--radius);
-      background: var(--white);
-      box-shadow: 3px 3px 0 var(--ink);
-      color: var(--ink);
-      font-size: .92rem;
-      font-weight: 800;
-    }
-
-    .node.is-accent {
-      background: var(--yellow);
-    }
-
-    .arrow {
-      color: var(--muted);
-      font-size: 1.2rem;
-      font-weight: 800;
-    }
-
-    .task-grid {
-      display: grid;
-      grid-template-columns: 1fr;
-      gap: 16px;
-      margin-top: 1rem;
-    }
-
-    .task {
-      padding: 20px 22px;
-      border: 2px solid var(--ink);
-      border-radius: var(--radius);
-      background: var(--white);
-      box-shadow: var(--shadow-hard);
-    }
-
-    .task > h3 {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 12px;
-      margin: 0 0 .5rem;
-    }
-
-    .num {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      width: 30px;
-      height: 30px;
-      flex: none;
-      border: 2px solid var(--ink);
-      border-radius: 8px;
-      background: var(--yellow);
-      box-shadow: 2px 2px 0 var(--ink);
-      color: var(--ink);
-      font-size: .95rem;
-      font-weight: 900;
-      transform: rotate(-3deg);
-    }
-
-    .task-meta {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px 16px;
-      margin-top: .75rem;
-      color: var(--muted);
-      font-size: .85rem;
-      font-weight: 650;
-    }
-
-    .note {
-      margin: 1.25rem 0;
-      padding: 14px 16px 14px 18px;
-      border: 1.5px solid var(--line-strong);
-      border-left-width: 6px;
-      border-radius: var(--radius);
-      background: var(--white);
-    }
-
-    .note-title {
-      display: block;
-      margin-bottom: .25rem;
-      color: var(--ink);
-      font-weight: 800;
-    }
-
-    .note-info {
-      border-left-color: var(--blue);
-      background: var(--paper-blue);
-    }
-
-    .tbl-wrap {
-      overflow-x: auto;
-      margin: 1.25rem 0;
-      border: 2px solid var(--ink);
-      border-radius: var(--radius);
-      box-shadow: var(--shadow-soft);
-      background: var(--white);
-    }
-
-    .tbl {
-      width: 100%;
-      min-width: 640px;
-      border-collapse: separate;
-      border-spacing: 0;
-    }
-
-    .tbl th,
-    .tbl td {
-      padding: 10px 14px;
-      border-bottom: 1px solid var(--line);
-      text-align: left;
-      font-size: .95rem;
-      vertical-align: top;
-    }
-
-    .tbl thead th {
-      background: var(--ink);
-      color: var(--white);
-      font-size: .8rem;
-      font-weight: 800;
-      letter-spacing: 0;
-      text-transform: uppercase;
-    }
-
-    .tbl tbody tr:nth-child(even) {
-      background: rgba(18, 17, 15, .025);
-    }
-
-    .tbl tbody tr:last-child td {
-      border-bottom: 0;
-    }
-
-    pre,
-    code {
-      font-family: var(--font-mono);
-    }
-
-    code {
-      padding: .12em .4em;
-      border-radius: 5px;
-      background: rgba(18, 17, 15, .06);
-      font-size: .9em;
-    }
-
-    pre {
-      margin: 1.25rem 0;
-      padding: 16px 18px;
-      overflow-x: auto;
-      border: 2px solid var(--ink);
-      border-radius: var(--radius);
-      background: #fffdf7;
-      box-shadow: var(--shadow-hard);
-      color: var(--ink);
-      font-size: .88rem;
-      line-height: 1.55;
-    }
-
-    pre code {
-      padding: 0;
-      background: none;
-      font-size: inherit;
-    }
-
-    .check {
-      display: grid;
-      gap: 8px;
-      margin: 1rem 0;
-      padding: 0;
-      list-style: none;
-    }
-
-    .check li {
-      position: relative;
-      padding-left: 34px;
-      line-height: 1.5;
-    }
-
-    .check li::before {
-      content: "";
-      position: absolute;
-      top: 1px;
-      left: 0;
-      width: 20px;
-      height: 20px;
-      border: 2px solid var(--ink);
-      border-radius: 6px;
-      background: var(--white);
-    }
-
-    .check li.is-done {
-      color: var(--muted);
-    }
-
-    .check li.is-done::before {
-      background: var(--green);
-    }
-
-    .check li.is-done::after {
-      content: "";
-      position: absolute;
-      top: 4px;
-      left: 6px;
-      width: 6px;
-      height: 11px;
-      border: solid var(--ink);
-      border-width: 0 2.5px 2.5px 0;
-      transform: rotate(40deg);
-    }
-
-    @media (max-width: 720px) {
       .wrap {
-        width: min(100% - 28px, 900px);
-        padding-top: 28px;
+        width: min(900px, calc(100% - 40px));
+        margin: 0 auto;
+        padding: 42px 0 96px;
       }
 
-      h1 {
-        max-width: 13ch;
-        font-size: 2.45rem;
-      }
-
-      h2 {
-        font-size: 1.55rem;
+      .doc-head {
+        margin-bottom: 2.5rem;
+        padding-bottom: 1.5rem;
+        border-bottom: 2px solid var(--line-strong);
       }
 
       .head-line {
-        margin-bottom: 1.8rem;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 18px 36px;
+        margin-bottom: 2.5rem;
       }
-    }
 
-    @media (prefers-reduced-motion: reduce) {
-      html {
-        scroll-behavior: auto;
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        color: var(--ink);
+        font-size: 1.05rem;
+        font-weight: 900;
       }
-    }
-  </style>
-</head>
-<body>
-  <main class="wrap">
-    <header class="doc-head">
-      <div class="head-line">
-        <span class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</span>
-        <span class="kicker">Artifact workflow</span>
-      </div>
-      <h1>A static artifact, ready to share.</h1>
-      <p class="lede">Patchy Cloud validates one self-contained HTML document, gates publishing with token authentication by default, and returns a public, unlisted review URL.</p>
-      <div class="meta">
-        <span class="pill pill-progress">Token default</span>
-        <span class="pill pill-done">Public, unlisted views</span>
-        <span>Self-hostable</span>
-      </div>
-    </header>
 
-    <ul class="toc" aria-label="Sections">
-      <li><a href="#overview">Overview</a></li>
-      <li><a href="#flow">Workflow</a></li>
-      <li><a href="#access">Access</a></li>
-      <li><a href="#artifact">Artifact</a></li>
-    </ul>
+      .glyph {
+        position: relative;
+        width: 30px;
+        height: 30px;
+        flex: none;
+        border: 2px solid var(--ink);
+        border-radius: 8px;
+        background: var(--green);
+        box-shadow: 3px 3px 0 var(--ink);
+        transform: rotate(-5deg);
+      }
 
-    <section id="overview">
-      <h2>One file, one review link</h2>
-      <p>Patchy Cloud turns plans, briefs, architecture notes, and reports into durable single-file HTML artifacts. The service rejects active content such as scripts, forms, embeds, and unsafe URL schemes before storing the document.</p>
-      <div class="note note-info">
-        <span class="note-title">Public by link</span>
-        <p>Draft viewer URLs are public and unlisted. Anyone with the link can open the rendered artifact, so publish only material that is safe to share with every link holder.</p>
-      </div>
-    </section>
+      .glyph::after {
+        content: "";
+        position: absolute;
+        top: 6px;
+        right: 5px;
+        width: 10px;
+        height: 10px;
+        border-top: 2px solid var(--ink);
+        border-right: 2px solid var(--ink);
+      }
 
-    <section id="flow">
-      <h2>Publish from a server you control</h2>
-      <p>Requires the <code>patchy</code> CLI on Node.js 22 or newer. Provide <code>PATCHY_SETUP_TOKEN</code> through a secret environment. The scoped flow pins the self-hosted origin, clears inherited credential overrides, and verifies the stored token before validation or upload.</p>
-      <div class="flow" role="img" aria-label="Flow: Write, configure, verify, validate, upload, review">
-        <span class="node">Write HTML</span>
-        <span class="arrow" aria-hidden="true">&rarr;</span>
-        <span class="node">Configure</span>
-        <span class="arrow" aria-hidden="true">&rarr;</span>
-        <span class="node">Verify</span>
-        <span class="arrow" aria-hidden="true">&rarr;</span>
-        <span class="node">Validate</span>
-        <span class="arrow" aria-hidden="true">&rarr;</span>
-        <span class="node">Upload</span>
-        <span class="arrow" aria-hidden="true">&rarr;</span>
-        <span class="node is-accent">Share Link</span>
-      </div>
-      <pre><code>(
+      .kicker,
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        border: 2px solid var(--ink);
+        border-radius: var(--radius-pill);
+        color: var(--ink);
+        font-weight: 850;
+        line-height: 1;
+        text-transform: uppercase;
+        letter-spacing: 0;
+        white-space: nowrap;
+      }
+
+      .kicker {
+        min-height: 30px;
+        padding: 5px 18px;
+        background: var(--yellow);
+        box-shadow: 3px 3px 0 var(--ink);
+        font-size: 0.78rem;
+      }
+
+      .pill {
+        gap: 6px;
+        min-height: 28px;
+        padding: 3px 11px;
+        font-size: 0.76rem;
+      }
+
+      .pill::before {
+        content: "";
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: currentColor;
+      }
+
+      .pill-progress {
+        background: var(--paper-blue);
+        color: var(--blue-dark);
+      }
+
+      .pill-done {
+        background: var(--paper-green);
+        color: var(--green-ink);
+      }
+
+      .pill-planned {
+        background: var(--white);
+        color: var(--muted);
+      }
+
+      .pill-warn {
+        background: var(--paper-amber);
+        color: var(--amber-ink);
+      }
+
+      h1,
+      h2,
+      h3 {
+        margin: 0 0 0.5em;
+        color: var(--ink);
+        font-weight: 850;
+        line-height: 1.04;
+        letter-spacing: 0;
+        text-wrap: balance;
+      }
+
+      h1 {
+        max-width: 12ch;
+        font-size: 3.35rem;
+        font-weight: 900;
+        line-height: 0.98;
+      }
+
+      h2 {
+        margin-top: 2.4rem;
+        font-size: 2rem;
+      }
+
+      h3 {
+        margin-top: 1.6rem;
+        font-size: 1.28rem;
+      }
+
+      p {
+        max-width: 70ch;
+        margin: 0 0 1rem;
+      }
+
+      strong {
+        color: var(--ink);
+        font-weight: 800;
+      }
+
+      a {
+        color: var(--blue-dark);
+        font-weight: 750;
+        text-decoration: underline;
+        text-underline-offset: 2px;
+      }
+
+      .lede {
+        max-width: 64ch;
+        color: var(--ink-soft);
+        font-size: 1.08rem;
+      }
+
+      .meta {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px;
+        margin-top: 0.95rem;
+        color: var(--muted);
+        font-size: 0.92rem;
+        font-weight: 650;
+      }
+
+      .toc {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin: 0 0 2.5rem;
+        padding: 0;
+        list-style: none;
+      }
+
+      .toc a {
+        display: inline-flex;
+        align-items: center;
+        min-height: 34px;
+        padding: 0 14px;
+        border: 1.5px solid var(--line-strong);
+        border-radius: var(--radius-pill);
+        background: var(--white);
+        color: var(--ink);
+        font-size: 0.9rem;
+        font-weight: 760;
+        text-decoration: none;
+      }
+
+      .toc a:hover {
+        border-color: var(--ink);
+        background: var(--blue);
+        color: var(--white);
+      }
+
+      .flow {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px;
+        margin: 1.5rem 0;
+        padding: 18px;
+        border: 2px dashed var(--line-strong);
+        border-radius: var(--radius);
+        background: rgba(255, 254, 250, 0.6);
+      }
+
+      .node {
+        display: inline-flex;
+        align-items: center;
+        min-height: 40px;
+        padding: 0 16px;
+        border: 2px solid var(--ink);
+        border-radius: var(--radius);
+        background: var(--white);
+        box-shadow: 3px 3px 0 var(--ink);
+        color: var(--ink);
+        font-size: 0.92rem;
+        font-weight: 800;
+      }
+
+      .node.is-accent {
+        background: var(--yellow);
+      }
+
+      .arrow {
+        color: var(--muted);
+        font-size: 1.2rem;
+        font-weight: 800;
+      }
+
+      .task-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 16px;
+        margin-top: 1rem;
+      }
+
+      .task {
+        padding: 20px 22px;
+        border: 2px solid var(--ink);
+        border-radius: var(--radius);
+        background: var(--white);
+        box-shadow: var(--shadow-hard);
+      }
+
+      .task > h3 {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 12px;
+        margin: 0 0 0.5rem;
+      }
+
+      .num {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 30px;
+        height: 30px;
+        flex: none;
+        border: 2px solid var(--ink);
+        border-radius: 8px;
+        background: var(--yellow);
+        box-shadow: 2px 2px 0 var(--ink);
+        color: var(--ink);
+        font-size: 0.95rem;
+        font-weight: 900;
+        transform: rotate(-3deg);
+      }
+
+      .task-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 16px;
+        margin-top: 0.75rem;
+        color: var(--muted);
+        font-size: 0.85rem;
+        font-weight: 650;
+      }
+
+      .note {
+        margin: 1.25rem 0;
+        padding: 14px 16px 14px 18px;
+        border: 1.5px solid var(--line-strong);
+        border-left-width: 6px;
+        border-radius: var(--radius);
+        background: var(--white);
+      }
+
+      .note-title {
+        display: block;
+        margin-bottom: 0.25rem;
+        color: var(--ink);
+        font-weight: 800;
+      }
+
+      .note-info {
+        border-left-color: var(--blue);
+        background: var(--paper-blue);
+      }
+
+      .tbl-wrap {
+        overflow-x: auto;
+        margin: 1.25rem 0;
+        border: 2px solid var(--ink);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow-soft);
+        background: var(--white);
+      }
+
+      .tbl {
+        width: 100%;
+        min-width: 640px;
+        border-collapse: separate;
+        border-spacing: 0;
+      }
+
+      .tbl th,
+      .tbl td {
+        padding: 10px 14px;
+        border-bottom: 1px solid var(--line);
+        text-align: left;
+        font-size: 0.95rem;
+        vertical-align: top;
+      }
+
+      .tbl thead th {
+        background: var(--ink);
+        color: var(--white);
+        font-size: 0.8rem;
+        font-weight: 800;
+        letter-spacing: 0;
+        text-transform: uppercase;
+      }
+
+      .tbl tbody tr:nth-child(even) {
+        background: rgba(18, 17, 15, 0.025);
+      }
+
+      .tbl tbody tr:last-child td {
+        border-bottom: 0;
+      }
+
+      pre,
+      code {
+        font-family: var(--font-mono);
+      }
+
+      code {
+        padding: 0.12em 0.4em;
+        border-radius: 5px;
+        background: rgba(18, 17, 15, 0.06);
+        font-size: 0.9em;
+      }
+
+      pre {
+        margin: 1.25rem 0;
+        padding: 16px 18px;
+        overflow-x: auto;
+        border: 2px solid var(--ink);
+        border-radius: var(--radius);
+        background: #fffdf7;
+        box-shadow: var(--shadow-hard);
+        color: var(--ink);
+        font-size: 0.88rem;
+        line-height: 1.55;
+      }
+
+      pre code {
+        padding: 0;
+        background: none;
+        font-size: inherit;
+      }
+
+      .check {
+        display: grid;
+        gap: 8px;
+        margin: 1rem 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .check li {
+        position: relative;
+        padding-left: 34px;
+        line-height: 1.5;
+      }
+
+      .check li::before {
+        content: "";
+        position: absolute;
+        top: 1px;
+        left: 0;
+        width: 20px;
+        height: 20px;
+        border: 2px solid var(--ink);
+        border-radius: 6px;
+        background: var(--white);
+      }
+
+      .check li.is-done {
+        color: var(--muted);
+      }
+
+      .check li.is-done::before {
+        background: var(--green);
+      }
+
+      .check li.is-done::after {
+        content: "";
+        position: absolute;
+        top: 4px;
+        left: 6px;
+        width: 6px;
+        height: 11px;
+        border: solid var(--ink);
+        border-width: 0 2.5px 2.5px 0;
+        transform: rotate(40deg);
+      }
+
+      @media (max-width: 720px) {
+        .wrap {
+          width: min(100% - 28px, 900px);
+          padding-top: 28px;
+        }
+
+        h1 {
+          max-width: 13ch;
+          font-size: 2.45rem;
+        }
+
+        h2 {
+          font-size: 1.55rem;
+        }
+
+        .head-line {
+          margin-bottom: 1.8rem;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        html {
+          scroll-behavior: auto;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="wrap">
+      <header class="doc-head">
+        <div class="head-line">
+          <span class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</span>
+          <span class="kicker">Artifact workflow</span>
+        </div>
+        <h1>A static artifact, ready to share.</h1>
+        <p class="lede">
+          Patchy Cloud validates one self-contained HTML document, gates publishing with token
+          authentication by default, and returns a public, unlisted review URL.
+        </p>
+        <div class="meta">
+          <span class="pill pill-progress">Token default</span>
+          <span class="pill pill-done">Public, unlisted views</span>
+          <span>Self-hostable</span>
+        </div>
+      </header>
+
+      <ul class="toc" aria-label="Sections">
+        <li><a href="#overview">Overview</a></li>
+        <li><a href="#flow">Workflow</a></li>
+        <li><a href="#access">Access</a></li>
+        <li><a href="#artifact">Artifact</a></li>
+      </ul>
+
+      <section id="overview">
+        <h2>One file, one review link</h2>
+        <p>
+          Patchy Cloud turns plans, briefs, architecture notes, and reports into durable single-file
+          HTML artifacts. The service rejects active content such as scripts, forms, embeds, and
+          unsafe URL schemes before storing the document.
+        </p>
+        <div class="note note-info">
+          <span class="note-title">Public by link</span>
+          <p>
+            Draft viewer URLs are public and unlisted. Anyone with the link can open the rendered
+            artifact, so publish only material that is safe to share with every link holder.
+          </p>
+        </div>
+      </section>
+
+      <section id="flow">
+        <h2>Publish from a server you control</h2>
+        <p>
+          Requires the <code>patchy</code> CLI on Node.js 22 or newer. Provide
+          <code>PATCHY_SETUP_TOKEN</code> through a secret environment. The scoped flow pins the
+          self-hosted origin, clears inherited credential overrides, and verifies the stored token
+          before validation or upload.
+        </p>
+        <div
+          class="flow"
+          role="img"
+          aria-label="Flow: Write, configure, verify, validate, upload, review"
+        >
+          <span class="node">Write HTML</span>
+          <span class="arrow" aria-hidden="true">&rarr;</span>
+          <span class="node">Configure</span>
+          <span class="arrow" aria-hidden="true">&rarr;</span>
+          <span class="node">Verify</span>
+          <span class="arrow" aria-hidden="true">&rarr;</span>
+          <span class="node">Validate</span>
+          <span class="arrow" aria-hidden="true">&rarr;</span>
+          <span class="node">Upload</span>
+          <span class="arrow" aria-hidden="true">&rarr;</span>
+          <span class="node is-accent">Share Link</span>
+        </div>
+        <pre><code>(
   set +x
   set -eu
   PATCHY_API_URL='https://patchy.example.com'
@@ -597,64 +629,78 @@
     patchy validate "$ARTIFACT_PATH" &amp;&amp;
     patchy upload "$ARTIFACT_PATH"
 )</code></pre>
-    </section>
+      </section>
 
-    <section id="access">
-      <h2>Access is explicit</h2>
-      <div class="task-grid">
+      <section id="access">
+        <h2>Access is explicit</h2>
+        <div class="task-grid">
+          <article class="task">
+            <h3>
+              <span class="num">1</span> Token-authenticated publishing
+              <span class="pill pill-done">Required</span>
+            </h3>
+            <p>
+              Every upload requires a bearer API token, on every configuration. A self-hosted server
+              rejects a request that carries no token with 401, and a present but invalid token
+              stays 401. Authenticated uploads create drafts and update drafts the publisher owns;
+              uploading the same known file updates its cached draft unless <code>--new</code> is
+              passed.
+            </p>
+          </article>
+        </div>
+
+        <div class="tbl-wrap">
+          <table class="tbl">
+            <thead>
+              <tr>
+                <th>Surface</th>
+                <th>Current behavior</th>
+                <th>What it means</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Authenticated upload</td>
+                <td>Token required</td>
+                <td>Create new drafts or update drafts owned by the publisher.</td>
+              </tr>
+              <tr>
+                <td>Upload without a token</td>
+                <td>Rejected with 401</td>
+                <td>Retired posture; no server setting restores it.</td>
+              </tr>
+              <tr>
+                <td>Draft URL</td>
+                <td>Public and unlisted</td>
+                <td>Anyone with the link can open the artifact without an account.</td>
+              </tr>
+              <tr>
+                <td>Viewer</td>
+                <td>Sandboxed frame</td>
+                <td>The uploaded artifact is isolated from the Patchy Cloud wrapper.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="artifact">
+        <h2>The artifact contract</h2>
         <article class="task">
-          <h3><span class="num">1</span> Token-authenticated publishing <span class="pill pill-done">Required</span></h3>
-          <p>Every upload requires a bearer API token, on every configuration. A self-hosted server rejects a request that carries no token with 401, and a present but invalid token stays 401. Authenticated uploads create drafts and update drafts the publisher owns; uploading the same known file updates its cached draft unless <code>--new</code> is passed.</p>
+          <h3>
+            <span class="num">2</span> Safe, portable HTML <span class="pill pill-done">Ready</span>
+          </h3>
+          <p>
+            Each upload is one complete HTML document with inline CSS and no JavaScript, forms,
+            iframes, external fonts, or external design assets.
+          </p>
+          <ul class="check">
+            <li class="is-done">Semantic headings and readable body copy</li>
+            <li class="is-done">Responsive layout and visible keyboard focus</li>
+            <li class="is-done">No blocked tags, secrets, or unsafe URL schemes</li>
+          </ul>
         </article>
-      </div>
-
-      <div class="tbl-wrap">
-        <table class="tbl">
-          <thead>
-            <tr>
-              <th>Surface</th>
-              <th>Current behavior</th>
-              <th>What it means</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>Authenticated upload</td>
-              <td>Token required</td>
-              <td>Create new drafts or update drafts owned by the publisher.</td>
-            </tr>
-            <tr>
-              <td>Upload without a token</td>
-              <td>Rejected with 401</td>
-              <td>Retired posture; no server setting restores it.</td>
-            </tr>
-            <tr>
-              <td>Draft URL</td>
-              <td>Public and unlisted</td>
-              <td>Anyone with the link can open the artifact without an account.</td>
-            </tr>
-            <tr>
-              <td>Viewer</td>
-              <td>Sandboxed frame</td>
-              <td>The uploaded artifact is isolated from the Patchy Cloud wrapper.</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <section id="artifact">
-      <h2>The artifact contract</h2>
-      <article class="task">
-        <h3><span class="num">2</span> Safe, portable HTML <span class="pill pill-done">Ready</span></h3>
-        <p>Each upload is one complete HTML document with inline CSS and no JavaScript, forms, iframes, external fonts, or external design assets.</p>
-        <ul class="check">
-          <li class="is-done">Semantic headings and readable body copy</li>
-          <li class="is-done">Responsive layout and visible keyboard focus</li>
-          <li class="is-done">No blocked tags, secrets, or unsafe URL schemes</li>
-        </ul>
-      </article>
-    </section>
-  </main>
-</body>
+      </section>
+    </main>
+  </body>
 </html>

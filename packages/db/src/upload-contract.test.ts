@@ -66,10 +66,7 @@ async function captureInitializeError(db: PatchyDb): Promise<unknown> {
 
 type ContractHarnessFactory = () => Promise<ContractHarness>;
 
-function describeUploadContract(
-  driverName: string,
-  createHarness: ContractHarnessFactory
-): void {
+function describeUploadContract(driverName: string, createHarness: ContractHarnessFactory): void {
   describe(`${driverName} draft upload contract`, () => {
     it("records every shipped migration once, in order, and re-migrates as a no-op", async () => {
       const harness = await createHarness();
@@ -84,9 +81,7 @@ function describeUploadContract(
         await harness.peerDb.initialize(null);
 
         expect(await harness.db.listAppliedMigrations()).toEqual(applied);
-        const created = await harness.db.recordUpload(
-          uploadInput("create", draftId, harness.auth)
-        );
+        const created = await harness.db.recordUpload(uploadInput("create", draftId, harness.auth));
         expect(created.versionNumber).toBe(1);
       } finally {
         await harness.close();
@@ -107,9 +102,7 @@ function describeUploadContract(
         expect(shippedLedgerEntries(applied)).toEqual([...SCHEMA_MIGRATION_IDS]);
         expect(new Set(applied).size).toBe(applied.length);
 
-        const created = await resumed.recordUpload(
-          uploadInput("create", draftId, harness.auth)
-        );
+        const created = await resumed.recordUpload(uploadInput("create", draftId, harness.auth));
         expect(created.versionNumber).toBe(1);
       } finally {
         await harness.close();
@@ -158,16 +151,11 @@ function describeUploadContract(
 
         const applied = await upgraded.listAppliedMigrations();
         expect(shippedLedgerEntries(applied)).toEqual([...SCHEMA_MIGRATION_IDS]);
-        expect(applied.slice(-2)).toEqual([
-          PROBE_ADD_MIGRATION_ID,
-          PROBE_REQUIRE_MIGRATION_ID
-        ]);
+        expect(applied.slice(-2)).toEqual([PROBE_ADD_MIGRATION_ID, PROBE_REQUIRE_MIGRATION_ID]);
 
         const preserved = await upgraded.findDraftVersion(draftId);
         expect(preserved.draft?.id).toBe(draftId);
-        const updated = await upgraded.recordUpload(
-          uploadInput("update", draftId, harness.auth)
-        );
+        const updated = await upgraded.recordUpload(uploadInput("update", draftId, harness.auth));
         expect(updated.versionNumber).toBe(2);
 
         await upgraded.initialize(null);
@@ -198,9 +186,7 @@ function describeUploadContract(
         expect(shippedLedgerEntries(await harness.db.listAppliedMigrations())).toEqual([
           ...SCHEMA_MIGRATION_IDS
         ]);
-        expect(await harness.db.listAppliedMigrations()).not.toContain(
-          PROBE_REQUIRE_MIGRATION_ID
-        );
+        expect(await harness.db.listAppliedMigrations()).not.toContain(PROBE_REQUIRE_MIGRATION_ID);
       } finally {
         await harness.revertProbeMigrations();
         await harness.close();
@@ -234,16 +220,12 @@ function describeUploadContract(
         await expect(
           harness.db.disableDraft(ownerDisabledDraftId, otherPrincipalId, "not the owner")
         ).resolves.toBe(false);
-        await expect(
-          harness.db.deleteDraft(ownerDeletedDraftId, otherPrincipalId)
-        ).resolves.toBe(false);
+        await expect(harness.db.deleteDraft(ownerDeletedDraftId, otherPrincipalId)).resolves.toBe(
+          false
+        );
 
         await expect(
-          harness.db.disableDraft(
-            ownerDisabledDraftId,
-            harness.auth.accountId,
-            "owner policy"
-          )
+          harness.db.disableDraft(ownerDisabledDraftId, harness.auth.accountId, "owner policy")
         ).resolves.toBe(true);
         await expect(
           harness.db.deleteDraft(ownerDeletedDraftId, harness.auth.accountId)
@@ -252,12 +234,9 @@ function describeUploadContract(
         // An authorized moderator reaches a draft it does not own. This is the
         // operator's takedown path, keyed on nothing but the granted capability.
         await expect(
-          harness.db.disableDraft(
-            moderatedDisabledDraftId,
-            otherPrincipalId,
-            "operator policy",
-            { canModerateAnyPrincipal: true }
-          )
+          harness.db.disableDraft(moderatedDisabledDraftId, otherPrincipalId, "operator policy", {
+            canModerateAnyPrincipal: true
+          })
         ).resolves.toBe(true);
         await expect(
           harness.db.deleteDraft(moderatedDeletedDraftId, otherPrincipalId, {
@@ -359,7 +338,6 @@ function describeUploadContract(
       }
     });
 
-
     it("rejects unknown, foreign, deleted, and disabled update targets identically", async () => {
       const harness = await createHarness();
       const unknownDraftId = newDraftId();
@@ -400,12 +378,7 @@ function describeUploadContract(
           });
         }
         expect(errors.map(String)).toEqual(Array(4).fill("Error: Draft not found."));
-        for (const draftId of [
-          unknownDraftId,
-          foreignDraftId,
-          deletedDraftId,
-          disabledDraftId
-        ]) {
+        for (const draftId of [unknownDraftId, foreignDraftId, deletedDraftId, disabledDraftId]) {
           expect(errors.map(String).join("\n")).not.toContain(draftId);
         }
       } finally {
@@ -475,9 +448,7 @@ function describeUploadContract(
 
         expect(await harness.db.countLiveDraftsByCreatorApiToken(creator.id)).toBe(1);
         expect(await harness.db.countLiveDraftsByCreatorApiToken(other.id)).toBe(1);
-        expect(
-          await harness.db.countLiveDraftsByCreatorApiToken("tok_never_used")
-        ).toBe(0);
+        expect(await harness.db.countLiveDraftsByCreatorApiToken("tok_never_used")).toBe(0);
       } finally {
         await harness.close();
       }
@@ -492,9 +463,7 @@ function describeUploadContract(
         const editor = await createUploadToken(harness, "Quota update editor token");
 
         await harness.db.recordUpload(uploadInput("create", draftId, creator));
-        const updated = await harness.db.recordUpload(
-          uploadInput("update", draftId, editor)
-        );
+        const updated = await harness.db.recordUpload(uploadInput("update", draftId, editor));
 
         expect(updated.versionNumber).toBe(2);
         expect(await harness.db.countLiveDraftsByCreatorApiToken(creator.id)).toBe(1);
@@ -532,9 +501,7 @@ function describeUploadContract(
         // rather than escaping the count altogether.
         const unattributedBefore = await clocked.countSelfServiceMintsBySourceIp(null);
         await mintToken(clocked, null);
-        expect(await clocked.countSelfServiceMintsBySourceIp(null)).toBe(
-          unattributedBefore + 1
-        );
+        expect(await clocked.countSelfServiceMintsBySourceIp(null)).toBe(unattributedBefore + 1);
         expect(await clocked.countSelfServiceMintsBySourceIp(sourceIp)).toBe(2);
 
         // Still inside the day, then past it: the window rolls off the mints
@@ -858,18 +825,14 @@ function describeUploadContract(
 
         // The deploy expires nothing: a row written long before the clock
         // existed still serves the moment the migration lands.
-        expect((await adopted.findDraftVersion(LEGACY_DRAFT_ID)).draft?.title).toBe(
-          "Legacy draft"
-        );
+        expect((await adopted.findDraftVersion(LEGACY_DRAFT_ID)).draft?.title).toBe("Legacy draft");
 
         // And what it has ahead of it is a whole window, anchored at the
         // migration rather than at whenever the row was last written.
         let now = migratedAt;
         const clocked = harness.openDb({ clock: () => now });
         now = migratedAt + 89 * DAY_MS;
-        expect((await clocked.findDraftVersion(LEGACY_DRAFT_ID)).draft?.id).toBe(
-          LEGACY_DRAFT_ID
-        );
+        expect((await clocked.findDraftVersion(LEGACY_DRAFT_ID)).draft?.id).toBe(LEGACY_DRAFT_ID);
         now = migratedAt + 91 * DAY_MS;
         expect((await clocked.findDraftVersion(LEGACY_DRAFT_ID)).draft).toBeNull();
       } finally {
@@ -1038,9 +1001,7 @@ function describeUploadContract(
         expect(await clocked.deleteExpiredDraft(draftId)).toBeNull();
 
         // Ordinary in every other respect: its owner still updates it.
-        const updated = await clocked.recordUpload(
-          uploadInput("update", draftId, harness.auth)
-        );
+        const updated = await clocked.recordUpload(uploadInput("update", draftId, harness.auth));
         expect(updated.versionNumber).toBe(2);
 
         now = RETENTION_EPOCH + 400 * DAY_MS;
@@ -1399,11 +1360,7 @@ function describeUploadContract(
         expect(page.drafts[0]?.createdByApiTokenId).toBe(creator.id);
 
         const roomy = await clocked.listDraftsByPrincipal(harness.auth.accountId, 4);
-        expect(roomy.drafts.map((draft) => draft.id).slice(0, 3)).toEqual([
-          newest,
-          middle,
-          oldest
-        ]);
+        expect(roomy.drafts.map((draft) => draft.id).slice(0, 3)).toEqual([newest, middle, oldest]);
         expect(roomy.drafts.map((draft) => draft.id)).not.toContain(deleted);
 
         // A principal holding nothing is an empty answer, not a truncated one.
@@ -1473,10 +1430,7 @@ function describeUploadContract(
           harness.peerDb.revokeApiToken(created.id)
         ]);
 
-        expect([first?.alreadyRevoked, second?.alreadyRevoked].sort()).toEqual([
-          false,
-          true
-        ]);
+        expect([first?.alreadyRevoked, second?.alreadyRevoked].sort()).toEqual([false, true]);
         // Both report the same instant, and it is the one that actually stuck.
         expect(first?.revokedAt).toBe(second?.revokedAt);
         expect(await harness.db.findApiTokenByToken(token)).toBeNull();
@@ -1580,11 +1534,7 @@ async function createJsonHarness(): Promise<ContractHarness> {
     auth,
     openDb,
     async resetToDeployedSchema() {
-      await writeFile(
-        filePath,
-        `${JSON.stringify(deployedJsonStateFixture(), null, 2)}\n`,
-        "utf8"
-      );
+      await writeFile(filePath, `${JSON.stringify(deployedJsonStateFixture(), null, 2)}\n`, "utf8");
     },
     async setAppliedLedger(ids) {
       const stored = JSON.parse(await readFile(filePath, "utf8")) as Record<string, unknown>;
@@ -1644,9 +1594,7 @@ async function createPostgresHarness(): Promise<ContractHarness> {
       await runSql(SEED_DEPLOYED_ROWS_SQL);
     },
     async setAppliedLedger(ids) {
-      await runSql("DELETE FROM schema_migrations WHERE NOT (id = ANY($1::text[]))", [
-        [...ids]
-      ]);
+      await runSql("DELETE FROM schema_migrations WHERE NOT (id = ANY($1::text[]))", [[...ids]]);
     },
     async revertProbeMigrations() {
       await runSql(REVERT_PROBE_MIGRATIONS_SQL);
@@ -1664,10 +1612,7 @@ async function createPostgresHarness(): Promise<ContractHarness> {
 /**
  * A token nobody else in the test shares, so its tally starts from zero.
  */
-async function createUploadToken(
-  harness: ContractHarness,
-  name: string
-): Promise<ApiTokenAuth> {
+async function createUploadToken(harness: ContractHarness, name: string): Promise<ApiTokenAuth> {
   const token = randomToken();
   await harness.db.createApiToken({
     accountId: harness.auth.accountId,

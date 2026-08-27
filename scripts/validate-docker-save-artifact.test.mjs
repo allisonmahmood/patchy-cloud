@@ -60,7 +60,7 @@ const legacyKeyOrder = [
   "architecture",
   "variant",
   "os",
-  "Size",
+  "Size"
 ];
 
 function legacyConfig(v1Config, id, parent) {
@@ -95,7 +95,7 @@ function emptyMobyContainerConfig() {
     WorkingDir: "",
     Entrypoint: null,
     OnBuild: null,
-    Labels: null,
+    Labels: null
   };
 }
 
@@ -106,7 +106,7 @@ function mobyRuntimeConfig(runtimeConfig) {
     User: runtimeConfig.User ?? "",
     AttachStdin: false,
     AttachStdout: false,
-    AttachStderr: false,
+    AttachStderr: false
   };
   if (Object.hasOwn(runtimeConfig, "ExposedPorts")) {
     config.ExposedPorts = runtimeConfig.ExposedPorts;
@@ -116,7 +116,7 @@ function mobyRuntimeConfig(runtimeConfig) {
     OpenStdin: false,
     StdinOnce: false,
     Env: runtimeConfig.Env ?? null,
-    Cmd: runtimeConfig.Cmd ?? null,
+    Cmd: runtimeConfig.Cmd ?? null
   });
   if (Object.hasOwn(runtimeConfig, "Healthcheck")) {
     config.Healthcheck = runtimeConfig.Healthcheck;
@@ -128,7 +128,7 @@ function mobyRuntimeConfig(runtimeConfig) {
     WorkingDir: runtimeConfig.WorkingDir ?? "",
     Entrypoint: runtimeConfig.Entrypoint ?? null,
     OnBuild: runtimeConfig.OnBuild ?? null,
-    Labels: runtimeConfig.Labels ?? null,
+    Labels: runtimeConfig.Labels ?? null
   });
   for (const key of ["StopSignal", "Shell"]) {
     if (Object.hasOwn(runtimeConfig, key)) config[key] = runtimeConfig[key];
@@ -147,11 +147,9 @@ function fixtureTar({
   repositoryLayerId = ({ diffIds }) => diffIds.at(-1).slice("sha256:".length),
   mutateDiffIds = (digests) => digests,
   mutateLayerDigests = (digests) => digests,
-  mutateEntries = (entries) => entries,
+  mutateEntries = (entries) => entries
 } = {}) {
-  const diffIds = mutateDiffIds(
-    layerContents.map((layer) => `sha256:${sha256(layer)}`),
-  );
+  const diffIds = mutateDiffIds(layerContents.map((layer) => `sha256:${sha256(layer)}`));
   const storedLayers = layerContents.map(mutateStoredLayer);
   if (reverseStoredLayers) storedLayers.reverse();
   const compress =
@@ -167,9 +165,7 @@ function fixtureTar({
         ? "application/vnd.oci.image.layer.v1.tar+zstd"
         : "application/vnd.oci.image.layer.v1.tar";
   const layerBodies = storedLayers.map((layer) => compress(layer));
-  const layerDigests = mutateLayerDigests(
-    layerBodies.map((layer) => `sha256:${sha256(layer)}`),
-  );
+  const layerDigests = mutateLayerDigests(layerBodies.map((layer) => `sha256:${sha256(layer)}`));
   const configValue = {
     created: "1970-01-01T00:00:00Z",
     architecture: "amd64",
@@ -183,7 +179,7 @@ function fixtureTar({
       Labels: {
         "org.opencontainers.image.source": "https://github.com/allisonmahmood/patchy-cloud",
         "org.opencontainers.image.version": version,
-        "org.opencontainers.image.revision": revision,
+        "org.opencontainers.image.revision": revision
       },
       ExposedPorts: { "3000/tcp": {} },
       Volumes: { "/data": {} },
@@ -191,16 +187,16 @@ function fixtureTar({
         Test: ["CMD", "node", "healthcheck.js"],
         Interval: 1_000_000_000,
         Timeout: 2_000_000_000,
-        Retries: 3,
+        Retries: 3
       },
       StopSignal: "SIGTERM",
       Shell: ["/bin/sh", "-c"],
-      OnBuild: ["RUN echo verified"],
+      OnBuild: ["RUN echo verified"]
     },
     rootfs: {
       type: "layers",
-      diff_ids: diffIds,
-    },
+      diff_ids: diffIds
+    }
   };
   const config = jsonBuffer(configValue);
   const configDigest = `sha256:${sha256(config)}`;
@@ -210,21 +206,21 @@ function fixtureTar({
     config: {
       mediaType: "application/vnd.oci.image.config.v1+json",
       digest: configDigest,
-      size: config.length,
+      size: config.length
     },
     layers: layerBodies.map((layer, index) => ({
       mediaType: layerMediaType,
       digest: layerDigests[index],
-      size: layer.length,
-    })),
+      size: layer.length
+    }))
   });
   const ociManifestDigest = `sha256:${sha256(ociManifest)}`;
   const manifest = jsonBuffer([
     {
       Config: `blobs/sha256/${configDigest.slice("sha256:".length)}`,
       RepoTags: [repoTag],
-      Layers: layerDigests.map((digest) => `blobs/sha256/${digest.slice("sha256:".length)}`),
-    },
+      Layers: layerDigests.map((digest) => `blobs/sha256/${digest.slice("sha256:".length)}`)
+    }
   ]);
   const legacyLayerConfigs = [];
   for (let index = 0; index < diffIds.length; index += 1) {
@@ -236,19 +232,19 @@ function fixtureTar({
             container_config: emptyMobyContainerConfig(),
             config: mobyRuntimeConfig(configValue.config),
             architecture: configValue.architecture,
-            os: configValue.os,
+            os: configValue.os
           }
         : {
             created: "1970-01-01T00:00:00Z",
             container_config: emptyMobyContainerConfig(),
-            os: configValue.os,
+            os: configValue.os
           };
     const id = sha256(Buffer.from(`opaque-legacy-id-${index}`, "utf8"));
     const body = legacyConfig(v1Config, id, parent);
     legacyLayerConfigs.push({
       id,
       path: `blobs/sha256/${sha256(body)}`,
-      body,
+      body
     });
   }
   const storedLegacyLayerConfigs = mutateLegacyLayerConfigs(legacyLayerConfigs);
@@ -256,9 +252,9 @@ function fixtureTar({
     [imageName]: {
       [version]: repositoryLayerId({
         configs: storedLegacyLayerConfigs,
-        diffIds,
-      }),
-    },
+        diffIds
+      })
+    }
   });
   const index = jsonBuffer({
     schemaVersion: 2,
@@ -268,10 +264,10 @@ function fixtureTar({
         digest: ociManifestDigest,
         size: ociManifest.length,
         annotations: {
-          "org.opencontainers.image.ref.name": version,
-        },
-      },
-    ],
+          "org.opencontainers.image.ref.name": version
+        }
+      }
+    ]
   });
 
   const entries = mutateEntries([
@@ -283,23 +279,20 @@ function fixtureTar({
     tarEntry("index.json", index),
     tarEntry(`blobs/sha256/${configDigest.slice("sha256:".length)}`, config),
     ...layerBodies.map((layer, index) =>
-      tarEntry(`blobs/sha256/${layerDigests[index].slice("sha256:".length)}`, layer),
+      tarEntry(`blobs/sha256/${layerDigests[index].slice("sha256:".length)}`, layer)
     ),
     tarEntry(`blobs/sha256/${ociManifestDigest.slice("sha256:".length)}`, ociManifest),
     ...storedLegacyLayerConfigs.map((legacy) => tarEntry(legacy.path, legacy.body)),
-    ...extraEntries,
+    ...extraEntries
   ]);
 
-  const tar = Buffer.concat([
-    ...entries,
-    Buffer.alloc(1024),
-  ]);
+  const tar = Buffer.concat([...entries, Buffer.alloc(1024)]);
   return {
     tar,
     configDigest,
     diffIds,
     legacyLayerConfigs: storedLegacyLayerConfigs,
-    layerDigests,
+    layerDigests
   };
 }
 
@@ -311,7 +304,7 @@ function rewriteLegacyConfig(legacy, mutate) {
   return {
     id,
     path: `blobs/sha256/${sha256(body)}`,
-    body,
+    body
   };
 }
 
@@ -329,9 +322,9 @@ function validateTarInTemp(tmp, tar, configDigest) {
       "--expected-repo-tag",
       repoTag,
       "--expected-config-id",
-      configDigest,
+      configDigest
     ],
-    { cwd: repoRoot, encoding: "utf8" },
+    { cwd: repoRoot, encoding: "utf8" }
   );
 }
 
@@ -380,9 +373,9 @@ test("accepts opaque Moby legacy IDs when the authenticated graph bindings remai
           rewriteLegacyConfig(top, (legacy) => {
             legacy.id = topId;
             legacy.parent = rootId;
-          }),
+          })
         ];
-      },
+      }
     });
     await writeFile(path.join(tmp, "image.tar"), tar);
     const result = validateTarInTemp(tmp, tar, configDigest);
@@ -399,8 +392,8 @@ test("accepts a leaf that omits optional OCI role fields", async () => {
         rewriteLegacyConfig(top, (legacy) => {
           delete legacy.config;
           delete legacy.architecture;
-        }),
-      ],
+        })
+      ]
     });
     await writeFile(path.join(tmp, "image.tar"), tar);
     const result = validateTarInTemp(tmp, tar, configDigest);
@@ -413,7 +406,7 @@ test("rejects malformed Moby legacy parent graphs and repository bindings", asyn
   const threeLayers = [
     Buffer.from("layer-one\n", "utf8"),
     Buffer.from("layer-two\n", "utf8"),
-    Buffer.from("layer-three\n", "utf8"),
+    Buffer.from("layer-three\n", "utf8")
   ];
   const cases = [
     {
@@ -424,10 +417,10 @@ test("rejects malformed Moby legacy parent graphs and repository bindings", asyn
             rewriteLegacyConfig(root, (legacy) => {
               legacy.id = "A".repeat(64);
             }),
-            top,
-          ],
+            top
+          ]
         }),
-      error: /invalid id/,
+      error: /invalid id/
     },
     {
       name: "invalid parent",
@@ -437,10 +430,10 @@ test("rejects malformed Moby legacy parent graphs and repository bindings", asyn
             root,
             rewriteLegacyConfig(top, (legacy) => {
               legacy.parent = "not-a-legacy-id";
-            }),
-          ],
+            })
+          ]
         }),
-      error: /invalid parent/,
+      error: /invalid parent/
     },
     {
       name: "multiple roots",
@@ -450,10 +443,10 @@ test("rejects malformed Moby legacy parent graphs and repository bindings", asyn
             root,
             rewriteLegacyConfig(top, (legacy) => {
               delete legacy.parent;
-            }),
-          ],
+            })
+          ]
         }),
-      error: /exactly one parentless root, found 2/,
+      error: /exactly one parentless root, found 2/
     },
     {
       name: "fork",
@@ -465,10 +458,10 @@ test("rejects malformed Moby legacy parent graphs and repository bindings", asyn
             middle,
             rewriteLegacyConfig(top, (legacy) => {
               legacy.parent = root.id;
-            }),
-          ],
+            })
+          ]
         }),
-      error: /graph forks at parent/,
+      error: /graph forks at parent/
     },
     {
       name: "cycle",
@@ -478,10 +471,10 @@ test("rejects malformed Moby legacy parent graphs and repository bindings", asyn
             rewriteLegacyConfig(root, (legacy) => {
               legacy.parent = top.id;
             }),
-            top,
-          ],
+            top
+          ]
         }),
-      error: /exactly one parentless root, found 0/,
+      error: /exactly one parentless root, found 0/
     },
     {
       name: "missing parent",
@@ -491,18 +484,18 @@ test("rejects malformed Moby legacy parent graphs and repository bindings", asyn
             root,
             rewriteLegacyConfig(top, (legacy) => {
               legacy.parent = "5".repeat(64);
-            }),
-          ],
+            })
+          ]
         }),
-      error: /references a missing parent/,
+      error: /references a missing parent/
     },
     {
       name: "missing node",
       fixture: () =>
         fixtureTar({
-          mutateLegacyLayerConfigs: ([root]) => [root],
+          mutateLegacyLayerConfigs: ([root]) => [root]
         }),
-      error: /must contain exactly 2 legacy configs, found 1/,
+      error: /must contain exactly 2 legacy configs, found 1/
     },
     {
       name: "duplicate ID",
@@ -512,19 +505,19 @@ test("rejects malformed Moby legacy parent graphs and repository bindings", asyn
             root,
             rewriteLegacyConfig(top, (legacy) => {
               legacy.id = root.id;
-            }),
-          ],
+            })
+          ]
         }),
-      error: /duplicate legacy config id/,
+      error: /duplicate legacy config id/
     },
     {
       name: "repository tag points to the synthetic legacy leaf ID",
       fixture: () =>
         fixtureTar({
-          repositoryLayerId: ({ configs }) => configs.at(-1).id,
+          repositoryLayerId: ({ configs }) => configs.at(-1).id
         }),
-      error: /repositories .* expected top uncompressed diff ID/,
-    },
+      error: /repositories .* expected top uncompressed diff ID/
+    }
   ];
 
   for (const item of cases) {
@@ -547,9 +540,9 @@ test("rejects invalid or role-inconsistent Moby legacy V1 fields", async () => {
         rewriteLegacyConfig(root, (legacy) => {
           legacy.created = 0;
         }),
-        top,
+        top
       ],
-      error: /invalid created value/,
+      error: /invalid created value/
     },
     {
       name: "invalid container config type",
@@ -557,9 +550,9 @@ test("rejects invalid or role-inconsistent Moby legacy V1 fields", async () => {
         rewriteLegacyConfig(root, (legacy) => {
           legacy.container_config = [];
         }),
-        top,
+        top
       ],
-      error: /invalid container_config/,
+      error: /invalid container_config/
     },
     {
       name: "empty operating system",
@@ -567,9 +560,9 @@ test("rejects invalid or role-inconsistent Moby legacy V1 fields", async () => {
         rewriteLegacyConfig(root, (legacy) => {
           legacy.os = "";
         }),
-        top,
+        top
       ],
-      error: /invalid os/,
+      error: /invalid os/
     },
     {
       name: "invalid optional string type",
@@ -577,9 +570,9 @@ test("rejects invalid or role-inconsistent Moby legacy V1 fields", async () => {
         rewriteLegacyConfig(root, (legacy) => {
           legacy.comment = false;
         }),
-        top,
+        top
       ],
-      error: /invalid comment/,
+      error: /invalid comment/
     },
     {
       name: "non-leaf runtime config",
@@ -587,9 +580,9 @@ test("rejects invalid or role-inconsistent Moby legacy V1 fields", async () => {
         rewriteLegacyConfig(root, (legacy) => {
           legacy.config = { Labels: { attacker: "extra" } };
         }),
-        top,
+        top
       ],
-      error: /non-leaf legacy config .* must not contain config/,
+      error: /non-leaf legacy config .* must not contain config/
     },
     {
       name: "non-leaf architecture",
@@ -597,9 +590,9 @@ test("rejects invalid or role-inconsistent Moby legacy V1 fields", async () => {
         rewriteLegacyConfig(root, (legacy) => {
           legacy.architecture = "amd64";
         }),
-        top,
+        top
       ],
-      error: /non-leaf legacy config .* must not contain architecture/,
+      error: /non-leaf legacy config .* must not contain architecture/
     },
     {
       name: "non-leaf variant",
@@ -607,9 +600,9 @@ test("rejects invalid or role-inconsistent Moby legacy V1 fields", async () => {
         rewriteLegacyConfig(root, (legacy) => {
           legacy.variant = "v1";
         }),
-        top,
+        top
       ],
-      error: /non-leaf legacy config .* must not contain variant/,
+      error: /non-leaf legacy config .* must not contain variant/
     },
     {
       name: "final architecture",
@@ -617,9 +610,9 @@ test("rejects invalid or role-inconsistent Moby legacy V1 fields", async () => {
         root,
         rewriteLegacyConfig(top, (legacy) => {
           legacy.architecture = "arm64";
-        }),
+        })
       ],
-      error: /leaf architecture does not match OCI image config/,
+      error: /leaf architecture does not match OCI image config/
     },
     {
       name: "final variant",
@@ -627,9 +620,9 @@ test("rejects invalid or role-inconsistent Moby legacy V1 fields", async () => {
         root,
         rewriteLegacyConfig(top, (legacy) => {
           legacy.variant = "v1";
-        }),
+        })
       ],
-      error: /leaf variant does not match OCI image config/,
+      error: /leaf variant does not match OCI image config/
     },
     ...[
       ["User", "attacker"],
@@ -643,16 +636,16 @@ test("rejects invalid or role-inconsistent Moby legacy V1 fields", async () => {
       ["Healthcheck", { Test: ["NONE"] }],
       ["StopSignal", "SIGKILL"],
       ["Shell", ["/bin/bash", "-c"]],
-      ["OnBuild", ["RUN attacker"]],
+      ["OnBuild", ["RUN attacker"]]
     ].map(([field, value]) => ({
       name: `final runtime config ${field}`,
       mutate: ([root, top]) => [
         root,
         rewriteLegacyConfig(top, (legacy) => {
           legacy.config[field] = value;
-        }),
+        })
       ],
-      error: new RegExp(`leaf runtime config ${field} does not match OCI image config`),
+      error: new RegExp(`leaf runtime config ${field} does not match OCI image config`)
     })),
     {
       name: "operating system",
@@ -660,23 +653,23 @@ test("rejects invalid or role-inconsistent Moby legacy V1 fields", async () => {
         rewriteLegacyConfig(root, (legacy) => {
           legacy.os = "windows";
         }),
-        top,
+        top
       ],
-      error: /operating system does not match OCI image config/,
+      error: /operating system does not match OCI image config/
     },
     ...[
       ["zero", 0],
       ["fractional", 1.5],
-      ["unsafe", Number.MAX_SAFE_INTEGER + 1],
+      ["unsafe", Number.MAX_SAFE_INTEGER + 1]
     ].map(([name, value]) => ({
       name: `${name} Size`,
       mutate: ([root, top]) => [
         rewriteLegacyConfig(root, (legacy) => {
           legacy.Size = value;
         }),
-        top,
+        top
       ],
-      error: /invalid Size/,
+      error: /invalid Size/
     })),
     {
       name: "lowercase size key",
@@ -684,16 +677,16 @@ test("rejects invalid or role-inconsistent Moby legacy V1 fields", async () => {
         rewriteLegacyConfig(root, (legacy) => {
           legacy.size = 1;
         }),
-        top,
+        top
       ],
-      error: /unexpected key size/,
-    },
+      error: /unexpected key size/
+    }
   ];
 
   for (const item of cases) {
     await withImageTar(async (tmp) => {
       const { tar, configDigest } = fixtureTar({
-        mutateLegacyLayerConfigs: item.mutate,
+        mutateLegacyLayerConfigs: item.mutate
       });
       await writeFile(path.join(tmp, "image.tar"), tar);
       const result = validateTarInTemp(tmp, tar, configDigest);
@@ -711,48 +704,39 @@ test("rejects tampered, reordered, and compression-bomb layer content", async ()
       fixture: () =>
         fixtureTar({
           mutateStoredLayer: (layer, index) =>
-            index === 0 ? Buffer.from("tampered-layer\n", "utf8") : layer,
+            index === 0 ? Buffer.from("tampered-layer\n", "utf8") : layer
         }),
-      error: /rootfs\.diff_ids\[0\].*does not match uncompressed layer/,
+      error: /rootfs\.diff_ids\[0\].*does not match uncompressed layer/
     },
     {
       name: "reordered descriptors",
       fixture: () => fixtureTar({ reverseStoredLayers: true }),
-      error: /rootfs\.diff_ids\[0\].*does not match uncompressed layer/,
+      error: /rootfs\.diff_ids\[0\].*does not match uncompressed layer/
     },
     {
       name: "wrong compressed layer digest",
       fixture: () =>
         fixtureTar({
-          mutateLayerDigests: (digests) => [
-            `sha256:${"f".repeat(64)}`,
-            ...digests.slice(1),
-          ],
+          mutateLayerDigests: (digests) => [`sha256:${"f".repeat(64)}`, ...digests.slice(1)]
         }),
-      error: /blob .* hashes to sha256:.* not sha256:ffff/,
+      error: /blob .* hashes to sha256:.* not sha256:ffff/
     },
     {
       name: "wrong nonfinal diff ID",
       fixture: () =>
         fixtureTar({
-          mutateDiffIds: (diffIds) => [
-            `sha256:${"e".repeat(64)}`,
-            ...diffIds.slice(1),
-          ],
+          mutateDiffIds: (diffIds) => [`sha256:${"e".repeat(64)}`, ...diffIds.slice(1)]
         }),
-      error: /rootfs\.diff_ids\[0\].*does not match uncompressed layer/,
+      error: /rootfs\.diff_ids\[0\].*does not match uncompressed layer/
     },
     {
       name: "compression bomb",
       fixture: () =>
         fixtureTar({
-          layerContents: [
-            Buffer.alloc(2 * 1024 * 1024),
-            Buffer.from("ordinary-layer\n", "utf8"),
-          ],
+          layerContents: [Buffer.alloc(2 * 1024 * 1024), Buffer.from("ordinary-layer\n", "utf8")]
         }),
-      error: /bounded decompression limit/,
-    },
+      error: /bounded decompression limit/
+    }
   ];
 
   for (const item of cases) {
@@ -767,11 +751,10 @@ test("rejects tampered, reordered, and compression-bomb layer content", async ()
   }
 });
 
-
 test("rejects a non-OCI manifest media type in the Docker-save graph", async () => {
   await withImageTar(async (tmp) => {
     const { tar, configDigest } = fixtureTar({
-      manifestMediaType: "application/vnd.docker.distribution.manifest.v2+json",
+      manifestMediaType: "application/vnd.docker.distribution.manifest.v2+json"
     });
     await writeFile(path.join(tmp, "image.tar"), tar);
     const result = validateTarInTemp(tmp, tar, configDigest);
@@ -786,30 +769,31 @@ test("rejects unsafe docker-save tar paths and entry types", async () => {
     {
       name: "absolute",
       fixture: () => fixtureTar({ extraEntries: [tarEntry("/absolute", "bad\n")] }),
-      error: /absolute path/,
+      error: /absolute path/
     },
     {
       name: "parent traversal",
-      fixture: () => fixtureTar({
-      extraEntries: [tarEntry("../escape", "bad\n")],
-      }),
-      error: /escapes the archive root/,
+      fixture: () =>
+        fixtureTar({
+          extraEntries: [tarEntry("../escape", "bad\n")]
+        }),
+      error: /escapes the archive root/
     },
     {
       name: "duplicate",
       fixture: () => fixtureTar({ extraEntries: [tarEntry("manifest.json", "bad\n")] }),
-      error: /duplicate entry/,
+      error: /duplicate entry/
     },
     {
       name: "link",
       fixture: () => fixtureTar({ extraEntries: [tarEntry("link", "target", "2")] }),
-      error: /entry is a link/,
+      error: /entry is a link/
     },
     {
       name: "device",
       fixture: () => fixtureTar({ extraEntries: [tarEntry("device", "", "3")] }),
-      error: /device\/FIFO/,
-    },
+      error: /device\/FIFO/
+    }
   ];
 
   for (const item of cases) {
@@ -832,55 +816,55 @@ test("rejects arbitrary, noncanonical, or extra Moby legacy config blobs", async
       created: "1970-01-01T00:00:00Z",
       container_config: emptyMobyContainerConfig(),
       os: "linux",
-      rootfs: {},
+      rootfs: {}
     },
     "2".repeat(64),
-    "",
+    ""
   );
   const noncanonical = Buffer.from(
     `${legacyConfig(
       {
         created: "1970-01-01T00:00:00Z",
         container_config: emptyMobyContainerConfig(),
-        os: "linux",
+        os: "linux"
       },
       "3".repeat(64),
-      "",
+      ""
     ).toString("utf8")}\n`,
-    "utf8",
+    "utf8"
   );
   const cases = [
     {
       name: "arbitrary blob",
       fixture: () =>
         fixtureTar({
-          extraEntries: [tarEntry(`blobs/sha256/${sha256(arbitrary)}`, arbitrary)],
+          extraEntries: [tarEntry(`blobs/sha256/${sha256(arbitrary)}`, arbitrary)]
         }),
-      error: /legacy config blob .* is not JSON/,
+      error: /legacy config blob .* is not JSON/
     },
     {
       name: "array blob",
       fixture: () =>
         fixtureTar({
-          extraEntries: [tarEntry(`blobs/sha256/${sha256(array)}`, array)],
+          extraEntries: [tarEntry(`blobs/sha256/${sha256(array)}`, array)]
         }),
-      error: /must be a JSON object/,
+      error: /must be a JSON object/
     },
     {
       name: "unexpected V1 key",
       fixture: () =>
         fixtureTar({
-          extraEntries: [tarEntry(`blobs/sha256/${sha256(unexpectedKey)}`, unexpectedKey)],
+          extraEntries: [tarEntry(`blobs/sha256/${sha256(unexpectedKey)}`, unexpectedKey)]
         }),
-      error: /unexpected key rootfs/,
+      error: /unexpected key rootfs/
     },
     {
       name: "noncanonical V1 bytes",
       fixture: () =>
         fixtureTar({
-          extraEntries: [tarEntry(`blobs/sha256/${sha256(noncanonical)}`, noncanonical)],
+          extraEntries: [tarEntry(`blobs/sha256/${sha256(noncanonical)}`, noncanonical)]
         }),
-      error: /not canonical Moby V1 JSON/,
+      error: /not canonical Moby V1 JSON/
     },
     {
       name: "extra Moby-shaped root",
@@ -888,18 +872,14 @@ test("rejects arbitrary, noncanonical, or extra Moby legacy config blobs", async
         const v1Config = {
           created: "1970-01-01T00:00:00Z",
           container_config: emptyMobyContainerConfig(),
-          os: "linux",
+          os: "linux"
         };
-        const body = legacyConfig(
-          v1Config,
-          sha256(Buffer.from("extra-legacy-id", "utf8")),
-          "",
-        );
+        const body = legacyConfig(v1Config, sha256(Buffer.from("extra-legacy-id", "utf8")), "");
         return fixtureTar({
-          extraEntries: [tarEntry(`blobs/sha256/${sha256(body)}`, body)],
+          extraEntries: [tarEntry(`blobs/sha256/${sha256(body)}`, body)]
         });
       },
-      error: /must contain exactly 2 legacy configs, found 3/,
+      error: /must contain exactly 2 legacy configs, found 3/
     },
     {
       name: "extra Moby-shaped final config",
@@ -909,11 +889,11 @@ test("rejects arbitrary, noncanonical, or extra Moby legacy config blobs", async
             ...configs,
             rewriteLegacyConfig(configs.at(-1), (legacy) => {
               legacy.id = "4".repeat(64);
-            }),
-          ],
+            })
+          ]
         }),
-      error: /must contain exactly 2 legacy configs, found 3/,
-    },
+      error: /must contain exactly 2 legacy configs, found 3/
+    }
   ];
 
   for (const item of cases) {

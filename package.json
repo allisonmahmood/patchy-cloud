@@ -18,11 +18,13 @@
     "test:packed-cli-e2e": "node scripts/packed-cli-e2e.mjs",
     "test:docker-save": "node scripts/validate-docker-save-artifact.test.mjs",
     "test:server-image": "bash scripts/verify-server-image.sh",
-    "lint": "turbo run lint",
+    "prepare": "simple-git-hooks",
+    "lint": "eslint \"**/*.{ts,mts,cts,tsx}\"",
     "typecheck": "turbo run typecheck",
     "db:migrate": "turbo run db:migrate",
     "docker": "turbo run docker",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -31,13 +33,21 @@
     "embedded-postgres": "18.4.0-beta.17",
     "esbuild": "0.28.1",
     "eslint": "^10.8.0",
+    "lint-staged": "^17.3.0",
     "npm": "12.0.2",
     "pg": "^8.22.0",
     "prettier": "^3.9.6",
+    "simple-git-hooks": "^2.13.1",
     "tsx": "^4.23.1",
     "turbo": "^2.10.8",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.65.0",
     "vitest": "^4.1.10"
+  },
+  "simple-git-hooks": {
+    "pre-commit": "pnpm exec lint-staged"
+  },
+  "lint-staged": {
+    "*": "prettier --write --ignore-unknown"
   }
 }

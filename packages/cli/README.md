@@ -20,6 +20,7 @@ A publishing key is minted on first upload against an instance that hands them o
 For CI and other automation, set `PATCHY_SETUP_URL` to the instance you are publishing to and provide `PATCHY_SETUP_TOKEN` through a secret environment variable. This scoped workflow pins the intended instance, clears inherited credential overrides, verifies the stored token, and exits before upload if authentication or validation fails:
 
 <!-- patchy-packed-cli-e2e:start -->
+
 ```sh
 (
   set +x
@@ -40,6 +41,7 @@ For CI and other automation, set `PATCHY_SETUP_URL` to the instance you are publ
     patchy upload "$ARTIFACT_PATH"
 )
 ```
+
 <!-- patchy-packed-cli-e2e:end -->
 
 ## Commands
@@ -82,7 +84,7 @@ patchy status --json
 # }
 ```
 
-`instanceSource` names the link of the precedence chain that chose `instanceUrl`: `flag` (`--api-url`), `env` (`PATCHY_API_URL`), `config` (the saved `config.json`), or `default`. `hasToken` walks the same credential chain an upload would, so `true` means an upload would have that token to send. Read `false` as *no token this command can vouch for* — usually nothing is stored, but it also covers local state the probe declined to interpret. `tokenSource` is the stored credential's own `source` (`mint` or `auth-set`); it is `null` when there is no token, when the token came from `PATCHY_API_TOKEN`, or when the stored entry predates that field. The token itself is never printed.
+`instanceSource` names the link of the precedence chain that chose `instanceUrl`: `flag` (`--api-url`), `env` (`PATCHY_API_URL`), `config` (the saved `config.json`), or `default`. `hasToken` walks the same credential chain an upload would, so `true` means an upload would have that token to send. Read `false` as _no token this command can vouch for_ — usually nothing is stored, but it also covers local state the probe declined to interpret. `tokenSource` is the stored credential's own `source` (`mint` or `auth-set`); it is `null` when there is no token, when the token came from `PATCHY_API_TOKEN`, or when the stored entry predates that field. The token itself is never printed.
 
 Local state the probe cannot read — a file in the retired single-instance format, malformed JSON, an unreadable file, or an invalid entry for this instance — is reported as `hasToken: false` rather than raised as an error, because a probe that cannot answer is worse than one that answers narrowly. The commands that would actually spend a token keep failing closed on exactly those files: `upload` and `whoami` stop with an error naming the file and its next action, and never treat it as a reason to publish without credentials.
 

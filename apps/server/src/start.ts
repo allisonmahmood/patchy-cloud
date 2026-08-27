@@ -61,11 +61,11 @@ const shutdown = async (): Promise<void> => {
 };
 
 process.on("SIGINT", () => {
-  shutdown().finally(() => process.exit(0));
+  void shutdown().finally(() => process.exit(0));
 });
 
 process.on("SIGTERM", () => {
-  shutdown().finally(() => process.exit(0));
+  void shutdown().finally(() => process.exit(0));
 });
 
 await app.listen({ host: "0.0.0.0", port: config.port });

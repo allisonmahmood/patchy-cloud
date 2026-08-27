@@ -52,8 +52,8 @@ Avoid:
   --ink: #12110f;
   --ink-soft: #36332d;
   --muted: #69645a;
-  --line: rgba(18, 17, 15, .14);
-  --line-strong: rgba(18, 17, 15, .30);
+  --line: rgba(18, 17, 15, 0.14);
+  --line-strong: rgba(18, 17, 15, 0.3);
   --blue: #1263e6;
   --blue-dark: #093b92;
   --green: #64c83f;
@@ -63,18 +63,23 @@ Avoid:
   --red: #e94b35;
   --red-ink: #b4220f;
   --shadow-hard: 4px 4px 0 var(--ink);
-  --shadow-soft: 0 18px 50px rgba(18, 17, 15, .08);
+  --shadow-soft: 0 18px 50px rgba(18, 17, 15, 0.08);
   --radius: 8px;
   --radius-pill: 999px;
-  --font-sans: system-ui, -apple-system, "Segoe UI", "Helvetica Neue", Arial, "Liberation Sans", sans-serif;
-  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --font-sans:
+    system-ui, -apple-system, "Segoe UI", "Helvetica Neue", Arial, "Liberation Sans", sans-serif;
+  --font-mono:
+    ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", Menlo, Consolas, "Liberation Mono",
+    monospace;
 }
 ```
 
 ## Baseline CSS
 
 ```css
-* { box-sizing: border-box; }
+* {
+  box-sizing: border-box;
+}
 
 html {
   background: var(--paper-blue);
@@ -84,10 +89,19 @@ html {
 body {
   margin: 0;
   background:
-    linear-gradient(rgba(18, 17, 15, .035) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(18, 17, 15, .035) 1px, transparent 1px),
-    linear-gradient(180deg, var(--paper-blue) 0%, var(--paper) 34%, var(--paper-green) 78%, #fef7ef 100%);
-  background-size: 32px 32px, 32px 32px, auto;
+    linear-gradient(rgba(18, 17, 15, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(18, 17, 15, 0.035) 1px, transparent 1px),
+    linear-gradient(
+      180deg,
+      var(--paper-blue) 0%,
+      var(--paper) 34%,
+      var(--paper-green) 78%,
+      #fef7ef 100%
+    );
+  background-size:
+    32px 32px,
+    32px 32px,
+    auto;
   color: var(--ink-soft);
   font-family: var(--font-sans);
   font-size: 17px;
@@ -101,7 +115,7 @@ body::before {
   inset: 0;
   z-index: -1;
   pointer-events: none;
-  opacity: .22;
+  opacity: 0.22;
   mix-blend-mode: multiply;
   background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 160 160' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.95' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='.36'/%3E%3C/svg%3E");
 }
@@ -115,7 +129,7 @@ body::before {
 h1,
 h2,
 h3 {
-  margin: 0 0 .5em;
+  margin: 0 0 0.5em;
   color: var(--ink);
   font-weight: 850;
   line-height: 1.04;
@@ -126,13 +140,27 @@ h3 {
 h1 {
   font-size: 3.35rem;
   font-weight: 900;
-  line-height: .98;
+  line-height: 0.98;
 }
 
-h2 { font-size: 2rem; margin-top: 2.4rem; }
-h3 { font-size: 1.28rem; margin-top: 1.6rem; }
-p { max-width: 70ch; margin: 0 0 1rem; }
-a { color: var(--blue-dark); font-weight: 750; text-decoration: underline; text-underline-offset: 2px; }
+h2 {
+  font-size: 2rem;
+  margin-top: 2.4rem;
+}
+h3 {
+  font-size: 1.28rem;
+  margin-top: 1.6rem;
+}
+p {
+  max-width: 70ch;
+  margin: 0 0 1rem;
+}
+a {
+  color: var(--blue-dark);
+  font-weight: 750;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
 ```
 
 Use media queries for smaller screens. Do not scale type directly with viewport width.
@@ -163,40 +191,40 @@ Avoid hype, emoji, "seamless", "revolutionary", and vague AI-dashboard language.
 ```html
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{TITLE}}</title>
-  <style>
-    /* Insert tokens, baseline CSS, and only the components used by this draft. */
-  </style>
-</head>
-<body>
-  <main class="wrap">
-    <header class="doc-head">
-      <div class="head-line">
-        <span class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</span>
-        <span class="kicker">{{STATUS}}</span>
-      </div>
-      <h1>{{TITLE}}</h1>
-      <p>{{ONE_OR_TWO_SENTENCE_FRAMING}}</p>
-      <div class="meta">
-        <span class="pill pill-progress">In progress</span>
-        <span>Owner: {{OWNER}}</span>
-      </div>
-    </header>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{TITLE}}</title>
+    <style>
+      /* Insert tokens, baseline CSS, and only the components used by this draft. */
+    </style>
+  </head>
+  <body>
+    <main class="wrap">
+      <header class="doc-head">
+        <div class="head-line">
+          <span class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</span>
+          <span class="kicker">{{STATUS}}</span>
+        </div>
+        <h1>{{TITLE}}</h1>
+        <p>{{ONE_OR_TWO_SENTENCE_FRAMING}}</p>
+        <div class="meta">
+          <span class="pill pill-progress">In progress</span>
+          <span>Owner: {{OWNER}}</span>
+        </div>
+      </header>
 
-    <ul class="toc">
-      <li><a href="#overview">Overview</a></li>
-      <li><a href="#plan">Plan</a></li>
-      <li><a href="#risks">Risks</a></li>
-    </ul>
+      <ul class="toc">
+        <li><a href="#overview">Overview</a></li>
+        <li><a href="#plan">Plan</a></li>
+        <li><a href="#risks">Risks</a></li>
+      </ul>
 
-    <section id="overview">
-      <h2>Overview</h2>
-      <p>{{OVERVIEW}}</p>
-    </section>
-  </main>
-</body>
+      <section id="overview">
+        <h2>Overview</h2>
+        <p>{{OVERVIEW}}</p>
+      </section>
+    </main>
+  </body>
 </html>
 ```

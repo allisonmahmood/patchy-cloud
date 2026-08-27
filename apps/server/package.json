@@ -12,7 +12,6 @@
     "dev": "tsx --conditions=development watch src/start.ts",
     "start": "node dist/start.js",
     "test": "vitest run",
-    "lint": "eslint src --ext .ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "docker": "docker build -f Dockerfile -t patchy-server ../.."
   },

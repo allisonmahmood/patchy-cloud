@@ -16,10 +16,9 @@ export class AzureBlobHtmlStorage implements HtmlStorage {
     const containerName = requireConfigValue("AZURE_STORAGE_CONTAINER", options.container);
 
     if (options.connectionString) {
-      this.containerClient =
-        BlobServiceClient.fromConnectionString(options.connectionString).getContainerClient(
-          containerName
-        );
+      this.containerClient = BlobServiceClient.fromConnectionString(
+        options.connectionString
+      ).getContainerClient(containerName);
       return;
     }
 

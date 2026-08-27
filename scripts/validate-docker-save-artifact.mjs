@@ -62,7 +62,7 @@ async function uncompressedLayerDigest(body, mediaType, index) {
       if (outputBytes > outputLimit) {
         stream.destroy();
         fail(
-          `OCI manifest layer ${index} exceeded the bounded decompression limit (${MAX_UNCOMPRESSED_LAYER_BYTES} bytes or ${MAX_LAYER_EXPANSION_RATIO}:1 expansion)`,
+          `OCI manifest layer ${index} exceeded the bounded decompression limit (${MAX_UNCOMPRESSED_LAYER_BYTES} bytes or ${MAX_LAYER_EXPANSION_RATIO}:1 expansion)`
         );
       }
       hash.update(chunk);
@@ -74,7 +74,6 @@ async function uncompressedLayerDigest(body, mediaType, index) {
   if (outputBytes === 0) fail(`OCI manifest layer ${index} decompressed to an empty body`);
   return `sha256:${hash.digest("hex")}`;
 }
-
 
 function parseArgs(argv) {
   const options = new Map();
@@ -93,7 +92,7 @@ function parseArgs(argv) {
     "expected-filename",
     "expected-sha256",
     "expected-repo-tag",
-    "expected-config-id",
+    "expected-config-id"
   ];
   for (const key of required) {
     if (!options.has(key)) fail(`missing required option --${key}`);
@@ -105,7 +104,7 @@ function parseArgs(argv) {
     expectedSha256: options.get("expected-sha256"),
     expectedRepoTag: options.get("expected-repo-tag"),
     expectedConfigId: options.get("expected-config-id"),
-    maxBytes: Number(options.get("max-bytes") ?? DEFAULT_MAX_BYTES),
+    maxBytes: Number(options.get("max-bytes") ?? DEFAULT_MAX_BYTES)
   };
 }
 
@@ -276,7 +275,7 @@ function validateLegacyLayerConfigs(files, referenced, diffIds, config) {
     "architecture",
     "variant",
     "os",
-    "Size",
+    "Size"
   ];
   const allowedKeys = new Set(v1KeyOrder);
   const optionalStringKeys = [
@@ -285,15 +284,14 @@ function validateLegacyLayerConfigs(files, referenced, diffIds, config) {
     "docker_version",
     "author",
     "architecture",
-    "variant",
+    "variant"
   ];
   const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
-  const isObject = (value) =>
-    value !== null && typeof value === "object" && !Array.isArray(value);
+  const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
   const goJson = (value) =>
     JSON.stringify(value).replace(
       /[<>&\u2028\u2029]/g,
-      (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`,
+      (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`
     );
   const canonicalV1 = (legacy) => {
     const ordered = {};
@@ -348,20 +346,14 @@ function validateLegacyLayerConfigs(files, referenced, diffIds, config) {
       fail(`legacy config blob ${filePath} has an invalid os`);
     }
     for (const key of optionalStringKeys) {
-      if (
-        hasOwn(legacy, key) &&
-        (typeof legacy[key] !== "string" || legacy[key].length === 0)
-      ) {
+      if (hasOwn(legacy, key) && (typeof legacy[key] !== "string" || legacy[key].length === 0)) {
         fail(`legacy config blob ${filePath} has an invalid ${key}`);
       }
     }
     if (hasOwn(legacy, "config") && !isObject(legacy.config)) {
       fail(`legacy config blob ${filePath} has an invalid config`);
     }
-    if (
-      hasOwn(legacy, "Size") &&
-      (!Number.isSafeInteger(legacy.Size) || legacy.Size <= 0)
-    ) {
+    if (hasOwn(legacy, "Size") && (!Number.isSafeInteger(legacy.Size) || legacy.Size <= 0)) {
       fail(`legacy config blob ${filePath} has an invalid Size`);
     }
 
@@ -378,7 +370,7 @@ function validateLegacyLayerConfigs(files, referenced, diffIds, config) {
 
   if (nodes.length !== diffIds.length) {
     fail(
-      `docker-save archive must contain exactly ${diffIds.length} legacy configs, found ${nodes.length}`,
+      `docker-save archive must contain exactly ${diffIds.length} legacy configs, found ${nodes.length}`
     );
   }
 
@@ -418,9 +410,7 @@ function validateLegacyLayerConfigs(files, referenced, diffIds, config) {
   }
   for (const [index, node] of chain.entries()) {
     if (node.legacy.os !== config.os) {
-      fail(
-        `legacy config ${node.filePath} operating system does not match OCI image config`,
-      );
+      fail(`legacy config ${node.filePath} operating system does not match OCI image config`);
     }
 
     const isLeaf = index === chain.length - 1;
@@ -434,11 +424,7 @@ function validateLegacyLayerConfigs(files, referenced, diffIds, config) {
   const leaf = chain.at(-1);
   const leafRuntimeConfig = leaf.legacy.config;
   const ociRuntimeConfig = config.config;
-  if (
-    ociRuntimeConfig !== undefined &&
-    ociRuntimeConfig !== null &&
-    !isObject(ociRuntimeConfig)
-  ) {
+  if (ociRuntimeConfig !== undefined && ociRuntimeConfig !== null && !isObject(ociRuntimeConfig)) {
     fail("OCI image config has an invalid runtime config");
   }
   if (leafRuntimeConfig !== undefined && isObject(ociRuntimeConfig)) {
@@ -454,7 +440,7 @@ function validateLegacyLayerConfigs(files, referenced, diffIds, config) {
       "Healthcheck",
       "StopSignal",
       "Shell",
-      "OnBuild",
+      "OnBuild"
     ];
     for (const key of stableRuntimeFields) {
       if (
@@ -471,7 +457,6 @@ function validateLegacyLayerConfigs(files, referenced, diffIds, config) {
       fail(`leaf ${key} does not match OCI image config`);
     }
   }
-
 }
 
 async function validateDockerSaveTar(buffer, { expectedRepoTag, expectedConfigId }) {
@@ -506,7 +491,7 @@ async function validateDockerSaveTar(buffer, { expectedRepoTag, expectedConfigId
     fail("manifest.json image must contain at least one layer");
   }
   const layerDigests = image.Layers.map((layer, index) =>
-    pathDigest(layer, `manifest.json Layers[${index}]`),
+    pathDigest(layer, `manifest.json Layers[${index}]`)
   );
 
   const referenced = new Set(["manifest.json", "repositories", "oci-layout", "index.json"]);
@@ -575,14 +560,10 @@ async function validateDockerSaveTar(buffer, { expectedRepoTag, expectedConfigId
     if (layer.size !== layerBodies[index].length) {
       fail(`OCI manifest layer ${index} size does not match its blob`);
     }
-    const actualDiffId = await uncompressedLayerDigest(
-      layerBodies[index],
-      layer.mediaType,
-      index,
-    );
+    const actualDiffId = await uncompressedLayerDigest(layerBodies[index], layer.mediaType, index);
     if (diffIds[index] !== actualDiffId) {
       fail(
-        `config rootfs.diff_ids[${index}] ${diffIds[index]} does not match uncompressed layer ${actualDiffId}`,
+        `config rootfs.diff_ids[${index}] ${diffIds[index]} does not match uncompressed layer ${actualDiffId}`
       );
     }
   }
@@ -603,7 +584,7 @@ async function validateDockerSaveTar(buffer, { expectedRepoTag, expectedConfigId
   const expectedRepositoryLayer = diffIds.at(-1).slice("sha256:".length);
   if (repositoryTags[tag] !== expectedRepositoryLayer) {
     fail(
-      `repositories ${expectedRepoTag} points to ${repositoryTags[tag]}, expected top uncompressed diff ID ${expectedRepositoryLayer}`,
+      `repositories ${expectedRepoTag} points to ${repositoryTags[tag]}, expected top uncompressed diff ID ${expectedRepositoryLayer}`
     );
   }
 
@@ -620,8 +601,8 @@ async function validateDockerSaveTar(buffer, { expectedRepoTag, expectedConfigId
     rawManifest: ociManifestBody,
     blobs: new Map([
       [configDigest, configBody],
-      ...layerDigests.map((digest, index) => [digest, layerBodies[index]]),
-    ]),
+      ...layerDigests.map((digest, index) => [digest, layerBodies[index]])
+    ])
   };
 }
 
@@ -671,7 +652,7 @@ async function main() {
   try {
     const result = await validateArtifact(parseArgs(process.argv.slice(2)));
     process.stdout.write(
-      `validated docker-save artifact ${path.basename(result.path)} (${result.sha256})\n`,
+      `validated docker-save artifact ${path.basename(result.path)} (${result.sha256})\n`
     );
   } catch (error) {
     if (error instanceof ValidationError) {

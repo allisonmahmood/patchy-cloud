@@ -15,3 +15,4 @@ allowBuilds:
   "@embedded-postgres/linux-arm": true
   "@embedded-postgres/linux-ia32": true
   "@embedded-postgres/linux-ppc64": true
+  simple-git-hooks: true

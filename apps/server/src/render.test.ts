@@ -20,9 +20,7 @@ describe("renderHome", () => {
     expect(html.indexOf("Requires the <code>patchy</code> CLI")).toBeLessThan(
       html.indexOf("data-patchy-quick-start")
     );
-    expect(commands).toContain(
-      'patchy auth set --token-stdin --api-url "$PATCHY_API_URL"'
-    );
+    expect(commands).toContain('patchy auth set --token-stdin --api-url "$PATCHY_API_URL"');
     expect(commandNames(commands)).toEqual(["auth", "whoami", "validate", "upload"]);
 
     const syntax = spawnSync("sh", ["-n"], { input: commands, encoding: "utf8" });

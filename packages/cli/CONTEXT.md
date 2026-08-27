@@ -33,7 +33,7 @@ The copy-paste block in the README that a user hands their agent to get started:
 _Avoid_: install snippet (older internal name), install command (only one of its parts)
 
 **Publishing key**:
-What an auth token is called in front of the user — "your publishing key, saved on this machine". *Token*, *instance*, and *mint* stay out of user-facing copy except on the own-instance path, where operator vocabulary is correct.
+What an auth token is called in front of the user — "your publishing key, saved on this machine". _Token_, _instance_, and _mint_ stay out of user-facing copy except on the own-instance path, where operator vocabulary is correct.
 _Avoid_: token (in user-facing copy), password, account
 
 **Draft cache**:

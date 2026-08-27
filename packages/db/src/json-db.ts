@@ -13,15 +13,8 @@ import {
 import path from "node:path";
 import { TextDecoder, types as utilTypes } from "node:util";
 import { newInternalId, sha256 } from "@patchy/core";
-import {
-  applyJsonMigrations,
-  JSON_MIGRATION_LEDGER_KEY,
-  SCHEMA_MIGRATIONS
-} from "./migrations.js";
-import {
-  BOOTSTRAP_API_TOKEN_ID,
-  BOOTSTRAP_PRINCIPAL_ID
-} from "./internal-principals.js";
+import { applyJsonMigrations, JSON_MIGRATION_LEDGER_KEY, SCHEMA_MIGRATIONS } from "./migrations.js";
+import { BOOTSTRAP_API_TOKEN_ID, BOOTSTRAP_PRINCIPAL_ID } from "./internal-principals.js";
 import { countsTowardMintQuota } from "./mint-quota.js";
 import { expiryAfterUpload, expiryAfterVisit, isExpired } from "./retention.js";
 import { UploadTargetError } from "./types.js";
@@ -405,8 +398,7 @@ export class JsonFilePatchyDb implements PatchyDb {
     const now = this.clock();
     const draft =
       state.drafts.find(
-        (row) =>
-          row.id === draftId && !row.deletedAt && !row.disabledAt && !isExpired(row, now)
+        (row) => row.id === draftId && !row.deletedAt && !row.disabledAt && !isExpired(row, now)
       ) || null;
     if (!draft) return { draft: null, version: null };
 
@@ -425,10 +417,7 @@ export class JsonFilePatchyDb implements PatchyDb {
     return draft ? moderatedDraft(state, draft) : null;
   }
 
-  async listDraftsByPrincipal(
-    principalId: string,
-    limit: number
-  ): Promise<PrincipalDraftListing> {
+  async listDraftsByPrincipal(principalId: string, limit: number): Promise<PrincipalDraftListing> {
     const state = await this.readState();
     const owned = state.drafts
       .filter((row) => row.accountId === principalId && !row.deletedAt)
@@ -467,8 +456,7 @@ export class JsonFilePatchyDb implements PatchyDb {
       // so a pin can never be stuck on a draft that has since been taken down.
       const draft =
         state.drafts.find(
-          (row) =>
-            row.id === draftId && (!pinned || (!row.deletedAt && !row.disabledAt))
+          (row) => row.id === draftId && (!pinned || (!row.deletedAt && !row.disabledAt))
         ) || null;
       if (!draft) return { value: false, changed: false };
 
@@ -504,9 +492,7 @@ export class JsonFilePatchyDb implements PatchyDb {
       // Everything that points at the draft goes with it. Upload events name
       // both the draft and its versions, so they cannot outlive either.
       state.uploadEvents = state.uploadEvents.filter((event) => event.draftId !== draftId);
-      state.draftVersions = state.draftVersions.filter(
-        (version) => version.draftId !== draftId
-      );
+      state.draftVersions = state.draftVersions.filter((version) => version.draftId !== draftId);
       state.drafts = state.drafts.filter((row) => row.id !== draftId);
 
       return { value: objectKeys, changed: true };
@@ -592,9 +578,7 @@ export class JsonFilePatchyDb implements PatchyDb {
     return;
   }
 
-  private async mutateState<T>(
-    mutate: (state: JsonDbState) => StateMutationResult<T>
-  ): Promise<T> {
+  private async mutateState<T>(mutate: (state: JsonDbState) => StateMutationResult<T>): Promise<T> {
     const mutationIdentities = await canonicalMutationIdentities(this.filePath);
     return serializeJsonMutation(mutationIdentities, async () => {
       const { state, migrated } = await this.loadState();
@@ -851,12 +835,7 @@ function assertLosslessJsonValue(value: unknown, seen: WeakSet<object>): void {
       if (typeof key !== "string") throw new Error("Symbol-keyed JSON array.");
 
       const index = Number(key);
-      if (
-        !Number.isInteger(index) ||
-        index < 0 ||
-        index >= value.length ||
-        String(index) !== key
-      ) {
+      if (!Number.isInteger(index) || index < 0 || index >= value.length || String(index) !== key) {
         throw new Error("Non-index JSON array property.");
       }
 
@@ -883,21 +862,14 @@ function assertNoJsonTransformation(value: object): void {
     }
 
     const descriptor = Object.getOwnPropertyDescriptor(current, "toJSON");
-    if (
-      descriptor &&
-      (!("value" in descriptor) || typeof descriptor.value === "function")
-    ) {
+    if (descriptor && (!("value" in descriptor) || typeof descriptor.value === "function")) {
       throw new Error("JSON transformation is unsupported.");
     }
     current = Object.getPrototypeOf(current) as object | null;
   }
 }
 
-function assertJsonDataProperty(
-  object: object,
-  key: string,
-  seen: WeakSet<object>
-): void {
+function assertJsonDataProperty(object: object, key: string, seen: WeakSet<object>): void {
   const descriptor = Object.getOwnPropertyDescriptor(object, key);
   if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
     throw new Error("Unsafe JSON property.");

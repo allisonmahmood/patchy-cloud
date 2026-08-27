@@ -31,7 +31,7 @@ shared bucket. One sentinel owner for all untrusted content is not an ownership
 model; it is the absence of one.
 
 Meanwhile the friction we actually wanted to remove was never the token — it
-was the *signup*. An agent-driven workflow dead-ends at "get a token from the
+was the _signup_. An agent-driven workflow dead-ends at "get a token from the
 operator", not at "send a bearer header".
 
 ## Decision
@@ -59,7 +59,7 @@ Separate the two ideas. Keep the bearer token; delete the signup.
 4. **Minting takes zero input.** No email, no name, no fields — no friction, and
    no fake signals we would never verify.
 
-5. **No user-facing account concept.** Each mint creates a fresh 1:1 *principal*
+5. **No user-facing account concept.** Each mint creates a fresh 1:1 _principal_
    row so the existing account-scoped ownership checks are reused unchanged.
    That row is invisible plumbing, never surfaced in product language or API
    responses.

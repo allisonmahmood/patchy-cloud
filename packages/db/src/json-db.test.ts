@@ -222,15 +222,11 @@ describe("JsonFilePatchyDb", () => {
       const aliasedFilePath = path.join(aliasedParent, "db.json");
       try {
         // The lstat mock models a bind mount, which is not a symbolic-link parent.
-        const { JsonFilePatchyDb: IdentityJsonFilePatchyDb } = await import(
-          "./json-db.js"
-        );
+        const { JsonFilePatchyDb: IdentityJsonFilePatchyDb } = await import("./json-db.js");
         const uploads = Array.from({ length: 8 }, (_, index) => {
           const draftId = `identity_draft_${index}`;
           const versionId = `identity_ver_${index}`;
-          const db = new IdentityJsonFilePatchyDb(
-            index % 2 === 0 ? realFilePath : aliasedFilePath
-          );
+          const db = new IdentityJsonFilePatchyDb(index % 2 === 0 ? realFilePath : aliasedFilePath);
           return db.recordUpload({
             intent: "create",
             draftId,
@@ -294,9 +290,7 @@ describe("JsonFilePatchyDb", () => {
 
       try {
         // A static import cannot observe the per-test mocked filesystem boundary.
-        const { JsonFilePatchyDb: StaggeredJsonFilePatchyDb } = await import(
-          "./json-db.js"
-        );
+        const { JsonFilePatchyDb: StaggeredJsonFilePatchyDb } = await import("./json-db.js");
         const firstDb = new StaggeredJsonFilePatchyDb(filePath);
         const first = firstDb.recordUpload({
           intent: "create",
@@ -419,9 +413,7 @@ describe("JsonFilePatchyDb", () => {
     const uploads = Array.from({ length: 8 }, (_, index) => {
       const draftId = `unicode_case_draft_${index}`;
       const versionId = `unicode_case_ver_${index}`;
-      const db = new JsonFilePatchyDb(
-        index % 2 === 0 ? mixedCaseFilePath : foldedFilePath
-      );
+      const db = new JsonFilePatchyDb(index % 2 === 0 ? mixedCaseFilePath : foldedFilePath);
 
       return db.recordUpload({
         intent: "create",
@@ -531,11 +523,7 @@ describe("JsonFilePatchyDb", () => {
     }
 
     const [disabled, deleted] = await Promise.all([
-      new JsonFilePatchyDb(filePath).disableDraft(
-        "draft_to_disable",
-        auth!.accountId,
-        "policy"
-      ),
+      new JsonFilePatchyDb(filePath).disableDraft("draft_to_disable", auth!.accountId, "policy"),
       new JsonFilePatchyDb(filePath).deleteDraft("draft_to_delete", auth!.accountId)
     ]);
     expect(disabled).toBe(true);
@@ -552,12 +540,10 @@ describe("JsonFilePatchyDb", () => {
     const original = Buffer.from('{"accounts":[{"name":"persisted-secret"}');
     await writeFile(filePath, original);
 
-    const error = await new JsonFilePatchyDb(filePath)
-      .initialize("bootstrap-secret")
-      .then(
-        () => null,
-        (reason: unknown) => reason
-      );
+    const error = await new JsonFilePatchyDb(filePath).initialize("bootstrap-secret").then(
+      () => null,
+      (reason: unknown) => reason
+    );
 
     expect(await readFile(filePath)).toEqual(original);
     expect(error).toBeInstanceOf(Error);
@@ -567,17 +553,13 @@ describe("JsonFilePatchyDb", () => {
 
   it("rejects malformed state without changing it", async () => {
     const filePath = path.join(tempDir, "db.json");
-    const original = Buffer.from(
-      '{"accounts":not-valid-json,"persistedValue":"persisted-secret"}'
-    );
+    const original = Buffer.from('{"accounts":not-valid-json,"persistedValue":"persisted-secret"}');
     await writeFile(filePath, original);
 
-    const error = await new JsonFilePatchyDb(filePath)
-      .initialize("bootstrap-secret")
-      .then(
-        () => null,
-        (reason: unknown) => reason
-      );
+    const error = await new JsonFilePatchyDb(filePath).initialize("bootstrap-secret").then(
+      () => null,
+      (reason: unknown) => reason
+    );
 
     expect(await readFile(filePath)).toEqual(original);
     expect(error).toBeInstanceOf(Error);
@@ -596,12 +578,10 @@ describe("JsonFilePatchyDb", () => {
     ]);
     await writeFile(filePath, original);
 
-    const error = await new JsonFilePatchyDb(filePath)
-      .initialize(null)
-      .then(
-        () => null,
-        (reason: unknown) => reason
-      );
+    const error = await new JsonFilePatchyDb(filePath).initialize(null).then(
+      () => null,
+      (reason: unknown) => reason
+    );
 
     expect(await readFile(filePath)).toEqual(original);
     expect(error).toBeInstanceOf(Error);
@@ -621,12 +601,10 @@ describe("JsonFilePatchyDb", () => {
     );
     await writeFile(filePath, original);
 
-    const error = await new JsonFilePatchyDb(filePath)
-      .initialize(null)
-      .then(
-        () => null,
-        (reason: unknown) => reason
-      );
+    const error = await new JsonFilePatchyDb(filePath).initialize(null).then(
+      () => null,
+      (reason: unknown) => reason
+    );
 
     expect(await readFile(filePath)).toEqual(original);
     expect(error).toBeInstanceOf(Error);
@@ -644,18 +622,14 @@ describe("JsonFilePatchyDb", () => {
       const originalLink = await lstat(filePath);
       const originalLinkTarget = await readlink(filePath);
 
-      const error = await new JsonFilePatchyDb(filePath)
-        .initialize("replacement-secret")
-        .then(
-          () => null,
-          (reason: unknown) => reason
-        );
+      const error = await new JsonFilePatchyDb(filePath).initialize("replacement-secret").then(
+        () => null,
+        (reason: unknown) => reason
+      );
 
       const finalLink = await lstat(filePath);
       expect(error).toBeInstanceOf(Error);
-      expect((error as Error).message).toBe(
-        "JSON metadata file path must not be a symbolic link."
-      );
+      expect((error as Error).message).toBe("JSON metadata file path must not be a symbolic link.");
       expect(String(error)).not.toContain("target-secret");
       expect(String(error)).not.toContain("replacement-secret");
       expect(finalLink.isSymbolicLink()).toBe(true);
@@ -675,18 +649,14 @@ describe("JsonFilePatchyDb", () => {
       const originalLink = await lstat(filePath);
       const originalLinkTarget = await readlink(filePath);
 
-      const error = await new JsonFilePatchyDb(filePath)
-        .initialize("replacement-secret")
-        .then(
-          () => null,
-          (reason: unknown) => reason
-        );
+      const error = await new JsonFilePatchyDb(filePath).initialize("replacement-secret").then(
+        () => null,
+        (reason: unknown) => reason
+      );
 
       const finalLink = await lstat(filePath);
       expect(error).toBeInstanceOf(Error);
-      expect((error as Error).message).toBe(
-        "JSON metadata file path must not be a symbolic link."
-      );
+      expect((error as Error).message).toBe("JSON metadata file path must not be a symbolic link.");
       expect(String(error)).not.toContain("replacement-secret");
       expect(finalLink.isSymbolicLink()).toBe(true);
       expect(finalLink.ino).toBe(originalLink.ino);
@@ -706,12 +676,10 @@ describe("JsonFilePatchyDb", () => {
       const original = await readFile(filePath);
       const originalStats = await lstat(filePath);
 
-      const error = await new JsonFilePatchyDb(aliasPath)
-        .initialize("replacement-secret")
-        .then(
-          () => null,
-          (reason: unknown) => reason
-        );
+      const error = await new JsonFilePatchyDb(aliasPath).initialize("replacement-secret").then(
+        () => null,
+        (reason: unknown) => reason
+      );
 
       expect(error).toBeInstanceOf(Error);
       expect((error as Error).message).toBe(
@@ -734,18 +702,14 @@ describe("JsonFilePatchyDb", () => {
       await execFile("mkfifo", [filePath]);
       const originalStats = await lstat(filePath);
 
-      const error = await new JsonFilePatchyDb(filePath)
-        .initialize("replacement-secret")
-        .then(
-          () => null,
-          (reason: unknown) => reason
-        );
+      const error = await new JsonFilePatchyDb(filePath).initialize("replacement-secret").then(
+        () => null,
+        (reason: unknown) => reason
+      );
 
       const finalStats = await lstat(filePath);
       expect(error).toBeInstanceOf(Error);
-      expect((error as Error).message).toBe(
-        "JSON metadata file path must be a regular file."
-      );
+      expect((error as Error).message).toBe("JSON metadata file path must be a regular file.");
       expect(String(error)).not.toContain("replacement-secret");
       expect(finalStats.isFIFO()).toBe(true);
       expect(finalStats.ino).toBe(originalStats.ino);
@@ -896,9 +860,7 @@ describe("JsonFilePatchyDb", () => {
       );
 
     expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toBe(
-      "JSON metadata state cannot be persisted losslessly."
-    );
+    expect((error as Error).message).toBe("JSON metadata state cannot be persisted losslessly.");
     expect(String(error)).not.toContain("mutation-secret");
     expect(accessorCalls).toBe(0);
     expect(await readFile(filePath)).toEqual(original);
@@ -924,9 +886,7 @@ describe("JsonFilePatchyDb", () => {
       );
 
     expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toBe(
-      "JSON metadata state cannot be persisted losslessly."
-    );
+    expect((error as Error).message).toBe("JSON metadata state cannot be persisted losslessly.");
     expect(String(error)).not.toContain("raw-token-secret");
     expect(await readFile(filePath)).toEqual(original);
     expect(await readdir(tempDir)).toEqual(["db.json"]);
@@ -949,9 +909,7 @@ describe("JsonFilePatchyDb", () => {
     let error: unknown;
     try {
       // A static import cannot observe the per-test mocked filesystem boundary.
-      const { JsonFilePatchyDb: TrackedJsonFilePatchyDb } = await import(
-        "./json-db.js"
-      );
+      const { JsonFilePatchyDb: TrackedJsonFilePatchyDb } = await import("./json-db.js");
       error = await new TrackedJsonFilePatchyDb(filePath)
         .recordUpload({
           intent: "create",
@@ -978,9 +936,7 @@ describe("JsonFilePatchyDb", () => {
     }
 
     expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toBe(
-      "JSON metadata state cannot be persisted losslessly."
-    );
+    expect((error as Error).message).toBe("JSON metadata state cannot be persisted losslessly.");
     expect(String(error)).not.toContain("mutation-secret");
     expect(temporaryOpens).toEqual([]);
     expect(await readFile(filePath)).toEqual(original);
@@ -1011,9 +967,7 @@ describe("JsonFilePatchyDb", () => {
       const filePath = path.join(directoryPath, "db.json");
       try {
         // A static import cannot observe the per-test mocked filesystem boundary.
-        const { JsonFilePatchyDb: TrackedJsonFilePatchyDb } = await import(
-          "./json-db.js"
-        );
+        const { JsonFilePatchyDb: TrackedJsonFilePatchyDb } = await import("./json-db.js");
         await new TrackedJsonFilePatchyDb(filePath).initialize("dev-token");
       } finally {
         vi.doUnmock("node:fs/promises");
@@ -1021,15 +975,9 @@ describe("JsonFilePatchyDb", () => {
       }
 
       expect(syncedDirectories).toEqual(
-        expect.arrayContaining([
-          tempDir,
-          path.join(tempDir, "first"),
-          directoryPath
-        ])
+        expect.arrayContaining([tempDir, path.join(tempDir, "first"), directoryPath])
       );
-      const auth = await new JsonFilePatchyDb(filePath).findApiTokenByToken(
-        "dev-token"
-      );
+      const auth = await new JsonFilePatchyDb(filePath).findApiTokenByToken("dev-token");
       expect(auth?.id).toBe("tok_bootstrap");
     }
   );
@@ -1060,15 +1008,11 @@ describe("JsonFilePatchyDb", () => {
       let error: unknown;
       try {
         // A static import cannot observe the per-test mocked filesystem boundary.
-        const { JsonFilePatchyDb: FailingJsonFilePatchyDb } = await import(
-          "./json-db.js"
+        const { JsonFilePatchyDb: FailingJsonFilePatchyDb } = await import("./json-db.js");
+        error = await new FailingJsonFilePatchyDb(filePath).initialize("dev-token").then(
+          () => null,
+          (reason: unknown) => reason
         );
-        error = await new FailingJsonFilePatchyDb(filePath)
-          .initialize("dev-token")
-          .then(
-            () => null,
-            (reason: unknown) => reason
-          );
       } finally {
         vi.doUnmock("node:fs/promises");
         vi.resetModules();
@@ -1098,9 +1042,7 @@ describe("JsonFilePatchyDb", () => {
 
       try {
         // A static import cannot observe the per-test mocked filesystem boundary.
-        const { JsonFilePatchyDb: RetryingJsonFilePatchyDb } = await import(
-          "./json-db.js"
-        );
+        const { JsonFilePatchyDb: RetryingJsonFilePatchyDb } = await import("./json-db.js");
         const db = new RetryingJsonFilePatchyDb(filePath);
         await db.initialize("dev-token");
         expect((await db.findApiTokenByToken("dev-token"))?.id).toBe("tok_bootstrap");
@@ -1112,7 +1054,6 @@ describe("JsonFilePatchyDb", () => {
       expect(retriedParentSyncs).toBeGreaterThan(0);
     }
   );
-
 
   it("fails before commit when the target directory cannot be opened", async () => {
     const filePath = path.join(tempDir, "db.json");
@@ -1133,15 +1074,11 @@ describe("JsonFilePatchyDb", () => {
     let error: unknown;
     try {
       // A static import cannot observe the per-test mocked filesystem boundary.
-      const { JsonFilePatchyDb: FailingJsonFilePatchyDb } = await import(
-        "./json-db.js"
+      const { JsonFilePatchyDb: FailingJsonFilePatchyDb } = await import("./json-db.js");
+      error = await new FailingJsonFilePatchyDb(filePath).initialize("replacement-secret").then(
+        () => null,
+        (reason: unknown) => reason
       );
-      error = await new FailingJsonFilePatchyDb(filePath)
-        .initialize("replacement-secret")
-        .then(
-          () => null,
-          (reason: unknown) => reason
-        );
     } finally {
       vi.doUnmock("node:fs/promises");
       vi.resetModules();
@@ -1164,8 +1101,7 @@ describe("JsonFilePatchyDb", () => {
       let targetDirectoryOpens = 0;
       let targetDirectorySyncs = 0;
       const singleDirectoryOpen = (async (...args: Parameters<typeof actualFs.open>) => {
-        const isTargetDirectory =
-          args[1] === "r" && path.resolve(String(args[0])) === tempDir;
+        const isTargetDirectory = args[1] === "r" && path.resolve(String(args[0])) === tempDir;
         if (isTargetDirectory && targetDirectoryOpens > 0) {
           throw Object.assign(new Error("target directory reopened"), {
             code: "EACCES"
@@ -1192,12 +1128,8 @@ describe("JsonFilePatchyDb", () => {
 
       try {
         // A static import cannot observe the per-test mocked filesystem boundary.
-        const { JsonFilePatchyDb: SingleOpenJsonFilePatchyDb } = await import(
-          "./json-db.js"
-        );
-        await new SingleOpenJsonFilePatchyDb(filePath).initialize(
-          "replacement-secret"
-        );
+        const { JsonFilePatchyDb: SingleOpenJsonFilePatchyDb } = await import("./json-db.js");
+        await new SingleOpenJsonFilePatchyDb(filePath).initialize("replacement-secret");
       } finally {
         vi.doUnmock("node:fs/promises");
         vi.resetModules();
@@ -1206,9 +1138,7 @@ describe("JsonFilePatchyDb", () => {
       expect(targetDirectoryOpens).toBe(1);
       expect(targetDirectorySyncs).toBe(1);
       expect(await readdir(tempDir)).toEqual(["db.json"]);
-      const auth = await new JsonFilePatchyDb(filePath).findApiTokenByToken(
-        "replacement-secret"
-      );
+      const auth = await new JsonFilePatchyDb(filePath).findApiTokenByToken("replacement-secret");
       expect(auth?.id).toBe("tok_bootstrap");
     }
   );
@@ -1234,15 +1164,11 @@ describe("JsonFilePatchyDb", () => {
     let error: unknown;
     try {
       // A static import cannot observe the per-test mocked filesystem boundary.
-      const { JsonFilePatchyDb: FailingJsonFilePatchyDb } = await import(
-        "./json-db.js"
+      const { JsonFilePatchyDb: FailingJsonFilePatchyDb } = await import("./json-db.js");
+      error = await new FailingJsonFilePatchyDb(filePath).initialize("replacement-secret").then(
+        () => null,
+        (reason: unknown) => reason
       );
-      error = await new FailingJsonFilePatchyDb(filePath)
-        .initialize("replacement-secret")
-        .then(
-          () => null,
-          (reason: unknown) => reason
-        );
     } finally {
       vi.doUnmock("node:fs/promises");
       vi.resetModules();
@@ -1254,9 +1180,7 @@ describe("JsonFilePatchyDb", () => {
     expect(String(error)).not.toContain("replacement-secret");
     expect(await readFile(filePath)).not.toEqual(original);
     expect(await readdir(tempDir)).toEqual(["db.json"]);
-    const auth = await new JsonFilePatchyDb(filePath).findApiTokenByToken(
-      "replacement-secret"
-    );
+    const auth = await new JsonFilePatchyDb(filePath).findApiTokenByToken("replacement-secret");
     expect(auth?.id).toBe("tok_bootstrap");
   });
 
@@ -1291,15 +1215,11 @@ describe("JsonFilePatchyDb", () => {
     let error: unknown;
     try {
       // A static import cannot observe the per-test mocked filesystem boundary.
-      const { JsonFilePatchyDb: MountedJsonFilePatchyDb } = await import(
-        "./json-db.js"
+      const { JsonFilePatchyDb: MountedJsonFilePatchyDb } = await import("./json-db.js");
+      error = await new MountedJsonFilePatchyDb(filePath).initialize("replacement-secret").then(
+        () => null,
+        (reason: unknown) => reason
       );
-      error = await new MountedJsonFilePatchyDb(filePath)
-        .initialize("replacement-secret")
-        .then(
-          () => null,
-          (reason: unknown) => reason
-        );
     } finally {
       vi.doUnmock("node:fs/promises");
       vi.resetModules();

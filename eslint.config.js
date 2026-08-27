@@ -5,13 +5,72 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    ignores: ["dist/**", "coverage/**", "node_modules/**", ".turbo/**"]
+    ignores: ["**/dist/**", "**/coverage/**", "**/node_modules/**", "**/.turbo/**"]
   },
   {
-    files: ["**/*.ts"],
+    files: ["**/*.{ts,mts,cts,tsx}"],
+    languageOptions: {
+      parserOptions: {
+        project: "./tsconfig.lint.json",
+        tsconfigRootDir: import.meta.dirname
+      }
+    },
     rules: {
       "no-control-regex": "off",
-      "@typescript-eslint/no-explicit-any": "off"
+      "no-console": "error",
+      "no-restricted-properties": [
+        "error",
+        {
+          object: "process",
+          property: "env",
+          message: "Read environment variables in a package entrypoint or packages/config."
+        }
+      ],
+      "@typescript-eslint/no-explicit-any": "error",
+      "@typescript-eslint/no-floating-promises": "error"
+    }
+  },
+  {
+    files: ["packages/cli/src/**/*.{ts,mts,cts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              regex: "^@patchy/(?!core$)",
+              message: "The CLI may depend only on @patchy/core."
+            },
+            {
+              regex: "(^|/)\\.\\.(/|$)",
+              message: "CLI imports may not traverse parent directories."
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    files: [
+      "apps/server/src/start.ts",
+      "packages/cli/src/index.ts",
+      "packages/db/src/migrate.ts",
+      "test/postgres.ts"
+    ],
+    rules: {
+      "no-console": "off"
+    }
+  },
+  {
+    files: [
+      // These test entrypoints clone the host environment before launching child processes.
+      "apps/server/src/render.test.ts",
+      "packages/cli/src/index.test.ts",
+      "packages/cli/src/index.ts",
+      "packages/config/**/*.ts"
+    ],
+    rules: {
+      "no-restricted-properties": "off"
     }
   }
 );

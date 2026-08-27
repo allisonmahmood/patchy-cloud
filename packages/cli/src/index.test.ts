@@ -25,9 +25,7 @@ const MINTED_TOKEN = "pp_minted_publishing_key";
 const DEPRECATED_ANONYMOUS_NOTICE =
   "Warning: --anonymous is deprecated and ignored. Uploads always use a publishing token; " +
   "one is minted automatically when none is stored for the instance.\n";
-const argvPreloadUrl = pathToFileURL(
-  path.join(packageDir, "test/record-argv.mjs")
-).href;
+const argvPreloadUrl = pathToFileURL(path.join(packageDir, "test/record-argv.mjs")).href;
 const ttyPreloadUrl = pathToFileURL(path.join(packageDir, "test/mock-tty.mjs")).href;
 const signalListenerPreloadUrl = pathToFileURL(
   path.join(packageDir, "test/preinstalled-signal-listener.mjs")
@@ -87,10 +85,7 @@ describe("patchy auth set", () => {
   it("rejects ambiguous multi-line input from explicit stdin", () => {
     const firstToken = "pp_first_secret";
     const secondToken = "pp_second_secret";
-    const result = runCli(
-      ["auth", "set", "--token-stdin"],
-      `${firstToken}\n${secondToken}\n`
-    );
+    const result = runCli(["auth", "set", "--token-stdin"], `${firstToken}\n${secondToken}\n`);
 
     expect(result.status).toBe(1);
     expect(result.stdout).toBe("");
@@ -136,19 +131,16 @@ describe("patchy auth set", () => {
     expect(existsSync(path.join(result.stateDir, "credentials.json"))).toBe(false);
   });
 
-  it.runIf(supportsPythonPty)(
-    "rejects --token-stdin when stdin is an echoing terminal",
-    () => {
-      const result = runCliInPty(["auth", "set", "--token-stdin"], "none");
+  it.runIf(supportsPythonPty)("rejects --token-stdin when stdin is an echoing terminal", () => {
+    const result = runCliInPty(["auth", "set", "--token-stdin"], "none");
 
-      expect(result.status).toBe(1);
-      expect(result.output).toContain(
-        "--token-stdin requires redirected input. Run patchy auth set to use the hidden interactive prompt."
-      );
-      expect(result.terminalRestored).toBe(true);
-      expect(existsSync(path.join(result.stateDir, "credentials.json"))).toBe(false);
-    }
-  );
+    expect(result.status).toBe(1);
+    expect(result.output).toContain(
+      "--token-stdin requires redirected input. Run patchy auth set to use the hidden interactive prompt."
+    );
+    expect(result.terminalRestored).toBe(true);
+    expect(existsSync(path.join(result.stateDir, "credentials.json"))).toBe(false);
+  });
 
   it.runIf(supportsPythonPty)(
     "restores the terminal when the interactive prompt reaches EOF",
@@ -439,10 +431,7 @@ describe("patchy auth set terminal boundary", () => {
 
   it("rejects explicit stdin selection when stdin is a terminal", () => {
     const token = "pp_unsafe_tty_secret";
-    const result = runCliWithMockTty(
-      ["auth", "set", "--token-stdin"],
-      `${token}\n`
-    );
+    const result = runCliWithMockTty(["auth", "set", "--token-stdin"], `${token}\n`);
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("--token-stdin requires redirected input.");
@@ -456,11 +445,7 @@ describe("patchy auth set terminal boundary", () => {
     const parentDir = makeStateDir();
     const invalidStateDir = path.join(parentDir, "not-a-directory");
     writeFileSync(invalidStateDir, "occupied");
-    const result = runCliWithMockTty(
-      ["auth", "set"],
-      `${token}\n`,
-      invalidStateDir
-    );
+    const result = runCliWithMockTty(["auth", "set"], `${token}\n`, invalidStateDir);
 
     expect(result.status).toBe(1);
     expect(`${result.stdout}${result.stderr}`).not.toContain(token);
@@ -517,20 +502,8 @@ describe("patchy upload", () => {
   });
 
   it("rejects combining the update-only and create-only options", () => {
-    const result = runCli([
-      "upload",
-      "does-not-exist.html",
-      "--draft",
-      "abcdefghijkl",
-      "--new"
-    ]);
-    const emptyTargetResult = runCli([
-      "upload",
-      "does-not-exist.html",
-      "--draft",
-      "",
-      "--new"
-    ]);
+    const result = runCli(["upload", "does-not-exist.html", "--draft", "abcdefghijkl", "--new"]);
+    const emptyTargetResult = runCli(["upload", "does-not-exist.html", "--draft", "", "--new"]);
 
     expect(result.status).toBe(1);
     expect(result.stdout).toBe("");
@@ -676,11 +649,7 @@ describe("patchy upload", () => {
       writeFileSync(mintHtml, "<!doctype html><title>Minted</title>");
       const mintResult = await runCliAsync(["upload", mintHtml, ...apiArgs], {}, mintState);
 
-      expect([
-        environmentResult.status,
-        storedResult.status,
-        mintResult.status
-      ]).toEqual([0, 0, 0]);
+      expect([environmentResult.status, storedResult.status, mintResult.status]).toEqual([0, 0, 0]);
       expect(server.requests.map((request) => request.authorization)).toEqual([
         "Bearer environment-token",
         "Bearer stored-token",
@@ -771,12 +740,7 @@ describe("patchy upload", () => {
       writeFileSync(unreadableHtmlPath, "<!doctype html><title>Unreadable credentials</title>");
       mkdirSync(path.join(unreadableStateDir, "credentials.json"));
       const unreadableResult = await runCliAsync(
-        [
-          "upload",
-          unreadableHtmlPath,
-          "--api-url",
-          `http://127.0.0.1:${address.port}`
-        ],
+        ["upload", unreadableHtmlPath, "--api-url", `http://127.0.0.1:${address.port}`],
         {},
         unreadableStateDir
       );
@@ -873,20 +837,13 @@ describe("patchy upload", () => {
       const address = server.address();
       if (!address || typeof address === "string") throw new Error("Expected a TCP test server");
       const apiUrl = `http://127.0.0.1:${address.port}`;
-      writeFileSync(
-        path.join(stateDir, "config.json"),
-        `${JSON.stringify({ apiUrl }, null, 2)}\n`
-      );
+      writeFileSync(path.join(stateDir, "config.json"), `${JSON.stringify({ apiUrl }, null, 2)}\n`);
       writeFileSync(
         path.join(stateDir, "credentials.json"),
         hostKeyedCredentials({ [apiUrl]: "configured-instance-token" })
       );
 
-      const result = await runCliAsync(
-        ["upload", htmlPath],
-        { PATCHY_API_URL: "" },
-        stateDir
-      );
+      const result = await runCliAsync(["upload", htmlPath], { PATCHY_API_URL: "" }, stateDir);
 
       expect(result.status).toBe(0);
       expect(authorization).toBe("Bearer configured-instance-token");
@@ -1034,14 +991,7 @@ describe("patchy upload", () => {
       const address = server.address();
       if (!address || typeof address === "string") throw new Error("Expected a TCP test server");
       const result = await runCliAsync(
-        [
-          "upload",
-          htmlPath,
-          "--draft",
-          draftId,
-          "--api-url",
-          `http://127.0.0.1:${address.port}`
-        ],
+        ["upload", htmlPath, "--draft", draftId, "--api-url", `http://127.0.0.1:${address.port}`],
         { PATCHY_API_TOKEN: token }
       );
 
@@ -1216,11 +1166,7 @@ describe("auto-mint on first upload", () => {
     const server = await startUploadServer(createOnly("mnopqrstuvwx"));
 
     try {
-      const whoami = await runCliAsync(
-        ["whoami", "--api-url", server.apiUrl],
-        {},
-        stateDir
-      );
+      const whoami = await runCliAsync(["whoami", "--api-url", server.apiUrl], {}, stateDir);
       const validate = await runCliAsync(["validate", htmlPath], {}, stateDir);
 
       // Both are read-only diagnostics: they report the absence of a token
@@ -1795,11 +1741,7 @@ describe("host-keyed local state", () => {
         {},
         stateDir
       );
-      const whoami = await runCliAsync(
-        ["whoami", "--api-url", server.apiUrl],
-        {},
-        stateDir
-      );
+      const whoami = await runCliAsync(["whoami", "--api-url", server.apiUrl], {}, stateDir);
       const authSet = runCli(
         ["auth", "set", "--token-stdin", "--api-url", server.apiUrl],
         "pp_replacement\n",
@@ -2634,12 +2576,7 @@ function expectTerminalRestored(report: TerminalReport) {
 
 function runCliInPty(
   args: string[],
-  interaction:
-    | "line"
-    | "eof"
-    | "interrupt"
-    | "none"
-    | `signal:${(typeof externalSignals)[number]}`,
+  interaction: "line" | "eof" | "interrupt" | "none" | `signal:${(typeof externalSignals)[number]}`,
   input = "",
   stateDir = makeStateDir(),
   envOverrides: NodeJS.ProcessEnv = {}
