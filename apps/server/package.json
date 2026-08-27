@@ -9,7 +9,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "dev": "tsx watch src/start.ts",
+    "dev": "tsx --conditions=development watch src/start.ts",
     "start": "node dist/start.js",
     "test": "vitest run",
     "lint": "eslint src --ext .ts",
