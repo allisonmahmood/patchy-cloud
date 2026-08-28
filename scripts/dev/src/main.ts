@@ -23,6 +23,7 @@ import { FetchHttpClient, HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { Plan, PlanJson, computePlan, findWorktree } from "./plan.js";
 import { isPortFree } from "./ports.js";
+import { alive, signal } from "./process.js";
 import { layout, readPlan, writePlan } from "./state.js";
 import { supervise } from "./supervisor.js";
 
@@ -57,43 +58,28 @@ class NoPlan extends Schema.TaggedError<NoPlan>()("NoPlan", { worktree: Schema.S
   }
 }
 
-// ---- Process facts --------------------------------------------------------
+/**
+ * Every failure an agent can act on becomes one stderr line and exit 1: each
+ * handler ends in this, so `Command.run` formats it instead of `runMain`
+ * printing a stack.
+ */
+const userFacing = <A, E extends { readonly message: string }, R>(self: Effect.Effect<A, E, R>) =>
+  Effect.catch(self, (cause) => new CliError.UserError({ cause, userMessage: cause.message }));
 
-/** Signal 0 probes without sending: true while the pid exists and is ours to signal. */
-const alive = (pid: number) =>
-  Effect.sync(() => {
-    try {
-      process.kill(pid, 0);
-      return true;
-    } catch {
-      return false;
-    }
-  });
+// ---- Instance facts -------------------------------------------------------
 
-const signal = (pid: number, name: "SIGTERM") =>
-  Effect.sync(() => {
-    try {
-      process.kill(pid, name);
-    } catch {
-      // Already gone; nothing to stop.
-    }
-  });
-
+/** Bounded: a server that accepts the socket but never answers is not healthy either. */
 const healthy = (plan: Plan) =>
   HttpClient.get(`${plan.apiUrl}/healthz`).pipe(
     Effect.map((response) => response.status === 200),
-    Effect.orElseSucceed(() => false),
-    Effect.provide(FetchHttpClient.layer)
+    Effect.timeout("2 seconds"),
+    Effect.orElseSucceed(() => false)
   );
 
 /** A plan whose supervisor is alive and whose server answers. */
-const isRunning = (plan: Plan) => {
-  const pids = plan.pids;
-  if (pids === undefined) return Effect.succeed(false);
-  return Effect.gen(function* () {
-    return (yield* alive(pids.supervisor)) && (yield* healthy(plan));
-  });
-};
+const isRunning = Effect.fn("isRunning")(function* (plan: Plan) {
+  return plan.pids !== undefined && (yield* alive(plan.pids.supervisor)) && (yield* healthy(plan));
+});
 
 // ---- Plans ----------------------------------------------------------------
 
@@ -108,16 +94,17 @@ const stateDirOf = (root: string) =>
 /**
  * The recorded plan if its instance is running, otherwise a fresh one. A
  * supervisor that is alive but not yet (or no longer) healthy still owns the
- * state dir, so starting over it would race its writes: refuse instead.
+ * state dir, so starting over it would race its writes: a start refuses, a
+ * dry run just reports what is recorded.
  */
-const currentPlan = Effect.gen(function* () {
+const currentPlan = Effect.fn("currentPlan")(function* (dryRun: boolean) {
   const root = yield* worktree;
   const recorded = yield* readPlan(yield* stateDirOf(root));
   if (Option.isSome(recorded)) {
     const plan = recorded.value;
     if (yield* isRunning(plan)) return plan;
     if (plan.pids && (yield* alive(plan.pids.supervisor))) {
-      return yield* new SupervisorBusy({ pid: plan.pids.supervisor });
+      return dryRun ? plan : yield* new SupervisorBusy({ pid: plan.pids.supervisor });
     }
   }
   return yield* computePlan(root, isPortFree);
@@ -126,8 +113,8 @@ const currentPlan = Effect.gen(function* () {
 const printPlan = (plan: Plan, json: boolean) => {
   if (json) return Console.log(Schema.encodeSync(PlanJson)(plan));
   const pids = plan.pids
-    ? `supervisor ${plan.pids.supervisor}, server ${plan.pids.server}, postgres ${plan.pids.postgres}`
-    : "not running";
+    ? `supervisor ${plan.pids.supervisor}, server ${plan.pids.server ?? "-"}, postgres ${plan.pids.postgres ?? "-"}`
+    : "not started";
   return Console.log(
     [
       `Patchy Cloud dev instance for ${plan.worktree}`,
@@ -151,15 +138,21 @@ const dryRun = Flag.boolean("dry-run").pipe(
   Flag.withDefault(false)
 );
 
-const dev = Command.make("dev", { json, dryRun }, ({ json, dryRun }) =>
-  Effect.gen(function* () {
-    const plan = yield* currentPlan;
+const dev = Command.make(
+  "dev",
+  { json, dryRun },
+  Effect.fn(function* ({ json, dryRun }) {
+    const plan = yield* currentPlan(dryRun);
     if (dryRun || (yield* isRunning(plan))) return yield* printPlan(plan, json);
     yield* printPlan(yield* start(plan), json);
-  })
+  }, userFacing)
 ).pipe(Command.withDescription("Start this worktree's local Patchy Cloud instance (idempotent)"));
 
-/** Writes the plan, spawns the supervisor detached, and waits for `/healthz`. */
+/**
+ * Writes the plan, spawns the supervisor detached, records its pid at once
+ * (so a second start during initdb sees it and refuses), then waits for
+ * `/healthz`.
+ */
 const start = Effect.fn("start")(function* (plan: Plan) {
   const path = yield* Path.Path;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -182,6 +175,7 @@ const start = Effect.fn("start")(function* (plan: Plan) {
     )
   );
   yield* Effect.asVoid(supervisor.unref);
+  yield* writePlan({ ...plan, pids: { supervisor: supervisor.pid } });
 
   const deadline = 240; // × 250ms: initdb on a cold state dir is the slow case
   for (let attempt = 0; attempt < deadline; attempt++) {
@@ -219,17 +213,21 @@ const StatusReport = Schema.fromJsonString(
   { space: 2 }
 );
 
-const status = Command.make("status", { json }, ({ json }) =>
-  Effect.gen(function* () {
+const status = Command.make(
+  "status",
+  { json },
+  Effect.fn(function* ({ json }) {
     const plan = yield* recordedPlan;
-    const pids = plan.pids;
+    const probe = Effect.fn(function* (pid: number | undefined) {
+      return pid === undefined ? null : { pid, alive: yield* alive(pid) };
+    });
     const report = {
       worktree: plan.worktree,
       apiUrl: plan.apiUrl,
       healthy: yield* healthy(plan),
-      supervisor: pids ? { pid: pids.supervisor, alive: yield* alive(pids.supervisor) } : null,
-      server: pids ? { pid: pids.server, alive: yield* alive(pids.server) } : null,
-      postgres: pids ? { pid: pids.postgres, alive: yield* alive(pids.postgres) } : null
+      supervisor: yield* probe(plan.pids?.supervisor),
+      server: yield* probe(plan.pids?.server),
+      postgres: yield* probe(plan.pids?.postgres)
     };
     if (json) return yield* Console.log(Schema.encodeSync(StatusReport)(report));
     const state = (part: typeof ProcessState.Type) =>
@@ -242,7 +240,7 @@ const status = Command.make("status", { json }, ({ json }) =>
         `  postgres    ${state(report.postgres)}`
       ].join("\n")
     );
-  })
+  }, userFacing)
 ).pipe(Command.withDescription("Report what is running for this worktree"));
 
 /** SIGTERM the recorded supervisor and wait; state stays for the next start. */
@@ -258,28 +256,32 @@ const stopInstance = Effect.fn("stop")(function* (plan: Plan) {
   // A supervisor that died without tearing down leaves its children behind;
   // those pids are recorded too, so they are still ours to stop.
   for (const pid of [pids.server, pids.postgres]) {
-    if (yield* alive(pid)) yield* signal(pid, "SIGTERM");
+    if (pid !== undefined && (yield* alive(pid))) yield* signal(pid, "SIGTERM");
   }
   const leftover = yield* alive(pids.supervisor);
   yield* Console.log(leftover ? `Supervisor ${pids.supervisor} is still running.` : "Stopped.");
 });
 
-const stop = Command.make("stop", {}, () => Effect.flatMap(recordedPlan, stopInstance)).pipe(
-  Command.withDescription("Stop this worktree's instance, keeping its state")
-);
+const stop = Command.make("stop", {}, () =>
+  Effect.flatMap(recordedPlan, stopInstance).pipe(userFacing)
+).pipe(Command.withDescription("Stop this worktree's instance, keeping its state"));
 
-const logs = Command.make("logs", {}, () =>
-  Effect.gen(function* () {
+const logs = Command.make(
+  "logs",
+  {},
+  Effect.fn(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const file = layout(yield* recordedPlan, path).logFile;
     if (!(yield* fs.exists(file))) return yield* Console.log("(no log yet)");
     yield* Console.log(yield* fs.readFileString(file));
-  })
+  }, userFacing)
 ).pipe(Command.withDescription("Print this worktree's dev.log"));
 
-const reset = Command.make("reset", { json }, ({ json }) =>
-  Effect.gen(function* () {
+const reset = Command.make(
+  "reset",
+  { json },
+  Effect.fn(function* ({ json }) {
     const fs = yield* FileSystem.FileSystem;
     const stateDir = yield* stateDirOf(yield* worktree);
     // Reset is the recovery path, so an unreadable plan.json is wiped, not fatal.
@@ -290,12 +292,12 @@ const reset = Command.make("reset", { json }, ({ json }) =>
     yield* fs.remove(stateDir, { recursive: true, force: true });
     const plan = yield* computePlan(yield* worktree, isPortFree);
     yield* printPlan(yield* start(plan), json);
-  })
+  }, userFacing)
 ).pipe(Command.withDescription("Stop, wipe .local/dev, and start a fresh seeded instance"));
 
 /** The detached process `start` spawns. Reads the plan `start` wrote. */
 const superviseCommand = Command.make("supervise", {}, () =>
-  Effect.flatMap(recordedPlan, supervise).pipe(Effect.scoped)
+  Effect.flatMap(recordedPlan, supervise).pipe(Effect.scoped, userFacing)
 ).pipe(Command.unlisted);
 
 /** Agent-facing surface: `--help`/`--version` only; failures are one line, no stack. */
@@ -312,7 +314,6 @@ dev.pipe(
   Command.withSubcommands([status, stop, logs, reset, superviseCommand]),
   Command.run({ version: "0.0.0" }),
   Effect.scoped,
-  Effect.catch((cause) => new CliError.UserError({ cause, userMessage: cause.message })),
-  Effect.provide([NodeServices.layer, CliSurface]),
+  Effect.provide([NodeServices.layer, FetchHttpClient.layer, CliSurface]),
   NodeRuntime.runMain
 );

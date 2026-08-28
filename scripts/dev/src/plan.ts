@@ -10,12 +10,17 @@ import * as FileSystem from "effect/FileSystem";
 import * as Hash from "effect/Hash";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import { DEV_TOKEN, PG_PASSWORD, PG_USER } from "./seed.js";
 
-/** The processes a running instance recorded in `plan.json`. */
+/**
+ * The processes recorded in `plan.json`. `start` records the supervisor the
+ * moment it is spawned — that is the lock against a second start — and the
+ * supervisor fills in the rest once they exist.
+ */
 export const Pids = Schema.Struct({
   supervisor: Schema.Int,
-  server: Schema.Int,
-  postgres: Schema.Int
+  server: Schema.optionalKey(Schema.Int),
+  postgres: Schema.optionalKey(Schema.Int)
 });
 
 export const Plan = Schema.Struct({
@@ -27,7 +32,7 @@ export const Plan = Schema.Struct({
   databaseUrl: Schema.String,
   /** The seeded API token; `env` exports it as `PATCHY_API_TOKEN`. */
   token: Schema.String,
-  /** Absent until the supervisor has started the processes. */
+  /** Absent until `start` has spawned a supervisor. */
   pids: Schema.optionalKey(Pids)
 });
 export type Plan = typeof Plan.Type;
@@ -52,15 +57,7 @@ export class NoFreePorts extends Schema.TaggedError<NoFreePorts>()("NoFreePorts"
   }
 }
 
-/**
- * Fixed dev credentials; local only, and every worktree listens on its own
- * port. The token is not `dev-token` because the server tests bootstrap that
- * one on top of the seeded template, and a token hash is unique.
- */
-export const DEV_TOKEN = "patchy-dev-token";
 export const DATABASE_NAME = "patchy";
-export const PG_USER = "postgres";
-export const PG_PASSWORD = "postgres";
 
 /**
  * Even ports in 20000-39998 keep clear of the well-known range and leave
@@ -90,26 +87,26 @@ export const findWorktree = Effect.fn("findWorktree")(function* (from: string) {
  * The plan for a worktree, with the first free port pair at or above the
  * hashed base. `isFree` is the only side effect; tests pass a stub.
  */
-export const computePlan = <E, R>(
+export const computePlan = Effect.fn("computePlan")(function* <E, R>(
   worktree: string,
   isFree: (port: number) => Effect.Effect<boolean, E, R>
-): Effect.Effect<Plan, NoFreePorts | E, R | Path.Path> =>
-  Effect.gen(function* () {
-    const path = yield* Path.Path;
-    const from = basePort(worktree);
-    for (let pair = 0; pair < SCAN_PAIRS; pair++) {
-      const server = from + pair * 2;
-      const postgres = server + 1;
-      if ((yield* isFree(server)) && (yield* isFree(postgres))) {
-        return {
-          worktree,
-          stateDir: path.join(worktree, ".local", "dev"),
-          ports: { server, postgres },
-          apiUrl: `http://127.0.0.1:${server}`,
-          databaseUrl: `postgresql://${PG_USER}:${PG_PASSWORD}@127.0.0.1:${postgres}/${DATABASE_NAME}`,
-          token: DEV_TOKEN
-        };
-      }
+) {
+  const path = yield* Path.Path;
+  const from = basePort(worktree);
+  for (let pair = 0; pair < SCAN_PAIRS; pair++) {
+    const server = from + pair * 2;
+    const postgres = server + 1;
+    if ((yield* isFree(server)) && (yield* isFree(postgres))) {
+      const plan: Plan = {
+        worktree,
+        stateDir: path.join(worktree, ".local", "dev"),
+        ports: { server, postgres },
+        apiUrl: `http://127.0.0.1:${server}`,
+        databaseUrl: `postgresql://${PG_USER}:${PG_PASSWORD}@127.0.0.1:${postgres}/${DATABASE_NAME}`,
+        token: DEV_TOKEN
+      };
+      return plan;
     }
-    return yield* new NoFreePorts({ from, tried: SCAN_PAIRS });
-  });
+  }
+  return yield* new NoFreePorts({ from, tried: SCAN_PAIRS });
+});

@@ -8,7 +8,24 @@
  */
 import pg from "pg";
 import { sha256 } from "@patchy/core";
-import { DEV_TOKEN } from "./plan.js";
+
+/**
+ * Fixed dev credentials; local only, and every worktree listens on its own
+ * port. The token is not `dev-token` because the server tests bootstrap that
+ * one on top of the seeded template, and a token hash is unique.
+ */
+export const DEV_TOKEN = "patchy-dev-token";
+export const PG_USER = "postgres";
+export const PG_PASSWORD = "postgres";
+/** Durability off: a dev or test cluster is disposable, and this is most of its speed. */
+export const PG_FLAGS = [
+  "-c",
+  "fsync=off",
+  "-c",
+  "synchronous_commit=off",
+  "-c",
+  "full_page_writes=off"
+] as const;
 
 export const DEV_SEED = {
   accountId: "acct_dev",

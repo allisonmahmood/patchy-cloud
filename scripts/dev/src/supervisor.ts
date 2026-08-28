@@ -8,6 +8,7 @@
  * Every log line lands in `.local/dev/dev.log` with one `[service]` prefix.
  */
 import EmbeddedPostgres from "embedded-postgres";
+import * as Config from "effect/Config";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -17,8 +18,9 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { PostgresPatchyDb } from "@patchy/db";
-import { DATABASE_NAME, PG_PASSWORD, PG_USER, Plan } from "./plan.js";
-import { applyDevSeed } from "./seed.js";
+import { DATABASE_NAME, Plan } from "./plan.js";
+import { alive } from "./process.js";
+import { PG_FLAGS, PG_PASSWORD, PG_USER, applyDevSeed } from "./seed.js";
 import { layout, writeEnv, writePlan } from "./state.js";
 
 export class PostgresError extends Schema.TaggedError<PostgresError>()("PostgresError", {
@@ -57,27 +59,27 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
   yield* fs.makeDirectory(files.postgresDir, { recursive: true });
   yield* fs.makeDirectory(files.storageDir, { recursive: true });
 
-  // One writer for the log: library callbacks and streams all enqueue lines,
-  // a single fiber appends them, so prefixes never interleave mid-line.
-  const lines = yield* Queue.unbounded<string>();
+  // Every log line is one `writeAll`, so prefixes never split mid-line.
+  // Effect code writes directly; embedded-postgres's plain callbacks cannot,
+  // so they enqueue and a fiber appends for them.
   const log = yield* fs.open(files.logFile, { flag: "a" });
   const encoder = new TextEncoder();
-  const write = (service: string, line: string) =>
-    Effect.gen(function* () {
-      const now = yield* DateTime.now;
-      yield* log.writeAll(encoder.encode(`${DateTime.formatIso(now)} [${service}] ${line}\n`));
-    });
+  const write = Effect.fn("log")(function* (service: string, line: string) {
+    const now = yield* DateTime.now;
+    yield* log.writeAll(encoder.encode(`${DateTime.formatIso(now)} [${service}] ${line}\n`));
+  });
+  const callbackLines = yield* Queue.unbounded<{
+    readonly service: string;
+    readonly line: string;
+  }>();
   const enqueue = (service: string) => (message: unknown) => {
     const text = message instanceof Error ? message.message : String(message);
     for (const line of text.split("\n")) {
-      if (line.trim() !== "") Queue.offerUnsafe(lines, `${service}\t${line}`);
+      if (line.trim() !== "") Queue.offerUnsafe(callbackLines, { service, line });
     }
   };
-  yield* Stream.fromQueue(lines).pipe(
-    Stream.runForEach((entry) => {
-      const separator = entry.indexOf("\t");
-      return write(entry.slice(0, separator), entry.slice(separator + 1));
-    }),
+  yield* Stream.fromQueue(callbackLines).pipe(
+    Stream.runForEach(({ service, line }) => write(service, line)),
     Effect.forkScoped
   );
   const say = (line: string) => write("dev", line);
@@ -93,14 +95,7 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
     password: PG_PASSWORD,
     persistent: true,
     initdbFlags: ["--no-sync"],
-    postgresFlags: [
-      "-c",
-      "fsync=off",
-      "-c",
-      "synchronous_commit=off",
-      "-c",
-      "full_page_writes=off"
-    ],
+    postgresFlags: [...PG_FLAGS],
     onLog: enqueue("postgres"),
     onError: enqueue("postgres")
   });
@@ -161,7 +156,13 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
   yield* say("database migrated and seeded");
 
   // The server: plain node with the tsx loader so the pid we record is the
-  // one signals reach. Its env is exactly the plan, nothing inherited wins.
+  // one signals reach. Its env is closed: the plan plus what a process needs
+  // to run at all, so nothing exported in the agent's shell (another
+  // DATABASE_URL, a storage driver, a bootstrap token) leaks in.
+  const inherited = yield* Config.all({
+    PATH: Config.string("PATH"),
+    HOME: Config.string("HOME").pipe(Config.withDefault(plan.stateDir))
+  });
   const server = yield* spawner.spawn(
     ChildProcess.make(
       process.execPath,
@@ -174,13 +175,14 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
       {
         cwd: plan.worktree,
         env: {
+          ...inherited,
           PORT: String(plan.ports.server),
           PATCHY_DB_DRIVER: "postgres",
           DATABASE_URL: plan.databaseUrl,
           PATCHY_STORAGE_DIR: files.storageDir,
           PATCHY_PUBLIC_BASE_URL: plan.apiUrl
         },
-        extendEnv: true,
+        extendEnv: false,
         stdin: "ignore",
         killSignal: "SIGTERM",
         forceKillAfter: "5 seconds"
@@ -207,15 +209,7 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
   const postgresGone = Effect.gen(function* () {
     while (true) {
       yield* Effect.sleep("1 second");
-      const alive = yield* Effect.sync(() => {
-        try {
-          process.kill(postgresPid, 0);
-          return true;
-        } catch {
-          return false;
-        }
-      });
-      if (!alive) return yield* new PostgresExited({ pid: postgresPid });
+      if (!(yield* alive(postgresPid))) return yield* new PostgresExited({ pid: postgresPid });
     }
   });
   yield* Effect.raceFirst(

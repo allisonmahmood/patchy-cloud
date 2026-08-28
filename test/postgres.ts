@@ -8,8 +8,7 @@ import pg from "pg";
 import { inject } from "vitest";
 import type { TestProject } from "vitest/node";
 import { PostgresPatchyDb } from "../packages/db/src/postgres-db.js";
-import { PG_PASSWORD, PG_USER } from "../scripts/dev/src/plan.js";
-import { applyDevSeed } from "../scripts/dev/src/seed.js";
+import { PG_FLAGS, PG_PASSWORD, PG_USER, applyDevSeed } from "../scripts/dev/src/seed.js";
 
 const USER = PG_USER;
 const PASSWORD = PG_PASSWORD;
@@ -34,14 +33,7 @@ export default async function setup(project: TestProject): Promise<() => Promise
     user: USER,
     password: PASSWORD,
     persistent: false,
-    postgresFlags: [
-      "-c",
-      "fsync=off",
-      "-c",
-      "synchronous_commit=off",
-      "-c",
-      "full_page_writes=off"
-    ],
+    postgresFlags: [...PG_FLAGS],
     onLog() {},
     onError(error) {
       console.error(error);

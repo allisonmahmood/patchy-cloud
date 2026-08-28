@@ -26,7 +26,7 @@ describe("basePort", () => {
   });
 });
 
-describe("computePlan", () => {
+it.layer(Platform)("computePlan", (it) => {
   it.effect("pairs the server with the next port and derives every URL from them", () =>
     Effect.gen(function* () {
       const plan = yield* computePlan("/w/a", free);
@@ -37,7 +37,7 @@ describe("computePlan", () => {
       expect(plan.stateDir).toBe("/w/a/.local/dev");
       expect(plan.worktree).toBe("/w/a");
       expect(plan.pids).toBeUndefined();
-    }).pipe(Effect.provide(Platform))
+    })
   );
 
   it.effect("scans upward by pairs until both ports are free", () =>
@@ -46,14 +46,14 @@ describe("computePlan", () => {
       const busy = new Set([base, base + 3]);
       const plan = yield* computePlan("/w/a", (port) => Effect.succeed(!busy.has(port)));
       expect(plan.ports).toEqual({ server: base + 4, postgres: base + 5 });
-    }).pipe(Effect.provide(Platform))
+    })
   );
 
   it.effect("gives up with NoFreePorts after the scan window", () =>
     Effect.gen(function* () {
       const error = yield* Effect.flip(computePlan("/w/a", () => Effect.succeed(false)));
       expect(error._tag).toBe("NoFreePorts");
-    }).pipe(Effect.provide(Platform))
+    })
   );
 
   it.effect("round-trips through plan.json", () =>
@@ -62,11 +62,11 @@ describe("computePlan", () => {
       const text = Schema.encodeSync(PlanJson)(plan);
       expect(text).toContain('"ports"');
       expect(Schema.decodeUnknownSync(PlanJson)(text)).toEqual(plan);
-    }).pipe(Effect.provide(Platform))
+    })
   );
 });
 
-describe("findWorktree", () => {
+it.layer(Platform)("findWorktree", (it) => {
   it.effect("walks up to the directory holding .git, whether a directory or a file", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -77,7 +77,7 @@ describe("findWorktree", () => {
       yield* fs.writeFileString(path.join(worktree, ".git"), "gitdir: /elsewhere\n");
       expect(yield* findWorktree(path.join(worktree, "packages", "cli"))).toBe(worktree);
       expect(yield* findWorktree(worktree)).toBe(worktree);
-    }).pipe(Effect.scoped, Effect.provide(Platform))
+    }).pipe(Effect.scoped)
   );
 
   it.effect("fails with WorktreeNotFound outside any repository", () =>
@@ -86,6 +86,6 @@ describe("findWorktree", () => {
       const root = yield* fs.makeTempDirectoryScoped();
       const error = yield* Effect.flip(findWorktree(root));
       expect(error._tag).toBe("WorktreeNotFound");
-    }).pipe(Effect.scoped, Effect.provide(Platform))
+    }).pipe(Effect.scoped)
   );
 });
