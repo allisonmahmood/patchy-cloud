@@ -1,7 +1,8 @@
 name: PR labels
 
-# Applies `area:*` labels from the changed paths and a single `size:*` label
-# from the changed line count.
+# Applies `area:*` labels from the changed paths, a single `size:*` label
+# from the changed line count, and `effect-rc-bump` to Dependabot's Effect
+# group pull requests.
 #
 # SECURITY -- why this uses `pull_request_target` and must never check out
 # the pull request:
@@ -46,6 +47,21 @@ jobs:
           # Only manages labels named in .github/labeler.yml, so triage and
           # size labels are left alone.
           sync-labels: true
+
+      # Dependabot labels are per ecosystem, not per group, so the Effect RC
+      # group (see .github/dependabot.yml) is recognised by its branch name:
+      # dependabot/npm_and_yarn/effect-<hash>.
+      - name: Label Dependabot Effect RC bumps
+        if: github.event.pull_request.user.login == 'dependabot[bot]' && startsWith(github.event.pull_request.head.ref, 'dependabot/npm_and_yarn/effect-')
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              labels: ["effect-rc-bump"],
+            });
 
       - name: Apply a size label from changed lines
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0

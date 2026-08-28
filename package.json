@@ -27,9 +27,14 @@
     "format:check": "prettier --check ."
   },
   "devDependencies": {
+    "@effect/language-service": "catalog:",
+    "@effect/platform-node": "catalog:",
+    "@effect/sql-pg": "catalog:",
+    "@effect/vitest": "catalog:",
     "@eslint/js": "^10.0.1",
     "@types/node": "^22",
     "@types/pg": "^8.23.1",
+    "effect": "catalog:",
     "embedded-postgres": "18.4.0-beta.17",
     "esbuild": "0.28.2",
     "eslint": "^10.9.1",
