@@ -1,6 +1,6 @@
 # Publishing
 
-The `@patchy/cli` package and its bundled skill — the tool agents use to put pages up. An agent, not a human, is the expected operator; the CLI's output is its interface.
+The `@patchy/cli` package and its bundled skill — the tool agents use to put pages up. An agent is the primary operator and the CLI's output is its interface, so every message is written to be read by an agent first. Humans are not excluded: developers touching the cloud directly do drive it, so the human conveniences (completions, the wizard) stay, as long as they never change what an agent sees.
 
 ## Language
 
