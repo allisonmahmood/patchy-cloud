@@ -28,6 +28,7 @@ import {
   Ok,
   PatchQuotaExceeded,
   PatchView,
+  PayloadTooLarge,
   Pinned,
   PrincipalPatches,
   RateLimited,
@@ -539,6 +540,10 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
     if (statusCode >= 500) {
       app.log.error(error);
     }
+    // Fastify's own refusals. The two the wire names go out through their
+    // schemas; anything else keeps the same body at whatever status it carried.
+    if (statusCode === 413) return sendWire(reply, PayloadTooLarge, { ok: false, error: message });
+    if (statusCode === 400) return sendWire(reply, BadRequest, { ok: false, error: message });
     return reply.status(statusCode).send({ ok: false, error: message });
   });
 

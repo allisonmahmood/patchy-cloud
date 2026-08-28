@@ -19,6 +19,9 @@ export const PatchId = Schema.String.check(
 /** A moment on the wire is an ISO-8601 string, as the database already hands it out. */
 const Timestamp = Schema.String.annotate({ title: "Timestamp" });
 
+/** A request field a client may leave out or send as null. */
+const OptionalText = Schema.optionalKey(Schema.NullOr(Schema.String));
+
 // --- errors ---------------------------------------------------------------
 
 /**
@@ -90,7 +93,7 @@ export class MintedToken extends Schema.Class<MintedToken>("MintedToken")(
 ) {}
 
 export class CreateTokenRequest extends Schema.Class<CreateTokenRequest>("CreateTokenRequest")({
-  name: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  name: OptionalText,
   scopes: Schema.optionalKey(Schema.Array(Schema.String))
 }) {}
 
@@ -119,18 +122,18 @@ export class RevokedToken extends Schema.Class<RevokedToken>("RevokedToken")({
 
 /** What the CLI knows about where a document came from. Every field is optional. */
 export class UploadMetadata extends Schema.Class<UploadMetadata>("UploadMetadata")({
-  repoOrg: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  repoName: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  gitBranch: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  gitCommitSha: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  cliVersion: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  fileSha256: Schema.optionalKey(Schema.NullOr(Schema.String))
+  repoOrg: OptionalText,
+  repoName: OptionalText,
+  gitBranch: OptionalText,
+  gitCommitSha: OptionalText,
+  cliVersion: OptionalText,
+  fileSha256: OptionalText
 }) {}
 
 /** `POST /api/uploads`: with a `patchId` it updates that patch, without one it creates. */
 export class UploadRequest extends Schema.Class<UploadRequest>("UploadRequest")({
   html: Schema.String,
-  filename: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  filename: OptionalText,
   patchId: Schema.optionalKey(Schema.NullOr(PatchId)),
   metadata: Schema.optionalKey(UploadMetadata)
 }) {}
@@ -153,7 +156,7 @@ export class UploadCreated extends Schema.Class<UploadCreated>("UploadCreated")(
 export class UploadUpdated extends Schema.Class<UploadUpdated>("UploadUpdated")(uploadFields) {}
 
 export class DisableRequest extends Schema.Class<DisableRequest>("DisableRequest")({
-  reason: Schema.optionalKey(Schema.NullOr(Schema.String))
+  reason: OptionalText
 }) {}
 
 export class Ok extends Schema.Class<Ok>("Ok")({ ok: Schema.Literal(true) }) {}
