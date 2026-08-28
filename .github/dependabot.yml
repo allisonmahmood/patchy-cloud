@@ -14,8 +14,8 @@ updates:
       # follows prereleases while the pinned version is itself a prerelease of
       # the same release (4.0.0-rc.N -> 4.0.0-rc.M); once 4.0.0 ships it moves
       # to stable and stops following 4.x prereleases, which is what we want.
-      # .github/workflows/pr-labels.yml tags these PRs `effect-rc-bump` so an
-      # agent picks each one up and finishes it against MIGRATION.md.
+      # .github/workflows/pr-labels.yml tags these PRs `effect-rc-bump`; the
+      # runbook for finishing one lives in AGENTS.md -> Effect RC bumps.
       effect:
         patterns:
           - effect

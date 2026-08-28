@@ -49,6 +49,16 @@ Multi-context — a root `CONTEXT-MAP.md` pointing at one `CONTEXT.md` per conte
 - Body: the problem in a sentence or two, then how you fixed it. End with the model and harness that did the work.
 - One concern per PR. If the description says "also", split it.
 
+### Effect RC bumps
+
+Effect 4 is pinned at one release candidate through the pnpm `catalog:` in `pnpm-workspace.yaml`. Dependabot's `effect` group opens one PR per RC and `.github/workflows/pr-labels.yml` labels it `effect-rc-bump`. To finish one of those PRs:
+
+1. Check out the branch and run `pnpm install`, then read `node_modules/effect/MIGRATION.md` and the Effect changelog between the two RCs.
+2. Fix what the RC broke and commit onto the Dependabot branch until `pnpm lint`, `pnpm typecheck` and `pnpm test` pass.
+3. Keep `main` green: merge only on green CI. If the RC is unusable, close the PR and say why on the port map (#54).
+
+Drop the group, the label and this section once `effect@4.0.0` is stable.
+
 ## Plans and work artifacts
 
 - Do not commit implementation plans, research notes, or agent scratch files. Keep temporary working material outside the worktree. `.plans/` is gitignored only as a safety net for legacy tooling.

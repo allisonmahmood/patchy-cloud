@@ -15,11 +15,19 @@ catalog:
 minimumReleaseAge: 1440
 # Excluded by name rather than by exact version so a Dependabot RC bump only
 # has to touch the catalog; a fresh RC would otherwise be blocked for a day.
+# The `@effect/*` glob is deliberate: an RC of @effect/platform-node pulls a
+# matching @effect/platform-node-shared, and holding that back for a day would
+# fail the install on the bump branch. The cost is that @effect/language-service
+# also skips the gate. Delete this list once effect@4.0.0 is stable.
 minimumReleaseAgeExclude:
   - effect
   - "@effect/*"
-# Every transitive effect/@effect/* must resolve to the one pinned RC; two
-# copies of effect in the tree break Context/Layer identity.
+# Two copies of `effect` in the tree break Context/Layer identity, so every
+# transitive `effect` resolves to the pinned RC. The @effect/* packages we
+# depend on are pinned alongside it. pnpm overrides match exact names, not
+# scope globs, so packages we only get transitively (today:
+# @effect/platform-node-shared) follow their parent's exact range instead of
+# being listed here -- a stale entry here would be worse than none.
 overrides:
   effect: "catalog:"
   "@effect/platform-node": "catalog:"
