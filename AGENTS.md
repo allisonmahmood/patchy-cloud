@@ -16,6 +16,20 @@ We don't expect the users to need to know how to code. If they do, great! If not
 
 There are two life cycles a patch can be thought of. The development stage and the deployed stage. While being developed it will be the users agents creating it, building it, and finally deploying it. Once deployed it will be the user themselves directly interacting with it.
 
+## Long term vision
+
+The patchy cloud is not this yet, but i think here you will benefit from me explaining a bit of the future. currently we are rebuilding what used to be patch page. this means that in the patchy cloud there is a single primitive we serve the user. a static page. after we get all the migration and other things done, here is how we can think about the long term vission.
+
+There will be four main tiers of runtimes.
+
+- Tier 0 is static page no execution local or server side. It can fetch data from integrations and other sources, but it basically has no javascript locally or code running server side.
+- Tier 1 is then where we get "local execution" essentially in the users browser. aka client side now can do things. again it can connect to integrations, now it can actually execute and do more things, but there is no server side execution for a patch with a tier 1 runtime.
+- Tier 2 is where you get server side execution. this is where lot of modern saas apps live. you have all your integrations and other primitives. a tier 2 patch has a thing on the server side (probably some kind of lambda function or something, we haven't gotten to the point of deciding that yet) as well as client side.
+- Tier 3 runtime of a patch is then the final state where we can have things happen fully server side. could be some kind of automations that persist, etc.
+- And then eventually a tier 4 which is a sandbox for agents, but that's months out.
+
+We will also have many primitives. Like if a patch needs a place to store files we will have a primitive for that, if it needs its own tables in a database we will have primitives for that. If it wants to use one of the integrations a company has connected like say gmail or salesforce, we will have primitives for that that patches can use to build full fledged internal company tools
+
 ## Final note from Patchy
 
 We like ambitious ideas, simple systems, and software that feels obvious. Do not preserve complexity just because it already exists. Do not introduce machinery because it looks architecturally impressive. Understand the real constraint, then fight for the smallest model that makes the correct behavior unsurprising.

@@ -10,6 +10,7 @@ tmp/
 .local/
 .scratch/
 .plans/
+.claude/worktrees/
 
 # Local Patchy HTML plan artifacts.
 .local/patchy-plans/
