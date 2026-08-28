@@ -60,22 +60,50 @@ Multi-context — a root `CONTEXT-MAP.md` pointing at one `CONTEXT.md` per conte
 
 Standards sources for `/code-review`'s Standards axis, one `SKILL.md` each under `.agents/skills/`: `effect-service-conventions` when the diff creates, moves, refactors, or consumes an Effect service; `ui-consistency` when it touches rendered HTML or CSS. Pass the matching file(s) to the Standards sub-agent.
 
+## Effect
+
+The server, packages and CLI are moving onto Effect 4 (one RC, pinned through the pnpm `catalog:` in `pnpm-workspace.yaml`; HTTP, HttpApi, SQL and CLI come from `effect/unstable/*`). The port lands package by package on `main`, one PR each, from the build tickets on the port map (#54); a package that has moved is held to everything below, code the port has not reached yet is not.
+
+Before writing Effect code, read `node_modules/effect/AGENTS.md` — how Effect wants to be written (`Effect.gen`, `Effect.fn`, services, layers), with worked examples under `node_modules/effect/ai-docs/`. Effect's `MIGRATION.md` is not shipped in the package; it lives upstream at <https://github.com/Effect-TS/effect/blob/main/MIGRATION.md>.
+
+### Service conventions
+
+`.agents/skills/effect-service-conventions/SKILL.md` is the source of truth and the review spec; the gist:
+
+- One file per service, in this order: errors and schemas, the `Context.Service` tag with its interface inline, `make`, `layer`. Refer to the interface as `Foo["Service"]`.
+- Namespace imports at service boundaries: `import * as Effect from "effect/Effect"`, `PatchStore.PatchStore` / `PatchStore.layer`. Named imports stay for whole packages such as `@patchy/api` and for pure helpers, errors, schemas and types.
+- Failures are `Schema.TaggedError` with structured fields; `message` derives from those fields, the underlying error rides as `cause`. Catch known tags with `Effect.catchTags`. Wire bodies keep their current shape (a 401 is `{ ok: false, error }`, no `_tag` on the wire).
+- Dependencies come from the environment (`yield* Foo.Foo`), never as constructor arguments. `runPromise` and `ManagedRuntime` belong only at the server and CLI entrypoints and at the thin seam between a ported package and one not yet moved.
+- A capability with one consumer stays a module; a second consumer earns the package.
+
+### Packages by capability
+
+The target layout, decided on the port map ([#56](https://github.com/allisonmahmood/patchy-cloud/issues/56)): `core` (html-policy, ids), `api` (wire schemas, the `HttpApi`, the derived client), `sql` (client and Migrator, no tables), `auth`, `content-store`, `patches` (owns the expiry sweep), `serving` (pages, reads through `patches`), `analytics`, `limits`, `cli`. Each capability owns its migrations and its `HttpApi` group. `config`, `db` and `storage` are the pre-port packages and go as the port reaches them.
+
+### Tests
+
+`@effect/vitest`: `it.layer` shares one migrated Postgres per block, `it.effect` for each case, `HttpApiTest.groups` for API routes, `NodeHttpServer.layerTest` when the test needs what a real socket sees, `TestClock` for the clock, `Scope` for anything that must be closed. Inject faults with an alternate layer, not a mock. The copyable template is `packages/effect-slice/src/slice.test.ts` on the `prototype/effect-slice` branch; its README lists the gotchas the port must carry (esbuild `createRequire` banner, `Migrator.make({})`, the CLI output overrides).
+
+### Guardrails
+
+`@effect/language-service` diagnostics fail `pnpm typecheck` (rule set in `tsconfig.base.json`; `effect-language-service patch` runs from `prepare`). `/code-review` loads the service review spec above whenever a diff touches an Effect service.
+
+### Effect RC bumps
+
+Dependabot's `effect` group opens one PR per RC and `.github/workflows/pr-labels.yml` labels it `effect-rc-bump`. To finish one:
+
+1. Check out the branch, run `pnpm install`, then read the upstream `MIGRATION.md` and the Effect changelog between the two RCs.
+2. Fix what the RC broke and commit onto the Dependabot branch until `pnpm lint`, `pnpm typecheck` and `pnpm test` pass.
+3. Keep `main` green: merge only on green CI. If the RC is unusable, close the PR and say why on the port map (#54).
+
+Drop the group, the label and this section once `effect@4.0.0` is stable.
+
 ## Pull requests
 
 - Never make a PR unless the developer explicitly asks you to do so.
 - Conventional commit titles, plain language: `fix(web): new threads no longer spike CPU`.
 - Body: the problem in a sentence or two, then how you fixed it. End with the model and harness that did the work.
 - One concern per PR. If the description says "also", split it.
-
-### Effect RC bumps
-
-Effect 4 is pinned at one release candidate through the pnpm `catalog:` in `pnpm-workspace.yaml`. Dependabot's `effect` group opens one PR per RC and `.github/workflows/pr-labels.yml` labels it `effect-rc-bump`. To finish one of those PRs:
-
-1. Check out the branch and run `pnpm install`, then read `node_modules/effect/MIGRATION.md` and the Effect changelog between the two RCs.
-2. Fix what the RC broke and commit onto the Dependabot branch until `pnpm lint`, `pnpm typecheck` and `pnpm test` pass.
-3. Keep `main` green: merge only on green CI. If the RC is unusable, close the PR and say why on the port map (#54).
-
-Drop the group, the label and this section once `effect@4.0.0` is stable.
 
 ## Plans and work artifacts
 
