@@ -20,7 +20,8 @@
         // Effect diagnostics. `effect-language-service patch` (run by `prepare`
         // and `typecheck`) bakes the plugin into tsc so these fail the build.
         "name": "@effect/language-service",
-        "namespaceImportPackages": ["@effect/platform-node", "effect"],
+        // Effect warnings exit 2 by default. The whole-file rules below are
+        // warnings, so without this they would red CI on unported Node code.
         "ignoreEffectWarningsInTscExitCode": true,
         "diagnosticSeverity": {
           "importFromBarrel": "error",
@@ -28,32 +29,29 @@
           "unsafeEffectTypeAssertion": "error",
           "instanceOfSchema": "error",
           "deterministicKeys": "error",
-          "strictEffectProvide": "off",
           "leakingRequirements": "error",
           "globalErrorInEffectCatch": "error",
           "globalErrorInEffectFailure": "error",
           "unknownInEffectCatch": "error",
-          "strictBooleanExpressions": "off",
           "preferSchemaOverJson": "error",
-          // Whole-file rules that flag plain Node code too. Warnings until the
-          // Effect port lands; promote to error as each package is ported.
-          "nodeBuiltinImport": "warning",
-          "globalDate": "warning",
-          "globalDateInEffect": "error",
-          "globalConsole": "warning",
           "globalConsoleInEffect": "error",
-          "globalRandom": "warning",
+          "globalDateInEffect": "error",
           "globalRandomInEffect": "error",
-          "globalTimers": "warning",
           "globalTimersInEffect": "error",
-          "globalFetch": "warning",
           "globalFetchInEffect": "error",
-          // Effect v3-only in @effect/language-service 0.87.2; kept at error so
-          // they start gating the moment the language service ports them to v4.
-          "missingEffectServiceDependency": "error",
-          "schemaSyncInEffect": "error",
-          "cryptoRandomUUID": "warning",
-          "cryptoRandomUUIDInEffect": "error"
+          "cryptoRandomUUIDInEffect": "error",
+          // Whole-file variants of the rules above. They also flag plain Node
+          // code, so they report without failing the build until it is ported.
+          "nodeBuiltinImport": "warning",
+          "globalConsole": "warning",
+          "globalDate": "warning",
+          "globalRandom": "warning",
+          "globalTimers": "warning",
+          "globalFetch": "warning",
+          "cryptoRandomUUID": "warning"
+          // Omitted as v3-only in @effect/language-service 0.87.2, so inert on
+          // Effect 4: missingEffectServiceDependency, schemaSyncInEffect,
+          // nonObjectEffectServiceType, scopeInLayerEffect, schemaUnionOfLiterals.
         }
       }
     ]
