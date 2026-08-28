@@ -149,7 +149,7 @@ async function createWatchedApp(
         }
       });
       expect(upload.statusCode).toBe(201);
-      return (upload.json() as { draftId: string }).draftId;
+      return (upload.json() as { patchId: string }).patchId;
     },
     async close() {
       await app.close();
@@ -237,7 +237,7 @@ describe("server-side analytics", () => {
       url: "/api/uploads",
       headers: { authorization: "Bearer dev-token" },
       payload: {
-        draftId,
+        patchId: draftId,
         html: "<!doctype html><html><head><title>Second</title></head><body></body></html>"
       }
     });
@@ -279,7 +279,7 @@ describe("server-side analytics", () => {
 
     const disable = await watched.app.inject({
       method: "POST",
-      url: `/api/drafts/${disabledId}/disable`,
+      url: `/api/patches/${disabledId}/disable`,
       headers: { authorization: "Bearer dev-token" },
       payload: { reason: "Reported and reviewed." }
     });
@@ -287,7 +287,7 @@ describe("server-side analytics", () => {
 
     const remove = await watched.app.inject({
       method: "DELETE",
-      url: `/api/drafts/${deletedId}`,
+      url: `/api/patches/${deletedId}`,
       headers: { authorization: "Bearer dev-token" }
     });
     expect(remove.statusCode).toBe(200);
@@ -323,14 +323,14 @@ describe("server-side analytics", () => {
 
     const disable = await watched.app.inject({
       method: "POST",
-      url: `/api/drafts/${disabledId}/disable`,
+      url: `/api/patches/${disabledId}/disable`,
       headers: { authorization: `Bearer ${owner}` }
     });
     expect(disable.statusCode).toBe(200);
 
     const remove = await watched.app.inject({
       method: "DELETE",
-      url: `/api/drafts/${deletedId}`,
+      url: `/api/patches/${deletedId}`,
       headers: { authorization: `Bearer ${owner}` }
     });
     expect(remove.statusCode).toBe(200);
@@ -348,14 +348,14 @@ describe("server-side analytics", () => {
 
     const disable = await watched.app.inject({
       method: "POST",
-      url: "/api/drafts/drf_00000000000000000000000000/disable",
+      url: "/api/patches/drf_00000000000000000000000000/disable",
       headers: { authorization: "Bearer dev-token" }
     });
     expect(disable.statusCode).toBe(404);
 
     const remove = await watched.app.inject({
       method: "DELETE",
-      url: "/api/drafts/drf_00000000000000000000000000",
+      url: "/api/patches/drf_00000000000000000000000000",
       headers: { authorization: "Bearer dev-token" }
     });
     expect(remove.statusCode).toBe(404);
@@ -430,7 +430,7 @@ describe("server-side analytics", () => {
     for (const suffix of ["pin", "unpin"]) {
       const response = await watched.app.inject({
         method: "POST",
-        url: `/api/drafts/${draftId}/${suffix}`,
+        url: `/api/patches/${draftId}/${suffix}`,
         headers: { authorization: "Bearer dev-token" }
       });
       expect(response.statusCode).toBe(200);
@@ -473,7 +473,7 @@ describe("server-side analytics", () => {
       url: "/api/uploads",
       headers: { authorization: "Bearer dev-token" },
       payload: {
-        draftId,
+        patchId: draftId,
         html: "<!doctype html><html><head><title>Again</title></head><body></body></html>"
       }
     });
@@ -481,14 +481,14 @@ describe("server-side analytics", () => {
 
     const disable = await watched.app.inject({
       method: "POST",
-      url: `/api/drafts/${draftId}/disable`,
+      url: `/api/patches/${draftId}/disable`,
       headers: { authorization: "Bearer dev-token" }
     });
     expect(disable.statusCode).toBe(200);
 
     const remove = await watched.app.inject({
       method: "DELETE",
-      url: `/api/drafts/${draftId}`,
+      url: `/api/patches/${draftId}`,
       headers: { authorization: "Bearer dev-token" }
     });
     expect(remove.statusCode).toBe(200);
@@ -526,7 +526,7 @@ describe("analytics configuration", () => {
     const draftId = await watched.createDraft("Private instance");
     const remove = await watched.app.inject({
       method: "DELETE",
-      url: `/api/drafts/${draftId}`,
+      url: `/api/patches/${draftId}`,
       headers: { authorization: "Bearer dev-token" }
     });
     expect(remove.statusCode).toBe(200);

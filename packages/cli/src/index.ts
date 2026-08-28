@@ -18,6 +18,8 @@ import path from "node:path";
 import { createInterface } from "node:readline/promises";
 import { Writable } from "node:stream";
 import { Command } from "commander";
+import * as Schema from "effect/Schema";
+import { Identity, MintedToken, UploadCreated, UploadUpdated } from "@patchy/api";
 import { sha256, validateHtml } from "@patchy/core";
 
 const VERSION = typeof __PATCHY_VERSION__ === "string" ? __PATCHY_VERSION__ : "0.0.0-dev";
@@ -94,27 +96,29 @@ interface HostCredential {
 
 /** One entry of drafts.json, which is scoped per instance then per file path. */
 interface CachedDraft {
-  draftId: string;
+  patchId: string;
   publicUrl: string;
   latestVersionNumber: number;
   updatedAt: string;
 }
 type ApiResponseBody = Record<string, unknown>;
 
-interface WhoamiResponse {
-  accountName: string;
-  accountId: string;
-  apiTokenName: string;
-  apiTokenId: string;
-  scopes: string[];
+/**
+ * Set by every command from its `--json` flag. Success is one JSON document
+ * on stdout; failure is `{ ok: false, error }` on stderr (see the catch at
+ * the bottom). Text mode keeps the lines agents already read.
+ */
+let jsonOutput = process.argv.includes("--json");
+
+function report(document: unknown, text: () => void): void {
+  if (jsonOutput) {
+    console.log(JSON.stringify(document, null, 2));
+  } else {
+    text();
+  }
 }
 
-interface UploadResponse {
-  draftId: string;
-  publicUrl: string;
-  versionNumber: number;
-  warnings: string[];
-}
+const JSON_FLAG = ["--json", "Print the result as JSON"] as const;
 
 const program = new Command();
 
@@ -123,12 +127,13 @@ const program = new Command();
 // shape so a mistaken secret passed as a positional is never echoed on stderr.
 program.configureOutput({
   outputError: (str, write) => {
-    write(
-      str.replace(
-        /(error: too many arguments(?: for '[^']+')?\. Expected \d+ arguments? but got \d+): .+\.(\n?)$/,
-        "$1.$2"
-      )
+    const message = str.replace(
+      /(error: too many arguments(?: for '[^']+')?\. Expected \d+ arguments? but got \d+): .+\.(\n?)$/,
+      "$1.$2"
     );
+    // Commander fails before any action runs, so `--json` is read from argv
+    // here: a parse error is one document on stderr like every other failure.
+    write(jsonOutput ? `${JSON.stringify({ ok: false, error: message.trim() })}\n` : message);
   }
 });
 
@@ -143,7 +148,9 @@ program
   .command("set")
   .option("--token-stdin", "Read the Patchy Cloud API token from stdin")
   .option("--api-url <url>", "Override the default Patchy Cloud API base URL")
-  .action(async (options: { tokenStdin?: boolean; apiUrl?: string }) => {
+  .option(...JSON_FLAG)
+  .action(async (options: { tokenStdin?: boolean; apiUrl?: string; json?: boolean }) => {
+    jsonOutput = Boolean(options.json);
     if (options.tokenStdin && process.stdin.isTTY) {
       throw new CliError(
         "--token-stdin requires redirected input. Run patchy auth set to use the hidden interactive prompt."
@@ -171,14 +178,18 @@ program
     const apiUrl = resolveApiUrl(options.apiUrl);
     saveHostCredential(credentials, apiUrl, apiToken, "auth-set");
 
-    console.log(`Patchy Cloud credentials saved for ${apiUrl}.`);
+    report({ ok: true, instanceUrl: apiUrl }, () => {
+      console.log(`Patchy Cloud credentials saved for ${apiUrl}.`);
+    });
   });
 
 program
   .command("whoami")
   .description("Check the configured Patchy Cloud credentials.")
   .option("--api-url <url>", "Override the configured Patchy Cloud API base URL")
-  .action(async (options: { apiUrl?: string }) => {
+  .option(...JSON_FLAG)
+  .action(async (options: { apiUrl?: string; json?: boolean }) => {
+    jsonOutput = Boolean(options.json);
     const { apiUrl, apiToken } = readAuth(options.apiUrl);
     const response = await fetch(`${apiUrl}/api/me`, {
       headers: { Authorization: `Bearer ${apiToken}` }
@@ -191,15 +202,17 @@ program
       throw new CliError(`${error}${hint}`);
     }
 
-    const identity = parseWhoamiResponse(body);
+    const identity = decodeWire(Identity, body);
     if (!identity) {
       throw new CliError(
         `Authentication succeeded, but ${apiUrl} returned invalid account details.`
       );
     }
-    console.log(`Account: ${identity.accountName} (${identity.accountId})`);
-    console.log(`API token: ${identity.apiTokenName} (${identity.apiTokenId})`);
-    console.log(`Scopes: ${identity.scopes.join(", ")}`);
+    report(Schema.encodeSync(Identity)(identity), () => {
+      console.log(`Account: ${identity.accountName} (${identity.accountId})`);
+      console.log(`API token: ${identity.apiTokenName} (${identity.apiTokenId})`);
+      console.log(`Scopes: ${identity.scopes.join(", ")}`);
+    });
   });
 
 program
@@ -208,6 +221,7 @@ program
   .requiredOption("--json", "Print the report as JSON")
   .option("--api-url <url>", "Override the configured Patchy Cloud API base URL")
   .action((options: { apiUrl?: string }) => {
+    jsonOutput = true;
     console.log(JSON.stringify(buildStatusReport(options.apiUrl), null, 2));
   });
 
@@ -215,7 +229,9 @@ program
   .command("validate")
   .argument("<file>", "HTML file path")
   .description("Validate a static HTML draft without uploading it.")
-  .action((file: string) => {
+  .option(...JSON_FLAG)
+  .action((file: string, options: { json?: boolean }) => {
+    jsonOutput = Boolean(options.json);
     const html = readHtmlFile(file);
     const validation = validateHtml(html);
 
@@ -225,10 +241,12 @@ program
       );
     }
 
-    console.log("HTML passed Patchy Cloud validation.");
-    for (const warning of validation.warnings) {
-      console.warn(`Warning: ${warning}`);
-    }
+    report({ ok: true, warnings: validation.warnings }, () => {
+      console.log("HTML passed Patchy Cloud validation.");
+      for (const warning of validation.warnings) {
+        console.warn(`Warning: ${warning}`);
+      }
+    });
   });
 
 program
@@ -238,12 +256,20 @@ program
   .option("--new", "Always create a new draft")
   .option("--anonymous", "Deprecated and ignored; uploads always use a token")
   .option("--api-url <url>", "Override the configured Patchy Cloud API base URL")
+  .option(...JSON_FLAG)
   .description("Upload or update an HTML draft.")
   .action(
     async (
       file: string,
-      options: { draft?: string; new?: boolean; anonymous?: boolean; apiUrl?: string }
+      options: {
+        draft?: string;
+        new?: boolean;
+        anonymous?: boolean;
+        apiUrl?: string;
+        json?: boolean;
+      }
     ) => {
+      jsonOutput = Boolean(options.json);
       if (options.draft !== undefined && options.new) {
         throw new CliError("--draft and --new cannot be used together.");
       }
@@ -274,7 +300,7 @@ program
       const drafts = readDraftFile();
       const cachedDrafts = readCachedDrafts(drafts.hosts, apiUrl);
       const knownDraft = cachedDrafts[resolvedFile];
-      const draftId = options.new ? null : (options.draft ?? knownDraft?.draftId ?? null);
+      const draftId = options.new ? null : (options.draft ?? knownDraft?.patchId ?? null);
       const isUpdateAttempt = draftId !== null;
 
       const headers: Record<string, string> = {
@@ -289,7 +315,7 @@ program
         body: JSON.stringify({
           html,
           filename: path.basename(resolvedFile),
-          ...(draftId !== null ? { draftId } : {}),
+          ...(draftId !== null ? { patchId: draftId } : {}),
           metadata: {
             ...collectGitMetadata(path.dirname(resolvedFile)),
             cliVersion: VERSION,
@@ -318,12 +344,14 @@ program
         throw new CliError(`${error}${details}${hint}`);
       }
 
-      const upload = parseUploadResponse(body);
+      // A create is 201, an update 200; the wire names them separately.
+      const uploadSchema = response.status === 201 ? UploadCreated : UploadUpdated;
+      const upload = decodeWire(uploadSchema, body);
       if (!upload) {
         throw new CliError(`Upload succeeded, but ${apiUrl} returned invalid upload details.`);
       }
       cachedDrafts[resolvedFile] = {
-        draftId: upload.draftId,
+        patchId: upload.patchId,
         publicUrl: upload.publicUrl,
         latestVersionNumber: upload.versionNumber,
         updatedAt: new Date().toISOString()
@@ -333,13 +361,15 @@ program
       drafts.hosts[apiUrl] = { files: cachedDrafts };
       writeJson(DRAFTS_PATH, drafts, 0o600);
 
-      console.log(isUpdateAttempt ? "Updated draft" : "Uploaded draft");
-      console.log(`URL: ${upload.publicUrl}`);
-      console.log(`Draft ID: ${upload.draftId}`);
-      console.log(`Version: ${upload.versionNumber}`);
-      for (const warning of upload.warnings) {
-        console.warn(`Warning: ${warning}`);
-      }
+      report(Schema.encodeSync(uploadSchema)(upload), () => {
+        console.log(isUpdateAttempt ? "Updated draft" : "Uploaded draft");
+        console.log(`URL: ${upload.publicUrl}`);
+        console.log(`Draft ID: ${upload.patchId}`);
+        console.log(`Version: ${upload.versionNumber}`);
+        for (const warning of upload.warnings) {
+          console.warn(`Warning: ${warning}`);
+        }
+      });
     }
   );
 
@@ -347,7 +377,7 @@ program.exitOverride();
 
 program.parseAsync(process.argv).catch((error: unknown) => {
   if (error instanceof CliError) {
-    console.error(error.message);
+    failWith(error.message);
     process.exit(1);
   }
 
@@ -360,9 +390,14 @@ program.parseAsync(process.argv).catch((error: unknown) => {
     process.exit(0);
   }
 
-  console.error(error instanceof Error ? error.message : String(error));
+  failWith(error instanceof Error ? error.message : String(error));
   process.exit(1);
 });
+
+/** One failure line on stderr, or the `{ ok: false, error }` document under `--json`. */
+function failWith(message: string): void {
+  console.error(jsonOutput ? JSON.stringify({ ok: false, error: message }) : message);
+}
 
 /**
  * An unset environment variable and an empty one mean the same thing
@@ -512,19 +547,21 @@ async function mintPublishingToken(apiUrl: string): Promise<string> {
   const body = await readResponseJson(response);
   if (!response.ok) throw new CliError(mintFailureMessage(apiUrl, response, body));
 
-  const token = typeof body.token === "string" ? body.token : "";
-  if (token.length === 0) {
+  const minted = decodeWire(MintedToken, body);
+  if (!minted) {
     throw new CliError(
       `Could not get a publishing token: ${apiUrl} answered without one.\n` +
         `Ask that instance's operator for a token and save it with: patchy auth set --api-url ${apiUrl}`
     );
   }
 
+  const token = minted.token;
   saveHostCredential(readCredentialFileForWrite(), apiUrl, token, "mint");
 
   // Saved before it is announced: a token that reached the instance but not
-  // the disk would silently orphan every page it just created.
-  console.log(
+  // the disk would silently orphan every page it just created. Under `--json`
+  // stdout is the upload document alone, so the announcement goes to stderr.
+  (jsonOutput ? console.error : console.log)(
     `Minted a new publishing token for ${apiUrl}; saved to ${CREDENTIALS_PATH}. ` +
       "That file is the only key to these pages — copy it to another machine to publish from " +
       "there with the same editing rights. If you've published from another machine before, " +
@@ -686,10 +723,14 @@ function readCachedDrafts(
   const parsed: Record<string, CachedDraft> = {};
   for (const [file, cached] of Object.entries(files)) {
     const draft = asRecord(cached);
+    // An entry written before the wire renamed `draftId` to `patchId` is still
+    // the same page; it is read as-is and rewritten under the new key on the
+    // next upload, so nothing already published stops updating.
+    const patchId = draft?.patchId ?? draft?.draftId;
     if (
       !draft ||
-      typeof draft.draftId !== "string" ||
-      draft.draftId.length === 0 ||
+      typeof patchId !== "string" ||
+      patchId.length === 0 ||
       typeof draft.publicUrl !== "string" ||
       typeof draft.latestVersionNumber !== "number" ||
       typeof draft.updatedAt !== "string"
@@ -697,7 +738,7 @@ function readCachedDrafts(
       throw new CliError(DRAFT_CACHE_ERRORS.invalid);
     }
     parsed[file] = {
-      draftId: draft.draftId,
+      patchId,
       publicUrl: draft.publicUrl,
       latestVersionNumber: draft.latestVersionNumber,
       updatedAt: draft.updatedAt
@@ -982,33 +1023,13 @@ function isApiResponseBody(value: unknown): value is ApiResponseBody {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function parseWhoamiResponse(body: ApiResponseBody): WhoamiResponse | null {
-  const { accountName, accountId, apiTokenName, apiTokenId, scopes } = body;
-  if (
-    typeof accountName !== "string" ||
-    typeof accountId !== "string" ||
-    typeof apiTokenName !== "string" ||
-    typeof apiTokenId !== "string" ||
-    !Array.isArray(scopes) ||
-    !scopes.every((scope) => typeof scope === "string")
-  ) {
-    return null;
-  }
-  return { accountName, accountId, apiTokenName, apiTokenId, scopes };
-}
-
-function parseUploadResponse(body: ApiResponseBody): UploadResponse | null {
-  const { draftId, publicUrl, versionNumber, warnings } = body;
-  if (
-    typeof draftId !== "string" ||
-    typeof publicUrl !== "string" ||
-    typeof versionNumber !== "number" ||
-    (warnings !== undefined &&
-      (!Array.isArray(warnings) || !warnings.every((warning) => typeof warning === "string")))
-  ) {
-    return null;
-  }
-  return { draftId, publicUrl, versionNumber, warnings: warnings ?? [] };
+/** A response body read through its wire schema; null when the instance sent something else. */
+function decodeWire<S extends Schema.Codec<unknown, unknown>>(
+  schema: S,
+  body: ApiResponseBody
+): S["Type"] | null {
+  const result = Schema.decodeUnknownResult(schema)(body);
+  return result._tag === "Success" ? result.success : null;
 }
 
 async function readResponseJson(response: Response): Promise<ApiResponseBody> {

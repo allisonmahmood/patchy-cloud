@@ -22,6 +22,7 @@ This is a **multi-context** repo — a pnpm workspace whose two halves are the s
 │   ├── CONTEXT.md                     ← hosting context
 │   └── docs/adr/
 └── packages/
+    ├── api/                           ← the wire contract both contexts speak (ADR-0002)
     ├── cli/
     │   ├── CONTEXT.md                 ← publishing context (the `patchy` CLI)
     │   └── docs/adr/

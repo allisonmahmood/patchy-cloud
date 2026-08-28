@@ -72,6 +72,11 @@ Behavior:
 - CLI state lives in the state dir, `~/.patchy` by default. The `status --json` probe
   reports what this machine already holds, without touching the network; its seven keys
   and their values are tabled in `references/onboarding.md`.
+- Every command takes `--json`: one JSON document on stdout on success, `{ "ok": false,
+"error" }` on stderr on failure. `upload --json` prints the instance's response as it is
+  on the wire (`patchId`, `publicUrl`, `versionNumber`, `warnings`, …); the mint
+  announcement, when there is one, goes to stderr so stdout stays one document. Prefer it
+  when the URL or the patch id is going into a script rather than to the user.
 
 ## Publishing to the user's own instance
 

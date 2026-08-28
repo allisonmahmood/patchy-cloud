@@ -86,6 +86,9 @@ importers:
 
   apps/server:
     dependencies:
+      "@patchy/api":
+        specifier: workspace:*
+        version: link:../../packages/api
       "@patchy/config":
         specifier: workspace:*
         version: link:../../packages/config
@@ -98,6 +101,9 @@ importers:
       "@patchy/storage":
         specifier: workspace:*
         version: link:../../packages/storage
+      effect:
+        specifier: 4.0.0-rc.112
+        version: 4.0.0-rc.112
       fastify:
         specifier: ^5.12.1
         version: 5.12.1
@@ -105,14 +111,30 @@ importers:
         specifier: ^5.51.2
         version: 5.51.2
 
+  packages/api:
+    dependencies:
+      "@patchy/core":
+        specifier: workspace:*
+        version: link:../core
+      effect:
+        specifier: 4.0.0-rc.112
+        version: 4.0.0-rc.112
+
   packages/cli:
     dependencies:
       commander:
         specifier: ^15.0.0
         version: 15.0.0
+      effect:
+        specifier: 4.0.0-rc.112
+        version: 4.0.0-rc.112
       parse5:
         specifier: "catalog:"
         version: 7.3.0
+    devDependencies:
+      "@patchy/api":
+        specifier: workspace:*
+        version: link:../api
 
   packages/config: {}
 

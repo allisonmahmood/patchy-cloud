@@ -107,13 +107,13 @@ describe("Patchy Cloud server", () => {
 
     expect(upload.statusCode).toBe(201);
     const body = upload.json() as {
-      draftId: string;
+      patchId: string;
       publicUrl: string;
       versionNumber: number;
     };
-    expect(body.draftId).toMatch(/^[a-z0-9]{12}$/);
+    expect(body.patchId).toMatch(/^[a-z0-9]{12}$/);
     expect(body.versionNumber).toBe(1);
-    expect(body.publicUrl).toBe(`${publicBaseUrl}/d/${body.draftId}`);
+    expect(body.publicUrl).toBe(`${publicBaseUrl}/d/${body.patchId}`);
 
     await app.close();
     await db.close();
@@ -143,10 +143,10 @@ describe("Patchy Cloud server", () => {
       }
     });
     expect(upload.statusCode).toBe(201);
-    const body = upload.json() as { draftId: string; publicUrl: string };
-    expect(body.publicUrl).toBe(`http://localhost:3000/d/${body.draftId}`);
+    const body = upload.json() as { patchId: string; publicUrl: string };
+    expect(body.publicUrl).toBe(`http://localhost:3000/d/${body.patchId}`);
 
-    const viewer = await app.inject({ method: "GET", url: `/d/${body.draftId}` });
+    const viewer = await app.inject({ method: "GET", url: `/d/${body.patchId}` });
     expect(viewer.statusCode).toBe(200);
     expect(viewer.headers["content-security-policy"]).toContain("default-src 'none'");
     expect(viewer.body).toContain("Test Draft");
@@ -176,8 +176,8 @@ describe("Patchy Cloud server", () => {
       try {
         for (const payload of [
           { html },
-          { html, draftId: null },
-          { html, draftId: "abcdefghijkl" }
+          { html, patchId: null },
+          { html, patchId: "abcdefghijkl" }
         ]) {
           const upload = await app.inject({
             method: "POST",
@@ -270,15 +270,15 @@ describe("Patchy Cloud server", () => {
     let foreignDraftSequence = 0;
     const createForeignDraft = async (): Promise<string> => {
       foreignDraftSequence += 1;
-      const draftId = `zzzzzzzzzzz${foreignDraftSequence}`;
+      const patchId = `zzzzzzzzzzz${foreignDraftSequence}`;
       await db.recordUpload({
         intent: "create",
-        draftId,
+        draftId: patchId,
         versionId: `ver_foreign_${foreignDraftSequence}`,
         accountId: "acct_foreign",
         apiTokenId: admin.id,
         title: "Another principal's draft",
-        objectKey: `drafts/${draftId}/versions/ver_foreign_${foreignDraftSequence}.html`,
+        objectKey: `drafts/${patchId}/versions/ver_foreign_${foreignDraftSequence}.html`,
         contentHash: `sha256:foreign${foreignDraftSequence}`,
         fileSize: 1,
         filename: "foreign.html",
@@ -286,7 +286,7 @@ describe("Patchy Cloud server", () => {
         sourceIp: null,
         userAgent: "vitest"
       });
-      return draftId;
+      return patchId;
     };
 
     try {
@@ -295,10 +295,10 @@ describe("Patchy Cloud server", () => {
         { method: "GET" as const, url: "/api/me" },
         {
           method: "POST" as const,
-          url: `/api/drafts/${disableDraftId}/disable`,
+          url: `/api/patches/${disableDraftId}/disable`,
           payload: { reason: "tokenless attempt" }
         },
-        { method: "DELETE" as const, url: `/api/drafts/${disableDraftId}` }
+        { method: "DELETE" as const, url: `/api/patches/${disableDraftId}` }
       ]) {
         const tokenlessOperation = await app.inject(request);
         expect(tokenlessOperation.statusCode).toBe(401);
@@ -307,7 +307,7 @@ describe("Patchy Cloud server", () => {
       // An ordinary upload token reaches only what it owns.
       const ordinaryDisable = await app.inject({
         method: "POST",
-        url: `/api/drafts/${disableDraftId}/disable`,
+        url: `/api/patches/${disableDraftId}/disable`,
         headers: { authorization: "Bearer ordinary-token" },
         payload: { reason: "not a moderator" }
       });
@@ -317,7 +317,7 @@ describe("Patchy Cloud server", () => {
       // which is what completes the moderation loop.
       const adminDisable = await app.inject({
         method: "POST",
-        url: `/api/drafts/${disableDraftId}/disable`,
+        url: `/api/patches/${disableDraftId}/disable`,
         headers: { authorization: "Bearer admin-token" },
         payload: { reason: "operator policy" }
       });
@@ -326,14 +326,14 @@ describe("Patchy Cloud server", () => {
       const deleteDraftId = await createForeignDraft();
       const ordinaryDelete = await app.inject({
         method: "DELETE",
-        url: `/api/drafts/${deleteDraftId}`,
+        url: `/api/patches/${deleteDraftId}`,
         headers: { authorization: "Bearer ordinary-token" }
       });
       expect(ordinaryDelete.statusCode).toBe(404);
 
       const adminDelete = await app.inject({
         method: "DELETE",
-        url: `/api/drafts/${deleteDraftId}`,
+        url: `/api/patches/${deleteDraftId}`,
         headers: { authorization: "Bearer admin-token" }
       });
       expect(adminDelete.statusCode).toBe(200);
@@ -526,14 +526,14 @@ describe("Patchy Cloud server", () => {
     try {
       const created = await createDraft(app, "upload-token", "Pinnable");
       expect(created.statusCode).toBe(201);
-      const { draftId } = created.json() as { draftId: string };
+      const { patchId } = created.json() as { patchId: string };
 
       // Pinning is the operator's act, so the token that made the draft cannot
       // exempt it from expiry — only an admin can.
       for (const suffix of ["pin", "unpin"]) {
         const refused = await app.inject({
           method: "POST",
-          url: `/api/drafts/${draftId}/${suffix}`,
+          url: `/api/patches/${patchId}/${suffix}`,
           headers: { authorization: "Bearer upload-token" }
         });
         expect(refused.statusCode).toBe(403);
@@ -546,7 +546,7 @@ describe("Patchy Cloud server", () => {
       // An admin pins any draft, whoever holds it.
       const pinned = await app.inject({
         method: "POST",
-        url: `/api/drafts/${draftId}/pin`,
+        url: `/api/patches/${patchId}/pin`,
         headers: { authorization: "Bearer admin-only-token" }
       });
       expect(pinned.statusCode).toBe(200);
@@ -554,11 +554,11 @@ describe("Patchy Cloud server", () => {
 
       const missing = await app.inject({
         method: "POST",
-        url: "/api/drafts/doesnotexist1/pin",
+        url: "/api/patches/doesnotexist1/pin",
         headers: { authorization: "Bearer admin-only-token" }
       });
       expect(missing.statusCode).toBe(404);
-      expect(missing.json()).toEqual({ ok: false, error: "Draft not found." });
+      expect(missing.json()).toEqual({ ok: false, error: "Patch not found." });
     } finally {
       await app.close();
       await db.close();
@@ -724,7 +724,7 @@ describe("Patchy Cloud server", () => {
         }
       });
       expect(upload.statusCode).toBe(201);
-      const { draftId } = upload.json() as { draftId: string };
+      const { patchId } = upload.json() as { patchId: string };
 
       const attackerJson = `{"html":"${"x".repeat(2 * 1024 * 1024)}`;
       const oversized = await app.inject({
@@ -779,7 +779,7 @@ describe("Patchy Cloud server", () => {
 
       const viewer = await app.inject({
         method: "GET",
-        url: `/d/${draftId}`,
+        url: `/d/${patchId}`,
         remoteAddress: "203.0.113.9"
       });
       expect(viewer.statusCode).toBe(200);
@@ -920,19 +920,19 @@ describe("Patchy Cloud server", () => {
     },
     {
       label: "overlong route parameter",
-      protectedTarget: `/api/drafts/${"x".repeat(101)}/disable`,
+      protectedTarget: `/api/patches/${"x".repeat(101)}/disable`,
       authenticatedStatus: 414,
       authenticatedError: "Request target is too long."
     },
     {
       label: "encoded overlong route parameter",
-      protectedTarget: `/api/drafts/${"x".repeat(60)}%2F${"x".repeat(60)}/disable`,
+      protectedTarget: `/api/patches/${"x".repeat(60)}%2F${"x".repeat(60)}/disable`,
       authenticatedStatus: 414,
       authenticatedError: "Request target is too long."
     },
     {
       label: "DELETE overlong route parameter",
-      protectedTarget: `/api/drafts/${"x".repeat(101)}`,
+      protectedTarget: `/api/patches/${"x".repeat(101)}`,
       method: "DELETE",
       authenticatedStatus: 414,
       authenticatedError: "Request target is too long."
@@ -941,20 +941,20 @@ describe("Patchy Cloud server", () => {
       // The moderation read registers the same bare shape DELETE does, so its
       // overlong parameter is a too-long target rather than a missing route.
       label: "GET overlong route parameter",
-      protectedTarget: `/api/drafts/${"x".repeat(101)}`,
+      protectedTarget: `/api/patches/${"x".repeat(101)}`,
       method: "GET",
       authenticatedStatus: 414,
       authenticatedError: "Request target is too long."
     },
     {
       label: "pin overlong route parameter",
-      protectedTarget: `/api/drafts/${"x".repeat(101)}/pin`,
+      protectedTarget: `/api/patches/${"x".repeat(101)}/pin`,
       authenticatedStatus: 414,
       authenticatedError: "Request target is too long."
     },
     {
       label: "unpin overlong route parameter",
-      protectedTarget: `/api/drafts/${"x".repeat(101)}/unpin`,
+      protectedTarget: `/api/patches/${"x".repeat(101)}/unpin`,
       authenticatedStatus: 414,
       authenticatedError: "Request target is too long."
     }
@@ -1027,15 +1027,15 @@ describe("Patchy Cloud server", () => {
         { method: "POST", requestTarget: `/api/unmatched/${longSegment}` },
         {
           method: "POST",
-          requestTarget: `/api/drafts/${longSegment}`
+          requestTarget: `/api/patches/${longSegment}`
         },
         {
           method: "DELETE",
-          requestTarget: `/api/drafts/${longSegment}/disable`
+          requestTarget: `/api/patches/${longSegment}/disable`
         },
         {
           method: "PUT",
-          requestTarget: `/api/drafts/${longSegment}/disable`
+          requestTarget: `/api/patches/${longSegment}/disable`
         }
       ]) {
         const response = await rawHttpRequest(
@@ -1109,7 +1109,7 @@ describe("Patchy Cloud server", () => {
         }
       });
       expect(upload.statusCode).toBe(201);
-      const { draftId } = upload.json() as { draftId: string };
+      const { patchId } = upload.json() as { patchId: string };
 
       for (let attempt = 0; attempt < 9; attempt += 1) {
         const response = await app.inject({
@@ -1156,7 +1156,7 @@ describe("Patchy Cloud server", () => {
       });
       expect(otherToken.statusCode).toBe(400);
 
-      const viewer = await app.inject({ method: "GET", url: `/d/${draftId}` });
+      const viewer = await app.inject({ method: "GET", url: `/d/${patchId}` });
       expect(viewer.statusCode).toBe(200);
       expect(viewer.body).toContain("Limited Draft");
 
@@ -1241,11 +1241,11 @@ describe("Patchy Cloud server", () => {
     try {
       const first = await createDraft(app, "dev-token", "First");
       expect(first.statusCode).toBe(201);
-      const { draftId } = first.json() as { draftId: string };
+      const { patchId } = first.json() as { patchId: string };
 
       // Updates in the same window must not spend any of the create budget.
       for (let revision = 0; revision < 3; revision += 1) {
-        const update = await updateDraft(app, "dev-token", draftId, `First v${revision}`);
+        const update = await updateDraft(app, "dev-token", patchId, `First v${revision}`);
         expect(update.statusCode).toBe(200);
       }
 
@@ -1263,7 +1263,7 @@ describe("Patchy Cloud server", () => {
       });
 
       // An update still succeeds once the create bucket is empty.
-      expect((await updateDraft(app, "dev-token", draftId, "First again")).statusCode).toBe(200);
+      expect((await updateDraft(app, "dev-token", patchId, "First again")).statusCode).toBe(200);
 
       now = 61_000;
       const afterWindow = await createDraft(app, "dev-token", "Fourth");
@@ -1286,7 +1286,7 @@ describe("Patchy Cloud server", () => {
     try {
       const one = await createDraft(app, "dev-token", "One");
       expect(one.statusCode).toBe(201);
-      const { draftId } = one.json() as { draftId: string };
+      const { patchId } = one.json() as { patchId: string };
       expect((await createDraft(app, "dev-token", "Two")).statusCode).toBe(201);
 
       const overQuota = await createDraft(app, "dev-token", "Three");
@@ -1294,14 +1294,14 @@ describe("Patchy Cloud server", () => {
       expect(overQuota.json()).toEqual({
         ok: false,
         error:
-          "Draft quota reached: 2 live drafts per token. Delete or let a draft expire before creating another.",
-        code: "live_draft_quota_exceeded",
+          "Patch quota reached: 2 live patches per token. Delete or let a patch expire before creating another.",
+        code: "live_patch_quota_exceeded",
         quota: 2
       });
 
       // The quota bounds creates only: at the ceiling, rewriting a draft the
       // token already holds still succeeds.
-      expect((await updateDraft(app, "dev-token", draftId, "One revised")).statusCode).toBe(200);
+      expect((await updateDraft(app, "dev-token", patchId, "One revised")).statusCode).toBe(200);
     } finally {
       await app.close();
       await db.close();
@@ -1317,7 +1317,7 @@ describe("Patchy Cloud server", () => {
       const stillOverQuota = await createDraft(restarted, "dev-token", "Three again");
       expect(stillOverQuota.statusCode).toBe(403);
       expect(stillOverQuota.json()).toMatchObject({
-        code: "live_draft_quota_exceeded",
+        code: "live_patch_quota_exceeded",
         quota: 2
       });
     } finally {
@@ -1344,7 +1344,7 @@ describe("Patchy Cloud server", () => {
     try {
       const created = await createDraft(app, "dev-token", "Only one");
       expect(created.statusCode).toBe(201);
-      const { draftId } = created.json() as { draftId: string };
+      const { patchId } = created.json() as { patchId: string };
       expect((await createDraft(app, "dev-token", "Blocked")).statusCode).toBe(403);
 
       // The cap is per token, not per account: a sibling token on the same
@@ -1353,7 +1353,7 @@ describe("Patchy Cloud server", () => {
 
       const disable = await app.inject({
         method: "POST",
-        url: `/api/drafts/${draftId}/disable`,
+        url: `/api/patches/${patchId}/disable`,
         headers: { authorization: "Bearer dev-token" },
         payload: { reason: "quota test" }
       });
@@ -1361,12 +1361,12 @@ describe("Patchy Cloud server", () => {
 
       const afterDisable = await createDraft(app, "dev-token", "After disable");
       expect(afterDisable.statusCode).toBe(201);
-      const replacementDraftId = (afterDisable.json() as { draftId: string }).draftId;
+      const replacementDraftId = (afterDisable.json() as { patchId: string }).patchId;
       expect((await createDraft(app, "dev-token", "Blocked again")).statusCode).toBe(403);
 
       const removed = await app.inject({
         method: "DELETE",
-        url: `/api/drafts/${replacementDraftId}`,
+        url: `/api/patches/${replacementDraftId}`,
         headers: { authorization: "Bearer dev-token" }
       });
       expect(removed.statusCode).toBe(200);
@@ -1484,21 +1484,21 @@ describe("Patchy Cloud server", () => {
     await db.initialize("dev-token");
     const storage = new FileSystemHtmlStorage(path.join(tempDir, "unknown-update-drafts"));
     const app = createApp({ config, db, storage });
-    const draftId = "abcdefghijkl";
+    const patchId = "abcdefghijkl";
 
     const upload = await app.inject({
       method: "POST",
       url: "/api/uploads",
       headers: { authorization: "Bearer dev-token" },
       payload: {
-        draftId,
+        patchId,
         html: "<!doctype html><html><head><title>Must not exist</title></head><body></body></html>"
       }
     });
 
     expect(upload.statusCode).toBe(404);
-    expect(upload.json()).toEqual({ ok: false, error: "Draft not found." });
-    const viewer = await app.inject({ method: "GET", url: `/d/${draftId}` });
+    expect(upload.json()).toEqual({ ok: false, error: "Patch not found." });
+    const viewer = await app.inject({ method: "GET", url: `/d/${patchId}` });
     expect(viewer.statusCode).toBe(404);
     expect(await listFiles(storage.rootDir)).toEqual([]);
 
@@ -1519,19 +1519,19 @@ describe("Patchy Cloud server", () => {
     const deletedDraftId = "cccccccccccc";
     const disabledDraftId = "dddddddddddd";
 
-    for (const [draftId, accountId] of [
+    for (const [patchId, accountId] of [
       [foreignDraftId, "acct_another"],
       [deletedDraftId, auth.accountId],
       [disabledDraftId, auth.accountId]
     ]) {
       await db.recordUpload({
         intent: "create",
-        draftId,
-        versionId: `ver_${draftId}`,
+        draftId: patchId,
+        versionId: `ver_${patchId}`,
         accountId,
         apiTokenId: auth.id,
         title: "Existing target",
-        objectKey: `drafts/${draftId}/versions/seed.html`,
+        objectKey: `drafts/${patchId}/versions/seed.html`,
         contentHash: "sha256:seed",
         fileSize: 1,
         filename: "seed.html",
@@ -1544,13 +1544,13 @@ describe("Patchy Cloud server", () => {
     await db.disableDraft(disabledDraftId, auth.accountId, "policy");
 
     const responses = await Promise.all(
-      [unknownDraftId, foreignDraftId, deletedDraftId, disabledDraftId].map((draftId) =>
+      [unknownDraftId, foreignDraftId, deletedDraftId, disabledDraftId].map((patchId) =>
         app.inject({
           method: "POST",
           url: "/api/uploads",
           headers: { authorization: "Bearer dev-token" },
           payload: {
-            draftId,
+            patchId,
             html: "<!doctype html><html><head><title>Update</title></head><body></body></html>"
           }
         })
@@ -1559,7 +1559,7 @@ describe("Patchy Cloud server", () => {
 
     for (const response of responses) {
       expect(response.statusCode).toBe(404);
-      expect(response.json()).toEqual({ ok: false, error: "Draft not found." });
+      expect(response.json()).toEqual({ ok: false, error: "Patch not found." });
     }
 
     await app.close();
@@ -1582,14 +1582,14 @@ describe("Patchy Cloud server", () => {
         html: "<!doctype html><html><head><title>Original</title></head><body>original-marker</body></html>"
       }
     });
-    const createBody = created.json() as { draftId: string; versionNumber: number };
+    const createBody = created.json() as { patchId: string; versionNumber: number };
 
     const updated = await app.inject({
       method: "POST",
       url: "/api/uploads",
       headers,
       payload: {
-        draftId: createBody.draftId,
+        patchId: createBody.patchId,
         html: "<!doctype html><html><head><title>Updated</title></head><body>updated-marker</body></html>"
       }
     });
@@ -1598,18 +1598,18 @@ describe("Patchy Cloud server", () => {
     expect(createBody.versionNumber).toBe(1);
     expect(updated.statusCode).toBe(200);
     expect(updated.json()).toMatchObject({
-      draftId: createBody.draftId,
+      patchId: createBody.patchId,
       versionNumber: 2,
       title: "Updated"
     });
 
     const currentViewer = await app.inject({
       method: "GET",
-      url: `/d/${createBody.draftId}`
+      url: `/d/${createBody.patchId}`
     });
     const originalViewer = await app.inject({
       method: "GET",
-      url: `/d/${createBody.draftId}/v/1`
+      url: `/d/${createBody.patchId}/v/1`
     });
     expect(currentViewer.statusCode).toBe(200);
     expect(currentViewer.body).toContain("updated-marker");
@@ -1668,7 +1668,7 @@ describe("Patchy Cloud server", () => {
         url: "/api/uploads",
         headers: { authorization: "Bearer dev-token" },
         payload: {
-          draftId: createdBody.draftId,
+          patchId: createdBody.patchId,
           html: "<!doctype html><html><head><title>Slow update</title></head><body></body></html>"
         }
       });
@@ -1705,9 +1705,9 @@ describe("Patchy Cloud server", () => {
       }
     });
     const createdBody = created.json();
-    const originalKey = `drafts/${createdBody.draftId}/versions/${createdBody.versionId}.html`;
+    const originalKey = `drafts/${createdBody.patchId}/versions/${createdBody.versionId}.html`;
     storage.afterPut = async () => {
-      await db.disableDraft(createdBody.draftId, auth.accountId, "policy race");
+      await db.disableDraft(createdBody.patchId, auth.accountId, "policy race");
     };
 
     const update = await app.inject({
@@ -1715,13 +1715,13 @@ describe("Patchy Cloud server", () => {
       url: "/api/uploads",
       headers: { authorization: "Bearer dev-token" },
       payload: {
-        draftId: createdBody.draftId,
+        patchId: createdBody.patchId,
         html: "<!doctype html><html><head><title>Rejected</title></head><body>rejected</body></html>"
       }
     });
 
     expect(update.statusCode).toBe(404);
-    expect(update.json()).toEqual({ ok: false, error: "Draft not found." });
+    expect(update.json()).toEqual({ ok: false, error: "Patch not found." });
     expect(await listFiles(storage.rootDir)).toEqual([originalKey]);
     await expect(storage.getHtmlObject(originalKey)).resolves.toContain("original");
 
@@ -1751,16 +1751,16 @@ describe("Patchy Cloud server", () => {
       url: "/api/uploads",
       headers: { authorization: "Bearer dev-token" },
       payload: {
-        draftId: createdBody.draftId,
+        patchId: createdBody.patchId,
         html: "<!doctype html><html><head><title>Failed</title></head><body>failed</body></html>"
       }
     });
 
     expect(update.statusCode).toBe(500);
-    const current = await db.findDraftVersion(createdBody.draftId);
+    const current = await db.findDraftVersion(createdBody.patchId);
     expect(current.version?.id).toBe(createdBody.versionId);
     expect(await listFiles(storage.rootDir)).toEqual([
-      `drafts/${createdBody.draftId}/versions/${createdBody.versionId}.html`
+      `drafts/${createdBody.patchId}/versions/${createdBody.versionId}.html`
     ]);
 
     await app.close();
@@ -1785,7 +1785,7 @@ describe("Patchy Cloud server", () => {
     });
     const createdBody = created.json();
     storage.afterPut = async () => {
-      await db.disableDraft(createdBody.draftId, auth.accountId, "policy race");
+      await db.disableDraft(createdBody.patchId, auth.accountId, "policy race");
     };
     storage.deleteError = new Error("Cleanup unavailable.");
 
@@ -1794,7 +1794,7 @@ describe("Patchy Cloud server", () => {
       url: "/api/uploads",
       headers: { authorization: "Bearer dev-token" },
       payload: {
-        draftId: createdBody.draftId,
+        patchId: createdBody.patchId,
         html: "<!doctype html><html><head><title>Rejected</title></head><body></body></html>"
       }
     });
@@ -1829,13 +1829,13 @@ describe("Patchy Cloud server", () => {
       url: "/api/uploads",
       headers: { authorization: "Bearer dev-token" },
       payload: {
-        draftId: createdBody.draftId,
+        patchId: createdBody.patchId,
         html: "<!doctype html><html><head><title>Committed</title></head><body>committed</body></html>"
       }
     });
 
     expect(update.statusCode).toBe(500);
-    const current = await db.findDraftVersion(createdBody.draftId);
+    const current = await db.findDraftVersion(createdBody.patchId);
     expect(current.version?.versionNumber).toBe(2);
     if (!current.version) throw new Error("Expected committed version.");
     expect(await listFiles(storage.rootDir)).toHaveLength(2);
@@ -1859,7 +1859,7 @@ describe("Patchy Cloud server", () => {
       payload: {
         html: "<!doctype html><html><head><title>Released CLI</title></head><body></body></html>",
         filename: "released-cli.html",
-        draftId: null,
+        patchId: null,
         metadata: {
           cliVersion: "0.1.0",
           fileSha256: "legacy-client-hash"
@@ -1869,9 +1869,39 @@ describe("Patchy Cloud server", () => {
 
     expect(upload.statusCode).toBe(201);
     const response = upload.json();
-    expect(response.draftId).toMatch(/^[a-z0-9]{12}$/);
+    expect(response.patchId).toMatch(/^[a-z0-9]{12}$/);
     expect(response.versionNumber).toBe(1);
 
+    await app.close();
+    await db.close();
+  });
+
+  it("names the rename to a client still sending draftId, instead of creating", async () => {
+    const config = testConfig();
+    const db = new JsonFilePatchyDb(path.join(tempDir, "legacy-key-db.json"));
+    await db.initialize("dev-token");
+    const auth = await db.findApiTokenByToken("dev-token");
+    if (!auth) throw new Error("Expected bootstrap authentication.");
+    const storage = new FileSystemHtmlStorage(path.join(tempDir, "legacy-key-drafts"));
+    const app = createApp({ config, db, storage });
+
+    const upload = await app.inject({
+      method: "POST",
+      url: "/api/uploads",
+      headers: { authorization: "Bearer dev-token" },
+      payload: {
+        draftId: "abcdefghijkl",
+        html: "<!doctype html><html><head><title>Old client</title></head><body></body></html>"
+      }
+    });
+
+    expect(upload.statusCode).toBe(400);
+    expect(upload.json()).toEqual({
+      ok: false,
+      error:
+        "Unknown field draftId: the wire renamed it to patchId. Send patchId to update that patch."
+    });
+    expect(await db.countLiveDraftsByCreatorApiToken(auth.id)).toBe(0);
     await app.close();
     await db.close();
   });
@@ -1883,19 +1913,19 @@ describe("Patchy Cloud server", () => {
     const storage = new FileSystemHtmlStorage(path.join(tempDir, "explicit-intent-drafts"));
     const app = createApp({ config, db, storage });
 
-    for (const draftId of ["", 123]) {
+    for (const patchId of ["", 123]) {
       const upload = await app.inject({
         method: "POST",
         url: "/api/uploads",
         headers: { authorization: "Bearer dev-token" },
         payload: {
-          draftId,
+          patchId,
           html: "<!doctype html><html><head><title>Invalid target</title></head><body></body></html>"
         }
       });
 
       expect(upload.statusCode).toBe(400);
-      expect(upload.json()).toEqual({ ok: false, error: "Invalid draft ID." });
+      expect(upload.json()).toEqual({ ok: false, error: "Invalid patch ID." });
     }
 
     await app.close();
@@ -1947,7 +1977,7 @@ describe("Patchy Cloud server", () => {
 
     const missingVersion = await served.app.inject({
       method: "GET",
-      url: `/d/${served.draftId}/v/9`
+      url: `/d/${served.patchId}/v/9`
     });
     expect(missingVersion.statusCode).toBe(404);
     expect(missingVersion.headers["cache-control"]).toBe("no-store");
@@ -2023,16 +2053,16 @@ describe("Patchy Cloud server", () => {
     const clocked = await createClockedApp("expiry");
 
     try {
-      const draftId = await publishDraft(clocked.app, "Ninety day page");
+      const patchId = await publishDraft(clocked.app, "Ninety day page");
 
       // A visit this early tops up nothing, so the clock still ends at day 90.
       clocked.advanceDays(1);
-      const early = await clocked.app.inject({ method: "GET", url: `/d/${draftId}` });
+      const early = await clocked.app.inject({ method: "GET", url: `/d/${patchId}` });
       expect(early.statusCode).toBe(200);
       expect(early.body).toContain("Ninety day page");
 
       clocked.advanceDays(90);
-      for (const url of [`/d/${draftId}`, `/d/${draftId}/v/1`]) {
+      for (const url of [`/d/${patchId}`, `/d/${patchId}/v/1`]) {
         const gone = await clocked.app.inject({ method: "GET", url });
         expect(gone.statusCode).toBe(404);
         expect(gone.headers["content-type"]).toContain("text/html");
@@ -2051,12 +2081,12 @@ describe("Patchy Cloud server", () => {
         url: "/api/uploads",
         headers: { authorization: "Bearer dev-token" },
         payload: {
-          draftId,
+          patchId,
           html: "<!doctype html><html><head><title>Too late</title></head><body></body></html>"
         }
       });
       expect(update.statusCode).toBe(404);
-      expect(update.json()).toEqual({ ok: false, error: "Draft not found." });
+      expect(update.json()).toEqual({ ok: false, error: "Patch not found." });
     } finally {
       await clocked.close();
     }
@@ -2066,23 +2096,23 @@ describe("Patchy Cloud server", () => {
     const clocked = await createClockedApp("visit-topup");
 
     try {
-      const draftId = await publishDraft(clocked.app, "Still visited");
+      const patchId = await publishDraft(clocked.app, "Still visited");
 
       // Ten days left on the upload's window: this visit tops it up to thirty.
       clocked.advanceDays(80);
-      const inWindow = await clocked.app.inject({ method: "GET", url: `/d/${draftId}` });
+      const inWindow = await clocked.app.inject({ method: "GET", url: `/d/${patchId}` });
       expect(inWindow.statusCode).toBe(200);
 
       // Day 95 — past where the upload alone would have ended it. The page is
       // still here because it was visited, and this visit extends it again.
       clocked.advanceDays(15);
-      const extended = await clocked.app.inject({ method: "GET", url: `/d/${draftId}` });
+      const extended = await clocked.app.inject({ method: "GET", url: `/d/${patchId}` });
       expect(extended.statusCode).toBe(200);
       expect(extended.body).toContain("Still visited");
 
       // Thirty-one days without a visit, and it is gone.
       clocked.advanceDays(31);
-      const abandoned = await clocked.app.inject({ method: "GET", url: `/d/${draftId}` });
+      const abandoned = await clocked.app.inject({ method: "GET", url: `/d/${patchId}` });
       expect(abandoned.statusCode).toBe(404);
     } finally {
       await clocked.close();
@@ -2095,19 +2125,19 @@ describe("Patchy Cloud server", () => {
     });
 
     try {
-      const draftId = await publishDraft(clocked.app, "Survives a failed top-up");
+      const patchId = await publishDraft(clocked.app, "Survives a failed top-up");
 
       // Ten days left, so this visit is one the clock would move — and the
       // write throws. The reader still gets the page.
       clocked.advanceDays(80);
-      const served = await clocked.app.inject({ method: "GET", url: `/d/${draftId}` });
+      const served = await clocked.app.inject({ method: "GET", url: `/d/${patchId}` });
       expect(served.statusCode).toBe(200);
       expect(served.body).toContain("Survives a failed top-up");
 
       // Best-effort means exactly that: the page was served and the clock
       // genuinely did not move, so the original window still ends it.
       clocked.advanceDays(11);
-      const expired = await clocked.app.inject({ method: "GET", url: `/d/${draftId}` });
+      const expired = await clocked.app.inject({ method: "GET", url: `/d/${patchId}` });
       expect(expired.statusCode).toBe(404);
     } finally {
       await clocked.close();
@@ -2118,7 +2148,7 @@ describe("Patchy Cloud server", () => {
     const clocked = await createClockedApp("upload-reset");
 
     try {
-      const draftId = await publishDraft(clocked.app, "First cut");
+      const patchId = await publishDraft(clocked.app, "First cut");
 
       clocked.advanceDays(80);
       const republish = await clocked.app.inject({
@@ -2126,7 +2156,7 @@ describe("Patchy Cloud server", () => {
         url: "/api/uploads",
         headers: { authorization: "Bearer dev-token" },
         payload: {
-          draftId,
+          patchId,
           html: "<!doctype html><html><head><title>Second cut</title></head><body></body></html>"
         }
       });
@@ -2134,7 +2164,7 @@ describe("Patchy Cloud server", () => {
 
       // Day 100: past the first window, well inside the one the update opened.
       clocked.advanceDays(20);
-      const served = await clocked.app.inject({ method: "GET", url: `/d/${draftId}` });
+      const served = await clocked.app.inject({ method: "GET", url: `/d/${patchId}` });
       expect(served.statusCode).toBe(200);
       expect(served.body).toContain("Second cut");
     } finally {
@@ -2146,12 +2176,12 @@ describe("Patchy Cloud server", () => {
     const clocked = await createClockedApp("expiry-sweep");
 
     try {
-      const draftId = await publishDraft(clocked.app, "Ages out");
+      const patchId = await publishDraft(clocked.app, "Ages out");
       const updated = await clocked.app.inject({
         method: "POST",
         url: "/api/uploads",
         headers: { authorization: "Bearer dev-token" },
-        payload: { draftId, html: draftHtml("Ages out, twice") }
+        payload: { patchId, html: draftHtml("Ages out, twice") }
       });
       expect(updated.statusCode).toBe(200);
       expect(await listFiles(clocked.storageDir)).toHaveLength(2);
@@ -2169,7 +2199,7 @@ describe("Patchy Cloud server", () => {
       });
 
       expect(await listFiles(clocked.storageDir)).toEqual([]);
-      for (const url of [`/d/${draftId}`, `/d/${draftId}/v/1`, `/d/${draftId}/v/2`]) {
+      for (const url of [`/d/${patchId}`, `/d/${patchId}/v/1`, `/d/${patchId}/v/2`]) {
         const gone = await clocked.app.inject({ method: "GET", url });
         expect(gone.statusCode).toBe(404);
         expect(gone.body).not.toContain("Ages out");
@@ -2180,7 +2210,7 @@ describe("Patchy Cloud server", () => {
         method: "POST",
         url: "/api/uploads",
         headers: { authorization: "Bearer dev-token" },
-        payload: { draftId, html: draftHtml("Too late") }
+        payload: { patchId, html: draftHtml("Too late") }
       });
       expect(republished.statusCode).toBe(404);
     } finally {
@@ -2192,10 +2222,10 @@ describe("Patchy Cloud server", () => {
     const clocked = await createClockedApp("expiry-sweep-pinned");
 
     try {
-      const draftId = await publishDraft(clocked.app, "Welcome page");
+      const patchId = await publishDraft(clocked.app, "Welcome page");
       const pinned = await clocked.app.inject({
         method: "POST",
-        url: `/api/drafts/${draftId}/pin`,
+        url: `/api/patches/${patchId}/pin`,
         headers: { authorization: "Bearer dev-token" }
       });
       expect(pinned.statusCode).toBe(200);
@@ -2203,18 +2233,18 @@ describe("Patchy Cloud server", () => {
 
       // A year with nobody reading it, and the instance's own page is still up.
       clocked.advanceDays(365);
-      const served = await clocked.app.inject({ method: "GET", url: `/d/${draftId}` });
+      const served = await clocked.app.inject({ method: "GET", url: `/d/${patchId}` });
       expect(served.statusCode).toBe(200);
       expect(served.body).toContain("Welcome page");
 
       expect(await clocked.app.sweepExpiredDrafts()).toMatchObject({ deleted: 0 });
-      const survived = await clocked.app.inject({ method: "GET", url: `/d/${draftId}` });
+      const survived = await clocked.app.inject({ method: "GET", url: `/d/${patchId}` });
       expect(survived.statusCode).toBe(200);
       expect(await listFiles(clocked.storageDir)).toHaveLength(1);
 
       const unpinned = await clocked.app.inject({
         method: "POST",
-        url: `/api/drafts/${draftId}/unpin`,
+        url: `/api/patches/${patchId}/unpin`,
         headers: { authorization: "Bearer dev-token" }
       });
       expect(unpinned.statusCode).toBe(200);
@@ -2224,7 +2254,7 @@ describe("Patchy Cloud server", () => {
       // its window — and then goes, content and all.
       clocked.advanceDays(31);
       expect(await clocked.app.sweepExpiredDrafts()).toMatchObject({ deleted: 1 });
-      const gone = await clocked.app.inject({ method: "GET", url: `/d/${draftId}` });
+      const gone = await clocked.app.inject({ method: "GET", url: `/d/${patchId}` });
       expect(gone.statusCode).toBe(404);
       expect(await listFiles(clocked.storageDir)).toEqual([]);
     } finally {
@@ -2236,17 +2266,17 @@ describe("Patchy Cloud server", () => {
     const clocked = await createClockedApp("expiry-sweep-pinned-then-deleted");
 
     try {
-      const draftId = await publishDraft(clocked.app, "Pinned then withdrawn");
+      const patchId = await publishDraft(clocked.app, "Pinned then withdrawn");
       const pinned = await clocked.app.inject({
         method: "POST",
-        url: `/api/drafts/${draftId}/pin`,
+        url: `/api/patches/${patchId}/pin`,
         headers: { authorization: "Bearer dev-token" }
       });
       expect(pinned.statusCode).toBe(200);
 
       const deleted = await clocked.app.inject({
         method: "DELETE",
-        url: `/api/drafts/${draftId}`,
+        url: `/api/patches/${patchId}`,
         headers: { authorization: "Bearer dev-token" }
       });
       expect(deleted.statusCode).toBe(200);
@@ -2261,7 +2291,7 @@ describe("Patchy Cloud server", () => {
       // And pinning it again was never on the table.
       const repinned = await clocked.app.inject({
         method: "POST",
-        url: `/api/drafts/${draftId}/pin`,
+        url: `/api/patches/${patchId}/pin`,
         headers: { authorization: "Bearer dev-token" }
       });
       expect(repinned.statusCode).toBe(404);
@@ -2312,7 +2342,7 @@ describe("Patchy Cloud server", () => {
     const storage = clocked.storage as ControlledHtmlStorage;
 
     try {
-      const draftId = await publishDraft(clocked.app, "Object outlives its record");
+      const patchId = await publishDraft(clocked.app, "Object outlives its record");
       clocked.advanceDays(91);
       storage.deleteError = new Error("Storage delete failed.");
 
@@ -2326,7 +2356,7 @@ describe("Patchy Cloud server", () => {
       // The record went and the object stayed. Nothing serves it and no later
       // run can find it — storage to reclaim by hand, not a draft that survived.
       expect(await listFiles(clocked.storageDir)).toHaveLength(1);
-      const gone = await clocked.app.inject({ method: "GET", url: `/d/${draftId}` });
+      const gone = await clocked.app.inject({ method: "GET", url: `/d/${patchId}` });
       expect(gone.statusCode).toBe(404);
       expect(await clocked.app.sweepExpiredDrafts()).toMatchObject({
         deleted: 0,
@@ -2343,18 +2373,18 @@ describe("Patchy Cloud server", () => {
     try {
       const created = await createDraft(moderated.app, moderated.publisherToken, "Flagged");
       expect(created.statusCode).toBe(201);
-      const { draftId } = created.json() as { draftId: string };
+      const { patchId } = created.json() as { patchId: string };
 
       const read = await moderated.app.inject({
         method: "GET",
-        url: `/api/drafts/${draftId}`,
+        url: `/api/patches/${patchId}`,
         headers: { authorization: "Bearer dev-token" }
       });
       expect(read.statusCode).toBe(200);
       expect(read.json()).toMatchObject({
         ok: true,
-        draft: {
-          id: draftId,
+        patch: {
+          id: patchId,
           principalId: moderated.principalId,
           createdByApiTokenId: moderated.publisherApiTokenId,
           title: "Flagged",
@@ -2367,7 +2397,7 @@ describe("Patchy Cloud server", () => {
       // refused for its scope, and no token at all never reaches the route.
       const ordinary = await moderated.app.inject({
         method: "GET",
-        url: `/api/drafts/${draftId}`,
+        url: `/api/patches/${patchId}`,
         headers: { authorization: `Bearer ${moderated.publisherToken}` }
       });
       expect(ordinary.statusCode).toBe(403);
@@ -2378,23 +2408,23 @@ describe("Patchy Cloud server", () => {
 
       const tokenless = await moderated.app.inject({
         method: "GET",
-        url: `/api/drafts/${draftId}`
+        url: `/api/patches/${patchId}`
       });
       expect(tokenless.statusCode).toBe(401);
 
       const unknown = await moderated.app.inject({
         method: "GET",
-        url: "/api/drafts/zzzzzzzzzzzz",
+        url: "/api/patches/zzzzzzzzzzzz",
         headers: { authorization: "Bearer dev-token" }
       });
       expect(unknown.statusCode).toBe(404);
-      expect(unknown.json()).toEqual({ ok: false, error: "Draft not found." });
+      expect(unknown.json()).toEqual({ ok: false, error: "Patch not found." });
 
       // A draft the operator has already taken down still answers: a complaint
       // arrives about pages that are off as often as pages that are on.
       const disabled = await moderated.app.inject({
         method: "POST",
-        url: `/api/drafts/${draftId}/disable`,
+        url: `/api/patches/${patchId}/disable`,
         headers: { authorization: "Bearer dev-token" },
         payload: { reason: "operator policy" }
       });
@@ -2402,12 +2432,12 @@ describe("Patchy Cloud server", () => {
 
       const afterDisable = await moderated.app.inject({
         method: "GET",
-        url: `/api/drafts/${draftId}`,
+        url: `/api/patches/${patchId}`,
         headers: { authorization: "Bearer dev-token" }
       });
       expect(afterDisable.statusCode).toBe(200);
       expect(
-        (afterDisable.json() as { draft: { disabledReason: string } }).draft.disabledReason
+        (afterDisable.json() as { patch: { disabledReason: string } }).patch.disabledReason
       ).toBe("operator policy");
     } finally {
       await moderated.close();
@@ -2425,44 +2455,44 @@ describe("Patchy Cloud server", () => {
       const second = await createDraft(moderated.app, moderated.publisherToken, "Two");
       moderated.advanceDays(1);
       const removed = await createDraft(moderated.app, moderated.publisherToken, "Gone");
-      const removedDraftId = (removed.json() as { draftId: string }).draftId;
+      const removedDraftId = (removed.json() as { patchId: string }).patchId;
       const deletion = await moderated.app.inject({
         method: "DELETE",
-        url: `/api/drafts/${removedDraftId}`,
+        url: `/api/patches/${removedDraftId}`,
         headers: { authorization: "Bearer dev-token" }
       });
       expect(deletion.statusCode).toBe(200);
 
       const listed = await moderated.app.inject({
         method: "GET",
-        url: `/api/principals/${moderated.principalId}/drafts`,
+        url: `/api/principals/${moderated.principalId}/patches`,
         headers: { authorization: "Bearer dev-token" }
       });
       expect(listed.statusCode).toBe(200);
       const body = listed.json() as {
         principalId: string;
         truncated: boolean;
-        drafts: { id: string; createdByApiTokenId: string }[];
+        patches: { id: string; createdByApiTokenId: string }[];
       };
       expect(body.principalId).toBe(moderated.principalId);
       expect(body.truncated).toBe(false);
       // Newest first, and the one already deleted is not on the list.
-      expect(body.drafts.map((draft) => draft.id)).toEqual([
-        (second.json() as { draftId: string }).draftId,
-        (first.json() as { draftId: string }).draftId
+      expect(body.patches.map((draft) => draft.id)).toEqual([
+        (second.json() as { patchId: string }).patchId,
+        (first.json() as { patchId: string }).patchId
       ]);
-      expect(body.drafts[0]?.createdByApiTokenId).toBe(moderated.publisherApiTokenId);
+      expect(body.patches[0]?.createdByApiTokenId).toBe(moderated.publisherApiTokenId);
 
       const ordinary = await moderated.app.inject({
         method: "GET",
-        url: `/api/principals/${moderated.principalId}/drafts`,
+        url: `/api/principals/${moderated.principalId}/patches`,
         headers: { authorization: `Bearer ${moderated.publisherToken}` }
       });
       expect(ordinary.statusCode).toBe(403);
 
       const tokenless = await moderated.app.inject({
         method: "GET",
-        url: `/api/principals/${moderated.principalId}/drafts`
+        url: `/api/principals/${moderated.principalId}/patches`
       });
       expect(tokenless.statusCode).toBe(401);
 
@@ -2470,14 +2500,14 @@ describe("Patchy Cloud server", () => {
       // "this principal holds nothing" is an answer, not a missing resource.
       const stranger = await moderated.app.inject({
         method: "GET",
-        url: "/api/principals/acct_holds_nothing/drafts",
+        url: "/api/principals/acct_holds_nothing/patches",
         headers: { authorization: "Bearer dev-token" }
       });
       expect(stranger.statusCode).toBe(200);
       expect(stranger.json()).toEqual({
         ok: true,
         principalId: "acct_holds_nothing",
-        drafts: [],
+        patches: [],
         truncated: false
       });
     } finally {
@@ -2490,7 +2520,7 @@ describe("Patchy Cloud server", () => {
 
     try {
       const created = await createDraft(moderated.app, moderated.publisherToken, "Abusive");
-      const { draftId } = created.json() as { draftId: string };
+      const { patchId } = created.json() as { patchId: string };
 
       const revokeUrl = `/api/tokens/${moderated.publisherApiTokenId}/revoke`;
       const ordinary = await moderated.app.inject({
@@ -2564,14 +2594,14 @@ describe("Patchy Cloud server", () => {
         {
           method: "POST" as const,
           url: "/api/uploads",
-          payload: { draftId, html: draftHtml("Still trying") }
+          payload: { patchId, html: draftHtml("Still trying") }
         },
         {
           method: "POST" as const,
-          url: `/api/drafts/${draftId}/disable`,
+          url: `/api/patches/${patchId}/disable`,
           payload: { reason: "cover tracks" }
         },
-        { method: "DELETE" as const, url: `/api/drafts/${draftId}` }
+        { method: "DELETE" as const, url: `/api/patches/${patchId}` }
       ]) {
         const revokedAttempt = await moderated.app.inject({
           ...request,
@@ -2586,19 +2616,19 @@ describe("Patchy Cloud server", () => {
       }
 
       // The drafts stay up. Revocation is not a takedown.
-      const served = await moderated.app.inject({ method: "GET", url: `/d/${draftId}` });
+      const served = await moderated.app.inject({ method: "GET", url: `/d/${patchId}` });
       expect(served.statusCode).toBe(200);
       expect(served.body).toContain("Abusive");
 
       // And the row survives its revocation, so the loop can still read it.
       const read = await moderated.app.inject({
         method: "GET",
-        url: `/api/drafts/${draftId}`,
+        url: `/api/patches/${patchId}`,
         headers: { authorization: "Bearer dev-token" }
       });
       expect(read.statusCode).toBe(200);
       expect(
-        (read.json() as { draft: { createdByApiTokenId: string } }).draft.createdByApiTokenId
+        (read.json() as { patch: { createdByApiTokenId: string } }).patch.createdByApiTokenId
       ).toBe(moderated.publisherApiTokenId);
     } finally {
       await moderated.close();
@@ -2620,12 +2650,12 @@ describe("Patchy Cloud server", () => {
         apiToken: { id: string };
       };
       const created = await createDraft(clocked.app, token, "Runs down");
-      const { draftId } = created.json() as { draftId: string };
+      const { patchId } = created.json() as { patchId: string };
 
       // Day 80, ten days left: a visit before the revocation tops the clock up
       // to day 110, and that extension is not taken away afterwards.
       clocked.advanceDays(80);
-      expect((await clocked.app.inject({ method: "GET", url: `/d/${draftId}` })).statusCode).toBe(
+      expect((await clocked.app.inject({ method: "GET", url: `/d/${patchId}` })).statusCode).toBe(
         200
       );
 
@@ -2643,20 +2673,20 @@ describe("Patchy Cloud server", () => {
       for (let visit = 0; visit < 3; visit += 1) {
         const stillServed = await clocked.app.inject({
           method: "GET",
-          url: `/d/${draftId}`
+          url: `/d/${patchId}`
         });
         expect(stillServed.statusCode).toBe(200);
         expect(stillServed.body).toContain("Runs down");
       }
 
       clocked.advanceDays(4);
-      expect((await clocked.app.inject({ method: "GET", url: `/d/${draftId}` })).statusCode).toBe(
+      expect((await clocked.app.inject({ method: "GET", url: `/d/${patchId}` })).statusCode).toBe(
         200
       );
 
       // Day 111: the clock only ran down, and it has run out.
       clocked.advanceDays(2);
-      expect((await clocked.app.inject({ method: "GET", url: `/d/${draftId}` })).statusCode).toBe(
+      expect((await clocked.app.inject({ method: "GET", url: `/d/${patchId}` })).statusCode).toBe(
         404
       );
     } finally {
@@ -2682,18 +2712,18 @@ describe("Patchy Cloud server", () => {
 
       const flaggedUpload = await createDraft(clocked.app, token, "Abusive page");
       expect(flaggedUpload.statusCode).toBe(201);
-      const { draftId } = flaggedUpload.json() as { draftId: string };
+      const { patchId } = flaggedUpload.json() as { patchId: string };
       const sibling = await createDraft(clocked.app, token, "Second abusive page");
-      const siblingDraftId = (sibling.json() as { draftId: string }).draftId;
+      const siblingDraftId = (sibling.json() as { patchId: string }).patchId;
 
-      expect((await clocked.app.inject({ method: "GET", url: `/d/${draftId}` })).statusCode).toBe(
+      expect((await clocked.app.inject({ method: "GET", url: `/d/${patchId}` })).statusCode).toBe(
         200
       );
 
       // Step 1 — the flagged URL names the principal and the token to revoke.
       const read = await clocked.app.inject({
         method: "GET",
-        url: `/api/drafts/${draftId}`,
+        url: `/api/patches/${patchId}`,
         headers: { authorization: "Bearer dev-token" }
       });
       expect(read.statusCode).toBe(200);
@@ -2701,7 +2731,7 @@ describe("Patchy Cloud server", () => {
         read.json() as {
           draft: { principalId: string; createdByApiTokenId: string };
         }
-      ).draft;
+      ).patch;
 
       // A self-service mint is 1:1 with a fresh principal, so the culprit is
       // not the operator's own — which is what makes revoking it surgical.
@@ -2715,12 +2745,12 @@ describe("Patchy Cloud server", () => {
       // Step 2 — and the sibling page comes with it.
       const listed = await clocked.app.inject({
         method: "GET",
-        url: `/api/principals/${culprit.principalId}/drafts`,
+        url: `/api/principals/${culprit.principalId}/patches`,
         headers: { authorization: "Bearer dev-token" }
       });
       expect(listed.statusCode).toBe(200);
-      const held = (listed.json() as { drafts: { id: string }[] }).drafts;
-      expect([...held.map((draft) => draft.id)].sort()).toEqual([draftId, siblingDraftId].sort());
+      const held = (listed.json() as { patches: { id: string }[] }).patches;
+      expect([...held.map((draft) => draft.id)].sort()).toEqual([patchId, siblingDraftId].sort());
 
       // Step 3 — revoke. Provenance makes no difference to it: this is the same
       // endpoint, the same answer shape, and the same effect as on a token the
@@ -2743,17 +2773,17 @@ describe("Patchy Cloud server", () => {
       // The key is dead everywhere, and because the principal was its alone,
       // nothing else can reach the pages it left behind.
       expect((await createDraft(clocked.app, token, "Another")).statusCode).toBe(401);
-      expect((await updateDraft(clocked.app, token, draftId, "Rewritten")).statusCode).toBe(401);
+      expect((await updateDraft(clocked.app, token, patchId, "Rewritten")).statusCode).toBe(401);
 
       // The pages stay up and keep their remaining clock — and the freeze holds
       // for a self-service token exactly as it does for an operator's.
       clocked.advanceDays(80);
-      expect((await clocked.app.inject({ method: "GET", url: `/d/${draftId}` })).statusCode).toBe(
+      expect((await clocked.app.inject({ method: "GET", url: `/d/${patchId}` })).statusCode).toBe(
         200
       );
 
       clocked.advanceDays(11);
-      for (const gone of [draftId, siblingDraftId]) {
+      for (const gone of [patchId, siblingDraftId]) {
         expect((await clocked.app.inject({ method: "GET", url: `/d/${gone}` })).statusCode).toBe(
           404
         );
@@ -2768,7 +2798,7 @@ describe("Patchy Cloud server", () => {
 
     try {
       const created = await createDraft(clocked.app, "dev-token", "Flagged then expired");
-      const { draftId } = created.json() as { draftId: string };
+      const { patchId } = created.json() as { patchId: string };
 
       clocked.advanceDays(91);
       expect(await clocked.app.sweepExpiredDrafts()).toMatchObject({ deleted: 1 });
@@ -2778,11 +2808,11 @@ describe("Patchy Cloud server", () => {
       // has nothing to name and says so — an ordinary 404, not a fall over.
       const read = await clocked.app.inject({
         method: "GET",
-        url: `/api/drafts/${draftId}`,
+        url: `/api/patches/${patchId}`,
         headers: { authorization: "Bearer dev-token" }
       });
       expect(read.statusCode).toBe(404);
-      expect(read.json()).toEqual({ ok: false, error: "Draft not found." });
+      expect(read.json()).toEqual({ ok: false, error: "Patch not found." });
 
       const operator = await clocked.app.inject({
         method: "GET",
@@ -2791,11 +2821,11 @@ describe("Patchy Cloud server", () => {
       });
       const listed = await clocked.app.inject({
         method: "GET",
-        url: `/api/principals/${(operator.json() as { accountId: string }).accountId}/drafts`,
+        url: `/api/principals/${(operator.json() as { accountId: string }).accountId}/patches`,
         headers: { authorization: "Bearer dev-token" }
       });
       expect(listed.statusCode).toBe(200);
-      expect(listed.json()).toMatchObject({ ok: true, drafts: [], truncated: false });
+      expect(listed.json()).toMatchObject({ ok: true, patches: [], truncated: false });
     } finally {
       await clocked.close();
     }
@@ -3036,7 +3066,7 @@ describe("self-service minting", () => {
       // Fresh principal per mint: the two tokens share nothing to own through.
       expect(first.accountId).not.toBe(second.accountId);
 
-      const draftId = await minting.uploadAs(first.token, "First principal page");
+      const patchId = await minting.uploadAs(first.token, "First principal page");
 
       // The other minted token cannot reach a draft it does not own — not to
       // update it, not to moderate it, not to delete it.
@@ -3045,7 +3075,7 @@ describe("self-service minting", () => {
         url: "/api/uploads",
         headers: { authorization: `Bearer ${second.token}` },
         payload: {
-          draftId,
+          patchId,
           html: "<!doctype html><html><head><title>Hijack</title></head><body></body></html>"
         }
       });
@@ -3053,7 +3083,7 @@ describe("self-service minting", () => {
 
       const foreignDisable = await minting.app.inject({
         method: "POST",
-        url: `/api/drafts/${draftId}/disable`,
+        url: `/api/patches/${patchId}/disable`,
         headers: { authorization: `Bearer ${second.token}` },
         payload: { reason: "not mine" }
       });
@@ -3061,7 +3091,7 @@ describe("self-service minting", () => {
 
       const foreignDelete = await minting.app.inject({
         method: "DELETE",
-        url: `/api/drafts/${draftId}`,
+        url: `/api/patches/${patchId}`,
         headers: { authorization: `Bearer ${second.token}` }
       });
       expect(foreignDelete.statusCode).toBe(404);
@@ -3070,7 +3100,7 @@ describe("self-service minting", () => {
       const operatorDraftId = await publishDraft(minting.app, "Operator page");
       const reachUp = await minting.app.inject({
         method: "DELETE",
-        url: `/api/drafts/${operatorDraftId}`,
+        url: `/api/patches/${operatorDraftId}`,
         headers: { authorization: `Bearer ${first.token}` }
       });
       expect(reachUp.statusCode).toBe(404);
@@ -3091,7 +3121,7 @@ describe("self-service minting", () => {
         url: "/api/uploads",
         headers: { authorization: `Bearer ${first.token}` },
         payload: {
-          draftId,
+          patchId,
           html: "<!doctype html><html><head><title>Second cut</title></head><body></body></html>"
         }
       });
@@ -3099,7 +3129,7 @@ describe("self-service minting", () => {
 
       const ownDelete = await minting.app.inject({
         method: "DELETE",
-        url: `/api/drafts/${draftId}`,
+        url: `/api/patches/${patchId}`,
         headers: { authorization: `Bearer ${first.token}` }
       });
       expect(ownDelete.statusCode).toBe(200);
@@ -3113,16 +3143,16 @@ describe("self-service minting", () => {
 
     try {
       const { token } = await minting.mintedToken("203.0.113.60");
-      const draftId = await minting.uploadAs(token, "Minted and mortal");
+      const patchId = await minting.uploadAs(token, "Minted and mortal");
 
-      expect((await minting.app.inject({ method: "GET", url: `/d/${draftId}` })).statusCode).toBe(
+      expect((await minting.app.inject({ method: "GET", url: `/d/${patchId}` })).statusCode).toBe(
         200
       );
 
       // Minting buys no exemption: the retention clock runs on this draft
       // exactly as it does on the operator's, and the sweep takes it.
       minting.advanceMs(91 * DAY_MS);
-      expect((await minting.app.inject({ method: "GET", url: `/d/${draftId}` })).statusCode).toBe(
+      expect((await minting.app.inject({ method: "GET", url: `/d/${patchId}` })).statusCode).toBe(
         404
       );
       expect(await minting.app.sweepExpiredDrafts()).toMatchObject({ deleted: 1 });
@@ -3132,7 +3162,7 @@ describe("self-service minting", () => {
       const secondDraftId = await minting.uploadAs(token, "Minted and hopeful");
       const selfPin = await minting.app.inject({
         method: "POST",
-        url: `/api/drafts/${secondDraftId}/pin`,
+        url: `/api/patches/${secondDraftId}/pin`,
         headers: { authorization: `Bearer ${token}` }
       });
       expect(selfPin.statusCode).toBe(403);
@@ -3146,7 +3176,7 @@ interface ServedDraft {
   app: ReturnType<typeof createApp>;
   /** The store behind the app, for reading what a request left behind. */
   db: JsonFilePatchyDb;
-  draftId: string;
+  patchId: string;
   latestUrl: string;
   versionUrl: string;
   /**
@@ -3180,14 +3210,14 @@ async function createServedDraft(
     }
   });
   expect(upload.statusCode).toBe(201);
-  const body = upload.json() as { draftId: string; versionNumber: number };
+  const body = upload.json() as { patchId: string; versionNumber: number };
 
   return {
     app,
     db,
-    draftId: body.draftId,
-    latestUrl: `/d/${body.draftId}`,
-    versionUrl: `/d/${body.draftId}/v/${body.versionNumber}`,
+    patchId: body.patchId,
+    latestUrl: `/d/${body.patchId}`,
+    versionUrl: `/d/${body.patchId}/v/${body.versionNumber}`,
     advanceMs(ms) {
       now += ms;
     },
@@ -3233,8 +3263,8 @@ async function uploadSourceIp(options: {
     });
 
     expect(upload.statusCode).toBe(201);
-    const { draftId, versionId } = upload.json() as { draftId: string; versionId: string };
-    const lookup = await db.findDraftVersion(draftId);
+    const { patchId, versionId } = upload.json() as { patchId: string; versionId: string };
+    const lookup = await db.findDraftVersion(patchId);
     const state = JSON.parse(await readFile(dbFile, "utf8")) as {
       uploadEvents: Array<{ draftVersionId: string; sourceIp: string | null }>;
     };
@@ -3306,14 +3336,14 @@ async function createDraft(app: ReturnType<typeof createApp>, token: string, tit
 async function updateDraft(
   app: ReturnType<typeof createApp>,
   token: string,
-  draftId: string,
+  patchId: string,
   title: string
 ) {
   return app.inject({
     method: "POST",
     url: "/api/uploads",
     headers: { authorization: `Bearer ${token}` },
-    payload: { draftId, html: draftHtml(title) }
+    payload: { patchId, html: draftHtml(title) }
   });
 }
 
@@ -3611,7 +3641,7 @@ async function createMintApp(
         }
       });
       expect(upload.statusCode).toBe(201);
-      return (upload.json() as { draftId: string }).draftId;
+      return (upload.json() as { patchId: string }).patchId;
     },
     advanceMs(ms) {
       now += ms;
@@ -3708,7 +3738,7 @@ async function publishDraft(app: ReturnType<typeof createApp>, title: string): P
     }
   });
   expect(upload.statusCode).toBe(201);
-  return (upload.json() as { draftId: string }).draftId;
+  return (upload.json() as { patchId: string }).patchId;
 }
 
 /** A store that can serve a draft but cannot record the visit that follows. */

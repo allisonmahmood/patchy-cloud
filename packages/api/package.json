@@ -1,0 +1,28 @@
+{
+  "name": "@patchy/api",
+  "version": "0.0.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "description": "The Patchy Cloud wire contract: one schema per wire shape, the HttpApi, the derived client.",
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "render-docs": "node --import tsx --conditions=development scripts/render-api-md.ts",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@patchy/core": "workspace:*",
+    "effect": "catalog:"
+  }
+}

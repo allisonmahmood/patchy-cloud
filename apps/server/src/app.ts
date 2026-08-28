@@ -8,17 +8,39 @@ import type {
   ModeratedDraftRecord,
   PatchyDb,
   RecordUploadInput,
-  RecordUploadResult
+  RecordUploadResult,
+  UploadTargetError
 } from "@patchy/db";
 import type { HtmlStorage } from "@patchy/storage";
 import {
-  contentHash,
-  isDraftId,
-  newDraftId,
-  newInternalId,
-  randomToken,
-  validateHtml
-} from "@patchy/core";
+  BadRequest,
+  Conflict,
+  CreatedToken,
+  CreateTokenRequest,
+  DisableRequest,
+  Forbidden,
+  Identity,
+  InvalidHtml,
+  MintedToken,
+  MintQuotaExceeded,
+  type ModeratedPatch,
+  NotFound,
+  Ok,
+  PatchQuotaExceeded,
+  PatchView,
+  PayloadTooLarge,
+  Pinned,
+  PrincipalPatches,
+  RateLimited,
+  RequestTargetTooLong,
+  RevokedToken,
+  SelfServiceDisabled,
+  Unauthorized,
+  UploadCreated,
+  UploadRequest,
+  UploadUpdated
+} from "@patchy/api";
+import { contentHash, newDraftId, newInternalId, randomToken, validateHtml } from "@patchy/core";
 import type { UploadMetadata } from "@patchy/core";
 import { DisabledAnalytics, type Analytics } from "./analytics.js";
 import { createExpirySweep, type ExpirySweepResult } from "./expiry-sweep.js";
@@ -36,6 +58,7 @@ import {
   NO_STORE_CACHE_CONTROL,
   servedDraftCacheControl
 } from "./serving-headers.js";
+import { decodeBody, sendWire } from "./wire.js";
 
 export interface CreateAppOptions {
   config: ServerConfig;
@@ -47,18 +70,6 @@ export interface CreateAppOptions {
    * which is what an instance with no analytics key configured runs with.
    */
   analytics?: Analytics;
-}
-
-interface UploadBody {
-  html?: unknown;
-  filename?: unknown;
-  draftId?: unknown;
-  metadata?: unknown;
-}
-
-interface TokenBody {
-  name?: unknown;
-  scopes?: unknown;
 }
 
 declare module "fastify" {
@@ -111,7 +122,7 @@ const SELF_SERVICE_MINT_PATH = "/api/tokens/self-service";
 
 const FASTIFY_DEFAULT_MAX_PARAM_LENGTH = 100;
 /**
- * The `POST /api/drafts/:draftId/<suffix>` routes that exist. An overlong
+ * The `POST /api/patches/:patchId/<suffix>` routes that exist. An overlong
  * parameter on one of these is a too-long target; on anything else it is a
  * route that was never there. Adding a route here without adding it below
  * turns its overlong-parameter answer into a 404.
@@ -180,27 +191,28 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
 
   app.get("/healthz", async () => ({ ok: true }));
 
-  app.get("/api/me", { onRequest: protectedApi() }, async (request) => {
+  app.get("/api/me", { onRequest: protectedApi() }, async (request, reply) => {
     const auth = authenticatedRequest(request);
 
-    return {
+    return sendWire(reply, Identity, {
       accountId: auth.accountId,
       accountName: auth.accountName,
       apiTokenId: auth.id,
       apiTokenName: auth.name,
       scopes: auth.scopes
-    };
+    });
   });
 
   app.post("/api/tokens", { onRequest: protectedApi("admin") }, async (request, reply) => {
     const auth = authenticatedRequest(request);
 
-    const body = (request.body || {}) as TokenBody;
+    const body = decodeBody(CreateTokenRequest, request.body);
+    if (!body.ok) return sendMalformedBody(reply);
     const token = `pp_${randomToken(32)}`;
-    const scopes = normalizeScopes(body.scopes);
+    const scopes = normalizeScopes(body.value.scopes);
     const apiToken = await options.db.createApiToken({
       accountId: auth.accountId,
-      name: cleanText(body.name) || "CLI API Token",
+      name: cleanText(body.value.name) || "CLI API Token",
       token,
       scopes
     });
@@ -214,11 +226,7 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
       properties: { apiTokenId: apiToken.id, selfService: false }
     });
 
-    return reply.status(201).send({
-      ok: true,
-      apiToken,
-      token
-    });
+    return sendWire(reply, CreatedToken, { ok: true, apiToken, token });
   });
 
   // The mint route parses its own body. The operation takes no input at all, so
@@ -265,12 +273,12 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
       const apiTokenId = (request.params as { apiTokenId: string }).apiTokenId;
       const revocation = await options.db.revokeApiToken(apiTokenId);
       if (!revocation) {
-        return reply.status(404).send({ ok: false, error: "API token not found." });
+        return sendWire(reply, NotFound, { ok: false, error: "API token not found." });
       }
 
       // Idempotent: revoking twice is the same answer, with the original
       // moment intact, because that moment is when the freeze began.
-      return {
+      return sendWire(reply, RevokedToken, {
         ok: true,
         alreadyRevoked: revocation.alreadyRevoked,
         apiToken: {
@@ -279,7 +287,7 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
           principalId: revocation.accountId,
           revokedAt: revocation.revokedAt
         }
-      };
+      });
     }
   );
 
@@ -287,31 +295,31 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
   // principal behind it and the token to revoke. Admin-scoped, and deliberately
   // answering for drafts that are already disabled, deleted, or expired — the
   // operator is asked about pages that are off as often as pages that are on.
-  app.get("/api/drafts/:draftId", { onRequest: protectedApi("admin") }, async (request, reply) => {
-    const draftId = (request.params as { draftId: string }).draftId;
+  app.get("/api/patches/:patchId", { onRequest: protectedApi("admin") }, async (request, reply) => {
+    const draftId = (request.params as { patchId: string }).patchId;
     const draft = await options.db.findDraftForModeration(draftId);
-    if (!draft) return reply.status(404).send({ ok: false, error: "Draft not found." });
-    return { ok: true, draft: moderationDraftView(draft) };
+    if (!draft) return sendPatchNotFound(reply);
+    return sendWire(reply, PatchView, { ok: true, patch: moderationPatchView(draft) });
   });
 
   // The second step: everything else that principal is holding, so one takedown
   // resolves the whole principal rather than the single page that was flagged.
   app.get(
-    "/api/principals/:principalId/drafts",
+    "/api/principals/:principalId/patches",
     { onRequest: protectedApi("admin") },
-    async (request) => {
+    async (request, reply) => {
       const principalId = (request.params as { principalId: string }).principalId;
       const listing = await options.db.listDraftsByPrincipal(
         principalId,
         MODERATION_DRAFT_LIST_LIMIT
       );
 
-      return {
+      return sendWire(reply, PrincipalPatches, {
         ok: true,
         principalId,
-        drafts: listing.drafts.map(moderationDraftView),
+        patches: listing.drafts.map(moderationPatchView),
         truncated: listing.truncated
-      };
+      });
     }
   );
 
@@ -325,29 +333,40 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
     async (request, reply) => {
       const auth = authenticatedRequest(request);
 
-      const body = (request.body || {}) as UploadBody;
-      if (typeof body.html !== "string") {
-        return reply.status(400).send({ ok: false, error: "Missing HTML document." });
+      // The wire renamed this field. A client still sending the old name is
+      // told so, rather than being answered with a fresh patch it did not ask for.
+      if (typeof request.body === "object" && request.body !== null && "draftId" in request.body) {
+        return sendWire(reply, BadRequest, {
+          ok: false,
+          error:
+            "Unknown field draftId: the wire renamed it to patchId. Send patchId to update that patch."
+        });
       }
+      const decoded = decodeBody(UploadRequest, request.body);
+      if (!decoded.ok) {
+        // Which field failed decides the answer, as it always has: no usable
+        // document is one refusal, an unusable target is another.
+        const error =
+          decoded.field === "patchId"
+            ? "Invalid patch ID."
+            : decoded.field === "html"
+              ? "Missing HTML document."
+              : "Malformed request body.";
+        return sendWire(reply, BadRequest, { ok: false, error });
+      }
+      const body = decoded.value;
       const html = body.html;
 
       const validation = validateHtml(html, { maxBytes: options.config.maxHtmlBytes });
       if (!validation.ok) {
-        return reply.status(422).send({
+        return sendWire(reply, InvalidHtml, {
           ok: false,
           errors: validation.errors,
           warnings: validation.warnings
         });
       }
 
-      const requestedDraftId =
-        body.draftId === undefined || body.draftId === null ? null : body.draftId;
-      if (
-        requestedDraftId !== null &&
-        (typeof requestedDraftId !== "string" || !isDraftId(requestedDraftId))
-      ) {
-        return reply.status(400).send({ ok: false, error: "Invalid draft ID." });
-      }
+      const requestedDraftId = body.patchId ?? null;
 
       // Only creates are quota-bearing. An update rewrites a draft the token
       // already holds, so it costs nothing against either ceiling.
@@ -394,7 +413,12 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
         userAgent: request.headers["user-agent"] || null
       };
 
-      await options.db.assertUploadTarget(uploadInput);
+      try {
+        await options.db.assertUploadTarget(uploadInput);
+      } catch (error) {
+        if (!isUploadTargetError(error)) throw error;
+        return sendUploadTargetError(reply, error);
+      }
       await options.storage.putHtmlObject(objectKey, html);
 
       let upload: RecordUploadResult;
@@ -408,7 +432,7 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
           app.log.error(cleanupError);
           throw new Error("Upload cleanup failed.", { cause: cleanupError });
         }
-        throw error;
+        return sendUploadTargetError(reply, error);
       }
 
       const publicUrl = getDraftPublicUrl({
@@ -429,9 +453,12 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
         }
       });
 
-      return reply.status(requestedDraftId ? 200 : 201).send({
+      return sendWire(reply, requestedDraftId ? UploadUpdated : UploadCreated, {
         ok: true,
-        ...upload,
+        patchId: upload.draftId,
+        versionId: upload.versionId,
+        versionNumber: upload.versionNumber,
+        title: upload.title,
         publicUrl,
         warnings: validation.warnings
       });
@@ -439,25 +466,26 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
   );
 
   app.post(
-    "/api/drafts/:draftId/disable",
+    "/api/patches/:patchId/disable",
     { onRequest: protectedApi() },
     async (request, reply) => {
       const auth = authenticatedRequest(request);
 
-      const draftId = (request.params as { draftId: string }).draftId;
-      const reason =
-        cleanText((request.body as { reason?: unknown } | null)?.reason) || "Disabled.";
+      const draftId = (request.params as { patchId: string }).patchId;
+      const body = decodeBody(DisableRequest, request.body);
+      if (!body.ok) return sendMalformedBody(reply);
+      const reason = cleanText(body.value.reason) || "Disabled.";
       const disabled = await options.db.disableDraft(draftId, auth.accountId, reason, {
         canModerateAnyPrincipal: hasScope(auth, "admin")
       });
-      if (!disabled) return reply.status(404).send({ ok: false, error: "Draft not found." });
+      if (!disabled) return sendPatchNotFound(reply);
 
       analytics.capture({
         name: "draft.disabled",
         principalId: auth.accountId,
         properties: { draftId, admin: hasScope(auth, "admin") }
       });
-      return { ok: true };
+      return sendWire(reply, Ok, { ok: true });
     }
   );
 
@@ -472,32 +500,32 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
     { suffix: "unpin", pinned: false }
   ] as const) {
     app.post(
-      `/api/drafts/:draftId/${route.suffix}`,
+      `/api/patches/:patchId/${route.suffix}`,
       { onRequest: protectedApi("admin") },
       async (request, reply) => {
-        const draftId = (request.params as { draftId: string }).draftId;
+        const draftId = (request.params as { patchId: string }).patchId;
         const applied = await options.db.setDraftPinned(draftId, route.pinned);
-        if (!applied) return reply.status(404).send({ ok: false, error: "Draft not found." });
-        return { ok: true, pinned: route.pinned };
+        if (!applied) return sendPatchNotFound(reply);
+        return sendWire(reply, Pinned, { ok: true, pinned: route.pinned });
       }
     );
   }
 
-  app.delete("/api/drafts/:draftId", { onRequest: protectedApi() }, async (request, reply) => {
+  app.delete("/api/patches/:patchId", { onRequest: protectedApi() }, async (request, reply) => {
     const auth = authenticatedRequest(request);
 
-    const draftId = (request.params as { draftId: string }).draftId;
+    const draftId = (request.params as { patchId: string }).patchId;
     const deleted = await options.db.deleteDraft(draftId, auth.accountId, {
       canModerateAnyPrincipal: hasScope(auth, "admin")
     });
-    if (!deleted) return reply.status(404).send({ ok: false, error: "Draft not found." });
+    if (!deleted) return sendPatchNotFound(reply);
 
     analytics.capture({
       name: "draft.deleted",
       principalId: auth.accountId,
       properties: { draftId, admin: hasScope(auth, "admin") }
     });
-    return { ok: true };
+    return sendWire(reply, Ok, { ok: true });
   });
 
   app.get("/d/:draftId", async (request, reply) => {
@@ -521,6 +549,10 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
     if (statusCode >= 500) {
       app.log.error(error);
     }
+    // Fastify's own refusals. The two the wire names go out through their
+    // schemas; anything else keeps the same body at whatever status it carried.
+    if (statusCode === 413) return sendWire(reply, PayloadTooLarge, { ok: false, error: message });
+    if (statusCode === 400) return sendWire(reply, BadRequest, { ok: false, error: message });
     return reply.status(statusCode).send({ ok: false, error: message });
   });
 
@@ -547,7 +579,7 @@ async function mintSelfServiceToken(
   reply: FastifyReply
 ): Promise<FastifyReply> {
   if (!options.config.allowSelfServiceTokens) {
-    return reply.status(403).send({
+    return sendWire(reply, SelfServiceDisabled, {
       ok: false,
       error: "This instance does not issue self-service tokens. Ask its operator for a token.",
       code: "self_service_disabled"
@@ -568,7 +600,7 @@ async function mintSelfServiceToken(
   const quota = options.config.selfServiceMintsPerIpPerDay;
   const recentMints = await options.db.countSelfServiceMintsBySourceIp(sourceIp);
   if (recentMints >= quota) {
-    return reply.status(429).send({
+    return sendWire(reply, MintQuotaExceeded, {
       ok: false,
       // "Within a day", not "tomorrow": the window rolls off each mint 24 hours
       // after it happened, so the next slot opens on the oldest mint's clock
@@ -597,10 +629,7 @@ async function mintSelfServiceToken(
 
   // The plaintext appears here and nowhere else, exactly once. Only its hash is
   // stored, so no later response — and no operator — can produce it again.
-  return reply.status(201).send({
-    ok: true,
-    token
-  });
+  return sendWire(reply, MintedToken, { ok: true, token });
 }
 
 /**
@@ -672,7 +701,7 @@ function protectedApiPrefixGuard(
     // No configuration admits a tokenless request: a missing credential and a
     // present-but-invalid one are indistinguishable from here on.
     if (authState.kind === "missing" || authState.kind === "invalid") {
-      reply.status(401).send({ ok: false, error: "Missing or invalid API token." });
+      sendUnauthorized(reply);
       return;
     }
 
@@ -686,7 +715,7 @@ function protectedApiPrefixGuard(
 
     if (targetPolicy.requiredScope) {
       if (!hasScope(authState.auth, targetPolicy.requiredScope)) {
-        reply.status(403).send({ ok: false, error: "API token does not have the required scope." });
+        sendForbidden(reply);
         return;
       }
       markPreBodyAuthorizedScope(request, targetPolicy.requiredScope);
@@ -715,14 +744,14 @@ function protectedApiRouteHook(
   return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
     const auth = request.auth;
     if (!auth) {
-      reply.status(401).send({ ok: false, error: "Missing or invalid API token." });
+      sendUnauthorized(reply);
       return;
     }
 
     const scopeAlreadyChecked =
       requiredScope && request.preBodyAuthorizedScopes?.has(requiredScope);
     if (requiredScope && !scopeAlreadyChecked && !hasScope(auth, requiredScope)) {
-      reply.status(403).send({ ok: false, error: "API token does not have the required scope." });
+      sendForbidden(reply);
       return;
     }
 
@@ -759,15 +788,15 @@ function registeredApiParamRoutingErrorStatus(
 ): PreRoutingApiErrorStatus | undefined {
   if (method !== "GET" && method !== "POST" && method !== "DELETE") return undefined;
 
-  const [leading, rawApi, rawDrafts, rawParameter, rawSuffix, ...extraSegments] =
+  const [leading, rawApi, rawPatches, rawParameter, rawSuffix, ...extraSegments] =
     rawPath.split("/");
   if (
     leading !== "" ||
     rawApi === undefined ||
-    rawDrafts === undefined ||
+    rawPatches === undefined ||
     rawParameter === undefined ||
     decodeURI(rawApi) !== "api" ||
-    decodeURI(rawDrafts) !== "drafts" ||
+    decodeURI(rawPatches) !== "patches" ||
     decodeURIComponent(rawParameter).length <= FASTIFY_DEFAULT_MAX_PARAM_LENGTH
   ) {
     return undefined;
@@ -781,7 +810,7 @@ function registeredApiParamRoutingErrorStatus(
     return exactRegisteredRoute ? 414 : 404;
   }
 
-  // GET and DELETE both register the bare `/api/drafts/:draftId` shape and
+  // GET and DELETE both register the bare `/api/patches/:patchId` shape and
   // nothing under it, so an overlong parameter there is a too-long target and
   // anything deeper is a route that never existed.
   return rawSuffix === undefined ? 414 : 404;
@@ -870,19 +899,46 @@ function markPreBodyAuthorizedScope(request: FastifyRequest, scope: string): voi
 }
 
 function sendPreRoutingApiError(reply: FastifyReply, status: PreRoutingApiErrorStatus): void {
-  const error =
-    status === 400
-      ? "Malformed request target."
-      : status === 404
-        ? "Not found."
-        : "Request target is too long.";
-  reply.status(status).send({ ok: false, error });
+  if (status === 400) {
+    sendWire(reply, BadRequest, { ok: false, error: "Malformed request target." });
+  } else if (status === 404) {
+    sendApiNotFound(reply);
+  } else {
+    sendWire(reply, RequestTargetTooLong, { ok: false, error: "Request target is too long." });
+  }
+}
+
+function sendUnauthorized(reply: FastifyReply): void {
+  sendWire(reply, Unauthorized, { ok: false, error: "Missing or invalid API token." });
+}
+
+function sendForbidden(reply: FastifyReply): void {
+  sendWire(reply, Forbidden, { ok: false, error: "API token does not have the required scope." });
+}
+
+function sendMalformedBody(reply: FastifyReply): FastifyReply {
+  return sendWire(reply, BadRequest, { ok: false, error: "Malformed request body." });
+}
+
+function sendPatchNotFound(reply: FastifyReply): FastifyReply {
+  return sendWire(reply, NotFound, { ok: false, error: "Patch not found." });
+}
+
+/**
+ * The upload contract's two refusals, in wire words: the store still says
+ * "draft", the wire says "patch". An unavailable target — unknown, unowned,
+ * disabled, deleted or expired — is one 404, so the answer never says which.
+ */
+function sendUploadTargetError(reply: FastifyReply, error: UploadTargetError): FastifyReply {
+  return error.statusCode === 404
+    ? sendPatchNotFound(reply)
+    : sendWire(reply, Conflict, { ok: false, error: "Patch already exists." });
 }
 
 function sendRateLimited(reply: FastifyReply, decision: RateLimitDecision): void {
   const retryAfterSeconds = decision.retryAfterSeconds ?? 1;
   reply.header("Retry-After", String(retryAfterSeconds));
-  reply.status(429).send({
+  sendWire(reply, RateLimited, {
     ok: false,
     error: "Rate limit exceeded.",
     code: "rate_limited",
@@ -890,13 +946,13 @@ function sendRateLimited(reply: FastifyReply, decision: RateLimitDecision): void
   });
 }
 
-// "Draft quota", not "draft limit": the glossary reserves limit-shaped wording
+// "Patch quota", not "patch limit": the glossary reserves limit-shaped wording
 // for the per-minute create limit, which is a different rejection.
 function sendLiveDraftQuotaExceeded(reply: FastifyReply, quota: number): FastifyReply {
-  return reply.status(403).send({
+  return sendWire(reply, PatchQuotaExceeded, {
     ok: false,
-    error: `Draft quota reached: ${quota} live drafts per token. Delete or let a draft expire before creating another.`,
-    code: "live_draft_quota_exceeded",
+    error: `Patch quota reached: ${quota} live patches per token. Delete or let a patch expire before creating another.`,
+    code: "live_patch_quota_exceeded",
     quota
   });
 }
@@ -909,7 +965,7 @@ function sendLiveDraftQuotaExceeded(reply: FastifyReply, quota: number): Fastify
  * "Principal" rather than "account" — the moderation loop is operator-facing,
  * and the glossary's word for the ownership row is what it should hear.
  */
-function moderationDraftView(draft: ModeratedDraftRecord): Record<string, unknown> {
+function moderationPatchView(draft: ModeratedDraftRecord): (typeof ModeratedPatch)["Encoded"] {
   return {
     id: draft.id,
     principalId: draft.accountId,
@@ -928,10 +984,7 @@ function moderationDraftView(draft: ModeratedDraftRecord): Record<string, unknow
 }
 
 function sendApiNotFound(reply: FastifyReply): void {
-  reply.status(404).send({
-    ok: false,
-    error: "Not found."
-  });
+  sendWire(reply, NotFound, { ok: false, error: "Not found." });
 }
 
 async function authenticateApiRequest(

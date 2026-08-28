@@ -27,22 +27,22 @@ describe("Patchy Cloud HTTP with Postgres", () => {
       const created = await upload(harness.app, "Database create");
       expect(created.statusCode).toBe(201);
       const firstBody: unknown = created.json();
-      const draftId = stringField(firstBody, "draftId");
+      const patchId = stringField(firstBody, "patchId");
       const versionNumber = numberField(firstBody, "versionNumber");
 
       const updated = await upload(harness.app, "Database update", {
-        draftId
+        patchId
       });
       expect(updated.statusCode).toBe(200);
-      expect(updated.json()).toMatchObject({ draftId, versionNumber: 2 });
+      expect(updated.json()).toMatchObject({ patchId, versionNumber: 2 });
 
-      const latest = await harness.app.inject({ method: "GET", url: `/d/${draftId}` });
+      const latest = await harness.app.inject({ method: "GET", url: `/d/${patchId}` });
       expect(latest.statusCode).toBe(200);
       expect(latest.body).toContain("Database update");
 
       const original = await harness.app.inject({
         method: "GET",
-        url: `/d/${draftId}/v/${versionNumber}`
+        url: `/d/${patchId}/v/${versionNumber}`
       });
       expect(original.statusCode).toBe(200);
       expect(original.body).toContain("Database create");
@@ -63,18 +63,18 @@ describe("Patchy Cloud HTTP with Postgres", () => {
 
       const created = await upload(harness.app, "Scoped upload", {}, uploadToken);
       expect(created.statusCode).toBe(201);
-      const draftId = stringField(created.json(), "draftId");
+      const patchId = stringField(created.json(), "patchId");
 
       const refusedPin = await harness.app.inject({
         method: "POST",
-        url: `/api/drafts/${draftId}/pin`,
+        url: `/api/patches/${patchId}/pin`,
         headers: { authorization: `Bearer ${uploadToken}` }
       });
       expect(refusedPin.statusCode).toBe(403);
 
       const pinned = await harness.app.inject({
         method: "POST",
-        url: `/api/drafts/${draftId}/pin`,
+        url: `/api/patches/${patchId}/pin`,
         headers: { authorization: `Bearer ${adminToken}` }
       });
       expect(pinned.statusCode).toBe(200);
@@ -104,23 +104,23 @@ describe("Patchy Cloud HTTP with Postgres", () => {
 
       const created = await upload(harness.app, "Moderated", {}, token);
       expect(created.statusCode).toBe(201);
-      const draftId = stringField(created.json(), "draftId");
+      const patchId = stringField(created.json(), "patchId");
 
       const inspected = await harness.app.inject({
         method: "GET",
-        url: `/api/drafts/${draftId}`,
+        url: `/api/patches/${patchId}`,
         headers: { authorization: "Bearer dev-token" }
       });
       expect(inspected.statusCode).toBe(200);
 
       const disabled = await harness.app.inject({
         method: "POST",
-        url: `/api/drafts/${draftId}/disable`,
+        url: `/api/patches/${patchId}/disable`,
         headers: { authorization: "Bearer dev-token" },
         payload: { reason: "operator decision" }
       });
       expect(disabled.statusCode).toBe(200);
-      expect((await harness.app.inject({ method: "GET", url: `/d/${draftId}` })).statusCode).toBe(
+      expect((await harness.app.inject({ method: "GET", url: `/d/${patchId}` })).statusCode).toBe(
         404
       );
     } finally {
@@ -133,24 +133,24 @@ describe("Patchy Cloud HTTP with Postgres", () => {
 
     try {
       const created = await upload(harness.app, "Ninety day page");
-      const draftId = stringField(created.json(), "draftId");
+      const patchId = stringField(created.json(), "patchId");
 
       harness.advanceDays(1);
-      expect((await harness.app.inject({ method: "GET", url: `/d/${draftId}` })).statusCode).toBe(
+      expect((await harness.app.inject({ method: "GET", url: `/d/${patchId}` })).statusCode).toBe(
         200
       );
 
       harness.advanceDays(90);
-      for (const url of [`/d/${draftId}`, `/d/${draftId}/v/1`]) {
+      for (const url of [`/d/${patchId}`, `/d/${patchId}/v/1`]) {
         const gone = await harness.app.inject({ method: "GET", url });
         expect(gone.statusCode).toBe(404);
         expect(gone.headers["x-robots-tag"]).toBe("noindex");
         expect(gone.headers["cache-control"]).toBe("no-store");
       }
 
-      const update = await upload(harness.app, "Too late", { draftId });
+      const update = await upload(harness.app, "Too late", { patchId });
       expect(update.statusCode).toBe(404);
-      expect(update.json()).toEqual({ ok: false, error: "Draft not found." });
+      expect(update.json()).toEqual({ ok: false, error: "Patch not found." });
     } finally {
       await harness.close();
     }
@@ -161,20 +161,20 @@ describe("Patchy Cloud HTTP with Postgres", () => {
 
     try {
       const created = await upload(harness.app, "Still visited");
-      const draftId = stringField(created.json(), "draftId");
+      const patchId = stringField(created.json(), "patchId");
 
       harness.advanceDays(80);
-      expect((await harness.app.inject({ method: "GET", url: `/d/${draftId}` })).statusCode).toBe(
+      expect((await harness.app.inject({ method: "GET", url: `/d/${patchId}` })).statusCode).toBe(
         200
       );
 
       harness.advanceDays(15);
-      const extended = await harness.app.inject({ method: "GET", url: `/d/${draftId}` });
+      const extended = await harness.app.inject({ method: "GET", url: `/d/${patchId}` });
       expect(extended.statusCode).toBe(200);
       expect(extended.body).toContain("Still visited");
 
       harness.advanceDays(31);
-      expect((await harness.app.inject({ method: "GET", url: `/d/${draftId}` })).statusCode).toBe(
+      expect((await harness.app.inject({ method: "GET", url: `/d/${patchId}` })).statusCode).toBe(
         404
       );
     } finally {
@@ -187,8 +187,8 @@ describe("Patchy Cloud HTTP with Postgres", () => {
 
     try {
       const created = await upload(harness.app, "Ages out");
-      const draftId = stringField(created.json(), "draftId");
-      expect((await upload(harness.app, "Ages out twice", { draftId })).statusCode).toBe(200);
+      const patchId = stringField(created.json(), "patchId");
+      expect((await upload(harness.app, "Ages out twice", { patchId })).statusCode).toBe(200);
       expect(await listFiles(harness.storageDir)).toHaveLength(2);
 
       harness.advanceDays(91);
@@ -200,10 +200,10 @@ describe("Patchy Cloud HTTP with Postgres", () => {
       });
       expect(await listFiles(harness.storageDir)).toEqual([]);
 
-      for (const url of [`/d/${draftId}`, `/d/${draftId}/v/1`, `/d/${draftId}/v/2`]) {
+      for (const url of [`/d/${patchId}`, `/d/${patchId}/v/1`, `/d/${patchId}/v/2`]) {
         expect((await harness.app.inject({ method: "GET", url })).statusCode).toBe(404);
       }
-      expect((await upload(harness.app, "Too late", { draftId })).statusCode).toBe(404);
+      expect((await upload(harness.app, "Too late", { patchId })).statusCode).toBe(404);
     } finally {
       await harness.close();
     }
@@ -214,31 +214,31 @@ describe("Patchy Cloud HTTP with Postgres", () => {
 
     try {
       const created = await upload(harness.app, "Welcome page");
-      const draftId = stringField(created.json(), "draftId");
+      const patchId = stringField(created.json(), "patchId");
 
       const pinned = await harness.app.inject({
         method: "POST",
-        url: `/api/drafts/${draftId}/pin`,
+        url: `/api/patches/${patchId}/pin`,
         headers: { authorization: "Bearer dev-token" }
       });
       expect(pinned.statusCode).toBe(200);
 
       harness.advanceDays(365);
       expect(await harness.app.sweepExpiredDrafts()).toMatchObject({ deleted: 0 });
-      expect((await harness.app.inject({ method: "GET", url: `/d/${draftId}` })).statusCode).toBe(
+      expect((await harness.app.inject({ method: "GET", url: `/d/${patchId}` })).statusCode).toBe(
         200
       );
 
       const unpinned = await harness.app.inject({
         method: "POST",
-        url: `/api/drafts/${draftId}/unpin`,
+        url: `/api/patches/${patchId}/unpin`,
         headers: { authorization: "Bearer dev-token" }
       });
       expect(unpinned.statusCode).toBe(200);
 
       harness.advanceDays(31);
       expect(await harness.app.sweepExpiredDrafts()).toMatchObject({ deleted: 1 });
-      expect((await harness.app.inject({ method: "GET", url: `/d/${draftId}` })).statusCode).toBe(
+      expect((await harness.app.inject({ method: "GET", url: `/d/${patchId}` })).statusCode).toBe(
         404
       );
       expect(await listFiles(harness.storageDir)).toEqual([]);
@@ -251,9 +251,9 @@ describe("Patchy Cloud HTTP with Postgres", () => {
     const harness = await createPostgresHttpHarness("concurrent-sweep");
 
     try {
-      const expiredId = stringField((await upload(harness.app, "Abandoned")).json(), "draftId");
+      const expiredId = stringField((await upload(harness.app, "Abandoned")).json(), "patchId");
       harness.advanceDays(91);
-      const liveId = stringField((await upload(harness.app, "Still here")).json(), "draftId");
+      const liveId = stringField((await upload(harness.app, "Still here")).json(), "patchId");
 
       const [first, second] = await Promise.all([
         harness.app.sweepExpiredDrafts(),
@@ -279,22 +279,22 @@ describe("Patchy Cloud HTTP with Postgres", () => {
 
     try {
       const first = await upload(harness.app, "One");
-      const firstId = stringField(first.json(), "draftId");
+      const firstId = stringField(first.json(), "patchId");
       expect((await upload(harness.app, "Two")).statusCode).toBe(201);
 
       const overQuota = await upload(harness.app, "Three");
       expect(overQuota.statusCode).toBe(403);
       expect(overQuota.json()).toMatchObject({
-        code: "live_draft_quota_exceeded",
+        code: "live_patch_quota_exceeded",
         quota: 2
       });
-      expect((await upload(harness.app, "One revised", { draftId: firstId })).statusCode).toBe(200);
+      expect((await upload(harness.app, "One revised", { patchId: firstId })).statusCode).toBe(200);
 
       await harness.restart();
       const afterRestart = await upload(harness.app, "Three again");
       expect(afterRestart.statusCode).toBe(403);
       expect(afterRestart.json()).toMatchObject({
-        code: "live_draft_quota_exceeded",
+        code: "live_patch_quota_exceeded",
         quota: 2
       });
     } finally {
@@ -414,7 +414,7 @@ function mintSelfServiceToken(app: FastifyInstance, sourceIp: string) {
 function upload(
   app: FastifyInstance,
   title: string,
-  target: { draftId?: string } = {},
+  target: { patchId?: string } = {},
   token = "dev-token"
 ) {
   return app.inject({
