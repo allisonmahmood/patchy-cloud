@@ -42,6 +42,10 @@ The five canonical triage roles, each label string equal to its name. See `docs/
 
 Multi-context — a root `CONTEXT-MAP.md` pointing at one `CONTEXT.md` per context (hosting server, CLI publisher). See `docs/agents/domain.md`.
 
+### Review specs
+
+Standards sources for `/code-review`'s Standards axis, one `SKILL.md` each under `.agents/skills/`: `effect-service-conventions` when the diff creates, moves, refactors, or consumes an Effect service; `ui-consistency` when it touches rendered HTML or CSS. Pass the matching file(s) to the Standards sub-agent.
+
 ## Pull requests
 
 - Never make a PR unless the developer explicitly asks you to do so.
