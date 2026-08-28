@@ -14,22 +14,22 @@ Everything Patchy serves is server-rendered HTML with an inline `<style>` block,
 
 Two page kinds, and the distinction drives most findings:
 
-- **First-party chrome** — the home page, the report form, its acknowledgement, and the 404 — all composed through `htmlPage`.
+- **First-party chrome** — the home page and the 404 — all composed through `htmlPage`.
 - **Served drafts** — `renderDraftWrapper`, which is user content and is deliberately _not_ `htmlPage`.
 
 ## The shell and its one exception
 
 - First-party pages compose `htmlPage`. A new page that re-emits its own `<head>`, base styles, or design tokens instead of composing the shell is a concrete finding.
-- `renderDraftWrapper` is the standing exception and stays one. It is a separate document on purpose: its own minimal `<head>`, no shell paper/grid/glyph styling, and a locked CSP whose `form-action 'none'` is why the report form lives on its own page behind a link. Do not report it as a duplicated skeleton, and do not accept a change that folds it into `htmlPage`.
+- `renderDraftWrapper` is the standing exception and stays one. It is a separate document on purpose: its own minimal `<head>`, no shell paper/grid/glyph styling, and a locked CSP (`form-action 'none'`, no script source) that nothing inside the wrapper may need to relax. Do not report it as a duplicated skeleton, and do not accept a change that folds it into `htmlPage`.
 - When first-party pages repeat the same durable treatment — pills, notes, compact code panels — prefer a named shared class in the shell. Keep contextual layout, width, and color at the call site.
 - Flag call-site overrides that replace a shared class's core height, radius, padding, focus ring, or base colors. Extend the shared contract instead when the pattern is genuinely shared.
 
 ## Served drafts
 
-- Served drafts carry no JavaScript, anywhere: not in the wrapper, not in the footer. A control that needs script is the wrong control.
+- Served drafts carry no JavaScript, anywhere in the wrapper. A control that needs script is the wrong control.
 - Keep the draft iframe's `sandbox` and `title`, and its `srcdoc` escaping. Draft HTML reaches the attribute through `escapeAttribute`; a draft title reaching markup goes through `escapeHtml`. Flag any user-supplied value interpolated raw.
 - Readers of a served draft are unwatched: no cookies, no session, no analytics, no third-party requests from the wrapper. Flag anything that adds one.
-- The footer is the reader's only channel to the operator. Preserve that link and its no-script behavior.
+- The wrapper is the sandboxed frame and nothing else: no footer, no chrome, no first-party link out of the page. Flag anything that adds one.
 
 ## CSS ownership
 
@@ -42,12 +42,12 @@ Two page kinds, and the distinction drives most findings:
 
 ## Scroll and frames
 
-- The served-draft frame owns its scrolling: `body { overflow: hidden }`, the iframe flexes, the footer is `flex: none`. A change that scrolls the document instead of the frame changes reader behavior and is a finding.
+- The served-draft frame owns its scrolling: `html, body { height: 100% }`, `body { overflow: hidden }`, and the iframe fills the viewport. A change that scrolls the document instead of the frame changes reader behavior and is a finding.
 - Verify actual scroll behavior when changing overflow ownership or frame sizing. Comparing classes in source is not enough.
 
 ## Change discipline and evidence
 
-- Preserve responsive geometry, frame and footer insets, clipping, radius, and the shell's shadow tokens.
+- Preserve responsive geometry, frame insets, clipping, radius, and the shell's shadow tokens.
 - Preserve accessibility and interaction semantics through a migration: focus-visible rings, disabled behavior, keyboard behavior, pointer cursor, `aria-*`, and coarse-pointer hit targets.
 - Preserve comments that explain a browser, sandbox, or CSP constraint. They are why the exception exists.
 - Prefer the smallest durable contract over a page-specific workaround or a broad abstraction with one consumer.

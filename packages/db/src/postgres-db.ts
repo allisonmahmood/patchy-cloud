@@ -13,7 +13,6 @@ import type {
   DbDriverOptions,
   DraftRecord,
   DraftModerationOptions,
-  DraftReportRecord,
   DraftVersionLookup,
   DraftVersionRecord,
   MintSelfServiceTokenInput,
@@ -21,7 +20,6 @@ import type {
   ModeratedDraftRecord,
   PatchyDb,
   PrincipalDraftListing,
-  RecordDraftReportInput,
   RecordUploadInput,
   RecordUploadResult,
   UploadTargetInput
@@ -81,14 +79,6 @@ interface DraftVersionRow extends pg.QueryResultRow {
   git_branch: string | null;
   git_commit_sha: string | null;
   original_filename: string | null;
-  created_at: unknown;
-}
-
-interface DraftReportRow extends pg.QueryResultRow {
-  id: string;
-  draft_id: string;
-  source_ip: string | null;
-  reason: string | null;
   created_at: unknown;
 }
 
@@ -719,30 +709,6 @@ export class PostgresPatchyDb implements PatchyDb {
     return Boolean(result.rowCount);
   }
 
-  async recordDraftReport(input: RecordDraftReportInput): Promise<DraftReportRecord> {
-    // One INSERT and nothing else: no trigger, no cascade, no UPDATE of the
-    // draft. That is what makes report volume unable to move any state.
-    const result = await this.pool.query<DraftReportRow>(
-      `
-        INSERT INTO draft_reports (id, draft_id, source_ip, reason)
-        VALUES ($1, $2, $3, $4)
-        RETURNING *
-      `,
-      [newInternalId("rpt"), input.draftId, input.sourceIp, cleanText(input.reason)]
-    );
-    const report = result.rows[0];
-    if (!report) throw new Error("Postgres did not return the inserted draft report.");
-    return mapDraftReport(report);
-  }
-
-  async listDraftReports(draftId: string): Promise<DraftReportRecord[]> {
-    const result = await this.pool.query<DraftReportRow>(
-      "SELECT * FROM draft_reports WHERE draft_id = $1 ORDER BY created_at, id",
-      [draftId]
-    );
-    return result.rows.map(mapDraftReport);
-  }
-
   async close(): Promise<void> {
     await this.pool.end();
   }
@@ -850,16 +816,6 @@ function mapDraftVersion(row: DraftVersionRow): DraftVersionRecord {
     gitBranch: row.git_branch,
     gitCommitSha: row.git_commit_sha,
     originalFilename: row.original_filename,
-    createdAt: toIso(row.created_at)
-  };
-}
-
-function mapDraftReport(row: DraftReportRow): DraftReportRecord {
-  return {
-    id: row.id,
-    draftId: row.draft_id,
-    sourceIp: row.source_ip,
-    reason: row.reason,
     createdAt: toIso(row.created_at)
   };
 }

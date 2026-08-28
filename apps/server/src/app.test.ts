@@ -1999,353 +1999,24 @@ describe("Patchy Cloud server", () => {
     await served.close();
   });
 
-  it("footers every served draft with the report link", async () => {
-    const served = await createServedDraft("report-footer");
+  it("serves a draft as the framed document and nothing else", async () => {
+    const served = await createServedDraft("bare-wrapper");
 
     for (const url of [served.latestUrl, served.versionUrl]) {
       const response = await served.app.inject({ method: "GET", url });
       expect(response.statusCode).toBe(200);
 
-      // The reader's channel to the operator, on both URL shapes. The footer
-      // carries this one link and no others.
-      expect(response.body).toContain(`href="/report/${served.draftId}"`);
-      expect(response.body).toContain("Report this page");
-      expect(response.headers["referrer-policy"]).toBe("no-referrer");
-
-      // The footer is links, not script, because the draft policy forbids
-      // script and forbids a form submitting from here.
+      // The wrapper is the sandboxed frame alone: no footer, no first-party
+      // link out of the page, and nothing a reader could submit or run.
+      expect(response.body).not.toContain("<footer");
       expect(response.body).not.toContain("<script");
       expect(response.body).not.toContain("<form");
       expect(response.body).not.toContain("onclick");
-
-      // And carrying it changed nothing about how a draft is served.
-      expect(response.headers["content-security-policy"]).toBe(
-        "default-src 'none'; style-src 'unsafe-inline'; img-src https: data:; " +
-          "frame-src 'self' about:; base-uri 'none'; form-action 'none'"
-      );
+      expect(response.headers["referrer-policy"]).toBe("no-referrer");
       expect(response.headers["set-cookie"]).toBeUndefined();
     }
 
     await served.close();
-  });
-
-  it("takes a report over plain navigation and acknowledges the reader immediately", async () => {
-    const served = await createServedDraft("report-submit");
-    const reportUrl = `/report/${served.draftId}`;
-
-    // Step one is a link the footer already carries: an ordinary GET, whose
-    // own response — not the draft's — is what may carry a form.
-    const form = await served.app.inject({ method: "GET", url: reportUrl });
-    expect(form.statusCode).toBe(200);
-    expect(form.headers["content-type"]).toContain("text/html");
-    expect(form.body).toContain(
-      `<form class="panel panel-form" method="post" action="${reportUrl}"`
-    );
-    expect(form.body).toContain('name="reason"');
-    expect(form.body).not.toContain("<script");
-    expect(form.headers["content-security-policy"]).toBe(
-      "default-src 'none'; style-src 'unsafe-inline'; img-src https: data:; " +
-        "base-uri 'none'; form-action 'self'"
-    );
-    expect(form.headers["content-security-policy"]).not.toContain("script");
-    expect(form.headers["cache-control"]).toBe("no-store");
-    expect(form.headers["x-robots-tag"]).toBe("noindex");
-    expect(form.headers["referrer-policy"]).toBe("no-referrer");
-    expect(form.headers["set-cookie"]).toBeUndefined();
-
-    // Step two is that form submitting itself. No JavaScript ran to get here.
-    const filed = await served.app.inject({
-      method: "POST",
-      url: reportUrl,
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      payload: "reason=Impersonates+my+company"
-    });
-    expect(filed.statusCode).toBe(200);
-    expect(filed.headers["content-type"]).toContain("text/html");
-    expect(filed.body).toContain("Report received");
-    expect(filed.headers["cache-control"]).toBe("no-store");
-    expect(filed.headers["x-robots-tag"]).toBe("noindex");
-    expect(filed.headers["referrer-policy"]).toBe("no-referrer");
-    expect(filed.headers["set-cookie"]).toBeUndefined();
-
-    // A reader with nothing to add is acknowledged the same way. What the two
-    // submissions *stored* is the DB contract suite's to prove, not this seam's.
-    const bare = await served.app.inject({
-      method: "POST",
-      url: reportUrl,
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      payload: ""
-    });
-    expect(bare.statusCode).toBe(200);
-    expect(bare.body).toContain("Report received");
-
-    await served.close();
-  });
-
-  it("keeps the report form parser out of the API", async () => {
-    const served = await createServedDraft("report-parser-scope");
-
-    // The urlencoded parser is registered in the report routes' own plugin
-    // scope. If it ever leaked to the root instance, these would parse instead
-    // of being refused, and a form post would become a valid API call.
-    for (const url of ["/api/uploads", "/api/tokens"]) {
-      const response = await served.app.inject({
-        method: "POST",
-        url,
-        headers: {
-          authorization: "Bearer dev-token",
-          "content-type": "application/x-www-form-urlencoded"
-        },
-        payload: "html=%3Cp%3Ehi%3C%2Fp%3E&name=leaked"
-      });
-      expect(response.statusCode).toBe(415);
-    }
-
-    // And the API's ordinary answers are untouched either way.
-    const me = await served.app.inject({
-      method: "GET",
-      url: "/api/me",
-      headers: { authorization: "Bearer dev-token" }
-    });
-    expect(me.statusCode).toBe(200);
-
-    await served.close();
-  });
-
-  it("never lets reports take a draft down, however many arrive", async () => {
-    // Four windows at the configured rate is the same forty reports this test
-    // always filed, now arriving at a rate the instance accepts. What it proves
-    // is unchanged: volume is not a takedown.
-    const served = await createServedDraft("report-bomb");
-    const limit = testConfig().reportRateLimitPerMinute;
-    const windows = 4;
-
-    const before = await served.app.inject({ method: "GET", url: served.latestUrl });
-    expect(before.statusCode).toBe(200);
-
-    for (let window = 0; window < windows; window += 1) {
-      for (let index = 0; index < limit; index += 1) {
-        const filed = await served.app.inject({
-          method: "POST",
-          url: `/report/${served.draftId}`,
-          headers: { "content-type": "application/x-www-form-urlencoded" },
-          payload: `reason=Bomb+${window}-${index}`
-        });
-        // Every reader within the limit is acknowledged; none is a takedown.
-        expect(filed.statusCode).toBe(200);
-      }
-
-      // And the one that overruns the window is refused as a rate limit —
-      // never as anything about the page, which is still being served.
-      const overrun = await served.app.inject({
-        method: "POST",
-        url: `/report/${served.draftId}`,
-        headers: { "content-type": "application/x-www-form-urlencoded" },
-        payload: "reason=One+too+many"
-      });
-      expect(overrun.statusCode).toBe(429);
-      expect(overrun.json()).toMatchObject({ ok: false, code: "rate_limited" });
-      expect((await served.app.inject({ method: "GET", url: served.latestUrl })).statusCode).toBe(
-        200
-      );
-
-      served.advanceMs(60_000);
-    }
-
-    // Forty reports landed, and the store holds every one of them.
-    expect(limit * windows).toBe(40);
-    expect(await served.db.listDraftReports(served.draftId)).toHaveLength(40);
-
-    for (const url of [served.latestUrl, served.versionUrl]) {
-      const after = await served.app.inject({ method: "GET", url });
-      expect(after.statusCode).toBe(200);
-      expect(after.body).toContain("Served.");
-    }
-
-    // Taking it down stays where it always was: an operator's decision.
-    const disabled = await served.app.inject({
-      method: "POST",
-      url: `/api/drafts/${served.draftId}/disable`,
-      headers: { authorization: "Bearer dev-token" },
-      payload: { reason: "Operator reviewed the reports." }
-    });
-    expect(disabled.statusCode).toBe(200);
-    expect((await served.app.inject({ method: "GET", url: served.latestUrl })).statusCode).toBe(
-      404
-    );
-
-    await served.close();
-  });
-
-  it("bounds how fast one address may file reports, and lets the window roll off", async () => {
-    const served = await createServedDraft("report-rate-limit", {
-      reportRateLimitPerMinute: 3
-    });
-    const reader = "198.51.100.40";
-    const file = async (
-      reason: string,
-      remoteAddress = reader
-    ): Promise<Awaited<ReturnType<typeof served.app.inject>>> =>
-      served.app.inject({
-        method: "POST",
-        url: `/report/${served.draftId}`,
-        remoteAddress,
-        headers: { "content-type": "application/x-www-form-urlencoded" },
-        payload: `reason=${reason}`
-      });
-
-    // Under the limit, nothing about filing a report has changed: the reader
-    // is acknowledged with the same page, and the row is stored.
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      const filed = await file(`Under+${attempt}`);
-      expect(filed.statusCode).toBe(200);
-      expect(filed.headers["content-type"]).toContain("text/html");
-      expect(filed.body).toContain("Report received");
-    }
-
-    // The fourth in the same minute is the API's ordinary rate-limited answer.
-    const limited = await file("Over");
-    expect(limited.statusCode).toBe(429);
-    expect(limited.headers["retry-after"]).toBe("60");
-    expect(limited.json()).toMatchObject({
-      ok: false,
-      code: "rate_limited",
-      retryAfterSeconds: 60
-    });
-
-    // Nothing was written for it — the limiter is consumed before the draft is
-    // even looked up, so a flood costs neither a read nor a row.
-    expect(await served.db.listDraftReports(served.draftId)).toHaveLength(3);
-
-    // The bucket is that reader's alone; another address files freely.
-    const neighbour = await file("From+elsewhere", "198.51.100.41");
-    expect(neighbour.statusCode).toBe(200);
-    expect(neighbour.body).toContain("Report received");
-
-    // Reading the page and opening the report form are untouched by any of it:
-    // the limiter is on the write, and a rate-limited reader can still see
-    // both the draft and the form.
-    for (const url of [served.latestUrl, `/report/${served.draftId}`]) {
-      const response = await served.app.inject({ method: "GET", url, remoteAddress: reader });
-      expect(response.statusCode).toBe(200);
-      expect(response.headers["content-type"]).toContain("text/html");
-    }
-
-    // A minute later the window has rolled off and the reader files again.
-    served.advanceMs(60_000);
-    const afterWindow = await file("A+minute+later");
-    expect(afterWindow.statusCode).toBe(200);
-    expect(afterWindow.body).toContain("Report received");
-    expect(await served.db.listDraftReports(served.draftId)).toHaveLength(5);
-
-    await served.close();
-  });
-
-  it("opens a report path only for a draft a reader could have read", async () => {
-    const served = await createServedDraft("report-unreadable");
-
-    const disable = await served.app.inject({
-      method: "POST",
-      url: `/api/drafts/${served.draftId}/disable`,
-      headers: { authorization: "Bearer dev-token" },
-      payload: { reason: "Operator decision." }
-    });
-    expect(disable.statusCode).toBe(200);
-
-    // A disabled draft, an unknown ID, and a malformed one are all the same
-    // 404 the draft URL itself gives — an unreadable page is unreportable, and
-    // a made-up ID is never a way to write a row.
-    for (const draftId of [served.draftId, "doesnotexist1", "not a draft id"]) {
-      for (const method of ["GET", "POST"] as const) {
-        const response = await served.app.inject({
-          method,
-          url: `/report/${encodeURIComponent(draftId)}`,
-          headers: method === "POST" ? { "content-type": "application/x-www-form-urlencoded" } : {},
-          payload: method === "POST" ? "reason=Nothing+here" : undefined
-        });
-        expect(response.statusCode).toBe(404);
-        expect(response.headers["content-type"]).toContain("text/html");
-        expect(response.headers["cache-control"]).toBe("no-store");
-        expect(response.headers["set-cookie"]).toBeUndefined();
-      }
-    }
-
-    await served.close();
-  });
-
-  /**
-   * The one report test here that reads the store, because these two facts do
-   * not exist anywhere else. What a report *is* once stored — its reason, its
-   * trimming, its scoping to one draft — is the DB contract suite's, proved on
-   * both drivers. What only this seam can answer is whether the app hands the
-   * store the right things: the reader's resolved address, and nothing at all
-   * for a draft nobody could have read. Same shape as the upload path's
-   * source-IP attribution test.
-   */
-  it("attributes a filed report to the reader's address, and writes nothing for an unreadable draft", async () => {
-    const served = await createServedDraft("report-attribution");
-
-    const filed = await served.app.inject({
-      method: "POST",
-      url: `/report/${served.draftId}`,
-      remoteAddress: "198.51.100.23",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      payload: "reason=From+a+specific+address"
-    });
-    expect(filed.statusCode).toBe(200);
-
-    const stored = await served.db.listDraftReports(served.draftId);
-    expect(stored).toHaveLength(1);
-    expect(stored[0]?.sourceIp).toBe("198.51.100.23");
-
-    // A made-up ID is never a way to write a row: the handler resolves the
-    // draft before it stores anything.
-    const missing = await served.app.inject({
-      method: "POST",
-      url: "/report/doesnotexist1",
-      remoteAddress: "198.51.100.24",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      payload: "reason=Nothing+here"
-    });
-    expect(missing.statusCode).toBe(404);
-    expect(await served.db.listDraftReports("doesnotexist1")).toEqual([]);
-
-    await served.close();
-  });
-
-  it("treats reporting a page as something other than reading it", async () => {
-    const clocked = await createClockedApp("report-not-a-visit");
-
-    try {
-      const draftId = await publishDraft(clocked.app, "Quietly reported");
-
-      // Deep into the top-up window, where a real visit would move the clock.
-      clocked.advanceDays(75);
-      for (let index = 0; index < 5; index += 1) {
-        expect(
-          (await clocked.app.inject({ method: "GET", url: `/report/${draftId}` })).statusCode
-        ).toBe(200);
-        expect(
-          (
-            await clocked.app.inject({
-              method: "POST",
-              url: `/report/${draftId}`,
-              headers: { "content-type": "application/x-www-form-urlencoded" },
-              payload: "reason=Still+here"
-            })
-          ).statusCode
-        ).toBe(200);
-      }
-
-      // Reporting a page is not reading it, so none of that bought the draft a
-      // single day: the original 90-day clock still runs out on time.
-      clocked.advanceDays(16);
-      expect((await clocked.app.inject({ method: "GET", url: `/d/${draftId}` })).statusCode).toBe(
-        404
-      );
-    } finally {
-      await clocked.close();
-    }
   });
 
   it("stops serving and stops updating a draft once its retention clock runs out", async () => {
@@ -2670,7 +2341,7 @@ describe("Patchy Cloud server", () => {
     const moderated = await createModerationApp("moderation-read");
 
     try {
-      const created = await createDraft(moderated.app, moderated.publisherToken, "Reported");
+      const created = await createDraft(moderated.app, moderated.publisherToken, "Flagged");
       expect(created.statusCode).toBe(201);
       const { draftId } = created.json() as { draftId: string };
 
@@ -2686,7 +2357,7 @@ describe("Patchy Cloud server", () => {
           id: draftId,
           principalId: moderated.principalId,
           createdByApiTokenId: moderated.publisherApiTokenId,
-          title: "Reported",
+          title: "Flagged",
           deletedAt: null,
           disabledAt: null
         }
@@ -2719,7 +2390,7 @@ describe("Patchy Cloud server", () => {
       expect(unknown.statusCode).toBe(404);
       expect(unknown.json()).toEqual({ ok: false, error: "Draft not found." });
 
-      // A draft the operator has already taken down still answers: a report
+      // A draft the operator has already taken down still answers: a complaint
       // arrives about pages that are off as often as pages that are on.
       const disabled = await moderated.app.inject({
         method: "POST",
@@ -2855,7 +2526,7 @@ describe("Patchy Cloud server", () => {
       expect(revocation.alreadyRevoked).toBe(false);
       expect(revocation.apiToken).toMatchObject({
         id: moderated.publisherApiTokenId,
-        name: "Reported publisher",
+        name: "Flagged publisher",
         principalId: moderated.principalId
       });
       expect(revocation.apiToken.revokedAt).toEqual(expect.any(String));
@@ -2942,7 +2613,7 @@ describe("Patchy Cloud server", () => {
         method: "POST",
         url: "/api/tokens",
         headers: { authorization: "Bearer dev-token" },
-        payload: { name: "Reported publisher", scopes: ["upload"] }
+        payload: { name: "Flagged publisher", scopes: ["upload"] }
       });
       const { token, apiToken } = minted.json() as {
         token: string;
@@ -2993,7 +2664,7 @@ describe("Patchy Cloud server", () => {
     }
   });
 
-  it("resolves a reader's report on a self-service page through to revocation", async () => {
+  it("resolves a takedown on a self-service page through to revocation", async () => {
     // The whole story on the posture the public instance actually runs: the
     // publisher asked the service for its own key, with no operator involved.
     const clocked = await createClockedApp("self-service-moderation", {
@@ -3009,33 +2680,24 @@ describe("Patchy Cloud server", () => {
       expect(minted.statusCode).toBe(201);
       const { token } = minted.json() as { token: string };
 
-      const reportedUpload = await createDraft(clocked.app, token, "Abusive page");
-      expect(reportedUpload.statusCode).toBe(201);
-      const { draftId } = reportedUpload.json() as { draftId: string };
+      const flaggedUpload = await createDraft(clocked.app, token, "Abusive page");
+      expect(flaggedUpload.statusCode).toBe(201);
+      const { draftId } = flaggedUpload.json() as { draftId: string };
       const sibling = await createDraft(clocked.app, token, "Second abusive page");
       const siblingDraftId = (sibling.json() as { draftId: string }).draftId;
 
-      // A reader flags it. The report is stored and acknowledged, and the page
-      // is still up: no volume of reports is a takedown.
-      const filed = await clocked.app.inject({
-        method: "POST",
-        url: `/report/${draftId}`,
-        headers: { "content-type": "application/x-www-form-urlencoded" },
-        payload: "reason=This+is+abuse"
-      });
-      expect(filed.statusCode).toBe(200);
       expect((await clocked.app.inject({ method: "GET", url: `/d/${draftId}` })).statusCode).toBe(
         200
       );
 
-      // Step 1 — the reported URL names the principal and the token to revoke.
+      // Step 1 — the flagged URL names the principal and the token to revoke.
       const read = await clocked.app.inject({
         method: "GET",
         url: `/api/drafts/${draftId}`,
         headers: { authorization: "Bearer dev-token" }
       });
       expect(read.statusCode).toBe(200);
-      const reported = (
+      const culprit = (
         read.json() as {
           draft: { principalId: string; createdByApiTokenId: string };
         }
@@ -3048,12 +2710,12 @@ describe("Patchy Cloud server", () => {
         url: "/api/me",
         headers: { authorization: "Bearer dev-token" }
       });
-      expect(reported.principalId).not.toBe((operator.json() as { accountId: string }).accountId);
+      expect(culprit.principalId).not.toBe((operator.json() as { accountId: string }).accountId);
 
       // Step 2 — and the sibling page comes with it.
       const listed = await clocked.app.inject({
         method: "GET",
-        url: `/api/principals/${reported.principalId}/drafts`,
+        url: `/api/principals/${culprit.principalId}/drafts`,
         headers: { authorization: "Bearer dev-token" }
       });
       expect(listed.statusCode).toBe(200);
@@ -3065,7 +2727,7 @@ describe("Patchy Cloud server", () => {
       // operator minted by hand.
       const revoked = await clocked.app.inject({
         method: "POST",
-        url: `/api/tokens/${reported.createdByApiTokenId}/revoke`,
+        url: `/api/tokens/${culprit.createdByApiTokenId}/revoke`,
         headers: { authorization: "Bearer dev-token" }
       });
       expect(revoked.statusCode).toBe(200);
@@ -3073,8 +2735,8 @@ describe("Patchy Cloud server", () => {
         ok: true,
         alreadyRevoked: false,
         apiToken: {
-          id: reported.createdByApiTokenId,
-          principalId: reported.principalId
+          id: culprit.createdByApiTokenId,
+          principalId: culprit.principalId
         }
       });
 
@@ -3105,21 +2767,13 @@ describe("Patchy Cloud server", () => {
     const clocked = await createClockedApp("moderation-after-sweep");
 
     try {
-      const created = await createDraft(clocked.app, "dev-token", "Reported then expired");
+      const created = await createDraft(clocked.app, "dev-token", "Flagged then expired");
       const { draftId } = created.json() as { draftId: string };
-
-      const filed = await clocked.app.inject({
-        method: "POST",
-        url: `/report/${draftId}`,
-        headers: { "content-type": "application/x-www-form-urlencoded" },
-        payload: "reason=Worth+a+look"
-      });
-      expect(filed.statusCode).toBe(200);
 
       clocked.advanceDays(91);
       expect(await clocked.app.sweepExpiredDrafts()).toMatchObject({ deleted: 1 });
 
-      // A report outlives the page it was about, so the operator can still
+      // A complaint outlives the page it was about, so the operator can still
       // arrive at a draft ID with nothing left behind it. The loop's first step
       // has nothing to name and says so — an ordinary 404, not a fall over.
       const read = await clocked.app.inject({
@@ -3841,7 +3495,7 @@ type ClockedAppOptions = {
 };
 
 type ModerationApp = ClockedApp & {
-  /** The publisher a report is about: plaintext token, its ID, its principal. */
+  /** The publisher a takedown is about: plaintext token, its ID, its principal. */
   publisherToken: string;
   publisherApiTokenId: string;
   principalId: string;
@@ -4022,7 +3676,7 @@ async function createModerationApp(label: string): Promise<ModerationApp> {
     method: "POST",
     url: "/api/tokens",
     headers: { authorization: "Bearer dev-token" },
-    payload: { name: "Reported publisher", scopes: ["upload"] }
+    payload: { name: "Flagged publisher", scopes: ["upload"] }
   });
   expect(minted.statusCode).toBe(201);
   const publisher = minted.json() as { token: string; apiToken: { id: string } };
@@ -4077,7 +3731,6 @@ function testConfig(): ServerConfig {
     selfServiceMintRateLimitPerMinute: 5,
     selfServiceMintsPerIpPerDay: 5,
     draftCreateRateLimitPerMinute: 10,
-    reportRateLimitPerMinute: 10,
     liveDraftsPerToken: 1_000,
     posthogApiKey: null,
     posthogHost: "https://us.i.posthog.com",

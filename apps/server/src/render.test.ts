@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
-import { escapeHtml, renderHome } from "./render.js";
+import type { DraftRecord, DraftVersionRecord } from "@patchy/db";
+import { escapeHtml, renderDraftWrapper, renderHome } from "./render.js";
 
 const configuredUrl = "https://self-host.example.test/base?tenant=O'Reilly&mode=review";
 const setupToken = "render-setup-sentinel";
@@ -55,6 +56,78 @@ describe("renderHome", () => {
       expect(observedCommands(result.stdout)).toEqual(expected);
     }
   );
+});
+
+describe("renderDraftWrapper", () => {
+  const draft: DraftRecord = {
+    id: "draft123456ab",
+    accountId: "acct_1",
+    title: "",
+    visibility: "public",
+    currentVersionId: "ver_1",
+    repoOrg: null,
+    repoName: null,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    expiresAt: "2026-04-01T00:00:00.000Z",
+    pinnedAt: null,
+    deletedAt: null,
+    disabledAt: null,
+    disabledReason: null
+  };
+  const version: DraftVersionRecord = {
+    id: "ver_1",
+    draftId: draft.id,
+    versionNumber: 2,
+    objectKey: "drafts/draft123456ab/2.html",
+    contentHash: "hash",
+    fileSize: 12,
+    createdByApiTokenId: "tok_1",
+    sourceIp: null,
+    userAgent: null,
+    cliVersion: null,
+    gitBranch: null,
+    gitCommitSha: null,
+    originalFilename: null,
+    createdAt: "2026-01-01T00:00:00.000Z"
+  };
+
+  it("is the sandboxed frame and nothing else", () => {
+    const html = renderDraftWrapper({
+      draft,
+      version,
+      html: '<p title="a&b">hi</p><script>alert(1)</script>'
+    });
+
+    // The document reaches the frame through the escaped attribute, never raw.
+    expect(html).toContain('sandbox=""');
+    expect(html).toContain('referrerpolicy="no-referrer"');
+    expect(html).toContain('srcdoc="&lt;p title=&quot;a&amp;b&quot;&gt;hi&lt;/p&gt;');
+    expect(html).not.toContain("<script>alert");
+
+    // No chrome around it: no footer, no link out, no form, no script of its own.
+    expect(html).not.toContain("<footer");
+    expect(html).not.toContain("<a ");
+    expect(html).not.toContain("<form");
+    expect(html).not.toContain("<script");
+
+    // An untitled draft still gets a title on the document and on the frame.
+    expect(html).toContain("<title>Patchy draft</title>");
+    expect(html).toContain('title="Patchy draft"');
+    expect(html).toContain(`<!-- draft:${draft.id} version:2 -->`);
+  });
+
+  it("escapes the draft title into both the document and the frame", () => {
+    const html = renderDraftWrapper({
+      draft: { ...draft, title: "<b>Q3</b> & beyond" },
+      version,
+      html: "<p>hi</p>"
+    });
+
+    expect(html).toContain("<title>&lt;b&gt;Q3&lt;/b&gt; &amp; beyond</title>");
+    expect(html).toContain('title="&lt;b&gt;Q3&lt;/b&gt; &amp; beyond"');
+    expect(html).not.toContain("<b>Q3</b>");
+  });
 });
 
 function extractQuickStart(html: string): string {

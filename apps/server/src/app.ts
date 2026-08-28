@@ -5,7 +5,6 @@ import type { ServerConfig } from "@patchy/config";
 import { isUploadTargetError } from "@patchy/db";
 import type {
   ApiTokenAuth,
-  DraftRecord,
   ModeratedDraftRecord,
   PatchyDb,
   RecordUploadInput,
@@ -29,19 +28,12 @@ import {
   type FixedWindowRateLimiter,
   type RateLimitDecision
 } from "./rate-limit.js";
-import {
-  renderDraftReportAcknowledgement,
-  renderDraftReportForm,
-  renderDraftWrapper,
-  renderHome,
-  renderNotFound
-} from "./render.js";
+import { renderDraftWrapper, renderHome, renderNotFound } from "./render.js";
 import {
   DRAFT_CONTENT_SECURITY_POLICY,
   DRAFT_ROBOTS_TAG,
   NO_REFERRER_POLICY,
   NO_STORE_CACHE_CONTROL,
-  REPORT_PAGE_CONTENT_SECURITY_POLICY,
   servedDraftCacheControl
 } from "./serving-headers.js";
 
@@ -108,19 +100,12 @@ type ApiRequestTargetPolicy =
     };
 
 /**
- * A report is one optional sentence, and the driver caps what it stores at 255
- * characters anyway. Refusing an oversized body outright keeps an
- * unauthenticated write from being a place to push bytes.
- */
-const REPORT_FORM_BODY_LIMIT_BYTES = 8 * 1024;
-
-/**
  * Self-service minting's route. Deliberately under `/api/tokens/` and just as
  * deliberately not `/api/tokens`: the admin token-creation endpoint keeps its
  * name, its body, and its admin-only posture, and this is a different operation
  * with a different audience — zero input, no credential, its own guardrails.
  *
- * It is the service's other unauthenticated write, alongside the report path.
+ * It is the service's only unauthenticated write.
  */
 const SELF_SERVICE_MINT_PATH = "/api/tokens/self-service";
 
@@ -298,7 +283,7 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
     }
   );
 
-  // The moderation loop's first step: a reported URL, answered with the
+  // The moderation loop's first step: a flagged URL, answered with the
   // principal behind it and the token to revoke. Admin-scoped, and deliberately
   // answering for drafts that are already disabled, deleted, or expired — the
   // operator is asked about pages that are off as often as pages that are on.
@@ -309,7 +294,7 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
     return { ok: true, draft: moderationDraftView(draft) };
   });
 
-  // The second step: everything else that principal is holding, so one report
+  // The second step: everything else that principal is holding, so one takedown
   // resolves the whole principal rather than the single page that was flagged.
   app.get(
     "/api/principals/:principalId/drafts",
@@ -525,75 +510,6 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
     return renderDraft(options, params.draftId, Number(params.versionNumber), reply);
   });
 
-  // The report path, in its own encapsulated scope so its form-body parser
-  // belongs to it alone: adding a urlencoded parser to the root instance would
-  // quietly change how every `/api` route answers a form-encoded body.
-  app.register(async (reportScope) => {
-    reportScope.addContentTypeParser(
-      "application/x-www-form-urlencoded",
-      { parseAs: "string", bodyLimit: REPORT_FORM_BODY_LIMIT_BYTES },
-      (_request, body, done) => {
-        done(null, Object.fromEntries(new URLSearchParams(body as string)));
-      }
-    );
-
-    reportScope.get("/report/:draftId", async (request, reply) => {
-      const draftId = (request.params as { draftId: string }).draftId;
-      const draft = await findReportableDraft(options, draftId);
-      if (!draft) return sendDraftNotFound(reply);
-
-      applyReportPageHeaders(reply);
-      return reply
-        .type("text/html")
-        .send(renderDraftReportForm({ draft, publicBaseUrl: options.config.publicBaseUrl }));
-    });
-
-    reportScope.post("/report/:draftId", async (request, reply) => {
-      // Before the draft lookup, not after: the limiter is here so a flood of
-      // reports costs the instance neither a read nor a row. It answers in the
-      // same rate-limited shape every other limiter here does — one contract
-      // for one rejection — and being limited says nothing about the page: a
-      // report has no automatic consequence at any volume.
-      const reportAttempt = rateLimiters.report.consume(request.ip || "");
-      if (!reportAttempt.allowed) {
-        sendRateLimited(reply, reportAttempt);
-        return reply;
-      }
-
-      const draftId = (request.params as { draftId: string }).draftId;
-      const draft = await findReportableDraft(options, draftId);
-      if (!draft) return sendDraftNotFound(reply);
-
-      // Storing the report is the entire effect. Nothing here disables the
-      // draft, shortens its clock, or touches its token: a page comes down
-      // only when an operator decides it should, so filing the same report a
-      // thousand times changes exactly as much as filing it once.
-      const reason = cleanText((request.body as { reason?: unknown } | null)?.reason);
-      await options.db.recordDraftReport({
-        draftId: draft.id,
-        sourceIp: request.ip || null,
-        reason
-      });
-
-      // The event belongs to the principal whose draft was flagged, never to
-      // the reader who flagged it: no address, and whether a reason was typed
-      // rather than what it said.
-      analytics.capture({
-        name: "draft.reported",
-        principalId: draft.accountId,
-        properties: { draftId: draft.id, reasonGiven: reason !== null }
-      });
-
-      applyReportPageHeaders(reply);
-      return reply.type("text/html").send(
-        renderDraftReportAcknowledgement({
-          draft,
-          publicBaseUrl: options.config.publicBaseUrl
-        })
-      );
-    });
-  });
-
   app.setNotFoundHandler((_request, reply) => {
     return reply.status(404).type("text/html").send(renderNotFound());
   });
@@ -732,51 +648,7 @@ async function renderDraft(
   }
   reply.header("Content-Security-Policy", DRAFT_CONTENT_SECURITY_POLICY);
   reply.header("Cache-Control", servedDraftCacheControl(versionNumber));
-  return reply.type("text/html").send(
-    renderDraftWrapper({
-      draft,
-      version,
-      html,
-      homeUrl: options.config.publicBaseUrl
-    })
-  );
-}
-
-/**
- * The draft a report is about, or nothing. You can only report a page you could
- * have read: the same lookup that serves a draft decides this, so a deleted,
- * disabled, or expired draft answers 404 here exactly as its URL does — and an
- * unknown ID is never a way to write a row.
- *
- * Deliberately not a visit: opening the report page is not a reading of the
- * draft, so it must not top the retention clock up.
- */
-async function findReportableDraft(
-  options: CreateAppOptions,
-  draftId: string
-): Promise<DraftRecord | null> {
-  if (!isDraftId(draftId)) return null;
-  const { draft } = await options.db.findDraftVersion(draftId);
-  return draft;
-}
-
-/**
- * Report pages are first-party pages on the serving host, and they keep the
- * serving guarantees: noindexed, never cached, no cookie, and no script source
- * in their policy. Only the form-action differs from a served draft's, and only
- * on this page — see `REPORT_PAGE_CONTENT_SECURITY_POLICY`.
- */
-function applyReportPageHeaders(reply: FastifyReply): void {
-  reply.header("X-Robots-Tag", DRAFT_ROBOTS_TAG);
-  reply.header("Referrer-Policy", NO_REFERRER_POLICY);
-  reply.header("Content-Security-Policy", REPORT_PAGE_CONTENT_SECURITY_POLICY);
-  // `Cache-Control` is left to the global hook, which makes it `no-store`.
-}
-
-function sendDraftNotFound(reply: FastifyReply): FastifyReply {
-  reply.header("X-Robots-Tag", DRAFT_ROBOTS_TAG);
-  reply.header("Referrer-Policy", NO_REFERRER_POLICY);
-  return reply.status(404).type("text/html").send(renderNotFound());
+  return reply.type("text/html").send(renderDraftWrapper({ draft, version, html }));
 }
 
 function protectedApiPrefixGuard(

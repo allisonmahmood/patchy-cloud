@@ -51,25 +51,6 @@ forward must give the app and its database the same clock function.** Passing on
 only to `createApp` moves the rate limiters and leaves retention on wall time,
 which looks like the clock working and proves nothing.
 
-## Reports
-
-`draft_reports` is where a reader's flag on a served draft lands, written by
-`recordDraftReport` and read by `listDraftReports`. Two properties are load-bearing
-and neither is an accident:
-
-- **Nothing acts on the table.** No trigger, no cascade, no sweep reads it. Filing a
-  report writes one row and touches nothing else — not the draft, not its retention
-  clock, not its token — so report-bombing a page cannot take it down. Disabling,
-  deleting, and revoking stay operator decisions.
-- **`draft_id` carries no foreign key.** A report has to outlive the draft it flags:
-  expiry hard-deletes drafts, and an operator reviewing a report after the fact still
-  needs to see that it was filed, against what, and from where. A reference would make
-  the expiry sweep's delete fail instead.
-
-Operator review at launch is a direct read of this table — deliberately with no
-endpoint in front of it. `listDraftReports` exists so the report path is observable
-through the port rather than by reading storage.
-
 ## Schema migrations
 
 One ordered list in `src/migrations.ts` — `SCHEMA_MIGRATIONS` — is the schema for
@@ -106,16 +87,14 @@ owner/audit actor used to be seeded here too; the trust-model cutover removed
 it, and no sentinel principal is seeded now.)
 
 Two objects are easy to confuse, so they are named here. **`0002_drafts_account_id_index`,
-`0003_drafts_expiry_columns`, `0004_drafts_pinned_at`,
-`0005_self_service_mint_records`, and `0006_draft_reports` are the shipped
-additive migrations** — each ships permanently and none supersedes another;
-`0002` exists because ownership lookups scan `drafts` by account, `0004` adds the
-pin plus the partial index the sweep scans, `0005` adds the `token_mints` table
-the per-address mint quota counts plus the provenance mark on `accounts`, and
-`0006` adds a whole table rather than a column (see "Reports" above). The list
-ran with `0005` absent for a while, because `0006` merged first and an ID is
-immutable once merged — a gap is legal, since apply order is ID order and the
-ledger records what actually ran. `0005` has since landed and filled it. The
+`0003_drafts_expiry_columns`, `0004_drafts_pinned_at`, and
+`0005_self_service_mint_records` are the shipped additive migrations** — each
+ships permanently and none supersedes another; `0002` exists because ownership
+lookups scan `drafts` by account, `0004` adds the pin plus the partial index the
+sweep scans, and `0005` adds the `token_mints` table the per-address mint quota
+counts plus the provenance mark on `accounts`. (`0006_draft_reports` shipped for a
+while and was removed with the report feature before any production database
+existed; a dev ledger that still lists it is ignored, and `reset` clears it.) The
 **probe migrations in
 `src/migration-fixtures.fixture.ts` are test-only** and never ship: they exercise
 a column-level additive step on both drivers without putting a placeholder column
