@@ -18,7 +18,6 @@ describe("getServerConfig", () => {
     expect(config.authenticatedUploadRateLimitPerMinute).toBe(20);
     expect(config.selfServiceMintRateLimitPerMinute).toBe(5);
     expect(config.draftCreateRateLimitPerMinute).toBe(10);
-    expect(config.reportRateLimitPerMinute).toBe(10);
   });
 
   it("defaults the live-draft quota to a thousand per token", () => {
@@ -73,15 +72,13 @@ describe("getServerConfig", () => {
       PATCHY_PROTECTED_API_RATE_LIMIT_PER_MINUTE: "120",
       PATCHY_AUTHENTICATED_UPLOAD_RATE_LIMIT_PER_MINUTE: "40",
       PATCHY_SELF_SERVICE_MINT_RATE_LIMIT_PER_MINUTE: "10",
-      PATCHY_DRAFT_CREATE_RATE_LIMIT_PER_MINUTE: "30",
-      PATCHY_REPORT_RATE_LIMIT_PER_MINUTE: "50"
+      PATCHY_DRAFT_CREATE_RATE_LIMIT_PER_MINUTE: "30"
     });
 
     expect(config.protectedApiRateLimitPerMinute).toBe(120);
     expect(config.authenticatedUploadRateLimitPerMinute).toBe(40);
     expect(config.selfServiceMintRateLimitPerMinute).toBe(10);
     expect(config.draftCreateRateLimitPerMinute).toBe(30);
-    expect(config.reportRateLimitPerMinute).toBe(50);
   });
 
   it("requires abuse-protection limits to be decimal integers from 1 through 10000", () => {
@@ -92,8 +89,7 @@ describe("getServerConfig", () => {
         "authenticatedUploadRateLimitPerMinute"
       ],
       ["PATCHY_SELF_SERVICE_MINT_RATE_LIMIT_PER_MINUTE", "selfServiceMintRateLimitPerMinute"],
-      ["PATCHY_DRAFT_CREATE_RATE_LIMIT_PER_MINUTE", "draftCreateRateLimitPerMinute"],
-      ["PATCHY_REPORT_RATE_LIMIT_PER_MINUTE", "reportRateLimitPerMinute"]
+      ["PATCHY_DRAFT_CREATE_RATE_LIMIT_PER_MINUTE", "draftCreateRateLimitPerMinute"]
     ] as const;
 
     for (const [envName, configName] of settings) {

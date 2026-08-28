@@ -102,18 +102,9 @@ describe("Patchy Cloud HTTP with Postgres", () => {
       expect(identity.statusCode).toBe(200);
       expect(identity.json()).toMatchObject({ scopes: ["upload"] });
 
-      const created = await upload(harness.app, "Reportable", {}, token);
+      const created = await upload(harness.app, "Moderated", {}, token);
       expect(created.statusCode).toBe(201);
       const draftId = stringField(created.json(), "draftId");
-
-      const reported = await harness.app.inject({
-        method: "POST",
-        url: `/report/${draftId}`,
-        remoteAddress: "203.0.113.9",
-        headers: { "content-type": "application/x-www-form-urlencoded" },
-        payload: "reason=Postgres+HTTP"
-      });
-      expect(reported.statusCode).toBe(200);
 
       const inspected = await harness.app.inject({
         method: "GET",

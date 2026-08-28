@@ -88,7 +88,6 @@ function testConfig(overrides: Partial<ServerConfig> = {}): ServerConfig {
     selfServiceMintRateLimitPerMinute: 5,
     selfServiceMintsPerIpPerDay: 5,
     draftCreateRateLimitPerMinute: 10,
-    reportRateLimitPerMinute: 10,
     liveDraftsPerToken: 1_000,
     posthogApiKey: null,
     posthogHost: "https://us.i.posthog.com",
@@ -272,48 +271,6 @@ describe("server-side analytics", () => {
     await watched.close();
   });
 
-  it("reports a report against the reported draft's principal, never the reader", async () => {
-    const watched = await createWatchedApp("report");
-    const draftId = await watched.createDraft("Reported");
-    watched.analytics.events.length = 0;
-
-    const report = await watched.app.inject({
-      method: "POST",
-      url: `/report/${draftId}`,
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      payload: "reason=this+page+is+a+phishing+lure",
-      remoteAddress: "198.51.100.7"
-    });
-    expect(report.statusCode).toBe(200);
-
-    const event = watched.analytics.only();
-    expect(event.name).toBe("draft.reported");
-    expect(event.properties).toEqual({ draftId, reasonGiven: true });
-    // The reader is nobody: no address anywhere, and the sentence they typed
-    // stays in the database rather than going out as a property.
-    expect(JSON.stringify(event)).not.toContain("198.51.100.7");
-    expect(JSON.stringify(event)).not.toContain("phishing");
-
-    await watched.close();
-  });
-
-  it("reports whether a report carried a reason without carrying the reason", async () => {
-    const watched = await createWatchedApp("report-bare");
-    const draftId = await watched.createDraft("Reported");
-    watched.analytics.events.length = 0;
-
-    const report = await watched.app.inject({
-      method: "POST",
-      url: `/report/${draftId}`,
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      payload: ""
-    });
-    expect(report.statusCode).toBe(200);
-    expect(watched.analytics.only().properties).toEqual({ draftId, reasonGiven: false });
-
-    await watched.close();
-  });
-
   it("reports a disabled draft and a deleted one, marking who acted", async () => {
     const watched = await createWatchedApp("moderation");
     const disabledId = await watched.createDraft("To disable");
@@ -446,13 +403,11 @@ describe("server-side analytics", () => {
     expect(latest.statusCode).toBe(200);
     const version = await watched.app.inject({ method: "GET", url: `/d/${draftId}/v/1` });
     expect(version.statusCode).toBe(200);
-    const reportForm = await watched.app.inject({ method: "GET", url: `/report/${draftId}` });
-    expect(reportForm.statusCode).toBe(200);
 
     // Readers are unwatched: a visit moves a retention clock and is reported
     // nowhere, and nothing analytics-shaped reaches the page either.
     expect(watched.analytics.events).toEqual([]);
-    for (const response of [latest, version, reportForm]) {
+    for (const response of [latest, version]) {
       expect(response.body).not.toContain("posthog");
       expect(response.body).not.toContain("<script");
       // No cookie, and a policy that admits no script source at all: scripts
@@ -523,14 +478,6 @@ describe("server-side analytics", () => {
       }
     });
     expect(update.statusCode).toBe(200);
-
-    const report = await watched.app.inject({
-      method: "POST",
-      url: `/report/${draftId}`,
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      payload: "reason=spam"
-    });
-    expect(report.statusCode).toBe(200);
 
     const disable = await watched.app.inject({
       method: "POST",

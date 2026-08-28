@@ -26,7 +26,6 @@ import type {
   DbDriverOptions,
   DraftRecord,
   DraftModerationOptions,
-  DraftReportRecord,
   DraftVersionLookup,
   DraftVersionRecord,
   MintSelfServiceTokenInput,
@@ -34,7 +33,6 @@ import type {
   ModeratedDraftRecord,
   PatchyDb,
   PrincipalDraftListing,
-  RecordDraftReportInput,
   RecordUploadInput,
   RecordUploadResult,
   UploadTargetInput
@@ -87,7 +85,6 @@ interface JsonDbState {
   drafts: DraftRecord[];
   draftVersions: DraftVersionRecord[];
   uploadEvents: UploadEventRow[];
-  draftReports: DraftReportRecord[];
   tokenMints: TokenMintRow[];
 }
 
@@ -547,33 +544,6 @@ export class JsonFilePatchyDb implements PatchyDb {
     });
   }
 
-  async recordDraftReport(input: RecordDraftReportInput): Promise<DraftReportRecord> {
-    return this.mutateState((state) => {
-      // Nothing else in this transform touches the draft. Filing a report is a
-      // write to one collection and nothing more — no disable, no clock change.
-      const report: DraftReportRecord = {
-        id: newInternalId("rpt"),
-        draftId: input.draftId,
-        sourceIp: input.sourceIp,
-        reason: cleanText(input.reason),
-        createdAt: this.nowIso()
-      };
-
-      state.draftReports.push(report);
-      return { value: { ...report }, changed: true };
-    });
-  }
-
-  async listDraftReports(draftId: string): Promise<DraftReportRecord[]> {
-    const state = await this.readState();
-    // Push order is chronological, so it is already the oldest-first order the
-    // port promises — no sort needed, and none that could disagree with a
-    // frozen clock's identical timestamps.
-    return state.draftReports
-      .filter((report) => report.draftId === draftId)
-      .map((report) => ({ ...report }));
-  }
-
   async close(): Promise<void> {
     return;
   }
@@ -1009,8 +979,6 @@ function isJsonDbState(value: unknown): value is JsonDbState {
     value.draftVersions.every(isDraftVersionRecord) &&
     Array.isArray(value.uploadEvents) &&
     value.uploadEvents.every(isUploadEventRow) &&
-    Array.isArray(value.draftReports) &&
-    value.draftReports.every(isDraftReportRecord) &&
     Array.isArray(value.tokenMints) &&
     value.tokenMints.every(isTokenMintRow)
   );
@@ -1111,17 +1079,6 @@ function isUploadEventRow(value: unknown): value is UploadEventRow {
   );
 }
 
-function isDraftReportRecord(value: unknown): value is DraftReportRecord {
-  return (
-    isRecord(value) &&
-    typeof value.id === "string" &&
-    typeof value.draftId === "string" &&
-    isNullableString(value.sourceIp) &&
-    isNullableString(value.reason) &&
-    typeof value.createdAt === "string"
-  );
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -1180,7 +1137,7 @@ function ensureBootstrapState(
   }
 }
 
-/** The token on a draft's first version: who to revoke when a report lands. */
+/** The token on a draft's first version: who to revoke on a takedown. */
 function creatingApiTokenId(state: JsonDbState, draftId: string): string | null {
   const firstVersion = state.draftVersions.find(
     (version) => version.draftId === draftId && version.versionNumber === FIRST_VERSION_NUMBER

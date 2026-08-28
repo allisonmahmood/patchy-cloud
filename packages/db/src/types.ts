@@ -59,32 +59,6 @@ export interface DraftVersionRecord {
   createdAt: string;
 }
 
-/**
- * A reader's flag on a served draft, filed without an account and stored for an
- * operator to read. Nothing in the system acts on one: disabling, deleting, and
- * revoking are all operator decisions, so no volume of these rows can take a
- * page down.
- *
- * A report outlives its draft on purpose — `draftId` is a plain string, not a
- * reference — because expiry hard-deletes drafts and the record of what was
- * reported has to survive that.
- */
-export interface DraftReportRecord {
-  id: string;
-  draftId: string;
-  /** The reporting reader's address, as the server resolved it. */
-  sourceIp: string | null;
-  /** The reader's optional short note. Absent when they filed without one. */
-  reason: string | null;
-  createdAt: string;
-}
-
-export interface RecordDraftReportInput {
-  draftId: string;
-  sourceIp: string | null;
-  reason: string | null;
-}
-
 export interface CreateApiTokenInput {
   accountId: string;
   name: string;
@@ -115,7 +89,7 @@ export interface MintSelfServiceTokenResult {
  * A draft as the moderation loop sees it: the ordinary record plus the token
  * that created it, which is the thing revocation acts on. The creating token is
  * fixed at the draft's first version, so a later update by another token never
- * changes who a report resolves to.
+ * changes who a takedown resolves to.
  *
  * `createdByApiTokenId` is nullable because a draft row can outlive knowledge of
  * its first version only in a corrupt store; the loop reports what it found
@@ -274,7 +248,7 @@ export interface PatchyDb {
   /** Expired drafts are absent here, exactly as deleted and disabled ones are. */
   findDraftVersion(draftId: string, versionNumber?: number): Promise<DraftVersionLookup>;
   /**
-   * A reported draft's owning principal and creating token — the first step of
+   * A draft's owning principal and creating token — the first step of
    * the moderation loop, the one that turns a URL into a culprit.
    *
    * Deliberately unlike `findDraftVersion`: a disabled, deleted, or expired
@@ -352,18 +326,6 @@ export interface PatchyDb {
     accountId: string,
     options?: DraftModerationOptions
   ): Promise<boolean>;
-  /**
-   * Files a reader's report against a draft. Storing one is the whole effect:
-   * this writes a row and changes nothing about the draft, its retention clock,
-   * or its owning token.
-   */
-  recordDraftReport(input: RecordDraftReportInput): Promise<DraftReportRecord>;
-  /**
-   * Every report filed against one draft, oldest first. This is the operator's
-   * review path at launch — a database read, deliberately with no endpoint in
-   * front of it — and the seam the report path is observable through.
-   */
-  listDraftReports(draftId: string): Promise<DraftReportRecord[]>;
   close(): Promise<void>;
 }
 

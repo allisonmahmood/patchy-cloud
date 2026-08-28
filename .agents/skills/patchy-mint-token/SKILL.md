@@ -180,7 +180,7 @@ land in `~/.patchy/credentials.json`; every save creates or repairs that file to
 owner-only permissions on Unix. Always pass `--api-url`: the CLI's built-in fallback is a
 server on this machine, never your instance.
 
-## Resolving a report: from a page to the token behind it
+## Resolving a complaint: from a page to the token behind it
 
 Four admin-scoped endpoints close the loop. Row surgery is no longer the procedure — do
 not hand-edit `revoked_at` or the JSON state file.
@@ -200,7 +200,7 @@ unset ADMIN_TOKEN
 Then walk the loop, substituting the IDs each step hands you:
 
 ```bash
-# 1. The reported URL's draft ID -> the principal and the token that created it.
+# 1. The flagged URL's draft ID -> the principal and the token that created it.
 curl --fail --silent --show-error --header "@$MODERATION_HEADER_FILE" \
   "$API/api/drafts/DRAFT_ID"
 
@@ -214,7 +214,7 @@ curl --fail --silent --show-error --header "@$MODERATION_HEADER_FILE" \
 # 3. Take individual pages down: disable hides one, delete removes it.
 curl --fail --silent --show-error --request POST \
   --header "@$MODERATION_HEADER_FILE" --header "content-type: application/json" \
-  --data '{"reason":"reported content"}' "$API/api/drafts/DRAFT_ID/disable"
+  --data '{"reason":"operator decision"}' "$API/api/drafts/DRAFT_ID/disable"
 curl --fail --silent --show-error --request DELETE \
   --header "@$MODERATION_HEADER_FILE" "$API/api/drafts/DRAFT_ID"
 
@@ -267,5 +267,5 @@ neither loses its mint record.
 - Tokens gate publishing, ownership, and updates. Draft view URLs stay public and unlisted
   regardless; a token does not make a draft private. An `upload` token disables or deletes
   only the drafts it owns; an `admin` scope moderates any principal's draft, which is how
-  the operator takes down a reported page.
+  the operator takes down a flagged page.
 - Do not hand the bootstrap token to CLI clients; mint per-client `upload` tokens instead.

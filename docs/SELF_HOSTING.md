@@ -49,7 +49,6 @@ PATCHY_PROTECTED_API_RATE_LIMIT_PER_MINUTE=60
 PATCHY_AUTHENTICATED_UPLOAD_RATE_LIMIT_PER_MINUTE=20
 PATCHY_SELF_SERVICE_MINT_RATE_LIMIT_PER_MINUTE=5
 PATCHY_DRAFT_CREATE_RATE_LIMIT_PER_MINUTE=10
-PATCHY_REPORT_RATE_LIMIT_PER_MINUTE=10
 
 # Per-token quotas
 PATCHY_LIVE_DRAFTS_PER_TOKEN=1000
@@ -90,7 +89,7 @@ Notes on values:
 - `PATCHY_PUBLIC_BASE_URL` is used to build the public draft URLs returned by uploads and rendered in the viewer. Set it to the externally reachable origin (scheme + host, no trailing slash). It defaults to `http://localhost:3000` for local development.
 - `PATCHY_TRUST_PROXY` controls whether Fastify derives `request.ip` from `X-Forwarded-For`. Leave it undefined unless every route to the server has a verified trust boundary. See [Client IP attribution behind proxies](#client-ip-attribution-behind-proxies).
 - `PATCHY_MAX_HTML_BYTES` caps the size of a single HTML document (default 524288 = 512 KiB).
-- `PATCHY_PROTECTED_API_RATE_LIMIT_PER_MINUTE`, `PATCHY_AUTHENTICATED_UPLOAD_RATE_LIMIT_PER_MINUTE`, `PATCHY_SELF_SERVICE_MINT_RATE_LIMIT_PER_MINUTE`, `PATCHY_DRAFT_CREATE_RATE_LIMIT_PER_MINUTE`, and `PATCHY_REPORT_RATE_LIMIT_PER_MINUTE` are decimal integers from `1` through `10000`. Defaults are `60`, `20`, `5`, `10`, and `10`.
+- `PATCHY_PROTECTED_API_RATE_LIMIT_PER_MINUTE`, `PATCHY_AUTHENTICATED_UPLOAD_RATE_LIMIT_PER_MINUTE`, `PATCHY_SELF_SERVICE_MINT_RATE_LIMIT_PER_MINUTE`, and `PATCHY_DRAFT_CREATE_RATE_LIMIT_PER_MINUTE` are decimal integers from `1` through `10000`. Defaults are `60`, `20`, `5`, and `10`.
 - `PATCHY_LIVE_DRAFTS_PER_TOKEN` is a decimal integer from `1` through `1000000` and defaults to `1000`. See [Per-token draft quotas](#per-token-draft-quotas).
 - `PATCHY_ALLOW_SELF_SERVICE_TOKENS` is a strict `true`/`false` value and defaults to `false`. It gates the self-service mint route (`POST /api/tokens/self-service`) and nothing else; while it is `false` that route refuses every caller and your instance keeps its admin-only token posture. It never admits an upload that carries no bearer token. See [Self-service minting](#self-service-minting).
 - `PATCHY_SELF_SERVICE_MINTS_PER_IP_PER_DAY` is a decimal integer from `1` through `1000000` and defaults to `5`. It applies only while self-service minting is on.
@@ -106,7 +105,6 @@ The server applies deterministic fixed-window in-memory limits inside each serve
 - Authenticated upload requests are limited to `PATCHY_AUTHENTICATED_UPLOAD_RATE_LIMIT_PER_MINUTE` attempts per minute per API token database identity. Rotating the raw bearer secret for the same token record does not create a fresh upload bucket.
 - `PATCHY_SELF_SERVICE_MINT_RATE_LIMIT_PER_MINUTE` limits self-service mints per minute per canonical Fastify `request.ip`, on instances where minting is enabled. It is keyed by address rather than by token because a caller asking for its first token has no token to key on.
 - Draft _creates_ are additionally limited to `PATCHY_DRAFT_CREATE_RATE_LIMIT_PER_MINUTE` per minute per creating token. An upload carrying a `draftId` is an update and never consumes this bucket. Because the request body decides create versus update, this bucket is consumed after body parsing, unlike the buckets above.
-- `PATCHY_REPORT_RATE_LIMIT_PER_MINUTE` limits filed reports (`POST /report/:draftId`) per minute per canonical Fastify `request.ip`. This is the service's other unauthenticated write, and like the mint route it is keyed by address because a reader flagging a page carries no credential. The bucket is consumed _before_ the draft is looked up, so a flood costs neither a metadata read nor a stored row. Reports the server cannot attribute to an address share one bucket rather than each escaping the count, as mints do. Opening the report form (`GET /report/:draftId`) consumes nothing. The limit bounds write volume and nothing else: a report has no automatic consequence at any volume, so hitting it never affects the reported page. See [Moderation](#moderation).
 
 When a bucket is exceeded, the server returns HTTP `429` with JSON `{ "ok": false, "code": "rate_limited", ... }` and an integer `Retry-After` header. Each limiter tracks up to `10000` live keys in memory. If all live key slots are occupied, an unseen key receives the same bounded `429` response until the earliest live bucket resets. Live buckets are never evicted to make room for an unseen key, because eviction would let an attacker bypass limits by cycling key values.
 
@@ -186,14 +184,13 @@ Setting a key turns on capture for seven business events, and only those seven:
 | `token.minted`   | A token is issued, self-service or by an operator | `apiTokenId`, `selfService`                           |
 | `draft.created`  | An upload creates a draft                         | `draftId`, `apiTokenId`, `versionNumber`, `htmlBytes` |
 | `draft.updated`  | An upload adds a version                          | `draftId`, `apiTokenId`, `versionNumber`, `htmlBytes` |
-| `draft.reported` | A reader files a report                           | `draftId`, `reasonGiven`                              |
 | `draft.disabled` | A draft is disabled                               | `draftId`, `admin`                                    |
 | `draft.deleted`  | A draft is deleted                                | `draftId`, `admin`                                    |
 | `draft.expired`  | The expiry sweep takes a draft                    | `draftId`, `versionsRemoved`                          |
 
 Two properties of this are load-bearing rather than incidental:
 
-- **Readers stay unwatched.** Serving a draft is deliberately not an event. No analytics JavaScript is ever added to a served page — the draft content security policy permits no script source of any kind — no cookie is set, and no event carries a source address, the sentence a reader typed into a report, page content, a filename, or a URL. Events are attributed to the principal that acted; the ones no principal performed are attributed to the instance.
+- **Readers stay unwatched.** Serving a draft is deliberately not an event. No analytics JavaScript is ever added to a served page — the draft content security policy permits no script source of any kind — no cookie is set, and no event carries a source address, page content, a filename, or a URL. Events are attributed to the principal that acted; the ones no principal performed are attributed to the instance.
 - **Capture never affects a response.** Events are handed off without being awaited, capture failures are swallowed and logged, and requests to the analytics backend time out in three seconds. An analytics outage is invisible to everyone publishing or reading.
 
 `PATCHY_POSTHOG_HOST` points capture somewhere other than the default `https://us.i.posthog.com` — PostHog's EU cloud, or a self-hosted PostHog. It must be an `http` or `https` URL; a malformed one fails startup rather than silently discarding every event.
@@ -715,9 +712,9 @@ No instance publishes without credentials: every upload requires a bearer token,
 
 ### Moderation
 
-Four admin-scoped endpoints resolve a report end to end, so no operator ever edits rows by hand:
+Complaints about a page reach the operator out of band — nothing on a served page files one. Four admin-scoped endpoints then resolve one end to end, so no operator ever edits rows by hand:
 
-- `GET /api/drafts/:draftId` — the draft's owning principal and the token that created it. It answers for a draft that is already disabled, deleted, or expired, because those are exactly the ones reports arrive about. Once the expiry sweep has hard-deleted the draft, the row is gone and this answers 404 — the report outlives the page it was about.
+- `GET /api/drafts/:draftId` — the draft's owning principal and the token that created it. It answers for a draft that is already disabled, deleted, or expired, because those are exactly the ones complaints arrive about. Once the expiry sweep has hard-deleted the draft, the row is gone and this answers 404 — a complaint can outlive the page it was about.
 - `GET /api/principals/:principalId/drafts` — that principal's other drafts, newest first. Deleted drafts are omitted; disabled ones are not. A `truncated` answer means the principal holds more than one page: **deleting** drafts is what reveals the rest, because deleting is what removes them from this list — disabling a draft leaves it on the page.
 - `POST /api/drafts/:draftId/disable` and `DELETE /api/drafts/:draftId` — per-draft takedown, as above.
 - `POST /api/tokens/:apiTokenId/revoke` — revoke the token.

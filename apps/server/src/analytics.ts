@@ -37,7 +37,6 @@ export type AnalyticsEventName =
   | "token.minted"
   | "draft.created"
   | "draft.updated"
-  | "draft.reported"
   | "draft.disabled"
   | "draft.deleted"
   | "draft.expired";

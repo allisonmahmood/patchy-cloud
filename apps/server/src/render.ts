@@ -1,5 +1,4 @@
 import type { DraftRecord, DraftVersionRecord } from "@patchy/db";
-import { getDraftPublicUrl, getDraftReportPath } from "./public-url.js";
 
 export function renderHome(options: { publicBaseUrl: string }): string {
   const publicBaseUrl = escapeHtml(options.publicBaseUrl);
@@ -70,17 +69,9 @@ export function renderHome(options: { publicBaseUrl: string }): string {
 }
 
 /**
- * The served-draft page: the uploaded document in a sandboxed frame, plus the
- * one strip of first-party chrome every served draft carries.
- *
- * The footer is the reader's only channel to the operator, so it has to work
- * under the draft's own locked CSP: no script anywhere, and `form-action 'none'`
- * ruling out a form here. It is one plain link — a navigation to a report page
- * that carries the form under its own headers. With JavaScript disabled this
- * footer is unchanged, because there is no JavaScript in it to disable.
- *
- * That one link, and no brand credit: this is someone else's published page, and
- * all the footer owes its reader is a way to reach the operator.
+ * The served-draft page: the uploaded document in a sandboxed frame, and
+ * nothing else. No chrome, no brand credit, no script — this is someone else's
+ * published page, and the wrapper's only job is to sandbox it.
  */
 export function renderDraftWrapper(options: {
   draft: DraftRecord;
@@ -89,7 +80,6 @@ export function renderDraftWrapper(options: {
   homeUrl: string;
 }): string {
   const title = escapeHtml(options.draft.title || "Patchy draft");
-  const reportPath = escapeHtml(getDraftReportPath(options.draft.id));
 
   return `<!doctype html>
 <html lang="en">
@@ -106,40 +96,15 @@ export function renderDraftWrapper(options: {
     }
 
     body {
-      display: flex;
-      flex-direction: column;
       overflow: hidden;
     }
 
     .draft-frame {
       display: block;
-      flex: 1 1 auto;
       width: 100%;
-      min-height: 0;
+      height: 100%;
       border: 0;
       background: #ffffff;
-    }
-
-    .draft-footer {
-      display: flex;
-      flex: none;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 6px 12px;
-      padding: 7px 14px;
-      border-top: 1px solid rgba(18, 17, 15, .14);
-      background: #fffdf4;
-      color: #69645a;
-      font-family: system-ui, -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-      font-size: 12px;
-      line-height: 1.5;
-    }
-
-    .draft-footer a {
-      color: #093b92;
-      font-weight: 650;
-      text-decoration: underline;
-      text-underline-offset: 2px;
     }
   </style>
 </head>
@@ -150,94 +115,9 @@ export function renderDraftWrapper(options: {
     sandbox=""
     referrerpolicy="no-referrer"
     srcdoc="${escapeAttribute(options.html)}"></iframe>
-  <footer class="draft-footer">
-    <a href="${reportPath}">Report this page</a>
-  </footer>
   <!-- draft:${escapeHtml(options.draft.id)} version:${Number(options.version.versionNumber)} -->
 </body>
 </html>`;
-}
-
-/**
- * The report page the footer link leads to. Its whole reason for existing is
- * that it is *not* the draft: it is served under its own CSP, so it may carry a
- * form, and the draft's policy stays exactly as locked as it was.
- *
- * No JavaScript, no cookie, no token — a form and a button.
- */
-export function renderDraftReportForm(options: {
-  draft: DraftRecord;
-  publicBaseUrl: string;
-}): string {
-  const title = escapeHtml(options.draft.title || "Patchy draft");
-  const reportPath = escapeHtml(getDraftReportPath(options.draft.id));
-  const draftUrl = escapeHtml(
-    getDraftPublicUrl({ draftId: options.draft.id, publicBaseUrl: options.publicBaseUrl })
-  );
-
-  return htmlPage({
-    title: "Report this page",
-    body: `
-      <main class="wrap compact">
-        <header class="doc-head">
-          <div class="head-line">
-            <span class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</span>
-            <span class="kicker">Report</span>
-          </div>
-          <h1>Report this page.</h1>
-          <p class="lede">You are reporting <strong>${title}</strong> for an operator to review. No account, and nothing to sign in to.</p>
-        </header>
-
-        <form class="panel panel-form" method="post" action="${reportPath}">
-          <div>
-            <h2>What's wrong with it?</h2>
-            <p>Optional, and short is fine — a sentence is more useful than nothing.</p>
-          </div>
-          <div>
-            <label class="field-label" for="reason">Reason</label>
-            <textarea id="reason" name="reason" rows="4" maxlength="255"
-              placeholder="What should the operator look at?"></textarea>
-            <button type="submit">Send report</button>
-          </div>
-        </form>
-
-        <div class="note note-warn">
-          <span class="note-title">What filing this does</span>
-          <p>It stores your report — the page, the time, the address this request came from, and anything you wrote — for a person to read. It does nothing to the page on its own: taking a page down is always an operator's decision, so no number of reports can remove one.</p>
-        </div>
-
-        <p class="foot">Back to <a href="${draftUrl}">the page</a>.</p>
-      </main>
-    `
-  });
-}
-
-/** The acknowledgement a reader gets the moment their report is stored. */
-export function renderDraftReportAcknowledgement(options: {
-  draft: DraftRecord;
-  publicBaseUrl: string;
-}): string {
-  const draftUrl = escapeHtml(
-    getDraftPublicUrl({ draftId: options.draft.id, publicBaseUrl: options.publicBaseUrl })
-  );
-
-  return htmlPage({
-    title: "Report received",
-    body: `
-      <main class="wrap compact">
-        <header class="doc-head">
-          <div class="head-line">
-            <span class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</span>
-            <span class="kicker">Report received</span>
-          </div>
-          <h1>Report received.</h1>
-          <p class="lede">Thank you. Your report is stored and an operator will read it. Nothing about the page changes automatically, and there is nothing further for you to do.</p>
-        </header>
-
-        <p class="foot">Back to <a href="${draftUrl}">the page</a>.</p>
-      </main>
-    `
-  });
 }
 
 export function renderNotFound(): string {
@@ -540,47 +420,6 @@ function htmlPage(options: { title: string; body: string }): string {
       border-radius: var(--radius);
       background: var(--white);
       box-shadow: var(--shadow-hard);
-    }
-
-    .panel-form {
-      margin-bottom: 24px;
-    }
-
-    .field-label {
-      display: block;
-      margin-bottom: .35rem;
-      color: var(--ink);
-      font-size: .82rem;
-      font-weight: 850;
-      text-transform: uppercase;
-    }
-
-    textarea {
-      display: block;
-      width: 100%;
-      padding: 10px 12px;
-      border: 2px solid var(--ink);
-      border-radius: var(--radius);
-      background: #fffdf7;
-      color: var(--ink);
-      font-family: inherit;
-      font-size: 1rem;
-      line-height: 1.5;
-      resize: vertical;
-    }
-
-    button[type="submit"] {
-      margin-top: 14px;
-      padding: 10px 22px;
-      border: 2px solid var(--ink);
-      border-radius: var(--radius);
-      background: var(--yellow);
-      box-shadow: var(--shadow-hard);
-      color: var(--ink);
-      font-family: inherit;
-      font-size: .95rem;
-      font-weight: 900;
-      cursor: pointer;
     }
 
     .grid {
