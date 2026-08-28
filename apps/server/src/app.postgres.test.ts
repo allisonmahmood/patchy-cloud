@@ -84,7 +84,7 @@ describe("Patchy Cloud HTTP with Postgres", () => {
     }
   });
 
-  it("mints self-service tokens and records reports and disables", async () => {
+  it("mints self-service tokens and moderates their drafts", async () => {
     const harness = await createPostgresHttpHarness("self-service", {
       allowSelfServiceTokens: true
     });

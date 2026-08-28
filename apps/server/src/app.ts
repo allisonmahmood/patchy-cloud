@@ -648,14 +648,7 @@ async function renderDraft(
   }
   reply.header("Content-Security-Policy", DRAFT_CONTENT_SECURITY_POLICY);
   reply.header("Cache-Control", servedDraftCacheControl(versionNumber));
-  return reply.type("text/html").send(
-    renderDraftWrapper({
-      draft,
-      version,
-      html,
-      homeUrl: options.config.publicBaseUrl
-    })
-  );
+  return reply.type("text/html").send(renderDraftWrapper({ draft, version, html }));
 }
 
 function protectedApiPrefixGuard(

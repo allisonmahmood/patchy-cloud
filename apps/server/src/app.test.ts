@@ -2009,7 +2009,6 @@ describe("Patchy Cloud server", () => {
       // The wrapper is the sandboxed frame alone: no footer, no first-party
       // link out of the page, and nothing a reader could submit or run.
       expect(response.body).not.toContain("<footer");
-      expect(response.body).not.toContain("/report/");
       expect(response.body).not.toContain("<script");
       expect(response.body).not.toContain("<form");
       expect(response.body).not.toContain("onclick");

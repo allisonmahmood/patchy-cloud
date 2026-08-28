@@ -77,7 +77,6 @@ export function renderDraftWrapper(options: {
   draft: DraftRecord;
   version: DraftVersionRecord;
   html: string;
-  homeUrl: string;
 }): string {
   const title = escapeHtml(options.draft.title || "Patchy draft");
 
