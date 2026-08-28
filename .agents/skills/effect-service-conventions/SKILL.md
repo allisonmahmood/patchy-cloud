@@ -1,6 +1,6 @@
 ---
 name: effect-service-conventions
-description: Review spec for Effect services. Read by /code-review's Standards axis for diffs that create, move, refactor, or consume an Effect service.
+description: Review spec for Effect services in this repo's Effect v4 port.
 disable-model-invocation: true
 metadata:
   internal: "true"
@@ -18,7 +18,7 @@ Effect is not yet imported in source: the Effect v4 port lands package by packag
 - At a service boundary, import the local service module as a namespace and use its public module shape: `PatchStore.PatchStore`, `PatchStore.make`, and `PatchStore.layer`. Flag aliases such as `import { layer as patchStoreLayer }` that erase the module namespace.
 - Namespace imports are not a blanket rule. Keep named imports for whole packages such as `@patchy/api` (wire schemas, the `HttpApi`, the client), and for modules used only for a pure helper, error, schema, config value, or standalone type. Do not request `import type * as Api`.
 - A package subpath that is itself a service module may use a namespace import when callers access its service/tag, `make`, or `layer` members.
-- When a barrel exposes an entire service module, prefer `export * as TokenStore from "./tokenStore.ts"` so consumers can use `TokenStore.TokenStore` and `TokenStore.layer`. Do not individually rename `make` and `layer` exports to simulate a namespace.
+- When a barrel exposes an entire service module, prefer `export * as PatchStore from "./patchStore.ts"` so consumers can use `PatchStore.PatchStore` and `PatchStore.layer`. Do not individually rename `make` and `layer` exports to simulate a namespace.
 
 ## Service definition
 
@@ -28,8 +28,8 @@ Effect is not yet imported in source: the Effect v4 port lands package by packag
 - Refer to the inferred service interface as `Foo["Service"]`, including in mechanically updated routes, CLI commands, tests, and integration harnesses.
 - Export a real `make` when the module owns construction. Do not create `make = Effect.succeed(...)` solely to force `Layer.effect`.
 - Export the canonical layer as `export const layer = Layer...`. `Layer.effect` is not required: use `Layer.succeed`, `Layer.scoped`, or another appropriate constructor when that matches the implementation.
-- In a concrete implementation module already named for the implementation, use plain `make` and `layer` (for example `PgPatchStore.ts` and `MemoryPatchStore.ts`).
-- Keep implementation-specific names when an abstract port module contains one of several possible implementations, for example `makeS3BlobStore` and `layerS3` in `BlobStore.ts`.
+- In a concrete implementation module already named for the implementation, use plain `make` and `layer` (for example `FilesystemBlobStore.ts` and `AzureBlobStore.ts`).
+- Keep implementation-specific names when an abstract port module contains one of several possible implementations, for example `makeAzureBlobStore` and `layerAzure` in `BlobStore.ts`.
 
 ## Dependency acquisition and runtime boundaries
 
@@ -56,7 +56,6 @@ Effect is not yet imported in source: the Effect v4 port lands package by packag
 - Export direct schema predicates such as `export const isFoo = Schema.is(Foo)`. Flag a private `Schema.is` constant wrapped by a redundant function with the same signature.
 - Do not introduce a large `switch` or lookup table in an error's `message` getter to model failures that deserve separate error classes.
 - Catch statically known tagged failures with `Effect.catchTags({ ... })`, including when handling only one tag. Do not use `catchIf` with a schema predicate merely to recover one or more known `_tag` variants, and do not use `catchTag`. `Effect.catch` is appropriate when the entire error channel is intentionally handled; `catchIf` remains appropriate for genuinely structural predicates such as inspecting an underlying platform error code.
-- For startup reconciliation that repairs multiple independent entities, preserve interruption rather than reducing it to a warning. Retry a transient per-entity repair before readiness, then isolate a persistent failure so one bad entity cannot abort global startup or prevent later entities from being repaired. Require tests for both the retry-success path and persistent-failure continuation.
 - Do not add a helper whose only behavior is `(...args) => new SomeError({ ...args })`, including curried aliases used once with `mapError`. Construct the error at the failure boundary so its attributes and cause remain visible. Keep a mapper only when it performs real normalization, passes through existing domain errors, or adds reusable context/control flow.
 - When a reusable error-to-error translation clearly belongs to the target error type, prefer a descriptive static factory on that error class over a detached production-side switch. Do not force a static method for one-off inline mappings.
 
@@ -67,6 +66,16 @@ Effect is not yet imported in source: the Effect v4 port lands package by packag
 - Do not flag genuinely separate implementation/adapter modules merely because they remain in an implementation-oriented directory.
 - Avoid substantive route or CLI redesign in service-cleanup PRs. Mechanical import, layer, and `Service["Service"]` updates are expected when required to remove obsolete paths or shapes.
 
+## Port shapes settled by #54
+
+These are decided; a diff that improvises a different shape is a finding.
+
+- `/api/*` is one `HttpApi` defined in `packages/api` (wire schemas, the API, the derived client) and consumed by the CLI. Pages (`/`, `/d/*`, `/report/*`, `/healthz`) are plain `HttpRouter` routes owned by `serving`. Map domain errors onto declared `HttpApiError` responses at the handler; do not let an untyped failure decide a status code.
+- Persistence is `@effect/sql-pg` with `SqlSchema` and `sql.withTransaction`, Postgres only, row decoding through Schema in one module. Schema changes go through Effect's `Migrator`.
+- Tests use `@effect/vitest` (`it.effect`, `it.layer`), `HttpApiTest` for API routes, `NodeHttpServer.layerTest` for raw-socket cases, `TestClock` for the clock, and `Scope` for manual close pairs. Inject faults with an alternate layer.
+- Read configuration through Effect `Config` per capability, with `Redacted` for secrets.
+- A capability with one consumer stays a module. Flag a new package, service, or layer introduced before a second consumer exists.
+
 ## Change discipline
 
 - Preserve useful comments, invariants, and specification documentation while moving code.
@@ -76,4 +85,4 @@ Effect is not yet imported in source: the Effect v4 port lands package by packag
 
 ## Reporting
 
-Report only concrete violations introduced or retained in the change's scope. Anchor each finding to the smallest relevant line range, cite the rule above, and state the expected fix. Optional style preferences and unrelated legacy code are not findings. With no findings, report "No Effect service findings" on one line.
+Report only concrete violations introduced or retained in the change's scope. Anchor each finding to the smallest line range, cite the rule above, and state the expected fix. With no findings, report "No Effect service findings" on one line.

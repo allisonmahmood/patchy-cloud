@@ -44,7 +44,7 @@ Multi-context — a root `CONTEXT-MAP.md` pointing at one `CONTEXT.md` per conte
 
 ### Review specs
 
-Standards sources for `/code-review`'s Standards axis, one `SKILL.md` each under `.agents/skills/`: `effect-service-conventions` when the diff creates, moves, refactors, or consumes an Effect service; `ui-consistency` when it touches rendered HTML, CSS, or page controls. Pass the matching file(s) to the Standards sub-agent alongside the smell baseline.
+Standards sources for `/code-review`'s Standards axis, one `SKILL.md` each under `.agents/skills/`: `effect-service-conventions` when the diff creates, moves, refactors, or consumes an Effect service; `ui-consistency` when it touches rendered HTML or CSS. Pass the matching file(s) to the Standards sub-agent.
 
 ## Pull requests
 
