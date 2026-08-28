@@ -35,7 +35,11 @@ const failure = <Fields extends Schema.Struct.Fields>(status: number, fields: Fi
   );
 
 export const BadRequest = failure(400, {});
-export const Unauthorized = failure(401, {});
+/** A missing credential and a bad one answer the same sentence, so the wire never says which. */
+export const Unauthorized = Schema.Struct({
+  ok: Schema.Literal(false),
+  error: Schema.Literal("Missing or invalid API token.")
+}).pipe(HttpApiSchema.status(401));
 export const Forbidden = failure(403, {});
 export const NotFound = failure(404, {});
 export const Conflict = failure(409, {});

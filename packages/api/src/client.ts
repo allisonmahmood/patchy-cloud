@@ -9,11 +9,11 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
 import * as HttpApiMiddleware from "effect/unstable/httpapi/HttpApiMiddleware";
-import { Authorization, PatchyApi } from "./api.js";
+import * as Api from "./api.js";
 
 /** Puts the bearer token on every request that `Authorization` protects. */
 export const authorizationClient = (token: Redacted.Redacted) =>
-  HttpApiMiddleware.layerClient(Authorization, ({ next, request }) =>
+  HttpApiMiddleware.layerClient(Api.Authorization, ({ next, request }) =>
     next(HttpClientRequest.bearerToken(request, token))
   );
 
@@ -22,7 +22,7 @@ export const authorizationClient = (token: Redacted.Redacted) =>
  * for the protected routes, the layer from `authorizationClient`.
  */
 export const makeClient = (apiUrl: string) =>
-  HttpApiClient.make(PatchyApi, {
+  HttpApiClient.make(Api.PatchyApi, {
     transformClient: HttpClient.mapRequest(HttpClientRequest.prependUrl(apiUrl))
   });
 

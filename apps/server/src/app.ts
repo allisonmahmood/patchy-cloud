@@ -333,6 +333,15 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
     async (request, reply) => {
       const auth = authenticatedRequest(request);
 
+      // The wire renamed this field. A client still sending the old name is
+      // told so, rather than being answered with a fresh patch it did not ask for.
+      if (typeof request.body === "object" && request.body !== null && "draftId" in request.body) {
+        return sendWire(reply, BadRequest, {
+          ok: false,
+          error:
+            "Unknown field draftId: the wire renamed it to patchId. Send patchId to update that patch."
+        });
+      }
       const decoded = decodeBody(UploadRequest, request.body);
       if (!decoded.ok) {
         // Which field failed decides the answer, as it always has: no usable

@@ -19,7 +19,7 @@ import { createInterface } from "node:readline/promises";
 import { Writable } from "node:stream";
 import { Command } from "commander";
 import * as Schema from "effect/Schema";
-import { Identity, UploadCreated, UploadUpdated } from "@patchy/api";
+import { Identity, MintedToken, UploadCreated, UploadUpdated } from "@patchy/api";
 import { sha256, validateHtml } from "@patchy/core";
 
 const VERSION = typeof __PATCHY_VERSION__ === "string" ? __PATCHY_VERSION__ : "0.0.0-dev";
@@ -108,7 +108,7 @@ type ApiResponseBody = Record<string, unknown>;
  * on stdout; failure is `{ ok: false, error }` on stderr (see the catch at
  * the bottom). Text mode keeps the lines agents already read.
  */
-let jsonOutput = false;
+let jsonOutput = process.argv.includes("--json");
 
 function report(document: unknown, text: () => void): void {
   if (jsonOutput) {
@@ -127,12 +127,13 @@ const program = new Command();
 // shape so a mistaken secret passed as a positional is never echoed on stderr.
 program.configureOutput({
   outputError: (str, write) => {
-    write(
-      str.replace(
-        /(error: too many arguments(?: for '[^']+')?\. Expected \d+ arguments? but got \d+): .+\.(\n?)$/,
-        "$1.$2"
-      )
+    const message = str.replace(
+      /(error: too many arguments(?: for '[^']+')?\. Expected \d+ arguments? but got \d+): .+\.(\n?)$/,
+      "$1.$2"
     );
+    // Commander fails before any action runs, so `--json` is read from argv
+    // here: a parse error is one document on stderr like every other failure.
+    write(jsonOutput ? `${JSON.stringify({ ok: false, error: message.trim() })}\n` : message);
   }
 });
 
@@ -546,14 +547,15 @@ async function mintPublishingToken(apiUrl: string): Promise<string> {
   const body = await readResponseJson(response);
   if (!response.ok) throw new CliError(mintFailureMessage(apiUrl, response, body));
 
-  const token = typeof body.token === "string" ? body.token : "";
-  if (token.length === 0) {
+  const minted = decodeWire(MintedToken, body);
+  if (!minted) {
     throw new CliError(
       `Could not get a publishing token: ${apiUrl} answered without one.\n` +
         `Ask that instance's operator for a token and save it with: patchy auth set --api-url ${apiUrl}`
     );
   }
 
+  const token = minted.token;
   saveHostCredential(readCredentialFileForWrite(), apiUrl, token, "mint");
 
   // Saved before it is announced: a token that reached the instance but not
@@ -721,10 +723,14 @@ function readCachedDrafts(
   const parsed: Record<string, CachedDraft> = {};
   for (const [file, cached] of Object.entries(files)) {
     const draft = asRecord(cached);
+    // An entry written before the wire renamed `draftId` to `patchId` is still
+    // the same page; it is read as-is and rewritten under the new key on the
+    // next upload, so nothing already published stops updating.
+    const patchId = draft?.patchId ?? draft?.draftId;
     if (
       !draft ||
-      typeof draft.patchId !== "string" ||
-      draft.patchId.length === 0 ||
+      typeof patchId !== "string" ||
+      patchId.length === 0 ||
       typeof draft.publicUrl !== "string" ||
       typeof draft.latestVersionNumber !== "number" ||
       typeof draft.updatedAt !== "string"
@@ -732,7 +738,7 @@ function readCachedDrafts(
       throw new CliError(DRAFT_CACHE_ERRORS.invalid);
     }
     parsed[file] = {
-      patchId: draft.patchId,
+      patchId,
       publicUrl: draft.publicUrl,
       latestVersionNumber: draft.latestVersionNumber,
       updatedAt: draft.updatedAt

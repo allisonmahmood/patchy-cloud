@@ -1876,6 +1876,36 @@ describe("Patchy Cloud server", () => {
     await db.close();
   });
 
+  it("names the rename to a client still sending draftId, instead of creating", async () => {
+    const config = testConfig();
+    const db = new JsonFilePatchyDb(path.join(tempDir, "legacy-key-db.json"));
+    await db.initialize("dev-token");
+    const auth = await db.findApiTokenByToken("dev-token");
+    if (!auth) throw new Error("Expected bootstrap authentication.");
+    const storage = new FileSystemHtmlStorage(path.join(tempDir, "legacy-key-drafts"));
+    const app = createApp({ config, db, storage });
+
+    const upload = await app.inject({
+      method: "POST",
+      url: "/api/uploads",
+      headers: { authorization: "Bearer dev-token" },
+      payload: {
+        draftId: "abcdefghijkl",
+        html: "<!doctype html><html><head><title>Old client</title></head><body></body></html>"
+      }
+    });
+
+    expect(upload.statusCode).toBe(400);
+    expect(upload.json()).toEqual({
+      ok: false,
+      error:
+        "Unknown field draftId: the wire renamed it to patchId. Send patchId to update that patch."
+    });
+    expect(await db.countLiveDraftsByCreatorApiToken(auth.id)).toBe(0);
+    await app.close();
+    await db.close();
+  });
+
   it("rejects invalid non-null draft IDs instead of treating them as creates", async () => {
     const config = testConfig();
     const db = new JsonFilePatchyDb(path.join(tempDir, "explicit-intent-db.json"));

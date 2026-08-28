@@ -2207,6 +2207,57 @@ describe("--json", () => {
     }
   });
 
+  it("reports a Commander parse error as one document too", () => {
+    const result = runCli(["upload", "--json"]);
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(JSON.parse(result.stderr)).toEqual({
+      ok: false,
+      error: "error: missing required argument 'file'"
+    });
+  });
+
+  it("still updates a page cached under the pre-rename draftId key", async () => {
+    const stateDir = makeStateDir();
+    const htmlPath = path.join(stateDir, "legacy-cache.html");
+    writeFileSync(htmlPath, "<!doctype html><title>Legacy cache</title>");
+    const server = await startUploadServer(createOrUpdate("mnopqrstuvwx"));
+    writeFileSync(
+      path.join(stateDir, "drafts.json"),
+      `${JSON.stringify({
+        hosts: {
+          [server.apiUrl]: {
+            files: {
+              [htmlPath]: {
+                draftId: "abcdefghijkl",
+                publicUrl: `${server.apiUrl}/d/abcdefghijkl`,
+                latestVersionNumber: 1,
+                updatedAt: "2026-08-14T00:00:00.000Z"
+              }
+            }
+          }
+        }
+      })}\n`
+    );
+
+    try {
+      const result = await runCliAsync(
+        ["upload", htmlPath, "--json", "--api-url", server.apiUrl],
+        { PATCHY_API_TOKEN: "pp_env" },
+        stateDir
+      );
+
+      expect(result.status).toBe(0);
+      expect(server.requests[0]?.body).toHaveProperty("patchId", "abcdefghijkl");
+      const entry = readDraftCache(stateDir).hosts[server.apiUrl]?.files[htmlPath];
+      expect(entry).toMatchObject({ patchId: "abcdefghijkl", latestVersionNumber: 2 });
+      expect(entry).not.toHaveProperty("draftId");
+    } finally {
+      await server.close();
+    }
+  });
+
   it("prints whoami, validate and auth set as one document each", async () => {
     const stateDir = makeStateDir();
     const identity = {

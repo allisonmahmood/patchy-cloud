@@ -26,7 +26,6 @@ import {
   MintQuotaExceeded,
   NotFound,
   Ok,
-  PatchId,
   PatchQuotaExceeded,
   PatchView,
   PayloadTooLarge,
@@ -62,18 +61,18 @@ export class Authorization extends HttpApiMiddleware.Service<
 
 /**
  * What any protected route can answer before its handler runs: the request
- * target was malformed or too long, a per-minute bucket ran dry, the token
- * lacks the scope, or the route is not there.
+ * target was malformed, a per-minute bucket ran dry, the token lacks the
+ * scope, or the route is not there.
  */
-const protectedErrors = [
-  BadRequest,
-  Forbidden,
-  NotFound,
-  RateLimited,
-  RequestTargetTooLong
-] as const;
+const protectedErrors = [BadRequest, Forbidden, NotFound, RateLimited] as const;
 
-const patchParams = { patchId: PatchId };
+/**
+ * The routes that take a patch id in the path also answer 414 to an overlong
+ * one. The id is a plain string here on purpose: an unknown or malformed id
+ * is a 404 from the handler, not a 400 from the path.
+ */
+const patchRouteErrors = [...protectedErrors, RequestTargetTooLong] as const;
+const patchParams = { patchId: Schema.String };
 
 /** The route's paragraph in `docs/API.md`. */
 const describe = (description: string) => OpenApi.annotations({ description });
@@ -147,7 +146,7 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
     HttpApiEndpoint.get("read", "/patches/:patchId", {
       params: patchParams,
       success: PatchView,
-      error: protectedErrors
+      error: patchRouteErrors
     }).annotateMerge(
       describe(
         "A patch as the moderation surface sees it: the principal behind it and the token that " +
@@ -168,7 +167,7 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
       params: patchParams,
       payload: DisableRequest,
       success: Ok,
-      error: protectedErrors
+      error: patchRouteErrors
     }).annotateMerge(
       describe(
         "Take a patch out of service. Its creator may disable it; admin scope reaches any " +
@@ -179,7 +178,7 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
     HttpApiEndpoint.post("pin", "/patches/:patchId/pin", {
       params: patchParams,
       success: Pinned,
-      error: protectedErrors
+      error: patchRouteErrors
     }).annotateMerge(
       describe(
         "Exempt a patch from expiry. Admin scope, any principal's patch. Only a patch in " +
@@ -189,7 +188,7 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
     HttpApiEndpoint.post("unpin", "/patches/:patchId/unpin", {
       params: patchParams,
       success: Pinned,
-      error: protectedErrors
+      error: patchRouteErrors
     }).annotateMerge(
       describe(
         "Hand a pinned patch back to its retention clock, at whatever time it has left. Admin " +
@@ -199,7 +198,7 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
     HttpApiEndpoint.delete("delete", "/patches/:patchId", {
       params: patchParams,
       success: Ok,
-      error: protectedErrors
+      error: patchRouteErrors
     }).annotateMerge(
       describe(
         "Delete a patch. Its creator may delete it; admin scope reaches any principal's. The " +

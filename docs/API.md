@@ -26,10 +26,9 @@ Responses:
 
 - `200` [Identity](#identity)
 - `400` { ok: false, error: string }
-- `401` { ok: false, error: string }
+- `401` { ok: false, error: "Missing or invalid API token." }
 - `403` { ok: false, error: string }
 - `404` { ok: false, error: string }
-- `414` { ok: false, error: string }
 - `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
 
 ### `POST /api/tokens`
@@ -42,10 +41,9 @@ Responses:
 
 - `201` [CreatedToken](#createdtoken)
 - `400` { ok: false, error: string }
-- `401` { ok: false, error: string }
+- `401` { ok: false, error: "Missing or invalid API token." }
 - `403` { ok: false, error: string }
 - `404` { ok: false, error: string }
-- `414` { ok: false, error: string }
 - `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
 
 ### `POST /api/tokens/:apiTokenId/revoke`
@@ -56,10 +54,9 @@ Responses:
 
 - `200` [RevokedToken](#revokedtoken)
 - `400` { ok: false, error: string }
-- `401` { ok: false, error: string }
+- `401` { ok: false, error: "Missing or invalid API token." }
 - `403` { ok: false, error: string }
 - `404` { ok: false, error: string }
-- `414` { ok: false, error: string }
 - `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
 
 ## patches
@@ -75,12 +72,11 @@ Responses:
 - `200` [UploadUpdated](#uploadupdated)
 - `201` [UploadCreated](#uploadcreated)
 - `400` { ok: false, error: string }
-- `401` { ok: false, error: string }
+- `401` { ok: false, error: "Missing or invalid API token." }
 - `403` { ok: false, error: string } | { ok: false, error: string, code: "live_patch_quota_exceeded", quota: integer }
 - `404` { ok: false, error: string }
 - `409` { ok: false, error: string }
 - `413` { ok: false, error: string }
-- `414` { ok: false, error: string }
 - `422` { ok: false, errors: string[], warnings: string[] }
 - `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
 
@@ -92,7 +88,7 @@ Responses:
 
 - `200` [PatchView](#patchview)
 - `400` { ok: false, error: string }
-- `401` { ok: false, error: string }
+- `401` { ok: false, error: "Missing or invalid API token." }
 - `403` { ok: false, error: string }
 - `404` { ok: false, error: string }
 - `414` { ok: false, error: string }
@@ -106,7 +102,7 @@ Responses:
 
 - `200` [Ok](#ok)
 - `400` { ok: false, error: string }
-- `401` { ok: false, error: string }
+- `401` { ok: false, error: "Missing or invalid API token." }
 - `403` { ok: false, error: string }
 - `404` { ok: false, error: string }
 - `414` { ok: false, error: string }
@@ -120,10 +116,9 @@ Responses:
 
 - `200` [PrincipalPatches](#principalpatches)
 - `400` { ok: false, error: string }
-- `401` { ok: false, error: string }
+- `401` { ok: false, error: "Missing or invalid API token." }
 - `403` { ok: false, error: string }
 - `404` { ok: false, error: string }
-- `414` { ok: false, error: string }
 - `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
 
 ### `POST /api/patches/:patchId/disable`
@@ -136,7 +131,7 @@ Responses:
 
 - `200` [Ok](#ok)
 - `400` { ok: false, error: string }
-- `401` { ok: false, error: string }
+- `401` { ok: false, error: "Missing or invalid API token." }
 - `403` { ok: false, error: string }
 - `404` { ok: false, error: string }
 - `414` { ok: false, error: string }
@@ -150,7 +145,7 @@ Responses:
 
 - `200` [Pinned](#pinned)
 - `400` { ok: false, error: string }
-- `401` { ok: false, error: string }
+- `401` { ok: false, error: "Missing or invalid API token." }
 - `403` { ok: false, error: string }
 - `404` { ok: false, error: string }
 - `414` { ok: false, error: string }
@@ -164,7 +159,7 @@ Responses:
 
 - `200` [Pinned](#pinned)
 - `400` { ok: false, error: string }
-- `401` { ok: false, error: string }
+- `401` { ok: false, error: "Missing or invalid API token." }
 - `403` { ok: false, error: string }
 - `404` { ok: false, error: string }
 - `414` { ok: false, error: string }
