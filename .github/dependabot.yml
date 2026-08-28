@@ -9,6 +9,21 @@ updates:
     versioning-strategy: increase
     open-pull-requests-limit: 20
     groups:
+      # Effect 4 release candidates ship in lockstep and are pinned through the
+      # pnpm catalog, so every new RC lands as one pull request. Dependabot only
+      # follows prereleases while the pinned version is itself a prerelease of
+      # the same release (4.0.0-rc.N -> 4.0.0-rc.M); once 4.0.0 ships it moves
+      # to stable and stops following 4.x prereleases, which is what we want.
+      # .github/workflows/pr-labels.yml tags these PRs `effect-rc-bump`; the
+      # runbook for finishing one lives in AGENTS.md -> Effect RC bumps.
+      effect:
+        patterns:
+          - effect
+          - "@effect/*"
+        # The language service has its own release line; let it flow as an
+        # ordinary update instead of muddying the RC changelog.
+        exclude-patterns:
+          - "@effect/language-service"
       patch-updates:
         update-types:
           - patch
