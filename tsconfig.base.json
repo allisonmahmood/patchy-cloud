@@ -14,6 +14,46 @@
     "isolatedModules": true,
     "noUncheckedIndexedAccess": true,
     "resolveJsonModule": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "plugins": [
+      {
+        // Effect diagnostics. `effect-language-service patch` (run by `prepare`
+        // and `typecheck`) bakes the plugin into tsc so these fail the build.
+        "name": "@effect/language-service",
+        // Effect warnings exit 2 by default. The whole-file rules below are
+        // warnings, so without this they would red CI on unported Node code.
+        "ignoreEffectWarningsInTscExitCode": true,
+        "diagnosticSeverity": {
+          "importFromBarrel": "error",
+          "anyUnknownInErrorContext": "error",
+          "unsafeEffectTypeAssertion": "error",
+          "instanceOfSchema": "error",
+          "deterministicKeys": "error",
+          "leakingRequirements": "error",
+          "globalErrorInEffectCatch": "error",
+          "globalErrorInEffectFailure": "error",
+          "unknownInEffectCatch": "error",
+          "preferSchemaOverJson": "error",
+          "globalConsoleInEffect": "error",
+          "globalDateInEffect": "error",
+          "globalRandomInEffect": "error",
+          "globalTimersInEffect": "error",
+          "globalFetchInEffect": "error",
+          "cryptoRandomUUIDInEffect": "error",
+          // Whole-file variants of the rules above. They also flag plain Node
+          // code, so they report without failing the build until it is ported.
+          "nodeBuiltinImport": "warning",
+          "globalConsole": "warning",
+          "globalDate": "warning",
+          "globalRandom": "warning",
+          "globalTimers": "warning",
+          "globalFetch": "warning",
+          "cryptoRandomUUID": "warning"
+          // Omitted as v3-only in @effect/language-service 0.87.2, so inert on
+          // Effect 4: missingEffectServiceDependency, schemaSyncInEffect,
+          // nonObjectEffectServiceType, scopeInLayerEffect, schemaUnionOfLiterals.
+        }
+      }
+    ]
   }
 }
