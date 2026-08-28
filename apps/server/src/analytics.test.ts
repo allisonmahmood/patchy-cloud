@@ -443,7 +443,7 @@ describe("server-side analytics", () => {
     });
     expect(me.statusCode).toBe(200);
 
-    // The seven are the whole list. Pinning, unpinning, and reading are things
+    // Those six are the whole list. Pinning, unpinning, and reading are things
     // that happen; they are not moments the instance reports.
     expect(watched.analytics.events).toEqual([]);
 

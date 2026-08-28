@@ -2341,7 +2341,7 @@ describe("Patchy Cloud server", () => {
     const moderated = await createModerationApp("moderation-read");
 
     try {
-      const created = await createDraft(moderated.app, moderated.publisherToken, "Reported");
+      const created = await createDraft(moderated.app, moderated.publisherToken, "Flagged");
       expect(created.statusCode).toBe(201);
       const { draftId } = created.json() as { draftId: string };
 
@@ -2357,7 +2357,7 @@ describe("Patchy Cloud server", () => {
           id: draftId,
           principalId: moderated.principalId,
           createdByApiTokenId: moderated.publisherApiTokenId,
-          title: "Reported",
+          title: "Flagged",
           deletedAt: null,
           disabledAt: null
         }
@@ -2526,7 +2526,7 @@ describe("Patchy Cloud server", () => {
       expect(revocation.alreadyRevoked).toBe(false);
       expect(revocation.apiToken).toMatchObject({
         id: moderated.publisherApiTokenId,
-        name: "Reported publisher",
+        name: "Flagged publisher",
         principalId: moderated.principalId
       });
       expect(revocation.apiToken.revokedAt).toEqual(expect.any(String));
@@ -2613,7 +2613,7 @@ describe("Patchy Cloud server", () => {
         method: "POST",
         url: "/api/tokens",
         headers: { authorization: "Bearer dev-token" },
-        payload: { name: "Reported publisher", scopes: ["upload"] }
+        payload: { name: "Flagged publisher", scopes: ["upload"] }
       });
       const { token, apiToken } = minted.json() as {
         token: string;
@@ -2697,7 +2697,7 @@ describe("Patchy Cloud server", () => {
         headers: { authorization: "Bearer dev-token" }
       });
       expect(read.statusCode).toBe(200);
-      const reported = (
+      const culprit = (
         read.json() as {
           draft: { principalId: string; createdByApiTokenId: string };
         }
@@ -2710,12 +2710,12 @@ describe("Patchy Cloud server", () => {
         url: "/api/me",
         headers: { authorization: "Bearer dev-token" }
       });
-      expect(reported.principalId).not.toBe((operator.json() as { accountId: string }).accountId);
+      expect(culprit.principalId).not.toBe((operator.json() as { accountId: string }).accountId);
 
       // Step 2 — and the sibling page comes with it.
       const listed = await clocked.app.inject({
         method: "GET",
-        url: `/api/principals/${reported.principalId}/drafts`,
+        url: `/api/principals/${culprit.principalId}/drafts`,
         headers: { authorization: "Bearer dev-token" }
       });
       expect(listed.statusCode).toBe(200);
@@ -2727,7 +2727,7 @@ describe("Patchy Cloud server", () => {
       // operator minted by hand.
       const revoked = await clocked.app.inject({
         method: "POST",
-        url: `/api/tokens/${reported.createdByApiTokenId}/revoke`,
+        url: `/api/tokens/${culprit.createdByApiTokenId}/revoke`,
         headers: { authorization: "Bearer dev-token" }
       });
       expect(revoked.statusCode).toBe(200);
@@ -2735,8 +2735,8 @@ describe("Patchy Cloud server", () => {
         ok: true,
         alreadyRevoked: false,
         apiToken: {
-          id: reported.createdByApiTokenId,
-          principalId: reported.principalId
+          id: culprit.createdByApiTokenId,
+          principalId: culprit.principalId
         }
       });
 
@@ -3676,7 +3676,7 @@ async function createModerationApp(label: string): Promise<ModerationApp> {
     method: "POST",
     url: "/api/tokens",
     headers: { authorization: "Bearer dev-token" },
-    payload: { name: "Reported publisher", scopes: ["upload"] }
+    payload: { name: "Flagged publisher", scopes: ["upload"] }
   });
   expect(minted.statusCode).toBe(201);
   const publisher = minted.json() as { token: string; apiToken: { id: string } };

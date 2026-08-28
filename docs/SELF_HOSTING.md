@@ -177,7 +177,7 @@ Turning the flag back off stops new mints; it does not revoke tokens already min
 
 Off by default. Leave `PATCHY_POSTHOG_API_KEY` unset and your instance builds no analytics client, opens no connection, and reports nothing — this is the default posture and nothing else in the server changes with it.
 
-Setting a key turns on capture for seven business events, and only those seven:
+Setting a key turns on capture for six business events, and only those six:
 
 | Event            | When                                              | Properties                                            |
 | ---------------- | ------------------------------------------------- | ----------------------------------------------------- |

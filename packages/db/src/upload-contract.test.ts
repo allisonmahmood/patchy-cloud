@@ -1101,7 +1101,7 @@ function describeUploadContract(driverName: string, createHarness: ContractHarne
       }
     });
 
-    it("answers a reported draft with the principal and token behind it", async () => {
+    it("answers a moderation read with the principal and token behind the draft", async () => {
       const harness = await createHarness();
       const draftId = newDraftId();
       let now = RETENTION_EPOCH;

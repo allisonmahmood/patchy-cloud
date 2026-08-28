@@ -12,14 +12,13 @@ import type { ServerConfig } from "@patchy/config";
  * served draft carries no script source of any kind, so there is no analytics
  * JavaScript to carry. Serving a draft is deliberately not an event — a visit
  * moves a retention clock in the database and is never reported here — and no
- * event carries a source address, a reason a reader typed, page content, a
- * filename, or a URL. What ships is the shape of what happened: ids, sizes,
+ * event carries a source address, page content, a filename, or a URL. What ships is the shape of what happened: ids, sizes,
  * counts, and states.
  *
  * **A user's request never depends on it.** `capture` returns nothing, throws
  * nothing, and is never awaited. A failing analytics backend is a warning in
  * the log and no difference at all to the response — which is why the guard
- * lives in the base class here rather than at each of the seven call sites.
+ * lives in the base class here rather than at each call site.
  *
  * An instance with no API key configured gets the disabled seam, which accepts
  * every event and reports none. Private instances get no analytics by default
