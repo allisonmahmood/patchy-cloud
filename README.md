@@ -23,39 +23,32 @@ A Turborepo monorepo managed with pnpm.
 
 ## Local development
 
-The default local mode needs no Postgres: it uses a JSON metadata file and filesystem HTML storage.
+`pnpm dev` runs a complete local instance for the worktree you are in — embedded Postgres, migrations, a seeded company with a working token, and the server — and returns once it is healthy:
 
 ```sh
-pnpm install &&
-  PATCHY_BOOTSTRAP_API_TOKEN=dev-token pnpm --filter @patchy/server dev
+pnpm install && pnpm dev
 ```
 
-Every upload requires a bearer token, on every configuration — there is no tokenless upload path. In another shell, point the CLI at the local server with that bootstrap token:
+Every upload requires a bearer token, on every configuration — there is no tokenless upload path. The runner writes the local one to `.local/dev/env`; source it and the CLI is pointed at the instance:
 
 ```sh
 pnpm --filter @patchy/cli build &&
 (
-  set +x
   set -eu
-  PATCHY_API_URL='http://localhost:3000'
-  export PATCHY_API_URL
-  unset PATCHY_API_TOKEN
-  PATCHY_SETUP_TOKEN='dev-token'
-  ARTIFACT_PATH='examples/plan.html'
-
-  printf '%s' "$PATCHY_SETUP_TOKEN" | PATCHY_STATE_DIR='.local/cli' node packages/cli/dist/index.js auth set --token-stdin --api-url "$PATCHY_API_URL"
-  unset PATCHY_SETUP_TOKEN
+  set -a; . .local/dev/env; set +a
   PATCHY_STATE_DIR='.local/cli' node packages/cli/dist/index.js whoami &&
-    PATCHY_STATE_DIR='.local/cli' node packages/cli/dist/index.js validate "$ARTIFACT_PATH" &&
-    PATCHY_STATE_DIR='.local/cli' node packages/cli/dist/index.js upload "$ARTIFACT_PATH"
+    PATCHY_STATE_DIR='.local/cli' node packages/cli/dist/index.js validate examples/plan.html &&
+    PATCHY_STATE_DIR='.local/cli' node packages/cli/dist/index.js upload examples/plan.html
 )
 ```
+
+`pnpm dev status`, `stop`, `logs` and `reset` manage the instance; see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 Put `packages/cli/dist/index.js` on your `PATH` as `patchy` and the same commands run as `patchy whoami`, `patchy validate`, `patchy upload`. The CLI defaults to `http://localhost:3000`; `--api-url` or `PATCHY_API_URL` points it at another instance. Full command and flag reference: [packages/cli/README.md](packages/cli/README.md).
 
 Run all locally supported test suites with `pnpm test:all`; CI-only suites are reported as skipped with the reason. Other commands: `pnpm test`, `pnpm typecheck`, `pnpm build`.
 
-See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for Postgres mode and storage notes, and [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md) for running an instance, configuration, database migration, and minting tokens.
+See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for the dev runner, running the server by hand, and storage notes, and [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md) for running an instance, configuration, database migration, and minting tokens.
 
 **Unlisted, not private.** Draft viewer URLs are long, unguessable, unlisted, and served `noindex` — but anyone with the link can open or reshare one. Don't publish secrets.
 
