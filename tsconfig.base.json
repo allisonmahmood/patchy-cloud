@@ -14,6 +14,48 @@
     "isolatedModules": true,
     "noUncheckedIndexedAccess": true,
     "resolveJsonModule": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "plugins": [
+      {
+        // Effect diagnostics. `effect-language-service patch` (run by `prepare`
+        // and `typecheck`) bakes the plugin into tsc so these fail the build.
+        "name": "@effect/language-service",
+        "namespaceImportPackages": ["@effect/platform-node", "effect"],
+        "ignoreEffectWarningsInTscExitCode": true,
+        "diagnosticSeverity": {
+          "importFromBarrel": "error",
+          "anyUnknownInErrorContext": "error",
+          "unsafeEffectTypeAssertion": "error",
+          "instanceOfSchema": "error",
+          "deterministicKeys": "error",
+          "strictEffectProvide": "off",
+          "leakingRequirements": "error",
+          "globalErrorInEffectCatch": "error",
+          "globalErrorInEffectFailure": "error",
+          "unknownInEffectCatch": "error",
+          "strictBooleanExpressions": "off",
+          "preferSchemaOverJson": "error",
+          // Whole-file rules that flag plain Node code too. Warnings until the
+          // Effect port lands; promote to error as each package is ported.
+          "nodeBuiltinImport": "warning",
+          "globalDate": "warning",
+          "globalDateInEffect": "error",
+          "globalConsole": "warning",
+          "globalConsoleInEffect": "error",
+          "globalRandom": "warning",
+          "globalRandomInEffect": "error",
+          "globalTimers": "warning",
+          "globalTimersInEffect": "error",
+          "globalFetch": "warning",
+          "globalFetchInEffect": "error",
+          // Effect v3-only in @effect/language-service 0.87.2; kept at error so
+          // they start gating the moment the language service ports them to v4.
+          "missingEffectServiceDependency": "error",
+          "schemaSyncInEffect": "error",
+          "cryptoRandomUUID": "warning",
+          "cryptoRandomUUIDInEffect": "error"
+        }
+      }
+    ]
   }
 }
