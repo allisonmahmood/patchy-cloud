@@ -11,7 +11,7 @@
   "packageManager": "pnpm@11.5.2",
   "scripts": {
     "build": "turbo run build",
-    "dev": "turbo run dev --parallel",
+    "dev": "node --import tsx --conditions=development scripts/dev/src/main.ts",
     "seed:dev": "node scripts/seed-dev.mjs",
     "test": "vitest run",
     "test:all": "sh scripts/test-all.sh",

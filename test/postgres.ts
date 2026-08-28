@@ -8,9 +8,11 @@ import pg from "pg";
 import { inject } from "vitest";
 import type { TestProject } from "vitest/node";
 import { PostgresPatchyDb } from "../packages/db/src/postgres-db.js";
+import { PG_PASSWORD, PG_USER } from "../scripts/dev/src/plan.js";
+import { applyDevSeed } from "../scripts/dev/src/seed.js";
 
-const USER = "postgres";
-const PASSWORD = "postgres";
+const USER = PG_USER;
+const PASSWORD = PG_PASSWORD;
 const TEMPLATE_DATABASE = "patchy_test_template";
 
 interface PostgresTestContext {
@@ -55,10 +57,13 @@ export default async function setup(project: TestProject): Promise<() => Promise
     const templateUrl = connectionString(port, TEMPLATE_DATABASE);
     const templateDb = new PostgresPatchyDb(templateUrl);
     try {
-      await templateDb.initialize("dev-token");
+      await templateDb.initialize(null);
     } finally {
       await templateDb.close();
     }
+    // The same rows `pnpm dev` seeds, so a test and the dev instance agree
+    // on which token works.
+    await applyDevSeed(templateUrl);
 
     project.provide("postgres", { adminUrl });
   } catch (error) {
