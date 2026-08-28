@@ -80,13 +80,17 @@ export interface PostgresTestDatabase {
 
 /** Clones the migrated template so every test starts with the same isolated store. */
 export async function createPostgresTestDatabase(): Promise<PostgresTestDatabase> {
+  return createDatabase(TEMPLATE_DATABASE);
+}
+
+async function createDatabase(template: string | undefined): Promise<PostgresTestDatabase> {
   const { adminUrl } = inject("postgres");
   const databaseName = `patchy_test_${randomUUID().replaceAll("-", "")}`;
   const admin = new pg.Client({ connectionString: adminUrl });
   await admin.connect();
   try {
     await admin.query(
-      `CREATE DATABASE ${quoteIdentifier(databaseName)} TEMPLATE ${quoteIdentifier(TEMPLATE_DATABASE)}`
+      `CREATE DATABASE ${quoteIdentifier(databaseName)}${template === undefined ? "" : ` TEMPLATE ${quoteIdentifier(template)}`}`
     );
   } finally {
     await admin.end();
@@ -109,6 +113,11 @@ export async function createPostgresTestDatabase(): Promise<PostgresTestDatabase
       }
     }
   };
+}
+
+/** PROTOTYPE (#55): an empty database the Effect Migrator migrates itself. */
+export async function createEmptyPostgresDatabase(): Promise<PostgresTestDatabase> {
+  return createDatabase(undefined);
 }
 
 function quoteIdentifier(value: string): string {
