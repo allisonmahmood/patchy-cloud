@@ -4,7 +4,7 @@
   "private": true,
   "license": "UNLICENSED",
   "type": "module",
-  "description": "PROTOTYPE — throwaway Effect 4 vertical slice for issue #55. Never shipped.",
+  "description": "PROTOTYPE \u2014 throwaway Effect 4 vertical slice for issue #55. Never shipped.",
   "scripts": {
     "build": "node scripts/build-cli.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -15,6 +15,7 @@
     "@effect/platform-node": "catalog:",
     "@effect/sql-pg": "catalog:",
     "@patchy/core": "workspace:*",
+    "@patchy/db": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {

@@ -14,22 +14,25 @@ import { SqlClient, SqlSchema } from "effect/unstable/sql";
 import { Authorization, PatchyApi } from "./api.js";
 import { AuthorizationLive } from "./auth/index.js";
 import { Patches } from "./patches/index.js";
-import { allMigrations, pgLayerFor, runMigrations } from "./sql.js";
+import { allMigrations, legacyMigrations, pgLayerFor, runMigrations } from "./sql.js";
 import { AppRoutes, DRAFT_CONTENT_SECURITY_POLICY, MeHandlers } from "./server.js";
 import { createEmptyPostgresDatabase } from "../../../test/postgres.js";
 
-/** A fresh empty database, migrated by the slice's own Migrator, closed with the layer. */
-const MigratedPg = Layer.unwrap(
-  Effect.gen(function* () {
-    const database = yield* Effect.acquireRelease(
-      Effect.promise(createEmptyPostgresDatabase),
-      (database) => Effect.promise(database.drop)
-    );
-    return Layer.effectDiscard(runMigrations(allMigrations)).pipe(
-      Layer.provideMerge(pgLayerFor(database.connectionString))
-    );
-  })
-);
+/** A fresh empty database, migrated by the given record through the slice's Migrator, dropped with the layer. */
+const migratedPg = (migrations: Parameters<typeof runMigrations>[0]) =>
+  Layer.unwrap(
+    Effect.gen(function* () {
+      const database = yield* Effect.acquireRelease(
+        Effect.promise(createEmptyPostgresDatabase),
+        (database) => Effect.promise(database.drop)
+      );
+      return Layer.effectDiscard(runMigrations(migrations)).pipe(
+        Layer.provideMerge(pgLayerFor(database.connectionString))
+      );
+    })
+  );
+
+const MigratedPg = migratedPg(allMigrations);
 
 const seed = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -40,6 +43,9 @@ const seed = Effect.gen(function* () {
   yield* sql`INSERT INTO draft_versions (id, draft_id, version_number, object_key) VALUES ('v_1', 'd_1', 1, 'objects/one.html')`;
   yield* sql`UPDATE drafts SET current_version_id = 'v_1' WHERE id = 'd_1'`;
 });
+
+/** Seeded during layer construction, so no test depends on another having run. */
+const SeededPg = Layer.effectDiscard(seed).pipe(Layer.provideMerge(MigratedPg));
 
 const bearer = (token: string) =>
   HttpApiMiddleware.layerClient(Authorization, ({ next, request }) =>
@@ -75,14 +81,36 @@ it.layer(MigratedPg)("Migrator across packages", (it) => {
   );
 });
 
+it.layer(migratedPg(legacyMigrations))("Migrator over today's SCHEMA_MIGRATIONS", (it) => {
+  it.effect("runs every multi-statement DDL step and lands the current schema", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const applied =
+        yield* sql`SELECT migration_id AS id FROM schema_migrations ORDER BY migration_id`;
+      assert.deepStrictEqual(
+        applied.map((row) => row.id),
+        [1, 2, 3, 4, 5, 6]
+      );
+      const columns =
+        yield* sql`SELECT column_name FROM information_schema.columns WHERE table_name = 'drafts' ORDER BY column_name`;
+      assert.include(
+        columns.map((row) => row.column_name),
+        "expires_at"
+      );
+      assert.include(
+        columns.map((row) => row.column_name),
+        "pinned_at"
+      );
+    })
+  );
+});
+
 it.layer(
   Layer.mergeAll(MeHandlers, HttpServer.layerServices).pipe(
     Layer.provideMerge(AuthorizationLive),
-    Layer.provideMerge(MigratedPg)
+    Layer.provideMerge(SeededPg)
   )
 )("GET /api/me through HttpApiTest", (it) => {
-  it.effect("seeds", () => seed);
-
   it.effect("returns the identity for a live token", () =>
     Effect.gen(function* () {
       const client = yield* HttpApiTest.groups(PatchyApi, ["me"]);
@@ -104,7 +132,7 @@ it.layer(
     Effect.gen(function* () {
       const client = yield* HttpApiTest.groups(PatchyApi, ["me"]);
       const error = yield* client.me().pipe(Effect.flip);
-      assert.strictEqual(error._tag, "Unauthorized");
+      assert.deepStrictEqual(error, { ok: false, error: "Missing or invalid API token." });
     }).pipe(Effect.provide(bearer("nope")))
   );
 });
@@ -112,14 +140,12 @@ it.layer(
 const ServedApp = HttpRouter.serve(AppRoutes).pipe(
   Layer.provideMerge(NodeHttpServer.layerTest),
   Layer.provideMerge(Patches.layer),
-  Layer.provideMerge(MigratedPg)
+  Layer.provideMerge(SeededPg)
 );
 
 const LastVisited = Schema.Struct({ lastVisitedAt: Schema.NullOr(Schema.Date) });
 
 it.layer(ServedApp)("GET /d/:draftId over a real socket", (it) => {
-  it.effect("seeds", () => seed);
-
   it.effect("serves the draft with the serving headers", () =>
     Effect.gen(function* () {
       const client = yield* HttpClient.HttpClient;
@@ -133,7 +159,7 @@ it.layer(ServedApp)("GET /d/:draftId over a real socket", (it) => {
       );
       assert.strictEqual(response.headers["cache-control"], "public, max-age=60");
       assert.strictEqual(response.headers["x-content-type-options"], "nosniff");
-      assert.include(yield* response.text, "<title>Hello</title>");
+      assert.include(yield* response.text, "<title>Patchy draft</title>");
     })
   );
 
@@ -156,6 +182,20 @@ it.layer(ServedApp)("GET /d/:draftId over a real socket", (it) => {
       assert.strictEqual(response.status, 200);
       assert.strictEqual(response.headers["cache-control"], "no-store");
       assert.strictEqual(response.headers["x-content-type-options"], "nosniff");
+    })
+  );
+
+  it.effect("/api/me with a bad token is today's 401 body", () =>
+    Effect.gen(function* () {
+      const client = yield* HttpClient.HttpClient;
+      const response = yield* client.execute(
+        HttpClientRequest.get("/api/me").pipe(HttpClientRequest.bearerToken("nope"))
+      );
+      assert.strictEqual(response.status, 401);
+      assert.deepStrictEqual(yield* response.json, {
+        ok: false,
+        error: "Missing or invalid API token."
+      });
     })
   );
 

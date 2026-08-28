@@ -1,6 +1,7 @@
 /** The patches capability: find a draft's current version, record a visit. */
 import { Context, DateTime, Effect, Layer, Option, Schema } from "effect";
 import { SqlClient, SqlSchema } from "effect/unstable/sql";
+import type { SqlError } from "effect/unstable/sql/SqlError";
 
 export { patchMigrations } from "./migrations.js";
 
@@ -14,8 +15,8 @@ export class ServedDraft extends Schema.Class<ServedDraft>("ServedDraft")({
 export class Patches extends Context.Service<
   Patches,
   {
-    findCurrent(draftId: string): Effect.Effect<Option.Option<ServedDraft>>;
-    recordVisit(draftId: string): Effect.Effect<void>;
+    findCurrent(draftId: string): Effect.Effect<Option.Option<ServedDraft>, SqlError>;
+    recordVisit(draftId: string): Effect.Effect<void, SqlError>;
   }
 >()("@patchy/effect-slice/patches/index/Patches") {
   static readonly layer = Layer.effect(
@@ -39,8 +40,9 @@ export class Patches extends Context.Service<
       });
 
       return Patches.of({
-        findCurrent: (draftId) => findCurrent(draftId).pipe(Effect.orDie),
-        recordVisit: (draftId) => recordVisit(draftId).pipe(Effect.orDie)
+        findCurrent: (draftId) =>
+          findCurrent(draftId).pipe(Effect.catchTags({ SchemaError: Effect.die })),
+        recordVisit
       });
     })
   );

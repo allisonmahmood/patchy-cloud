@@ -8,6 +8,7 @@ import {
   HttpApiEndpoint,
   HttpApiGroup,
   HttpApiMiddleware,
+  HttpApiSchema,
   HttpApiSecurity
 } from "effect/unstable/httpapi";
 
@@ -20,11 +21,12 @@ export class Identity extends Schema.Class<Identity>("Identity")({
   scopes: Schema.Array(Schema.String)
 }) {}
 
-export class Unauthorized extends Schema.TaggedError<Unauthorized>()(
-  "Unauthorized",
-  { error: Schema.String },
-  { httpApiStatus: 401 }
-) {}
+/** Today's 401 body, byte for byte: `{ ok: false, error }`. Not a TaggedError — no `_tag` on the wire. */
+export const Unauthorized = Schema.Struct({
+  ok: Schema.Literal(false),
+  error: Schema.String
+}).pipe(HttpApiSchema.status(401));
+export type Unauthorized = typeof Unauthorized.Type;
 
 export class CurrentIdentity extends Context.Service<CurrentIdentity, Identity>()(
   "@patchy/effect-slice/api/CurrentIdentity"

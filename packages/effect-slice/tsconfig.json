@@ -3,7 +3,9 @@
   "compilerOptions": {
     "noEmit": true,
     "paths": {
-      "@patchy/core": ["../../packages/core/src/index.ts"]
+      "@patchy/config": ["../../packages/config/src/index.ts"],
+      "@patchy/core": ["../../packages/core/src/index.ts"],
+      "@patchy/db": ["../../packages/db/src/index.ts"]
     }
   },
   "include": ["src/**/*.ts"]

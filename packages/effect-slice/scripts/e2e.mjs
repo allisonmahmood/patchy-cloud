@@ -87,16 +87,25 @@ try {
 
   const bad = await run(cli, ["whoami"], { PATCHY_API_URL: apiUrl, PATCHY_API_TOKEN: "wrong" });
   console.log("[whoami bad]", JSON.stringify(bad));
-  assert.notEqual(bad.code, 0);
+  assert.equal(bad.code, 1);
+  assert.equal(bad.stdout, "");
+  assert.match(bad.stderr, /Missing or invalid API token\./);
+  assert.doesNotMatch(bad.stderr, /\n\s+at /, "stack trace leaked to the agent");
 
   const noUrl = await run(cli, ["whoami"], { PATCHY_API_TOKEN: "x" });
   console.log("[whoami no url]", JSON.stringify(noUrl));
-  assert.notEqual(noUrl.code, 0);
+  assert.equal(noUrl.code, 1);
+  assert.equal(noUrl.stdout, "");
+  assert.match(noUrl.stderr, /PATCHY_API_URL/);
+  assert.doesNotMatch(noUrl.stderr, /\n\s+at /, "stack trace leaked to the agent");
 
   const help = await run(cli, ["--help"], {});
   console.log("[help]", JSON.stringify(help));
+  assert.equal(help.code, 0);
+  assert.doesNotMatch(help.stdout, /--wizard|--completions|--log-level/);
   const version = await run(cli, ["--version"], {});
   console.log("[version]", JSON.stringify(version));
+  assert.equal(version.stdout.trim(), "0.0.1-slice");
   console.log("e2e core OK");
 } finally {
   server.kill("SIGTERM");

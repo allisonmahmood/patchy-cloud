@@ -2,7 +2,7 @@
 import { sha256 } from "@patchy/core";
 import { Effect, Layer, Redacted, Schema } from "effect";
 import { SqlClient, SqlSchema } from "effect/unstable/sql";
-import { Authorization, CurrentIdentity, Identity, Unauthorized } from "../api.js";
+import { Authorization, CurrentIdentity, Identity } from "../api.js";
 
 export { authMigrations } from "./migrations.js";
 
@@ -26,9 +26,12 @@ export const AuthorizationLive = Layer.effect(
     const findIdentity = yield* findIdentityByTokenHash;
     return Authorization.of({
       bearer: Effect.fn("Authorization.bearer")(function* (httpEffect, { credential }) {
-        const identity = yield* findIdentity(sha256(Redacted.value(credential))).pipe(Effect.orDie);
+        // A decode failure is a bug, not a bad token; a database failure is a 500, not a 401.
+        const identity = yield* findIdentity(sha256(Redacted.value(credential))).pipe(
+          Effect.catchTags({ SchemaError: Effect.die, SqlError: Effect.die })
+        );
         if (identity._tag === "None") {
-          return yield* new Unauthorized({ error: "Invalid API token." });
+          return yield* Effect.fail({ ok: false as const, error: "Missing or invalid API token." });
         }
         return yield* Effect.provideService(httpEffect, CurrentIdentity, identity.value);
       })

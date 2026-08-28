@@ -35,10 +35,14 @@ const DraftRoute = HttpRouter.use((router) =>
         );
       }
       // Best-effort on purpose: a reader one header away from their page gets it.
-      yield* patches.recordVisit(draftId!).pipe(Effect.ignoreCause);
-      const draft = found.value;
+      yield* patches
+        .recordVisit(draftId!)
+        .pipe(
+          Effect.catchTags({ SqlError: (error) => Effect.logWarning("visit top-up failed", error) })
+        );
+      // The real page renders through `escapeHtml`; the headers are this slice's contract.
       return HttpServerResponse.html(
-        `<!doctype html><title>${draft.title}</title><iframe src="/o/${draft.objectKey}"></iframe>`
+        `<!doctype html><title>Patchy draft</title><p>${found.value.versionNumber}</p>`
       ).pipe(
         HttpServerResponse.setHeaders({
           ...headers,

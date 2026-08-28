@@ -4,7 +4,8 @@
  */
 import { PgClient } from "@effect/sql-pg";
 import { Config, Effect, Layer, Redacted } from "effect";
-import { Migrator } from "effect/unstable/sql";
+import { SCHEMA_MIGRATIONS } from "@patchy/db";
+import { Migrator, SqlClient } from "effect/unstable/sql";
 import { authMigrations } from "./auth/migrations.js";
 import { patchMigrations } from "./patches/migrations.js";
 
@@ -23,3 +24,24 @@ export const runMigrations = (migrations: Parameters<typeof Migrator.fromRecord>
 export const allMigrations = { ...authMigrations, ...patchMigrations };
 
 export const MigratorLive = Layer.effectDiscard(runMigrations(allMigrations).pipe(Effect.orDie));
+
+/**
+ * Today's hand-written migrations, unchanged, as a `fromRecord` record: each
+ * Postgres step is one multi-statement DDL string run through `sql.unsafe`.
+ * Ids like `0001_baseline_schema` already parse as `<id>_<name>`.
+ */
+export const legacyMigrations = Object.fromEntries(
+  SCHEMA_MIGRATIONS.flatMap((migration) =>
+    migration.postgres === undefined
+      ? []
+      : [
+          [
+            migration.id,
+            Effect.gen(function* () {
+              const sql = yield* SqlClient.SqlClient;
+              yield* sql.unsafe(migration.postgres!);
+            })
+          ] as const
+        ]
+  )
+);
