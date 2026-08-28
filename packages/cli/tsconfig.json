@@ -2,6 +2,7 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "paths": {
+      "@patchy/api": ["../../packages/api/src/index.ts"],
       "@patchy/core": ["../../packages/core/src/index.ts"]
     },
     "noEmit": true

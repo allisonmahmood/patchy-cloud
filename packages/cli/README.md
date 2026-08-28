@@ -117,7 +117,7 @@ With credentials, uploading a file the CLI has seen before updates that same dra
 ## Flags
 
 - `--api-url <url>` — override the API base URL for this command (available on `auth set`, `whoami`, `status`, and `upload`).
-- `--json` — on `status`, print the report as JSON. It is required, because JSON is the only format `status` offers.
+- `--json` — on every command, print the result as one JSON document on stdout: `auth set` prints `{ "ok": true, "instanceUrl" }`, `validate` prints `{ "ok": true, "warnings" }`, and `whoami` and `upload` print the instance's response exactly as [`docs/API.md`](../../docs/API.md) describes it. A failure is `{ "ok": false, "error" }` on stderr with exit code 1. On `status` it is required, because JSON is the only format `status` offers.
 - `--token-stdin` — on `auth set`, read exactly one non-empty token from redirected stdin. This is the explicit automation path and is rejected when stdin is a terminal.
 - `--new` — on `upload`, always create a new draft with a server-generated ID instead of updating the one previously uploaded from this path. It cannot be combined with `--draft`.
 - `--draft <draft-id>` — on `upload`, update a specific existing draft. This is update-only and never creates a new draft. It cannot be combined with `--new`.
@@ -146,7 +146,7 @@ Both files are keyed by the resolved API base URL under exact string equality, s
 // credentials.json
 { "hosts": { "https://pages.example.com": { "token": "…", "updatedAt": "…", "source": "auth-set" } } }
 // drafts.json
-{ "hosts": { "https://pages.example.com": { "files": { "/abs/plan.html": { "draftId": "…", "publicUrl": "…", "latestVersionNumber": 3, "updatedAt": "…" } } } } }
+{ "hosts": { "https://pages.example.com": { "files": { "/abs/plan.html": { "patchId": "…", "publicUrl": "…", "latestVersionNumber": 3, "updatedAt": "…" } } } } }
 ```
 
 A token saved for one instance is never sent to another, and a draft ID cached for one instance is never replayed against another. Files written by an older CLI in the previous single-instance format are not migrated: the CLI stops with an error naming the file, so a token that still controls live drafts is never discarded silently. Copy anything you need out of the old file, then delete it.

@@ -2,7 +2,7 @@
 
 The Patchy Cloud server is a normal Node HTTP service and runs anywhere that supports Node or containers. This guide covers running it from source: configuration, the database, starting the server, minting tokens, and pointing the CLI at it.
 
-Once your server is running, point the CLI at it and you have your own instance. Every upload requires a bearer API token, on every configuration: a request with no `Authorization` header is rejected with 401, and a present but invalid credential stays a 401 rather than being downgraded to a credential-free upload. No server setting relaxes that. Draft viewer URLs are public and unlisted, so anyone with the link can view them.
+Once your server is running, point the CLI at it and you have your own instance. Every route and wire shape is listed in [`API.md`](./API.md), rendered from the schemas the server and CLI share. Every upload requires a bearer API token, on every configuration: a request with no `Authorization` header is rejected with 401, and a present but invalid credential stays a 401 rather than being downgraded to a credential-free upload. No server setting relaxes that. Draft viewer URLs are public and unlisted, so anyone with the link can view them.
 
 ## Prerequisites
 
@@ -104,7 +104,7 @@ The server applies deterministic fixed-window in-memory limits inside each serve
 - Protected `/api` requests are limited to `PATCHY_PROTECTED_API_RATE_LIMIT_PER_MINUTE` attempts per minute per canonical Fastify `request.ip`. That IP follows `PATCHY_TRUST_PROXY`, so configure the proxy boundary before relying on IP-based buckets.
 - Authenticated upload requests are limited to `PATCHY_AUTHENTICATED_UPLOAD_RATE_LIMIT_PER_MINUTE` attempts per minute per API token database identity. Rotating the raw bearer secret for the same token record does not create a fresh upload bucket.
 - `PATCHY_SELF_SERVICE_MINT_RATE_LIMIT_PER_MINUTE` limits self-service mints per minute per canonical Fastify `request.ip`, on instances where minting is enabled. It is keyed by address rather than by token because a caller asking for its first token has no token to key on.
-- Draft _creates_ are additionally limited to `PATCHY_DRAFT_CREATE_RATE_LIMIT_PER_MINUTE` per minute per creating token. An upload carrying a `draftId` is an update and never consumes this bucket. Because the request body decides create versus update, this bucket is consumed after body parsing, unlike the buckets above.
+- Draft _creates_ are additionally limited to `PATCHY_DRAFT_CREATE_RATE_LIMIT_PER_MINUTE` per minute per creating token. An upload carrying a `patchId` is an update and never consumes this bucket. Because the request body decides create versus update, this bucket is consumed after body parsing, unlike the buckets above.
 
 When a bucket is exceeded, the server returns HTTP `429` with JSON `{ "ok": false, "code": "rate_limited", ... }` and an integer `Retry-After` header. Each limiter tracks up to `10000` live keys in memory. If all live key slots are occupied, an unseen key receives the same bounded `429` response until the earliest live bucket resets. Live buckets are never evicted to make room for an unseen key, because eviction would let an attacker bypass limits by cycling key values.
 
@@ -120,7 +120,7 @@ Only per-minute limits live in memory. A long-window quota is derived from the d
 
 The cap is per token, not per account: two tokens on one account each get the full allowance. It applies uniformly, with no exemption for `admin`-scoped tokens.
 
-A create that would exceed the quota is rejected with HTTP `403` and JSON `{ "ok": false, "code": "live_draft_quota_exceeded", "quota": <cap>, "error": "..." }`, where the error text names the cap. Updates are never rejected by this quota.
+A create that would exceed the quota is rejected with HTTP `403` and JSON `{ "ok": false, "code": "live_patch_quota_exceeded", "quota": <cap>, "error": "..." }`, where the error text names the cap. Updates are never rejected by this quota.
 
 Unlike the buckets above, this ceiling is not process-local: it is recounted from the metadata store on every create, so restarting or scaling the server does not reset it.
 
@@ -144,13 +144,13 @@ PIN_TMP_DIR="$(mktemp -d)" && chmod 700 "$PIN_TMP_DIR"
 
 curl --fail --silent --show-error --request POST \
   --header "@$PIN_TMP_DIR/auth.headers" \
-  "$API_URL/api/drafts/$DRAFT_ID/pin"
+  "$API_URL/api/patches/$DRAFT_ID/pin"
 # {"ok":true,"pinned":true}
 
 rm -rf "$PIN_TMP_DIR"
 ```
 
-`POST /api/drafts/:draftId/unpin` reverses it. Both return `404` for a draft that is not there, and `403` for a token without the `admin` scope — including the token that created the draft. A pinned draft is never expired and never swept, however long it sits; in every other respect it is ordinary. Its clock keeps running underneath the pin and visits keep topping it up, so unpinning hands it back to whatever time it had left: a page still being read keeps its 30-day visit window, and one nobody has read in months expires at once.
+`POST /api/patches/:patchId/unpin` reverses it. Both return `404` for a draft that is not there, and `403` for a token without the `admin` scope — including the token that created the draft. A pinned draft is never expired and never swept, however long it sits; in every other respect it is ordinary. Its clock keeps running underneath the pin and visits keep topping it up, so unpinning hands it back to whatever time it had left: a page still being read keeps its 30-day visit window, and one nobody has read in months expires at once.
 
 A pin only ever holds a page that is **in service**. Deleting or disabling a draft ends its pin, and pinning a draft that is already deleted or disabled returns `404` — so a pin can never keep a moderated or withdrawn page's storage alive. Unpinning works on any draft that still has a row, which means a pin can never get stuck out of reach.
 
@@ -714,9 +714,9 @@ No instance publishes without credentials: every upload requires a bearer token,
 
 Complaints about a page reach the operator out of band — nothing on a served page files one. Four admin-scoped endpoints then resolve one end to end, so no operator ever edits rows by hand:
 
-- `GET /api/drafts/:draftId` — the draft's owning principal and the token that created it. It answers for a draft that is already disabled, deleted, or expired, because those are exactly the ones complaints arrive about. Once the expiry sweep has hard-deleted the draft, the row is gone and this answers 404 — a complaint can outlive the page it was about.
-- `GET /api/principals/:principalId/drafts` — that principal's other drafts, newest first. Deleted drafts are omitted; disabled ones are not. A `truncated` answer means the principal holds more than one page: **deleting** drafts is what reveals the rest, because deleting is what removes them from this list — disabling a draft leaves it on the page.
-- `POST /api/drafts/:draftId/disable` and `DELETE /api/drafts/:draftId` — per-draft takedown, as above.
+- `GET /api/patches/:patchId` — the draft's owning principal and the token that created it. It answers for a draft that is already disabled, deleted, or expired, because those are exactly the ones complaints arrive about. Once the expiry sweep has hard-deleted the draft, the row is gone and this answers 404 — a complaint can outlive the page it was about.
+- `GET /api/principals/:principalId/patches` — that principal's other drafts, newest first. Deleted drafts are omitted; disabled ones are not. A `truncated` answer means the principal holds more than one page: **deleting** drafts is what reveals the rest, because deleting is what removes them from this list — disabling a draft leaves it on the page.
+- `POST /api/patches/:patchId/disable` and `DELETE /api/patches/:patchId` — per-draft takedown, as above.
 - `POST /api/tokens/:apiTokenId/revoke` — revoke the token.
 
 Revocation is a state the token enters, never a deletion: the row survives with its mint provenance, and a revoked token authenticates nothing — the caller sees the same 401 any bad credential gets. Revoking twice is the same answer with the original timestamp, because that moment is when the token's drafts stopped receiving visit top-ups. Those drafts stay up and run out whatever retention clock they had left; nothing extends them again. There is no un-revoke; issue a replacement token instead.

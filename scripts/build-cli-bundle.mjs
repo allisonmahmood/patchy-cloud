@@ -23,7 +23,7 @@ await esbuild.build({
   target: "node22",
   sourcemap: true,
   tsconfig: path.join(cliDir, "tsconfig.json"),
-  external: ["commander", "parse5"],
+  external: ["commander", "effect", "parse5"],
   define: {
     __PATCHY_VERSION__: JSON.stringify(packageJson.version)
   }

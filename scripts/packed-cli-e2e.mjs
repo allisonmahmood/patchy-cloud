@@ -552,7 +552,7 @@ try {
     await checkedCall(() => readFile(path.join(cliStateDir, "drafts.json"), "utf8"))
   );
   assert.equal(
-    deprecatedFlagCache.hosts[publicBaseUrl].files[fixtureCachePath].draftId,
+    deprecatedFlagCache.hosts[publicBaseUrl].files[fixtureCachePath].patchId,
     deprecatedFlag.draftId,
     "the deprecated flag must still update the per-instance draft cache"
   );

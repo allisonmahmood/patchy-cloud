@@ -38,8 +38,8 @@ export default tseslint.config(
         {
           patterns: [
             {
-              regex: "^@patchy/(?!core$)",
-              message: "The CLI may depend only on @patchy/core."
+              regex: "^@patchy/(?!(api|core)$)",
+              message: "The CLI may depend only on @patchy/api and @patchy/core."
             },
             {
               regex: "(^|/)\\.\\.(/|$)",

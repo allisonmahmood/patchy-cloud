@@ -531,7 +531,7 @@ describe("patchy upload", () => {
       writeFileSync(
         path.join(stateDir, "drafts.json"),
         hostKeyedDraftCache({
-          [server.apiUrl]: { [htmlPath]: { draftId: cachedDraftId, latestVersionNumber: 3 } }
+          [server.apiUrl]: { [htmlPath]: { patchId: cachedDraftId, latestVersionNumber: 3 } }
         })
       );
 
@@ -548,10 +548,10 @@ describe("patchy upload", () => {
       expect(result.stdout).toContain("Updated draft");
       expect(server.requests).toHaveLength(1);
       expect(server.requests[0]?.authorization).toBe("Bearer stored-token");
-      expect(server.requests[0]?.body).toHaveProperty("draftId", cachedDraftId);
+      expect(server.requests[0]?.body).toHaveProperty("patchId", cachedDraftId);
       expect(server.mints).toEqual([]);
       expect(readDraftCache(stateDir).hosts[server.apiUrl]?.files[htmlPath]).toMatchObject({
-        draftId: cachedDraftId,
+        patchId: cachedDraftId,
         latestVersionNumber: 2
       });
     } finally {
@@ -606,7 +606,7 @@ describe("patchy upload", () => {
       expect(result.stdout).toContain("Updated draft");
       expect(server.mints).toHaveLength(1);
       expect(server.requests[0]?.authorization).toBe(`Bearer ${MINTED_TOKEN}`);
-      expect(server.requests[0]?.body).toHaveProperty("draftId", "abcdefghijkl");
+      expect(server.requests[0]?.body).toHaveProperty("patchId", "abcdefghijkl");
     } finally {
       await server.close();
     }
@@ -671,9 +671,11 @@ describe("patchy upload", () => {
       response.end(
         JSON.stringify({
           ok: true,
-          draftId: "mnopqrstuvwx",
-          publicUrl: "http://example.test/d/mnopqrstuvwx",
+          patchId: "mnopqrstuvwx",
+          versionId: "ver_mnopqrstuvwx",
           versionNumber: 1,
+          title: "Plan",
+          publicUrl: "http://example.test/d/mnopqrstuvwx",
           warnings: []
         })
       );
@@ -781,8 +783,8 @@ describe("patchy upload", () => {
       // The announcement is a first-run event, not a per-upload banner.
       expect(second.stdout).not.toContain("Minted a new publishing token");
       expect(second.stdout).toContain("Updated draft");
-      expect(server.requests[0]?.body).not.toHaveProperty("draftId");
-      expect(server.requests[1]?.body).toHaveProperty("draftId", "mnopqrstuvwx");
+      expect(server.requests[0]?.body).not.toHaveProperty("patchId");
+      expect(server.requests[1]?.body).toHaveProperty("patchId", "mnopqrstuvwx");
     } finally {
       await server.close();
     }
@@ -824,9 +826,11 @@ describe("patchy upload", () => {
       response.end(
         JSON.stringify({
           ok: true,
-          draftId: "mnopqrstuvwx",
-          publicUrl: "http://example.test/d/mnopqrstuvwx",
+          patchId: "mnopqrstuvwx",
+          versionId: "ver_mnopqrstuvwx",
           versionNumber: 1,
+          title: "Plan",
+          publicUrl: "http://example.test/d/mnopqrstuvwx",
           warnings: []
         })
       );
@@ -933,9 +937,11 @@ describe("patchy upload", () => {
       response.end(
         JSON.stringify({
           ok: true,
-          draftId: "abcdefghijkl",
-          publicUrl: "http://example.test/d/abcdefghijkl",
+          patchId: "abcdefghijkl",
+          versionId: "ver_abcdefghijkl",
           versionNumber: 1,
+          title: "Plan",
+          publicUrl: "http://example.test/d/abcdefghijkl",
           warnings: []
         })
       );
@@ -952,7 +958,7 @@ describe("patchy upload", () => {
 
       expect(result.status).toBe(0);
       expect(requestBody).toBeDefined();
-      expect(requestBody).not.toHaveProperty("draftId");
+      expect(requestBody).not.toHaveProperty("patchId");
       expect(result.stdout).toContain("Uploaded draft");
       expect(result.argv.join("\0")).not.toContain(token);
       expect(`${result.stdout}${result.stderr}`).not.toContain(token);
@@ -965,7 +971,7 @@ describe("patchy upload", () => {
 
   it("reports an unavailable --draft target safely without retrying as create", async () => {
     const token = "pp_update_request_secret";
-    const draftId = "abcdefghijkl";
+    const patchId = "abcdefghijkl";
     const fixtureDir = makeStateDir();
     const htmlPath = path.join(fixtureDir, "update.html");
     writeFileSync(
@@ -991,7 +997,7 @@ describe("patchy upload", () => {
       const address = server.address();
       if (!address || typeof address === "string") throw new Error("Expected a TCP test server");
       const result = await runCliAsync(
-        ["upload", htmlPath, "--draft", draftId, "--api-url", `http://127.0.0.1:${address.port}`],
+        ["upload", htmlPath, "--draft", patchId, "--api-url", `http://127.0.0.1:${address.port}`],
         { PATCHY_API_TOKEN: token }
       );
 
@@ -1002,7 +1008,7 @@ describe("patchy upload", () => {
       );
       expect(requestCount).toBe(1);
       expect(authorization).toBe(`Bearer ${token}`);
-      expect(requestBody).toHaveProperty("draftId", draftId);
+      expect(requestBody).toHaveProperty("patchId", patchId);
       expect(existsSync(path.join(result.stateDir, "drafts.json"))).toBe(false);
       expect(result.argv.join("\0")).not.toContain(token);
       expect(`${result.stdout}${result.stderr}`).not.toContain(token);
@@ -1015,7 +1021,7 @@ describe("patchy upload", () => {
 
   it("reports an unavailable cached draft safely without retrying as create", async () => {
     const token = "pp_cached_update_secret";
-    const draftId = "abcdefghijkl";
+    const patchId = "abcdefghijkl";
     const stateDir = makeStateDir();
     const htmlPath = path.join(stateDir, "cached-update.html");
     writeFileSync(
@@ -1041,7 +1047,7 @@ describe("patchy upload", () => {
       const apiUrl = `http://127.0.0.1:${address.port}`;
       writeFileSync(
         path.join(stateDir, "drafts.json"),
-        hostKeyedDraftCache({ [apiUrl]: { [htmlPath]: { draftId, latestVersionNumber: 1 } } })
+        hostKeyedDraftCache({ [apiUrl]: { [htmlPath]: { patchId, latestVersionNumber: 1 } } })
       );
 
       const result = await runCliAsync(
@@ -1056,7 +1062,7 @@ describe("patchy upload", () => {
         "Cached draft is unavailable for update. Use --new to create a new draft.\n"
       );
       expect(requestCount).toBe(1);
-      expect(requestBody).toHaveProperty("draftId", draftId);
+      expect(requestBody).toHaveProperty("patchId", patchId);
       expect(`${result.stdout}${result.stderr}`).not.toContain(token);
     } finally {
       await new Promise<void>((resolve, reject) =>
@@ -1558,18 +1564,18 @@ describe("host-keyed local state", () => {
       expect(second.requests.map((request) => request.authorization)).toEqual([
         "Bearer second-instance-token"
       ]);
-      expect(first.requests[0]?.body).not.toHaveProperty("draftId");
-      expect(second.requests[0]?.body).not.toHaveProperty("draftId");
-      expect(first.requests[1]?.body).toHaveProperty("draftId", "aaaabbbbcccc");
+      expect(first.requests[0]?.body).not.toHaveProperty("patchId");
+      expect(second.requests[0]?.body).not.toHaveProperty("patchId");
+      expect(first.requests[1]?.body).toHaveProperty("patchId", "aaaabbbbcccc");
 
       const cache = readDraftCache(stateDir);
       expect(Object.keys(cache.hosts).sort()).toEqual([first.apiUrl, second.apiUrl].sort());
       expect(cache.hosts[first.apiUrl]?.files[htmlPath]).toMatchObject({
-        draftId: "aaaabbbbcccc",
+        patchId: "aaaabbbbcccc",
         latestVersionNumber: 2
       });
       expect(cache.hosts[second.apiUrl]?.files[htmlPath]).toMatchObject({
-        draftId: "ddddeeeeffff",
+        patchId: "ddddeeeeffff",
         latestVersionNumber: 1
       });
     } finally {
@@ -1679,7 +1685,7 @@ describe("host-keyed local state", () => {
       );
 
       // The draft cache carries the same kind of unrelated damage.
-      const brokenCacheEntry = { files: { "/gone.html": { draftId: 42 } } };
+      const brokenCacheEntry = { files: { "/gone.html": { patchId: 42 } } };
       writeFileSync(
         path.join(stateDir, "drafts.json"),
         `${JSON.stringify({ hosts: { "https://broken.test": brokenCacheEntry } }, null, 2)}\n`
@@ -1700,7 +1706,7 @@ describe("host-keyed local state", () => {
         ["https://broken.test", server.apiUrl].sort()
       );
       expect(cache.hosts[server.apiUrl]?.files[htmlPath]).toMatchObject({
-        draftId: "aaaabbbbcccc"
+        patchId: "aaaabbbbcccc"
       });
       // The neighbour's unusable entry is preserved, not rewritten or dropped.
       expect(cache.hosts["https://broken.test"]).toEqual(brokenCacheEntry);
@@ -1775,7 +1781,7 @@ describe("host-keyed local state", () => {
       {
         files: {
           [htmlPath]: {
-            draftId: "abcdefghijkl",
+            patchId: "abcdefghijkl",
             publicUrl: "http://example.test/d/abcdefghijkl",
             latestVersionNumber: 1,
             updatedAt: "2026-07-13T00:00:00.000Z"
@@ -2156,6 +2162,99 @@ describe("PTY test driver", () => {
   });
 });
 
+describe("--json", () => {
+  it("prints the upload wire document alone on stdout and the mint announcement on stderr", async () => {
+    const stateDir = makeStateDir();
+    const htmlPath = path.join(stateDir, "json-upload.html");
+    writeFileSync(htmlPath, "<!doctype html><title>JSON upload</title>");
+    const server = await startUploadServer(createOnly("mnopqrstuvwx"));
+
+    try {
+      const result = await runCliAsync(
+        ["upload", htmlPath, "--json", "--api-url", server.apiUrl],
+        {},
+        stateDir
+      );
+
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe(mintAnnouncement(server.apiUrl, stateDir));
+      expect(JSON.parse(result.stdout)).toEqual(createOnly("mnopqrstuvwx")().body);
+      expect(readDraftCache(stateDir).hosts[server.apiUrl]?.files[htmlPath]).toMatchObject({
+        patchId: "mnopqrstuvwx",
+        latestVersionNumber: 1
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("reports a failure as { ok: false, error } on stderr with nothing on stdout", () => {
+    const stateDir = makeStateDir();
+    const htmlPath = path.join(stateDir, "json-invalid.html");
+    writeFileSync(htmlPath, "<!doctype html><title>Bad</title><script>alert(1)</script>");
+
+    for (const args of [
+      ["validate", htmlPath, "--json"],
+      ["upload", htmlPath, "--json", "--api-url", "http://127.0.0.1:1"]
+    ]) {
+      const result = runCli(args, undefined, stateDir);
+
+      expect(result.status).toBe(1);
+      expect(result.stdout).toBe("");
+      const failure = JSON.parse(result.stderr) as { ok: boolean; error: string };
+      expect(failure.ok).toBe(false);
+      expect(failure.error).toContain("HTML failed Patchy Cloud validation:");
+    }
+  });
+
+  it("prints whoami, validate and auth set as one document each", async () => {
+    const stateDir = makeStateDir();
+    const identity = {
+      accountId: "acct_ci",
+      accountName: "CI account",
+      apiTokenId: "tok_ci",
+      apiTokenName: "CI token",
+      scopes: ["upload"]
+    };
+    const server = createServer((_request, response) => {
+      response.setHeader("Content-Type", "application/json");
+      response.end(JSON.stringify(identity));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected a TCP test server");
+    const apiUrl = `http://127.0.0.1:${address.port}`;
+
+    try {
+      const authSet = runCli(
+        ["auth", "set", "--token-stdin", "--json", "--api-url", apiUrl],
+        "pp_json_secret\n",
+        stateDir
+      );
+      expect(authSet.status).toBe(0);
+      expect(authSet.stderr).toBe("");
+      expect(JSON.parse(authSet.stdout)).toEqual({ ok: true, instanceUrl: apiUrl });
+
+      // Async: a blocking spawn would starve the loopback server of its turn.
+      const whoami = await runCliAsync(["whoami", "--json", "--api-url", apiUrl], {}, stateDir);
+      expect(whoami.status).toBe(0);
+      expect(whoami.stderr).toBe("");
+      expect(JSON.parse(whoami.stdout)).toEqual(identity);
+
+      const htmlPath = path.join(stateDir, "json-validate.html");
+      writeFileSync(htmlPath, "<!doctype html><title>Valid</title>");
+      const validate = runCli(["validate", htmlPath, "--json"], undefined, stateDir);
+      expect(validate.status).toBe(0);
+      expect(validate.stderr).toBe("");
+      expect(JSON.parse(validate.stdout)).toEqual({ ok: true, warnings: [] });
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve()))
+      );
+    }
+  });
+});
+
 function runCli(
   args: string[],
   input?: string,
@@ -2334,14 +2433,16 @@ function mintAnnouncement(apiUrl: string, stateDir: string): string {
   );
 }
 
-function createOnly(draftId: string) {
+function createOnly(patchId: string) {
   return (): UploadResponse => ({
     status: 201,
     body: {
       ok: true,
-      draftId,
-      publicUrl: `http://example.test/d/${draftId}`,
+      patchId,
+      versionId: `ver_${patchId}_1`,
       versionNumber: 1,
+      title: "Plan",
+      publicUrl: `http://example.test/d/${patchId}`,
       warnings: []
     }
   });
@@ -2349,16 +2450,18 @@ function createOnly(draftId: string) {
 
 function createOrUpdate(createdDraftId: string) {
   return (request: UploadRequest): UploadResponse => {
-    const requested = request.body.draftId;
+    const requested = request.body.patchId;
     const isUpdate = typeof requested === "string";
-    const draftId = isUpdate ? requested : createdDraftId;
+    const patchId = isUpdate ? requested : createdDraftId;
     return {
       status: isUpdate ? 200 : 201,
       body: {
         ok: true,
-        draftId,
-        publicUrl: `http://example.test/d/${draftId}`,
+        patchId,
+        versionId: `ver_${patchId}_${isUpdate ? 2 : 1}`,
         versionNumber: isUpdate ? 2 : 1,
+        title: "Plan",
+        publicUrl: `http://example.test/d/${patchId}`,
         warnings: []
       }
     };
@@ -2424,7 +2527,7 @@ function hostKeyedCredentials(entries: Record<string, string>): string {
 }
 
 function hostKeyedDraftCache(
-  hosts: Record<string, Record<string, { draftId: string; latestVersionNumber: number }>>
+  hosts: Record<string, Record<string, { patchId: string; latestVersionNumber: number }>>
 ): string {
   return `${JSON.stringify(
     {
@@ -2436,8 +2539,8 @@ function hostKeyedDraftCache(
               Object.entries(files).map(([file, draft]) => [
                 file,
                 {
-                  draftId: draft.draftId,
-                  publicUrl: `${host}/d/${draft.draftId}`,
+                  patchId: draft.patchId,
+                  publicUrl: `${host}/d/${draft.patchId}`,
                   latestVersionNumber: draft.latestVersionNumber,
                   updatedAt: "2026-08-14T00:00:00.000Z"
                 }

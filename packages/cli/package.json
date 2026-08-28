@@ -43,6 +43,10 @@
   },
   "dependencies": {
     "commander": "^15.0.0",
+    "effect": "catalog:",
     "parse5": "catalog:"
+  },
+  "devDependencies": {
+    "@patchy/api": "workspace:*"
   }
 }
