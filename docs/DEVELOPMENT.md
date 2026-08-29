@@ -43,6 +43,9 @@ patchy upload examples/plan.html
 | `pnpm dev logs`             | Print `dev.log`.                                                                  |
 | `pnpm dev reset`            | Stop, wipe `.local/dev/`, and start a fresh seeded instance.                      |
 
+`reset` is also the answer when the migration ledger changes shape under an
+instance you already have (as it did when migrations moved onto Effect's Migrator).
+
 `--json` also works on `status`, `reset` and a plain start. The server is not
 watched; after a code change, `pnpm dev stop && pnpm dev`.
 

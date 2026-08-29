@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Cause from "effect/Cause";
 import * as Exit from "effect/Exit";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { LEDGER_TABLE, migrate, type Migrations } from "./index.js";
@@ -54,6 +55,24 @@ it.layer(Testing.layer({ ...widgets, ...gadgets }))("migrator", (it) => {
     })
   );
 
+  it.effect("applies a new pending step to an already-migrated database", () =>
+    Effect.gen(function* () {
+      const applied = yield* migrate({
+        ...widgets,
+        ...gadgets,
+        "3_sprockets": ddl("CREATE TABLE sprockets (id integer PRIMARY KEY)")
+      });
+      assert.deepStrictEqual(applied, [[3, "sprockets"]]);
+      assert.deepStrictEqual(yield* tables, ["gadgets", LEDGER_TABLE, "sprockets", "widgets"]);
+      assert.deepStrictEqual(
+        (yield* ledger).map((row) => row.id),
+        [1, 2, 3]
+      );
+      yield* ddl("DROP TABLE sprockets");
+      yield* ddl(`DELETE FROM ${LEDGER_TABLE} WHERE migration_id = 3`);
+    })
+  );
+
   it.effect("applies pending steps in one transaction: a failing step rolls the batch back", () =>
     Effect.gen(function* () {
       const exit = yield* migrate({
@@ -62,7 +81,7 @@ it.layer(Testing.layer({ ...widgets, ...gadgets }))("migrator", (it) => {
         "3_sprockets": ddl("CREATE TABLE sprockets (id integer PRIMARY KEY)"),
         "4_broken": ddl("CREATE TABLE sprockets (id integer PRIMARY KEY)")
       }).pipe(Effect.exit);
-      assert.isTrue(Exit.isFailure(exit));
+      assert.isTrue(Exit.isFailure(exit) && Cause.hasDies(exit.cause));
       assert.deepStrictEqual(yield* tables, ["gadgets", LEDGER_TABLE, "widgets"]);
       assert.strictEqual((yield* ledger).length, 2);
     })

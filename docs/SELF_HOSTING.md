@@ -214,7 +214,7 @@ Do not share one JSON file between multiple server processes, workers, or replic
 
 ## Database migration
 
-If you use the `postgres` driver, create the schema and the bootstrap token before starting the server. The migration uses a pre-existing non-empty `PATCHY_BOOTSTRAP_API_TOKEN` first. When it is absent, the snippet reads `PATCHY_BOOTSTRAP_TOKEN_FILE` or creates and reuses the protected default token file:
+If you use the `postgres` driver, the server migrates the schema and provisions the bootstrap token itself on startup; the snippet below only readies the token it needs. It uses a pre-existing non-empty `PATCHY_BOOTSTRAP_API_TOKEN` first. When it is absent, the snippet reads `PATCHY_BOOTSTRAP_TOKEN_FILE` or creates and reuses the protected default token file:
 
 ```sh
 (

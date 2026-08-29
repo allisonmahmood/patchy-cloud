@@ -12,7 +12,7 @@ If any of these files don't exist, **proceed silently**. Don't flag their absenc
 
 ## Layout
 
-This is a **multi-context** repo — a pnpm workspace whose two halves are the service that hosts pages and the package people run to put pages up.
+This is a **multi-context** repo — a pnpm workspace whose two halves are the service that hosts pages and the package people run to put pages up, plus the SQL package the hosting side migrates through.
 
 ```
 /
@@ -35,6 +35,7 @@ This is a **multi-context** repo — a pnpm workspace whose two halves are the s
 
 - **Hosting** — `apps/server`. Receives uploads and serves published pages. Owns `@patchy/db`, `@patchy/storage`, and `@patchy/config` as supporting packages; treat changes in those as part of this context.
 - **Publishing** — `packages/cli`. The `patchy` CLI package agents use to put pages up. Its own vocabulary (drafts, uploads, auth tokens) lives here.
+- **SQL** — `packages/sql`. The Postgres client and Effect's Migrator every capability package migrates through. Owns no tables; its `CONTEXT.md` defines migration and ledger.
 - **Shared kernel** — `packages/core`. The safe-HTML policy and the ID/crypto primitives both contexts depend on. It has no `CONTEXT.md` of its own; terms it defines belong to whichever context introduced them. Changes here ripple both ways, so decisions touching it go in the root `docs/adr/`, not a context-scoped one.
 
 ## Use the glossary's vocabulary
