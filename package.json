@@ -16,12 +16,9 @@
     "test": "vitest run",
     "test:all": "sh scripts/test-all.sh",
     "test:packed-cli-e2e": "node scripts/packed-cli-e2e.mjs",
-    "test:docker-save": "node scripts/validate-docker-save-artifact.test.mjs",
-    "test:server-image": "bash scripts/verify-server-image.sh",
     "prepare": "effect-language-service patch && simple-git-hooks",
     "lint": "eslint \"**/*.{ts,mts,cts,tsx}\"",
     "typecheck": "effect-language-service patch && turbo run typecheck",
-    "docker": "turbo run docker",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },

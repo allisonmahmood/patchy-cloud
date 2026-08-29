@@ -15,10 +15,6 @@
     },
     "typecheck": {
       "dependsOn": ["^build"]
-    },
-    "docker": {
-      "dependsOn": ["build"],
-      "cache": false
     }
   }
 }
