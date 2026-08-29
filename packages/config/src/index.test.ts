@@ -6,7 +6,6 @@ describe("getServerConfig", () => {
     const config = getServerConfig({});
 
     expect(config.dbDriver).toBe("json");
-    expect(config.storageDriver).toBe("filesystem");
     expect(config.publicBaseUrl).toBe("http://localhost:3000");
     expect(config.trustProxy).toBe(false);
   });

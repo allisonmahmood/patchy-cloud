@@ -42,11 +42,12 @@ export interface ServerConfig {
   dbDriver: "postgres" | "json";
   databaseUrl: string | null;
   jsonDbFile: string;
-  storageDriver: "filesystem" | "azure-blob";
+  /**
+   * Where the filesystem content store writes. The store reads
+   * `PATCHY_STORAGE_DIR` itself through Effect `Config`; this copy is what the
+   * test runtime hands it.
+   */
   storageDir: string;
-  azureStorageAccount: string | null;
-  azureStorageContainer: string | null;
-  azureStorageConnectionString: string | null;
 }
 
 export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
@@ -101,12 +102,7 @@ export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCon
     dbDriver,
     databaseUrl,
     jsonDbFile: stringValue(env.PATCHY_DB_FILE) ?? ".local/patchy-db.json",
-    storageDriver:
-      enumValue(env.PATCHY_STORAGE_DRIVER, ["filesystem", "azure-blob"] as const) ?? "filesystem",
-    storageDir: stringValue(env.PATCHY_STORAGE_DIR) ?? ".local/drafts",
-    azureStorageAccount: stringValue(env.AZURE_STORAGE_ACCOUNT),
-    azureStorageContainer: stringValue(env.AZURE_STORAGE_CONTAINER),
-    azureStorageConnectionString: stringValue(env.AZURE_STORAGE_CONNECTION_STRING)
+    storageDir: stringValue(env.PATCHY_STORAGE_DIR) ?? ".local/drafts"
   };
 }
 

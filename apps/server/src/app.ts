@@ -11,7 +11,6 @@ import type {
   UploadTargetError
 } from "@patchy/db";
 import type { Limits } from "@patchy/limits";
-import type { HtmlStorage } from "@patchy/storage";
 import {
   BadRequest,
   Conflict,
@@ -39,7 +38,16 @@ import { contentHash, newDraftId, newInternalId, validateHtml } from "@patchy/co
 import type { UploadMetadata } from "@patchy/core";
 import { createExpirySweep, type ExpirySweepResult } from "./expiry-sweep.js";
 import { getDraftPublicUrl } from "./public-url.js";
-import { authenticate, consume, serveAuthApi, track, type ServerRuntime } from "./runtime.js";
+import {
+  authenticate,
+  consume,
+  deleteObject,
+  getObject,
+  putObject,
+  serveAuthApi,
+  track,
+  type ServerRuntime
+} from "./runtime.js";
 import { renderDraftWrapper, renderHome, renderNotFound } from "./render.js";
 import {
   DRAFT_CONTENT_SECURITY_POLICY,
@@ -53,8 +61,7 @@ import { decodeBody, sendWire } from "./wire.js";
 export interface CreateAppOptions {
   config: ServerConfig;
   db: PatchyDb;
-  storage: HtmlStorage;
-  /** The Effect side — analytics, the rate limiter, tokens and the auth API — behind one runtime. */
+  /** The Effect side — analytics, the rate limiter, tokens, the content store and the auth API — behind one runtime. */
   runtime: ServerRuntime;
 }
 
@@ -171,7 +178,6 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
 
   const expirySweep = createExpirySweep({
     db: options.db,
-    storage: options.storage,
     runtime: options.runtime,
     log: app.log
   });
@@ -352,7 +358,7 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
         if (!isUploadTargetError(error)) throw error;
         return sendUploadTargetError(reply, error);
       }
-      await options.storage.putHtmlObject(objectKey, html);
+      await putObject(options.runtime, objectKey, html);
 
       let upload: RecordUploadResult;
       try {
@@ -360,7 +366,7 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
       } catch (error) {
         if (!isUploadTargetError(error)) throw error;
         try {
-          await options.storage.deleteHtmlObject(objectKey);
+          await deleteObject(options.runtime, objectKey);
         } catch (cleanupError) {
           app.log.error(cleanupError);
           throw new Error("Upload cleanup failed.", { cause: cleanupError });
@@ -506,7 +512,7 @@ async function renderDraft(
     return reply.status(404).type("text/html").send(renderNotFound());
   }
 
-  const html = await options.storage.getHtmlObject(version.objectKey);
+  const html = await getObject(options.runtime, version.objectKey);
   // The page is real and already fetched, so this is a visit — the thing that
   // keeps a draft people still visit from ageing out. The database decides
   // whether the clock actually moves and writes nothing when it does not.

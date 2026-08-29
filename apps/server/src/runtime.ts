@@ -7,6 +7,7 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { Analytics } from "@patchy/analytics";
 import { AuthApi, Tokens } from "@patchy/auth";
+import { ContentStore } from "@patchy/content-store";
 import { Limits } from "@patchy/limits";
 import type { ConfigError } from "effect/Config";
 import * as Context from "effect/Context";
@@ -39,23 +40,44 @@ const make = Effect.map(HttpRouter.toHttpEffect(AuthApi.routes), Effect.orDie);
 export interface LayerOptions {
   /** Tokens over the store the caller opened. */
   readonly tokens: Layer.Layer<Tokens.Tokens, ConfigError | SqlError>;
+  /** Where a patch's bytes go: the filesystem layer, or Azure when its config is present. */
+  readonly contentStore: Layer.Layer<ContentStore.ContentStore, ConfigError>;
   /** Defaults to reporting when a PostHog key is configured; a test brings its own. */
   readonly analytics?: Layer.Layer<Analytics.Analytics, ConfigError>;
 }
 
 /**
- * What the app runs on: analytics, the in-memory limiter, tokens, and the
- * auth group's handler over all three.
+ * What the app runs on: analytics, the in-memory limiter, tokens, the content
+ * store, and the auth group's handler over the first three.
  */
-export const layer = ({ analytics = Analytics.layer, tokens }: LayerOptions) => {
-  const services = Layer.mergeAll(analytics, Limits.layer, tokens);
+export const layer = ({ analytics = Analytics.layer, contentStore, tokens }: LayerOptions) => {
+  const services = Layer.mergeAll(analytics, Limits.layer, tokens, contentStore);
   return Layer.merge(services, Layer.effect(AuthApiHandler, make).pipe(Layer.provide(services)));
 };
 
 export type ServerRuntime = ManagedRuntime.ManagedRuntime<
-  Analytics.Analytics | Limits.Limits | Tokens.Tokens | AuthApiHandler,
+  Analytics.Analytics | Limits.Limits | Tokens.Tokens | ContentStore.ContentStore | AuthApiHandler,
   never
 >;
+
+/** Writes a patch version's HTML under its object key; see `ContentStore.put`. */
+export function putObject(runtime: ServerRuntime, key: string, html: string): Promise<void> {
+  return runtime.runPromise(
+    Effect.flatMap(ContentStore.ContentStore, (store) => store.put(key, html))
+  );
+}
+
+/** Reads a patch version's HTML back; rejects with `ObjectNotFound` when nothing is there. */
+export function getObject(runtime: ServerRuntime, key: string): Promise<string> {
+  return runtime.runPromise(Effect.flatMap(ContentStore.ContentStore, (store) => store.get(key)));
+}
+
+/** Removes a patch version's HTML; a key already empty is fine. */
+export function deleteObject(runtime: ServerRuntime, key: string): Promise<void> {
+  return runtime.runPromise(
+    Effect.flatMap(ContentStore.ContentStore, (store) => store.delete(key))
+  );
+}
 
 /** Spends one attempt of a rate limit; see `Limits.consume`. */
 export function consume(

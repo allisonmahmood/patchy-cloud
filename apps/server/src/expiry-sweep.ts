@@ -1,6 +1,5 @@
 import type { PatchyDb } from "@patchy/db";
-import type { HtmlStorage } from "@patchy/storage";
-import { track, type ServerRuntime } from "./runtime.js";
+import { deleteObject, track, type ServerRuntime } from "./runtime.js";
 
 /**
  * The expiry sweep — the job that makes draft expiry real.
@@ -50,8 +49,7 @@ export interface ExpirySweepLog {
 
 export interface ExpirySweepOptions {
   db: PatchyDb;
-  storage: HtmlStorage;
-  /** Where a taken draft is reported. */
+  /** The content store the objects go from, and where a taken draft is reported. */
   runtime: ServerRuntime;
   log?: ExpirySweepLog;
 }
@@ -139,7 +137,7 @@ async function sweepDraft(
 
   for (const objectKey of objectKeys) {
     try {
-      await options.storage.deleteHtmlObject(objectKey);
+      await deleteObject(options.runtime, objectKey);
     } catch (error) {
       // The record is already gone, so nothing serves this object and no later
       // run will list it again. It is storage to reclaim by hand, not a draft

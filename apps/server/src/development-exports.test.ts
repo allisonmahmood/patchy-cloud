@@ -27,11 +27,11 @@ const workspaceLibraries = [
     resolve: () => import.meta.resolve("@patchy/db")
   },
   {
-    packageName: "@patchy/storage",
+    packageName: "@patchy/content-store",
     sourceUrl: pathToFileURL(
-      path.resolve(import.meta.dirname, "../../../packages/storage/src/index.ts")
+      path.resolve(import.meta.dirname, "../../../packages/content-store/src/index.ts")
     ).href,
-    resolve: () => import.meta.resolve("@patchy/storage")
+    resolve: () => import.meta.resolve("@patchy/content-store")
   }
 ];
 

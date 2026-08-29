@@ -8,7 +8,7 @@ metadata:
 
 # Effect service review
 
-Review changed TypeScript and directly affected call sites for the conventions below. Apply them when a change creates, moves, refactors, or consumes an Effect service in `apps/server` or the capability packages (`packages/api`, `auth`, `patches`, `serving`, `storage`, `sql`, `cli`, `core`). Do not demand unrelated repository-wide cleanup. Treat these conventions as authoritative when older code differs.
+Review changed TypeScript and directly affected call sites for the conventions below. Apply them when a change creates, moves, refactors, or consumes an Effect service in `apps/server` or the capability packages (`packages/api`, `auth`, `patches`, `serving`, `content-store`, `sql`, `cli`, `core`). Do not demand unrelated repository-wide cleanup. Treat these conventions as authoritative when older code differs.
 
 Effect is not yet imported in source: the Effect v4 port lands package by package (issue #54), so these rules bind each package as it moves. Pre-port code the diff leaves untouched is out of scope; a package that has moved is held to every rule. Skip anything the linter or `@effect/language-service` already enforces.
 

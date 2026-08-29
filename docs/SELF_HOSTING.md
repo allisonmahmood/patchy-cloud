@@ -70,17 +70,15 @@ DATABASE_URL=postgres://user:password@host:5432/patchy
 # Image default (when you build the image from this repo): /data/patchy-db.json
 PATCHY_DB_FILE=.local/patchy-db.json
 
-# HTML object storage: "filesystem" or "azure-blob"
-# Defaults to "filesystem".
-PATCHY_STORAGE_DRIVER=filesystem
+# Where HTML objects go when no Azure container is configured.
 # Source default: .local/drafts
 # Image default (when you build the image from this repo): /data/drafts
 PATCHY_STORAGE_DIR=.local/drafts
 
-# Only used by the "azure-blob" storage driver:
+# Setting AZURE_STORAGE_CONTAINER switches HTML objects to Azure Blob.
 AZURE_STORAGE_ACCOUNT=
 AZURE_STORAGE_CONTAINER=
-# If a connection string is absent, azure-blob uses managed identity.
+# If a connection string is absent, Azure Blob uses managed identity.
 AZURE_STORAGE_CONNECTION_STRING=
 ```
 
@@ -95,7 +93,7 @@ Notes on values:
 - `PATCHY_SELF_SERVICE_MINTS_PER_IP_PER_DAY` is a decimal integer from `1` through `1000000` and defaults to `5`. It applies only while self-service minting is on.
 - `PATCHY_POSTHOG_API_KEY` and `PATCHY_POSTHOG_HOST` configure server-side analytics. Leave the key unset — the default — and your instance reports nothing at all. See [Server-side analytics](#server-side-analytics).
 - Uploads are authenticated on every path. A missing bearer token, and any malformed, invalid, revoked, or insufficiently scoped credential, is an authentication or authorization failure with no unauthenticated fallback.
-- When running from source, the `json` metadata driver and `filesystem` storage driver write under `.local/` by default. An image built from this checkout overrides those path defaults to `/data` as shown above. Both modes need no external services and suit a quick or single-instance self-host. For a durable multi-instance deployment, use `postgres` and a shared object store (`azure-blob`).
+- When running from source, the `json` metadata driver and the filesystem content store write under `.local/` by default. An image built from this checkout overrides those path defaults to `/data` as shown above. Both modes need no external services and suit a quick or single-instance self-host. For a durable multi-instance deployment, use `postgres` and a shared object store (Azure Blob).
 
 ### Abuse protection and rate limits
 
@@ -207,10 +205,10 @@ On Linux, do not configure `PATCHY_DB_FILE` as a single-file bind mount. Linux d
 
 Do not share one JSON file between multiple server processes, workers, or replicas. That setup can lose updates. Use `postgres` and a shared object store for a multi-process or multi-replica deployment.
 
-### Storage drivers
+### Content store
 
-- `filesystem` — writes HTML objects to `PATCHY_STORAGE_DIR` on local disk. Simplest option.
-- `azure-blob` — Azure Blob Storage, authenticating with a connection string or, when none is set, a managed identity.
+- Filesystem — writes HTML objects to `PATCHY_STORAGE_DIR` on local disk. The default, and the simplest option.
+- Azure Blob — selected by setting `AZURE_STORAGE_CONTAINER`; authenticates with a connection string or, when none is set, a managed identity.
 
 ## Database migration
 
