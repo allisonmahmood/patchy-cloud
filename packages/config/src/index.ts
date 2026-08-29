@@ -17,8 +17,6 @@ interface TrustedProxyRange {
   end: bigint;
 }
 
-/** Where server-side analytics report when an instance configures a key but no host. */
-
 export interface ServerConfig {
   port: number;
   publicBaseUrl: string;
