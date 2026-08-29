@@ -11,7 +11,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import type { JsonFilePatchyDb } from "./json-db.js";
 
-export const jsonTokensLayer = (db: JsonFilePatchyDb) =>
+export const layer = (db: JsonFilePatchyDb) =>
   Layer.succeed(
     Tokens.Tokens,
     Tokens.Tokens.of({

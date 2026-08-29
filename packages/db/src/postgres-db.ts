@@ -96,17 +96,16 @@ export class PostgresPatchyDb implements PatchyDb {
    * `expires_at`. Deliberately not SQL `now()`: the clock is injectable, and
    * `now()` would make the window untestable and drift from the JSON driver.
    *
-   * `expires_at` and `token_mints.created_at` are on this clock here, because
-   * both are anchors a window is measured from — retention's and the mint
-   * quota's. Every other stamp in this driver (`last_used_at`, the remaining
-   * `created_at` columns, `disabled_at`, `deleted_at`, `revoked_at`) stays on
-   * SQL `now()`, where it is a column default or a `SET x = now()` clause,
-   * while the JSON driver puts all of its stamps on the injected clock.
-   * `revoked_at` belongs on that side because the revocation freeze keys on the
-   * column being non-null, never on the instant it holds. See the note
-   * on `JsonFilePatchyDb.nowIso` — the drivers agree on the retention anchor
-   * and drift on the rest under a wound-forward clock, which is deliberate.
-   * Do not "fix" one driver's non-retention stamps without the other's.
+   * `expires_at` is on this clock here because it is the anchor retention is
+   * measured from (`@patchy/auth` keeps `token_mints.created_at`, the mint
+   * quota's anchor, on the Effect clock for the same reason). Every other
+   * stamp in this driver (`created_at` columns, `disabled_at`, `deleted_at`)
+   * stays on SQL `now()`, where it is a column default or a `SET x = now()`
+   * clause, while the JSON driver puts all of its stamps on the injected
+   * clock. See the note on `JsonFilePatchyDb.nowIso` — the drivers agree on
+   * the retention anchor and drift on the rest under a wound-forward clock,
+   * which is deliberate. Do not "fix" one driver's non-retention stamps
+   * without the other's.
    */
   private nowIso(): string {
     return new Date(this.clock()).toISOString();

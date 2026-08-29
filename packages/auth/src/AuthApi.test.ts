@@ -22,6 +22,12 @@ const bearer = (token: string) =>
     next(HttpClientRequest.bearerToken(request, token))
   );
 
+/** The header verbatim, for the forms `HttpClientRequest.bearerToken` would normalise. */
+const rawAuthorization = (value: string) =>
+  HttpApiMiddleware.layerClient(AuthorizationTag, ({ next, request }) =>
+    next(HttpClientRequest.setHeader(request, "authorization", value))
+  );
+
 const client = HttpApiTest.groups(PatchyApi, ["auth"]);
 
 const layer = (env: Record<string, string>) =>
@@ -53,6 +59,12 @@ it.layer(layer({}))("auth group: tokens and me", (it) => {
         }
       );
     }).pipe(Effect.provide(bearer("dev-token")))
+  );
+
+  it.effect("reads the header as Bearer.parse does: tabs and trailing whitespace are fine", () =>
+    Effect.gen(function* () {
+      assert.strictEqual((yield* (yield* client).me()).apiTokenId, Tokens.BOOTSTRAP_API_TOKEN_ID);
+    }).pipe(Effect.provide(rawAuthorization("bEaReR\t dev-token \t")))
   );
 
   it.effect("401s an unknown token with the pinned body", () =>

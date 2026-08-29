@@ -1,6 +1,6 @@
 /**
- * Bearer parsing for the `Authorization` header, as the hosting server's
- * protected-route guard reads it: the scheme is case-insensitive, at least
+ * Bearer parsing for the `Authorization` header, as the `Authorization`
+ * middleware and the hosting server's protected-route guard read it: the scheme is case-insensitive, at least
  * one space or tab separates it from the credential, trailing whitespace is
  * tolerated, and anything else on the line makes the header invalid. A
  * missing header and an invalid one are told apart here and nowhere else —

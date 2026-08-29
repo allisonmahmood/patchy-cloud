@@ -11,7 +11,7 @@ import type { SqlError } from "effect/unstable/sql/SqlError";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import { JsonFilePatchyDb } from "./json-db.js";
-import { jsonTokensLayer } from "./json-tokens.js";
+import * as JsonTokens from "./json-tokens.js";
 import { migrateDatabase } from "./migrate.js";
 import { PostgresPatchyDb } from "./postgres-db.js";
 import type { DbFactoryOptions, PatchyDb } from "./types.js";
@@ -37,5 +37,5 @@ export async function openPatchyDb(
 
   const db = new JsonFilePatchyDb(options.jsonDbFile);
   await db.initialize(options.bootstrapApiToken);
-  return { db, tokens: jsonTokensLayer(db) };
+  return { db, tokens: JsonTokens.layer(db) };
 }

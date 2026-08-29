@@ -33,6 +33,9 @@ export class AuthApiHandler extends Context.Service<
   >
 >()("@patchy/server/runtime/AuthApiHandler") {}
 
+/** The auth group's routes as one handler; a routing failure is a defect here, not a response. */
+const make = Effect.map(HttpRouter.toHttpEffect(AuthApi.routes), Effect.orDie);
+
 export interface LayerOptions {
   /** Tokens over the store the caller opened. */
   readonly tokens: Layer.Layer<Tokens.Tokens, ConfigError | SqlError>;
@@ -46,11 +49,7 @@ export interface LayerOptions {
  */
 export const layer = ({ analytics = Analytics.layer, tokens }: LayerOptions) => {
   const services = Layer.mergeAll(analytics, Limits.layer, tokens);
-  const authApi = Layer.effect(
-    AuthApiHandler,
-    Effect.map(HttpRouter.toHttpEffect(AuthApi.routes), Effect.orDie)
-  ).pipe(Layer.provide(services));
-  return Layer.merge(services, authApi);
+  return Layer.merge(services, Layer.effect(AuthApiHandler, make).pipe(Layer.provide(services)));
 };
 
 export type ServerRuntime = ManagedRuntime.ManagedRuntime<

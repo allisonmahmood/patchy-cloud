@@ -8,7 +8,7 @@
 import { Analytics } from "@patchy/analytics";
 import type { Tokens } from "@patchy/auth";
 import type { ServerConfig } from "@patchy/config";
-import { jsonTokensLayer, type JsonFilePatchyDb } from "@patchy/db";
+import { JsonTokens, type JsonFilePatchyDb } from "@patchy/db";
 import type { ConfigError } from "effect/Config";
 import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -30,7 +30,7 @@ export type TestRuntimeOptions = {
 export function createTestRuntime(options: TestRuntimeOptions): ServerRuntime {
   const services = Layer.orDie(
     layer({
-      tokens: "db" in options ? jsonTokensLayer(options.db) : options.tokens,
+      tokens: "db" in options ? JsonTokens.layer(options.db) : options.tokens,
       analytics: options.analytics ?? Analytics.layerNoop
     })
   ).pipe(Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(authEnv(options.config)))));
