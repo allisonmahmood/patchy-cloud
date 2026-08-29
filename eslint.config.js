@@ -51,12 +51,7 @@ export default tseslint.config(
     }
   },
   {
-    files: [
-      "apps/server/src/start.ts",
-      "packages/cli/src/index.ts",
-      "packages/db/src/migrate.ts",
-      "test/postgres.ts"
-    ],
+    files: ["apps/server/src/start.ts", "packages/cli/src/index.ts", "test/postgres.ts"],
     rules: {
       "no-console": "off"
     }

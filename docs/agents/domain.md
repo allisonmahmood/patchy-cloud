@@ -26,7 +26,9 @@ This is a **multi-context** repo — a pnpm workspace whose two halves are the s
     ├── cli/
     │   ├── CONTEXT.md                 ← publishing context (the `patchy` CLI)
     │   └── docs/adr/
-    └── core/                          ← shared kernel: html-policy, crypto, ids, types
+    ├── core/                          ← shared kernel: html-policy, crypto, ids, types
+    └── sql/
+        └── CONTEXT.md                 ← the Postgres client and the Migrator (no tables)
 ```
 
 ### Contexts

@@ -1,5 +1,5 @@
-import { getServerConfig } from "@patchy/config";
-import { createPatchyDb } from "@patchy/db";
+import { getServerConfig, requireConfigValue } from "@patchy/config";
+import { createPatchyDb, migrateDatabase } from "@patchy/db";
 import { createHtmlStorage } from "@patchy/storage";
 import { createAnalytics } from "./analytics.js";
 import { createApp } from "./app.js";
@@ -18,6 +18,9 @@ const storage = createHtmlStorage({
   azureStorageConnectionString: config.azureStorageConnectionString
 });
 
+if (config.dbDriver === "postgres") {
+  await migrateDatabase(requireConfigValue("DATABASE_URL", config.databaseUrl));
+}
 await db.initialize(config.bootstrapApiToken);
 
 // Reports nothing unless a key is configured, which is what a private instance

@@ -184,8 +184,10 @@ export interface DraftModerationOptions {
 
 export interface DbDriverOptions {
   /**
-   * The ordered migration list to run. Defaults to the shipped
-   * `SCHEMA_MIGRATIONS`; overridden to exercise a migration end to end.
+   * The ordered migration list the JSON driver runs. Defaults to the shipped
+   * `SCHEMA_MIGRATIONS`; overridden to exercise a migration end to end. The
+   * Postgres driver ignores it: its schema is migrated ahead of time through
+   * `migrateDatabase` (`migrate.ts`).
    */
   migrations?: readonly SchemaMigration[];
   /**
@@ -198,9 +200,11 @@ export interface DbDriverOptions {
 }
 
 export interface PatchyDb {
+  /**
+   * Seeds the bootstrap token when one is given. The JSON driver also migrates
+   * its state file here; a Postgres database must already be migrated.
+   */
   initialize(bootstrapApiToken: string | null): Promise<void>;
-  /** The applied migration IDs this database records, in apply order. */
-  listAppliedMigrations(): Promise<string[]>;
   findApiTokenByToken(token: string): Promise<ApiTokenAuth | null>;
   createApiToken(input: CreateApiTokenInput): Promise<{ id: string; name: string }>;
   /**

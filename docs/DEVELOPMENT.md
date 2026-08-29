@@ -75,8 +75,9 @@ and the dev instance agree on what exists.
 `scripts/dev/` is the Effect 4 runner. `start` writes `plan.json` and spawns a
 detached supervisor under `node --import tsx`; the supervisor owns one Effect
 scope holding Postgres and the server, so either exiting — or `stop`'s
-SIGTERM — tears the other down. Migrations run through `packages/db`'s runner
-for now.
+SIGTERM — tears the other down. Migrations run through Effect's Migrator in
+`packages/sql`, behind `packages/db`'s `migrateDatabase` seam until the
+migrations move into their capability packages.
 
 ## Running the server by hand
 
@@ -93,14 +94,8 @@ with `dev-token`).
 
 ## Postgres Mode
 
-Set `PATCHY_DB_DRIVER=postgres` and `DATABASE_URL` when a Postgres instance is available:
-
-```sh
-PATCHY_DB_DRIVER=postgres \
-DATABASE_URL=... \
-PATCHY_BOOTSTRAP_API_TOKEN=... \
-pnpm db:migrate
-```
+Set `PATCHY_DB_DRIVER=postgres` and `DATABASE_URL` when a Postgres instance is
+available. The server migrates the database on startup, before it listens.
 
 Do not commit real database URLs or generated tokens.
 

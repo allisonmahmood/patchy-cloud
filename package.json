@@ -21,7 +21,6 @@
     "prepare": "effect-language-service patch && simple-git-hooks",
     "lint": "eslint \"**/*.{ts,mts,cts,tsx}\"",
     "typecheck": "effect-language-service patch && turbo run typecheck",
-    "db:migrate": "turbo run db:migrate",
     "docker": "turbo run docker",
     "format": "prettier --write .",
     "format:check": "prettier --check ."

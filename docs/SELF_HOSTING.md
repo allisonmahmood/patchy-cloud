@@ -319,11 +319,11 @@ BOOTSTRAP_TOKEN_READY=true
 export PATCHY_BOOTSTRAP_API_TOKEN
 PATCHY_DB_DRIVER=postgres \
 DATABASE_URL=postgres://user:password@host:5432/patchy \
-pnpm db:migrate
+pnpm --filter @patchy/server start
 )
 ```
 
-This runs the ordered schema migrations, recording each one in a `schema_migrations` ledger table so re-running is a no-op from any prior state — including a database created before that ledger existed. Together they create the `accounts`, `api_tokens`, `drafts`, `draft_versions`, and `upload_events` tables and their indexes. It then — when `PATCHY_BOOTSTRAP_API_TOKEN` is set — provisions a bootstrap account and a bootstrap API token with `admin` and `upload` scopes. The `json` driver applies the same migrations and initialization automatically on startup, so no separate migration is needed for it. Adding a migration is documented in `packages/db/README.md`.
+The server migrates the database on startup, before it listens: every pending schema migration runs in one transaction through Effect's Migrator, recorded in the `schema_migrations` ledger so a restart is a no-op. Together they create the `accounts`, `api_tokens`, `drafts`, `draft_versions`, `upload_events` and `token_mints` tables and their indexes. It then — when `PATCHY_BOOTSTRAP_API_TOKEN` is set — provisions a bootstrap account and a bootstrap API token with `admin` and `upload` scopes. The `json` driver applies the same migrations and initialization automatically on startup too. Adding a migration is documented in `packages/db/README.md`.
 
 ## Running the server
 
