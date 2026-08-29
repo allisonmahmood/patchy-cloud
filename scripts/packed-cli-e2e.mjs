@@ -17,6 +17,7 @@ import { createConnection, createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import pg from "pg";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const cliPackageDir = path.join(repoRoot, "packages/cli");
@@ -67,6 +68,9 @@ let serverReadyStdoutObserved = false;
 let serverStdout = "";
 let serverStderr = "";
 let serverBindCollisionProbe;
+/** The embedded Postgres behind the real server, started once per process. */
+let postgres;
+const TERMINATION_SIGNALS = ["SIGHUP", "SIGINT", "SIGTERM", "SIGBREAK"];
 
 class SignalAbort extends Error {
   constructor(signal) {
@@ -149,7 +153,6 @@ try {
   const packDir = path.join(tempRoot, "packed artifacts");
   const consumerDir = path.join(tempRoot, "clean consumer");
   const serverStateDir = path.join(tempRoot, "server state");
-  const metadataPath = path.join(serverStateDir, "metadata.json");
   const objectDir = path.join(serverStateDir, "objects");
   const cliStateDir = path.join(tempRoot, "cli state authenticated");
   assertSpacedPath("packed artifact directory", packDir);
@@ -166,18 +169,18 @@ try {
   if (lifecycleProbe.mode === "server-spawn-error") {
     portReservation = await reserveLoopbackPort();
     const publicBaseUrl = `http://127.0.0.1:${portReservation.port}`;
-    const startedServer = await startServer({ publicBaseUrl, metadataPath, objectDir });
+    const startedServer = await startServer({ publicBaseUrl, objectDir });
     await waitForReady(`${startedServer.publicBaseUrl}/healthz`);
     throw new Error("server spawn error probe unexpectedly reached readiness");
   }
 
   if (lifecycleProbe.mode === "server-bind-race-retry") {
-    await runServerBindRaceRetryProbe({ metadataPath, objectDir });
+    await runServerBindRaceRetryProbe({ objectDir });
     throw new ProbeComplete();
   }
 
   if (lifecycleProbe.mode === "missing-server-entry-negative-control") {
-    await runMissingServerEntryNegativeControl({ metadataPath, objectDir });
+    await runMissingServerEntryNegativeControl({ objectDir });
     throw new Error("missing server entry negative control unexpectedly completed");
   }
 
@@ -191,7 +194,7 @@ try {
     await run("pnpm", ["--filter", "@patchy/server...", "build"], { cwd: repoRoot });
     portReservation = await reserveLoopbackPort();
     let publicBaseUrl = `http://127.0.0.1:${portReservation.port}`;
-    const startedServer = await startServer({ publicBaseUrl, metadataPath, objectDir });
+    const startedServer = await startServer({ publicBaseUrl, objectDir });
     publicBaseUrl = startedServer.publicBaseUrl;
     await waitForReady(`${publicBaseUrl}/healthz`);
     await signalProbeCheckpoint("after-real-server-ready", {
@@ -254,7 +257,6 @@ try {
   let publicBaseUrl = `http://127.0.0.1:${portReservation.port}`;
   const startedServer = await startServer({
     publicBaseUrl,
-    metadataPath,
     objectDir
   });
   publicBaseUrl = startedServer.publicBaseUrl;
@@ -374,10 +376,9 @@ try {
   const freshViewer = await fetchViewer(fresh.publicUrl);
   assertViewer(freshViewer, fresh.draftId, 1, "packed-contract-new-draft");
 
-  const metadata = await readMetadata(metadataPath);
+  const metadata = await readMetadata();
   assert.equal(metadata.drafts.length, 2);
   assert.equal(metadata.draftVersions.length, 3);
-  assert.equal(metadata.uploadEvents.length, 3);
   await assertStoredDraft(metadata, objectDir, {
     draftId: first.draftId,
     expectedHtmlByVersion: [firstHtml, secondHtml],
@@ -407,7 +408,6 @@ try {
       PATCHY_API_URL: publicBaseUrl
     }),
     cliStateDir: unsafeValidationStateDir,
-    metadataPath,
     objectDir,
     expectAuthoritativeNonEmpty: true,
     expectEmptyCliState: true,
@@ -423,7 +423,6 @@ try {
     cwd: consumerDir,
     env: { ...cliEnv, PATCHY_API_TOKEN: "invalid-env-credential" },
     cliStateDir,
-    metadataPath,
     objectDir,
     sensitiveValues: ["invalid-env-credential"],
     stderr: /Missing or invalid API token\./
@@ -448,7 +447,6 @@ try {
     cwd: consumerDir,
     env: invalidStoredEnv,
     cliStateDir: invalidStoredStateDir,
-    metadataPath,
     objectDir,
     sensitiveValues: [invalidStoredToken],
     stderr: /Missing or invalid API token\./
@@ -493,7 +491,7 @@ try {
     !mintedResult.stdout.includes(mintedToken) && !mintedResult.stderr.includes(mintedToken),
     "the minted token must never be printed"
   );
-  const metadataAfterMint = await readMetadata(metadataPath);
+  const metadataAfterMint = await readMetadata();
   assert.ok(
     !JSON.stringify(metadataAfterMint).includes(mintedToken),
     "the instance must keep only the minted token's hash"
@@ -556,7 +554,7 @@ try {
     deprecatedFlag.draftId,
     "the deprecated flag must still update the per-instance draft cache"
   );
-  const metadataAfterDeprecatedFlag = await readMetadata(metadataPath);
+  const metadataAfterDeprecatedFlag = await readMetadata();
   // The credential the flag used to bypass is the one that published it.
   await assertStoredDraft(metadataAfterDeprecatedFlag, objectDir, {
     draftId: deprecatedFlag.draftId,
@@ -578,13 +576,12 @@ try {
     })
   );
 
-  const finalMetadata = await readMetadata(metadataPath);
+  const finalMetadata = await readMetadata();
   // Every draft on the instance has a controlling token from birth: the
   // tokenless upload path is gone, so nothing here is ownerless. Exactly one
   // draft belongs to the auto-minted principal; the rest are the operator's.
   assert.equal(finalMetadata.drafts.length, 5);
   assert.equal(finalMetadata.draftVersions.length, 6);
-  assert.equal(finalMetadata.uploadEvents.length, 6);
   const controllingAccounts = new Set(finalMetadata.drafts.map((draft) => draft.accountId));
   assert.ok(
     finalMetadata.drafts.every((draft) => typeof draft.accountId === "string" && draft.accountId),
@@ -1797,7 +1794,7 @@ async function readJsonlRecords(markerPath) {
     .map((line) => JSON.parse(line));
 }
 
-async function runServerBindRaceRetryProbe({ metadataPath, objectDir }) {
+async function runServerBindRaceRetryProbe({ objectDir }) {
   console.log("[lifecycle-probe] building real server for bind race probe");
   await run("pnpm", ["--filter", "@patchy/server...", "build"], { cwd: repoRoot });
 
@@ -1813,7 +1810,7 @@ async function runServerBindRaceRetryProbe({ metadataPath, objectDir }) {
     portReservation = await reserveLoopbackPort();
     const firstPort = portReservation.port;
     const publicBaseUrl = `http://127.0.0.1:${firstPort}`;
-    const startedServer = await startServer({ publicBaseUrl, metadataPath, objectDir });
+    const startedServer = await startServer({ publicBaseUrl, objectDir });
     const readyBaseUrl = startedServer?.publicBaseUrl ?? publicBaseUrl;
     await waitForReady(`${readyBaseUrl}/healthz`);
 
@@ -1832,7 +1829,7 @@ async function runServerBindRaceRetryProbe({ metadataPath, objectDir }) {
   }
 }
 
-async function runMissingServerEntryNegativeControl({ metadataPath, objectDir }) {
+async function runMissingServerEntryNegativeControl({ objectDir }) {
   const missingServerEntry = path.join(
     tempRoot,
     "patchy-packed-cli-e2e-missing-server-entry-negative-control",
@@ -1842,7 +1839,6 @@ async function runMissingServerEntryNegativeControl({ metadataPath, objectDir })
   const publicBaseUrl = `http://127.0.0.1:${portReservation.port}`;
   const startedServer = await startServer({
     publicBaseUrl,
-    metadataPath,
     objectDir,
     serverEntryPath: missingServerEntry
   });
@@ -2226,19 +2222,13 @@ async function reserveLoopbackPort() {
   return { server, port: address.port };
 }
 
-async function startServer({
-  publicBaseUrl,
-  metadataPath,
-  objectDir,
-  serverEntryPath = serverEntry
-}) {
+async function startServer({ publicBaseUrl, objectDir, serverEntryPath = serverEntry }) {
   let nextPublicBaseUrl = publicBaseUrl;
   const maxAttempts = 3;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
       return await startServerAttempt({
         publicBaseUrl: nextPublicBaseUrl,
-        metadataPath,
         objectDir,
         serverEntryPath
       });
@@ -2266,7 +2256,7 @@ async function startServer({
   throw new Error("unreachable server startup retry state");
 }
 
-async function startServerAttempt({ publicBaseUrl, metadataPath, objectDir, serverEntryPath }) {
+async function startServerAttempt({ publicBaseUrl, objectDir, serverEntryPath }) {
   throwIfSignalLatched();
   const serverArgs = [serverEntryPath];
   const injectsServerSpawnError = shouldInjectServerSpawnError(process.execPath, serverArgs);
@@ -2287,15 +2277,13 @@ async function startServerAttempt({ publicBaseUrl, metadataPath, objectDir, serv
       PATCHY_BOOTSTRAP_API_TOKEN: bootstrapToken,
       PATCHY_ALLOW_SELF_SERVICE_TOKENS: "true",
       PATCHY_MAX_HTML_BYTES: String(512 * 1024),
-      PATCHY_DB_DRIVER: "json",
-      PATCHY_DB_FILE: metadataPath,
+      DATABASE_URL: await startPostgres(),
       PATCHY_STORAGE_DIR: objectDir,
       PATCHY_PROTECTED_API_RATE_LIMIT_PER_MINUTE: "10000",
       PATCHY_AUTHENTICATED_UPLOAD_RATE_LIMIT_PER_MINUTE: "10000",
       PATCHY_SELF_SERVICE_MINT_RATE_LIMIT_PER_MINUTE: "10000"
     },
     [
-      "DATABASE_URL",
       "PATCHY_TRUST_PROXY",
       "AZURE_STORAGE_ACCOUNT",
       "AZURE_STORAGE_CONTAINER",
@@ -2563,14 +2551,13 @@ async function assertCliFailureNoMutation({
   cwd,
   env,
   cliStateDir,
-  metadataPath,
   objectDir,
   expectAuthoritativeNonEmpty = false,
   expectEmptyCliState = false,
   sensitiveValues = [],
   stderr
 }) {
-  const authoritativeBefore = await authoritativeSnapshot(metadataPath, objectDir);
+  const authoritativeBefore = await authoritativeSnapshot(objectDir);
   const cliStateBefore = await snapshotTree(cliStateDir);
   if (expectAuthoritativeNonEmpty) {
     assertAuthoritativeSnapshotNonEmpty(authoritativeBefore);
@@ -2587,7 +2574,7 @@ async function assertCliFailureNoMutation({
   assert.notEqual(result.code, 0, "expected packed CLI invocation to fail");
   assert.match(result.stderr, stderr);
   assert.deepEqual(
-    await authoritativeSnapshot(metadataPath, objectDir),
+    await authoritativeSnapshot(objectDir),
     authoritativeBefore,
     "failed CLI invocation mutated server metadata or object storage"
   );
@@ -2600,9 +2587,9 @@ async function assertCliFailureNoMutation({
   );
 }
 
-async function authoritativeSnapshot(metadataPath, objectDir) {
+async function authoritativeSnapshot(objectDir) {
   return {
-    metadata: await readFile(metadataPath, "utf8"),
+    metadata: JSON.stringify(await readMetadata()),
     objects: await snapshotTree(objectDir)
   };
 }
@@ -2684,8 +2671,91 @@ function assertViewer(viewer, draftId, versionNumber, marker) {
   );
 }
 
-async function readMetadata(metadataPath) {
-  return JSON.parse(await readFile(metadataPath, "utf8"));
+/**
+ * The instance's Postgres, as the assertions read it: every patch, every
+ * version, every token's hash. Started under the temp root on a loopback port
+ * the first time the real server needs it; stopped by `cleanup`.
+ */
+async function startPostgres() {
+  if (postgres) return postgres.databaseUrl;
+  // Imported here, not at the top: embedded-postgres installs process-exiting
+  // signal handlers (async-exit-hook) the moment it loads, which would pre-empt
+  // this harness's own signal latch and cleanup in every process, probes
+  // included. Only a process that starts Postgres pays that, and it takes the
+  // handlers back out — `cleanup` stops Postgres itself.
+  const listenersBefore = new Map(
+    TERMINATION_SIGNALS.map((signal) => [signal, new Set(process.listeners(signal))])
+  );
+  const { default: EmbeddedPostgres } = await import("embedded-postgres");
+  for (const signal of TERMINATION_SIGNALS) {
+    for (const listener of process.listeners(signal)) {
+      if (!listenersBefore.get(signal).has(listener)) process.removeListener(signal, listener);
+    }
+  }
+  const reservation = await reserveLoopbackPort();
+  await new Promise((resolve) => reservation.server.close(() => resolve()));
+  const databaseDir = path.join(tempRoot, "server state", "postgres");
+  await mkdir(databaseDir, { recursive: true });
+  const embedded = new EmbeddedPostgres({
+    databaseDir,
+    port: reservation.port,
+    user: "postgres",
+    password: "postgres",
+    persistent: false,
+    // Durability off: the cluster is disposable, and this is most of its speed.
+    postgresFlags: [
+      "-c",
+      "fsync=off",
+      "-c",
+      "synchronous_commit=off",
+      "-c",
+      "full_page_writes=off"
+    ],
+    onLog() {},
+    onError() {}
+  });
+  await embedded.initialise();
+  await embedded.start();
+  await embedded.createDatabase("patchy");
+  postgres = {
+    embedded,
+    databaseUrl: `postgresql://postgres:postgres@127.0.0.1:${reservation.port}/patchy`
+  };
+  return postgres.databaseUrl;
+}
+
+async function readMetadata() {
+  assert.ok(postgres, "the real server's Postgres must be running to read its metadata");
+  const client = new pg.Client({ connectionString: postgres.databaseUrl });
+  await client.connect();
+  try {
+    const query = async (text) => (await client.query(text)).rows;
+    return {
+      drafts: (
+        await query("SELECT id, account_id, current_version_id FROM patches ORDER BY created_at")
+      ).map((row) => ({
+        id: row.id,
+        accountId: row.account_id,
+        currentVersionId: row.current_version_id
+      })),
+      draftVersions: (
+        await query(
+          "SELECT id, patch_id, version_number, object_key, created_by_api_token_id FROM patch_versions ORDER BY created_at"
+        )
+      ).map((row) => ({
+        id: row.id,
+        draftId: row.patch_id,
+        versionNumber: row.version_number,
+        objectKey: row.object_key,
+        createdByApiTokenId: row.created_by_api_token_id
+      })),
+      apiTokens: (await query("SELECT id, account_id, token_hash FROM api_tokens ORDER BY id")).map(
+        (row) => ({ id: row.id, accountId: row.account_id, tokenHash: row.token_hash })
+      )
+    };
+  } finally {
+    await client.end();
+  }
 }
 
 async function assertStoredDraft(
@@ -3013,6 +3083,13 @@ async function cleanup() {
         Promise.allSettled([...activeChildren].map((child) => waitForClose(child))),
         new Promise((resolve) => setTimeout(resolve, 2_000))
       ]);
+    }
+    if (postgres) {
+      await Promise.race([
+        postgres.embedded.stop().catch(() => {}),
+        new Promise((resolve) => setTimeout(resolve, 15_000))
+      ]);
+      postgres = undefined;
     }
     if (tempRoot) await rm(tempRoot, { recursive: true, force: true });
     activeChildren.clear();
