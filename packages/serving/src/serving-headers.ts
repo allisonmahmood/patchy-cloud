@@ -15,6 +15,9 @@
  * latest-patch URL follows the patch, so it gets a short window that lets an
  * update land on its own.
  */
+import * as Effect from "effect/Effect";
+import * as HttpMiddleware from "effect/unstable/http/HttpMiddleware";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 
 export const PATCH_ROBOTS_TAG = "noindex";
 
@@ -45,3 +48,20 @@ const PATCH_VERSION_CACHE_CONTROL = "public, max-age=31536000, immutable";
 export function servedPatchCacheControl(versionNumber: number | undefined): string {
   return versionNumber === undefined ? LATEST_PATCH_CACHE_CONTROL : PATCH_VERSION_CACHE_CONTROL;
 }
+
+/**
+ * The two headers every response carries, whatever produced it: `nosniff`
+ * always, and `no-store` unless the route chose a cache policy of its own.
+ * The server installs this as global router middleware, outside everything
+ * that can answer a request, so a refusal is covered as well as a page.
+ */
+export const servingHeaders = HttpMiddleware.make((httpEffect) =>
+  Effect.map(httpEffect, (response) =>
+    HttpServerResponse.setHeaders(response, {
+      "x-content-type-options": "nosniff",
+      ...(response.headers["cache-control"] === undefined
+        ? { "cache-control": NO_STORE_CACHE_CONTROL }
+        : {})
+    })
+  )
+);

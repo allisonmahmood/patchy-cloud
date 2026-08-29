@@ -14,10 +14,13 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { migrateDatabase } from "@patchy/db";
+import { migrations as authMigrations } from "@patchy/auth";
+import { migrations as patchesMigrations } from "@patchy/patches";
+import { layerFromUrl, migrate } from "@patchy/sql";
 import { DATABASE_NAME, Plan } from "./plan.js";
 import { alive } from "./process.js";
 import { PG_FLAGS, PG_PASSWORD, PG_USER, applyDevSeed } from "./seed.js";
@@ -42,10 +45,10 @@ export class PostgresExited extends Schema.TaggedError<PostgresExited>()("Postgr
 
 export class DatabaseSetupError extends Schema.TaggedError<DatabaseSetupError>()(
   "DatabaseSetupError",
-  { stage: Schema.Literals(["migrate", "seed"]), cause: Schema.Defect() }
+  { cause: Schema.Defect() }
 ) {
   override get message() {
-    return `The dev database failed to ${this.stage}.`;
+    return "The dev database failed to seed.";
   }
 }
 
@@ -136,15 +139,14 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
   );
   yield* say(`postgres pid=${postgresPid} port=${plan.ports.postgres}`);
 
-  // Effect's Migrator, behind `packages/db`'s Promise seam until the
-  // migrations move into `auth` and `patches`.
-  yield* Effect.tryPromise({
-    try: () => migrateDatabase(plan.databaseUrl),
-    catch: (cause) => new DatabaseSetupError({ stage: "migrate", cause })
-  });
+  // The server migrates on its own way up too; running it here first means
+  // the seed below always lands on the current schema.
+  yield* migrate({ ...authMigrations, ...patchesMigrations }).pipe(
+    Effect.provide(layerFromUrl(Redacted.make(plan.databaseUrl)))
+  );
   yield* Effect.tryPromise({
     try: () => applyDevSeed(plan.databaseUrl),
-    catch: (cause) => new DatabaseSetupError({ stage: "seed", cause })
+    catch: (cause) => new DatabaseSetupError({ cause })
   });
   yield* say("database migrated and seeded");
 

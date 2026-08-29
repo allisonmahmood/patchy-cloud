@@ -15,8 +15,8 @@ const { uploader } = Fixtures.identities;
  * contract's rollback race is forced through. Faults come from the layers
  * below it, never from a switch on this one.
  */
-const memoryStore = Effect.gen(function* () {
-  const objects = yield* Ref.make(new Map<string, string>());
+const memoryStore = (() => {
+  const objects = Ref.makeUnsafe(new Map<string, string>());
   const control = { afterPut: Effect.void as Effect.Effect<void> };
   const service = ContentStore.ContentStore.of({
     put: (key, html) =>
@@ -43,9 +43,9 @@ const memoryStore = Effect.gen(function* () {
     layer: Layer.succeed(ContentStore.ContentStore, service),
     keys: Effect.map(Ref.get(objects), (map) => [...map.keys()].sort())
   };
-});
+})();
 
-const store = Effect.runSync(memoryStore);
+const store = memoryStore;
 const unavailable = (operation: "put" | "delete", key: string) =>
   new ContentStore.StoreUnavailable({ operation, key, cause: new Error("down") });
 

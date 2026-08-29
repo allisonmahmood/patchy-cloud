@@ -2666,7 +2666,7 @@ function assertViewer(viewer, draftId, versionNumber, marker) {
   );
   assert.ok(viewer.body.includes(marker), `viewer is missing ${marker}`);
   assert.ok(
-    viewer.body.includes(`<!-- draft:${draftId} version:${versionNumber} -->`),
+    viewer.body.includes(`<!-- patch:${draftId} version:${versionNumber} -->`),
     "viewer rendered the wrong draft version"
   );
 }

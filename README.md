@@ -12,13 +12,15 @@ Static-page publishing — grown from PatchPage — is the first thing it can de
 
 A Turborepo monorepo managed with pnpm.
 
-- `apps/server` — Fastify HTTP server that validates uploads, stores patches, and renders the sandboxed viewer (`@patchy/server`).
+- `apps/server` — the Effect HTTP server: wires the capability packages into one layer, guards `/api/*`, and listens (`@patchy/server`).
 - `packages/cli` — `@patchy/cli`, the `patchy` command-line publisher.
 - `packages/core` — shared HTML validation, hashing, and ID helpers (`@patchy/core`).
+- `packages/api` — the wire contract: schemas, the `HttpApi`, the derived client (`@patchy/api`).
+- `packages/auth` — tokens, principals, self-service minting, revocation, and the `auth` API group (`@patchy/auth`).
 - `packages/patches` — patches and versions, the upload contract, retention and the expiry sweep, moderation, and the `patches` API group (`@patchy/patches`).
-- `packages/db` — the migration seam that runs every capability's migrations for the Fastify server (`@patchy/db`).
+- `packages/serving` — the serving guarantees, the page routes, and the trusted-proxy schema (`@patchy/serving`).
 - `packages/content-store` — the object store for a patch's bytes, with filesystem and Azure Blob layers (`@patchy/content-store`).
-- `packages/config` — environment-variable parsing and server configuration (`@patchy/config`).
+- `packages/sql`, `packages/analytics`, `packages/limits` — the Postgres client and Migrator, the event service, the rate limiter.
 - `skills/patchy` — the agent skill that teaches an assistant to produce safe static HTML and publish it.
 - `examples/plan.html` — a Patchy-styled starter draft.
 

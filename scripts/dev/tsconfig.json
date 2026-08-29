@@ -1,40 +1,7 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "noEmit": true,
-    "plugins": [
-      {
-        // The runner is Effect code end to end, so the whole-file rules that
-        // stay warnings in tsconfig.base.json (they would red unported Node
-        // code) are errors here. Keep the two lists in sync.
-        "name": "@effect/language-service",
-        "diagnosticSeverity": {
-          "importFromBarrel": "error",
-          "anyUnknownInErrorContext": "error",
-          "unsafeEffectTypeAssertion": "error",
-          "instanceOfSchema": "error",
-          "deterministicKeys": "error",
-          "leakingRequirements": "error",
-          "globalErrorInEffectCatch": "error",
-          "globalErrorInEffectFailure": "error",
-          "unknownInEffectCatch": "error",
-          "preferSchemaOverJson": "error",
-          "globalConsoleInEffect": "error",
-          "globalDateInEffect": "error",
-          "globalRandomInEffect": "error",
-          "globalTimersInEffect": "error",
-          "globalFetchInEffect": "error",
-          "cryptoRandomUUIDInEffect": "error",
-          "nodeBuiltinImport": "error",
-          "globalConsole": "error",
-          "globalDate": "error",
-          "globalRandom": "error",
-          "globalTimers": "error",
-          "globalFetch": "error",
-          "cryptoRandomUUID": "error"
-        }
-      }
-    ]
+    "noEmit": true
   },
   "include": ["src/**/*.ts"]
 }

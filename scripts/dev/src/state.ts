@@ -19,6 +19,8 @@ export const layout = (plan: Plan, path: Path.Path) => ({
 });
 
 const planFileOf = (stateDir: string, path: Path.Path) => path.join(stateDir, "plan.json");
+const decodePlan = Schema.decodeUnknownEffect(PlanJson);
+const encodePlan = Schema.encodeSync(PlanJson);
 
 /** The recorded plan, if a `start` ever ran here. A corrupt file is a decode failure, not `None`. */
 export const readPlan = Effect.fn("readPlan")(function* (stateDir: string) {
@@ -27,14 +29,14 @@ export const readPlan = Effect.fn("readPlan")(function* (stateDir: string) {
   const file = planFileOf(stateDir, path);
   if (!(yield* fs.exists(file))) return Option.none();
   const text = yield* fs.readFileString(file);
-  return Option.some(yield* Schema.decodeUnknownEffect(PlanJson)(text));
+  return Option.some(yield* decodePlan(text));
 });
 
 export const writePlan = Effect.fn("writePlan")(function* (plan: Plan) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   yield* fs.makeDirectory(plan.stateDir, { recursive: true });
-  yield* fs.writeFileString(planFileOf(plan.stateDir, path), Schema.encodeSync(PlanJson)(plan));
+  yield* fs.writeFileString(planFileOf(plan.stateDir, path), encodePlan(plan));
 });
 
 /** `.local/dev/env`: `export`-free `KEY=value` lines, so both `set -a; . env` and dotenv readers take it. */

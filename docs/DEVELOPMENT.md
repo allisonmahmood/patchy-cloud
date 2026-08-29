@@ -80,9 +80,8 @@ detached supervisor under `node --import tsx`; the supervisor owns one Effect
 scope holding Postgres and the server, so either exiting — or `stop`'s
 SIGTERM — tears the other down. Migrations run through Effect's Migrator in
 `packages/sql`: `packages/auth` and `packages/patches` each own theirs, and
-`packages/db`'s `migrateDatabase` seam composes the two records for the
-Fastify server, the runner and the vitest template until the server moves
-onto Effect.
+the server, the runner and the vitest template each spread the two records
+into one run.
 
 ## Running the server by hand
 
@@ -100,7 +99,8 @@ with `dev-token`).
 ## Postgres
 
 `DATABASE_URL` is required: Postgres is the only store. The server migrates
-the database on startup, before it listens.
+the database on startup, before it listens; the packed-CLI e2e starts an
+embedded Postgres of its own under its temp root.
 
 Do not commit real database URLs or generated tokens.
 

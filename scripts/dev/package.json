@@ -9,8 +9,10 @@
   },
   "dependencies": {
     "@effect/platform-node": "catalog:",
+    "@patchy/auth": "workspace:*",
     "@patchy/core": "workspace:*",
-    "@patchy/db": "workspace:*",
+    "@patchy/patches": "workspace:*",
+    "@patchy/sql": "workspace:*",
     "effect": "catalog:",
     "embedded-postgres": "18.4.0-beta.17",
     "pg": "^8.23.0"

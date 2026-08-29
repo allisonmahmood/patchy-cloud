@@ -6,11 +6,10 @@
       "@patchy/analytics": ["./packages/analytics/src/index.ts"],
       "@patchy/api": ["./packages/api/src/index.ts"],
       "@patchy/auth": ["./packages/auth/src/index.ts"],
-      "@patchy/config": ["./packages/config/src/index.ts"],
       "@patchy/core": ["./packages/core/src/index.ts"],
-      "@patchy/db": ["./packages/db/src/index.ts"],
       "@patchy/limits": ["./packages/limits/src/index.ts"],
       "@patchy/patches": ["./packages/patches/src/index.ts"],
+      "@patchy/serving": ["./packages/serving/src/index.ts"],
       "@patchy/sql": ["./packages/sql/src/index.ts"],
       "@patchy/sql/testing": ["./packages/sql/src/testing.ts"],
       "@patchy/content-store": ["./packages/content-store/src/index.ts"]

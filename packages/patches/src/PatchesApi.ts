@@ -3,8 +3,7 @@
  * `Patches`, `Limits` and `Analytics`: the upload, the moderation reads,
  * disable, pin and unpin, delete. The principal comes from the bearer
  * middleware the group declares; this package never authenticates anyone.
- * The hosting server serves the group through its runtime seam until
- * `serving` mounts the whole API.
+ * The hosting server mounts the group with the rest of the API.
  */
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -13,23 +12,31 @@ import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import { Analytics } from "@patchy/analytics";
 import {
+  BadRequest,
   Conflict,
   CurrentIdentity,
+  decodeBody,
+  DisableRequest,
   Forbidden,
   hasScope,
   InvalidHtml,
+  type MalformedBody,
+  malformedBody,
   ModeratedPatch as ModeratedPatchOnWire,
   NotFound,
   Ok,
   PatchQuotaExceeded,
   PatchView,
   PatchyApi,
+  PayloadTooLarge,
   Pinned,
   PrincipalPatches,
-  RateLimited,
+  rateLimited,
+  readBody,
   refuse,
   UploadCreated,
   UploadMetadata,
+  UploadRequest,
   UploadUpdated
 } from "@patchy/api";
 import { validateHtml } from "@patchy/core";
@@ -51,17 +58,25 @@ const forbidden = () =>
 
 const notFound = () => refuse(NotFound, { ok: false, error: "Patch not found." });
 
-const rateLimited = (decision: Limits.ConsumeResult) =>
-  refuse(
-    RateLimited,
-    {
-      ok: false,
-      error: "Rate limit exceeded.",
-      code: "rate_limited",
-      retryAfterSeconds: decision.retryAfterSeconds
-    },
-    { "retry-after": String(decision.retryAfterSeconds) }
-  );
+const decodeUpload = decodeBody(UploadRequest);
+const decodeDisable = decodeBody(DisableRequest);
+/** A disable carries a reason and nothing else; this is room for one. */
+const MAX_DISABLE_BODY_BYTES = 16 * 1024;
+
+/**
+ * Which field failed decides the answer, as it always has: no usable document
+ * is one refusal, an unusable target is another, anything else the generic one.
+ */
+const malformedUpload = (refusal: MalformedBody) =>
+  refuse(BadRequest, {
+    ok: false,
+    error:
+      refusal.field === "patchId"
+        ? "Invalid patch ID."
+        : refusal.field === "html"
+          ? "Missing HTML document."
+          : "Malformed request body."
+  });
 
 const cleanText = (value: string | null | undefined) => {
   const trimmed = value?.trim();
@@ -106,16 +121,55 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
     const publicBaseUrl = yield* PatchesConfig.publicBaseUrl;
     const maxHtmlBytes = yield* PatchesConfig.maxHtmlBytes;
     const createRateLimitPerMinute = yield* PatchesConfig.patchCreateRateLimitPerMinute;
+    const uploadRateLimitPerMinute = yield* PatchesConfig.uploadRateLimitPerMinute;
+    const maxUploadBodyBytes = yield* PatchesConfig.maxUploadBodyBytes;
     const livePatchesPerToken = yield* PatchesConfig.livePatchesPerToken;
 
     const publicUrl = (patchId: string) => `${publicBaseUrl.replace(/\/+$/, "")}/d/${patchId}`;
 
     return (
       handlers
-        .handle("upload", ({ payload }) =>
+        // Raw, because the order matters: the scope and the per-token upload
+        // limit are checked before the body is read, so neither an
+        // under-scoped token nor one past its limit can make the server read
+        // a document, and the body's own refusals keep their wording.
+        .handleRaw("upload", () =>
           Effect.gen(function* () {
             const identity = yield* CurrentIdentity;
             if (!hasScope(identity, "upload")) return forbidden();
+
+            const attempt = yield* limits.consume({
+              key: `authenticated-upload:${identity.apiTokenId}`,
+              limit: uploadRateLimitPerMinute,
+              window: "1 minute"
+            });
+            if (!attempt.allowed) return rateLimited(attempt);
+
+            const json = yield* readBody(maxUploadBodyBytes).pipe(
+              Effect.catchTags({
+                MalformedBody: (refusal) => Effect.succeed(malformedUpload(refusal)),
+                BodyTooLarge: () =>
+                  Effect.succeed(
+                    refuse(PayloadTooLarge, { ok: false, error: "Request body is too large." })
+                  )
+              })
+            );
+            if (HttpServerResponse.isHttpServerResponse(json)) return json;
+            // The wire renamed this field. A client still sending the old name
+            // is told so, rather than answered with a fresh patch it did not ask for.
+            if (typeof json === "object" && json !== null && "draftId" in json) {
+              return refuse(BadRequest, {
+                ok: false,
+                error:
+                  "Unknown field draftId: the wire renamed it to patchId. Send patchId to update that patch."
+              });
+            }
+            const payload = yield* decodeUpload(json).pipe(
+              Effect.catchTags({
+                MalformedBody: (refusal) => Effect.succeed(malformedUpload(refusal))
+              })
+            );
+            if (HttpServerResponse.isHttpServerResponse(payload)) return payload;
 
             const validation = validateHtml(payload.html, { maxBytes: maxHtmlBytes });
             if (!validation.ok) {
@@ -246,10 +300,20 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             });
           })
         )
-        .handle("disable", ({ params, payload }) =>
+        // Raw, so a body the schema refuses — or none at all, which is `{}` —
+        // answers in the wire's words rather than an empty 400.
+        .handleRaw("disable", ({ params }) =>
           Effect.gen(function* () {
             const identity = yield* CurrentIdentity;
             const admin = hasScope(identity, "admin");
+            const payload = yield* readBody(MAX_DISABLE_BODY_BYTES).pipe(
+              Effect.flatMap(decodeDisable),
+              Effect.catchTags({
+                MalformedBody: () => Effect.succeed(malformedBody()),
+                BodyTooLarge: () => Effect.succeed(malformedBody())
+              })
+            );
+            if (HttpServerResponse.isHttpServerResponse(payload)) return payload;
             const disabled = yield* patches
               .disable(
                 params.patchId,

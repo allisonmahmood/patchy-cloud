@@ -1,5 +1,6 @@
 import js from "@eslint/js";
 import tseslint from "typescript-eslint";
+import patchy from "./eslint/plugin.js";
 
 export default tseslint.config(
   js.configs.recommended,
@@ -15,7 +16,11 @@ export default tseslint.config(
         tsconfigRootDir: import.meta.dirname
       }
     },
+    plugins: { patchy },
     rules: {
+      "patchy/namespace-service-imports": "error",
+      "patchy/no-inline-schema-compile": "error",
+      "patchy/no-manual-effect-runtime-in-tests": "error",
       "no-control-regex": "off",
       "no-console": "error",
       "no-restricted-properties": [
@@ -23,7 +28,8 @@ export default tseslint.config(
         {
           object: "process",
           property: "env",
-          message: "Read environment variables in a package entrypoint or packages/config."
+          message:
+            "Read the environment through Effect `Config` in the package that owns the setting."
         }
       ],
       "@typescript-eslint/no-explicit-any": "error",
@@ -59,10 +65,9 @@ export default tseslint.config(
   {
     files: [
       // These test entrypoints clone the host environment before launching child processes.
-      "apps/server/src/render.test.ts",
+      "packages/serving/src/render.test.ts",
       "packages/cli/src/index.test.ts",
-      "packages/cli/src/index.ts",
-      "packages/config/**/*.ts"
+      "packages/cli/src/index.ts"
     ],
     rules: {
       "no-restricted-properties": "off"

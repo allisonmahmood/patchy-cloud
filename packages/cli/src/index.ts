@@ -208,7 +208,7 @@ program
         `Authentication succeeded, but ${apiUrl} returned invalid account details.`
       );
     }
-    report(Schema.encodeSync(Identity)(identity), () => {
+    report(encodeIdentity(identity), () => {
       console.log(`Account: ${identity.accountName} (${identity.accountId})`);
       console.log(`API token: ${identity.apiTokenName} (${identity.apiTokenId})`);
       console.log(`Scopes: ${identity.scopes.join(", ")}`);
@@ -1024,6 +1024,9 @@ function isApiResponseBody(value: unknown): value is ApiResponseBody {
 }
 
 /** A response body read through its wire schema; null when the instance sent something else. */
+/** Compiled once: the identity as the wire spells it, for `--json`. */
+const encodeIdentity = Schema.encodeSync(Identity);
+
 function decodeWire<S extends Schema.Codec<unknown, unknown>>(
   schema: S,
   body: ApiResponseBody

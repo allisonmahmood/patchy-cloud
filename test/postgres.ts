@@ -7,7 +7,11 @@ import EmbeddedPostgres from "embedded-postgres";
 import pg from "pg";
 import { inject } from "vitest";
 import type { TestProject } from "vitest/node";
-import { migrateDatabase } from "../packages/db/src/migrate.js";
+import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
+import { migrations as authMigrations } from "../packages/auth/src/migrations.js";
+import { migrations as patchesMigrations } from "../packages/patches/src/migrations.js";
+import { layerFromUrl, migrate } from "../packages/sql/src/index.js";
 import { PG_FLAGS, PG_PASSWORD, PG_USER, applyDevSeed } from "../scripts/dev/src/seed.js";
 
 const USER = PG_USER;
@@ -47,7 +51,13 @@ export default async function setup(project: TestProject): Promise<() => Promise
 
     const adminUrl = connectionString(port, "postgres");
     const templateUrl = connectionString(port, TEMPLATE_DATABASE);
-    await migrateDatabase(templateUrl);
+    // vitest's globalSetup is not Effect code, so the Migrator runs from a
+    // Promise here: one migrated template, cloned per test database.
+    await Effect.runPromise(
+      migrate({ ...authMigrations, ...patchesMigrations }).pipe(
+        Effect.provide(layerFromUrl(Redacted.make(templateUrl)))
+      )
+    );
     // The same rows `pnpm dev` seeds, so a test and the dev instance agree
     // on which token works.
     await applyDevSeed(templateUrl);

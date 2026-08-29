@@ -10,11 +10,17 @@ RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json tsconfig.base.json ./
 COPY eslint.config.js prettier.config.js ./
 COPY apps/server/package.json apps/server/package.json
+COPY packages/analytics/package.json packages/analytics/package.json
+COPY packages/api/package.json packages/api/package.json
+COPY packages/auth/package.json packages/auth/package.json
 COPY packages/cli/package.json packages/cli/package.json
-COPY packages/config/package.json packages/config/package.json
-COPY packages/core/package.json packages/core/package.json
-COPY packages/db/package.json packages/db/package.json
 COPY packages/content-store/package.json packages/content-store/package.json
+COPY packages/core/package.json packages/core/package.json
+COPY packages/limits/package.json packages/limits/package.json
+COPY packages/patches/package.json packages/patches/package.json
+COPY packages/serving/package.json packages/serving/package.json
+COPY packages/sql/package.json packages/sql/package.json
+COPY scripts/dev/package.json scripts/dev/package.json
 
 RUN pnpm install --frozen-lockfile
 
@@ -23,10 +29,7 @@ COPY . .
 RUN pnpm --filter @patchy/server... build \
   && find \
     apps/server/dist \
-    packages/config/dist \
-    packages/core/dist \
-    packages/db/dist \
-    packages/content-store/dist \
+    packages/*/dist \
     -type f \( -name '*.d.ts' -o -name '*.map' \) -delete \
   && pnpm --filter @patchy/server deploy --prod --legacy /runtime
 

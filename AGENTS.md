@@ -78,7 +78,7 @@ Before writing Effect code, read `node_modules/effect/AGENTS.md` — how Effect 
 
 ### Packages by capability
 
-The target layout, decided on the port map ([#56](https://github.com/allisonmahmood/patchy-cloud/issues/56)): `core` (html-policy, ids), `api` (wire schemas, the `HttpApi`, the derived client), `sql` (client and Migrator, no tables), `auth`, `content-store`, `patches` (owns the expiry sweep), `serving` (pages, reads through `patches`), `analytics`, `limits`, `cli`. Each capability owns its migrations and its `HttpApi` group. `config` and `db` are the pre-port packages and go as the port reaches them.
+The target layout, decided on the port map ([#56](https://github.com/allisonmahmood/patchy-cloud/issues/56)): `core` (html-policy, ids), `api` (wire schemas, the `HttpApi`, the derived client), `sql` (client and Migrator, no tables), `auth`, `content-store`, `patches` (owns the expiry sweep), `serving` (pages, reads through `patches`), `analytics`, `limits`, `cli`. Each capability owns its migrations and its `HttpApi` group; `apps/server` is wiring plus the API guard. The pre-port packages (`config`, `db`) are gone.
 
 ### Tests
 
@@ -86,7 +86,7 @@ The target layout, decided on the port map ([#56](https://github.com/allisonmahm
 
 ### Guardrails
 
-`@effect/language-service` diagnostics fail `pnpm typecheck` (rule set in `tsconfig.base.json`; `effect-language-service patch` runs from `prepare`). `/code-review` loads the service review spec above whenever a diff touches an Effect service.
+`@effect/language-service` diagnostics fail `pnpm typecheck` (rule set in `tsconfig.base.json`, every rule an error; `packages/cli/tsconfig.json` keeps the whole-file Node rules at warning until the CLI ports; `effect-language-service patch` runs from `prepare`). A Node API with no Effect equivalent is allowed per file with `// @effect-diagnostics <rule>:off` and a reason. `pnpm lint` runs the repo's own rules from `eslint/`: namespace imports for Effect and service modules, no manual runtimes in tests, no Schema compiles in function bodies. `/code-review` loads the service review spec above whenever a diff touches an Effect service.
 
 ### Effect RC bumps
 
