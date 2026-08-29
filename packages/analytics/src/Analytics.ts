@@ -31,11 +31,11 @@ import * as PostHogClient from "./PostHogClient.js";
  */
 export type AnalyticsEventName =
   | "token.minted"
-  | "draft.created"
-  | "draft.updated"
-  | "draft.disabled"
-  | "draft.deleted"
-  | "draft.expired";
+  | "patch.created"
+  | "patch.updated"
+  | "patch.disabled"
+  | "patch.deleted"
+  | "patch.expired";
 
 /** What an event property may hold. Ids, sizes, counts, and states — nothing else. */
 export type AnalyticsPropertyValue = string | number | boolean | null;

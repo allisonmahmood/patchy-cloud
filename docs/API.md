@@ -73,7 +73,7 @@ Responses:
 - `201` [UploadCreated](#uploadcreated)
 - `400` { ok: false, error: string }
 - `401` { ok: false, error: "Missing or invalid API token." }
-- `403` { ok: false, error: string } | { ok: false, error: string, code: "live_patch_quota_exceeded", quota: integer }
+- `403` { ok: false, error: string, code: "live_patch_quota_exceeded", quota: integer } | { ok: false, error: string }
 - `404` { ok: false, error: string }
 - `409` { ok: false, error: string }
 - `413` { ok: false, error: string }

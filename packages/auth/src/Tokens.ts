@@ -108,11 +108,6 @@ export class Tokens extends Context.Service<
   }
 >()("@patchy/auth/Tokens") {}
 
-/** Whether an identity holds a scope; `admin` satisfies every scope. */
-export function hasScope(identity: Identity, scope: string): boolean {
-  return identity.scopes.includes(scope) || identity.scopes.includes("admin");
-}
-
 class RecentMints extends Schema.Class<RecentMints>("RecentMints")({ mints: Schema.Int }) {}
 
 class RevocationRow extends Schema.Class<RevocationRow>("RevocationRow")({

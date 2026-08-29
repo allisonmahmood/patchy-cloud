@@ -1,60 +1,34 @@
 /**
  * The `auth` group of the Patchy API, implemented over `Tokens`, `Limits` and
  * `Analytics`: self-service minting with its three guardrails, `/api/me`,
- * admin token issue and revocation. `routes` is the group as one router layer,
- * which the hosting server serves through its seam until `serving` mounts the
- * whole API.
+ * admin token issue and revocation. The hosting server serves it through its
+ * runtime seam until `serving` mounts the whole API.
  */
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
-import * as SchemaAST from "effect/SchemaAST";
-import * as HttpServer from "effect/unstable/http/HttpServer";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
-import * as HttpApi from "effect/unstable/httpapi/HttpApi";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import { Analytics } from "@patchy/analytics";
 import {
-  AuthGroup,
   CreatedToken,
   CurrentIdentity,
   Forbidden,
+  hasScope,
   MintedToken,
   MintQuotaExceeded,
   NotFound,
   PatchyApi,
   RateLimited,
+  refuse,
   RevokedToken,
   SelfServiceDisabled
 } from "@patchy/api";
 import { randomToken } from "@patchy/core";
 import { Limits } from "@patchy/limits";
 import * as AuthConfig from "./AuthConfig.js";
-import * as Authorization from "./Authorization.js";
 import * as Tokens from "./Tokens.js";
-
-const statusOf = SchemaAST.resolveAt<number>("httpApiStatus");
-
-/**
- * A refusal encoded through the wire schema that names it, at that schema's
- * status. Several refusals share one body shape (`Forbidden` and `NotFound`
- * are both `{ ok, error }`), so which schema encodes a body is the only thing
- * that tells them apart — the handler chooses it here rather than failing
- * with a value the endpoint's error union could encode as either.
- */
-const refuse = <S extends Schema.Top & Schema.Codec<unknown, unknown>>(
-  schema: S,
-  body: S["~type.make.in"],
-  headers: Record<string, string> = {}
-) =>
-  HttpServerResponse.jsonUnsafe(Schema.encodeSync(schema)(schema.make(body)), {
-    status: statusOf(schema.ast) ?? 400,
-    headers
-  });
 
 const rateLimited = (decision: Limits.ConsumeResult) =>
   refuse(
@@ -166,7 +140,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "auth", (handlers) =>
         .handle("createToken", ({ payload }) =>
           Effect.gen(function* () {
             const identity = yield* CurrentIdentity;
-            if (!Tokens.hasScope(identity, "admin")) return forbidden();
+            if (!hasScope(identity, "admin")) return forbidden();
 
             const token = newToken();
             const apiToken = yield* tokens
@@ -193,7 +167,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "auth", (handlers) =>
         .handle("revokeToken", ({ params }) =>
           Effect.gen(function* () {
             const identity = yield* CurrentIdentity;
-            if (!Tokens.hasScope(identity, "admin")) return forbidden();
+            if (!hasScope(identity, "admin")) return forbidden();
 
             const revocation = yield* tokens
               .revoke(params.apiTokenId)
@@ -221,16 +195,3 @@ function normalizeScopes(value: ReadonlyArray<string> | undefined): string[] {
   const scopes = (value ?? []).map(cleanText).filter((scope) => scope !== null);
   return scopes.length ? [...new Set(scopes)] : ["upload"];
 }
-
-/** The API with only this group in it: what the seam serves and what `HttpApiBuilder.layer` needs. */
-const AuthOnlyApi = HttpApi.make("patchy").add(AuthGroup);
-
-/**
- * The group's routes as one router layer, bearer middleware bound. Needs
- * `Tokens`, `Limits` and `Analytics` from the caller.
- */
-export const routes = HttpApiBuilder.layer(AuthOnlyApi).pipe(
-  Layer.provide(layer),
-  Layer.provide(Authorization.layer),
-  Layer.provide(HttpServer.layerServices)
-);

@@ -1,0 +1,37 @@
+{
+  "name": "@patchy/patches",
+  "version": "0.0.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "description": "The patches capability: records and versions, the upload contract, visits and the retention clock, pins, moderation, the patch quota, the expiry sweep, the patches/patch_versions migrations, and the patches HttpApi group.",
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@patchy/analytics": "workspace:*",
+    "@patchy/api": "workspace:*",
+    "@patchy/content-store": "workspace:*",
+    "@patchy/core": "workspace:*",
+    "@patchy/limits": "workspace:*",
+    "@patchy/sql": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@patchy/auth": "workspace:*",
+    "vitest": "^4.1.11"
+  }
+}

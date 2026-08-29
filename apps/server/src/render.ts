@@ -1,4 +1,4 @@
-import type { DraftRecord, DraftVersionRecord } from "@patchy/db";
+import type { Patches } from "@patchy/patches";
 
 export function renderHome(options: { publicBaseUrl: string }): string {
   const publicBaseUrl = escapeHtml(options.publicBaseUrl);
@@ -69,16 +69,16 @@ export function renderHome(options: { publicBaseUrl: string }): string {
 }
 
 /**
- * The served-draft page: the uploaded document in a sandboxed frame, and
+ * The served-patch page: the uploaded document in a sandboxed frame, and
  * nothing else. No chrome, no brand credit, no script — this is someone else's
  * published page, and the wrapper's only job is to sandbox it.
  */
-export function renderDraftWrapper(options: {
-  draft: DraftRecord;
-  version: DraftVersionRecord;
+export function renderPatchWrapper(options: {
+  patch: Patches.Patch;
+  version: Patches.PatchVersion;
   html: string;
 }): string {
-  const title = escapeHtml(options.draft.title || "Patchy draft");
+  const title = escapeHtml(options.patch.title || "Patchy draft");
 
   return `<!doctype html>
 <html lang="en">
@@ -114,7 +114,7 @@ export function renderDraftWrapper(options: {
     sandbox=""
     referrerpolicy="no-referrer"
     srcdoc="${escapeAttribute(options.html)}"></iframe>
-  <!-- draft:${escapeHtml(options.draft.id)} version:${Number(options.version.versionNumber)} -->
+  <!-- draft:${escapeHtml(options.patch.id)} version:${Number(options.version.versionNumber)} -->
 </body>
 </html>`;
 }

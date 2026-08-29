@@ -16,19 +16,13 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@patchy/api": "workspace:*",
     "@patchy/auth": "workspace:*",
-    "@patchy/config": "workspace:*",
-    "@patchy/core": "workspace:*",
+    "@patchy/patches": "workspace:*",
     "@patchy/sql": "workspace:*",
-    "effect": "catalog:",
-    "pg": "^8.23.0"
+    "effect": "catalog:"
   },
-  "devDependencies": {
-    "@types/pg": "^8.23.1"
-  }
+  "description": "The migration seam: every capability's migrations as one record, run from a Promise for the code the Effect port has not reached yet."
 }

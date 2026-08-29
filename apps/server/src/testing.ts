@@ -1,39 +1,36 @@
 /**
  * The runtime a test app runs on: no-op analytics unless a test provides its
- * own layer, the in-memory limiter, tokens over the test's store, the
- * filesystem content store under the config's `storageDir` unless a test
- * provides its own layer, the auth capability's configuration read from the
- * app's `ServerConfig`, and — when a test winds a clock — that clock, so a
- * window boundary is crossed without waiting a minute.
+ * own layer, the in-memory limiter, tokens and patches over the test's
+ * Postgres, the filesystem content store under the config's `storageDir`
+ * unless a test provides its own layer, the capabilities' configuration read
+ * from the app's `ServerConfig`, and — when a test winds a clock — that
+ * clock, so a window boundary is crossed without waiting a minute.
  */
 import { Analytics } from "@patchy/analytics";
-import type { Tokens } from "@patchy/auth";
 import type { ServerConfig } from "@patchy/config";
 import { type ContentStore, FilesystemContentStore } from "@patchy/content-store";
-import { JsonTokens, type JsonFilePatchyDb } from "@patchy/db";
-import type { ConfigError } from "effect/Config";
+import { layerFromUrl } from "@patchy/sql";
 import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
-import type { SqlError } from "effect/unstable/sql/SqlError";
+import * as Redacted from "effect/Redacted";
 import { layer, type ServerRuntime } from "./runtime.js";
 
-export type TestRuntimeOptions = {
+export interface TestRuntimeOptions {
   readonly config: ServerConfig;
+  /** A migrated database the test owns. */
+  readonly databaseUrl: string;
   readonly clock?: () => number;
   readonly analytics?: Layer.Layer<Analytics.Analytics>;
   readonly contentStore?: Layer.Layer<ContentStore.ContentStore>;
-} & (
-  | { readonly db: JsonFilePatchyDb }
-  | { readonly tokens: Layer.Layer<Tokens.Tokens, ConfigError | SqlError> }
-);
+}
 
 export function createTestRuntime(options: TestRuntimeOptions): ServerRuntime {
   const services = Layer.orDie(
     layer({
-      tokens: "db" in options ? JsonTokens.layer(options.db) : options.tokens,
+      sql: layerFromUrl(Redacted.make(options.databaseUrl)),
       analytics: options.analytics ?? Analytics.layerNoop,
       contentStore: options.contentStore ?? FilesystemContentStore.layer
     })
@@ -42,8 +39,9 @@ export function createTestRuntime(options: TestRuntimeOptions): ServerRuntime {
   );
   const clock = options.clock;
   if (clock === undefined) return ManagedRuntime.make(services);
-  // Merged rather than only provided: the limiter reads the clock when it
-  // consumes, not when it is built, so the clock has to be in the runtime.
+  // Merged rather than only provided: the limiter and the retention clock
+  // read the clock when they run, not when they are built, so the clock has
+  // to be in the runtime.
   const testClock = Layer.effect(
     Clock.Clock,
     Clock.clockWith((live) =>
@@ -67,6 +65,10 @@ export function createTestRuntime(options: TestRuntimeOptions): ServerRuntime {
 function capabilityEnv(config: ServerConfig): Record<string, string> {
   return {
     PATCHY_STORAGE_DIR: config.storageDir,
+    PATCHY_PUBLIC_BASE_URL: config.publicBaseUrl,
+    PATCHY_MAX_HTML_BYTES: String(config.maxHtmlBytes),
+    PATCHY_PATCH_CREATE_RATE_LIMIT_PER_MINUTE: String(config.patchCreateRateLimitPerMinute),
+    PATCHY_LIVE_PATCHES_PER_TOKEN: String(config.livePatchesPerToken),
     ...(config.bootstrapApiToken === null
       ? {}
       : { PATCHY_BOOTSTRAP_API_TOKEN: config.bootstrapApiToken }),

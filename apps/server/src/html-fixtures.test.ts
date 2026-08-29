@@ -1,22 +1,6 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { getServerConfig } from "@patchy/config";
-import { JsonFilePatchyDb } from "@patchy/db";
+import { describe, expect, it } from "vitest";
 import { readFixtureCorpus } from "../../../test/html-fixtures.mjs";
-import { createApp } from "./app.js";
-import { createTestRuntime } from "./testing.js";
-
-let tempDir: string;
-
-beforeEach(async () => {
-  tempDir = await mkdtemp(path.join(os.tmpdir(), "patchy-html-fixtures-"));
-});
-
-afterEach(async () => {
-  await rm(tempDir, { recursive: true, force: true });
-});
+import { createTestApp } from "./test-harness.js";
 
 describe("HTML fixture corpus", () => {
   it.each([
@@ -24,14 +8,11 @@ describe("HTML fixture corpus", () => {
     { kind: "reject" as const, statusCode: 422 }
   ])("serves the $kind fixtures through the upload policy", async ({ kind, statusCode }) => {
     const token = `${kind}-fixture-token`;
-    const db = new JsonFilePatchyDb(path.join(tempDir, `${kind}-db.json`));
-    await db.initialize(token);
-    const config = getServerConfig({ PATCHY_STORAGE_DIR: path.join(tempDir, "drafts") });
-    const app = createApp({ config, db, runtime: createTestRuntime({ db, config }) });
+    const harness = await createTestApp({ config: { bootstrapApiToken: token } });
 
     try {
       for (const fixture of await readFixtureCorpus(kind)) {
-        const response = await app.inject({
+        const response = await harness.app.inject({
           method: "POST",
           url: "/api/uploads",
           headers: { authorization: `Bearer ${token}` },
@@ -47,8 +28,7 @@ describe("HTML fixture corpus", () => {
         }
       }
     } finally {
-      await app.close();
-      await db.close();
+      await harness.close();
     }
   });
 });

@@ -13,7 +13,7 @@ import * as ContentStore from "./ContentStore.js";
 
 /** Where the objects land. */
 export const rootDir = Config.string("PATCHY_STORAGE_DIR").pipe(
-  Config.withDefault(".local/drafts")
+  Config.withDefault(".local/patches")
 );
 
 export const make = Effect.gen(function* () {

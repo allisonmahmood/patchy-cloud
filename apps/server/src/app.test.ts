@@ -1,22 +1,24 @@
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import { createConnection } from "node:net";
-import os from "node:os";
 import path from "node:path";
 import type { AddressInfo } from "node:net";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { getServerConfig } from "@patchy/config";
 import type { ServerConfig } from "@patchy/config";
+import { Tokens } from "@patchy/auth";
 import { sha256 } from "@patchy/core";
 import { ContentStore, FilesystemContentStore } from "@patchy/content-store";
-import { JsonFilePatchyDb } from "@patchy/db";
-import type { RecordUploadInput, RecordUploadResult } from "@patchy/db";
+import { Patches } from "@patchy/patches";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { createApp, isProtectedApiPath } from "./app.js";
-import { getObject } from "./runtime.js";
-import { createTestRuntime } from "./testing.js";
+import { getObject, sweepExpiredPatches } from "./runtime.js";
+import { createTestApp, type TestApp } from "./test-harness.js";
 
-let tempDir: string;
+/** The bootstrap principal every `dev-token` upload lands on. */
+const OPERATOR = Tokens.BOOTSTRAP_PRINCIPAL_ID;
+/** The dev seed's principal and token: a second, foreign principal every test database holds. */
+const FOREIGN = { accountId: "acct_dev", apiTokenId: "tok_dev" };
 
 const uploadLikeApiTargets: ApiTargetCase[] = [
   {
@@ -47,14 +49,6 @@ const uploadLikeApiTargets: ApiTargetCase[] = [
   }
 ];
 
-beforeEach(async () => {
-  tempDir = await mkdtemp(path.join(os.tmpdir(), "patchy-server-"));
-});
-
-afterEach(async () => {
-  await rm(tempDir, { recursive: true, force: true });
-});
-
 describe("Patchy Cloud server", () => {
   it("classifies router-equivalent protected API request targets", () => {
     expect(isProtectedApiPath("/api?ignored=true")).toBe(true);
@@ -73,13 +67,8 @@ describe("Patchy Cloud server", () => {
   it("returns uploaded draft URLs on the configured public origin", async () => {
     const publicBaseUrl = "https://drafts.self-hoster.dev";
     const apiToken = "configured-origin-token";
-    const config = getServerConfig({
-      PATCHY_PUBLIC_BASE_URL: publicBaseUrl,
-      PATCHY_STORAGE_DIR: path.join(tempDir, "drafts")
-    });
-    const db = new JsonFilePatchyDb(path.join(tempDir, "configured-origin-db.json"));
-    await db.initialize(apiToken);
-    const app = createApp({ config, db, runtime: createTestRuntime({ db, config }) });
+    const harness = await createTestApp({ config: { publicBaseUrl, bootstrapApiToken: apiToken } });
+    const { app } = harness;
 
     const upload = await app.inject({
       method: "POST",
@@ -100,15 +89,12 @@ describe("Patchy Cloud server", () => {
     expect(body.versionNumber).toBe(1);
     expect(body.publicUrl).toBe(`${publicBaseUrl}/d/${body.patchId}`);
 
-    await app.close();
-    await db.close();
+    await harness.close();
   });
 
   it("requires auth for upload and renders uploaded drafts publicly", async () => {
-    const config = testConfig();
-    const db = new JsonFilePatchyDb(path.join(tempDir, "db.json"));
-    await db.initialize("dev-token");
-    const app = createApp({ config, db, runtime: createTestRuntime({ db, config }) });
+    const harness = await createTestApp();
+    const { app } = harness;
 
     const unauth = await app.inject({
       method: "POST",
@@ -138,19 +124,16 @@ describe("Patchy Cloud server", () => {
     expect(viewer.body).toContain("&lt;h1&gt;Hello&lt;/h1&gt;");
     expect(viewer.body).not.toContain("patchy-banner");
 
-    await app.close();
-    await db.close();
+    await harness.close();
   });
 
   it("refuses a tokenless upload under every configuration", async () => {
     for (const allowSelfServiceTokens of [false, true]) {
       const label = `allowSelfServiceTokens=${allowSelfServiceTokens}`;
-      const config = { ...testConfig(), allowSelfServiceTokens };
-      const db = new JsonFilePatchyDb(
-        path.join(tempDir, `tokenless-db-${allowSelfServiceTokens}.json`)
-      );
-      await db.initialize(null);
-      const app = createApp({ config, db, runtime: createTestRuntime({ db, config }) });
+      const harness = await createTestApp({
+        config: { allowSelfServiceTokens, bootstrapApiToken: null }
+      });
+      const { app } = harness;
       const html =
         "<!doctype html><html><head><title>Tokenless</title></head><body>marker</body></html>";
 
@@ -173,17 +156,16 @@ describe("Patchy Cloud server", () => {
           });
         }
       } finally {
-        await app.close();
-        await db.close();
+        await harness.close();
       }
     }
   });
 
   it("does not admit an absent credential on a non-create upload method", async () => {
-    const config = { ...testConfig(), allowSelfServiceTokens: true };
-    const db = new JsonFilePatchyDb(path.join(tempDir, "tokenless-method-db.json"));
-    await db.initialize(null);
-    const app = createApp({ config, db, runtime: createTestRuntime({ db, config }) });
+    const harness = await createTestApp({
+      config: { allowSelfServiceTokens: true, bootstrapApiToken: null }
+    });
+    const { app } = harness;
 
     const response = await app.inject({
       method: "PUT",
@@ -198,15 +180,14 @@ describe("Patchy Cloud server", () => {
       error: "Missing or invalid API token."
     });
 
-    await app.close();
-    await db.close();
+    await harness.close();
   });
 
   it("keeps every upload-like POST target authenticated", async () => {
-    const config = { ...testConfig(), allowSelfServiceTokens: true };
-    const db = new JsonFilePatchyDb(path.join(tempDir, "upload-route-db.json"));
-    await db.initialize(null);
-    const app = createApp({ config, db, runtime: createTestRuntime({ db, config }) });
+    const harness = await createTestApp({
+      config: { allowSelfServiceTokens: true, bootstrapApiToken: null }
+    });
+    const { app } = harness;
 
     try {
       for (const target of [
@@ -227,56 +208,32 @@ describe("Patchy Cloud server", () => {
         });
       }
     } finally {
-      await app.close();
-      await db.close();
+      await harness.close();
     }
   });
 
   it("lets admin credentials alone moderate another principal's draft", async () => {
-    const config = testConfig();
-    const db = new JsonFilePatchyDb(path.join(tempDir, "moderation-db.json"));
-    await db.initialize("admin-token");
-    const admin = await db.findApiTokenByToken("admin-token");
-    if (!admin) throw new Error("Expected bootstrap authentication.");
-    await db.createApiToken({
-      accountId: admin.accountId,
+    const harness = await createTestApp({ config: { bootstrapApiToken: "admin-token" } });
+    const { app } = harness;
+    await harness.createToken({
       name: "Ordinary token",
       token: "ordinary-token",
       scopes: ["upload"]
     });
-    const app = createApp({ config, db, runtime: createTestRuntime({ db, config }) });
-    let foreignDraftSequence = 0;
-    const createForeignDraft = async (): Promise<string> => {
-      foreignDraftSequence += 1;
-      const patchId = `zzzzzzzzzzz${foreignDraftSequence}`;
-      await db.recordUpload({
-        intent: "create",
-        draftId: patchId,
-        versionId: `ver_foreign_${foreignDraftSequence}`,
-        accountId: "acct_foreign",
-        apiTokenId: admin.id,
-        title: "Another principal's draft",
-        objectKey: `drafts/${patchId}/versions/ver_foreign_${foreignDraftSequence}.html`,
-        contentHash: `sha256:foreign${foreignDraftSequence}`,
-        fileSize: 1,
-        filename: "foreign.html",
-        metadata: {},
-        sourceIp: null,
-        userAgent: "vitest"
-      });
-      return patchId;
-    };
+    const createForeignPatch = async (): Promise<string> =>
+      (await harness.upload(seedUpload({ ...FOREIGN, title: "Another principal's patch" })))
+        .patchId;
 
     try {
-      const disableDraftId = await createForeignDraft();
+      const disablePatchId = await createForeignPatch();
       for (const request of [
         { method: "GET" as const, url: "/api/me" },
         {
           method: "POST" as const,
-          url: `/api/patches/${disableDraftId}/disable`,
+          url: `/api/patches/${disablePatchId}/disable`,
           payload: { reason: "tokenless attempt" }
         },
-        { method: "DELETE" as const, url: `/api/patches/${disableDraftId}` }
+        { method: "DELETE" as const, url: `/api/patches/${disablePatchId}` }
       ]) {
         const tokenlessOperation = await app.inject(request);
         expect(tokenlessOperation.statusCode).toBe(401);
@@ -285,7 +242,7 @@ describe("Patchy Cloud server", () => {
       // An ordinary upload token reaches only what it owns.
       const ordinaryDisable = await app.inject({
         method: "POST",
-        url: `/api/patches/${disableDraftId}/disable`,
+        url: `/api/patches/${disablePatchId}/disable`,
         headers: { authorization: "Bearer ordinary-token" },
         payload: { reason: "not a moderator" }
       });
@@ -295,54 +252,43 @@ describe("Patchy Cloud server", () => {
       // which is what completes the moderation loop.
       const adminDisable = await app.inject({
         method: "POST",
-        url: `/api/patches/${disableDraftId}/disable`,
+        url: `/api/patches/${disablePatchId}/disable`,
         headers: { authorization: "Bearer admin-token" },
         payload: { reason: "operator policy" }
       });
       expect(adminDisable.statusCode).toBe(200);
 
-      const deleteDraftId = await createForeignDraft();
+      const deletePatchId = await createForeignPatch();
       const ordinaryDelete = await app.inject({
         method: "DELETE",
-        url: `/api/patches/${deleteDraftId}`,
+        url: `/api/patches/${deletePatchId}`,
         headers: { authorization: "Bearer ordinary-token" }
       });
       expect(ordinaryDelete.statusCode).toBe(404);
 
       const adminDelete = await app.inject({
         method: "DELETE",
-        url: `/api/patches/${deleteDraftId}`,
+        url: `/api/patches/${deletePatchId}`,
         headers: { authorization: "Bearer admin-token" }
       });
       expect(adminDelete.statusCode).toBe(200);
     } finally {
-      await app.close();
-      await db.close();
+      await harness.close();
     }
   });
 
   it("does not downgrade present bad credentials when self-service tokens are allowed", async () => {
-    const config = { ...testConfig(), allowSelfServiceTokens: true };
-    const dbFile = path.join(tempDir, "pre-body-auth-db.json");
-    const db = new JsonFilePatchyDb(dbFile);
-    await db.initialize("admin-token");
-    const adminAuth = await db.findApiTokenByToken("admin-token");
-    expect(adminAuth).not.toBeNull();
-    await db.createApiToken({
-      accountId: adminAuth!.accountId,
-      name: "Read-only token",
-      token: "read-token",
-      scopes: ["read"]
+    const harness = await createTestApp({
+      config: { allowSelfServiceTokens: true, bootstrapApiToken: "admin-token" }
     });
-    await db.createApiToken({
-      accountId: adminAuth!.accountId,
+    const { app } = harness;
+    await harness.createToken({ name: "Read-only token", token: "read-token", scopes: ["read"] });
+    const revoked = await harness.createToken({
       name: "Revoked token",
       token: "revoked-token",
       scopes: ["upload"]
     });
-    await markJsonTokenRevoked(dbFile, "Revoked token");
-
-    const app = createApp({ config, db, runtime: createTestRuntime({ db, config }) });
+    await harness.revokeToken(revoked.id);
     const attackerJson = `{"html":"${"x".repeat(2 * 1024 * 1024)}`;
 
     try {
@@ -426,15 +372,15 @@ describe("Patchy Cloud server", () => {
       });
       expect(goodAfterBadCredentials.statusCode).toBe(201);
     } finally {
-      await app.close();
-      await db.close();
+      await harness.close();
     }
   });
 
   it.each(uploadLikeApiTargets)(
     "rejects insufficient upload scope before parsing upload-like target: $label",
     async (target) => {
-      const { app, db } = await createScopedTokenApp(`insufficient-${target.label}`);
+      const harness = await createScopedTokenApp(`insufficient-${target.label}`);
+      const { app } = harness;
 
       try {
         const response = await oversizedJsonApiRequest(app, {
@@ -448,8 +394,7 @@ describe("Patchy Cloud server", () => {
           error: "API token does not have the required scope."
         });
       } finally {
-        await app.close();
-        await db.close();
+        await harness.close();
       }
     }
   );
@@ -457,7 +402,8 @@ describe("Patchy Cloud server", () => {
   it.each(uploadLikeApiTargets)(
     "returns API 404 before parsing authorized upload-like unmatched target: $label",
     async (target) => {
-      const { app, db } = await createScopedTokenApp(`authorized-${target.label}`);
+      const harness = await createScopedTokenApp(`authorized-${target.label}`);
+      const { app } = harness;
 
       try {
         const response = await oversizedJsonApiRequest(app, {
@@ -471,14 +417,14 @@ describe("Patchy Cloud server", () => {
           error: "Not found."
         });
       } finally {
-        await app.close();
-        await db.close();
+        await harness.close();
       }
     }
   );
 
   it("allows admin scope to satisfy upload-like policy before unmatched API 404", async () => {
-    const { app, db } = await createScopedTokenApp("authorized-admin-upload-like");
+    const harness = await createScopedTokenApp("authorized-admin-upload-like");
+    const { app } = harness;
 
     try {
       const response = await oversizedJsonApiRequest(app, {
@@ -492,16 +438,16 @@ describe("Patchy Cloud server", () => {
         error: "Not found."
       });
     } finally {
-      await app.close();
-      await db.close();
+      await harness.close();
     }
   });
 
   it("pins a draft only for an admin token, and only one that is there", async () => {
-    const { app, db } = await createScopedTokenApp("pin-admin-only");
+    const harness = await createScopedTokenApp("pin-admin-only");
+    const { app } = harness;
 
     try {
-      const created = await createDraft(app, "upload-token", "Pinnable");
+      const created = await createPatch(app, "upload-token", "Pinnable");
       expect(created.statusCode).toBe(201);
       const { patchId } = created.json() as { patchId: string };
 
@@ -537,13 +483,13 @@ describe("Patchy Cloud server", () => {
       expect(missing.statusCode).toBe(404);
       expect(missing.json()).toEqual({ ok: false, error: "Patch not found." });
     } finally {
-      await app.close();
-      await db.close();
+      await harness.close();
     }
   });
 
   it("returns API 404 before parsing arbitrary authenticated unmatched API targets", async () => {
-    const { app, db } = await createScopedTokenApp("authorized-arbitrary-unmatched-api");
+    const harness = await createScopedTokenApp("authorized-arbitrary-unmatched-api");
+    const { app } = harness;
 
     try {
       const response = await oversizedJsonApiRequest(app, {
@@ -560,14 +506,14 @@ describe("Patchy Cloud server", () => {
         error: "Not found."
       });
     } finally {
-      await app.close();
-      await db.close();
+      await harness.close();
     }
   });
 
   it("limits authorized upload-like unmatched targets by stable token identity", async () => {
     let now = 1_000;
-    const { app, db } = await createScopedTokenApp("upload-like-unmatched-limit", () => now);
+    const harness = await createScopedTokenApp("upload-like-unmatched-limit", () => now);
+    const { app } = harness;
     const target: ApiTargetCase = {
       label: "encoded slash upload-like target",
       url: "/api%2Fuploads"
@@ -610,25 +556,17 @@ describe("Patchy Cloud server", () => {
       });
       expect(reset.statusCode).toBe(404);
     } finally {
-      await app.close();
-      await db.close();
+      await harness.close();
     }
   });
 
   it("limits protected API attempts by canonical request IP", async () => {
     let now = 1_000;
-    const config = getServerConfig({
-      PATCHY_TRUST_PROXY: "10.0.0.0/8",
-      PATCHY_STORAGE_DIR: path.join(tempDir, "drafts")
-    });
-    const db = new JsonFilePatchyDb(path.join(tempDir, "protected-limit-db.json"));
-    await db.initialize("unused-token");
-    const app = createApp({
-      config,
-      db,
+    const harness = await createTestApp({
       clock: () => now,
-      runtime: createTestRuntime({ clock: () => now, db, config })
+      config: { trustProxy: trustProxyOf("10.0.0.0/8"), bootstrapApiToken: "unused-token" }
     });
+    const { app } = harness;
 
     try {
       for (let attempt = 0; attempt < 60; attempt += 1) {
@@ -684,22 +622,14 @@ describe("Patchy Cloud server", () => {
       });
       expect(reset.statusCode).toBe(401);
     } finally {
-      await app.close();
-      await db.close();
+      await harness.close();
     }
   });
 
   it("protects unmatched API paths before parsing and counts them once per IP", async () => {
     let now = 1_000;
-    const config = testConfig();
-    const db = new JsonFilePatchyDb(path.join(tempDir, "unmatched-api-limit-db.json"));
-    await db.initialize("dev-token");
-    const app = createApp({
-      config,
-      db,
-      clock: () => now,
-      runtime: createTestRuntime({ clock: () => now, db, config })
-    });
+    const harness = await createTestApp({ clock: () => now });
+    const { app } = harness;
 
     try {
       const upload = await app.inject({
@@ -781,8 +711,7 @@ describe("Patchy Cloud server", () => {
       });
       expect(reset.statusCode).toBe(401);
     } finally {
-      await app.close();
-      await db.close();
+      await harness.close();
     }
   });
 
@@ -806,17 +735,8 @@ describe("Patchy Cloud server", () => {
     "protects router-equivalent unmatched API target before parsing and counts it once per IP: $label",
     async ({ rawHttp, url }) => {
       let now = 1_000;
-      const config = testConfig();
-      const db = new JsonFilePatchyDb(
-        path.join(tempDir, `${url.replaceAll(/[^a-z0-9]/gi, "-")}-db.json`)
-      );
-      await db.initialize("dev-token");
-      const app = createApp({
-        config,
-        db,
-        clock: () => now,
-        runtime: createTestRuntime({ clock: () => now, db, config })
-      });
+      const harness = await createTestApp({ clock: () => now });
+      const { app } = harness;
 
       try {
         const attackerJson = `{"html":"${"x".repeat(2 * 1024 * 1024)}`;
@@ -889,8 +809,7 @@ describe("Patchy Cloud server", () => {
             });
         expect(reset.statusCode).toBe(401);
       } finally {
-        await app.close();
-        await db.close();
+        await harness.close();
       }
     }
   );
@@ -950,18 +869,10 @@ describe("Patchy Cloud server", () => {
     }
   ])(
     "authenticates and limits pre-routing API failure: $label",
-    async ({ label, protectedTarget, method, authenticatedStatus, authenticatedError }) => {
+    async ({ protectedTarget, method, authenticatedStatus, authenticatedError }) => {
       let now = 1_000;
-      const config = testConfig();
-      const caseName = label.replaceAll(/[^a-z0-9]/gi, "-");
-      const db = new JsonFilePatchyDb(path.join(tempDir, `${caseName}-pre-routing-db.json`));
-      await db.initialize("dev-token");
-      const app = createApp({
-        config,
-        db,
-        clock: () => now,
-        runtime: createTestRuntime({ clock: () => now, db, config })
-      });
+      const harness = await createTestApp({ clock: () => now });
+      const { app } = harness;
 
       try {
         const publicMalformed = await rawHttpRequest(app, "/public/%");
@@ -1000,17 +911,14 @@ describe("Patchy Cloud server", () => {
           error: authenticatedError
         });
       } finally {
-        await app.close();
-        await db.close();
+        await harness.close();
       }
     }
   );
 
   it("preserves authenticated 404s for long unmatched API route shapes", async () => {
-    const config = testConfig();
-    const db = new JsonFilePatchyDb(path.join(tempDir, "long-unmatched-api-db.json"));
-    await db.initialize("dev-token");
-    const app = createApp({ config, db, runtime: createTestRuntime({ db, config }) });
+    const harness = await createTestApp();
+    const { app } = harness;
     const longSegment = "x".repeat(101);
 
     try {
@@ -1040,16 +948,13 @@ describe("Patchy Cloud server", () => {
         expect(response.json()).toEqual({ ok: false, error: "Not found." });
       }
     } finally {
-      await app.close();
-      await db.close();
+      await harness.close();
     }
   });
 
   it("does not classify an absolute URI query as an API path or consume its bucket", async () => {
-    const config = testConfig();
-    const db = new JsonFilePatchyDb(path.join(tempDir, "absolute-query-db.json"));
-    await db.initialize("dev-token");
-    const app = createApp({ config, db, runtime: createTestRuntime({ db, config }) });
+    const harness = await createTestApp();
+    const { app } = harness;
 
     try {
       const publicQuery = await rawHttpRequest(app, "http://host?x=/api/%");
@@ -1068,29 +973,21 @@ describe("Patchy Cloud server", () => {
       expect(limited.statusCode).toBe(429);
       expect(limited.headers["retry-after"]).toBe("60");
     } finally {
-      await app.close();
-      await db.close();
+      await harness.close();
     }
   });
 
   it("limits authenticated upload attempts by stable token identity", async () => {
     let now = 1_000;
-    const config = testConfig();
-    const db = new JsonFilePatchyDb(path.join(tempDir, "upload-limit-db.json"));
-    await db.initialize("upload-token");
-    const auth = await db.findApiTokenByToken("upload-token");
-    expect(auth).not.toBeNull();
-    await db.createApiToken({
-      accountId: auth!.accountId,
+    const harness = await createTestApp({
+      clock: () => now,
+      config: { bootstrapApiToken: "upload-token" }
+    });
+    const { app } = harness;
+    await harness.createToken({
       name: "Other upload token",
       token: "other-upload-token",
       scopes: ["upload"]
-    });
-    const app = createApp({
-      config,
-      db,
-      clock: () => now,
-      runtime: createTestRuntime({ clock: () => now, db, config })
     });
 
     try {
@@ -1115,7 +1012,11 @@ describe("Patchy Cloud server", () => {
         expect(response.statusCode).toBe(400);
       }
 
-      await db.initialize("rotated-upload-token");
+      // The bootstrap token rotates: same token id, new plaintext.
+      await harness.sql("UPDATE api_tokens SET token_hash = $1 WHERE id = $2", [
+        sha256("rotated-upload-token"),
+        Tokens.BOOTSTRAP_API_TOKEN_ID
+      ]);
 
       for (let attempt = 0; attempt < 10; attempt += 1) {
         const response = await app.inject({
@@ -1163,27 +1064,22 @@ describe("Patchy Cloud server", () => {
       });
       expect(reset.statusCode).toBe(400);
     } finally {
-      await app.close();
-      await db.close();
+      await harness.close();
     }
   });
 
   it("composes protected-API and token upload limits independently", async () => {
     let now = 1_000;
-    const config = {
-      ...testConfig(),
-      allowSelfServiceTokens: true,
-      protectedApiRateLimitPerMinute: 2,
-      authenticatedUploadRateLimitPerMinute: 1
-    };
-    const db = new JsonFilePatchyDb(path.join(tempDir, "upload-limit-db.json"));
-    await db.initialize("upload-token");
-    const app = createApp({
-      config,
-      db,
+    const harness = await createTestApp({
       clock: () => now,
-      runtime: createTestRuntime({ clock: () => now, db, config })
+      config: {
+        allowSelfServiceTokens: true,
+        protectedApiRateLimitPerMinute: 2,
+        authenticatedUploadRateLimitPerMinute: 1,
+        bootstrapApiToken: "upload-token"
+      }
     });
+    const { app } = harness;
 
     try {
       const authenticated = await app.inject({
@@ -1223,38 +1119,33 @@ describe("Patchy Cloud server", () => {
       });
       expect(resetAuthenticated.statusCode).toBe(201);
     } finally {
-      await app.close();
-      await db.close();
+      await harness.close();
     }
   });
 
   it("limits draft creates per minute per token without counting updates", async () => {
     let now = 1_000;
-    const config = { ...testConfig(), draftCreateRateLimitPerMinute: 2 };
-    const db = new JsonFilePatchyDb(path.join(tempDir, "create-limit-db.json"));
-    await db.initialize("dev-token");
-    const app = createApp({
-      config,
-      db,
+    const harness = await createTestApp({
       clock: () => now,
-      runtime: createTestRuntime({ clock: () => now, db, config })
+      config: { patchCreateRateLimitPerMinute: 2 }
     });
+    const { app } = harness;
 
     try {
-      const first = await createDraft(app, "dev-token", "First");
+      const first = await createPatch(app, "dev-token", "First");
       expect(first.statusCode).toBe(201);
       const { patchId } = first.json() as { patchId: string };
 
       // Updates in the same window must not spend any of the create budget.
       for (let revision = 0; revision < 3; revision += 1) {
-        const update = await updateDraft(app, "dev-token", patchId, `First v${revision}`);
+        const update = await updatePatch(app, "dev-token", patchId, `First v${revision}`);
         expect(update.statusCode).toBe(200);
       }
 
       // Still room for the window's second create, so the updates cost nothing.
-      expect((await createDraft(app, "dev-token", "Second")).statusCode).toBe(201);
+      expect((await createPatch(app, "dev-token", "Second")).statusCode).toBe(201);
 
-      const limited = await createDraft(app, "dev-token", "Third");
+      const limited = await createPatch(app, "dev-token", "Third");
       expect(limited.statusCode).toBe(429);
       expect(limited.headers["retry-after"]).toBe("60");
       expect(limited.json()).toEqual({
@@ -1265,32 +1156,28 @@ describe("Patchy Cloud server", () => {
       });
 
       // An update still succeeds once the create bucket is empty.
-      expect((await updateDraft(app, "dev-token", patchId, "First again")).statusCode).toBe(200);
+      expect((await updatePatch(app, "dev-token", patchId, "First again")).statusCode).toBe(200);
 
       now = 61_000;
-      const afterWindow = await createDraft(app, "dev-token", "Fourth");
+      const afterWindow = await createPatch(app, "dev-token", "Fourth");
       expect(afterWindow.statusCode).toBe(201);
     } finally {
-      await app.close();
-      await db.close();
+      await harness.close();
     }
   });
 
   it("caps live drafts per token from the database, across a restart", async () => {
-    const config = { ...testConfig(), liveDraftsPerToken: 2 };
-    const dbFile = path.join(tempDir, "live-cap-db.json");
     // `dev-token` is the admin bootstrap token: the cap has no admin exemption.
-    const db = new JsonFilePatchyDb(dbFile);
-    await db.initialize("dev-token");
-    const app = createApp({ config, db, runtime: createTestRuntime({ db, config }) });
+    let harness = await createTestApp({ config: { livePatchesPerToken: 2 } });
+    const { app } = harness;
 
     try {
-      const one = await createDraft(app, "dev-token", "One");
+      const one = await createPatch(app, "dev-token", "One");
       expect(one.statusCode).toBe(201);
       const { patchId } = one.json() as { patchId: string };
-      expect((await createDraft(app, "dev-token", "Two")).statusCode).toBe(201);
+      expect((await createPatch(app, "dev-token", "Two")).statusCode).toBe(201);
 
-      const overQuota = await createDraft(app, "dev-token", "Three");
+      const overQuota = await createPatch(app, "dev-token", "Three");
       expect(overQuota.statusCode).toBe(403);
       expect(overQuota.json()).toEqual({
         ok: false,
@@ -1302,58 +1189,40 @@ describe("Patchy Cloud server", () => {
 
       // The quota bounds creates only: at the ceiling, rewriting a draft the
       // token already holds still succeeds.
-      expect((await updateDraft(app, "dev-token", patchId, "One revised")).statusCode).toBe(200);
-    } finally {
-      await app.close();
-      await db.close();
-    }
+      expect((await updatePatch(app, "dev-token", patchId, "One revised")).statusCode).toBe(200);
 
-    // A restart drops every in-memory bucket. The cap is recounted from the
-    // database, so it is still there.
-    const restartedDb = new JsonFilePatchyDb(dbFile);
-    await restartedDb.initialize("dev-token");
-    const restarted = createApp({
-      config,
-      db: restartedDb,
-      runtime: createTestRuntime({ db: restartedDb, config })
-    });
-
-    try {
-      const stillOverQuota = await createDraft(restarted, "dev-token", "Three again");
+      // A restart drops every in-memory bucket. The cap is recounted from the
+      // database, so it is still there.
+      harness = await harness.restart();
+      const stillOverQuota = await createPatch(harness.app, "dev-token", "Three again");
       expect(stillOverQuota.statusCode).toBe(403);
       expect(stillOverQuota.json()).toMatchObject({
         code: "live_patch_quota_exceeded",
         quota: 2
       });
     } finally {
-      await restarted.close();
-      await restartedDb.close();
+      await harness.close();
     }
   });
 
   it("returns live-draft cap room when a draft is disabled or deleted", async () => {
-    const config = { ...testConfig(), liveDraftsPerToken: 1 };
-    const db = new JsonFilePatchyDb(path.join(tempDir, "live-cap-release-db.json"));
-    await db.initialize("dev-token");
-    const auth = await db.findApiTokenByToken("dev-token");
-    expect(auth).not.toBeNull();
-    await db.createApiToken({
-      accountId: auth!.accountId,
+    const harness = await createTestApp({ config: { livePatchesPerToken: 1 } });
+    const { app } = harness;
+    await harness.createToken({
       name: "Sibling upload token",
       token: "sibling-token",
       scopes: ["upload"]
     });
-    const app = createApp({ config, db, runtime: createTestRuntime({ db, config }) });
 
     try {
-      const created = await createDraft(app, "dev-token", "Only one");
+      const created = await createPatch(app, "dev-token", "Only one");
       expect(created.statusCode).toBe(201);
       const { patchId } = created.json() as { patchId: string };
-      expect((await createDraft(app, "dev-token", "Blocked")).statusCode).toBe(403);
+      expect((await createPatch(app, "dev-token", "Blocked")).statusCode).toBe(403);
 
       // The cap is per token, not per account: a sibling token on the same
       // account still has its own room.
-      expect((await createDraft(app, "sibling-token", "Sibling")).statusCode).toBe(201);
+      expect((await createPatch(app, "sibling-token", "Sibling")).statusCode).toBe(201);
 
       const disable = await app.inject({
         method: "POST",
@@ -1363,24 +1232,23 @@ describe("Patchy Cloud server", () => {
       });
       expect(disable.statusCode).toBe(200);
 
-      const afterDisable = await createDraft(app, "dev-token", "After disable");
+      const afterDisable = await createPatch(app, "dev-token", "After disable");
       expect(afterDisable.statusCode).toBe(201);
-      const replacementDraftId = (afterDisable.json() as { patchId: string }).patchId;
-      expect((await createDraft(app, "dev-token", "Blocked again")).statusCode).toBe(403);
+      const replacementPatchId = (afterDisable.json() as { patchId: string }).patchId;
+      expect((await createPatch(app, "dev-token", "Blocked again")).statusCode).toBe(403);
 
       const removed = await app.inject({
         method: "DELETE",
-        url: `/api/patches/${replacementDraftId}`,
+        url: `/api/patches/${replacementPatchId}`,
         headers: { authorization: "Bearer dev-token" }
       });
       expect(removed.statusCode).toBe(200);
 
-      expect((await createDraft(app, "dev-token", "After delete")).statusCode).toBe(201);
+      expect((await createPatch(app, "dev-token", "After delete")).statusCode).toBe(201);
       // Nothing the first token did moved the sibling's own tally.
-      expect((await createDraft(app, "sibling-token", "Sibling blocked")).statusCode).toBe(403);
+      expect((await createPatch(app, "sibling-token", "Sibling blocked")).statusCode).toBe(403);
     } finally {
-      await app.close();
-      await db.close();
+      await harness.close();
     }
   });
 
@@ -1390,8 +1258,7 @@ describe("Patchy Cloud server", () => {
     });
 
     expect(sourceIp).toEqual({
-      versionSourceIp: "192.0.2.10",
-      eventSourceIp: "192.0.2.10"
+      versionSourceIp: "192.0.2.10"
     });
   });
 
@@ -1415,8 +1282,7 @@ describe("Patchy Cloud server", () => {
     });
 
     expect(sourceIp).toEqual({
-      versionSourceIp: "192.0.2.10",
-      eventSourceIp: "192.0.2.10"
+      versionSourceIp: "192.0.2.10"
     });
   });
 
@@ -1428,8 +1294,7 @@ describe("Patchy Cloud server", () => {
     });
 
     expect(sourceIp).toEqual({
-      versionSourceIp: "198.51.100.7",
-      eventSourceIp: "198.51.100.7"
+      versionSourceIp: "198.51.100.7"
     });
   });
 
@@ -1441,8 +1306,7 @@ describe("Patchy Cloud server", () => {
     });
 
     expect(sourceIp).toEqual({
-      versionSourceIp: "203.0.113.9",
-      eventSourceIp: "203.0.113.9"
+      versionSourceIp: "203.0.113.9"
     });
   });
 
@@ -1454,8 +1318,7 @@ describe("Patchy Cloud server", () => {
     });
 
     expect(sourceIp).toEqual({
-      versionSourceIp: "192.0.2.10",
-      eventSourceIp: "192.0.2.10"
+      versionSourceIp: "192.0.2.10"
     });
   });
 
@@ -1483,10 +1346,8 @@ describe("Patchy Cloud server", () => {
     }
   );
   it("rejects an unknown client-supplied draft ID without creating a public draft", async () => {
-    const config = testConfig();
-    const db = new JsonFilePatchyDb(path.join(tempDir, "unknown-update-db.json"));
-    await db.initialize("dev-token");
-    const app = createApp({ config, db, runtime: createTestRuntime({ db, config }) });
+    const harness = await createTestApp();
+    const { app, config } = harness;
     const patchId = "abcdefghijkl";
 
     const upload = await app.inject({
@@ -1505,48 +1366,21 @@ describe("Patchy Cloud server", () => {
     expect(viewer.statusCode).toBe(404);
     expect(await listFiles(config.storageDir)).toEqual([]);
 
-    await app.close();
-    await db.close();
+    await harness.close();
   });
 
   it("returns the same response for unavailable update targets", async () => {
-    const config = testConfig();
-    const db = new JsonFilePatchyDb(path.join(tempDir, "unavailable-update-db.json"));
-    await db.initialize("dev-token");
-    const auth = await db.findApiTokenByToken("dev-token");
-    if (!auth) throw new Error("Expected bootstrap authentication.");
-    const app = createApp({ config, db, runtime: createTestRuntime({ db, config }) });
-    const unknownDraftId = "aaaaaaaaaaaa";
-    const foreignDraftId = "bbbbbbbbbbbb";
-    const deletedDraftId = "cccccccccccc";
-    const disabledDraftId = "dddddddddddd";
-
-    for (const [patchId, accountId] of [
-      [foreignDraftId, "acct_another"],
-      [deletedDraftId, auth.accountId],
-      [disabledDraftId, auth.accountId]
-    ]) {
-      await db.recordUpload({
-        intent: "create",
-        draftId: patchId,
-        versionId: `ver_${patchId}`,
-        accountId,
-        apiTokenId: auth.id,
-        title: "Existing target",
-        objectKey: `drafts/${patchId}/versions/seed.html`,
-        contentHash: "sha256:seed",
-        fileSize: 1,
-        filename: "seed.html",
-        metadata: {},
-        sourceIp: null,
-        userAgent: "vitest"
-      });
-    }
-    await db.deleteDraft(deletedDraftId, auth.accountId);
-    await db.disableDraft(disabledDraftId, auth.accountId, "policy");
+    const harness = await createTestApp();
+    const { app } = harness;
+    const unknownPatchId = "aaaaaaaaaaaa";
+    const foreignPatchId = (await harness.upload(seedUpload(FOREIGN))).patchId;
+    const deletedPatchId = (await harness.upload(seedUpload(OPERATOR_UPLOAD))).patchId;
+    const disabledPatchId = (await harness.upload(seedUpload(OPERATOR_UPLOAD))).patchId;
+    await harness.delete(deletedPatchId, OPERATOR);
+    await harness.disable(disabledPatchId, OPERATOR, "policy");
 
     const responses = await Promise.all(
-      [unknownDraftId, foreignDraftId, deletedDraftId, disabledDraftId].map((patchId) =>
+      [unknownPatchId, foreignPatchId, deletedPatchId, disabledPatchId].map((patchId) =>
         app.inject({
           method: "POST",
           url: "/api/uploads",
@@ -1564,15 +1398,12 @@ describe("Patchy Cloud server", () => {
       expect(response.json()).toEqual({ ok: false, error: "Patch not found." });
     }
 
-    await app.close();
-    await db.close();
+    await harness.close();
   });
 
   it("updates an existing owned draft and preserves its previous version", async () => {
-    const config = testConfig();
-    const db = new JsonFilePatchyDb(path.join(tempDir, "owned-update-db.json"));
-    await db.initialize("dev-token");
-    const app = createApp({ config, db, runtime: createTestRuntime({ db, config }) });
+    const harness = await createTestApp();
+    const { app } = harness;
     const headers = { authorization: "Bearer dev-token" };
 
     const created = await app.inject({
@@ -1618,19 +1449,13 @@ describe("Patchy Cloud server", () => {
     expect(originalViewer.statusCode).toBe(200);
     expect(originalViewer.body).toContain("original-marker");
 
-    await app.close();
-    await db.close();
+    await harness.close();
   });
 
   it("does not hold metadata locks while object storage is slow", async () => {
-    const config = testConfig();
-    const db = new JsonFilePatchyDb(path.join(tempDir, "slow-storage-db.json"));
-    await db.initialize("dev-token");
-    const auth = await db.findApiTokenByToken("dev-token");
-    if (!auth) throw new Error("Expected bootstrap authentication.");
     const storage = controlledContentStore();
-    const runtime = createTestRuntime({ db, config, contentStore: storage.layer });
-    const app = createApp({ config, db, runtime });
+    const harness = await createTestApp({ contentStore: storage.layer });
+    const { app } = harness;
     const created = await app.inject({
       method: "POST",
       url: "/api/uploads",
@@ -1640,22 +1465,9 @@ describe("Patchy Cloud server", () => {
       }
     });
     const createdBody = created.json();
-    const unrelatedDraftId = "eeeeeeeeeeee";
-    await db.recordUpload({
-      intent: "create",
-      draftId: unrelatedDraftId,
-      versionId: "ver_unrelated",
-      accountId: auth.accountId,
-      apiTokenId: auth.id,
-      title: "Unrelated",
-      objectKey: `drafts/${unrelatedDraftId}/versions/ver_unrelated.html`,
-      contentHash: "sha256:unrelated",
-      fileSize: 1,
-      filename: "unrelated.html",
-      metadata: {},
-      sourceIp: null,
-      userAgent: "vitest"
-    });
+    const unrelatedPatchId = (
+      await harness.upload(seedUpload({ ...OPERATOR_UPLOAD, title: "Unrelated" }))
+    ).patchId;
 
     const writeStarted = Promise.withResolvers<void>();
     const allowWrite = Promise.withResolvers<void>();
@@ -1676,7 +1488,7 @@ describe("Patchy Cloud server", () => {
       });
       await writeStarted.promise;
 
-      const disable = db.disableDraft(unrelatedDraftId, auth.accountId, "unrelated policy action");
+      const disable = harness.disable(unrelatedPatchId, OPERATOR, "unrelated policy action");
       // Await the operation itself rather than racing the filesystem against a
       // short wall-clock deadline. The test timeout remains the deadlock watchdog.
       await expect(disable).resolves.toBe(true);
@@ -1685,20 +1497,14 @@ describe("Patchy Cloud server", () => {
       await expect(update).resolves.toMatchObject({ statusCode: 200 });
     } finally {
       allowWrite.resolve();
-      await app.close();
-      await db.close();
+      await harness.close();
     }
   }, 10_000);
 
   it("removes only the new object when final eligibility recheck rejects", async () => {
-    const config = testConfig();
-    const db = new JsonFilePatchyDb(path.join(tempDir, "race-cleanup-db.json"));
-    await db.initialize("dev-token");
-    const auth = await db.findApiTokenByToken("dev-token");
-    if (!auth) throw new Error("Expected bootstrap authentication.");
     const storage = controlledContentStore();
-    const runtime = createTestRuntime({ db, config, contentStore: storage.layer });
-    const app = createApp({ config, db, runtime });
+    const harness = await createTestApp({ contentStore: storage.layer });
+    const { app, config, runtime } = harness;
     const created = await app.inject({
       method: "POST",
       url: "/api/uploads",
@@ -1708,9 +1514,9 @@ describe("Patchy Cloud server", () => {
       }
     });
     const createdBody = created.json();
-    const originalKey = `drafts/${createdBody.patchId}/versions/${createdBody.versionId}.html`;
+    const originalKey = `patches/${createdBody.patchId}/versions/${createdBody.versionId}.html`;
     storage.control.afterPut = async () => {
-      await db.disableDraft(createdBody.patchId, auth.accountId, "policy race");
+      await harness.disable(createdBody.patchId, OPERATOR, "policy race");
     };
 
     const update = await app.inject({
@@ -1728,17 +1534,13 @@ describe("Patchy Cloud server", () => {
     expect(await listFiles(config.storageDir)).toEqual([originalKey]);
     await expect(getObject(runtime, originalKey)).resolves.toContain("original");
 
-    await app.close();
-    await db.close();
+    await harness.close();
   });
 
   it("does not mutate metadata when object storage fails", async () => {
-    const config = testConfig();
-    const db = new JsonFilePatchyDb(path.join(tempDir, "storage-failure-db.json"));
-    await db.initialize("dev-token");
     const storage = controlledContentStore();
-    const runtime = createTestRuntime({ db, config, contentStore: storage.layer });
-    const app = createApp({ config, db, runtime });
+    const harness = await createTestApp({ contentStore: storage.layer });
+    const { app, config } = harness;
     const created = await app.inject({
       method: "POST",
       url: "/api/uploads",
@@ -1761,25 +1563,18 @@ describe("Patchy Cloud server", () => {
     });
 
     expect(update.statusCode).toBe(500);
-    const current = await db.findDraftVersion(createdBody.patchId);
-    expect(current.version?.id).toBe(createdBody.versionId);
+    expect((await harness.currentVersion(createdBody.patchId))?.id).toBe(createdBody.versionId);
     expect(await listFiles(config.storageDir)).toEqual([
-      `drafts/${createdBody.patchId}/versions/${createdBody.versionId}.html`
+      `patches/${createdBody.patchId}/versions/${createdBody.versionId}.html`
     ]);
 
-    await app.close();
-    await db.close();
+    await harness.close();
   });
 
   it("surfaces cleanup failure instead of masking an orphan as a safe rejection", async () => {
-    const config = testConfig();
-    const db = new JsonFilePatchyDb(path.join(tempDir, "cleanup-failure-db.json"));
-    await db.initialize("dev-token");
-    const auth = await db.findApiTokenByToken("dev-token");
-    if (!auth) throw new Error("Expected bootstrap authentication.");
     const storage = controlledContentStore();
-    const runtime = createTestRuntime({ db, config, contentStore: storage.layer });
-    const app = createApp({ config, db, runtime });
+    const harness = await createTestApp({ contentStore: storage.layer });
+    const { app, config } = harness;
     const created = await app.inject({
       method: "POST",
       url: "/api/uploads",
@@ -1790,7 +1585,7 @@ describe("Patchy Cloud server", () => {
     });
     const createdBody = created.json();
     storage.control.afterPut = async () => {
-      await db.disableDraft(createdBody.patchId, auth.accountId, "policy race");
+      await harness.disable(createdBody.patchId, OPERATOR, "policy race");
     };
     storage.control.deleteError = new Error("Cleanup unavailable.");
 
@@ -1808,54 +1603,12 @@ describe("Patchy Cloud server", () => {
     expect(update.json()).toEqual({ ok: false, error: "Internal server error." });
     expect(await listFiles(config.storageDir)).toHaveLength(2);
 
-    await app.close();
-    await db.close();
-  });
-
-  it("keeps the new object when metadata commit outcome is indeterminate", async () => {
-    const config = testConfig();
-    const db = new CommitIndeterminateJsonDb(path.join(tempDir, "indeterminate-db.json"));
-    await db.initialize("dev-token");
-    const storage = controlledContentStore();
-    const runtime = createTestRuntime({ db, config, contentStore: storage.layer });
-    const app = createApp({ config, db, runtime });
-    const created = await app.inject({
-      method: "POST",
-      url: "/api/uploads",
-      headers: { authorization: "Bearer dev-token" },
-      payload: {
-        html: "<!doctype html><html><head><title>Original</title></head><body></body></html>"
-      }
-    });
-    const createdBody = created.json();
-    db.throwAfterRecord = true;
-
-    const update = await app.inject({
-      method: "POST",
-      url: "/api/uploads",
-      headers: { authorization: "Bearer dev-token" },
-      payload: {
-        patchId: createdBody.patchId,
-        html: "<!doctype html><html><head><title>Committed</title></head><body>committed</body></html>"
-      }
-    });
-
-    expect(update.statusCode).toBe(500);
-    const current = await db.findDraftVersion(createdBody.patchId);
-    expect(current.version?.versionNumber).toBe(2);
-    if (!current.version) throw new Error("Expected committed version.");
-    expect(await listFiles(config.storageDir)).toHaveLength(2);
-    await expect(getObject(runtime, current.version.objectKey)).resolves.toContain("committed");
-
-    await app.close();
-    await db.close();
+    await harness.close();
   });
 
   it("accepts the released CLI null draft marker as server-generated create intent", async () => {
-    const config = testConfig();
-    const db = new JsonFilePatchyDb(path.join(tempDir, "legacy-null-db.json"));
-    await db.initialize("dev-token");
-    const app = createApp({ config, db, runtime: createTestRuntime({ db, config }) });
+    const harness = await createTestApp();
+    const { app } = harness;
 
     const upload = await app.inject({
       method: "POST",
@@ -1877,17 +1630,12 @@ describe("Patchy Cloud server", () => {
     expect(response.patchId).toMatch(/^[a-z0-9]{12}$/);
     expect(response.versionNumber).toBe(1);
 
-    await app.close();
-    await db.close();
+    await harness.close();
   });
 
   it("names the rename to a client still sending draftId, instead of creating", async () => {
-    const config = testConfig();
-    const db = new JsonFilePatchyDb(path.join(tempDir, "legacy-key-db.json"));
-    await db.initialize("dev-token");
-    const auth = await db.findApiTokenByToken("dev-token");
-    if (!auth) throw new Error("Expected bootstrap authentication.");
-    const app = createApp({ config, db, runtime: createTestRuntime({ db, config }) });
+    const harness = await createTestApp();
+    const { app } = harness;
 
     const upload = await app.inject({
       method: "POST",
@@ -1905,16 +1653,19 @@ describe("Patchy Cloud server", () => {
       error:
         "Unknown field draftId: the wire renamed it to patchId. Send patchId to update that patch."
     });
-    expect(await db.countLiveDraftsByCreatorApiToken(auth.id)).toBe(0);
-    await app.close();
-    await db.close();
+    expect(
+      await harness.run(
+        Effect.flatMap(Patches.Patches, (patches) =>
+          patches.countLive(Tokens.BOOTSTRAP_API_TOKEN_ID)
+        )
+      )
+    ).toBe(0);
+    await harness.close();
   });
 
   it("rejects invalid non-null draft IDs instead of treating them as creates", async () => {
-    const config = testConfig();
-    const db = new JsonFilePatchyDb(path.join(tempDir, "explicit-intent-db.json"));
-    await db.initialize("dev-token");
-    const app = createApp({ config, db, runtime: createTestRuntime({ db, config }) });
+    const harness = await createTestApp();
+    const { app } = harness;
 
     for (const patchId of ["", 123]) {
       const upload = await app.inject({
@@ -1931,12 +1682,11 @@ describe("Patchy Cloud server", () => {
       expect(upload.json()).toEqual({ ok: false, error: "Invalid patch ID." });
     }
 
-    await app.close();
-    await db.close();
+    await harness.close();
   });
 
   it("serves drafts noindexed, unwatched, and open to machines", async () => {
-    const served = await createServedDraft("serving-guarantees");
+    const served = await createServedPatch("serving-guarantees");
 
     for (const url of [served.latestUrl, served.versionUrl]) {
       const anonymous = await served.app.inject({ method: "GET", url });
@@ -1968,7 +1718,7 @@ describe("Patchy Cloud server", () => {
   });
 
   it("caches version URLs immutably, latest-draft URLs briefly, and everything else never", async () => {
-    const served = await createServedDraft("serving-cache-headers");
+    const served = await createServedPatch("serving-cache-headers");
 
     const latest = await served.app.inject({ method: "GET", url: served.latestUrl });
     expect(latest.statusCode).toBe(200);
@@ -1985,9 +1735,9 @@ describe("Patchy Cloud server", () => {
     expect(missingVersion.statusCode).toBe(404);
     expect(missingVersion.headers["cache-control"]).toBe("no-store");
 
-    const missingDraft = await served.app.inject({ method: "GET", url: "/d/doesnotexist1" });
-    expect(missingDraft.statusCode).toBe(404);
-    expect(missingDraft.headers["cache-control"]).toBe("no-store");
+    const missingPatch = await served.app.inject({ method: "GET", url: "/d/doesnotexist1" });
+    expect(missingPatch.statusCode).toBe(404);
+    expect(missingPatch.headers["cache-control"]).toBe("no-store");
 
     // Everything that is not a served draft — API routes included — stays uncached.
     const uncachedResponses = [
@@ -2016,7 +1766,7 @@ describe("Patchy Cloud server", () => {
   });
 
   it("locks the draft content security policy with no script sources", async () => {
-    const served = await createServedDraft("serving-csp");
+    const served = await createServedPatch("serving-csp");
 
     for (const url of [served.latestUrl, served.versionUrl]) {
       const response = await served.app.inject({ method: "GET", url });
@@ -2033,7 +1783,7 @@ describe("Patchy Cloud server", () => {
   });
 
   it("serves a draft as the framed document and nothing else", async () => {
-    const served = await createServedDraft("bare-wrapper");
+    const served = await createServedPatch("bare-wrapper");
 
     for (const url of [served.latestUrl, served.versionUrl]) {
       const response = await served.app.inject({ method: "GET", url });
@@ -2056,7 +1806,7 @@ describe("Patchy Cloud server", () => {
     const clocked = await createClockedApp("expiry");
 
     try {
-      const patchId = await publishDraft(clocked.app, "Ninety day page");
+      const patchId = await publishPatch(clocked.app, "Ninety day page");
 
       // A visit this early tops up nothing, so the clock still ends at day 90.
       clocked.advanceDays(1);
@@ -2099,7 +1849,7 @@ describe("Patchy Cloud server", () => {
     const clocked = await createClockedApp("visit-topup");
 
     try {
-      const patchId = await publishDraft(clocked.app, "Still visited");
+      const patchId = await publishPatch(clocked.app, "Still visited");
 
       // Ten days left on the upload's window: this visit tops it up to thirty.
       clocked.advanceDays(80);
@@ -2123,12 +1873,18 @@ describe("Patchy Cloud server", () => {
   });
 
   it("serves a draft whose visit top-up write fails, without moving its clock", async () => {
-    const clocked = await createClockedApp("visit-write-failure", {
-      openDb: (file, clock) => new VisitFailingJsonDb(file, { clock })
-    });
+    const clocked = await createClockedApp("visit-write-failure");
 
     try {
-      const patchId = await publishDraft(clocked.app, "Survives a failed top-up");
+      const patchId = await publishPatch(clocked.app, "Survives a failed top-up");
+      // From here every move of a retention anchor fails inside the database.
+      await clocked.sql(`
+        CREATE FUNCTION fail_visit() RETURNS trigger AS $$
+          BEGIN RAISE EXCEPTION 'Forced visit top-up failure.'; END
+        $$ LANGUAGE plpgsql;
+        CREATE TRIGGER fail_visit BEFORE UPDATE OF expires_at ON patches
+          FOR EACH ROW EXECUTE FUNCTION fail_visit();
+      `);
 
       // Ten days left, so this visit is one the clock would move — and the
       // write throws. The reader still gets the page.
@@ -2151,7 +1907,7 @@ describe("Patchy Cloud server", () => {
     const clocked = await createClockedApp("upload-reset");
 
     try {
-      const patchId = await publishDraft(clocked.app, "First cut");
+      const patchId = await publishPatch(clocked.app, "First cut");
 
       clocked.advanceDays(80);
       const republish = await clocked.app.inject({
@@ -2179,12 +1935,12 @@ describe("Patchy Cloud server", () => {
     const clocked = await createClockedApp("expiry-sweep");
 
     try {
-      const patchId = await publishDraft(clocked.app, "Ages out");
+      const patchId = await publishPatch(clocked.app, "Ages out");
       const updated = await clocked.app.inject({
         method: "POST",
         url: "/api/uploads",
         headers: { authorization: "Bearer dev-token" },
-        payload: { patchId, html: draftHtml("Ages out, twice") }
+        payload: { patchId, html: patchHtml("Ages out, twice") }
       });
       expect(updated.statusCode).toBe(200);
       expect(await listFiles(clocked.storageDir)).toHaveLength(2);
@@ -2194,7 +1950,7 @@ describe("Patchy Cloud server", () => {
       clocked.advanceDays(91);
       expect(await listFiles(clocked.storageDir)).toHaveLength(2);
 
-      expect(await clocked.app.sweepExpiredDrafts()).toEqual({
+      expect(await sweepExpiredPatches(clocked.runtime)).toEqual({
         deleted: 1,
         skipped: 0,
         failed: 0,
@@ -2213,7 +1969,7 @@ describe("Patchy Cloud server", () => {
         method: "POST",
         url: "/api/uploads",
         headers: { authorization: "Bearer dev-token" },
-        payload: { patchId, html: draftHtml("Too late") }
+        payload: { patchId, html: patchHtml("Too late") }
       });
       expect(republished.statusCode).toBe(404);
     } finally {
@@ -2225,7 +1981,7 @@ describe("Patchy Cloud server", () => {
     const clocked = await createClockedApp("expiry-sweep-pinned");
 
     try {
-      const patchId = await publishDraft(clocked.app, "Welcome page");
+      const patchId = await publishPatch(clocked.app, "Welcome page");
       const pinned = await clocked.app.inject({
         method: "POST",
         url: `/api/patches/${patchId}/pin`,
@@ -2240,7 +1996,7 @@ describe("Patchy Cloud server", () => {
       expect(served.statusCode).toBe(200);
       expect(served.body).toContain("Welcome page");
 
-      expect(await clocked.app.sweepExpiredDrafts()).toMatchObject({ deleted: 0 });
+      expect(await sweepExpiredPatches(clocked.runtime)).toMatchObject({ deleted: 0 });
       const survived = await clocked.app.inject({ method: "GET", url: `/d/${patchId}` });
       expect(survived.statusCode).toBe(200);
       expect(await listFiles(clocked.storageDir)).toHaveLength(1);
@@ -2256,7 +2012,7 @@ describe("Patchy Cloud server", () => {
       // The visit above topped the clock up to thirty days, so the page keeps
       // its window — and then goes, content and all.
       clocked.advanceDays(31);
-      expect(await clocked.app.sweepExpiredDrafts()).toMatchObject({ deleted: 1 });
+      expect(await sweepExpiredPatches(clocked.runtime)).toMatchObject({ deleted: 1 });
       const gone = await clocked.app.inject({ method: "GET", url: `/d/${patchId}` });
       expect(gone.statusCode).toBe(404);
       expect(await listFiles(clocked.storageDir)).toEqual([]);
@@ -2269,7 +2025,7 @@ describe("Patchy Cloud server", () => {
     const clocked = await createClockedApp("expiry-sweep-pinned-then-deleted");
 
     try {
-      const patchId = await publishDraft(clocked.app, "Pinned then withdrawn");
+      const patchId = await publishPatch(clocked.app, "Pinned then withdrawn");
       const pinned = await clocked.app.inject({
         method: "POST",
         url: `/api/patches/${patchId}/pin`,
@@ -2288,7 +2044,7 @@ describe("Patchy Cloud server", () => {
       // the sweep frees the storage. A pin that survived here would exempt
       // bytes nobody can reach, with no way to unpin them back into reach.
       clocked.advanceDays(91);
-      expect(await clocked.app.sweepExpiredDrafts()).toMatchObject({ deleted: 1 });
+      expect(await sweepExpiredPatches(clocked.runtime)).toMatchObject({ deleted: 1 });
       expect(await listFiles(clocked.storageDir)).toEqual([]);
 
       // And pinning it again was never on the table.
@@ -2307,20 +2063,21 @@ describe("Patchy Cloud server", () => {
     const clocked = await createClockedApp("expiry-sweep-idempotent");
 
     try {
-      const expiring = await publishDraft(clocked.app, "Abandoned");
+      const expiring = await publishPatch(clocked.app, "Abandoned");
       clocked.advanceDays(91);
-      const fresh = await publishDraft(clocked.app, "Still here");
+      const fresh = await publishPatch(clocked.app, "Still here");
 
-      // Two runs at once are one run: the second finds nothing half-swept.
+      // Two runs at once take the patch once: whichever gets the row lock
+      // deletes it, and the other finds nothing half-swept.
       const [first, second] = await Promise.all([
-        clocked.app.sweepExpiredDrafts(),
-        clocked.app.sweepExpiredDrafts()
+        sweepExpiredPatches(clocked.runtime),
+        sweepExpiredPatches(clocked.runtime)
       ]);
-      expect(first).toEqual({ deleted: 1, skipped: 0, failed: 0, orphanedObjects: 0 });
-      expect(second).toEqual(first);
+      expect(first.deleted + second.deleted).toBe(1);
+      expect(first.failed + second.failed + first.orphanedObjects + second.orphanedObjects).toBe(0);
 
       // Running again changes nothing, and the live draft was never in reach.
-      expect(await clocked.app.sweepExpiredDrafts()).toEqual({
+      expect(await sweepExpiredPatches(clocked.runtime)).toEqual({
         deleted: 0,
         skipped: 0,
         failed: 0,
@@ -2345,11 +2102,11 @@ describe("Patchy Cloud server", () => {
     });
 
     try {
-      const patchId = await publishDraft(clocked.app, "Object outlives its record");
+      const patchId = await publishPatch(clocked.app, "Object outlives its record");
       clocked.advanceDays(91);
       storage.control.deleteError = new Error("Storage delete failed.");
 
-      expect(await clocked.app.sweepExpiredDrafts()).toEqual({
+      expect(await sweepExpiredPatches(clocked.runtime)).toEqual({
         deleted: 1,
         skipped: 0,
         failed: 0,
@@ -2361,7 +2118,7 @@ describe("Patchy Cloud server", () => {
       expect(await listFiles(clocked.storageDir)).toHaveLength(1);
       const gone = await clocked.app.inject({ method: "GET", url: `/d/${patchId}` });
       expect(gone.statusCode).toBe(404);
-      expect(await clocked.app.sweepExpiredDrafts()).toMatchObject({
+      expect(await sweepExpiredPatches(clocked.runtime)).toMatchObject({
         deleted: 0,
         orphanedObjects: 0
       });
@@ -2374,7 +2131,7 @@ describe("Patchy Cloud server", () => {
     const moderated = await createModerationApp("moderation-read");
 
     try {
-      const created = await createDraft(moderated.app, moderated.publisherToken, "Flagged");
+      const created = await createPatch(moderated.app, moderated.publisherToken, "Flagged");
       expect(created.statusCode).toBe(201);
       const { patchId } = created.json() as { patchId: string };
 
@@ -2453,15 +2210,15 @@ describe("Patchy Cloud server", () => {
     try {
       // A day between creates, so "newest first" is asserted against an order
       // the clock decided rather than one two same-millisecond writes fell into.
-      const first = await createDraft(moderated.app, moderated.publisherToken, "One");
+      const first = await createPatch(moderated.app, moderated.publisherToken, "One");
       moderated.advanceDays(1);
-      const second = await createDraft(moderated.app, moderated.publisherToken, "Two");
+      const second = await createPatch(moderated.app, moderated.publisherToken, "Two");
       moderated.advanceDays(1);
-      const removed = await createDraft(moderated.app, moderated.publisherToken, "Gone");
-      const removedDraftId = (removed.json() as { patchId: string }).patchId;
+      const removed = await createPatch(moderated.app, moderated.publisherToken, "Gone");
+      const removedPatchId = (removed.json() as { patchId: string }).patchId;
       const deletion = await moderated.app.inject({
         method: "DELETE",
-        url: `/api/patches/${removedDraftId}`,
+        url: `/api/patches/${removedPatchId}`,
         headers: { authorization: "Bearer dev-token" }
       });
       expect(deletion.statusCode).toBe(200);
@@ -2480,7 +2237,7 @@ describe("Patchy Cloud server", () => {
       expect(body.principalId).toBe(moderated.principalId);
       expect(body.truncated).toBe(false);
       // Newest first, and the one already deleted is not on the list.
-      expect(body.patches.map((draft) => draft.id)).toEqual([
+      expect(body.patches.map((patch) => patch.id)).toEqual([
         (second.json() as { patchId: string }).patchId,
         (first.json() as { patchId: string }).patchId
       ]);
@@ -2522,7 +2279,7 @@ describe("Patchy Cloud server", () => {
     const moderated = await createModerationApp("moderation-revoke");
 
     try {
-      const created = await createDraft(moderated.app, moderated.publisherToken, "Abusive");
+      const created = await createPatch(moderated.app, moderated.publisherToken, "Abusive");
       const { patchId } = created.json() as { patchId: string };
 
       const revokeUrl = `/api/tokens/${moderated.publisherApiTokenId}/revoke`;
@@ -2592,12 +2349,12 @@ describe("Patchy Cloud server", () => {
         {
           method: "POST" as const,
           url: "/api/uploads",
-          payload: { html: draftHtml("Still trying") }
+          payload: { html: patchHtml("Still trying") }
         },
         {
           method: "POST" as const,
           url: "/api/uploads",
-          payload: { patchId, html: draftHtml("Still trying") }
+          payload: { patchId, html: patchHtml("Still trying") }
         },
         {
           method: "POST" as const,
@@ -2652,7 +2409,7 @@ describe("Patchy Cloud server", () => {
         token: string;
         apiToken: { id: string };
       };
-      const created = await createDraft(clocked.app, token, "Runs down");
+      const created = await createPatch(clocked.app, token, "Runs down");
       const { patchId } = created.json() as { patchId: string };
 
       // Day 80, ten days left: a visit before the revocation tops the clock up
@@ -2701,7 +2458,7 @@ describe("Patchy Cloud server", () => {
     // The whole story on the posture the public instance actually runs: the
     // publisher asked the service for its own key, with no operator involved.
     const clocked = await createClockedApp("self-service-moderation", {
-      config: { ...testConfig(), allowSelfServiceTokens: true }
+      config: { allowSelfServiceTokens: true }
     });
 
     try {
@@ -2713,11 +2470,11 @@ describe("Patchy Cloud server", () => {
       expect(minted.statusCode).toBe(201);
       const { token } = minted.json() as { token: string };
 
-      const flaggedUpload = await createDraft(clocked.app, token, "Abusive page");
+      const flaggedUpload = await createPatch(clocked.app, token, "Abusive page");
       expect(flaggedUpload.statusCode).toBe(201);
       const { patchId } = flaggedUpload.json() as { patchId: string };
-      const sibling = await createDraft(clocked.app, token, "Second abusive page");
-      const siblingDraftId = (sibling.json() as { patchId: string }).patchId;
+      const sibling = await createPatch(clocked.app, token, "Second abusive page");
+      const siblingPatchId = (sibling.json() as { patchId: string }).patchId;
 
       expect((await clocked.app.inject({ method: "GET", url: `/d/${patchId}` })).statusCode).toBe(
         200
@@ -2732,7 +2489,7 @@ describe("Patchy Cloud server", () => {
       expect(read.statusCode).toBe(200);
       const culprit = (
         read.json() as {
-          draft: { principalId: string; createdByApiTokenId: string };
+          patch: { principalId: string; createdByApiTokenId: string };
         }
       ).patch;
 
@@ -2753,7 +2510,7 @@ describe("Patchy Cloud server", () => {
       });
       expect(listed.statusCode).toBe(200);
       const held = (listed.json() as { patches: { id: string }[] }).patches;
-      expect([...held.map((draft) => draft.id)].sort()).toEqual([patchId, siblingDraftId].sort());
+      expect([...held.map((patch) => patch.id)].sort()).toEqual([patchId, siblingPatchId].sort());
 
       // Step 3 — revoke. Provenance makes no difference to it: this is the same
       // endpoint, the same answer shape, and the same effect as on a token the
@@ -2775,8 +2532,8 @@ describe("Patchy Cloud server", () => {
 
       // The key is dead everywhere, and because the principal was its alone,
       // nothing else can reach the pages it left behind.
-      expect((await createDraft(clocked.app, token, "Another")).statusCode).toBe(401);
-      expect((await updateDraft(clocked.app, token, patchId, "Rewritten")).statusCode).toBe(401);
+      expect((await createPatch(clocked.app, token, "Another")).statusCode).toBe(401);
+      expect((await updatePatch(clocked.app, token, patchId, "Rewritten")).statusCode).toBe(401);
 
       // The pages stay up and keep their remaining clock — and the freeze holds
       // for a self-service token exactly as it does for an operator's.
@@ -2786,7 +2543,7 @@ describe("Patchy Cloud server", () => {
       );
 
       clocked.advanceDays(11);
-      for (const gone of [patchId, siblingDraftId]) {
+      for (const gone of [patchId, siblingPatchId]) {
         expect((await clocked.app.inject({ method: "GET", url: `/d/${gone}` })).statusCode).toBe(
           404
         );
@@ -2800,11 +2557,11 @@ describe("Patchy Cloud server", () => {
     const clocked = await createClockedApp("moderation-after-sweep");
 
     try {
-      const created = await createDraft(clocked.app, "dev-token", "Flagged then expired");
+      const created = await createPatch(clocked.app, "dev-token", "Flagged then expired");
       const { patchId } = created.json() as { patchId: string };
 
       clocked.advanceDays(91);
-      expect(await clocked.app.sweepExpiredDrafts()).toMatchObject({ deleted: 1 });
+      expect(await sweepExpiredPatches(clocked.runtime)).toMatchObject({ deleted: 1 });
 
       // A complaint outlives the page it was about, so the operator can still
       // arrive at a draft ID with nothing left behind it. The loop's first step
@@ -2868,7 +2625,7 @@ describe("self-service minting", () => {
       // "Exactly once" is a claim about storage as much as about the wire, and
       // the wire alone cannot make it. This is the one assertion in the suite
       // that reads what the instance kept: the plaintext is not in it.
-      const stored = await readFile(minting.dbFile, "utf8");
+      const stored = JSON.stringify(await minting.sql("SELECT token_hash FROM api_tokens"));
       expect(stored).not.toContain(body.token);
       expect(stored).toContain(sha256(body.token));
     } finally {
@@ -3100,10 +2857,10 @@ describe("self-service minting", () => {
       expect(foreignDelete.statusCode).toBe(404);
 
       // A draft the operator owns is just as far out of reach.
-      const operatorDraftId = await publishDraft(minting.app, "Operator page");
+      const operatorPatchId = await publishPatch(minting.app, "Operator page");
       const reachUp = await minting.app.inject({
         method: "DELETE",
-        url: `/api/patches/${operatorDraftId}`,
+        url: `/api/patches/${operatorPatchId}`,
         headers: { authorization: `Bearer ${first.token}` }
       });
       expect(reachUp.statusCode).toBe(404);
@@ -3158,14 +2915,14 @@ describe("self-service minting", () => {
       expect((await minting.app.inject({ method: "GET", url: `/d/${patchId}` })).statusCode).toBe(
         404
       );
-      expect(await minting.app.sweepExpiredDrafts()).toMatchObject({ deleted: 1 });
+      expect(await sweepExpiredPatches(minting.runtime)).toMatchObject({ deleted: 1 });
 
       // And pinning stays an operator's act — a self-service token cannot buy
       // itself the exemption either.
-      const secondDraftId = await minting.uploadAs(token, "Minted and hopeful");
+      const secondPatchId = await minting.uploadAs(token, "Minted and hopeful");
       const selfPin = await minting.app.inject({
         method: "POST",
-        url: `/api/patches/${secondDraftId}/pin`,
+        url: `/api/patches/${secondPatchId}/pin`,
         headers: { authorization: `Bearer ${token}` }
       });
       expect(selfPin.statusCode).toBe(403);
@@ -3175,10 +2932,8 @@ describe("self-service minting", () => {
   });
 });
 
-interface ServedDraft {
+interface ServedPatch {
   app: ReturnType<typeof createApp>;
-  /** The store behind the app, for reading what a request left behind. */
-  db: JsonFilePatchyDb;
   patchId: string;
   latestUrl: string;
   versionUrl: string;
@@ -3191,17 +2946,10 @@ interface ServedDraft {
   close: () => Promise<void>;
 }
 
-async function createServedDraft(
-  label: string,
-  overrides: Partial<ServerConfig> = {}
-): Promise<ServedDraft> {
-  const safeLabel = label.replaceAll(/[^a-z0-9]/gi, "-");
-  const config: ServerConfig = { ...testConfig(), ...overrides };
+async function createServedPatch(overrides: Partial<ServerConfig> = {}): Promise<ServedPatch> {
   let now = Date.UTC(2026, 0, 1);
-  const clock = (): number => now;
-  const db = new JsonFilePatchyDb(path.join(tempDir, `${safeLabel}-db.json`), { clock });
-  await db.initialize("dev-token");
-  const app = createApp({ config, db, runtime: createTestRuntime({ clock, db, config }) });
+  const harness = await createTestApp({ clock: () => now, config: overrides });
+  const { app } = harness;
 
   const upload = await app.inject({
     method: "POST",
@@ -3216,23 +2964,23 @@ async function createServedDraft(
 
   return {
     app,
-    db,
     patchId: body.patchId,
     latestUrl: `/d/${body.patchId}`,
     versionUrl: `/d/${body.patchId}/v/${body.versionNumber}`,
     advanceMs(ms) {
       now += ms;
     },
-    close: async () => {
-      await app.close();
-      await db.close();
-    }
+    close: () => harness.close()
   };
 }
 
 interface SourceIpAttribution {
   versionSourceIp: string | null | undefined;
-  eventSourceIp: string | null | undefined;
+}
+
+/** The trusted-proxy setting as the config parses it; throws on an invalid value. */
+function trustProxyOf(value: string): ServerConfig["trustProxy"] {
+  return getServerConfig({ PATCHY_TRUST_PROXY: value }).trustProxy;
 }
 
 async function uploadSourceIp(options: {
@@ -3241,17 +2989,15 @@ async function uploadSourceIp(options: {
   forwardedFor?: string;
 }): Promise<SourceIpAttribution> {
   const apiToken = "trusted-proxy-token";
-  const config = getServerConfig({
-    PATCHY_STORAGE_DIR: path.join(tempDir, "drafts"),
-    ...(options.trustProxy === undefined ? {} : { PATCHY_TRUST_PROXY: options.trustProxy })
+  const harness = await createTestApp({
+    config: {
+      bootstrapApiToken: apiToken,
+      ...(options.trustProxy === undefined ? {} : { trustProxy: trustProxyOf(options.trustProxy) })
+    }
   });
-  const dbFile = path.join(tempDir, "trusted-proxy-db.json");
-  const db = new JsonFilePatchyDb(dbFile);
-  await db.initialize(apiToken);
-  const app = createApp({ config, db, runtime: createTestRuntime({ db, config }) });
 
   try {
-    const upload = await app.inject({
+    const upload = await harness.app.inject({
       method: "POST",
       url: "/api/uploads",
       remoteAddress: options.remoteAddress,
@@ -3265,76 +3011,39 @@ async function uploadSourceIp(options: {
     });
 
     expect(upload.statusCode).toBe(201);
-    const { patchId, versionId } = upload.json() as { patchId: string; versionId: string };
-    const lookup = await db.findDraftVersion(patchId);
-    const state = JSON.parse(await readFile(dbFile, "utf8")) as {
-      uploadEvents: Array<{ draftVersionId: string; sourceIp: string | null }>;
-    };
-    const event = state.uploadEvents.find((row) => row.draftVersionId === versionId);
-
-    return {
-      versionSourceIp: lookup.version?.sourceIp,
-      eventSourceIp: event?.sourceIp
-    };
+    const { patchId } = upload.json() as { patchId: string };
+    return { versionSourceIp: (await harness.currentVersion(patchId))?.sourceIp };
   } finally {
-    await app.close();
-    await db.close();
+    await harness.close();
   }
 }
 
-async function markJsonTokenRevoked(filePath: string, name: string): Promise<void> {
-  const state = JSON.parse(await readFile(filePath, "utf8")) as {
-    apiTokens: Array<{ name: string; revokedAt: string | null }>;
-  };
-  const token = state.apiTokens.find((row) => row.name === name);
-  expect(token).toBeDefined();
-  token!.revokedAt = "2026-01-01T00:00:00.000Z";
-  await writeFile(filePath, JSON.stringify(state, null, 2));
-}
-
-async function createScopedTokenApp(label: string, clock?: () => number): Promise<ScopedTokenApp> {
-  const safeLabel = label.replaceAll(/[^a-z0-9]/gi, "-");
-  const config = testConfig();
-  const db = new JsonFilePatchyDb(path.join(tempDir, `${safeLabel}-db.json`));
-  await db.initialize("admin-token");
-  const adminAuth = await db.findApiTokenByToken("admin-token");
-  expect(adminAuth).not.toBeNull();
-  await db.createApiToken({
-    accountId: adminAuth!.accountId,
-    name: "Read token",
-    token: "read-token",
-    scopes: ["read"]
-  });
-  await db.createApiToken({
-    accountId: adminAuth!.accountId,
-    name: "Upload token",
-    token: "upload-token",
-    scopes: ["upload"]
-  });
-  await db.createApiToken({
-    accountId: adminAuth!.accountId,
+async function createScopedTokenApp(_label: string, clock?: () => number): Promise<TestApp> {
+  const harness = await createTestApp({ clock, config: { bootstrapApiToken: "admin-token" } });
+  await harness.createToken({ name: "Read token", token: "read-token", scopes: ["read"] });
+  await harness.createToken({ name: "Upload token", token: "upload-token", scopes: ["upload"] });
+  await harness.createToken({
     name: "Admin only token",
     token: "admin-only-token",
     scopes: ["admin"]
   });
-  const app = createApp({ config, db, runtime: createTestRuntime({ clock, db, config }) });
-  return { app, db };
+  return harness;
 }
 
-function draftHtml(title: string): string {
+function patchHtml(title: string): string {
   return `<!doctype html><html><head><title>${title}</title></head><body><h1>${title}</h1></body></html>`;
 }
 
-async function createDraft(app: ReturnType<typeof createApp>, token: string, title: string) {
+async function createPatch(app: ReturnType<typeof createApp>, token: string, title: string) {
   return app.inject({
     method: "POST",
     url: "/api/uploads",
     headers: { authorization: `Bearer ${token}` },
-    payload: { html: draftHtml(title) }
+    payload: { html: patchHtml(title) }
   });
 }
 
-async function updateDraft(
+async function updatePatch(
   app: ReturnType<typeof createApp>,
   token: string,
   patchId: string,
@@ -3344,7 +3053,7 @@ async function updateDraft(
     method: "POST",
     url: "/api/uploads",
     headers: { authorization: `Bearer ${token}` },
-    payload: { patchId, html: draftHtml(title) }
+    payload: { patchId, html: patchHtml(title) }
   });
 }
 
@@ -3504,13 +3213,11 @@ type ApiTargetCase = {
   rawHttp?: boolean;
 };
 
-type ScopedTokenApp = {
-  app: ReturnType<typeof createApp>;
-  db: JsonFilePatchyDb;
-};
-
 type ClockedApp = {
   app: ReturnType<typeof createApp>;
+  runtime: TestApp["runtime"];
+  /** Runs SQL on the app's database, for what only the store can be made to do. */
+  sql: TestApp["sql"];
   /** Where this app's HTML objects land, so a test can watch them go. */
   storageDir: string;
   advanceDays(days: number): void;
@@ -3518,10 +3225,9 @@ type ClockedApp = {
 };
 
 type ClockedAppOptions = {
-  openDb?: (file: string, clock: () => number) => JsonFilePatchyDb;
   contentStore?: Layer.Layer<ContentStore.ContentStore>;
-  /** Overrides `testConfig()`, for a clocked app that needs a posture changed. */
-  config?: ServerConfig;
+  /** Overrides the defaults, for a clocked app that needs a posture changed. */
+  config?: Partial<ServerConfig>;
 };
 
 type ModerationApp = ClockedApp & {
@@ -3561,7 +3267,8 @@ type InjectedResponse = Awaited<ReturnType<ReturnType<typeof createApp>["inject"
 
 interface MintApp {
   readonly app: ReturnType<typeof createApp>;
-  readonly dbFile: string;
+  readonly runtime: TestApp["runtime"];
+  readonly sql: TestApp["sql"];
   mint(sourceIp: string): Promise<InjectedResponse>;
   /** Mints, then reads back the principal the token authenticates as. */
   mintedToken(sourceIp: string): Promise<MintedToken>;
@@ -3579,38 +3286,24 @@ interface MintApp {
  * per-minute half.
  */
 async function createMintApp(
-  label: string,
+  _label: string,
   overrides: Partial<ServerConfig> = {}
 ): Promise<MintApp> {
   let now = Date.UTC(2026, 0, 1);
   const clock = (): number => now;
-  const dbFile = path.join(tempDir, `${label}-db.json`);
-  const config: ServerConfig = {
-    ...testConfig(),
-    allowSelfServiceTokens: true,
-    jsonDbFile: dbFile,
-    ...overrides
-  };
-
-  const open = async (): Promise<{
-    app: ReturnType<typeof createApp>;
-    db: JsonFilePatchyDb;
-  }> => {
-    const db = new JsonFilePatchyDb(dbFile, { clock });
-    await db.initialize("dev-token");
-    return {
-      app: createApp({ config, db, runtime: createTestRuntime({ clock, db, config }) }),
-      db
-    };
-  };
-
-  let running = await open();
+  let running = await createTestApp({
+    clock,
+    config: { allowSelfServiceTokens: true, ...overrides }
+  });
 
   return {
     get app() {
       return running.app;
     },
-    dbFile,
+    get runtime() {
+      return running.runtime;
+    },
+    sql: (text, values) => running.sql(text, values),
     async mint(sourceIp) {
       return running.app.inject({
         method: "POST",
@@ -3649,49 +3342,39 @@ async function createMintApp(
       now += ms;
     },
     async restart() {
-      await running.app.close();
-      await running.db.close();
-      running = await open();
+      running = await running.restart();
     },
     async close() {
-      await running.app.close();
-      await running.db.close();
+      await running.close();
     }
   };
 }
 
 /**
- * An app whose clock can be wound forward months. The database gets the *same*
- * clock: the retention clock is the database's, so an app-only clock would move
- * the rate limiters and nothing else.
+ * An app whose clock can be wound forward months. The database reads the
+ * *same* clock: the retention clock is the database's, so an app-only clock
+ * would move the rate limiters and nothing else.
  */
 async function createClockedApp(
-  label: string,
+  _label: string,
   options: ClockedAppOptions = {}
 ): Promise<ClockedApp> {
-  const openDb = options.openDb ?? ((file, clock) => new JsonFilePatchyDb(file, { clock }));
   let now = Date.UTC(2026, 0, 1);
-  const clock = (): number => now;
-  const db = openDb(path.join(tempDir, `${label}-db.json`), clock);
-  await db.initialize("dev-token");
-  const storageDir = path.join(tempDir, `${label}-drafts`);
-  const config = { ...(options.config ?? testConfig()), storageDir };
-  const app = createApp({
-    config,
-    db,
-    runtime: createTestRuntime({ clock, db, config, contentStore: options.contentStore })
+  const harness = await createTestApp({
+    clock: () => now,
+    config: options.config,
+    contentStore: options.contentStore
   });
 
   return {
-    app,
-    storageDir,
+    app: harness.app,
+    runtime: harness.runtime,
+    sql: (text, values) => harness.sql(text, values),
+    storageDir: harness.storageDir,
     advanceDays(days) {
       now += days * DAY_MS;
     },
-    async close() {
-      await app.close();
-      await db.close();
-    }
+    close: () => harness.close()
   };
 }
 
@@ -3732,7 +3415,7 @@ async function createModerationApp(label: string): Promise<ModerationApp> {
   };
 }
 
-async function publishDraft(app: ReturnType<typeof createApp>, title: string): Promise<string> {
+async function publishPatch(app: ReturnType<typeof createApp>, title: string): Promise<string> {
   const upload = await app.inject({
     method: "POST",
     url: "/api/uploads",
@@ -3745,33 +3428,30 @@ async function publishDraft(app: ReturnType<typeof createApp>, title: string): P
   return (upload.json() as { patchId: string }).patchId;
 }
 
-/** A store that can serve a draft but cannot record the visit that follows. */
-class VisitFailingJsonDb extends JsonFilePatchyDb {
-  override async recordDraftVisit(): Promise<void> {
-    throw new Error("Forced visit top-up failure.");
-  }
-}
-
-function testConfig(): ServerConfig {
+/** An upload as a seeded row: a title, a body, and whose it is. */
+function seedUpload(input: {
+  accountId: string;
+  apiTokenId: string;
+  title?: string;
+}): Parameters<TestApp["upload"]>[0] {
+  const title = input.title ?? "Existing target";
   return {
-    port: 3000,
-    publicBaseUrl: "http://localhost:3000",
-    trustProxy: false,
-    bootstrapApiToken: "dev-token",
-    allowSelfServiceTokens: false,
-    maxHtmlBytes: 512 * 1024,
-    protectedApiRateLimitPerMinute: 60,
-    authenticatedUploadRateLimitPerMinute: 20,
-    selfServiceMintRateLimitPerMinute: 5,
-    selfServiceMintsPerIpPerDay: 5,
-    draftCreateRateLimitPerMinute: 10,
-    liveDraftsPerToken: 1_000,
-    dbDriver: "json",
-    databaseUrl: null,
-    jsonDbFile: path.join(tempDir, "db.json"),
-    storageDir: path.join(tempDir, "drafts")
+    patchId: null,
+    accountId: input.accountId,
+    apiTokenId: input.apiTokenId,
+    title,
+    html: `<!doctype html><html><head><title>${title}</title></head><body></body></html>`,
+    filename: null,
+    repoOrg: null,
+    repoName: null,
+    cliVersion: null,
+    gitBranch: null,
+    gitCommitSha: null
   };
 }
+
+/** The operator's own uploads, as seeded rows. */
+const OPERATOR_UPLOAD = { accountId: OPERATOR, apiTokenId: Tokens.BOOTSTRAP_API_TOKEN_ID };
 
 interface ContentStoreControl {
   /** Runs after a put has landed, while the request is still inside the store call. */
@@ -3822,18 +3502,6 @@ function controlledContentStore(): {
     )
   ).pipe(Layer.provide(FilesystemContentStore.layer));
   return { control, layer };
-}
-
-class CommitIndeterminateJsonDb extends JsonFilePatchyDb {
-  throwAfterRecord = false;
-
-  override async recordUpload(input: RecordUploadInput): Promise<RecordUploadResult> {
-    const result = await super.recordUpload(input);
-    if (this.throwAfterRecord) {
-      throw new Error("JSON metadata commit outcome is indeterminate.");
-    }
-    return result;
-  }
 }
 
 async function listFiles(rootDir: string, currentDir = rootDir): Promise<string[]> {

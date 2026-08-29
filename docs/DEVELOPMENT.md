@@ -79,27 +79,28 @@ and the dev instance agree on what exists.
 detached supervisor under `node --import tsx`; the supervisor owns one Effect
 scope holding Postgres and the server, so either exiting — or `stop`'s
 SIGTERM — tears the other down. Migrations run through Effect's Migrator in
-`packages/sql`: `packages/auth` owns its own, and `packages/db`'s
-`migrateDatabase` seam composes them with the draft steps until those move
-into `packages/patches`.
+`packages/sql`: `packages/auth` and `packages/patches` each own theirs, and
+`packages/db`'s `migrateDatabase` seam composes the two records for the
+Fastify server, the runner and the vitest template until the server moves
+onto Effect.
 
 ## Running the server by hand
 
-The runner is the normal path. The server can still be started directly, with
-the filesystem-backed JSON store and no Postgres:
+The runner is the normal path. The server can still be started directly
+against a Postgres you point it at:
 
 ```sh
-PATCHY_BOOTSTRAP_API_TOKEN=dev-token pnpm --filter @patchy/server dev
+DATABASE_URL=postgres://... PATCHY_BOOTSTRAP_API_TOKEN=dev-token pnpm --filter @patchy/server dev
 ```
 
 `pnpm seed:dev` uploads the accepted HTML fixture corpus to whatever
 `PATCHY_API_URL`/`PATCHY_API_TOKEN` point at (default `http://localhost:3000`
 with `dev-token`).
 
-## Postgres Mode
+## Postgres
 
-Set `PATCHY_DB_DRIVER=postgres` and `DATABASE_URL` when a Postgres instance is
-available. The server migrates the database on startup, before it listens.
+`DATABASE_URL` is required: Postgres is the only store. The server migrates
+the database on startup, before it listens.
 
 Do not commit real database URLs or generated tokens.
 

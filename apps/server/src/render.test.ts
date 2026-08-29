@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
-import type { DraftRecord, DraftVersionRecord } from "@patchy/db";
-import { escapeHtml, renderDraftWrapper, renderHome } from "./render.js";
+import type { Patches } from "@patchy/patches";
+import { escapeHtml, renderPatchWrapper, renderHome } from "./render.js";
 
 const configuredUrl = "https://self-host.example.test/base?tenant=O'Reilly&mode=review";
 const setupToken = "render-setup-sentinel";
@@ -58,12 +58,11 @@ describe("renderHome", () => {
   );
 });
 
-describe("renderDraftWrapper", () => {
-  const draft: DraftRecord = {
-    id: "draft123456ab",
+describe("renderPatchWrapper", () => {
+  const patch: Patches.Patch = {
+    id: "patch12345ab",
     accountId: "acct_1",
     title: "",
-    visibility: "public",
     currentVersionId: "ver_1",
     repoOrg: null,
     repoName: null,
@@ -75,11 +74,11 @@ describe("renderDraftWrapper", () => {
     disabledAt: null,
     disabledReason: null
   };
-  const version: DraftVersionRecord = {
+  const version: Patches.PatchVersion = {
     id: "ver_1",
-    draftId: draft.id,
+    patchId: patch.id,
     versionNumber: 2,
-    objectKey: "drafts/draft123456ab/2.html",
+    objectKey: "patches/patch12345ab/2.html",
     contentHash: "hash",
     fileSize: 12,
     createdByApiTokenId: "tok_1",
@@ -93,8 +92,8 @@ describe("renderDraftWrapper", () => {
   };
 
   it("is the sandboxed frame and nothing else", () => {
-    const html = renderDraftWrapper({
-      draft,
+    const html = renderPatchWrapper({
+      patch,
       version,
       html: '<p title="a&b">hi</p><script>alert(1)</script>'
     });
@@ -111,15 +110,15 @@ describe("renderDraftWrapper", () => {
     expect(html).not.toContain("<form");
     expect(html).not.toContain("<script");
 
-    // An untitled draft still gets a title on the document and on the frame.
+    // An untitled patch still gets a title on the document and on the frame.
     expect(html).toContain("<title>Patchy draft</title>");
     expect(html).toContain('title="Patchy draft"');
-    expect(html).toContain(`<!-- draft:${draft.id} version:2 -->`);
+    expect(html).toContain(`<!-- draft:${patch.id} version:2 -->`);
   });
 
-  it("escapes the draft title into both the document and the frame", () => {
-    const html = renderDraftWrapper({
-      draft: { ...draft, title: "<b>Q3</b> & beyond" },
+  it("escapes the patch title into both the document and the frame", () => {
+    const html = renderPatchWrapper({
+      patch: { ...patch, title: "<b>Q3</b> & beyond" },
       version,
       html: "<p>hi</p>"
     });

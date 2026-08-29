@@ -1,7 +1,7 @@
 /**
- * The serving guarantees every published draft is delivered under.
+ * The serving guarantees every published patch is delivered under.
  *
- * Standing rule: draft URLs are never bot-blocked, challenged, or put behind a
+ * Standing rule: patch URLs are never bot-blocked, challenged, or put behind a
  * WAF human-check. Pages are share-a-link-never-be-found — `X-Robots-Tag:
  * noindex` keeps them out of search results, and that is the only measure taken
  * against discovery. Anything that makes an agent fail to fetch a pasted link is
@@ -12,21 +12,21 @@
  *
  * Cache lifetimes are keyed to URL shape and are never coupled to a CDN purge
  * API. A version URL names immutable content, so it is cached for a year; the
- * latest-draft URL follows the draft, so it gets a short window that lets an
+ * latest-patch URL follows the patch, so it gets a short window that lets an
  * update land on its own.
  */
 
-export const DRAFT_ROBOTS_TAG = "noindex";
+export const PATCH_ROBOTS_TAG = "noindex";
 
 /**
- * Document-wide on every served draft. The draft's own frame is already
+ * Document-wide on every served patch. The patch's own frame is already
  * `referrerpolicy="no-referrer"`, and this says the same thing one level up:
- * navigating away from a served page must not hand anyone the draft URL the
+ * navigating away from a served page must not hand anyone the patch URL the
  * reader was on. An unlisted page's URL is the only thing keeping it unlisted.
  */
 export const NO_REFERRER_POLICY = "no-referrer";
 
-export const DRAFT_CONTENT_SECURITY_POLICY = [
+export const PATCH_CONTENT_SECURITY_POLICY = [
   "default-src 'none'",
   "style-src 'unsafe-inline'",
   "img-src https: data:",
@@ -35,13 +35,13 @@ export const DRAFT_CONTENT_SECURITY_POLICY = [
   "form-action 'none'"
 ].join("; ");
 
-/** Everything that is not a served draft — API routes included — stays uncached. */
+/** Everything that is not a served patch — API routes included — stays uncached. */
 export const NO_STORE_CACHE_CONTROL = "no-store";
 
-const LATEST_DRAFT_CACHE_CONTROL = "public, max-age=60";
+const LATEST_PATCH_CACHE_CONTROL = "public, max-age=60";
 
-const DRAFT_VERSION_CACHE_CONTROL = "public, max-age=31536000, immutable";
+const PATCH_VERSION_CACHE_CONTROL = "public, max-age=31536000, immutable";
 
-export function servedDraftCacheControl(versionNumber: number | undefined): string {
-  return versionNumber === undefined ? LATEST_DRAFT_CACHE_CONTROL : DRAFT_VERSION_CACHE_CONTROL;
+export function servedPatchCacheControl(versionNumber: number | undefined): string {
+  return versionNumber === undefined ? LATEST_PATCH_CACHE_CONTROL : PATCH_VERSION_CACHE_CONTROL;
 }

@@ -1,6 +1,6 @@
 # Content store
 
-Where a patch's bytes go. `packages/content-store` owns one `ContentStore` service — put, get and delete an object by key — and its two implementations: a filesystem layer for `pnpm dev` and the tests, and an Azure Blob layer for the deployment. Which one runs is wiring in `apps/server/src/start.ts` (Azure when `AZURE_STORAGE_CONTAINER` is set), not an operator's choice. Nothing here knows what a patch is: the keys are handed in by the capability that records them, today the hosting server's upload contract and expiry sweep.
+Where a patch's bytes go. `packages/content-store` owns one `ContentStore` service — put, get and delete an object by key — and its two implementations: a filesystem layer for `pnpm dev` and the tests, and an Azure Blob layer for the deployment. Which one runs is wiring in `apps/server/src/start.ts` (Azure when `AZURE_STORAGE_CONTAINER` is set), not an operator's choice. Nothing here knows what a patch is: the keys are handed in by the capability that records them, `patches`' upload contract and expiry sweep.
 
 ## Language
 

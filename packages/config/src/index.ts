@@ -1,7 +1,7 @@
 import { isIP } from "node:net";
 
 const MAX_RATE_LIMIT_PER_MINUTE = 10_000;
-const MAX_LIVE_DRAFTS_PER_TOKEN = 1_000_000;
+const MAX_LIVE_PATCHES_PER_TOKEN = 1_000_000;
 const MAX_SELF_SERVICE_MINTS_PER_IP_PER_DAY = 1_000_000;
 const IPV4_BITS = 32;
 const IPV6_BITS = 128;
@@ -33,15 +33,14 @@ export interface ServerConfig {
    * the per-minute mint rate above.
    */
   selfServiceMintsPerIpPerDay: number;
-  draftCreateRateLimitPerMinute: number;
+  patchCreateRateLimitPerMinute: number;
   /**
-   * The live-draft ceiling one token may hold. Counted from the database on
+   * The live-patch ceiling one token may hold. Counted from the database on
    * every create, so it survives a restart — unlike the per-minute limiters.
    */
-  liveDraftsPerToken: number;
-  dbDriver: "postgres" | "json";
+  livePatchesPerToken: number;
+  /** The Postgres the instance runs on; required to start, optional only so tests need not set it. */
   databaseUrl: string | null;
-  jsonDbFile: string;
   /**
    * Where the filesystem content store writes. The store reads
    * `PATCHY_STORAGE_DIR` itself through Effect `Config`; this copy is what the
@@ -51,11 +50,6 @@ export interface ServerConfig {
 }
 
 export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
-  const databaseUrl = stringValue(env.DATABASE_URL);
-  const dbDriver =
-    enumValue(env.PATCHY_DB_DRIVER, ["postgres", "json"] as const) ??
-    (databaseUrl ? "postgres" : "json");
-
   return {
     port: intValue(env.PORT, 3000),
     publicBaseUrl: stringValue(env.PATCHY_PUBLIC_BASE_URL) ?? "http://localhost:3000",
@@ -88,21 +82,19 @@ export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCon
       5,
       MAX_SELF_SERVICE_MINTS_PER_IP_PER_DAY
     ),
-    draftCreateRateLimitPerMinute: rateLimitPerMinuteValue(
-      "PATCHY_DRAFT_CREATE_RATE_LIMIT_PER_MINUTE",
-      env.PATCHY_DRAFT_CREATE_RATE_LIMIT_PER_MINUTE,
+    patchCreateRateLimitPerMinute: rateLimitPerMinuteValue(
+      "PATCHY_PATCH_CREATE_RATE_LIMIT_PER_MINUTE",
+      env.PATCHY_PATCH_CREATE_RATE_LIMIT_PER_MINUTE,
       10
     ),
-    liveDraftsPerToken: boundedIntegerValue(
-      "PATCHY_LIVE_DRAFTS_PER_TOKEN",
-      env.PATCHY_LIVE_DRAFTS_PER_TOKEN,
+    livePatchesPerToken: boundedIntegerValue(
+      "PATCHY_LIVE_PATCHES_PER_TOKEN",
+      env.PATCHY_LIVE_PATCHES_PER_TOKEN,
       1_000,
-      MAX_LIVE_DRAFTS_PER_TOKEN
+      MAX_LIVE_PATCHES_PER_TOKEN
     ),
-    dbDriver,
-    databaseUrl,
-    jsonDbFile: stringValue(env.PATCHY_DB_FILE) ?? ".local/patchy-db.json",
-    storageDir: stringValue(env.PATCHY_STORAGE_DIR) ?? ".local/drafts"
+    databaseUrl: stringValue(env.DATABASE_URL),
+    storageDir: stringValue(env.PATCHY_STORAGE_DIR) ?? ".local/patches"
   };
 }
 
@@ -297,14 +289,4 @@ function strictBoolValue(name: string, value: string | undefined, fallback: bool
   if (trimmed.toLowerCase() === "true") return true;
   if (trimmed.toLowerCase() === "false") return false;
   throw new Error(`${name} must be true or false, received: ${value}`);
-}
-
-function enumValue<const T extends readonly string[]>(
-  value: string | undefined,
-  allowed: T
-): T[number] | null {
-  const trimmed = stringValue(value);
-  if (!trimmed) return null;
-  if ((allowed as readonly string[]).includes(trimmed)) return trimmed as T[number];
-  throw new Error(`Expected one of ${allowed.join(", ")}, received: ${value}`);
 }
