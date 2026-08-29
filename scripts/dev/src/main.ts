@@ -110,8 +110,10 @@ const currentPlan = Effect.fn("currentPlan")(function* (dryRun: boolean) {
   return yield* computePlan(root, isPortFree);
 });
 
+const encodePlan = Schema.encodeSync(PlanJson);
+
 const printPlan = (plan: Plan, json: boolean) => {
-  if (json) return Console.log(Schema.encodeSync(PlanJson)(plan));
+  if (json) return Console.log(encodePlan(plan));
   const pids = plan.pids
     ? `supervisor ${plan.pids.supervisor}, server ${plan.pids.server ?? "-"}, postgres ${plan.pids.postgres ?? "-"}`
     : "not started";
@@ -212,6 +214,7 @@ const StatusReport = Schema.fromJsonString(
   }),
   { space: 2 }
 );
+const encodeStatus = Schema.encodeSync(StatusReport);
 
 const status = Command.make(
   "status",
@@ -229,7 +232,7 @@ const status = Command.make(
       server: yield* probe(plan.pids?.server),
       postgres: yield* probe(plan.pids?.postgres)
     };
-    if (json) return yield* Console.log(Schema.encodeSync(StatusReport)(report));
+    if (json) return yield* Console.log(encodeStatus(report));
     const state = (part: typeof ProcessState.Type) =>
       part === null ? "not started" : part.alive ? `pid ${part.pid}` : `pid ${part.pid} (dead)`;
     yield* Console.log(

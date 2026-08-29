@@ -5,7 +5,7 @@ export default mergeConfig(
   postgresConfig,
   defineConfig({
     test: {
-      include: ["**/src/**/*.test.ts"]
+      include: ["**/src/**/*.test.ts", "eslint/**/*.test.ts"]
     }
   })
 );

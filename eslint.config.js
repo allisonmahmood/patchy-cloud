@@ -1,5 +1,6 @@
 import js from "@eslint/js";
 import tseslint from "typescript-eslint";
+import patchy from "./eslint/plugin.js";
 
 export default tseslint.config(
   js.configs.recommended,
@@ -15,7 +16,11 @@ export default tseslint.config(
         tsconfigRootDir: import.meta.dirname
       }
     },
+    plugins: { patchy },
     rules: {
+      "patchy/namespace-service-imports": "error",
+      "patchy/no-inline-schema-compile": "error",
+      "patchy/no-manual-effect-runtime-in-tests": "error",
       "no-control-regex": "off",
       "no-console": "error",
       "no-restricted-properties": [

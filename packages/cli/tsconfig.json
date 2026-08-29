@@ -5,7 +5,40 @@
       "@patchy/api": ["../../packages/api/src/index.ts"],
       "@patchy/core": ["../../packages/core/src/index.ts"]
     },
-    "noEmit": true
+    "noEmit": true,
+    "plugins": [
+      {
+        // Unported until #78: the whole-file Node rules stay warnings here, and
+        // warnings do not fail the build. Delete this block with the port.
+        "name": "@effect/language-service",
+        "ignoreEffectWarningsInTscExitCode": true,
+        "diagnosticSeverity": {
+          "importFromBarrel": "error",
+          "anyUnknownInErrorContext": "error",
+          "unsafeEffectTypeAssertion": "error",
+          "instanceOfSchema": "error",
+          "deterministicKeys": "error",
+          "leakingRequirements": "error",
+          "globalErrorInEffectCatch": "error",
+          "globalErrorInEffectFailure": "error",
+          "unknownInEffectCatch": "error",
+          "preferSchemaOverJson": "error",
+          "globalConsoleInEffect": "error",
+          "globalDateInEffect": "error",
+          "globalRandomInEffect": "error",
+          "globalTimersInEffect": "error",
+          "globalFetchInEffect": "error",
+          "cryptoRandomUUIDInEffect": "error",
+          "nodeBuiltinImport": "warning",
+          "globalConsole": "warning",
+          "globalDate": "warning",
+          "globalRandom": "warning",
+          "globalTimers": "warning",
+          "globalFetch": "warning",
+          "cryptoRandomUUID": "warning"
+        }
+      }
+    ]
   },
   "include": ["src/**/*.ts"],
   "exclude": ["src/**/*.test.ts"]
