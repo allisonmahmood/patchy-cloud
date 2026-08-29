@@ -4,6 +4,13 @@ import { getServerConfig } from "./index.js";
 
 const SELF_HOSTING_GUIDE = new URL("../../../docs/SELF_HOSTING.md", import.meta.url);
 
+/**
+ * Variables a ported package reads through Effect `Config` instead of here.
+ * Still the server's to document, so the fence covers them too. The list goes
+ * with this package when the last capability moves.
+ */
+const PORTED_VARIABLES = ["PATCHY_POSTHOG_API_KEY", "PATCHY_POSTHOG_HOST"];
+
 describe("server environment registry", () => {
   it("documents exactly the variables read by getServerConfig", () => {
     const readVariables = new Set<string>();
@@ -30,6 +37,6 @@ describe("server environment registry", () => {
       (match) => match[1]
     );
 
-    expect(documentedVariables.sort()).toEqual([...readVariables].sort());
+    expect(documentedVariables.sort()).toEqual([...readVariables, ...PORTED_VARIABLES].sort());
   });
 });

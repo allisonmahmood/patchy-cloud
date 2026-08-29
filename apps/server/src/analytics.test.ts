@@ -2,18 +2,14 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { Analytics, PostHogClient } from "@patchy/analytics";
 import type { ServerConfig } from "@patchy/config";
 import { JsonFilePatchyDb } from "@patchy/db";
 import { FileSystemHtmlStorage } from "@patchy/storage";
-import {
-  Analytics,
-  createAnalytics,
-  INSTANCE_DISTINCT_ID,
-  type AnalyticsClient,
-  type AnalyticsClientOptions,
-  type AnalyticsEvent
-} from "./analytics.js";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import { createApp } from "./app.js";
+import { createTestRuntime, recordingAnalytics } from "./testing.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MINT_PATH = "/api/tokens/self-service";
@@ -28,52 +24,29 @@ afterEach(async () => {
   await rm(tempDir, { recursive: true, force: true });
 });
 
-/** A seam that keeps what it was handed instead of reporting it. */
-class RecordingAnalytics extends Analytics {
-  readonly events: AnalyticsEvent[] = [];
+/** The reporting layer over a PostHog backend that is down. */
+const failingAnalytics = Analytics.layerPostHog.pipe(
+  Layer.provide(
+    Layer.succeed(
+      PostHogClient.PostHogClient,
+      PostHogClient.PostHogClient.of({
+        capture: () =>
+          new PostHogClient.PostHogError({
+            operation: "capture",
+            cause: new Error("Forced analytics failure.")
+          }),
+        shutdown: Effect.void
+      })
+    )
+  )
+);
 
-  protected override send(event: AnalyticsEvent): void {
-    this.events.push(event);
-  }
+const names = (events: Analytics.AnalyticsEvent[]) => events.map((event) => event.name);
 
-  names(): string[] {
-    return this.events.map((event) => event.name);
-  }
-
-  only(): AnalyticsEvent {
-    expect(this.events).toHaveLength(1);
-    return this.events[0] as AnalyticsEvent;
-  }
-}
-
-/** A seam whose backend is down. */
-class FailingAnalytics extends Analytics {
-  protected override send(): void {
-    throw new Error("Forced analytics failure.");
-  }
-}
-
-/** An upstream client that keeps every message rather than sending one. */
-class RecordingAnalyticsClient implements AnalyticsClient {
-  readonly messages: {
-    distinctId: string;
-    event: string;
-    properties: Record<string, unknown>;
-  }[] = [];
-  shutdownCalls = 0;
-
-  capture(message: {
-    distinctId: string;
-    event: string;
-    properties: Record<string, unknown>;
-  }): void {
-    this.messages.push(message);
-  }
-
-  async shutdown(): Promise<void> {
-    this.shutdownCalls += 1;
-  }
-}
+const only = (events: Analytics.AnalyticsEvent[]): Analytics.AnalyticsEvent => {
+  expect(events).toHaveLength(1);
+  return events[0] as Analytics.AnalyticsEvent;
+};
 
 function testConfig(overrides: Partial<ServerConfig> = {}): ServerConfig {
   return {
@@ -89,8 +62,6 @@ function testConfig(overrides: Partial<ServerConfig> = {}): ServerConfig {
     selfServiceMintsPerIpPerDay: 5,
     draftCreateRateLimitPerMinute: 10,
     liveDraftsPerToken: 1_000,
-    posthogApiKey: null,
-    posthogHost: "https://us.i.posthog.com",
     dbDriver: "json",
     databaseUrl: null,
     jsonDbFile: path.join(tempDir, "db.json"),
@@ -105,23 +76,25 @@ function testConfig(overrides: Partial<ServerConfig> = {}): ServerConfig {
 
 interface WatchedApp {
   readonly app: ReturnType<typeof createApp>;
-  readonly analytics: RecordingAnalytics;
+  /** What the recording layer kept; empty when a test brought its own layer. */
+  readonly events: Analytics.AnalyticsEvent[];
   advanceDays(days: number): void;
   createDraft(title: string, token?: string): Promise<string>;
   close(): Promise<void>;
 }
 
 /**
- * An app wired to a recording seam, with the clock its database also reads, so
- * a test can wind the retention clock forward and sweep.
+ * An app wired to a recording layer, with the clock its database also reads,
+ * so a test can wind the retention clock forward and sweep.
  */
 async function createWatchedApp(
   label: string,
-  options: { analytics?: Analytics; config?: Partial<ServerConfig> } = {}
+  options: { analytics?: Layer.Layer<Analytics.Analytics>; config?: Partial<ServerConfig> } = {}
 ): Promise<WatchedApp> {
   let now = Date.UTC(2026, 0, 1);
   const clock = (): number => now;
-  const analytics = options.analytics ?? new RecordingAnalytics();
+  const recording = recordingAnalytics();
+  const runtime = createTestRuntime({ clock, analytics: options.analytics ?? recording.layer });
   const db = new JsonFilePatchyDb(path.join(tempDir, `${label}-db.json`), { clock });
   await db.initialize("dev-token");
   const storage = new FileSystemHtmlStorage(path.join(tempDir, `${label}-drafts`));
@@ -129,13 +102,11 @@ async function createWatchedApp(
     jsonDbFile: path.join(tempDir, `${label}-db.json`),
     ...options.config
   });
-  const app = createApp({ config, db, storage, clock, analytics });
+  const app = createApp({ config, db, storage, clock, runtime });
 
   return {
     app,
-    // Only the recording seam exposes what it kept; a test that passes its own
-    // seam reads that one instead.
-    analytics: analytics as RecordingAnalytics,
+    events: recording.events,
     advanceDays(days) {
       now += days * DAY_MS;
     },
@@ -153,6 +124,8 @@ async function createWatchedApp(
     },
     async close() {
       await app.close();
+      // Lets every forked `track` land before the events are read.
+      await runtime.dispose();
       await db.close();
     }
   };
@@ -181,7 +154,7 @@ describe("server-side analytics", () => {
     });
     const principal = me.json() as { accountId: string; apiTokenId: string };
 
-    expect(watched.analytics.only()).toEqual({
+    expect(only(watched.events)).toEqual({
       name: "token.minted",
       principalId: principal.accountId,
       properties: { apiTokenId: principal.apiTokenId, selfService: true }
@@ -202,7 +175,7 @@ describe("server-side analytics", () => {
     expect(created.statusCode).toBe(201);
     const apiToken = (created.json() as { apiToken: { id: string } }).apiToken;
 
-    const event = watched.analytics.only();
+    const event = only(watched.events);
     expect(event.name).toBe("token.minted");
     expect(event.properties).toEqual({ apiTokenId: apiToken.id, selfService: false });
     // The plaintext exists in that response and must never leave through here.
@@ -223,7 +196,7 @@ describe("server-side analytics", () => {
       payload: "{}"
     });
     expect(mint.statusCode).toBe(403);
-    expect(watched.analytics.events).toEqual([]);
+    expect(watched.events).toEqual([]);
 
     await watched.close();
   });
@@ -243,8 +216,11 @@ describe("server-side analytics", () => {
     });
     expect(update.statusCode).toBe(200);
 
-    expect(watched.analytics.names()).toEqual(["draft.created", "draft.updated"]);
-    const [created, updated] = watched.analytics.events as [AnalyticsEvent, AnalyticsEvent];
+    expect(names(watched.events)).toEqual(["draft.created", "draft.updated"]);
+    const [created, updated] = watched.events as [
+      Analytics.AnalyticsEvent,
+      Analytics.AnalyticsEvent
+    ];
     expect(created.properties.draftId).toBe(draftId);
     expect(created.properties.versionNumber).toBe(1);
     expect(created.properties.htmlBytes).toBeGreaterThan(0);
@@ -266,7 +242,7 @@ describe("server-side analytics", () => {
       payload: { html: "<script>alert(1)</script>" }
     });
     expect(invalid.statusCode).toBe(422);
-    expect(watched.analytics.events).toEqual([]);
+    expect(watched.events).toEqual([]);
 
     await watched.close();
   });
@@ -275,7 +251,7 @@ describe("server-side analytics", () => {
     const watched = await createWatchedApp("moderation");
     const disabledId = await watched.createDraft("To disable");
     const deletedId = await watched.createDraft("To delete");
-    watched.analytics.events.length = 0;
+    watched.events.length = 0;
 
     const disable = await watched.app.inject({
       method: "POST",
@@ -292,12 +268,15 @@ describe("server-side analytics", () => {
     });
     expect(remove.statusCode).toBe(200);
 
-    expect(watched.analytics.names()).toEqual(["draft.disabled", "draft.deleted"]);
-    const [disabled, deleted] = watched.analytics.events as [AnalyticsEvent, AnalyticsEvent];
+    expect(names(watched.events)).toEqual(["draft.disabled", "draft.deleted"]);
+    const [disabled, deleted] = watched.events as [
+      Analytics.AnalyticsEvent,
+      Analytics.AnalyticsEvent
+    ];
     expect(disabled.properties).toEqual({ draftId: disabledId, admin: true });
     expect(deleted.properties).toEqual({ draftId: deletedId, admin: true });
     // The reason an operator typed is moderation state, not an event property.
-    expect(JSON.stringify(watched.analytics.events)).not.toContain("Reported and reviewed.");
+    expect(JSON.stringify(watched.events)).not.toContain("Reported and reviewed.");
 
     await watched.close();
   });
@@ -319,7 +298,7 @@ describe("server-side analytics", () => {
 
     const disabledId = await watched.createDraft("Mine to disable", owner);
     const deletedId = await watched.createDraft("Mine to delete", owner);
-    watched.analytics.events.length = 0;
+    watched.events.length = 0;
 
     const disable = await watched.app.inject({
       method: "POST",
@@ -335,8 +314,11 @@ describe("server-side analytics", () => {
     });
     expect(remove.statusCode).toBe(200);
 
-    expect(watched.analytics.names()).toEqual(["draft.disabled", "draft.deleted"]);
-    const [disabled, deleted] = watched.analytics.events as [AnalyticsEvent, AnalyticsEvent];
+    expect(names(watched.events)).toEqual(["draft.disabled", "draft.deleted"]);
+    const [disabled, deleted] = watched.events as [
+      Analytics.AnalyticsEvent,
+      Analytics.AnalyticsEvent
+    ];
     expect(disabled.properties).toEqual({ draftId: disabledId, admin: false });
     expect(deleted.properties).toEqual({ draftId: deletedId, admin: false });
 
@@ -359,7 +341,7 @@ describe("server-side analytics", () => {
       headers: { authorization: "Bearer dev-token" }
     });
     expect(remove.statusCode).toBe(404);
-    expect(watched.analytics.events).toEqual([]);
+    expect(watched.events).toEqual([]);
 
     await watched.close();
   });
@@ -367,13 +349,13 @@ describe("server-side analytics", () => {
   it("reports an expired draft when the sweep takes it, on no principal at all", async () => {
     const watched = await createWatchedApp("expiry");
     const draftId = await watched.createDraft("Ages out");
-    watched.analytics.events.length = 0;
+    watched.events.length = 0;
 
     watched.advanceDays(91);
     const result = await watched.app.sweepExpiredDrafts();
     expect(result.deleted).toBe(1);
 
-    expect(watched.analytics.only()).toEqual({
+    expect(only(watched.events)).toEqual({
       name: "draft.expired",
       principalId: null,
       properties: { draftId, versionsRemoved: 1 }
@@ -385,11 +367,11 @@ describe("server-side analytics", () => {
   it("reports nothing when a sweep takes nothing", async () => {
     const watched = await createWatchedApp("expiry-empty");
     await watched.createDraft("Still fresh");
-    watched.analytics.events.length = 0;
+    watched.events.length = 0;
 
     const result = await watched.app.sweepExpiredDrafts();
     expect(result.deleted).toBe(0);
-    expect(watched.analytics.events).toEqual([]);
+    expect(watched.events).toEqual([]);
 
     await watched.close();
   });
@@ -397,7 +379,7 @@ describe("server-side analytics", () => {
   it("reports nothing when a draft is served, at either URL", async () => {
     const watched = await createWatchedApp("serving");
     const draftId = await watched.createDraft("Read me");
-    watched.analytics.events.length = 0;
+    watched.events.length = 0;
 
     const latest = await watched.app.inject({ method: "GET", url: `/d/${draftId}` });
     expect(latest.statusCode).toBe(200);
@@ -406,7 +388,7 @@ describe("server-side analytics", () => {
 
     // Readers are unwatched: a visit moves a retention clock and is reported
     // nowhere, and nothing analytics-shaped reaches the page either.
-    expect(watched.analytics.events).toEqual([]);
+    expect(watched.events).toEqual([]);
     for (const response of [latest, version]) {
       expect(response.body).not.toContain("posthog");
       expect(response.body).not.toContain("<script");
@@ -425,7 +407,7 @@ describe("server-side analytics", () => {
   it("reports nothing for the routes that are not on the list", async () => {
     const watched = await createWatchedApp("closed-list");
     const draftId = await watched.createDraft("Pinned");
-    watched.analytics.events.length = 0;
+    watched.events.length = 0;
 
     for (const suffix of ["pin", "unpin"]) {
       const response = await watched.app.inject({
@@ -445,14 +427,14 @@ describe("server-side analytics", () => {
 
     // Those six are the whole list. Pinning, unpinning, and reading are things
     // that happen; they are not moments the instance reports.
-    expect(watched.analytics.events).toEqual([]);
+    expect(watched.events).toEqual([]);
 
     await watched.close();
   });
 
   it("answers every request normally when capture fails", async () => {
     const watched = await createWatchedApp("failing", {
-      analytics: new FailingAnalytics(),
+      analytics: failingAnalytics,
       config: { allowSelfServiceTokens: true }
     });
 
@@ -498,7 +480,7 @@ describe("server-side analytics", () => {
 
   it("finishes the expiry sweep when capture fails", async () => {
     const watched = await createWatchedApp("failing-sweep", {
-      analytics: new FailingAnalytics()
+      analytics: failingAnalytics
     });
     await watched.createDraft("Ages out");
 
@@ -508,102 +490,5 @@ describe("server-side analytics", () => {
     expect(result).toEqual({ deleted: 1, skipped: 0, failed: 0, orphanedObjects: 0 });
 
     await watched.close();
-  });
-});
-
-describe("analytics configuration", () => {
-  it("builds no client and reports nothing when no key is configured", async () => {
-    const clients: RecordingAnalyticsClient[] = [];
-    const analytics = createAnalytics(testConfig(), {
-      createClient: () => {
-        const client = new RecordingAnalyticsClient();
-        clients.push(client);
-        return client;
-      }
-    });
-
-    const watched = await createWatchedApp("unconfigured", { analytics });
-    const draftId = await watched.createDraft("Private instance");
-    const remove = await watched.app.inject({
-      method: "DELETE",
-      url: `/api/patches/${draftId}`,
-      headers: { authorization: "Bearer dev-token" }
-    });
-    expect(remove.statusCode).toBe(200);
-    await watched.close();
-
-    expect(clients).toEqual([]);
-
-    // Shutting a seam that never reported down is still a no-op, not a crash.
-    await analytics.shutdown();
-  });
-
-  it("reports through the configured client when a key is set", async () => {
-    const client = new RecordingAnalyticsClient();
-    const built: AnalyticsClientOptions[] = [];
-    const analytics = createAnalytics(
-      testConfig({ posthogApiKey: "phc_test", posthogHost: "https://eu.i.posthog.com" }),
-      {
-        createClient: (options) => {
-          built.push(options);
-          return client;
-        }
-      }
-    );
-
-    expect(built).toEqual([{ apiKey: "phc_test", host: "https://eu.i.posthog.com" }]);
-
-    const watched = await createWatchedApp("configured", { analytics });
-    const draftId = await watched.createDraft("Reported upstream");
-    await watched.close();
-
-    expect(client.messages).toHaveLength(1);
-    const message = client.messages[0] as (typeof client.messages)[number];
-    expect(message.event).toBe("draft.created");
-    expect(message.distinctId).toMatch(/^acct_/);
-    expect(message.properties.draftId).toBe(draftId);
-    // A principal is an ownership row, not a person.
-    expect(message.properties.$process_person_profile).toBe(false);
-
-    await analytics.shutdown();
-    expect(client.shutdownCalls).toBe(1);
-  });
-
-  it("reports events no principal performed under the instance", async () => {
-    const client = new RecordingAnalyticsClient();
-    const analytics = createAnalytics(testConfig({ posthogApiKey: "phc_test" }), {
-      createClient: () => client
-    });
-
-    const watched = await createWatchedApp("instance", { analytics });
-    await watched.createDraft("Ages out");
-    watched.advanceDays(91);
-    await watched.app.sweepExpiredDrafts();
-    await watched.close();
-
-    const expired = client.messages.find((message) => message.event === "draft.expired");
-    expect(expired?.distinctId).toBe(INSTANCE_DISTINCT_ID);
-  });
-
-  it("keeps a failing client's error away from the caller", async () => {
-    class BrokenClient extends RecordingAnalyticsClient {
-      override capture(): void {
-        throw new Error("Forced client failure.");
-      }
-      override async shutdown(): Promise<void> {
-        throw new Error("Forced shutdown failure.");
-      }
-    }
-
-    const analytics = createAnalytics(testConfig({ posthogApiKey: "phc_test" }), {
-      createClient: () => new BrokenClient()
-    });
-
-    const watched = await createWatchedApp("broken-client", { analytics });
-    const draftId = await watched.createDraft("Still published");
-    expect(draftId.length).toBeGreaterThan(0);
-    await watched.close();
-
-    await expect(analytics.shutdown()).resolves.toBeUndefined();
   });
 });

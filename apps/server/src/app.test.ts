@@ -11,6 +11,7 @@ import { JsonFilePatchyDb } from "@patchy/db";
 import type { RecordUploadInput, RecordUploadResult } from "@patchy/db";
 import { FileSystemHtmlStorage } from "@patchy/storage";
 import { classifyAuthorizationHeader, createApp, isProtectedApiPath } from "./app.js";
+import { createTestRuntime } from "./testing.js";
 
 let tempDir: string;
 
@@ -94,7 +95,7 @@ describe("Patchy Cloud server", () => {
     const db = new JsonFilePatchyDb(path.join(tempDir, "configured-origin-db.json"));
     await db.initialize(apiToken);
     const storage = new FileSystemHtmlStorage(path.join(tempDir, "configured-origin-drafts"));
-    const app = createApp({ config, db, storage });
+    const app = createApp({ config, db, storage, runtime: createTestRuntime() });
 
     const upload = await app.inject({
       method: "POST",
@@ -124,7 +125,7 @@ describe("Patchy Cloud server", () => {
     const db = new JsonFilePatchyDb(path.join(tempDir, "db.json"));
     await db.initialize("dev-token");
     const storage = new FileSystemHtmlStorage(path.join(tempDir, "drafts"));
-    const app = createApp({ config, db, storage });
+    const app = createApp({ config, db, storage, runtime: createTestRuntime() });
 
     const unauth = await app.inject({
       method: "POST",
@@ -169,7 +170,7 @@ describe("Patchy Cloud server", () => {
       const storage = new FileSystemHtmlStorage(
         path.join(tempDir, `tokenless-drafts-${allowSelfServiceTokens}`)
       );
-      const app = createApp({ config, db, storage });
+      const app = createApp({ config, db, storage, runtime: createTestRuntime() });
       const html =
         "<!doctype html><html><head><title>Tokenless</title></head><body>marker</body></html>";
 
@@ -203,7 +204,7 @@ describe("Patchy Cloud server", () => {
     const db = new JsonFilePatchyDb(path.join(tempDir, "tokenless-method-db.json"));
     await db.initialize(null);
     const storage = new FileSystemHtmlStorage(path.join(tempDir, "tokenless-method-drafts"));
-    const app = createApp({ config, db, storage });
+    const app = createApp({ config, db, storage, runtime: createTestRuntime() });
 
     const response = await app.inject({
       method: "PUT",
@@ -227,7 +228,7 @@ describe("Patchy Cloud server", () => {
     const db = new JsonFilePatchyDb(path.join(tempDir, "upload-route-db.json"));
     await db.initialize(null);
     const storage = new FileSystemHtmlStorage(path.join(tempDir, "upload-route-drafts"));
-    const app = createApp({ config, db, storage });
+    const app = createApp({ config, db, storage, runtime: createTestRuntime() });
 
     try {
       for (const target of [
@@ -266,7 +267,7 @@ describe("Patchy Cloud server", () => {
       scopes: ["upload"]
     });
     const storage = new FileSystemHtmlStorage(path.join(tempDir, "moderation-drafts"));
-    const app = createApp({ config, db, storage });
+    const app = createApp({ config, db, storage, runtime: createTestRuntime() });
     let foreignDraftSequence = 0;
     const createForeignDraft = async (): Promise<string> => {
       foreignDraftSequence += 1;
@@ -365,7 +366,7 @@ describe("Patchy Cloud server", () => {
     await markJsonTokenRevoked(dbFile, "Revoked token");
 
     const storage = new FileSystemHtmlStorage(path.join(tempDir, "pre-body-auth-drafts"));
-    const app = createApp({ config, db, storage });
+    const app = createApp({ config, db, storage, runtime: createTestRuntime() });
     const attackerJson = `{"html":"${"x".repeat(2 * 1024 * 1024)}`;
 
     try {
@@ -644,7 +645,13 @@ describe("Patchy Cloud server", () => {
     const db = new JsonFilePatchyDb(path.join(tempDir, "protected-limit-db.json"));
     await db.initialize("unused-token");
     const storage = new FileSystemHtmlStorage(path.join(tempDir, "protected-limit-drafts"));
-    const app = createApp({ config, db, storage, clock: () => now });
+    const app = createApp({
+      config,
+      db,
+      storage,
+      clock: () => now,
+      runtime: createTestRuntime({ clock: () => now })
+    });
 
     try {
       for (let attempt = 0; attempt < 60; attempt += 1) {
@@ -711,7 +718,13 @@ describe("Patchy Cloud server", () => {
     const db = new JsonFilePatchyDb(path.join(tempDir, "unmatched-api-limit-db.json"));
     await db.initialize("dev-token");
     const storage = new FileSystemHtmlStorage(path.join(tempDir, "unmatched-api-limit-drafts"));
-    const app = createApp({ config, db, storage, clock: () => now });
+    const app = createApp({
+      config,
+      db,
+      storage,
+      clock: () => now,
+      runtime: createTestRuntime({ clock: () => now })
+    });
 
     try {
       const upload = await app.inject({
@@ -826,7 +839,13 @@ describe("Patchy Cloud server", () => {
       const storage = new FileSystemHtmlStorage(
         path.join(tempDir, `${url.replaceAll(/[^a-z0-9]/gi, "-")}-drafts`)
       );
-      const app = createApp({ config, db, storage, clock: () => now });
+      const app = createApp({
+        config,
+        db,
+        storage,
+        clock: () => now,
+        runtime: createTestRuntime({ clock: () => now })
+      });
 
       try {
         const attackerJson = `{"html":"${"x".repeat(2 * 1024 * 1024)}`;
@@ -969,7 +988,13 @@ describe("Patchy Cloud server", () => {
       const storage = new FileSystemHtmlStorage(
         path.join(tempDir, `${caseName}-pre-routing-drafts`)
       );
-      const app = createApp({ config, db, storage, clock: () => now });
+      const app = createApp({
+        config,
+        db,
+        storage,
+        clock: () => now,
+        runtime: createTestRuntime({ clock: () => now })
+      });
 
       try {
         const publicMalformed = await rawHttpRequest(app, "/public/%");
@@ -1019,7 +1044,7 @@ describe("Patchy Cloud server", () => {
     const db = new JsonFilePatchyDb(path.join(tempDir, "long-unmatched-api-db.json"));
     await db.initialize("dev-token");
     const storage = new FileSystemHtmlStorage(path.join(tempDir, "long-unmatched-api-drafts"));
-    const app = createApp({ config, db, storage });
+    const app = createApp({ config, db, storage, runtime: createTestRuntime() });
     const longSegment = "x".repeat(101);
 
     try {
@@ -1059,7 +1084,7 @@ describe("Patchy Cloud server", () => {
     const db = new JsonFilePatchyDb(path.join(tempDir, "absolute-query-db.json"));
     await db.initialize("dev-token");
     const storage = new FileSystemHtmlStorage(path.join(tempDir, "absolute-query-drafts"));
-    const app = createApp({ config, db, storage });
+    const app = createApp({ config, db, storage, runtime: createTestRuntime() });
 
     try {
       const publicQuery = await rawHttpRequest(app, "http://host?x=/api/%");
@@ -1097,7 +1122,13 @@ describe("Patchy Cloud server", () => {
       scopes: ["upload"]
     });
     const storage = new FileSystemHtmlStorage(path.join(tempDir, "upload-limit-drafts"));
-    const app = createApp({ config, db, storage, clock: () => now });
+    const app = createApp({
+      config,
+      db,
+      storage,
+      clock: () => now,
+      runtime: createTestRuntime({ clock: () => now })
+    });
 
     try {
       const upload = await app.inject({
@@ -1185,7 +1216,13 @@ describe("Patchy Cloud server", () => {
     const db = new JsonFilePatchyDb(path.join(tempDir, "upload-limit-db.json"));
     await db.initialize("upload-token");
     const storage = new FileSystemHtmlStorage(path.join(tempDir, "upload-limit-drafts"));
-    const app = createApp({ config, db, storage, clock: () => now });
+    const app = createApp({
+      config,
+      db,
+      storage,
+      clock: () => now,
+      runtime: createTestRuntime({ clock: () => now })
+    });
 
     try {
       const authenticated = await app.inject({
@@ -1236,7 +1273,13 @@ describe("Patchy Cloud server", () => {
     const db = new JsonFilePatchyDb(path.join(tempDir, "create-limit-db.json"));
     await db.initialize("dev-token");
     const storage = new FileSystemHtmlStorage(path.join(tempDir, "create-limit-drafts"));
-    const app = createApp({ config, db, storage, clock: () => now });
+    const app = createApp({
+      config,
+      db,
+      storage,
+      clock: () => now,
+      runtime: createTestRuntime({ clock: () => now })
+    });
 
     try {
       const first = await createDraft(app, "dev-token", "First");
@@ -1281,7 +1324,7 @@ describe("Patchy Cloud server", () => {
     // `dev-token` is the admin bootstrap token: the cap has no admin exemption.
     const db = new JsonFilePatchyDb(dbFile);
     await db.initialize("dev-token");
-    const app = createApp({ config, db, storage });
+    const app = createApp({ config, db, storage, runtime: createTestRuntime() });
 
     try {
       const one = await createDraft(app, "dev-token", "One");
@@ -1311,7 +1354,7 @@ describe("Patchy Cloud server", () => {
     // database, so it is still there.
     const restartedDb = new JsonFilePatchyDb(dbFile);
     await restartedDb.initialize("dev-token");
-    const restarted = createApp({ config, db: restartedDb, storage });
+    const restarted = createApp({ config, db: restartedDb, storage, runtime: createTestRuntime() });
 
     try {
       const stillOverQuota = await createDraft(restarted, "dev-token", "Three again");
@@ -1339,7 +1382,7 @@ describe("Patchy Cloud server", () => {
       scopes: ["upload"]
     });
     const storage = new FileSystemHtmlStorage(path.join(tempDir, "live-cap-release-drafts"));
-    const app = createApp({ config, db, storage });
+    const app = createApp({ config, db, storage, runtime: createTestRuntime() });
 
     try {
       const created = await createDraft(app, "dev-token", "Only one");
@@ -1483,7 +1526,7 @@ describe("Patchy Cloud server", () => {
     const db = new JsonFilePatchyDb(path.join(tempDir, "unknown-update-db.json"));
     await db.initialize("dev-token");
     const storage = new FileSystemHtmlStorage(path.join(tempDir, "unknown-update-drafts"));
-    const app = createApp({ config, db, storage });
+    const app = createApp({ config, db, storage, runtime: createTestRuntime() });
     const patchId = "abcdefghijkl";
 
     const upload = await app.inject({
@@ -1513,7 +1556,7 @@ describe("Patchy Cloud server", () => {
     const auth = await db.findApiTokenByToken("dev-token");
     if (!auth) throw new Error("Expected bootstrap authentication.");
     const storage = new FileSystemHtmlStorage(path.join(tempDir, "unavailable-update-drafts"));
-    const app = createApp({ config, db, storage });
+    const app = createApp({ config, db, storage, runtime: createTestRuntime() });
     const unknownDraftId = "aaaaaaaaaaaa";
     const foreignDraftId = "bbbbbbbbbbbb";
     const deletedDraftId = "cccccccccccc";
@@ -1571,7 +1614,7 @@ describe("Patchy Cloud server", () => {
     const db = new JsonFilePatchyDb(path.join(tempDir, "owned-update-db.json"));
     await db.initialize("dev-token");
     const storage = new FileSystemHtmlStorage(path.join(tempDir, "owned-update-drafts"));
-    const app = createApp({ config, db, storage });
+    const app = createApp({ config, db, storage, runtime: createTestRuntime() });
     const headers = { authorization: "Bearer dev-token" };
 
     const created = await app.inject({
@@ -1628,7 +1671,7 @@ describe("Patchy Cloud server", () => {
     const auth = await db.findApiTokenByToken("dev-token");
     if (!auth) throw new Error("Expected bootstrap authentication.");
     const storage = new ControlledHtmlStorage(path.join(tempDir, "slow-storage-drafts"));
-    const app = createApp({ config, db, storage });
+    const app = createApp({ config, db, storage, runtime: createTestRuntime() });
     const created = await app.inject({
       method: "POST",
       url: "/api/uploads",
@@ -1695,7 +1738,7 @@ describe("Patchy Cloud server", () => {
     const auth = await db.findApiTokenByToken("dev-token");
     if (!auth) throw new Error("Expected bootstrap authentication.");
     const storage = new ControlledHtmlStorage(path.join(tempDir, "race-cleanup-drafts"));
-    const app = createApp({ config, db, storage });
+    const app = createApp({ config, db, storage, runtime: createTestRuntime() });
     const created = await app.inject({
       method: "POST",
       url: "/api/uploads",
@@ -1734,7 +1777,7 @@ describe("Patchy Cloud server", () => {
     const db = new JsonFilePatchyDb(path.join(tempDir, "storage-failure-db.json"));
     await db.initialize("dev-token");
     const storage = new ControlledHtmlStorage(path.join(tempDir, "storage-failure-drafts"));
-    const app = createApp({ config, db, storage });
+    const app = createApp({ config, db, storage, runtime: createTestRuntime() });
     const created = await app.inject({
       method: "POST",
       url: "/api/uploads",
@@ -1774,7 +1817,7 @@ describe("Patchy Cloud server", () => {
     const auth = await db.findApiTokenByToken("dev-token");
     if (!auth) throw new Error("Expected bootstrap authentication.");
     const storage = new ControlledHtmlStorage(path.join(tempDir, "cleanup-failure-drafts"));
-    const app = createApp({ config, db, storage });
+    const app = createApp({ config, db, storage, runtime: createTestRuntime() });
     const created = await app.inject({
       method: "POST",
       url: "/api/uploads",
@@ -1812,7 +1855,7 @@ describe("Patchy Cloud server", () => {
     const db = new CommitIndeterminateJsonDb(path.join(tempDir, "indeterminate-db.json"));
     await db.initialize("dev-token");
     const storage = new ControlledHtmlStorage(path.join(tempDir, "indeterminate-drafts"));
-    const app = createApp({ config, db, storage });
+    const app = createApp({ config, db, storage, runtime: createTestRuntime() });
     const created = await app.inject({
       method: "POST",
       url: "/api/uploads",
@@ -1850,7 +1893,7 @@ describe("Patchy Cloud server", () => {
     const db = new JsonFilePatchyDb(path.join(tempDir, "legacy-null-db.json"));
     await db.initialize("dev-token");
     const storage = new FileSystemHtmlStorage(path.join(tempDir, "legacy-null-drafts"));
-    const app = createApp({ config, db, storage });
+    const app = createApp({ config, db, storage, runtime: createTestRuntime() });
 
     const upload = await app.inject({
       method: "POST",
@@ -1883,7 +1926,7 @@ describe("Patchy Cloud server", () => {
     const auth = await db.findApiTokenByToken("dev-token");
     if (!auth) throw new Error("Expected bootstrap authentication.");
     const storage = new FileSystemHtmlStorage(path.join(tempDir, "legacy-key-drafts"));
-    const app = createApp({ config, db, storage });
+    const app = createApp({ config, db, storage, runtime: createTestRuntime() });
 
     const upload = await app.inject({
       method: "POST",
@@ -1911,7 +1954,7 @@ describe("Patchy Cloud server", () => {
     const db = new JsonFilePatchyDb(path.join(tempDir, "explicit-intent-db.json"));
     await db.initialize("dev-token");
     const storage = new FileSystemHtmlStorage(path.join(tempDir, "explicit-intent-drafts"));
-    const app = createApp({ config, db, storage });
+    const app = createApp({ config, db, storage, runtime: createTestRuntime() });
 
     for (const patchId of ["", 123]) {
       const upload = await app.inject({
@@ -3199,7 +3242,7 @@ async function createServedDraft(
   const db = new JsonFilePatchyDb(path.join(tempDir, `${safeLabel}-db.json`), { clock });
   await db.initialize("dev-token");
   const storage = new FileSystemHtmlStorage(path.join(tempDir, `${safeLabel}-drafts`));
-  const app = createApp({ config, db, storage, clock });
+  const app = createApp({ config, db, storage, clock, runtime: createTestRuntime({ clock }) });
 
   const upload = await app.inject({
     method: "POST",
@@ -3246,7 +3289,7 @@ async function uploadSourceIp(options: {
   const db = new JsonFilePatchyDb(dbFile);
   await db.initialize(apiToken);
   const storage = new FileSystemHtmlStorage(path.join(tempDir, "trusted-proxy-drafts"));
-  const app = createApp({ config, db, storage });
+  const app = createApp({ config, db, storage, runtime: createTestRuntime() });
 
   try {
     const upload = await app.inject({
@@ -3316,7 +3359,7 @@ async function createScopedTokenApp(label: string, clock?: () => number): Promis
     scopes: ["admin"]
   });
   const storage = new FileSystemHtmlStorage(path.join(tempDir, `${safeLabel}-drafts`));
-  const app = createApp({ config, db, storage, clock });
+  const app = createApp({ config, db, storage, clock, runtime: createTestRuntime({ clock }) });
   return { app, db };
 }
 
@@ -3599,7 +3642,10 @@ async function createMintApp(
   }> => {
     const db = new JsonFilePatchyDb(dbFile, { clock });
     await db.initialize("dev-token");
-    return { app: createApp({ config, db, storage, clock }), db };
+    return {
+      app: createApp({ config, db, storage, clock, runtime: createTestRuntime({ clock }) }),
+      db
+    };
   };
 
   let running = await open();
@@ -3675,7 +3721,13 @@ async function createClockedApp(
   await db.initialize("dev-token");
   const storageDir = path.join(tempDir, `${label}-drafts`);
   const storage = openStorage(storageDir);
-  const app = createApp({ config: options.config ?? testConfig(), db, storage, clock });
+  const app = createApp({
+    config: options.config ?? testConfig(),
+    db,
+    storage,
+    clock,
+    runtime: createTestRuntime({ clock })
+  });
 
   return {
     app,
@@ -3762,8 +3814,6 @@ function testConfig(): ServerConfig {
     selfServiceMintsPerIpPerDay: 5,
     draftCreateRateLimitPerMinute: 10,
     liveDraftsPerToken: 1_000,
-    posthogApiKey: null,
-    posthogHost: "https://us.i.posthog.com",
     dbDriver: "json",
     databaseUrl: null,
     jsonDbFile: path.join(tempDir, "db.json"),

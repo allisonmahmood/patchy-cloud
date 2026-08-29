@@ -1,6 +1,6 @@
 import type { PatchyDb } from "@patchy/db";
 import type { HtmlStorage } from "@patchy/storage";
-import type { Analytics } from "./analytics.js";
+import { track, type ServerRuntime } from "./runtime.js";
 
 /**
  * The expiry sweep — the job that makes draft expiry real.
@@ -51,11 +51,8 @@ export interface ExpirySweepLog {
 export interface ExpirySweepOptions {
   db: PatchyDb;
   storage: HtmlStorage;
-  /**
-   * Where a taken draft is reported. Left out, the sweep reports nothing and
-   * behaves exactly as it did.
-   */
-  analytics?: Analytics;
+  /** Where a taken draft is reported. */
+  runtime: ServerRuntime;
   log?: ExpirySweepLog;
 }
 
@@ -134,7 +131,7 @@ async function sweepDraft(
   result.deleted += 1;
   // Reported once the record is gone, which is the moment the draft stops
   // existing. No principal performed it — the clock ran out.
-  options.analytics?.capture({
+  track(options.runtime, {
     name: "draft.expired",
     principalId: null,
     properties: { draftId, versionsRemoved: objectKeys.length }

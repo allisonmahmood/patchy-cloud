@@ -11,6 +11,7 @@ import type {
   RecordUploadResult,
   UploadTargetError
 } from "@patchy/db";
+import type { Limits } from "@patchy/limits";
 import type { HtmlStorage } from "@patchy/storage";
 import {
   BadRequest,
@@ -42,14 +43,9 @@ import {
 } from "@patchy/api";
 import { contentHash, newDraftId, newInternalId, randomToken, validateHtml } from "@patchy/core";
 import type { UploadMetadata } from "@patchy/core";
-import { DisabledAnalytics, type Analytics } from "./analytics.js";
 import { createExpirySweep, type ExpirySweepResult } from "./expiry-sweep.js";
 import { getDraftPublicUrl } from "./public-url.js";
-import {
-  createRateLimiters,
-  type FixedWindowRateLimiter,
-  type RateLimitDecision
-} from "./rate-limit.js";
+import { consume, track, type ServerRuntime } from "./runtime.js";
 import { renderDraftWrapper, renderHome, renderNotFound } from "./render.js";
 import {
   DRAFT_CONTENT_SECURITY_POLICY,
@@ -65,12 +61,20 @@ export interface CreateAppOptions {
   db: PatchyDb;
   storage: HtmlStorage;
   clock?: () => number;
-  /**
-   * Where business events are reported. Left out, the app reports nothing —
-   * which is what an instance with no analytics key configured runs with.
-   */
-  analytics?: Analytics;
+  /** The Effect side — analytics and the rate limiter — behind one runtime. */
+  runtime: ServerRuntime;
 }
+
+/**
+ * The per-minute limits the app enforces. Only these live in memory; the
+ * long-window ceilings (mint quota, draft quota) are database counts, so a
+ * restart empties these buckets but not those. Every limit shares one store,
+ * so each prefixes its keys with its own name.
+ */
+type RateLimitName =
+  "protected-api" | "authenticated-upload" | "self-service-mint" | "draft-create";
+
+type ConsumeLimit = (name: RateLimitName, key: string) => Promise<Limits.ConsumeResult>;
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -97,7 +101,7 @@ export type AuthorizationCredential =
   { kind: "missing" } | { kind: "invalid" } | { kind: "bearer"; token: string };
 
 interface ProtectedApiHookOptions {
-  uploadLimiter?: FixedWindowRateLimiter;
+  uploadLimit?: boolean;
 }
 
 type ApiPolicyScope = "admin" | "upload";
@@ -149,7 +153,21 @@ type MarkedIncomingMessage = IncomingMessage & {
 
 export function createApp(options: CreateAppOptions): FastifyInstance {
   const clock = options.clock ?? Date.now;
-  const rateLimiters = createRateLimiters(options.config, { clock: options.clock });
+  const limitPerMinute: Record<RateLimitName, number> = {
+    "protected-api": options.config.protectedApiRateLimitPerMinute,
+    "authenticated-upload": options.config.authenticatedUploadRateLimitPerMinute,
+    // Keyed by source address rather than by token, since a caller asking
+    // for its first token has no token to key on yet. The only limit on an
+    // unauthenticated route.
+    "self-service-mint": options.config.selfServiceMintRateLimitPerMinute,
+    "draft-create": options.config.draftCreateRateLimitPerMinute
+  };
+  const consumeLimit: ConsumeLimit = (name, key) =>
+    consume(options.runtime, {
+      key: `${name}:${key}`,
+      limit: limitPerMinute[name],
+      window: "1 minute"
+    });
   const app = Fastify({
     logger: false,
     bodyLimit: Math.max(options.config.maxHtmlBytes * 3, 2 * 1024 * 1024),
@@ -165,20 +183,15 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
     }
   });
 
-  app.addHook(
-    "onRequest",
-    protectedApiPrefixGuard(options.db, rateLimiters.protectedApi, rateLimiters.authenticatedUpload)
-  );
+  app.addHook("onRequest", protectedApiPrefixGuard(options.db, consumeLimit));
 
   const protectedApi = (requiredScope?: string, hookOptions: ProtectedApiHookOptions = {}) =>
-    protectedApiRouteHook(requiredScope, hookOptions);
-
-  const analytics = options.analytics ?? new DisabledAnalytics(app.log);
+    protectedApiRouteHook(requiredScope, hookOptions, consumeLimit);
 
   const expirySweep = createExpirySweep({
     db: options.db,
     storage: options.storage,
-    analytics,
+    runtime: options.runtime,
     log: app.log
   });
   app.decorate("sweepExpiredDrafts", () => expirySweep.run());
@@ -220,7 +233,7 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
     // A token minted is a token minted, whichever door it came through. The
     // flag is what tells the operator's own issuing apart from the self-service
     // flow, so the event list stays one narrative rather than two.
-    analytics.capture({
+    track(options.runtime, {
       name: "token.minted",
       principalId: auth.accountId,
       properties: { apiTokenId: apiToken.id, selfService: false }
@@ -257,7 +270,7 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
     );
 
     mintScope.post(SELF_SERVICE_MINT_PATH, async (request, reply) =>
-      mintSelfServiceToken(options, analytics, rateLimiters.selfServiceMint, clock, request, reply)
+      mintSelfServiceToken(options, consumeLimit, clock, request, reply)
     );
   });
 
@@ -326,9 +339,7 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
   app.post(
     "/api/uploads",
     {
-      onRequest: protectedApi("upload", {
-        uploadLimiter: rateLimiters.authenticatedUpload
-      })
+      onRequest: protectedApi("upload", { uploadLimit: true })
     },
     async (request, reply) => {
       const auth = authenticatedRequest(request);
@@ -375,7 +386,7 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
         // client parked at the quota is throttled instead of being free to
         // re-count the database at the higher upload-limit rate. The cost is
         // that such a client sees 403 flip to 429 once its bucket empties.
-        const createAttempt = rateLimiters.draftCreate.consume(auth.id);
+        const createAttempt = await consumeLimit("draft-create", auth.id);
         if (!createAttempt.allowed) {
           sendRateLimited(reply, createAttempt);
           return reply;
@@ -442,7 +453,7 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
 
       // Reported once the upload is committed, so the event describes a draft
       // that exists. The size is the stored bytes, not the content.
-      analytics.capture({
+      track(options.runtime, {
         name: requestedDraftId ? "draft.updated" : "draft.created",
         principalId: auth.accountId,
         properties: {
@@ -480,7 +491,7 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
       });
       if (!disabled) return sendPatchNotFound(reply);
 
-      analytics.capture({
+      track(options.runtime, {
         name: "draft.disabled",
         principalId: auth.accountId,
         properties: { draftId, admin: hasScope(auth, "admin") }
@@ -520,7 +531,7 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
     });
     if (!deleted) return sendPatchNotFound(reply);
 
-    analytics.capture({
+    track(options.runtime, {
       name: "draft.deleted",
       principalId: auth.accountId,
       properties: { draftId, admin: hasScope(auth, "admin") }
@@ -572,8 +583,7 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
  */
 async function mintSelfServiceToken(
   options: CreateAppOptions,
-  analytics: Analytics,
-  mintLimiter: FixedWindowRateLimiter,
+  consumeLimit: ConsumeLimit,
   clock: () => number,
   request: FastifyRequest,
   reply: FastifyReply
@@ -588,7 +598,7 @@ async function mintSelfServiceToken(
 
   const sourceIp = request.ip || null;
 
-  const mintAttempt = mintLimiter.consume(sourceIp ?? "");
+  const mintAttempt = await consumeLimit("self-service-mint", sourceIp ?? "");
   if (!mintAttempt.allowed) {
     sendRateLimited(reply, mintAttempt);
     return reply;
@@ -621,7 +631,7 @@ async function mintSelfServiceToken(
   // The principal and its token, and nothing about where the mint came from:
   // the source address is what the mint quota counts and what the mint record
   // keeps, not something to report.
-  analytics.capture({
+  track(options.runtime, {
     name: "token.minted",
     principalId: minted.accountId,
     properties: { apiTokenId: minted.apiTokenId, selfService: true }
@@ -680,16 +690,12 @@ async function renderDraft(
   return reply.type("text/html").send(renderDraftWrapper({ draft, version, html }));
 }
 
-function protectedApiPrefixGuard(
-  db: PatchyDb,
-  protectedApiLimiter: FixedWindowRateLimiter,
-  authenticatedUploadLimiter: FixedWindowRateLimiter
-) {
+function protectedApiPrefixGuard(db: PatchyDb, consumeLimit: ConsumeLimit) {
   return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
     const targetPolicy = classifyApiRequestTargetPolicy(request.url);
     if (!targetPolicy.protected) return;
 
-    const protectedAttempt = protectedApiLimiter.consume(request.ip);
+    const protectedAttempt = await consumeLimit("protected-api", request.ip);
     if (!protectedAttempt.allowed) {
       sendRateLimited(reply, protectedAttempt);
       return;
@@ -722,7 +728,7 @@ function protectedApiPrefixGuard(
     }
 
     if (targetPolicy.uploadLimit) {
-      const uploadAttempt = authenticatedUploadLimiter.consume(authState.auth.id);
+      const uploadAttempt = await consumeLimit("authenticated-upload", authState.auth.id);
       request.preBodyUploadLimiterConsumed = true;
       if (!uploadAttempt.allowed) {
         sendRateLimited(reply, uploadAttempt);
@@ -739,7 +745,8 @@ function protectedApiPrefixGuard(
 
 function protectedApiRouteHook(
   requiredScope: string | undefined,
-  options: ProtectedApiHookOptions
+  options: ProtectedApiHookOptions,
+  consumeLimit: ConsumeLimit
 ) {
   return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
     const auth = request.auth;
@@ -755,8 +762,8 @@ function protectedApiRouteHook(
       return;
     }
 
-    if (options.uploadLimiter && !request.preBodyUploadLimiterConsumed) {
-      const uploadAttempt = options.uploadLimiter.consume(auth.id);
+    if (options.uploadLimit && !request.preBodyUploadLimiterConsumed) {
+      const uploadAttempt = await consumeLimit("authenticated-upload", auth.id);
       request.preBodyUploadLimiterConsumed = true;
       if (!uploadAttempt.allowed) {
         sendRateLimited(reply, uploadAttempt);
@@ -935,8 +942,8 @@ function sendUploadTargetError(reply: FastifyReply, error: UploadTargetError): F
     : sendWire(reply, Conflict, { ok: false, error: "Patch already exists." });
 }
 
-function sendRateLimited(reply: FastifyReply, decision: RateLimitDecision): void {
-  const retryAfterSeconds = decision.retryAfterSeconds ?? 1;
+function sendRateLimited(reply: FastifyReply, decision: Limits.ConsumeResult): void {
+  const { retryAfterSeconds } = decision;
   reply.header("Retry-After", String(retryAfterSeconds));
   sendWire(reply, RateLimited, {
     ok: false,
