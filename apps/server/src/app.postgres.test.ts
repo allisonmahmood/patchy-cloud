@@ -9,6 +9,7 @@ import { FileSystemHtmlStorage } from "@patchy/storage";
 import type { FastifyInstance } from "fastify";
 import { createPostgresTestDatabase } from "../../../test/postgres.js";
 import { createApp } from "./app.js";
+import { createTestRuntime } from "./testing.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -358,7 +359,10 @@ async function createPostgresHttpHarness(
   const open = async (): Promise<{ app: FastifyInstance; db: PostgresPatchyDb }> => {
     const db = new PostgresPatchyDb(testDatabase.connectionString, { clock });
     await db.initialize(config.bootstrapApiToken);
-    return { app: createApp({ config, db, storage, clock }), db };
+    return {
+      app: createApp({ config, db, storage, clock, runtime: createTestRuntime({ clock }) }),
+      db
+    };
   };
 
   let running = await open();

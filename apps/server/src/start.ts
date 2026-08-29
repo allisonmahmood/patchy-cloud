@@ -1,8 +1,10 @@
 import { getServerConfig, requireConfigValue } from "@patchy/config";
 import { createPatchyDb, migrateDatabase } from "@patchy/db";
 import { createHtmlStorage } from "@patchy/storage";
-import { createAnalytics } from "./analytics.js";
+import * as Layer from "effect/Layer";
+import * as ManagedRuntime from "effect/ManagedRuntime";
 import { createApp } from "./app.js";
+import { layer } from "./runtime.js";
 
 const config = getServerConfig();
 const db = createPatchyDb({
@@ -23,17 +25,13 @@ if (config.dbDriver === "postgres") {
 }
 await db.initialize(config.bootstrapApiToken);
 
-// Reports nothing unless a key is configured, which is what a private instance
-// runs with.
-const analytics = createAnalytics(config, {
-  log: {
-    warn: (details, message) => {
-      console.warn(message, details);
-    }
-  }
-});
+// The Effect side, built once and up front: analytics reports nothing unless
+// a key is configured, and a malformed analytics setting fails startup here
+// rather than silently discarding every event.
+const runtime = ManagedRuntime.make(Layer.orDie(layer));
+await runtime.context();
 
-const app = createApp({ config, db, storage, analytics });
+const app = createApp({ config, db, storage, runtime });
 
 /**
  * How often the expiry sweep runs. Nothing depends on the exact period: a
@@ -57,9 +55,9 @@ expirySweepTimer.unref();
 const shutdown = async (): Promise<void> => {
   clearInterval(expirySweepTimer);
   await app.close();
-  // Last, and bounded by its own timeout: whatever is still queued gets one
+  // Runs the analytics finalizer: whatever is still queued gets one bounded
   // chance to go out, and a slow analytics backend never holds the shutdown.
-  await analytics.shutdown();
+  await runtime.dispose();
   await db.close();
 };
 

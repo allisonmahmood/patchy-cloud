@@ -7,6 +7,7 @@ import { JsonFilePatchyDb } from "@patchy/db";
 import { FileSystemHtmlStorage } from "@patchy/storage";
 import { readFixtureCorpus } from "../../../test/html-fixtures.mjs";
 import { createApp } from "./app.js";
+import { createTestRuntime } from "./testing.js";
 
 let tempDir: string;
 
@@ -27,7 +28,12 @@ describe("HTML fixture corpus", () => {
     const db = new JsonFilePatchyDb(path.join(tempDir, `${kind}-db.json`));
     await db.initialize(token);
     const storage = new FileSystemHtmlStorage(path.join(tempDir, `${kind}-drafts`));
-    const app = createApp({ config: getServerConfig({}), db, storage });
+    const app = createApp({
+      config: getServerConfig({}),
+      db,
+      storage,
+      runtime: createTestRuntime()
+    });
 
     try {
       for (const fixture of await readFixtureCorpus(kind)) {

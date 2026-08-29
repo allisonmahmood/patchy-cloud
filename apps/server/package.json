@@ -16,13 +16,14 @@
     "docker": "docker build -f Dockerfile -t patchy-server ../.."
   },
   "dependencies": {
+    "@patchy/analytics": "workspace:*",
     "@patchy/api": "workspace:*",
     "@patchy/config": "workspace:*",
     "@patchy/core": "workspace:*",
     "@patchy/db": "workspace:*",
+    "@patchy/limits": "workspace:*",
     "@patchy/storage": "workspace:*",
     "effect": "catalog:",
-    "fastify": "^5.12.1",
-    "posthog-node": "^5.51.2"
+    "fastify": "^5.12.1"
   }
 }
