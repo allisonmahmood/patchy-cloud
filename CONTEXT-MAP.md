@@ -3,6 +3,7 @@
 ## Contexts
 
 - [Hosting](./apps/server/CONTEXT.md) — receives uploads and serves published pages; owns `@patchy/db`, `@patchy/storage`, `@patchy/config`
+- [SQL](./packages/sql/CONTEXT.md) — `packages/sql`, the Postgres client and Effect's Migrator every capability package migrates through; owns no tables
 - [Publishing](./packages/cli/CONTEXT.md) — `packages/cli` and the bundled skill, the `patchy` CLI package agents use to put pages up
 
 ## Relationships

@@ -1,6 +1,7 @@
 export * from "./factory.js";
 export * from "./internal-principals.js";
 export * from "./json-db.js";
+export * from "./migrate.js";
 export * from "./migrations.js";
 export * from "./mint-quota.js";
 export * from "./postgres-db.js";

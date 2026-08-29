@@ -43,6 +43,9 @@ patchy upload examples/plan.html
 | `pnpm dev logs`             | Print `dev.log`.                                                                  |
 | `pnpm dev reset`            | Stop, wipe `.local/dev/`, and start a fresh seeded instance.                      |
 
+`reset` is also the answer when the migration ledger changes shape under an
+instance you already have (as it did when migrations moved onto Effect's Migrator).
+
 `--json` also works on `status`, `reset` and a plain start. The server is not
 watched; after a code change, `pnpm dev stop && pnpm dev`.
 
@@ -75,8 +78,9 @@ and the dev instance agree on what exists.
 `scripts/dev/` is the Effect 4 runner. `start` writes `plan.json` and spawns a
 detached supervisor under `node --import tsx`; the supervisor owns one Effect
 scope holding Postgres and the server, so either exiting — or `stop`'s
-SIGTERM — tears the other down. Migrations run through `packages/db`'s runner
-for now.
+SIGTERM — tears the other down. Migrations run through Effect's Migrator in
+`packages/sql`, behind `packages/db`'s `migrateDatabase` seam until the
+migrations move into their capability packages.
 
 ## Running the server by hand
 
@@ -93,14 +97,8 @@ with `dev-token`).
 
 ## Postgres Mode
 
-Set `PATCHY_DB_DRIVER=postgres` and `DATABASE_URL` when a Postgres instance is available:
-
-```sh
-PATCHY_DB_DRIVER=postgres \
-DATABASE_URL=... \
-PATCHY_BOOTSTRAP_API_TOKEN=... \
-pnpm db:migrate
-```
+Set `PATCHY_DB_DRIVER=postgres` and `DATABASE_URL` when a Postgres instance is
+available. The server migrates the database on startup, before it listens.
 
 Do not commit real database URLs or generated tokens.
 

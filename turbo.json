@@ -16,9 +16,6 @@
     "typecheck": {
       "dependsOn": ["^build"]
     },
-    "db:migrate": {
-      "cache": false
-    },
     "docker": {
       "dependsOn": ["build"],
       "cache": false

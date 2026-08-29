@@ -1,11 +1,9 @@
 import pg from "pg";
 import { newInternalId, sha256 } from "@patchy/core";
 import { BOOTSTRAP_API_TOKEN_ID, BOOTSTRAP_PRINCIPAL_ID } from "./internal-principals.js";
-import { SCHEMA_MIGRATIONS } from "./migrations.js";
 import { mintQuotaWindowStart } from "./mint-quota.js";
 import { DRAFT_VISIT_EXTENSION_WINDOW_MS, expiryAfterUpload } from "./retention.js";
 import { UploadTargetError } from "./types.js";
-import type { SchemaMigration } from "./migrations.js";
 import type {
   ApiTokenAuth,
   ApiTokenRevocation,
@@ -37,10 +35,6 @@ const { Pool } = pg;
 function notExpired(clockParameter: number): string {
   return `(drafts.pinned_at IS NOT NULL OR drafts.expires_at >= $${clockParameter}::timestamptz)`;
 }
-
-// A fixed key so concurrent instances serialize their migration runs instead of
-// racing on `CREATE TABLE IF NOT EXISTS`, which is not race-free in Postgres.
-const MIGRATION_ADVISORY_LOCK_KEY = 5150324118422001n;
 
 /** A draft's creating token is the one recorded on its first version. */
 const FIRST_VERSION_NUMBER = 1;
@@ -97,12 +91,10 @@ const MODERATED_DRAFT_SELECT = `
 
 export class PostgresPatchyDb implements PatchyDb {
   private readonly pool: pg.Pool;
-  private readonly migrations: readonly SchemaMigration[];
   private readonly clock: () => number;
 
   constructor(connectionString: string, options: DbDriverOptions = {}) {
     this.pool = new Pool({ connectionString });
-    this.migrations = options.migrations ?? SCHEMA_MIGRATIONS;
     this.clock = options.clock ?? Date.now;
   }
 
@@ -127,21 +119,11 @@ export class PostgresPatchyDb implements PatchyDb {
     return new Date(this.clock()).toISOString();
   }
 
+  /** Expects a migrated database (`migrateDatabase` in `migrate.ts`); only seeds. */
   async initialize(bootstrapApiToken: string | null): Promise<void> {
-    await this.migrate();
     if (bootstrapApiToken) {
       await this.ensureBootstrapToken(bootstrapApiToken);
     }
-  }
-
-  async listAppliedMigrations(): Promise<string[]> {
-    const ledgerExists = await this.pool.query(
-      "SELECT to_regclass('schema_migrations') IS NOT NULL AS present"
-    );
-    if (!ledgerExists.rows[0]?.present) return [];
-
-    const result = await this.pool.query("SELECT id FROM schema_migrations ORDER BY id");
-    return result.rows.map((row) => String(row.id));
   }
 
   async findApiTokenByToken(token: string): Promise<ApiTokenAuth | null> {
@@ -711,47 +693,6 @@ export class PostgresPatchyDb implements PatchyDb {
 
   async close(): Promise<void> {
     await this.pool.end();
-  }
-
-  private async migrate(): Promise<void> {
-    const client = await this.pool.connect();
-    try {
-      await client.query("SELECT pg_advisory_lock($1)", [MIGRATION_ADVISORY_LOCK_KEY.toString()]);
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS schema_migrations (
-          id TEXT PRIMARY KEY,
-          applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
-        );
-      `);
-
-      const applied = new Set(
-        (await client.query("SELECT id FROM schema_migrations")).rows.map((row) => String(row.id))
-      );
-
-      for (const migration of this.migrations) {
-        if (applied.has(migration.id)) continue;
-
-        // One transaction per step: Postgres DDL is transactional, so a failed
-        // step leaves neither half-applied schema nor a ledger row claiming it.
-        await client.query("BEGIN");
-        try {
-          if (migration.postgres) await client.query(migration.postgres);
-          await client.query(
-            "INSERT INTO schema_migrations (id) VALUES ($1) ON CONFLICT (id) DO NOTHING",
-            [migration.id]
-          );
-          await client.query("COMMIT");
-        } catch (error) {
-          await client.query("ROLLBACK").catch(() => undefined);
-          throw new Error(`Schema migration ${migration.id} failed.`, { cause: error });
-        }
-      }
-    } finally {
-      await client
-        .query("SELECT pg_advisory_unlock($1)", [MIGRATION_ADVISORY_LOCK_KEY.toString()])
-        .catch(() => undefined);
-      client.release();
-    }
   }
 
   private async ensureBootstrapToken(token: string): Promise<void> {

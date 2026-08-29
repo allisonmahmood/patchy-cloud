@@ -17,7 +17,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { PostgresPatchyDb } from "@patchy/db";
+import { migrateDatabase } from "@patchy/db";
 import { DATABASE_NAME, Plan } from "./plan.js";
 import { alive } from "./process.js";
 import { PG_FLAGS, PG_PASSWORD, PG_USER, applyDevSeed } from "./seed.js";
@@ -136,17 +136,10 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
   );
   yield* say(`postgres pid=${postgresPid} port=${plan.ports.postgres}`);
 
-  // Migrations go through today's `packages/db` runner; the `sql` ticket swaps
-  // this seam for Effect's Migrator.
+  // Effect's Migrator, behind `packages/db`'s Promise seam until the
+  // migrations move into `auth` and `patches`.
   yield* Effect.tryPromise({
-    try: async () => {
-      const db = new PostgresPatchyDb(plan.databaseUrl);
-      try {
-        await db.initialize(null);
-      } finally {
-        await db.close();
-      }
-    },
+    try: () => migrateDatabase(plan.databaseUrl),
     catch: (cause) => new DatabaseSetupError({ stage: "migrate", cause })
   });
   yield* Effect.tryPromise({

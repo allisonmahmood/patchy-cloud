@@ -1,14 +1,20 @@
 {
-  "name": "@patchy/db",
+  "name": "@patchy/sql",
   "version": "0.0.0",
   "private": true,
   "license": "UNLICENSED",
   "type": "module",
+  "description": "The Postgres client layer, Effect's Migrator over the capability packages' migrations, and the migrated-database test layer. Owns no tables.",
   "exports": {
     ".": {
       "development": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./testing": {
+      "development": "./src/testing.ts",
+      "types": "./dist/testing.d.ts",
+      "import": "./dist/testing.js"
     }
   },
   "files": [
@@ -20,13 +26,11 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@patchy/config": "workspace:*",
-    "@patchy/core": "workspace:*",
-    "@patchy/sql": "workspace:*",
-    "effect": "catalog:",
-    "pg": "^8.23.0"
+    "@effect/sql-pg": "catalog:",
+    "effect": "catalog:"
   },
   "devDependencies": {
-    "@types/pg": "^8.23.1"
+    "@effect/vitest": "catalog:",
+    "vitest": "^4.1.11"
   }
 }

@@ -2,23 +2,27 @@
  * The ordered schema-migration list both drivers share.
  *
  * A migration is one additive schema step with an optional part per driver:
- * `postgres` is idempotent DDL, `json` is an idempotent transform that
+ * `postgres` is a DDL string, `json` is an idempotent transform that
  * default-fills the new fields on rows written by any earlier schema version.
  * A step may be omitted when a driver has nothing to do — a Postgres index has
  * no JSON analogue, and a JSON default-fill is a Postgres column default.
  *
- * Both drivers keep a ledger of applied migration IDs (the `schema_migrations`
- * table, the `schemaMigrations` array), so a migration runs once and re-running
- * from any prior state is a no-op. Every step must still be idempotent on its
- * own: a database deployed before this ledger existed reaches the ledger by
- * having the baseline replayed over its live schema.
+ * Postgres steps run through Effect's Migrator (`@patchy/sql`, via
+ * `migrate.ts`): the `schema_migrations` ledger is the guard, so a step is
+ * plain DDL with no `IF NOT EXISTS`, and every pending step runs in one
+ * transaction. The JSON driver keeps its own ledger (the `schemaMigrations`
+ * array) and runs the `json` steps itself.
  *
  * See `packages/db/README.md` for how to add one.
  */
 export interface SchemaMigration {
-  /** Ordered, immutable once merged. Zero-padded so ID order is apply order. */
+  /**
+   * `<id>_<name>`, immutable once merged. The Migrator parses the leading
+   * integer as the migration id — one global sequence, so apply order is id
+   * order and a duplicate id fails the run.
+   */
   readonly id: string;
-  /** Idempotent DDL. Omit when the migration does not touch Postgres. */
+  /** DDL, possibly several statements. Omit when the migration does not touch Postgres. */
   readonly postgres?: string;
   /**
    * Idempotent in-place transform of the parsed JSON state. Runs before the
@@ -60,14 +64,14 @@ export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
   {
     id: "0001_baseline_schema",
     postgres: `
-      CREATE TABLE IF NOT EXISTS accounts (
+      CREATE TABLE accounts (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
       );
 
-      CREATE TABLE IF NOT EXISTS api_tokens (
+      CREATE TABLE api_tokens (
         id TEXT PRIMARY KEY,
         account_id TEXT NOT NULL REFERENCES accounts(id),
         name TEXT NOT NULL,
@@ -78,7 +82,7 @@ export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
         revoked_at TIMESTAMPTZ
       );
 
-      CREATE TABLE IF NOT EXISTS drafts (
+      CREATE TABLE drafts (
         id TEXT PRIMARY KEY,
         account_id TEXT NOT NULL REFERENCES accounts(id),
         title TEXT NOT NULL,
@@ -93,7 +97,7 @@ export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
         disabled_reason TEXT
       );
 
-      CREATE TABLE IF NOT EXISTS draft_versions (
+      CREATE TABLE draft_versions (
         id TEXT PRIMARY KEY,
         draft_id TEXT NOT NULL REFERENCES drafts(id),
         version_number INTEGER NOT NULL,
@@ -111,7 +115,7 @@ export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
         UNIQUE (draft_id, version_number)
       );
 
-      CREATE TABLE IF NOT EXISTS upload_events (
+      CREATE TABLE upload_events (
         id TEXT PRIMARY KEY,
         draft_id TEXT NOT NULL REFERENCES drafts(id),
         draft_version_id TEXT REFERENCES draft_versions(id),
@@ -123,8 +127,8 @@ export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
         created_at TIMESTAMPTZ NOT NULL DEFAULT now()
       );
 
-      CREATE INDEX IF NOT EXISTS draft_versions_draft_id_idx ON draft_versions(draft_id);
-      CREATE INDEX IF NOT EXISTS upload_events_draft_id_idx ON upload_events(draft_id);
+      CREATE INDEX draft_versions_draft_id_idx ON draft_versions(draft_id);
+      CREATE INDEX upload_events_draft_id_idx ON upload_events(draft_id);
     `,
     json(state) {
       for (const collection of JSON_ROW_COLLECTIONS) {
@@ -136,7 +140,7 @@ export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
     id: "0002_drafts_account_id_index",
     // Ownership lookups (a principal's live drafts) scan by account today.
     // JSON has no index concept, so this migration has no JSON step.
-    postgres: `CREATE INDEX IF NOT EXISTS drafts_account_id_idx ON drafts(account_id);`
+    postgres: `CREATE INDEX drafts_account_id_idx ON drafts(account_id);`
   },
   {
     id: "0003_drafts_expiry_columns",
@@ -146,11 +150,11 @@ export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
     // The default is a floor, not the path — the drivers write the anchor from
     // their injected clock so a test can move it.
     postgres: `
-      ALTER TABLE drafts ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+      ALTER TABLE drafts ADD COLUMN expires_at TIMESTAMPTZ;
       UPDATE drafts SET expires_at = now() + interval '90 days' WHERE expires_at IS NULL;
       ALTER TABLE drafts ALTER COLUMN expires_at SET NOT NULL;
       ALTER TABLE drafts ALTER COLUMN expires_at SET DEFAULT now() + interval '90 days';
-      CREATE INDEX IF NOT EXISTS drafts_expires_at_idx ON drafts(expires_at);
+      CREATE INDEX drafts_expires_at_idx ON drafts(expires_at);
     `,
     json(state) {
       const drafts = state.drafts;
@@ -174,8 +178,8 @@ export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
     // The partial index is the sweep's: it scans by anchor over unpinned rows
     // only, which is exactly the set the sweep may take.
     postgres: `
-      ALTER TABLE drafts ADD COLUMN IF NOT EXISTS pinned_at TIMESTAMPTZ;
-      CREATE INDEX IF NOT EXISTS drafts_expiry_sweep_idx
+      ALTER TABLE drafts ADD COLUMN pinned_at TIMESTAMPTZ;
+      CREATE INDEX drafts_expiry_sweep_idx
         ON drafts(expires_at) WHERE pinned_at IS NULL;
     `,
     json(state) {
@@ -212,9 +216,9 @@ export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
     // takes. NULL means operator-created, which is what every pre-existing
     // account is; the JSON step below fills exactly that.
     postgres: `
-      ALTER TABLE accounts ADD COLUMN IF NOT EXISTS self_service_minted_at TIMESTAMPTZ;
+      ALTER TABLE accounts ADD COLUMN self_service_minted_at TIMESTAMPTZ;
 
-      CREATE TABLE IF NOT EXISTS token_mints (
+      CREATE TABLE token_mints (
         id TEXT PRIMARY KEY,
         account_id TEXT NOT NULL REFERENCES accounts(id),
         api_token_id TEXT NOT NULL REFERENCES api_tokens(id),
@@ -222,7 +226,7 @@ export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
         created_at TIMESTAMPTZ NOT NULL DEFAULT now()
       );
 
-      CREATE INDEX IF NOT EXISTS token_mints_source_ip_created_at_idx
+      CREATE INDEX token_mints_source_ip_created_at_idx
         ON token_mints(source_ip, created_at);
     `,
     json(state) {

@@ -7,6 +7,8 @@
       "@patchy/config": ["./packages/config/src/index.ts"],
       "@patchy/core": ["./packages/core/src/index.ts"],
       "@patchy/db": ["./packages/db/src/index.ts"],
+      "@patchy/sql": ["./packages/sql/src/index.ts"],
+      "@patchy/sql/testing": ["./packages/sql/src/testing.ts"],
       "@patchy/storage": ["./packages/storage/src/index.ts"]
     }
   },

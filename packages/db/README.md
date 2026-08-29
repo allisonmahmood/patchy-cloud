@@ -60,7 +60,7 @@ both drivers. Each entry has an ID and an optional step per driver, as
 ```ts
 {
   id: "0003_drafts_expiry_columns",
-  postgres: `ALTER TABLE drafts ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ; /* … */`,
+  postgres: `ALTER TABLE drafts ADD COLUMN expires_at TIMESTAMPTZ; /* … */`,
   json(state) {
     /* default-fill `expiresAt` on every stored draft row */
   }
@@ -72,49 +72,43 @@ example of an additive column with a backfill, and its Postgres step shows the
 whole additive sequence — add the column, backfill every existing row, only then
 constrain it.
 
-Both drivers keep a ledger of applied IDs — the `schema_migrations` table, the
-`schemaMigrations` array in the state file — so a migration runs once and
-`initialize()` is a no-op from any prior state. A database deployed before the
-ledger existed reaches it by having the baseline replayed over its live schema,
-which is why **every step must be idempotent on its own** even though the ledger
-normally prevents a second run.
-
-`initialize()` migrates, then seeds the bootstrap token when one is configured.
-Seeding is not a migration: it re-runs on every startup and must stay idempotent.
+`initialize()` seeds the bootstrap token when one is configured. Seeding is not
+a migration: it re-runs on every startup and must stay idempotent.
 `src/internal-principals.ts` names the two fixed IDs it seeds — a fixed ID is a
-contract with a deployed database, so it is spelled once. (The retired anonymous
-owner/audit actor used to be seeded here too; the trust-model cutover removed
-it, and no sentinel principal is seeded now.)
+contract with a deployed database, so it is spelled once.
 
-Two objects are easy to confuse, so they are named here. **`0002_drafts_account_id_index`,
-`0003_drafts_expiry_columns`, `0004_drafts_pinned_at`, and
-`0005_self_service_mint_records` are the shipped additive migrations** — each
-ships permanently and none supersedes another; `0002` exists because ownership
-lookups scan `drafts` by account, `0004` adds the pin plus the partial index the
-sweep scans, and `0005` adds the `token_mints` table the per-address mint quota
-counts plus the provenance mark on `accounts`. (`0006_draft_reports` shipped for a
-while and was removed with the report feature before any production database
-existed; a dev ledger that still lists it is ignored, and `reset` clears it.) The
-**probe migrations in
-`src/migration-fixtures.fixture.ts` are test-only** and never ship: they exercise
-a column-level additive step on both drivers without putting a placeholder column
-in the shipped schema. A later agent should not treat a probe as the pattern to
-copy for a real column — copy `0003` and the steps below.
+**`0002_drafts_account_id_index`, `0003_drafts_expiry_columns`,
+`0004_drafts_pinned_at`, and `0005_self_service_mint_records` are the shipped
+additive migrations** — each ships permanently and none supersedes another;
+`0002` exists because ownership lookups scan `drafts` by account, `0004` adds
+the pin plus the partial index the sweep scans, and `0005` adds the
+`token_mints` table the per-address mint quota counts plus the provenance mark
+on `accounts`. (`0006_draft_reports` shipped for a while and was removed with the
+report feature before any production database existed.) The **probe migrations
+in `src/migration-fixtures.fixture.ts` are test-only** and never ship: they
+exercise a column-level additive step on the JSON driver without putting a
+placeholder column in the shipped schema.
 
 ### Postgres
 
-Migrations run under a session advisory lock, one transaction per step, so
-concurrent instances starting at once serialize instead of racing on DDL. A
-failed step leaves neither half-applied schema nor a ledger row claiming it.
+The Postgres steps run through Effect's Migrator in `@patchy/sql`, behind the
+`migrateDatabase` seam in `src/migrate.ts` (`packages/sql/CONTEXT.md` has the
+contract). The Migrator's `schema_migrations` ledger is the guard, so a step is
+plain DDL — no `IF NOT EXISTS` — and every pending step runs in one transaction
+under an `ACCESS EXCLUSIVE` lock: a failing step rolls the whole batch back. The
+server, the dev runner and the vitest template database all migrate through the
+seam before the driver is opened; `PostgresPatchyDb.initialize()` only seeds.
 
 ### JSON: the default-fill convention
 
-The JSON driver's row guards describe the **current** schema only — they are
-deliberately strict, and they reject a row shape they don't know. Migrations are
-what make an older state readable: they run against the parsed state _before_
-the guards, so a migration's job is to default-fill the fields its guard will
-then require. A field that later tickets treat as nullable is filled with
-`null`; a field with a Postgres `DEFAULT` is filled with that same default.
+The JSON driver keeps its own ledger, the `schemaMigrations` array in the state
+file, and runs the `json` steps itself on read. Its row guards describe the
+**current** schema only — they are deliberately strict, and they reject a row
+shape they don't know. Migrations are what make an older state readable: they
+run against the parsed state _before_ the guards, so a migration's job is to
+default-fill the fields its guard will then require. A field that later tickets
+treat as nullable is filled with `null`; a field with a Postgres `DEFAULT` is
+filled with that same default.
 
 The reverse direction needs no work: guards ignore fields they don't know, so a
 handle on an older schema still reads rows a newer one wrote.
@@ -129,8 +123,8 @@ never rewrites the file.
    so an edit silently never runs. Fix a shipped migration with a new one.
 2. **ID it** `NNNN_snake_case_summary` with the next zero-padded number. ID
    order is apply order.
-3. **Write the Postgres step** as idempotent DDL: `ADD COLUMN IF NOT EXISTS`,
-   `CREATE TABLE IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`. Additive only —
+3. **Write the Postgres step** as plain DDL: `ADD COLUMN`, `CREATE TABLE`,
+   `CREATE INDEX` — the ledger guarantees it runs once. Additive only —
    dropping or retyping a column is a different conversation. Omit the step
    entirely if the migration doesn't touch Postgres.
 4. **Write the JSON step** to default-fill the same fields on existing rows,
@@ -143,18 +137,14 @@ never rewrites the file.
    to `src/upload-contract.test.ts`, which runs every assertion against both
    JSON and an isolated embedded Postgres database. Assert through the port only —
    never by reading the state file or selecting the column directly. The
-   mechanism itself is already covered ("records every shipped migration once,
-   in order, and re-migrates as a no-op", "resumes from a partly applied
-   ledger", "adopts a database created before this mechanism existed", "applies
-   an additive migration to an already-migrated database", "fails an additive
-   migration whose predecessor never ran", and the JSON guard-inversion case
-   "reads rows written by an earlier schema version only after they migrate"),
-   so you do not need to re-prove any of it.
+   mechanism itself is already covered — the JSON ledger cases in
+   `upload-contract.test.ts` and the Migrator cases in `packages/sql` — so you
+   do not need to re-prove any of it.
 7. **Run both drivers** before opening the PR:
 
    ```sh
    pnpm --filter @patchy/db test
    ```
 
-Deployed Postgres instances pick the migration up by running `pnpm db:migrate`
-(see `docs/SELF_HOSTING.md`); JSON instances migrate on startup.
+Both drivers migrate on startup: Postgres through the seam before the server
+listens, JSON when the state file is first read.
