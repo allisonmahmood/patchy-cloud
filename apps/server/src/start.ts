@@ -1,6 +1,6 @@
 import { getServerConfig } from "@patchy/config";
 import { openPatchyDb } from "@patchy/db";
-import { AzureContentStore, FilesystemContentStore } from "@patchy/content-store";
+import { AzureContentStore, BlobContainer, FilesystemContentStore } from "@patchy/content-store";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -20,7 +20,7 @@ const { db, tokens } = await openPatchyDb({
 // Where a patch's bytes go is wiring, not a setting: Azure Blob when its
 // container is configured, the local filesystem otherwise.
 const contentStore = Layer.unwrap(
-  Effect.map(Config.option(AzureContentStore.container), (container) =>
+  Effect.map(Config.option(BlobContainer.container), (container) =>
     Option.isSome(container) ? AzureContentStore.layer : FilesystemContentStore.layer
   )
 );

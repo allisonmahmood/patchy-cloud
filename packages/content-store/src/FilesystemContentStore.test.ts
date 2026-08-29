@@ -7,8 +7,6 @@ import * as Layer from "effect/Layer";
 import * as ContentStore from "./ContentStore.js";
 import * as FilesystemContentStore from "./FilesystemContentStore.js";
 
-const store = Effect.flatMap(ContentStore.ContentStore, Effect.succeed);
-
 /** The store rooted in a temp directory that goes with the layer's scope. */
 const storeInTempDir = Layer.unwrap(
   Effect.gen(function* () {
@@ -23,7 +21,7 @@ const storeInTempDir = Layer.unwrap(
 it.layer(Layer.merge(storeInTempDir, NodePath.layer))("FilesystemContentStore", (it) => {
   it.effect("stores and reads an object back", () =>
     Effect.gen(function* () {
-      const service = yield* store;
+      const service = yield* ContentStore.ContentStore;
       yield* service.put("drafts/abc/versions/one.html", "<h1>hi</h1>");
       assert.strictEqual(yield* service.get("drafts/abc/versions/one.html"), "<h1>hi</h1>");
     })
@@ -31,7 +29,7 @@ it.layer(Layer.merge(storeInTempDir, NodePath.layer))("FilesystemContentStore", 
 
   it.effect("deletes idempotently and reports a missing object by its key", () =>
     Effect.gen(function* () {
-      const service = yield* store;
+      const service = yield* ContentStore.ContentStore;
       const key = "drafts/abc/versions/gone.html";
       yield* service.put(key, "<h1>hi</h1>");
       yield* service.delete(key);
@@ -44,7 +42,7 @@ it.layer(Layer.merge(storeInTempDir, NodePath.layer))("FilesystemContentStore", 
 
   it.effect("refuses a key that would leave the root", () =>
     Effect.gen(function* () {
-      const service = yield* store;
+      const service = yield* ContentStore.ContentStore;
       const escaped = yield* service.put("../escape.html", "<h1>bad</h1>").pipe(Effect.flip);
       assert.strictEqual(escaped._tag, "InvalidObjectKey");
       assert.strictEqual(escaped.key, "../escape.html");

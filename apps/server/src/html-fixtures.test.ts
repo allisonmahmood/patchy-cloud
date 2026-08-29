@@ -26,7 +26,7 @@ describe("HTML fixture corpus", () => {
     const token = `${kind}-fixture-token`;
     const db = new JsonFilePatchyDb(path.join(tempDir, `${kind}-db.json`));
     await db.initialize(token);
-    const config = getServerConfig({});
+    const config = getServerConfig({ PATCHY_STORAGE_DIR: path.join(tempDir, "drafts") });
     const app = createApp({ config, db, runtime: createTestRuntime({ db, config }) });
 
     try {

@@ -22,17 +22,15 @@ export const make = Effect.gen(function* () {
   const root = path.resolve(yield* rootDir);
 
   /** The key's file, or `InvalidObjectKey` when it names nothing under the root. */
-  const resolveKey = (key: string) => {
-    if (key.length === 0 || key.includes("\0")) {
-      return Effect.fail(new ContentStore.InvalidObjectKey({ key }));
-    }
+  const resolveKey = Effect.fn(function* (key: string) {
+    yield* ContentStore.checkKey(key);
     const resolved = path.resolve(root, key);
     const relative = path.relative(root, resolved);
     if (relative.startsWith("..") || path.isAbsolute(relative)) {
-      return Effect.fail(new ContentStore.InvalidObjectKey({ key }));
+      return yield* Effect.fail(new ContentStore.InvalidObjectKey({ key }));
     }
-    return Effect.succeed(resolved);
-  };
+    return resolved;
+  });
 
   const put = Effect.fn("FilesystemContentStore.put")(function* (key: string, html: string) {
     const file = yield* resolveKey(key);

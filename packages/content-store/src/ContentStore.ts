@@ -6,8 +6,8 @@
  * by an operator setting. "Storage" is reserved for the later per-patch file
  * primitive; this package is not that.
  */
-import type * as Effect from "effect/Effect";
 import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 /** The key names no object: empty, or one that would leave the store's root. */
@@ -41,6 +41,10 @@ export class StoreUnavailable extends Schema.TaggedError<StoreUnavailable>()("St
     return `Content store could not ${this.operation} ${this.key}.`;
   }
 }
+
+/** What every layer refuses before touching its backend: an empty key, or one with a NUL in it. */
+export const checkKey = (key: string): Effect.Effect<void, InvalidObjectKey> =>
+  key.length === 0 || key.includes("\0") ? Effect.fail(new InvalidObjectKey({ key })) : Effect.void;
 
 export class ContentStore extends Context.Service<
   ContentStore,
