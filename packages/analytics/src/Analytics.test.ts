@@ -127,3 +127,13 @@ it.effect("runs the no-op layer when no key is configured", () =>
     );
   })
 );
+
+it.effect("refuses a host that is not an http(s) URL", () =>
+  Effect.gen(function* () {
+    const error = yield* built(Analytics.layer, {
+      PATCHY_POSTHOG_API_KEY: "phc_test",
+      PATCHY_POSTHOG_HOST: "us.i.posthog.com"
+    }).pipe(Effect.flip);
+    assert.strictEqual(error._tag, "ConfigError");
+  })
+);

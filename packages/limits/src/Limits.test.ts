@@ -1,12 +1,12 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { TestClock } from "effect/testing";
-import { Limits, MAX_TRACKED_KEYS, layer } from "./Limits.js";
+import * as Limits from "./Limits.js";
 
 const consume = (key: string, limit = 2) =>
-  Effect.flatMap(Limits, (limits) => limits.consume({ key, limit, window: "1 second" }));
+  Effect.flatMap(Limits.Limits, (limits) => limits.consume({ key, limit, window: "1 second" }));
 
-it.layer(layer)("Limits", (it) => {
+it.layer(Limits.layer)("Limits", (it) => {
   it.effect("refuses over-limit attempts with a Retry-After until the exact reset boundary", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(1_000);
@@ -50,7 +50,7 @@ it.layer(layer)("Limits", (it) => {
       });
       assert.strictEqual((yield* consume("one", 1)).retryAfterSeconds, 1);
       // A minute-long window reports the full minute on its first refusal.
-      const minute = Effect.flatMap(Limits, (limits) =>
+      const minute = Effect.flatMap(Limits.Limits, (limits) =>
         limits.consume({ key: "minute", limit: 1, window: "1 minute" })
       );
       yield* minute;
@@ -61,7 +61,7 @@ it.layer(layer)("Limits", (it) => {
   it.effect("fails closed at the tracked-key cap until an expired window frees a slot", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(100_000);
-      for (let index = 0; index < MAX_TRACKED_KEYS; index += 1) {
+      for (let index = 0; index < Limits.MAX_TRACKED_KEYS; index += 1) {
         assert.isTrue((yield* consume(`flood-${index}`, 1)).allowed);
       }
       // Never seen before, and no room: refused, and told when room opens.

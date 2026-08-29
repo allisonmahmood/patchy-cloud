@@ -29,10 +29,19 @@ export interface CaptureMessage {
 /** The key that switches reporting on. Unset (the default) means an instance reports nothing. */
 export const apiKey = Config.redacted("PATCHY_POSTHOG_API_KEY");
 
-/** Where capture goes: PostHog's US cloud unless pointed elsewhere. */
-export const host = Config.string("PATCHY_POSTHOG_HOST").pipe(
-  Config.withDefault("https://us.i.posthog.com")
-);
+/**
+ * Where capture goes: PostHog's US cloud unless pointed elsewhere. Must be an
+ * http(s) URL, so a typo fails startup rather than discarding every event.
+ */
+export const host = Config.schema(
+  Schema.String.check(
+    Schema.makeFilter(
+      (value: string) => /^https?:\/\/\S+$/.test(value) || "Must be an http or https URL.",
+      { title: "HttpUrl" }
+    )
+  ),
+  "PATCHY_POSTHOG_HOST"
+).pipe(Config.withDefault("https://us.i.posthog.com"));
 
 /**
  * How long a capture request may take before it is abandoned. Short by design:

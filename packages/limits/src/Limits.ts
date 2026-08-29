@@ -50,7 +50,7 @@ export class Limits extends Context.Service<
   }
 >()("@patchy/limits/Limits") {}
 
-interface Bucket {
+interface Window {
   count: number;
   resetAt: number;
 }
@@ -59,12 +59,12 @@ const retryAfterSeconds = (now: number, resetAt: number) =>
   Math.max(1, Math.ceil((resetAt - now) / 1_000));
 
 /**
- * The in-memory store: one map of windows, in insertion order. Windows expire
- * from the front on every consume; only a full store is scanned end to end,
- * so a hot path never walks live windows.
+ * The in-memory store: one map of windows. A key's own window is replaced
+ * when it has expired; the store is only scanned end to end when it is full,
+ * which at 10k entries is cheap and rare.
  */
 export const make = Effect.sync(() => {
-  const buckets = new Map<string, Bucket>();
+  const windows = new Map<string, Window>();
   // The wall clock may step backwards; a window never does.
   let lastNow = 0;
 
@@ -73,53 +73,45 @@ export const make = Effect.sync(() => {
     return lastNow;
   });
 
-  const pruneFromFront = (at: number) => {
-    for (const [key, bucket] of buckets) {
-      if (at < bucket.resetAt) return;
-      buckets.delete(key);
-    }
-  };
-
   /** Drops every expired window and answers with the earliest reset among the rest. */
-  const pruneAll = (at: number) => {
-    let earliestReset = Infinity;
-    for (const [key, bucket] of buckets) {
-      if (at >= bucket.resetAt) buckets.delete(key);
-      else earliestReset = Math.min(earliestReset, bucket.resetAt);
+  const pruneExpired = (at: number) => {
+    let earliestReset = at + 1_000;
+    for (const [key, window] of windows) {
+      if (at >= window.resetAt) windows.delete(key);
+      else earliestReset = Math.min(earliestReset, window.resetAt);
     }
     return earliestReset;
   };
 
   const consume = Effect.fn("Limits.consume")(function* (options: ConsumeOptions) {
     const at = yield* now;
-    pruneFromFront(at);
-    const bucket = buckets.get(options.key);
+    const window = windows.get(options.key);
 
-    if (bucket === undefined) {
-      if (buckets.size >= MAX_TRACKED_KEYS) {
-        const earliestReset = pruneAll(at);
-        if (buckets.size >= MAX_TRACKED_KEYS) {
-          return {
-            allowed: false,
-            remaining: 0,
-            retryAfterSeconds: retryAfterSeconds(at, earliestReset)
-          };
-        }
+    if (window !== undefined && at < window.resetAt) {
+      if (window.count >= options.limit) {
+        return {
+          allowed: false,
+          remaining: 0,
+          retryAfterSeconds: retryAfterSeconds(at, window.resetAt)
+        };
       }
-      buckets.set(options.key, { count: 1, resetAt: at + Duration.toMillis(options.window) });
-      return { allowed: true, remaining: options.limit - 1, retryAfterSeconds: 0 };
+      window.count += 1;
+      return { allowed: true, remaining: options.limit - window.count, retryAfterSeconds: 0 };
     }
 
-    if (bucket.count >= options.limit) {
-      return {
-        allowed: false,
-        remaining: 0,
-        retryAfterSeconds: retryAfterSeconds(at, bucket.resetAt)
-      };
+    if (window === undefined && windows.size >= MAX_TRACKED_KEYS) {
+      const earliestReset = pruneExpired(at);
+      if (windows.size >= MAX_TRACKED_KEYS) {
+        return {
+          allowed: false,
+          remaining: 0,
+          retryAfterSeconds: retryAfterSeconds(at, earliestReset)
+        };
+      }
     }
 
-    bucket.count += 1;
-    return { allowed: true, remaining: options.limit - bucket.count, retryAfterSeconds: 0 };
+    windows.set(options.key, { count: 1, resetAt: at + Duration.toMillis(options.window) });
+    return { allowed: true, remaining: options.limit - 1, retryAfterSeconds: 0 };
   });
 
   return Limits.of({ consume });

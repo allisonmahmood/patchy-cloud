@@ -193,7 +193,7 @@ Two properties of this are load-bearing rather than incidental:
 - **Readers stay unwatched.** Serving a draft is deliberately not an event. No analytics JavaScript is ever added to a served page — the draft content security policy permits no script source of any kind — no cookie is set, and no event carries a source address, page content, a filename, or a URL. Events are attributed to the principal that acted; the ones no principal performed are attributed to the instance.
 - **Capture never affects a response.** Events are handed off without being awaited, capture failures are swallowed and logged, and requests to the analytics backend time out in three seconds. An analytics outage is invisible to everyone publishing or reading.
 
-`PATCHY_POSTHOG_HOST` points capture somewhere other than the default `https://us.i.posthog.com` — PostHog's EU cloud, or a self-hosted PostHog. On shutdown the server gives whatever is still queued three seconds to go out, then stops waiting.
+`PATCHY_POSTHOG_HOST` points capture somewhere other than the default `https://us.i.posthog.com` — PostHog's EU cloud, or a self-hosted PostHog. It must be an `http` or `https` URL; a malformed one fails startup rather than silently discarding every event. On shutdown the server gives whatever is still queued three seconds to go out, then stops waiting.
 
 ### JSON metadata durability
 
