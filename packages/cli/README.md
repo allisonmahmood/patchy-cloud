@@ -2,6 +2,8 @@
 
 Command-line uploader for [Patchy Cloud](https://github.com/allisonmahmood/patchy-cloud). It sends static HTML drafts to a Patchy Cloud instance, which serves them behind unlisted, link-viewable URLs. Every upload carries a bearer API token; draft viewer URLs are public and unlisted, so anyone with the link can view the rendered page.
 
+An agent is the primary operator, so the CLI promises a contract an agent can branch on without reading prose: an [exit code that says who has to act](#exit-codes), `--json` on every command, and one resolution of which instance is being targeted. The contract is [ADR-0004](../../docs/adr/ADR-0004-cli-contract-for-agents.md).
+
 There is no hosted instance to default to: the CLI talks to whichever instance you point it at, and falls back to `http://localhost:3000` — a server running from this repo on your own machine. See the [self-hosting guide](https://github.com/allisonmahmood/patchy-cloud/blob/main/docs/SELF_HOSTING.md) to run one somewhere else.
 
 ## Run it
@@ -67,12 +69,12 @@ patchy whoami
 # Scopes: upload
 ```
 
-### `patchy status --json [--api-url <url>]`
+### `patchy status [--api-url <url>]`
 
-Report what the publishing state looks like on this machine for the resolved instance. It is strictly local — it never contacts the instance it names — and it exits `0` whether or not anything is configured, so it answers rather than checks. JSON is its only output format.
+Report what the publishing state looks like on this machine for the resolved instance. It is strictly local — it never contacts the instance it names — and it exits `0` whether or not anything is configured, so it answers rather than checks. JSON is its only output format, with or without `--json`.
 
 ```sh
-patchy status --json
+patchy status
 # {
 #   "instanceUrl": "https://pages.example.com",
 #   "instanceSource": "config",
@@ -84,7 +86,7 @@ patchy status --json
 # }
 ```
 
-`instanceSource` names the link of the precedence chain that chose `instanceUrl`: `flag` (`--api-url`), `env` (`PATCHY_API_URL`), `config` (the saved `config.json`), or `default`. `hasToken` walks the same credential chain an upload would, so `true` means an upload would have that token to send. Read `false` as _no token this command can vouch for_ — usually nothing is stored, but it also covers local state the probe declined to interpret. `tokenSource` is the stored credential's own `source` (`mint` or `auth-set`); it is `null` when there is no token, when the token came from `PATCHY_API_TOKEN`, or when the stored entry predates that field. The token itself is never printed.
+`instanceSource` names the link of the precedence chain that chose `instanceUrl`: `flag` (`--api-url`), `dev-env` (a `.local/dev/env` written by `pnpm dev`, found at or above the working directory), `env` (`PATCHY_API_URL`), `config` (the saved `config.json`), or `default`. `hasToken` walks the same credential chain an upload would, so `true` means an upload would have that token to send. Read `false` as _no token this command can vouch for_ — usually nothing is stored, but it also covers local state the probe declined to interpret. `tokenSource` is the stored credential's own `source` (`mint` or `auth-set`); it is `null` when there is no token, when the token came from `PATCHY_API_TOKEN` or the dev env, or when the stored entry predates that field. The token itself is never printed.
 
 Local state the probe cannot read — a file in the retired single-instance format, malformed JSON, an unreadable file, or an invalid entry for this instance — is reported as `hasToken: false` rather than raised as an error, because a probe that cannot answer is worse than one that answers narrowly. The commands that would actually spend a token keep failing closed on exactly those files: `upload` and `whoami` stop with an error naming the file and its next action, and never treat it as a reason to publish without credentials.
 
@@ -100,24 +102,44 @@ patchy validate ./plan.html
 
 ### `patchy upload <file> [--draft <draft-id>] [--new] [--api-url <url>]`
 
-Validate the file, then upload it. On success it prints the public URL, the draft ID, and the version number.
+Validate the file, then upload it. On success it prints the public URL, the draft ID, and the version number, after a line naming the instance and where that choice came from.
 
 ```sh
 patchy upload ./plan.html
+# Publishing to https://pages.example.com (target came from the saved config).
 # Uploaded draft
 # URL: https://pages.example.com/d/k7f2m9x1a3b8
 # Draft ID: k7f2m9x1a3b8
 # Version: 1
 ```
 
-Credential selection is deterministic: `PATCHY_API_TOKEN` wins over the token stored for the resolved instance. When neither exists, the CLI mints a publishing token for that instance and uses it. Every upload carries a bearer token; no configuration accepts a credential-free upload, and an authentication failure is reported as-is rather than retried without credentials.
+Credential selection is deterministic: `PATCHY_API_TOKEN` wins, then the token a dev env seeded beside its URL, then the token stored for the resolved instance. When none exists, the CLI mints a publishing token for that instance and uses it. Every upload carries a bearer token; no configuration accepts a credential-free upload, and an authentication failure is reported as-is rather than retried without credentials.
 
 With credentials, uploading a file the CLI has seen before updates that same draft (a new version). If that cached draft is unavailable, the upload fails; pass `--new` to create a brand-new draft with a server-generated ID. `--draft <draft-id>` is update-only: it can add a version to an existing active draft your own token owns, but it never creates a draft at a caller-chosen ID. Unknown, unavailable, or unowned targets fail with the same generic update error.
 
-## Flags
+## Exit codes
 
-- `--api-url <url>` — override the API base URL for this command (available on `auth set`, `whoami`, `status`, and `upload`).
-- `--json` — on every command, print the result as one JSON document on stdout: `auth set` prints `{ "ok": true, "instanceUrl" }`, `validate` prints `{ "ok": true, "warnings" }`, and `whoami` and `upload` print the instance's response exactly as [`docs/API.md`](../../docs/API.md) describes it. A failure is `{ "ok": false, "error" }` on stderr with exit code 1. On `status` it is required, because JSON is the only format `status` offers.
+The code says who has to act, so an agent can branch on it without reading the message:
+
+| code | kind          | meaning                              | examples                                                                            |
+| ---- | ------------- | ------------------------------------ | ----------------------------------------------------------------------------------- |
+| 0    | ok            |                                      |                                                                                     |
+| 1    | `local`       | fixable without touching the network | bad args, file missing, HTML fails validation, no token stored, malformed state dir |
+| 2    | `rejected`    | the instance answered and said no    | a rejected token, an update target that is not there, a quota, a rate limit         |
+| 3    | `unreachable` | no usable answer from the instance   | DNS/connect/timeout, a 5xx, a body the CLI could not read                           |
+| 130  | interrupted   | SIGINT or SIGTERM                    |                                                                                     |
+
+Nothing else. A bug in the CLI is one `Unexpected error: <message>` line and exit 1; add `--log-level debug` for the stack.
+
+## Global flags
+
+Every command takes these, before or after the subcommand:
+
+- `--api-url <url>` — the instance to talk to, overriding every other source; see [precedence](#environment-variables).
+- `--json` — print the result as one JSON document on stdout and nothing else: `auth set` prints `{ "ok": true, "instanceUrl" }`, `validate` prints `{ "ok": true, "warnings" }`, and `whoami` and `upload` print the instance's response exactly as [`docs/API.md`](../../docs/API.md) describes it. A failure is `{ "ok": false, "error", "kind" }` on stderr, stdout empty, with the exit code for `kind`. Stderr is otherwise empty, except that an upload that minted a key still prints the mint announcement there. `status` prints JSON either way.
+
+## Command flags
+
 - `--token-stdin` — on `auth set`, read exactly one non-empty token from redirected stdin. This is the explicit automation path and is rejected when stdin is a terminal.
 - `--new` — on `upload`, always create a new draft with a server-generated ID instead of updating the one previously uploaded from this path. It cannot be combined with `--draft`.
 - `--draft <draft-id>` — on `upload`, update a specific existing draft. This is update-only and never creates a new draft. It cannot be combined with `--new`.
@@ -125,11 +147,13 @@ With credentials, uploading a file the CLI has seen before updates that same dra
 
 ## Environment variables
 
-- `PATCHY_API_URL` — API base URL. Overrides the stored config; overridden by `--api-url`. Default: `http://localhost:3000`.
-- `PATCHY_API_TOKEN` — API token for ordinary authenticated commands such as `whoami` and `upload`. It overrides the token stored for the resolved instance and is useful in CI; `auth set` does not read it. When neither it nor a stored token exists, `upload` mints a publishing token for the resolved instance and uses that; there is no credential-free upload.
+- `PATCHY_API_URL` — API base URL. Overrides the stored config; overridden by `--api-url` and by a dev env. Default: `http://localhost:3000`.
+- `PATCHY_API_TOKEN` — API token for ordinary authenticated commands such as `whoami` and `upload`. It overrides every other token and is useful in CI; `auth set` does not read it. When no token is configured, `upload` mints a publishing token for the resolved instance and uses that; there is no credential-free upload.
 - `PATCHY_STATE_DIR` — directory for the CLI's config, credentials, and draft cache. Default: `~/.patchy`.
 
 Setting any of these to the empty string means the same thing as leaving it unset.
+
+The instance is resolved once per command, in this order: `--api-url`, then the `.local/dev/env` that `pnpm dev` writes in a worktree (searched upward from the working directory, with the token it seeded), then `PATCHY_API_URL`, then the saved `config.json`, then the default. A checkout with a running dev instance therefore publishes to it without any environment set, and can never publish to a remote instance by accident.
 
 ## State
 
