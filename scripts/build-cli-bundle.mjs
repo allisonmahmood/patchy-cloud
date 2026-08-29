@@ -1,3 +1,5 @@
+// Bundles the CLI into one file, Effect and the workspace packages included: a
+// packed CLI has no node_modules to resolve them from. The skill ships beside it.
 import { access, chmod, copyFile, cp, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,7 +25,11 @@ await esbuild.build({
   target: "node22",
   sourcemap: true,
   tsconfig: path.join(cliDir, "tsconfig.json"),
-  external: ["commander", "effect", "parse5"],
+  // undici (CJS, via @effect/platform-node) calls require() for node builtins;
+  // ESM output needs a require to hand it.
+  banner: {
+    js: "#!/usr/bin/env node\nimport { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);"
+  },
   define: {
     __PATCHY_VERSION__: JSON.stringify(packageJson.version)
   }

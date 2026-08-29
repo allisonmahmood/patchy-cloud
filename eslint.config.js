@@ -57,7 +57,7 @@ export default tseslint.config(
     }
   },
   {
-    files: ["apps/server/src/start.ts", "packages/cli/src/index.ts", "test/postgres.ts"],
+    files: ["apps/server/src/start.ts", "test/postgres.ts"],
     rules: {
       "no-console": "off"
     }
@@ -66,8 +66,7 @@ export default tseslint.config(
     files: [
       // These test entrypoints clone the host environment before launching child processes.
       "packages/serving/src/render.test.ts",
-      "packages/cli/src/index.test.ts",
-      "packages/cli/src/index.ts"
+      "packages/cli/src/cli.test.ts"
     ],
     rules: {
       "no-restricted-properties": "off"

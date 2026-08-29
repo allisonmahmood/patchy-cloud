@@ -178,20 +178,25 @@ importers:
         version: 4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.12)(yaml@2.9.0))
 
   packages/cli:
-    dependencies:
-      commander:
-        specifier: ^15.0.0
-        version: 15.0.0
-      effect:
-        specifier: 4.0.0-rc.112
-        version: 4.0.0-rc.112
-      parse5:
-        specifier: "catalog:"
-        version: 7.3.0
     devDependencies:
+      "@effect/platform-node":
+        specifier: 4.0.0-rc.112
+        version: 4.0.0-rc.112(effect@4.0.0-rc.112)(redis@6.2.1)
+      "@effect/vitest":
+        specifier: 4.0.0-rc.112
+        version: 4.0.0-rc.112(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.12)(yaml@2.9.0)))
       "@patchy/api":
         specifier: workspace:*
         version: link:../api
+      "@patchy/core":
+        specifier: workspace:*
+        version: link:../core
+      effect:
+        specifier: 4.0.0-rc.112
+        version: 4.0.0-rc.112
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.12)(yaml@2.9.0))
 
   packages/content-store:
     dependencies:
@@ -1603,13 +1608,6 @@ packages:
         integrity: sha512-RMr0FhtfXemyinomL4hrWcYJxmX6deFdCxpJzhDttxgO1+bcCnkk+9drydLVDmAMG7NE6aN/fl4F7ucU/90gAA==
       }
     engines: { node: ">=0.10.0" }
-
-  commander@15.0.0:
-    resolution:
-      {
-        integrity: sha512-z67u4ZhzCL/Tydu1lJARtEZYWbWaN7oYLHbsuzocr6y4N6WZAagG3RQ4FW61V1/0+jImpj293XfrcYnd1qxtPg==
-      }
-    engines: { node: ">=22.12.0" }
 
   convert-source-map@2.0.0:
     resolution:
@@ -3571,8 +3569,6 @@ snapshots:
   chai@6.2.2: {}
 
   cluster-key-slot@1.1.2: {}
-
-  commander@15.0.0: {}
 
   convert-source-map@2.0.0: {}
 

@@ -37,10 +37,8 @@
           "globalTimersInEffect": "error",
           "globalFetchInEffect": "error",
           "cryptoRandomUUIDInEffect": "error",
-          // Whole-file variants of the rules above. Errors everywhere the port
-          // has reached; packages/cli/tsconfig.json keeps them warnings until
-          // the CLI ports (#78). A Node API with no Effect equivalent is
-          // allowed per file with `// @effect-diagnostics <rule>:off`.
+          // Whole-file variants of the rules above. A Node API with no Effect
+          // equivalent is allowed per file with `// @effect-diagnostics <rule>:off`.
           "nodeBuiltinImport": "error",
           "globalConsole": "error",
           "globalDate": "error",
