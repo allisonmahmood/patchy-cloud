@@ -1,8 +1,10 @@
 # Path -> area label mapping for .github/workflows/pr-labels.yml
 #
-# The first three areas mirror the contexts in CONTEXT-MAP.md, so pull
-# requests and the domain docs stay in the same vocabulary. The hosting side's
-# capability packages roll into `area:server`.
+# The areas follow CONTEXT-MAP.md so pull requests and the domain docs stay in
+# one vocabulary: `area:server` is the hosting side (apps/server and its
+# packages: analytics, api, auth, content-store, limits, patches, serving, sql),
+# `area:cli` the Publishing context, `area:core` the shared kernel. The table in
+# docs/agents/triage-labels.md says the same thing; change both together.
 #
 # A pull request can carry several area labels; that is intended.
 

@@ -4,7 +4,7 @@ Command-line uploader for [Patchy Cloud](https://github.com/allisonmahmood/patch
 
 An agent is the primary operator, so the CLI promises a contract an agent can branch on without reading prose: an [exit code that says who has to act](#exit-codes), `--json` on every command, and one resolution of which instance is being targeted. The contract is [ADR-0004](../../docs/adr/ADR-0004-cli-contract-for-agents.md).
 
-There is no hosted instance to default to: the CLI talks to whichever instance you point it at, and falls back to `http://localhost:3000` — a server running from this repo on your own machine. See the [self-hosting guide](https://github.com/allisonmahmood/patchy-cloud/blob/main/docs/SELF_HOSTING.md) to run one somewhere else.
+The CLI talks to whichever instance you point it at — Patchy Cloud, or the `pnpm dev` instance of a checkout — and falls back to `http://localhost:3000`, a server running from this repo on your own machine.
 
 ## Run it
 

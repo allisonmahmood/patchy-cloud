@@ -1,9 +1,11 @@
 # ADR-0000 — Origin: grown from PatchPage, not speaking for it
 
-- **Status**: Accepted
+- **Status**: Superseded by [ADR-0002](./ADR-0002-api-is-the-contract-package.md), [ADR-0003](./ADR-0003-postgres-only.md) and [ADR-0004](./ADR-0004-cli-contract-for-agents.md) (2026-08-29)
 - **Date**: 2026-08-26
 - **Contexts**: Repository-wide — it fixes what this repo is, what it is named, and what it may not do, so it lives in the root ADR home.
 - **Source**: the split itself; there is no ticket, because the tracker this repo inherited belongs to the project being split from.
+
+_Retired by the Effect v4 port, whose record is the [port map (#54)](https://github.com/allisonmahmood/patchy-cloud/issues/54) and its spec (#68). Decisions 1–3 and 5 still hold as facts about the repo: PatchPage stays separate, nothing here publishes to its channels, everything is `@patchy/*` and `PATCHY_*`, the licence is unresolved. What this ADR framed as "detach the copy" the port finished: the inherited code is gone (Fastify, the `pg` layer, commander, the JSON driver, the reports surface, the operator artefacts), and the repo is now described by what replaced it — the `api` contract package (ADR-0002), Postgres as the only store (ADR-0003), the CLI contract (ADR-0004), and one `CONTEXT.md` per capability package from `CONTEXT-MAP.md`. Decision 4's "kept deliberately" list is no longer a decision, just the toolchain. Patchy Cloud is the only deployment, and the history before the split is provenance, not a description of anything running._
 
 ## Context
 

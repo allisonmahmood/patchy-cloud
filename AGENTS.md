@@ -62,7 +62,7 @@ Standards sources for `/code-review`'s Standards axis, one `SKILL.md` each under
 
 ## Effect
 
-The server, packages and CLI are moving onto Effect 4 (one RC, pinned through the pnpm `catalog:` in `pnpm-workspace.yaml`; HTTP, HttpApi, SQL and CLI come from `effect/unstable/*`). The port lands package by package on `main`, one PR each, from the build tickets on the port map (#54); a package that has moved is held to everything below, code the port has not reached yet is not.
+The server, packages and CLI run on Effect 4 (one RC, pinned through the pnpm `catalog:` in `pnpm-workspace.yaml`; HTTP, HttpApi, SQL and CLI come from `effect/unstable/*`). Everything below binds all of them; the port that got them here is recorded on the port map (#54).
 
 Before writing Effect code, read `node_modules/effect/AGENTS.md` — how Effect wants to be written (`Effect.gen`, `Effect.fn`, services, layers), with worked examples under `node_modules/effect/ai-docs/`. Effect's `MIGRATION.md` is not shipped in the package; it lives upstream at <https://github.com/Effect-TS/effect/blob/main/MIGRATION.md>.
 
@@ -73,20 +73,20 @@ Before writing Effect code, read `node_modules/effect/AGENTS.md` — how Effect 
 - One file per service, in this order: errors and schemas, the `Context.Service` tag with its interface inline, `make`, `layer`. Refer to the interface as `Foo["Service"]`.
 - Namespace imports at service boundaries: `import * as Effect from "effect/Effect"`, `PatchStore.PatchStore` / `PatchStore.layer`. Named imports stay for whole packages such as `@patchy/api` and for pure helpers, errors, schemas and types.
 - Failures are `Schema.TaggedError` with structured fields; `message` derives from those fields, the underlying error rides as `cause`. Catch known tags with `Effect.catchTags`. Wire bodies keep their current shape (a 401 is `{ ok: false, error }`, no `_tag` on the wire).
-- Dependencies come from the environment (`yield* Foo.Foo`), never as constructor arguments. `runPromise` and `ManagedRuntime` belong only at the server and CLI entrypoints and at the thin seam between a ported package and one not yet moved.
+- Dependencies come from the environment (`yield* Foo.Foo`), never as constructor arguments. `runPromise` and `ManagedRuntime` belong only at the server and CLI entrypoints.
 - A capability with one consumer stays a module; a second consumer earns the package.
 
 ### Packages by capability
 
-The target layout, decided on the port map ([#56](https://github.com/allisonmahmood/patchy-cloud/issues/56)): `core` (html-policy, ids), `api` (wire schemas, the `HttpApi`, the derived client), `sql` (client and Migrator, no tables), `auth`, `content-store`, `patches` (owns the expiry sweep), `serving` (pages, reads through `patches`), `analytics`, `limits`, `cli`. Each capability owns its migrations and its `HttpApi` group; `apps/server` is wiring plus the API guard. The pre-port packages (`config`, `db`) are gone.
+Decided on [#56](https://github.com/allisonmahmood/patchy-cloud/issues/56); `CONTEXT-MAP.md` is the map. `core` (html-policy, ids), `api` (wire schemas, the `HttpApi`, the derived client), `sql` (client and Migrator, no tables), `auth`, `content-store`, `patches` (owns the expiry sweep), `serving` (pages, reads through `patches`), `analytics`, `limits`, `cli`. Each capability owns its migrations and its `HttpApi` group; `apps/server` is wiring plus the API guard.
 
 ### Tests
 
-`@effect/vitest`: `it.layer` shares one migrated Postgres per block, `it.effect` for each case, `HttpApiTest.groups` for API routes, `NodeHttpServer.layerTest` when the test needs what a real socket sees, `TestClock` for the clock, `Scope` for anything that must be closed. Inject faults with an alternate layer, not a mock. The copyable template is `packages/effect-slice/src/slice.test.ts` on the `prototype/effect-slice` branch; its README lists the gotchas the port must carry (esbuild `createRequire` banner, `Migrator.make({})`, the CLI output overrides).
+`@effect/vitest`: `it.layer` shares one migrated Postgres per block, `it.effect` for each case, `HttpApiTest.groups` for API routes, `NodeHttpServer.layerTest` when the test needs what a real socket sees, `TestClock` for the clock, `Scope` for anything that must be closed. Inject faults with an alternate layer, not a mock. Copy an existing suite in the package you are in; `packages/patches` and `packages/serving` show the `it.layer` shape over a migrated database.
 
 ### Guardrails
 
-`@effect/language-service` diagnostics fail `pnpm typecheck` (rule set in `tsconfig.base.json`, every rule an error; `packages/cli/tsconfig.json` keeps the whole-file Node rules at warning until the CLI ports; `effect-language-service patch` runs from `prepare`). A Node API with no Effect equivalent is allowed per file with `// @effect-diagnostics <rule>:off` and a reason. `pnpm lint` runs the repo's own rules from `eslint/`: namespace imports for Effect and service modules, no manual runtimes in tests, no Schema compiles in function bodies. `/code-review` loads the service review spec above whenever a diff touches an Effect service.
+`@effect/language-service` diagnostics fail `pnpm typecheck` (rule set in `tsconfig.base.json`, every rule an error; `effect-language-service patch` runs from `prepare`). A Node API with no Effect equivalent is allowed per file with `// @effect-diagnostics <rule>:off` and a reason. `pnpm lint` runs the repo's own rules from `eslint/`: namespace imports for Effect and service modules, no manual runtimes in tests, no Schema compiles in function bodies. `/code-review` loads the service review spec above whenever a diff touches an Effect service.
 
 ### Effect RC bumps
 

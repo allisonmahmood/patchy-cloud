@@ -123,9 +123,6 @@ validate and upload.
 )
 ```
 
-Self-hosting guide:
-https://github.com/allisonmahmood/patchy-cloud/blob/main/docs/SELF_HOSTING.md
-
 ## Style
 
 Before writing a page, settle which style applies, in this order:
