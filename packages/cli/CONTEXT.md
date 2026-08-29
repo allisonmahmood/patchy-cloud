@@ -1,12 +1,12 @@
 # Publishing
 
-The `@patchy/cli` package and its bundled skill — the tool agents use to put pages up. An agent is the primary operator and the CLI's output is its interface, so every message is written to be read by an agent first and what an agent sees is a written contract ([ADR-0004](../../docs/adr/ADR-0004-cli-contract-for-agents.md)). Humans are not excluded: developers touching the cloud directly do drive it, so the human conveniences (completions, the wizard) stay, as long as they never change what an agent sees.
+The `@patchy/cli` package and its bundled skill — the tool agents use to put pages up. An agent is the primary operator and the CLI's output is its interface, so every message is written to be read by an agent first and what an agent sees is a written contract ([ADR-0004](../../docs/adr/ADR-0004-cli-contract-for-agents.md)). Humans are not excluded: developers touching the cloud directly do drive it, so the human conveniences (completions, the wizard) stay, as long as they never change what an agent sees. A _draft_ in the CLI's copy is a patch on the instance: the CLI keeps the word its users know, and only the wire says `patch`.
 
 ## Language
 
 **Instance**:
-A Patchy Cloud server that drafts are published to, identified by its API URL. There is no hosted instance and no official one: the URL is always supplied by whoever is publishing — a flag, the dev env, the environment, or saved config, in that order — and the built-in fallback is only a server running locally from this repo. A token and a cached draft each belong to exactly one instance. Resolved once per command by the `Instance` service, which also remembers its **source**.
-_Avoid_: the server (ambiguous with the hosting codebase), host, backend, the official instance
+The Patchy Cloud server drafts are published to, identified by its API URL: the deployment, or the `pnpm dev` instance of a checkout. The CLI bakes in no address for the deployment; the URL is always supplied by whoever is publishing — a flag, the dev env, the environment, or saved config, in that order — and the built-in fallback is only a server running locally from this repo. A token and a cached draft each belong to exactly one instance. Resolved once per command by the `Instance` service, which also remembers its **source**.
+_Avoid_: the server (ambiguous with the hosting codebase), host, backend, your own instance (there is one deployment; the rest are dev instances)
 
 **Dev env**:
 The `.local/dev/env` a `pnpm dev` writes in a worktree — the instance URL and the seeded token. Found by walking up from the working directory and ranked above `PATCHY_API_URL`, so a checkout with a running dev instance publishes to it with nothing set and can never publish somewhere remote by accident.
@@ -41,7 +41,7 @@ The copy-paste block in the README that a user hands their agent to get started:
 _Avoid_: install snippet (older internal name), install command (only one of its parts)
 
 **Publishing key**:
-What an auth token is called in front of the user — "your publishing key, saved on this machine". _Token_, _instance_, and _mint_ stay out of user-facing copy except on the own-instance path, where operator vocabulary is correct.
+What an auth token is called in front of the user — "your publishing key, saved on this machine". _Token_, _instance_, and _mint_ stay out of user-facing copy except on the operator-token path, where operator vocabulary is correct.
 _Avoid_: token (in user-facing copy), password, account
 
 **Draft cache**:

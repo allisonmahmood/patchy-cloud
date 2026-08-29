@@ -51,7 +51,7 @@ Put `packages/cli/dist/index.js` on your `PATH` as `patchy` and the same command
 
 Run all locally supported test suites with `pnpm test:all`; CI-only suites are reported as skipped with the reason. Other commands: `pnpm test`, `pnpm typecheck`, `pnpm build`.
 
-See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for the dev runner, running the server by hand, and storage notes, and [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md) for running an instance, configuration, database migration, and minting tokens.
+See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for the dev runner, running the server by hand, and storage notes. Patchy Cloud is the only deployment.
 
 **Unlisted, not private.** Draft viewer URLs are long, unguessable, unlisted, and served `noindex` — but anyone with the link can open or reshare one. Don't publish secrets.
 

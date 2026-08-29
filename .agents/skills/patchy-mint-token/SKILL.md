@@ -1,29 +1,29 @@
 ---
 name: patchy-mint-token
-description: Mint Patchy Cloud API tokens as the server operator and wire them into the CLI. Use when the user says "mint a patchy token", "patchy token", "patchy auth is not set up", or "patchy upload is unauthorized".
+description: Mint Patchy Cloud API tokens as the Patchy Cloud operator and wire them into the CLI. Use when the user says "mint a patchy token", "patchy token", "patchy auth is not set up", or "patchy upload is unauthorized".
 metadata:
   internal: "true"
 ---
 
 # Minting Patchy Cloud API Tokens
 
-Use this skill when an agent or a new machine needs authenticated upload and update access
-to a Patchy Cloud server that the user operates. Every upload requires an `upload`-scoped
-API token, on every configuration: a request with no bearer token is rejected with 401, and
-no server setting relaxes that. A minted token is the only way to publish, own, and update
-drafts.
+Use this skill when an agent or a new machine needs an operator-minted token for
+Patchy Cloud, or for a `pnpm dev` instance of this repo. Every upload requires an
+`upload`-scoped token: a request with no bearer token is rejected with 401, and no
+setting relaxes that. When self-service minting is on the CLI mints its own token on
+first use, so reach for this skill only when a token must be issued by the operator —
+a named per-client credential, or a `pnpm dev` instance where the seeded
+`patchy-dev-token` in `.local/dev/env` is not what you want.
 
-This is an operator-side skill. It lives in the repo for people who run their own Patchy
-Cloud server; it sits outside `skills/`, so it is not part of the bundle the CLI ships, and
-it is marked `metadata.internal`. If your user does not operate the target
-server, stop: only the server operator can issue tokens. To stand a server up, see
-`docs/SELF_HOSTING.md`.
+This is the operator's skill. It sits outside `skills/`, so it is not part of the
+bundle the CLI ships, and it is marked `metadata.internal`. Only the Patchy Cloud
+operator holds an admin token; if your user is not the operator, stop.
 
 ## How token issuance works
 
-- Every deployment has a bootstrap credential: the `PATCHY_BOOTSTRAP_API_TOKEN`
-  environment variable on the server becomes a real API token with `admin` and `upload`
-  scopes on startup or migration.
+- The deployment has a bootstrap credential: `PATCHY_BOOTSTRAP_API_TOKEN` in the
+  server's environment becomes a real API token with `admin` and `upload` scopes when
+  the tokens layer builds.
 - Any token with the `admin` scope can mint further tokens via `POST /api/tokens`.
 - Minted tokens default to the `upload` scope. `admin` satisfies every scope check; grant
   it only to tokens that need to mint other tokens.
@@ -32,16 +32,10 @@ server, stop: only the server operator can issue tokens. To stand a server up, s
 
 ## Step 1 — find an admin token
 
-Look wherever the deployment defines the server's environment. Common spots, depending on
-how the operator deploys:
-
-- a `.env` or compose file next to the server (`PATCHY_BOOTSTRAP_API_TOKEN=...`)
-- the hosting platform's secret store or app-settings dashboard
-- infrastructure-as-code variables, outputs, or state, if the token is generated there
-- a previously minted `admin`-scoped token the operator saved
-
-Treat whatever you find as a secret: acquire it through a non-echoing prompt or directly
-from the secret store, and never print it into logs, transcripts, or commits.
+Look wherever the deployment defines the server's environment — the hosting
+platform's secret store, or `.local/dev/env` for a dev instance. Treat whatever you
+find as a secret: acquire it through a non-echoing prompt or directly from the secret
+store, and never print it into logs, transcripts, or commits.
 
 ## Step 2 — mint, save, and verify a scoped token
 
@@ -50,7 +44,7 @@ Requires Node.js 22 or newer, and the `patchy` CLI on `PATH`.
 ```bash
 (
 set +x
-API="https://pages.example.com" # your instance
+API="https://pages.example.com" # Patchy Cloud, or the dev instance URL
 PATCHY_API_URL=$API
 export PATCHY_API_URL
 unset PATCHY_API_TOKEN
@@ -178,18 +172,17 @@ revocation painless.
 `whoami` calls `GET /api/me` and prints the account, token name, and scopes. Credentials
 land in `~/.patchy/credentials.json`; every save creates or repairs that file to
 owner-only permissions on Unix. Always pass `--api-url`: the CLI's built-in fallback is a
-server on this machine, never your instance.
+server on this machine, never Patchy Cloud.
 
 ## Resolving a complaint: from a page to the token behind it
 
-Four admin-scoped endpoints close the loop. Row surgery is no longer the procedure — do
-not hand-edit `revoked_at` or the JSON state file.
+Four admin-scoped endpoints close the loop; the database is never edited by hand.
 
 Put the admin credential in a protected header file first, exactly as Step 2 does, so it
 never reaches a process argument list or the shell history:
 
 ```bash
-API=https://your.instance
+API=https://pages.example.com
 MODERATION_HEADER_FILE="$(mktemp)"
 chmod 600 "$MODERATION_HEADER_FILE"
 (set +x; umask 077; printf 'authorization: Bearer %s\n' "$ADMIN_TOKEN" \
@@ -200,23 +193,23 @@ unset ADMIN_TOKEN
 Then walk the loop, substituting the IDs each step hands you:
 
 ```bash
-# 1. The flagged URL's draft ID -> the principal and the token that created it.
+# 1. The flagged URL's patch ID -> the principal and the token that created it.
 curl --fail --silent --show-error --header "@$MODERATION_HEADER_FILE" \
-  "$API/api/drafts/DRAFT_ID"
+  "$API/api/patches/PATCH_ID"
 
 # 2. Everything else that principal is holding, newest first, up to 200 at a time.
-#    Deleted drafts are omitted; disabled ones are not. `truncated: true` means
-#    there are more: DELETING drafts is what reveals them, because deleting is what
+#    Deleted patches are omitted; disabled ones are not. `truncated: true` means
+#    there are more: DELETING patches is what reveals them, because deleting is what
 #    takes them off this list. Disabling a page leaves it here.
 curl --fail --silent --show-error --header "@$MODERATION_HEADER_FILE" \
-  "$API/api/principals/PRINCIPAL_ID/drafts"
+  "$API/api/principals/PRINCIPAL_ID/patches"
 
 # 3. Take individual pages down: disable hides one, delete removes it.
 curl --fail --silent --show-error --request POST \
   --header "@$MODERATION_HEADER_FILE" --header "content-type: application/json" \
-  --data '{"reason":"operator decision"}' "$API/api/drafts/DRAFT_ID/disable"
+  --data '{"reason":"operator decision"}' "$API/api/patches/PATCH_ID/disable"
 curl --fail --silent --show-error --request DELETE \
-  --header "@$MODERATION_HEADER_FILE" "$API/api/drafts/DRAFT_ID"
+  --header "@$MODERATION_HEADER_FILE" "$API/api/patches/PATCH_ID"
 
 # 4. Revoke the token itself, then discard the header file.
 curl --fail --silent --show-error --request POST \
@@ -226,30 +219,30 @@ rm -f "$MODERATION_HEADER_FILE"
 
 ## Revoking tokens
 
-`POST /api/tokens/<apiTokenId>/revoke` sets the token's revoked-at state. Both drivers
-read the store on every request, so it takes effect immediately: from that moment the
-token authenticates nothing, and the caller sees the same 401 any bad credential gets.
+`POST /api/tokens/<apiTokenId>/revoke` sets the token's revoked-at state. Every request
+reads the database, so it takes effect immediately: from that moment the token
+authenticates nothing, and the caller sees the same 401 any bad credential gets.
 
 Revoked is a **state, never a deletion**. The row survives with its mint provenance for
-later review, and the endpoint never removes it — `draft_versions` references the token, so
-postgres would reject the delete for anything that has ever uploaded anyway.
+later review, and the endpoint never removes it — `patch_versions` references the token, so
+Postgres would reject the delete for anything that has ever uploaded anyway.
 
 Revoking is idempotent: a second call returns `alreadyRevoked: true` and the _original_
-`revokedAt`, because that moment is when the token's drafts stopped receiving visit
-top-ups. Their clocks only run down from there — the pages stay up until draft expiry
-takes them, and no visit extends them again. There is no un-revoke; a replacement
-credential is a fresh mint.
+`revokedAt`, because that moment is when the token's patches stopped receiving visit
+top-ups. Their clocks only run down from there — the pages stay up until expiry takes
+them, and no visit extends them again. There is no un-revoke; a replacement credential
+is a fresh mint.
 
-An unknown token ID answers 404. Revocation does not touch the token's drafts: disable or
-delete those individually if they should come down before their clocks run out.
+An unknown token ID answers 404. Revocation does not touch the token's patches: disable
+or delete those individually if they should come down before their clocks run out.
 
 Two cases where revoking alone will not age a page out:
 
-- **A pinned draft is exempt from expiry.** If step 1's read shows `pinnedAt`, the clock
+- **A pinned patch is exempt from expiry.** If step 1's read shows `pinnedAt`, the clock
   will never take that page however long you wait — unpin, disable, or delete it yourself.
 - **Revocation is scoped to the token, not the principal.** Where you have minted several
-  tokens on one principal, a surviving sibling can still update that principal's drafts and
-  reset their 90-day window. Revoke every token on the principal, or delete the drafts. A
+  tokens on one principal, a surviving sibling can still update that principal's patches and
+  reset their 90-day window. Revoke every token on the principal, or delete the patches. A
   self-service token is 1:1 with its principal, so this only bites operator-created tokens.
 
 Revoking works the same way whichever way the token was created: an operator mint from
@@ -264,8 +257,8 @@ neither loses its mint record.
   a fresh one.
 - Never pass a token positionally to `patchy auth set`; use the hidden prompt for a
   person or explicit `--token-stdin` for automation.
-- Tokens gate publishing, ownership, and updates. Draft view URLs stay public and unlisted
-  regardless; a token does not make a draft private. An `upload` token disables or deletes
-  only the drafts it owns; an `admin` scope moderates any principal's draft, which is how
+- Tokens gate publishing, ownership, and updates. Patch URLs stay public and unlisted
+  regardless; a token does not make a patch private. An `upload` token disables or deletes
+  only the patches it owns; an `admin` scope moderates any principal's patch, which is how
   the operator takes down a flagged page.
 - Do not hand the bootstrap token to CLI clients; mint per-client `upload` tokens instead.

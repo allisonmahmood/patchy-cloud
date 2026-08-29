@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { Patches } from "@patchy/patches";
 import { escapeHtml, renderPatchWrapper, renderHome } from "./render.js";
 
-const configuredUrl = "https://self-host.example.test/base?tenant=O'Reilly&mode=review";
+const configuredUrl = "https://origin.example.test/base?tenant=O'Reilly&mode=review";
 const setupToken = "render-setup-sentinel";
 const inheritedOrigin = "https://hostile-inherited.example.test";
 const inheritedApiToken = "hostile-inherited-api-token";

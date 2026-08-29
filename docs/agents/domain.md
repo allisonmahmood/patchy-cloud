@@ -12,38 +12,18 @@ If any of these files don't exist, **proceed silently**. Don't flag their absenc
 
 ## Layout
 
-This is a **multi-context** repo — a pnpm workspace whose two halves are the service that hosts pages and the package people run to put pages up, cut into capability packages on the hosting side.
+This is a **multi-context** repo — a pnpm workspace whose two sides are the service that hosts pages and the CLI agents run to put pages up, with the hosting side cut into capability packages. `CONTEXT-MAP.md` names the contexts (Auth, Patches, Serving, Publishing), the shared kernel (`core`), the infrastructure packages (`api`, `sql`, `content-store`, `analytics`, `limits`, and `apps/server` as wiring) and the relationships between them; every context and infrastructure package but `core` and `api` has a `CONTEXT.md` beside its code.
 
 ```
 /
 ├── CONTEXT-MAP.md                     ← the map
 ├── docs/adr/                          ← system-wide decisions
-├── apps/server/
-│   ├── CONTEXT.md                     ← hosting context
-│   └── docs/adr/
-└── packages/
-    ├── api/                           ← the wire contract both contexts speak (ADR-0002)
-    ├── auth/CONTEXT.md                ← tokens, principals, minting, revocation
-    ├── patches/CONTEXT.md             ← patches, versions, retention, the sweep, moderation
-    ├── serving/CONTEXT.md             ← the serving guarantees, the page routes, trusted proxies
-    ├── content-store/CONTEXT.md       ← where a patch's bytes go
-    ├── analytics/CONTEXT.md, limits/CONTEXT.md
-    ├── cli/
-    │   ├── CONTEXT.md                 ← publishing context (the `patchy` CLI)
-    │   └── docs/adr/
-    ├── core/                          ← shared kernel: html-policy, crypto, ids, types
-    └── sql/
-        └── CONTEXT.md                 ← the Postgres client and the Migrator (no tables)
+├── apps/server/CONTEXT.md             ← wiring terms only
+└── packages/<name>/CONTEXT.md         ← one per context and infrastructure package
+    └── docs/adr/                      ← that package's decisions, once it has one
 ```
 
-### Contexts
-
-- **Hosting** — `apps/server`. The process: wires every capability package into one Effect layer, guards `/api/*`, and listens. Nothing lives here that a package could own.
-- **Serving** — `packages/serving`. How a published patch reaches its reader: the serving guarantees and their headers, the page routes, and the trusted-proxy schema.
-- **Patches** — `packages/patches`. What a patch is and how long it stays up: records, versions, the upload contract, the retention clock, the sweep, pins, moderation, the quota, and the `patches` API group.
-- **Publishing** — `packages/cli`. The `patchy` CLI package agents use to put pages up. Its own vocabulary (uploads, auth tokens) lives here.
-- **SQL** — `packages/sql`. The Postgres client and Effect's Migrator every capability package migrates through. Owns no tables; its `CONTEXT.md` defines migration and ledger.
-- **Shared kernel** — `packages/core`. The safe-HTML policy and the ID/crypto primitives both contexts depend on. It has no `CONTEXT.md` of its own; terms it defines belong to whichever context introduced them. Changes here ripple both ways, so decisions touching it go in the root `docs/adr/`, not a context-scoped one.
+A term belongs to the package that introduced it; `core` and `api` define none of their own.
 
 ## Use the glossary's vocabulary
 

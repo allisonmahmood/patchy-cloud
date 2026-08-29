@@ -14,7 +14,7 @@ and every query rule — the retention clock, the visit top-up, the pin — was
 written twice, once in SQL and once in TypeScript, with the suite asserting the
 two agreed.
 
-The port ends self-hosting: Patchy Cloud is the only deployment, and no
+After the port Patchy Cloud is the only deployment, and no
 production database exists yet. The dev runner (#81) already starts an embedded
 Postgres per worktree, and the vitest template database is one too.
 
@@ -44,9 +44,9 @@ no TypeScript twin and no suite to keep the two honest. The Effect clock reads
 into the query as `to_timestamp(...)`, so a test still winds time.
 
 **Running the server means having a Postgres.** `DATABASE_URL` is required;
-the runner is the path that provides one. The Docker image and the self-hosting
-guide lose their file-store mode, which the self-hosting clean-up ticket
-retires with the rest.
+the runner is the path that provides one. The Docker image lost its file-store
+mode, and the guide to running an instance of your own went with #79: Patchy
+Cloud is the only deployment.
 
 **A future migration is one DDL step.** No JSON transform, no default-fill for
 rows written by an older shape.

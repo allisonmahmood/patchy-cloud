@@ -561,7 +561,7 @@
         <div class="meta">
           <span class="pill pill-progress">Token default</span>
           <span class="pill pill-done">Public, unlisted views</span>
-          <span>Self-hostable</span>
+          <span>Agent-operated</span>
         </div>
       </header>
 
@@ -593,7 +593,7 @@
         <p>
           Requires the <code>patchy</code> CLI on Node.js 22 or newer. Provide
           <code>PATCHY_SETUP_TOKEN</code> through a secret environment. The scoped flow pins the
-          self-hosted origin, clears inherited credential overrides, and verifies the stored token
+          intended origin, clears inherited credential overrides, and verifies the stored token
           before validation or upload.
         </p>
         <div
@@ -640,11 +640,10 @@
               <span class="pill pill-done">Required</span>
             </h3>
             <p>
-              Every upload requires a bearer API token, on every configuration. A self-hosted server
-              rejects a request that carries no token with 401, and a present but invalid token
-              stays 401. Authenticated uploads create drafts and update drafts the publisher owns;
-              uploading the same known file updates its cached draft unless <code>--new</code> is
-              passed.
+              Every upload requires a bearer API token, on every configuration. The server rejects a
+              request that carries no token with 401, and a present but invalid token stays 401.
+              Authenticated uploads create drafts and update drafts the publisher owns; uploading
+              the same known file updates its cached draft unless <code>--new</code> is passed.
             </p>
           </article>
         </div>

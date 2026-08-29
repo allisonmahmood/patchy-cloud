@@ -1,6 +1,6 @@
 # ADR-0001 — Trust model: self-service tokens, no tokenless upload
 
-- **Status**: Accepted
+- **Status**: Superseded by [ADR-0002](./ADR-0002-api-is-the-contract-package.md), [ADR-0003](./ADR-0003-postgres-only.md) and [ADR-0004](./ADR-0004-cli-contract-for-agents.md) (2026-08-29)
 - **Date**: 2026-08-14
 - **Contexts**: Hosting (`apps/server`) and Publishing (`packages/cli`) — the decision spans both, so it lives in the root ADR home.
 - **Source**: resolution of #90, from Wayfinder map #87; implemented by #108 and its successors under spec #106.
@@ -13,6 +13,8 @@ and `PATCHY_ANONYMOUS_CREATE_RATE_LIMIT_PER_MINUTE` are now simply unread names,
 the operators that refusal protected are all upstream's. And the "official instance"
 named in decision 8 is upstream PatchPage's — this repo runs no instance and ships no
 production default._
+
+_Retired by the Effect v4 port, recorded on the [port map (#54)](https://github.com/allisonmahmood/patchy-cloud/issues/54) and its spec (#68). The trust model survives — every upload carries a bearer token, minting is server-side and zero-input, a self-service token reaches only what it owns, `admin` moderates — but it now lives where the code does: tokens, principals, minting and revocation in [Auth](../../packages/auth/CONTEXT.md), the records they own in [Patches](../../packages/patches/CONTEXT.md) under the `patch` name (`draft` below is the old word), the wire shapes of mint, `me` and revoke in ADR-0002's contract package, the store both write to in ADR-0003, and the CLI's auto-mint in ADR-0004. The report-driven takedown loop this ADR anticipated was removed with reports. Everything below about private instances and operators other than Patchy Cloud no longer applies: Patchy Cloud is the only deployment, and `PATCHY_ALLOW_SELF_SERVICE_TOKENS` is simply its setting._
 
 ## Context
 
@@ -86,12 +88,12 @@ Separate the two ideas. Keep the bearer token; delete the signup.
 
 ## Consequences
 
-**A self-hoster's deliberate security posture is never silently reinterpreted.**
+**An operator's deliberate security posture is never silently reinterpreted.**
 This is the whole reason the rename breaks startup rather than falling back to a
 default. Someone who wrote `PATCHY_ALLOW_ANONYMOUS_UPLOADS=false` chose a
 posture; silently dropping that line and booting anyway would be the one failure
 mode worse than downtime. The breaking rename is accepted deliberately: this
-lands pre-launch, when there are effectively no self-hosters to break.
+lands pre-launch, when there are effectively no operators to break.
 
 **Moderation stops being a carve-out and becomes a capability.** The old admin
 reach was keyed on the sentinel: an admin-scoped credential could disable or
@@ -114,9 +116,9 @@ continues the upload. The user hears "your publishing key, saved on this
 machine" and never learns the word token. That UX is specified separately; this
 ADR only guarantees the server side it stands on.
 
-**Self-hosting is untouched.** Self-service minting is off by default, so a
-private instance keeps its admin-only token posture exactly as before. Nothing
-here redirects a self-hoster's drafts or tokens to the official instance.
+**A private instance is untouched.** Self-service minting is off by default, so
+a private instance keeps its admin-only token posture exactly as before. Nothing
+here redirects its drafts or tokens to the official instance.
 
 **A future accounts service has a hook, not a commitment.** The 1:1 principal
 rows are where managed accounts could later hang. Building on them is a separate

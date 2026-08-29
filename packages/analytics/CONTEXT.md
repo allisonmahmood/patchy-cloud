@@ -1,6 +1,6 @@
 # Analytics
 
-The service every business moment the instance reports goes through. `packages/analytics` owns the event vocabulary, the PostHog layer and the no-op layer; the emitters (`auth`, `patches`, and the hosting server until they exist) decide what is reported.
+The service every business moment the instance reports goes through. `packages/analytics` owns the event vocabulary, the PostHog layer and the no-op layer; the emitters (`auth`, `patches`) decide what is reported.
 
 ## Language
 
