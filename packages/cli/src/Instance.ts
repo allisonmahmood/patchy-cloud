@@ -16,6 +16,7 @@ import * as GlobalFlag from "effect/unstable/cli/GlobalFlag";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Redacted from "effect/Redacted";
 import * as State from "./State.js";
 
 export const DEFAULT_API_URL = "http://localhost:3000";
@@ -47,7 +48,7 @@ export class Instance extends Context.Service<
     readonly apiUrl: string;
     readonly source: Source;
     /** The seeded token beside a `dev-env` URL: `pnpm dev` wrote both so the CLI works at once. */
-    readonly token: Option.Option<string>;
+    readonly token: Option.Option<Redacted.Redacted>;
   }
 >()("@patchy/cli/Instance") {}
 
@@ -72,6 +73,14 @@ const envValue = (text: string, key: string) =>
       .trim()
   ).pipe(Option.filter((value) => value !== ""));
 
+/** A secret from the environment, redacted at the boundary; empty means unset. */
+export const optionalSecret = (name: string) =>
+  Config.redacted(name).pipe(
+    Config.option,
+    Config.map(Option.filter((value) => Redacted.value(value) !== "")),
+    Effect.orDie
+  );
+
 /**
  * The `PATCHY_API_URL` (and the seeded `PATCHY_API_TOKEN`) of the nearest
  * `.local/dev/env` at or above `cwd`. A worktree with a running dev instance
@@ -87,17 +96,22 @@ export const devEnv = Effect.fn("devEnv")(function* (cwd: string) {
       const text = yield* fs.readFileString(file).pipe(Effect.orElseSucceed(() => ""));
       const apiUrl = envValue(text, "PATCHY_API_URL");
       if (Option.isSome(apiUrl)) {
-        return Option.some({ apiUrl: apiUrl.value, token: envValue(text, "PATCHY_API_TOKEN") });
+        return Option.some({
+          apiUrl: apiUrl.value,
+          token: Option.map(envValue(text, "PATCHY_API_TOKEN"), Redacted.make)
+        });
       }
     }
     const parent = path.dirname(dir);
-    if (parent === dir) return Option.none<{ apiUrl: string; token: Option.Option<string> }>();
+    if (parent === dir) {
+      return Option.none<{ apiUrl: string; token: Option.Option<Redacted.Redacted> }>();
+    }
     dir = parent;
   }
 });
 
 export const make = Effect.fn("Instance.make")(function* (cwd: string) {
-  const resolved = (apiUrl: string, source: Source, token = Option.none<string>()) =>
+  const resolved = (apiUrl: string, source: Source, token = Option.none<Redacted.Redacted>()) =>
     Instance.of({ apiUrl: normalizeApiUrl(apiUrl), source, token });
 
   const flag = yield* ApiUrlFlag;

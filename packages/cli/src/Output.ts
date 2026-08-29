@@ -14,7 +14,7 @@ import * as GlobalFlag from "effect/unstable/cli/GlobalFlag";
 import * as Option from "effect/Option";
 import * as Runtime from "effect/Runtime";
 import * as Schema from "effect/Schema";
-import { type CliError, exitCode, isCliError } from "./CliError.js";
+import { type CliError, exitCode } from "./CliError.js";
 
 export const JsonFlag = GlobalFlag.setting("json")({
   flag: Flag.boolean("json").pipe(
@@ -82,7 +82,7 @@ export const contract = <A, R>(handler: Effect.Effect<A, CliError, R>) =>
         Effect.andThen(new Failed({ code: exitCode(kind) }))
       );
     return yield* handler.pipe(
-      Effect.catchIf(isCliError, (error) => fail(error.message, error.kind)),
+      Effect.catch((error) => fail(error.message, error.kind)),
       Effect.catchDefect((defect) => {
         const message = defect instanceof Error ? defect.message : String(defect);
         const stack = debug && defect instanceof Error && defect.stack ? `\n${defect.stack}` : "";

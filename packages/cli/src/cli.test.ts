@@ -155,6 +155,21 @@ describe("built-ins", async () => {
 });
 
 describe("the exit-code ladder", async () => {
+  it("exits 130 on SIGINT, as Effect's interruption", async () => {
+    const instance = await stubInstance(() => undefined);
+    const child = spawn(process.execPath, [cliPath, "whoami", "--api-url", instance.url], {
+      env: { PATH: process.env.PATH ?? "", PATCHY_STATE_DIR: tempDir(), PATCHY_API_TOKEN: "t" }
+    });
+    child.stdin.end();
+    await new Promise<void>((resolve) => {
+      const poll = () => (instance.requests.length > 0 ? resolve() : setTimeout(poll, 20));
+      poll();
+    });
+    child.kill("SIGINT");
+    const status = await new Promise<number | null>((resolve) => child.on("close", resolve));
+    expect(status).toBe(130);
+  });
+
   it("exits 1 when the caller can fix it: a file that fails validation", async () => {
     const dir = tempDir();
     const file = htmlFile(dir, "bad.html", "<!doctype html><title>x</title><script>1</script>");

@@ -12,7 +12,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as CliOutput from "effect/unstable/cli/CliOutput";
 import * as Command from "effect/unstable/cli/Command";
-import { root, VERSION } from "./commands.js";
+import { Cwd, root, VERSION } from "./commands.js";
 import { toJson } from "./Output.js";
 
 /** Read from argv here because a parse error is rendered before any handler runs. */
@@ -29,6 +29,13 @@ const output = CliOutput.layer({
 });
 
 Command.run(root, { version: VERSION }).pipe(
-  Effect.provide(Layer.mergeAll(NodeServices.layer, NodeHttpClient.layerUndici, output)),
+  Effect.provide(
+    Layer.mergeAll(
+      NodeServices.layer,
+      NodeHttpClient.layerUndici,
+      output,
+      Layer.succeed(Cwd, process.cwd())
+    )
+  ),
   NodeRuntime.runMain
 );

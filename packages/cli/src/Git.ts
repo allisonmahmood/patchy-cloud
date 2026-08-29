@@ -8,13 +8,6 @@ import * as Path from "effect/Path";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
-export interface Metadata {
-  readonly repoOrg: string | null;
-  readonly repoName: string | null;
-  readonly gitBranch: string | null;
-  readonly gitCommitSha: string | null;
-}
-
 export const metadata = Effect.fn("Git.metadata")(function* (cwd: string) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const path = yield* Path.Path;
@@ -31,7 +24,7 @@ export const metadata = Effect.fn("Git.metadata")(function* (cwd: string) {
     repoName: remote.name ?? (repoRoot ? path.basename(repoRoot) : null),
     gitBranch: yield* git("rev-parse", "--abbrev-ref", "HEAD"),
     gitCommitSha: yield* git("rev-parse", "HEAD")
-  } satisfies Metadata;
+  };
 });
 
 /** `git@host:org/name.git`, `https://host/org/name.git`, or a bare `org/name` path. */

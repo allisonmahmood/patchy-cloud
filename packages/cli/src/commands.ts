@@ -6,6 +6,7 @@
  * path where operator vocabulary is right.
  */
 import * as Console from "effect/Console";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -30,8 +31,14 @@ import * as State from "./State.js";
 
 export const VERSION = typeof __PATCHY_VERSION__ === "string" ? __PATCHY_VERSION__ : "0.0.0-dev";
 
+/** The working directory the entrypoint started in; where the dev-env walk begins. */
+export class Cwd extends Context.Service<Cwd, string>()("@patchy/cli/commands/Cwd") {}
+
 /** The instance and the state dir, resolved once per command from the working directory. */
-const local = Layer.provideMerge(Instance.layer(process.cwd()), State.layer);
+const local = Layer.provideMerge(
+  Layer.unwrap(Effect.map(Cwd, (cwd) => Instance.layer(cwd))),
+  State.layer
+);
 
 /** Every handler runs under the output contract with `Instance` and `State` resolved. */
 const run = <A, R>(handler: Effect.Effect<A, CliError, R>) =>
@@ -66,19 +73,26 @@ const refused = (error: Api.ClientFailure, fallback: string) =>
     return yield* Api.classify(error, fallback);
   });
 
+/** A token that arrived with no provenance: `PATCHY_API_TOKEN`, or the one seeded beside a dev-env URL. */
+const environmentToken = Effect.gen(function* () {
+  const env = yield* Instance.optionalSecret("PATCHY_API_TOKEN");
+  const instance = yield* Instance.Instance;
+  return Option.orElse(env, () => instance.token);
+});
+
 /**
- * The credential chain: `PATCHY_API_TOKEN`, the token seeded beside a dev-env
- * URL, then the token stored for this instance. `None` is not a licence to
- * publish without one — it is the signal that this instance has no key yet,
- * which `upload` answers by minting.
+ * The credential chain: the environment's token, then the token stored for
+ * this instance. `None` is not a licence to publish without one — it is the
+ * signal that this instance has no key yet, which `upload` answers by minting.
  */
 const configuredToken = Effect.gen(function* () {
-  const env = yield* Instance.optionalEnv("PATCHY_API_TOKEN");
+  const env = yield* environmentToken;
   if (Option.isSome(env)) return env;
-  const instance = yield* Instance.Instance;
-  if (Option.isSome(instance.token)) return instance.token;
+  const { apiUrl } = yield* Instance.Instance;
   const state = yield* State.State;
-  return Option.map(yield* state.readCredential(instance.apiUrl), (credential) => credential.token);
+  return Option.map(yield* state.readCredential(apiUrl), (credential) =>
+    Redacted.make(credential.token)
+  );
 });
 
 const readHtml = Effect.fn("readHtml")(function* (file: string) {
@@ -118,10 +132,14 @@ const parseApiToken = (input: string, fromStdin: boolean) =>
     if (token !== token.trim()) {
       return yield* new LocalError({ message: "API token cannot begin or end with whitespace." });
     }
-    return token;
+    return Redacted.make(token);
   });
 
-/** The hidden prompt. Effect's terminal owns raw mode, so interruption restores it by construction. */
+/**
+ * The hidden prompt. Effect's terminal owns raw mode, so interruption restores
+ * it by construction; Ctrl-C and end of input are `QuitError`, rendered as
+ * interruption — exit 130, like any other signal.
+ */
 const promptForToken = Effect.gen(function* () {
   const stdio = yield* Stdio.Stdio;
   if (!(yield* stdio.stdinIsTerminal)) {
@@ -130,13 +148,9 @@ const promptForToken = Effect.gen(function* () {
         "Interactive token entry requires a terminal. For automation, pipe the token to patchy auth set --token-stdin."
     });
   }
-  const token = yield* Prompt.run(Prompt.password({ message: "Patchy Cloud API token" })).pipe(
-    Effect.catchTags({
-      QuitError: (cause) =>
-        new LocalError({ message: "API token input ended before a token was entered.", cause })
-    })
+  return yield* Prompt.run(Prompt.password({ message: "Patchy Cloud API token" })).pipe(
+    Effect.catchTags({ QuitError: () => Effect.interrupt })
   );
-  return Redacted.value(token);
 });
 
 const readStdin = Effect.gen(function* () {
@@ -165,8 +179,9 @@ const authSet = Command.make(
   ({ tokenStdin }) =>
     run(
       Effect.gen(function* () {
-        const input = tokenStdin ? yield* readStdin : yield* promptForToken;
-        const token = yield* parseApiToken(input, tokenStdin);
+        const token = tokenStdin
+          ? yield* Effect.flatMap(readStdin, (input) => parseApiToken(input, true))
+          : yield* promptForToken;
         const { apiUrl } = yield* Instance.Instance;
         const state = yield* State.State;
         if (Option.isSome(yield* Instance.ApiUrlFlag)) yield* state.saveConfigUrl(apiUrl);
@@ -204,7 +219,7 @@ const whoami = Command.make("whoami", {}, () =>
             `patchy auth set --api-url ${apiUrl}`
         });
       }
-      const client = yield* Api.client(Option.some(Redacted.make(token.value)));
+      const client = yield* Api.client(token);
       const identity = yield* client
         .me()
         .pipe(Effect.catch((error) => refused(error, "Authentication failed.")));
@@ -231,11 +246,7 @@ const status = Command.make("status", {}, () =>
     Effect.gen(function* () {
       const instance = yield* Instance.Instance;
       const state = yield* State.State;
-      // The environment and the dev env both count as a token without provenance.
-      const env = Option.orElse(
-        yield* Instance.optionalEnv("PATCHY_API_TOKEN"),
-        () => instance.token
-      );
+      const env = yield* environmentToken;
       const stored = Option.isSome(env)
         ? Option.none<State.HostCredential>()
         : yield* state
@@ -294,7 +305,8 @@ const mintPublishingToken = Effect.gen(function* () {
   const state = yield* State.State;
   const client = yield* Api.client(Option.none());
   const minted = yield* client.mint().pipe(Effect.catch((error) => mintFailure(error, apiUrl)));
-  yield* state.saveCredential(apiUrl, minted.token, "mint");
+  const token = Redacted.make(minted.token);
+  yield* state.saveCredential(apiUrl, token, "mint");
   yield* Output.announce(
     `Minted a new publishing token for ${apiUrl}; saved to ${state.credentialsPath}. ` +
       "That file is the only key to these pages — copy it to another machine to publish from " +
@@ -302,7 +314,7 @@ const mintPublishingToken = Effect.gen(function* () {
       "those pages belong to that machine's token — ask your agent to help copy it over instead " +
       "of using this new one."
   );
-  return minted.token;
+  return token;
 });
 
 /** One plain-language failure per pinned mint response, cause then next action. */
@@ -411,7 +423,7 @@ const upload = Command.make(
               Option.getOrNull(Option.map(cached, (c) => c.patchId))
             );
 
-        const client = yield* Api.client(Option.some(Redacted.make(apiToken)));
+        const client = yield* Api.client(Option.some(apiToken));
         const upload = yield* client
           .upload({
             payload: new UploadRequest({

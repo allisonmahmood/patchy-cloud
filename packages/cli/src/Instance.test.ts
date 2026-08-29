@@ -6,6 +6,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Redacted from "effect/Redacted";
 import * as Instance from "./Instance.js";
 import * as State from "./State.js";
 
@@ -52,7 +53,7 @@ it.layer(services)("Instance", (it) => {
       assert.deepStrictEqual(fromDev, {
         apiUrl: "http://127.0.0.1:41234",
         source: "dev-env",
-        token: Option.some("secret")
+        token: Option.some(Redacted.make("secret"))
       });
 
       const fromFlag = yield* resolve(cwd, { stateDir, flag: "http://flag/" });

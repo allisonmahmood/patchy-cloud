@@ -23,6 +23,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { LocalError } from "./CliError.js";
 
@@ -103,7 +104,7 @@ export class State extends Context.Service<
      */
     readonly saveCredential: (
       apiUrl: string,
-      token: string,
+      token: Redacted.Redacted,
       source: CredentialSource
     ) => Effect.Effect<void, LocalError>;
     readonly readCachedPatch: (
@@ -168,15 +169,17 @@ export const make = Effect.gen(function* () {
       );
     });
 
+  /** The retired flat file, by shape: the one document nothing may overwrite. */
+  const isRetired = (root: unknown, legacyKey: string) => isRecord(root) && legacyKey in root;
+
   const readHostKeyed = (file: string, legacyKey: string, errors: HostKeyedErrors) =>
     Effect.gen(function* () {
       const document = yield* readDocument(file, errors);
       if (Option.isNone(document)) return { hosts: {} as Record<string, unknown> };
-      const root = document.value;
-      if (isRecord(root) && legacyKey in root) {
+      if (isRetired(document.value, legacyKey)) {
         return yield* new LocalError({ message: errors.legacy });
       }
-      return yield* decodeHostKeyed(root).pipe(
+      return yield* decodeHostKeyed(document.value).pipe(
         Effect.mapError((cause) => new LocalError({ message: errors.invalid, cause }))
       );
     });
@@ -249,13 +252,22 @@ export const make = Effect.gen(function* () {
       }),
     saveCredential: (apiUrl, token, source) =>
       Effect.gen(function* () {
-        const { hosts } = yield* readCredentialFile.pipe(
-          Effect.catchIf(
-            (error) => error.message !== credentialErrors.legacy,
-            () => Effect.succeed({ hosts: {} as Record<string, unknown> })
-          )
+        // Read in two steps so the retired file is refused by its shape, and a
+        // document with no salvageable host map is replaced rather than fatal.
+        const document = yield* readDocument(credentialsPath, credentialErrors).pipe(
+          Effect.orElseSucceed(() => Option.none<unknown>())
         );
-        const entry = { token, updatedAt: yield* now, source };
+        if (Option.isSome(document) && isRetired(document.value, "apiToken")) {
+          return yield* new LocalError({ message: credentialErrors.legacy });
+        }
+        const { hosts } = yield* Option.match(document, {
+          onNone: () => Effect.succeed({ hosts: {} as Record<string, unknown> }),
+          onSome: (root) =>
+            decodeHostKeyed(root).pipe(
+              Effect.orElseSucceed(() => ({ hosts: {} as Record<string, unknown> }))
+            )
+        });
+        const entry = { token: Redacted.value(token), updatedAt: yield* now, source };
         yield* writeJson(credentialsPath, { hosts: { ...hosts, [apiUrl]: entry } });
       }),
     readCachedPatch: (apiUrl, file) =>
