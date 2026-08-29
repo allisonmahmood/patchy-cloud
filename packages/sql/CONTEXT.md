@@ -11,6 +11,3 @@ _Avoid_: schema version, patch (that word is the product's), idempotent migratio
 **Ledger**:
 The `schema_migrations` table Effect's Migrator keeps — `migration_id integer`, `name`, `created_at` — recording each applied migration. Reading it is how a database says where it stands; nothing else writes it.
 _Avoid_: migration history, version table
-
-**Migration seam**:
-`migrateDatabase` in `packages/db/src/migrate.ts`: the Promise adapter that runs `auth`'s record (ids 1–2) and `patches`' (3 onward) through the Migrator for the Fastify server, the dev runner and the vitest template database, until the server moves onto Effect and the seam goes.

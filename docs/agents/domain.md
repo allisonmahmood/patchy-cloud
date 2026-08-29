@@ -12,7 +12,7 @@ If any of these files don't exist, **proceed silently**. Don't flag their absenc
 
 ## Layout
 
-This is a **multi-context** repo — a pnpm workspace whose two halves are the service that hosts pages and the package people run to put pages up, plus the SQL package the hosting side migrates through.
+This is a **multi-context** repo — a pnpm workspace whose two halves are the service that hosts pages and the package people run to put pages up, cut into capability packages on the hosting side.
 
 ```
 /
@@ -25,6 +25,7 @@ This is a **multi-context** repo — a pnpm workspace whose two halves are the s
     ├── api/                           ← the wire contract both contexts speak (ADR-0002)
     ├── auth/CONTEXT.md                ← tokens, principals, minting, revocation
     ├── patches/CONTEXT.md             ← patches, versions, retention, the sweep, moderation
+    ├── serving/CONTEXT.md             ← the serving guarantees, the page routes, trusted proxies
     ├── content-store/CONTEXT.md       ← where a patch's bytes go
     ├── analytics/CONTEXT.md, limits/CONTEXT.md
     ├── cli/
@@ -37,7 +38,8 @@ This is a **multi-context** repo — a pnpm workspace whose two halves are the s
 
 ### Contexts
 
-- **Hosting** — `apps/server`. Receives uploads and serves published pages. Owns `@patchy/config` and the `@patchy/db` migration seam as supporting packages; treat changes in those as part of this context.
+- **Hosting** — `apps/server`. The process: wires every capability package into one Effect layer, guards `/api/*`, and listens. Nothing lives here that a package could own.
+- **Serving** — `packages/serving`. How a published patch reaches its reader: the serving guarantees and their headers, the page routes, and the trusted-proxy schema.
 - **Patches** — `packages/patches`. What a patch is and how long it stays up: records, versions, the upload contract, the retention clock, the sweep, pins, moderation, the quota, and the `patches` API group.
 - **Publishing** — `packages/cli`. The `patchy` CLI package agents use to put pages up. Its own vocabulary (uploads, auth tokens) lives here.
 - **SQL** — `packages/sql`. The Postgres client and Effect's Migrator every capability package migrates through. Owns no tables; its `CONTEXT.md` defines migration and ledger.

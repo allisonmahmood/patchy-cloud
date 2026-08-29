@@ -1,0 +1,35 @@
+{
+  "name": "@patchy/serving",
+  "version": "0.0.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "description": "The serving capability: the serving guarantees every published patch is delivered under, the page routes (home, health, the patch at its latest and version URLs), and the trusted-proxy schema that decides where a request came from.",
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@patchy/patches": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/platform-node": "catalog:",
+    "@effect/vitest": "catalog:",
+    "@patchy/auth": "workspace:*",
+    "@patchy/content-store": "workspace:*",
+    "@patchy/sql": "workspace:*",
+    "vitest": "^4.1.11"
+  }
+}

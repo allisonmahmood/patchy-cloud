@@ -1,8 +1,4 @@
-/**
- * The auth capability's configuration, read from the environment through
- * Effect `Config`. The names are the ones `packages/config` validates for the
- * Fastify app; that duplication goes with `packages/config` itself.
- */
+/** The auth capability's configuration, read from the environment through Effect `Config`. */
 import * as Config from "effect/Config";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";

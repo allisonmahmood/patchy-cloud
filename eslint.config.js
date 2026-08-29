@@ -23,7 +23,8 @@ export default tseslint.config(
         {
           object: "process",
           property: "env",
-          message: "Read environment variables in a package entrypoint or packages/config."
+          message:
+            "Read the environment through Effect `Config` in the package that owns the setting."
         }
       ],
       "@typescript-eslint/no-explicit-any": "error",
@@ -59,10 +60,9 @@ export default tseslint.config(
   {
     files: [
       // These test entrypoints clone the host environment before launching child processes.
-      "apps/server/src/render.test.ts",
+      "packages/serving/src/render.test.ts",
       "packages/cli/src/index.test.ts",
-      "packages/cli/src/index.ts",
-      "packages/config/**/*.ts"
+      "packages/cli/src/index.ts"
     ],
     rules: {
       "no-restricted-properties": "off"

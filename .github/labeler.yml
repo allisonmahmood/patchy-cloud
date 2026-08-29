@@ -1,10 +1,8 @@
 # Path -> area label mapping for .github/workflows/pr-labels.yml
 #
 # The first three areas mirror the contexts in CONTEXT-MAP.md, so pull
-# requests and the domain docs stay in the same vocabulary. `db`, `content-store`
-# and `config` roll into `area:server` because docs/agents/domain.md treats
-# them as the hosting context's supporting packages. `analytics`, `limits`
-# and `auth` are the hosting server's ported capability packages.
+# requests and the domain docs stay in the same vocabulary. The hosting side's
+# capability packages roll into `area:server`.
 #
 # A pull request can carry several area labels; that is intended.
 
@@ -12,12 +10,14 @@
   - changed-files:
       - any-glob-to-any-file:
           - "apps/server/**"
-          - "packages/db/**"
-          - "packages/content-store/**"
-          - "packages/config/**"
           - "packages/analytics/**"
-          - "packages/limits/**"
+          - "packages/api/**"
           - "packages/auth/**"
+          - "packages/content-store/**"
+          - "packages/limits/**"
+          - "packages/patches/**"
+          - "packages/serving/**"
+          - "packages/sql/**"
 
 "area:cli":
   - changed-files:

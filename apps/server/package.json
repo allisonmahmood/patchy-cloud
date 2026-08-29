@@ -16,17 +16,19 @@
     "docker": "docker build -f Dockerfile -t patchy-server ../.."
   },
   "dependencies": {
+    "@effect/platform-node": "catalog:",
     "@patchy/analytics": "workspace:*",
     "@patchy/api": "workspace:*",
     "@patchy/auth": "workspace:*",
-    "@patchy/config": "workspace:*",
     "@patchy/content-store": "workspace:*",
-    "@patchy/core": "workspace:*",
-    "@patchy/db": "workspace:*",
     "@patchy/limits": "workspace:*",
     "@patchy/patches": "workspace:*",
+    "@patchy/serving": "workspace:*",
     "@patchy/sql": "workspace:*",
-    "effect": "catalog:",
-    "fastify": "^5.12.1"
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "vitest": "^4.1.11"
   }
 }
