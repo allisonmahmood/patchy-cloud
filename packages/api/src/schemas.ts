@@ -7,11 +7,11 @@
  */
 import * as Schema from "effect/Schema";
 import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
-import { isDraftId } from "@patchy/core";
+import { isPatchId } from "@patchy/core";
 
 /** A patch's public id: twelve lowercase letters or digits. */
 export const PatchId = Schema.String.check(
-  Schema.makeFilter((value: string) => isDraftId(value) || "Invalid patch ID.", {
+  Schema.makeFilter((value: string) => isPatchId(value) || "Invalid patch ID.", {
     title: "PatchId"
   })
 );
@@ -86,6 +86,10 @@ export class Identity extends Schema.Class<Identity>("Identity")({
   apiTokenName: Schema.String,
   scopes: Schema.Array(Schema.String)
 }) {}
+
+/** Whether an identity holds a scope; `admin` satisfies every scope. */
+export const hasScope = (identity: Identity, scope: string): boolean =>
+  identity.scopes.includes(scope) || identity.scopes.includes("admin");
 
 /** The plaintext appears here exactly once; only its hash is stored. */
 export class MintedToken extends Schema.Class<MintedToken>("MintedToken")(

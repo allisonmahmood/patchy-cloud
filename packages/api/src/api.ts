@@ -133,7 +133,9 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
     HttpApiEndpoint.post("upload", "/uploads", {
       payload: UploadRequest,
       success: [UploadCreated, UploadUpdated],
-      error: [...protectedErrors, InvalidHtml, PatchQuotaExceeded, Conflict, PayloadTooLarge]
+      // The quota refusal shares its 403 with `Forbidden`, whose body shape is a
+      // subset of it: it goes first so a client decoding by status keeps `code`.
+      error: [PatchQuotaExceeded, ...protectedErrors, InvalidHtml, Conflict, PayloadTooLarge]
     }).annotateMerge(
       describe(
         "Publish a document. Upload scope. With no `patchId` it creates a patch and answers " +

@@ -48,10 +48,10 @@ PATCHY_MAX_HTML_BYTES=524288
 PATCHY_PROTECTED_API_RATE_LIMIT_PER_MINUTE=60
 PATCHY_AUTHENTICATED_UPLOAD_RATE_LIMIT_PER_MINUTE=20
 PATCHY_SELF_SERVICE_MINT_RATE_LIMIT_PER_MINUTE=5
-PATCHY_DRAFT_CREATE_RATE_LIMIT_PER_MINUTE=10
+PATCHY_PATCH_CREATE_RATE_LIMIT_PER_MINUTE=10
 
 # Per-token quotas
-PATCHY_LIVE_DRAFTS_PER_TOKEN=1000
+PATCHY_LIVE_PATCHES_PER_TOKEN=1000
 
 # Per-address quotas (only used when self-service minting is on)
 PATCHY_SELF_SERVICE_MINTS_PER_IP_PER_DAY=5
@@ -61,19 +61,13 @@ PATCHY_POSTHOG_API_KEY=
 # Defaults to https://us.i.posthog.com. Only read when a key is set.
 PATCHY_POSTHOG_HOST=https://us.i.posthog.com
 
-# Metadata store: "postgres" or "json"
-# Defaults to "postgres" if DATABASE_URL is set, otherwise "json".
-PATCHY_DB_DRIVER=postgres
+# The metadata store. Required: Postgres is the only store.
 DATABASE_URL=postgres://user:password@host:5432/patchy
-# Only used by the "json" driver.
-# Source default: .local/patchy-db.json
-# Image default (when you build the image from this repo): /data/patchy-db.json
-PATCHY_DB_FILE=.local/patchy-db.json
 
 # Where HTML objects go when no Azure container is configured.
-# Source default: .local/drafts
-# Image default (when you build the image from this repo): /data/drafts
-PATCHY_STORAGE_DIR=.local/drafts
+# Source default: .local/patches
+# Image default (when you build the image from this repo): /data/patches
+PATCHY_STORAGE_DIR=.local/patches
 
 # Setting AZURE_STORAGE_CONTAINER switches HTML objects to Azure Blob.
 AZURE_STORAGE_ACCOUNT=
@@ -87,8 +81,8 @@ Notes on values:
 - `PATCHY_PUBLIC_BASE_URL` is used to build the public draft URLs returned by uploads and rendered in the viewer. Set it to the externally reachable origin (scheme + host, no trailing slash). It defaults to `http://localhost:3000` for local development.
 - `PATCHY_TRUST_PROXY` controls whether Fastify derives `request.ip` from `X-Forwarded-For`. Leave it undefined unless every route to the server has a verified trust boundary. See [Client IP attribution behind proxies](#client-ip-attribution-behind-proxies).
 - `PATCHY_MAX_HTML_BYTES` caps the size of a single HTML document (default 524288 = 512 KiB).
-- `PATCHY_PROTECTED_API_RATE_LIMIT_PER_MINUTE`, `PATCHY_AUTHENTICATED_UPLOAD_RATE_LIMIT_PER_MINUTE`, `PATCHY_SELF_SERVICE_MINT_RATE_LIMIT_PER_MINUTE`, and `PATCHY_DRAFT_CREATE_RATE_LIMIT_PER_MINUTE` are decimal integers from `1` through `10000`. Defaults are `60`, `20`, `5`, and `10`.
-- `PATCHY_LIVE_DRAFTS_PER_TOKEN` is a decimal integer from `1` through `1000000` and defaults to `1000`. See [Per-token draft quotas](#per-token-draft-quotas).
+- `PATCHY_PROTECTED_API_RATE_LIMIT_PER_MINUTE`, `PATCHY_AUTHENTICATED_UPLOAD_RATE_LIMIT_PER_MINUTE`, `PATCHY_SELF_SERVICE_MINT_RATE_LIMIT_PER_MINUTE`, and `PATCHY_PATCH_CREATE_RATE_LIMIT_PER_MINUTE` are decimal integers from `1` through `10000`. Defaults are `60`, `20`, `5`, and `10`.
+- `PATCHY_LIVE_PATCHES_PER_TOKEN` is a decimal integer from `1` through `1000000` and defaults to `1000`. See [Per-token draft quotas](#per-token-draft-quotas).
 - `PATCHY_ALLOW_SELF_SERVICE_TOKENS` is a strict `true`/`false` value and defaults to `false`. It gates the self-service mint route (`POST /api/tokens/self-service`) and nothing else; while it is `false` that route refuses every caller and your instance keeps its admin-only token posture. It never admits an upload that carries no bearer token. See [Self-service minting](#self-service-minting).
 - `PATCHY_SELF_SERVICE_MINTS_PER_IP_PER_DAY` is a decimal integer from `1` through `1000000` and defaults to `5`. It applies only while self-service minting is on.
 - `PATCHY_POSTHOG_API_KEY` and `PATCHY_POSTHOG_HOST` configure server-side analytics. Leave the key unset — the default — and your instance reports nothing at all. See [Server-side analytics](#server-side-analytics).
@@ -102,7 +96,7 @@ The server applies deterministic fixed-window in-memory limits inside each serve
 - Protected `/api` requests are limited to `PATCHY_PROTECTED_API_RATE_LIMIT_PER_MINUTE` attempts per minute per canonical Fastify `request.ip`. That IP follows `PATCHY_TRUST_PROXY`, so configure the proxy boundary before relying on IP-based buckets.
 - Authenticated upload requests are limited to `PATCHY_AUTHENTICATED_UPLOAD_RATE_LIMIT_PER_MINUTE` attempts per minute per API token database identity. Rotating the raw bearer secret for the same token record does not create a fresh upload bucket.
 - `PATCHY_SELF_SERVICE_MINT_RATE_LIMIT_PER_MINUTE` limits self-service mints per minute per canonical Fastify `request.ip`, on instances where minting is enabled. It is keyed by address rather than by token because a caller asking for its first token has no token to key on.
-- Draft _creates_ are additionally limited to `PATCHY_DRAFT_CREATE_RATE_LIMIT_PER_MINUTE` per minute per creating token. An upload carrying a `patchId` is an update and never consumes this bucket. Because the request body decides create versus update, this bucket is consumed after body parsing, unlike the buckets above.
+- Draft _creates_ are additionally limited to `PATCHY_PATCH_CREATE_RATE_LIMIT_PER_MINUTE` per minute per creating token. An upload carrying a `patchId` is an update and never consumes this bucket. Because the request body decides create versus update, this bucket is consumed after body parsing, unlike the buckets above.
 
 When a bucket is exceeded, the server returns HTTP `429` with JSON `{ "ok": false, "code": "rate_limited", ... }` and an integer `Retry-After` header. Each limiter tracks up to `10000` live keys in memory. If all live key slots are occupied, an unseen key receives the same bounded `429` response until the earliest live bucket resets. Live buckets are never evicted to make room for an unseen key, because eviction would let an attacker bypass limits by cycling key values.
 
@@ -114,7 +108,7 @@ These counters are process-local and memory-only. They reset on restart and are 
 
 Only per-minute limits live in memory. A long-window quota is derived from the database on every attempt, so restarting the process never hands anyone a fresh allowance.
 
-`PATCHY_LIVE_DRAFTS_PER_TOKEN` caps how many _live_ drafts one token may hold at once. A draft is live while it is neither deleted nor disabled, and it belongs to the token that created it — a later update by a different token never moves it between tallies. Deleting or disabling a draft returns its slot immediately.
+`PATCHY_LIVE_PATCHES_PER_TOKEN` caps how many _live_ drafts one token may hold at once. A draft is live while it is neither deleted nor disabled, and it belongs to the token that created it — a later update by a different token never moves it between tallies. Deleting or disabling a draft returns its slot immediately.
 
 The cap is per token, not per account: two tokens on one account each get the full allowance. It applies uniformly, with no exemption for `admin`-scoped tokens.
 

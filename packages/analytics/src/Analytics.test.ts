@@ -12,9 +12,9 @@ import * as Analytics from "./Analytics.js";
 import * as PostHogClient from "./PostHogClient.js";
 
 const event: Analytics.AnalyticsEvent = {
-  name: "draft.created",
+  name: "patch.created",
   principalId: "acct_1",
-  properties: { draftId: "drf_1", versionNumber: 1 }
+  properties: { patchId: "pch_1", versionNumber: 1 }
 };
 
 /** A client that keeps every message and answers shutdown at once. */
@@ -61,8 +61,8 @@ it.effect("reports an event on its principal without a person profile", () =>
     assert.deepStrictEqual(client.messages, [
       {
         distinctId: "acct_1",
-        event: "draft.created",
-        properties: { draftId: "drf_1", versionNumber: 1, $process_person_profile: false }
+        event: "patch.created",
+        properties: { patchId: "pch_1", versionNumber: 1, $process_person_profile: false }
       }
     ]);
   })
@@ -71,7 +71,7 @@ it.effect("reports an event on its principal without a person profile", () =>
 it.effect("reports an event no principal performed under the instance", () =>
   Effect.gen(function* () {
     const client = recording();
-    yield* track({ ...event, name: "draft.expired", principalId: null }).pipe(
+    yield* track({ ...event, name: "patch.expired", principalId: null }).pipe(
       Effect.provide(Analytics.layerPostHog.pipe(Layer.provide(client.layer)))
     );
     assert.strictEqual(client.messages[0]?.distinctId, Analytics.INSTANCE_DISTINCT_ID);

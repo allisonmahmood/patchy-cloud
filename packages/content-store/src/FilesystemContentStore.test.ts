@@ -22,15 +22,15 @@ it.layer(Layer.merge(storeInTempDir, NodePath.layer))("FilesystemContentStore", 
   it.effect("stores and reads an object back", () =>
     Effect.gen(function* () {
       const service = yield* ContentStore.ContentStore;
-      yield* service.put("drafts/abc/versions/one.html", "<h1>hi</h1>");
-      assert.strictEqual(yield* service.get("drafts/abc/versions/one.html"), "<h1>hi</h1>");
+      yield* service.put("patches/abc/versions/one.html", "<h1>hi</h1>");
+      assert.strictEqual(yield* service.get("patches/abc/versions/one.html"), "<h1>hi</h1>");
     })
   );
 
   it.effect("deletes idempotently and reports a missing object by its key", () =>
     Effect.gen(function* () {
       const service = yield* ContentStore.ContentStore;
-      const key = "drafts/abc/versions/gone.html";
+      const key = "patches/abc/versions/gone.html";
       yield* service.put(key, "<h1>hi</h1>");
       yield* service.delete(key);
       yield* service.delete(key);

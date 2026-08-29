@@ -12,10 +12,11 @@ Static-page publishing — grown from PatchPage — is the first thing it can de
 
 A Turborepo monorepo managed with pnpm.
 
-- `apps/server` — Fastify HTTP server that validates uploads, stores drafts, and renders the sandboxed viewer (`@patchy/server`).
+- `apps/server` — Fastify HTTP server that validates uploads, stores patches, and renders the sandboxed viewer (`@patchy/server`).
 - `packages/cli` — `@patchy/cli`, the `patchy` command-line publisher.
 - `packages/core` — shared HTML validation, hashing, and ID helpers (`@patchy/core`).
-- `packages/db` — metadata store with Postgres and JSON-file drivers, plus schema migrations (`@patchy/db`).
+- `packages/patches` — patches and versions, the upload contract, retention and the expiry sweep, moderation, and the `patches` API group (`@patchy/patches`).
+- `packages/db` — the migration seam that runs every capability's migrations for the Fastify server (`@patchy/db`).
 - `packages/content-store` — the object store for a patch's bytes, with filesystem and Azure Blob layers (`@patchy/content-store`).
 - `packages/config` — environment-variable parsing and server configuration (`@patchy/config`).
 - `skills/patchy` — the agent skill that teaches an assistant to produce safe static HTML and publish it.

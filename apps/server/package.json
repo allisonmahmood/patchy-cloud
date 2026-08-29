@@ -20,11 +20,12 @@
     "@patchy/api": "workspace:*",
     "@patchy/auth": "workspace:*",
     "@patchy/config": "workspace:*",
+    "@patchy/content-store": "workspace:*",
     "@patchy/core": "workspace:*",
     "@patchy/db": "workspace:*",
     "@patchy/limits": "workspace:*",
+    "@patchy/patches": "workspace:*",
     "@patchy/sql": "workspace:*",
-    "@patchy/content-store": "workspace:*",
     "effect": "catalog:",
     "fastify": "^5.12.1"
   }

@@ -2,7 +2,7 @@ import { randomInt } from "node:crypto";
 
 const ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
 
-export function newDraftId(): string {
+export function newPatchId(): string {
   return randomId(12);
 }
 
@@ -10,7 +10,7 @@ export function newInternalId(prefix = "id"): string {
   return `${prefix}_${randomId(24)}`;
 }
 
-export function isDraftId(value: string): boolean {
+export function isPatchId(value: string): boolean {
   return /^[a-z0-9]{12}$/.test(value);
 }
 

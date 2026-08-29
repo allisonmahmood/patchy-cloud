@@ -23,6 +23,10 @@ This is a **multi-context** repo — a pnpm workspace whose two halves are the s
 │   └── docs/adr/
 └── packages/
     ├── api/                           ← the wire contract both contexts speak (ADR-0002)
+    ├── auth/CONTEXT.md                ← tokens, principals, minting, revocation
+    ├── patches/CONTEXT.md             ← patches, versions, retention, the sweep, moderation
+    ├── content-store/CONTEXT.md       ← where a patch's bytes go
+    ├── analytics/CONTEXT.md, limits/CONTEXT.md
     ├── cli/
     │   ├── CONTEXT.md                 ← publishing context (the `patchy` CLI)
     │   └── docs/adr/
@@ -33,8 +37,9 @@ This is a **multi-context** repo — a pnpm workspace whose two halves are the s
 
 ### Contexts
 
-- **Hosting** — `apps/server`. Receives uploads and serves published pages. Owns `@patchy/db` and `@patchy/config` as supporting packages; treat changes in those as part of this context.
-- **Publishing** — `packages/cli`. The `patchy` CLI package agents use to put pages up. Its own vocabulary (drafts, uploads, auth tokens) lives here.
+- **Hosting** — `apps/server`. Receives uploads and serves published pages. Owns `@patchy/config` and the `@patchy/db` migration seam as supporting packages; treat changes in those as part of this context.
+- **Patches** — `packages/patches`. What a patch is and how long it stays up: records, versions, the upload contract, the retention clock, the sweep, pins, moderation, the quota, and the `patches` API group.
+- **Publishing** — `packages/cli`. The `patchy` CLI package agents use to put pages up. Its own vocabulary (uploads, auth tokens) lives here.
 - **SQL** — `packages/sql`. The Postgres client and Effect's Migrator every capability package migrates through. Owns no tables; its `CONTEXT.md` defines migration and ledger.
 - **Shared kernel** — `packages/core`. The safe-HTML policy and the ID/crypto primitives both contexts depend on. It has no `CONTEXT.md` of its own; terms it defines belong to whichever context introduced them. Changes here ripple both ways, so decisions touching it go in the root `docs/adr/`, not a context-scoped one.
 

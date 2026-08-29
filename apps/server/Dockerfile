@@ -42,8 +42,7 @@ LABEL org.opencontainers.image.source="https://github.com/allisonmahmood/patchy-
 
 ENV NODE_ENV=production
 ENV PORT=3000
-ENV PATCHY_DB_FILE=/data/patchy-db.json
-ENV PATCHY_STORAGE_DIR=/data/drafts
+ENV PATCHY_STORAGE_DIR=/data/patches
 
 WORKDIR /app
 

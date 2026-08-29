@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 import { getServerConfig } from "./index.js";
 
 describe("getServerConfig", () => {
-  it("defaults to json db when DATABASE_URL is absent", () => {
+  it("defaults the public origin and proxy trust", () => {
     const config = getServerConfig({});
 
-    expect(config.dbDriver).toBe("json");
+    expect(config.databaseUrl).toBeNull();
     expect(config.publicBaseUrl).toBe("http://localhost:3000");
     expect(config.trustProxy).toBe(false);
   });
@@ -16,19 +16,19 @@ describe("getServerConfig", () => {
     expect(config.protectedApiRateLimitPerMinute).toBe(60);
     expect(config.authenticatedUploadRateLimitPerMinute).toBe(20);
     expect(config.selfServiceMintRateLimitPerMinute).toBe(5);
-    expect(config.draftCreateRateLimitPerMinute).toBe(10);
+    expect(config.patchCreateRateLimitPerMinute).toBe(10);
   });
 
-  it("defaults the live-draft quota to a thousand per token", () => {
-    expect(getServerConfig({}).liveDraftsPerToken).toBe(1_000);
-    expect(getServerConfig({ PATCHY_LIVE_DRAFTS_PER_TOKEN: "25" }).liveDraftsPerToken).toBe(25);
-    expect(getServerConfig({ PATCHY_LIVE_DRAFTS_PER_TOKEN: "1000000" }).liveDraftsPerToken).toBe(
+  it("defaults the live-patch quota to a thousand per token", () => {
+    expect(getServerConfig({}).livePatchesPerToken).toBe(1_000);
+    expect(getServerConfig({ PATCHY_LIVE_PATCHES_PER_TOKEN: "25" }).livePatchesPerToken).toBe(25);
+    expect(getServerConfig({ PATCHY_LIVE_PATCHES_PER_TOKEN: "1000000" }).livePatchesPerToken).toBe(
       1_000_000
     );
 
     for (const value of ["0", "-1", "+1", "01", "1.5", "1e2", "1000001"]) {
-      expect(() => getServerConfig({ PATCHY_LIVE_DRAFTS_PER_TOKEN: value })).toThrow(
-        /PATCHY_LIVE_DRAFTS_PER_TOKEN/
+      expect(() => getServerConfig({ PATCHY_LIVE_PATCHES_PER_TOKEN: value })).toThrow(
+        /PATCHY_LIVE_PATCHES_PER_TOKEN/
       );
     }
   });
@@ -71,13 +71,13 @@ describe("getServerConfig", () => {
       PATCHY_PROTECTED_API_RATE_LIMIT_PER_MINUTE: "120",
       PATCHY_AUTHENTICATED_UPLOAD_RATE_LIMIT_PER_MINUTE: "40",
       PATCHY_SELF_SERVICE_MINT_RATE_LIMIT_PER_MINUTE: "10",
-      PATCHY_DRAFT_CREATE_RATE_LIMIT_PER_MINUTE: "30"
+      PATCHY_PATCH_CREATE_RATE_LIMIT_PER_MINUTE: "30"
     });
 
     expect(config.protectedApiRateLimitPerMinute).toBe(120);
     expect(config.authenticatedUploadRateLimitPerMinute).toBe(40);
     expect(config.selfServiceMintRateLimitPerMinute).toBe(10);
-    expect(config.draftCreateRateLimitPerMinute).toBe(30);
+    expect(config.patchCreateRateLimitPerMinute).toBe(30);
   });
 
   it("requires abuse-protection limits to be decimal integers from 1 through 10000", () => {
@@ -88,7 +88,7 @@ describe("getServerConfig", () => {
         "authenticatedUploadRateLimitPerMinute"
       ],
       ["PATCHY_SELF_SERVICE_MINT_RATE_LIMIT_PER_MINUTE", "selfServiceMintRateLimitPerMinute"],
-      ["PATCHY_DRAFT_CREATE_RATE_LIMIT_PER_MINUTE", "draftCreateRateLimitPerMinute"]
+      ["PATCHY_PATCH_CREATE_RATE_LIMIT_PER_MINUTE", "patchCreateRateLimitPerMinute"]
     ] as const;
 
     for (const [envName, configName] of settings) {
@@ -99,12 +99,6 @@ describe("getServerConfig", () => {
         expect(() => getServerConfig({ [envName]: value })).toThrow(new RegExp(envName));
       }
     }
-  });
-
-  it("defaults to postgres db when DATABASE_URL is present", () => {
-    const config = getServerConfig({ DATABASE_URL: "postgres://example" });
-
-    expect(config.dbDriver).toBe("postgres");
   });
 
   it.each(["1", "2", "32", "33"])("rejects trusted-proxy hop counts %j", (value) => {

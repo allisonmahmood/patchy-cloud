@@ -1,21 +1,22 @@
-import { getServerConfig } from "@patchy/config";
-import { openPatchyDb } from "@patchy/db";
+import { getServerConfig, requireConfigValue } from "@patchy/config";
+import { migrateDatabase } from "@patchy/db";
 import { AzureContentStore, BlobContainer, FilesystemContentStore } from "@patchy/content-store";
+import { ExpirySweep } from "@patchy/patches";
+import { layerFromUrl } from "@patchy/sql";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as ManagedRuntime from "effect/ManagedRuntime";
+import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
+import * as Schedule from "effect/Schedule";
 import { createApp } from "./app.js";
 import { layer } from "./runtime.js";
 
 const config = getServerConfig();
-const { db, tokens } = await openPatchyDb({
-  driver: config.dbDriver,
-  databaseUrl: config.databaseUrl,
-  jsonDbFile: config.jsonDbFile,
-  bootstrapApiToken: config.bootstrapApiToken
-});
+const databaseUrl = requireConfigValue("DATABASE_URL", config.databaseUrl);
+await migrateDatabase(databaseUrl);
 
 // Where a patch's bytes go is wiring, not a setting: Azure Blob when its
 // container is configured, the local filesystem otherwise.
@@ -27,40 +28,34 @@ const contentStore = Layer.unwrap(
 
 // The Effect side, built once and up front: analytics reports nothing unless
 // a key is configured, a malformed analytics setting fails startup here
-// rather than silently discarding every event, the Postgres tokens layer
-// seeds the bootstrap token from `PATCHY_BOOTSTRAP_API_TOKEN`, and an
-// incomplete Azure config fails startup rather than the first upload.
-const runtime = ManagedRuntime.make(Layer.orDie(layer({ tokens, contentStore })));
+// rather than silently discarding every event, the tokens layer seeds the
+// bootstrap token from `PATCHY_BOOTSTRAP_API_TOKEN`, and an incomplete Azure
+// config fails startup rather than the first upload.
+const runtime = ManagedRuntime.make(
+  Layer.orDie(layer({ sql: layerFromUrl(Redacted.make(databaseUrl)), contentStore }))
+);
 await runtime.context();
 
-const app = createApp({ config, db, runtime });
+const app = createApp({ config, runtime });
 
 /**
- * How often the expiry sweep runs. Nothing depends on the exact period: a
- * draft's clock decides when it expires, and this only decides how long the
- * dead row lingers afterwards. Hourly keeps that lag small without making the
- * sweep a meaningful share of what the process does.
+ * The expiry sweep, once on the way up — a restart is exactly when a backlog
+ * is most likely — and then hourly. Nothing depends on the exact period: a
+ * patch's clock decides when it expires, and this only decides how long the
+ * dead row lingers afterwards.
  */
-const EXPIRY_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
-
-const runExpirySweep = (): void => {
-  void app.sweepExpiredDrafts().catch((error: unknown) => {
-    console.error("Expiry sweep failed.", error);
-  });
-};
-
-const expirySweepTimer = setInterval(runExpirySweep, EXPIRY_SWEEP_INTERVAL_MS);
-// The HTTP server holds the process open; the sweep should never be the reason
-// it stays up, nor the reason a shutdown waits.
-expirySweepTimer.unref();
+const sweeper = runtime.runFork(
+  Effect.flatMap(ExpirySweep.ExpirySweep, (sweep) => sweep.sweep).pipe(
+    Effect.repeat(Schedule.spaced("1 hour"))
+  )
+);
 
 const shutdown = async (): Promise<void> => {
-  clearInterval(expirySweepTimer);
+  await runtime.runPromise(Fiber.interrupt(sweeper));
   await app.close();
   // Runs the analytics finalizer: whatever is still queued gets one bounded
   // chance to go out, and a slow analytics backend never holds the shutdown.
   await runtime.dispose();
-  await db.close();
 };
 
 process.on("SIGINT", () => {
@@ -73,7 +68,3 @@ process.on("SIGTERM", () => {
 
 await app.listen({ host: "0.0.0.0", port: config.port });
 console.log(`Patchy Cloud server listening on http://0.0.0.0:${config.port}`);
-
-// A restart is exactly when a backlog is most likely, so sweep once on the way
-// up rather than waiting out the first interval.
-runExpirySweep();

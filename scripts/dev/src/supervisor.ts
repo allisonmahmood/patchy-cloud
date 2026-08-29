@@ -170,7 +170,6 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
         env: {
           ...inherited,
           PORT: String(plan.ports.server),
-          PATCHY_DB_DRIVER: "postgres",
           DATABASE_URL: plan.databaseUrl,
           PATCHY_STORAGE_DIR: files.storageDir,
           PATCHY_PUBLIC_BASE_URL: plan.apiUrl
