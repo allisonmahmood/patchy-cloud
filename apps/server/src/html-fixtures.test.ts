@@ -4,7 +4,6 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { getServerConfig } from "@patchy/config";
 import { JsonFilePatchyDb } from "@patchy/db";
-import { FileSystemHtmlStorage } from "@patchy/storage";
 import { readFixtureCorpus } from "../../../test/html-fixtures.mjs";
 import { createApp } from "./app.js";
 import { createTestRuntime } from "./testing.js";
@@ -27,9 +26,8 @@ describe("HTML fixture corpus", () => {
     const token = `${kind}-fixture-token`;
     const db = new JsonFilePatchyDb(path.join(tempDir, `${kind}-db.json`));
     await db.initialize(token);
-    const storage = new FileSystemHtmlStorage(path.join(tempDir, `${kind}-drafts`));
-    const config = getServerConfig({});
-    const app = createApp({ config, db, storage, runtime: createTestRuntime({ db, config }) });
+    const config = getServerConfig({ PATCHY_STORAGE_DIR: path.join(tempDir, "drafts") });
+    const app = createApp({ config, db, runtime: createTestRuntime({ db, config }) });
 
     try {
       for (const fixture of await readFixtureCorpus(kind)) {

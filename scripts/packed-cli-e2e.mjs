@@ -2289,7 +2289,6 @@ async function startServerAttempt({ publicBaseUrl, metadataPath, objectDir, serv
       PATCHY_MAX_HTML_BYTES: String(512 * 1024),
       PATCHY_DB_DRIVER: "json",
       PATCHY_DB_FILE: metadataPath,
-      PATCHY_STORAGE_DRIVER: "filesystem",
       PATCHY_STORAGE_DIR: objectDir,
       PATCHY_PROTECTED_API_RATE_LIMIT_PER_MINUTE: "10000",
       PATCHY_AUTHENTICATED_UPLOAD_RATE_LIMIT_PER_MINUTE: "10000",

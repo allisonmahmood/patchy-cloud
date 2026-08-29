@@ -12,7 +12,7 @@
       "@patchy/limits": ["./packages/limits/src/index.ts"],
       "@patchy/sql": ["./packages/sql/src/index.ts"],
       "@patchy/sql/testing": ["./packages/sql/src/testing.ts"],
-      "@patchy/storage": ["./packages/storage/src/index.ts"]
+      "@patchy/content-store": ["./packages/content-store/src/index.ts"]
     }
   },
   "include": ["**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx"],

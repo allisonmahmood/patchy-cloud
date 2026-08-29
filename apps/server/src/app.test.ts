@@ -7,10 +7,13 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { getServerConfig } from "@patchy/config";
 import type { ServerConfig } from "@patchy/config";
 import { sha256 } from "@patchy/core";
+import { ContentStore, FilesystemContentStore } from "@patchy/content-store";
 import { JsonFilePatchyDb } from "@patchy/db";
 import type { RecordUploadInput, RecordUploadResult } from "@patchy/db";
-import { FileSystemHtmlStorage } from "@patchy/storage";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import { createApp, isProtectedApiPath } from "./app.js";
+import { getObject } from "./runtime.js";
 import { createTestRuntime } from "./testing.js";
 
 let tempDir: string;
@@ -71,12 +74,12 @@ describe("Patchy Cloud server", () => {
     const publicBaseUrl = "https://drafts.self-hoster.dev";
     const apiToken = "configured-origin-token";
     const config = getServerConfig({
-      PATCHY_PUBLIC_BASE_URL: publicBaseUrl
+      PATCHY_PUBLIC_BASE_URL: publicBaseUrl,
+      PATCHY_STORAGE_DIR: path.join(tempDir, "drafts")
     });
     const db = new JsonFilePatchyDb(path.join(tempDir, "configured-origin-db.json"));
     await db.initialize(apiToken);
-    const storage = new FileSystemHtmlStorage(path.join(tempDir, "configured-origin-drafts"));
-    const app = createApp({ config, db, storage, runtime: createTestRuntime({ db, config }) });
+    const app = createApp({ config, db, runtime: createTestRuntime({ db, config }) });
 
     const upload = await app.inject({
       method: "POST",
@@ -105,8 +108,7 @@ describe("Patchy Cloud server", () => {
     const config = testConfig();
     const db = new JsonFilePatchyDb(path.join(tempDir, "db.json"));
     await db.initialize("dev-token");
-    const storage = new FileSystemHtmlStorage(path.join(tempDir, "drafts"));
-    const app = createApp({ config, db, storage, runtime: createTestRuntime({ db, config }) });
+    const app = createApp({ config, db, runtime: createTestRuntime({ db, config }) });
 
     const unauth = await app.inject({
       method: "POST",
@@ -148,10 +150,7 @@ describe("Patchy Cloud server", () => {
         path.join(tempDir, `tokenless-db-${allowSelfServiceTokens}.json`)
       );
       await db.initialize(null);
-      const storage = new FileSystemHtmlStorage(
-        path.join(tempDir, `tokenless-drafts-${allowSelfServiceTokens}`)
-      );
-      const app = createApp({ config, db, storage, runtime: createTestRuntime({ db, config }) });
+      const app = createApp({ config, db, runtime: createTestRuntime({ db, config }) });
       const html =
         "<!doctype html><html><head><title>Tokenless</title></head><body>marker</body></html>";
 
@@ -184,8 +183,7 @@ describe("Patchy Cloud server", () => {
     const config = { ...testConfig(), allowSelfServiceTokens: true };
     const db = new JsonFilePatchyDb(path.join(tempDir, "tokenless-method-db.json"));
     await db.initialize(null);
-    const storage = new FileSystemHtmlStorage(path.join(tempDir, "tokenless-method-drafts"));
-    const app = createApp({ config, db, storage, runtime: createTestRuntime({ db, config }) });
+    const app = createApp({ config, db, runtime: createTestRuntime({ db, config }) });
 
     const response = await app.inject({
       method: "PUT",
@@ -208,8 +206,7 @@ describe("Patchy Cloud server", () => {
     const config = { ...testConfig(), allowSelfServiceTokens: true };
     const db = new JsonFilePatchyDb(path.join(tempDir, "upload-route-db.json"));
     await db.initialize(null);
-    const storage = new FileSystemHtmlStorage(path.join(tempDir, "upload-route-drafts"));
-    const app = createApp({ config, db, storage, runtime: createTestRuntime({ db, config }) });
+    const app = createApp({ config, db, runtime: createTestRuntime({ db, config }) });
 
     try {
       for (const target of [
@@ -247,8 +244,7 @@ describe("Patchy Cloud server", () => {
       token: "ordinary-token",
       scopes: ["upload"]
     });
-    const storage = new FileSystemHtmlStorage(path.join(tempDir, "moderation-drafts"));
-    const app = createApp({ config, db, storage, runtime: createTestRuntime({ db, config }) });
+    const app = createApp({ config, db, runtime: createTestRuntime({ db, config }) });
     let foreignDraftSequence = 0;
     const createForeignDraft = async (): Promise<string> => {
       foreignDraftSequence += 1;
@@ -346,8 +342,7 @@ describe("Patchy Cloud server", () => {
     });
     await markJsonTokenRevoked(dbFile, "Revoked token");
 
-    const storage = new FileSystemHtmlStorage(path.join(tempDir, "pre-body-auth-drafts"));
-    const app = createApp({ config, db, storage, runtime: createTestRuntime({ db, config }) });
+    const app = createApp({ config, db, runtime: createTestRuntime({ db, config }) });
     const attackerJson = `{"html":"${"x".repeat(2 * 1024 * 1024)}`;
 
     try {
@@ -622,14 +617,15 @@ describe("Patchy Cloud server", () => {
 
   it("limits protected API attempts by canonical request IP", async () => {
     let now = 1_000;
-    const config = getServerConfig({ PATCHY_TRUST_PROXY: "10.0.0.0/8" });
+    const config = getServerConfig({
+      PATCHY_TRUST_PROXY: "10.0.0.0/8",
+      PATCHY_STORAGE_DIR: path.join(tempDir, "drafts")
+    });
     const db = new JsonFilePatchyDb(path.join(tempDir, "protected-limit-db.json"));
     await db.initialize("unused-token");
-    const storage = new FileSystemHtmlStorage(path.join(tempDir, "protected-limit-drafts"));
     const app = createApp({
       config,
       db,
-      storage,
       clock: () => now,
       runtime: createTestRuntime({ clock: () => now, db, config })
     });
@@ -698,11 +694,9 @@ describe("Patchy Cloud server", () => {
     const config = testConfig();
     const db = new JsonFilePatchyDb(path.join(tempDir, "unmatched-api-limit-db.json"));
     await db.initialize("dev-token");
-    const storage = new FileSystemHtmlStorage(path.join(tempDir, "unmatched-api-limit-drafts"));
     const app = createApp({
       config,
       db,
-      storage,
       clock: () => now,
       runtime: createTestRuntime({ clock: () => now, db, config })
     });
@@ -817,13 +811,9 @@ describe("Patchy Cloud server", () => {
         path.join(tempDir, `${url.replaceAll(/[^a-z0-9]/gi, "-")}-db.json`)
       );
       await db.initialize("dev-token");
-      const storage = new FileSystemHtmlStorage(
-        path.join(tempDir, `${url.replaceAll(/[^a-z0-9]/gi, "-")}-drafts`)
-      );
       const app = createApp({
         config,
         db,
-        storage,
         clock: () => now,
         runtime: createTestRuntime({ clock: () => now, db, config })
       });
@@ -966,13 +956,9 @@ describe("Patchy Cloud server", () => {
       const caseName = label.replaceAll(/[^a-z0-9]/gi, "-");
       const db = new JsonFilePatchyDb(path.join(tempDir, `${caseName}-pre-routing-db.json`));
       await db.initialize("dev-token");
-      const storage = new FileSystemHtmlStorage(
-        path.join(tempDir, `${caseName}-pre-routing-drafts`)
-      );
       const app = createApp({
         config,
         db,
-        storage,
         clock: () => now,
         runtime: createTestRuntime({ clock: () => now, db, config })
       });
@@ -1024,8 +1010,7 @@ describe("Patchy Cloud server", () => {
     const config = testConfig();
     const db = new JsonFilePatchyDb(path.join(tempDir, "long-unmatched-api-db.json"));
     await db.initialize("dev-token");
-    const storage = new FileSystemHtmlStorage(path.join(tempDir, "long-unmatched-api-drafts"));
-    const app = createApp({ config, db, storage, runtime: createTestRuntime({ db, config }) });
+    const app = createApp({ config, db, runtime: createTestRuntime({ db, config }) });
     const longSegment = "x".repeat(101);
 
     try {
@@ -1064,8 +1049,7 @@ describe("Patchy Cloud server", () => {
     const config = testConfig();
     const db = new JsonFilePatchyDb(path.join(tempDir, "absolute-query-db.json"));
     await db.initialize("dev-token");
-    const storage = new FileSystemHtmlStorage(path.join(tempDir, "absolute-query-drafts"));
-    const app = createApp({ config, db, storage, runtime: createTestRuntime({ db, config }) });
+    const app = createApp({ config, db, runtime: createTestRuntime({ db, config }) });
 
     try {
       const publicQuery = await rawHttpRequest(app, "http://host?x=/api/%");
@@ -1102,11 +1086,9 @@ describe("Patchy Cloud server", () => {
       token: "other-upload-token",
       scopes: ["upload"]
     });
-    const storage = new FileSystemHtmlStorage(path.join(tempDir, "upload-limit-drafts"));
     const app = createApp({
       config,
       db,
-      storage,
       clock: () => now,
       runtime: createTestRuntime({ clock: () => now, db, config })
     });
@@ -1196,11 +1178,9 @@ describe("Patchy Cloud server", () => {
     };
     const db = new JsonFilePatchyDb(path.join(tempDir, "upload-limit-db.json"));
     await db.initialize("upload-token");
-    const storage = new FileSystemHtmlStorage(path.join(tempDir, "upload-limit-drafts"));
     const app = createApp({
       config,
       db,
-      storage,
       clock: () => now,
       runtime: createTestRuntime({ clock: () => now, db, config })
     });
@@ -1253,11 +1233,9 @@ describe("Patchy Cloud server", () => {
     const config = { ...testConfig(), draftCreateRateLimitPerMinute: 2 };
     const db = new JsonFilePatchyDb(path.join(tempDir, "create-limit-db.json"));
     await db.initialize("dev-token");
-    const storage = new FileSystemHtmlStorage(path.join(tempDir, "create-limit-drafts"));
     const app = createApp({
       config,
       db,
-      storage,
       clock: () => now,
       runtime: createTestRuntime({ clock: () => now, db, config })
     });
@@ -1301,11 +1279,10 @@ describe("Patchy Cloud server", () => {
   it("caps live drafts per token from the database, across a restart", async () => {
     const config = { ...testConfig(), liveDraftsPerToken: 2 };
     const dbFile = path.join(tempDir, "live-cap-db.json");
-    const storage = new FileSystemHtmlStorage(path.join(tempDir, "live-cap-drafts"));
     // `dev-token` is the admin bootstrap token: the cap has no admin exemption.
     const db = new JsonFilePatchyDb(dbFile);
     await db.initialize("dev-token");
-    const app = createApp({ config, db, storage, runtime: createTestRuntime({ db, config }) });
+    const app = createApp({ config, db, runtime: createTestRuntime({ db, config }) });
 
     try {
       const one = await createDraft(app, "dev-token", "One");
@@ -1338,7 +1315,6 @@ describe("Patchy Cloud server", () => {
     const restarted = createApp({
       config,
       db: restartedDb,
-      storage,
       runtime: createTestRuntime({ db: restartedDb, config })
     });
 
@@ -1367,8 +1343,7 @@ describe("Patchy Cloud server", () => {
       token: "sibling-token",
       scopes: ["upload"]
     });
-    const storage = new FileSystemHtmlStorage(path.join(tempDir, "live-cap-release-drafts"));
-    const app = createApp({ config, db, storage, runtime: createTestRuntime({ db, config }) });
+    const app = createApp({ config, db, runtime: createTestRuntime({ db, config }) });
 
     try {
       const created = await createDraft(app, "dev-token", "Only one");
@@ -1511,8 +1486,7 @@ describe("Patchy Cloud server", () => {
     const config = testConfig();
     const db = new JsonFilePatchyDb(path.join(tempDir, "unknown-update-db.json"));
     await db.initialize("dev-token");
-    const storage = new FileSystemHtmlStorage(path.join(tempDir, "unknown-update-drafts"));
-    const app = createApp({ config, db, storage, runtime: createTestRuntime({ db, config }) });
+    const app = createApp({ config, db, runtime: createTestRuntime({ db, config }) });
     const patchId = "abcdefghijkl";
 
     const upload = await app.inject({
@@ -1529,7 +1503,7 @@ describe("Patchy Cloud server", () => {
     expect(upload.json()).toEqual({ ok: false, error: "Patch not found." });
     const viewer = await app.inject({ method: "GET", url: `/d/${patchId}` });
     expect(viewer.statusCode).toBe(404);
-    expect(await listFiles(storage.rootDir)).toEqual([]);
+    expect(await listFiles(config.storageDir)).toEqual([]);
 
     await app.close();
     await db.close();
@@ -1541,8 +1515,7 @@ describe("Patchy Cloud server", () => {
     await db.initialize("dev-token");
     const auth = await db.findApiTokenByToken("dev-token");
     if (!auth) throw new Error("Expected bootstrap authentication.");
-    const storage = new FileSystemHtmlStorage(path.join(tempDir, "unavailable-update-drafts"));
-    const app = createApp({ config, db, storage, runtime: createTestRuntime({ db, config }) });
+    const app = createApp({ config, db, runtime: createTestRuntime({ db, config }) });
     const unknownDraftId = "aaaaaaaaaaaa";
     const foreignDraftId = "bbbbbbbbbbbb";
     const deletedDraftId = "cccccccccccc";
@@ -1599,8 +1572,7 @@ describe("Patchy Cloud server", () => {
     const config = testConfig();
     const db = new JsonFilePatchyDb(path.join(tempDir, "owned-update-db.json"));
     await db.initialize("dev-token");
-    const storage = new FileSystemHtmlStorage(path.join(tempDir, "owned-update-drafts"));
-    const app = createApp({ config, db, storage, runtime: createTestRuntime({ db, config }) });
+    const app = createApp({ config, db, runtime: createTestRuntime({ db, config }) });
     const headers = { authorization: "Bearer dev-token" };
 
     const created = await app.inject({
@@ -1656,8 +1628,9 @@ describe("Patchy Cloud server", () => {
     await db.initialize("dev-token");
     const auth = await db.findApiTokenByToken("dev-token");
     if (!auth) throw new Error("Expected bootstrap authentication.");
-    const storage = new ControlledHtmlStorage(path.join(tempDir, "slow-storage-drafts"));
-    const app = createApp({ config, db, storage, runtime: createTestRuntime({ db, config }) });
+    const storage = controlledContentStore();
+    const runtime = createTestRuntime({ db, config, contentStore: storage.layer });
+    const app = createApp({ config, db, runtime });
     const created = await app.inject({
       method: "POST",
       url: "/api/uploads",
@@ -1686,7 +1659,7 @@ describe("Patchy Cloud server", () => {
 
     const writeStarted = Promise.withResolvers<void>();
     const allowWrite = Promise.withResolvers<void>();
-    storage.afterPut = async () => {
+    storage.control.afterPut = async () => {
       writeStarted.resolve();
       await allowWrite.promise;
     };
@@ -1723,8 +1696,9 @@ describe("Patchy Cloud server", () => {
     await db.initialize("dev-token");
     const auth = await db.findApiTokenByToken("dev-token");
     if (!auth) throw new Error("Expected bootstrap authentication.");
-    const storage = new ControlledHtmlStorage(path.join(tempDir, "race-cleanup-drafts"));
-    const app = createApp({ config, db, storage, runtime: createTestRuntime({ db, config }) });
+    const storage = controlledContentStore();
+    const runtime = createTestRuntime({ db, config, contentStore: storage.layer });
+    const app = createApp({ config, db, runtime });
     const created = await app.inject({
       method: "POST",
       url: "/api/uploads",
@@ -1735,7 +1709,7 @@ describe("Patchy Cloud server", () => {
     });
     const createdBody = created.json();
     const originalKey = `drafts/${createdBody.patchId}/versions/${createdBody.versionId}.html`;
-    storage.afterPut = async () => {
+    storage.control.afterPut = async () => {
       await db.disableDraft(createdBody.patchId, auth.accountId, "policy race");
     };
 
@@ -1751,8 +1725,8 @@ describe("Patchy Cloud server", () => {
 
     expect(update.statusCode).toBe(404);
     expect(update.json()).toEqual({ ok: false, error: "Patch not found." });
-    expect(await listFiles(storage.rootDir)).toEqual([originalKey]);
-    await expect(storage.getHtmlObject(originalKey)).resolves.toContain("original");
+    expect(await listFiles(config.storageDir)).toEqual([originalKey]);
+    await expect(getObject(runtime, originalKey)).resolves.toContain("original");
 
     await app.close();
     await db.close();
@@ -1762,8 +1736,9 @@ describe("Patchy Cloud server", () => {
     const config = testConfig();
     const db = new JsonFilePatchyDb(path.join(tempDir, "storage-failure-db.json"));
     await db.initialize("dev-token");
-    const storage = new ControlledHtmlStorage(path.join(tempDir, "storage-failure-drafts"));
-    const app = createApp({ config, db, storage, runtime: createTestRuntime({ db, config }) });
+    const storage = controlledContentStore();
+    const runtime = createTestRuntime({ db, config, contentStore: storage.layer });
+    const app = createApp({ config, db, runtime });
     const created = await app.inject({
       method: "POST",
       url: "/api/uploads",
@@ -1773,7 +1748,7 @@ describe("Patchy Cloud server", () => {
       }
     });
     const createdBody = created.json();
-    storage.putError = new Error("Object storage unavailable.");
+    storage.control.putError = new Error("Object storage unavailable.");
 
     const update = await app.inject({
       method: "POST",
@@ -1788,7 +1763,7 @@ describe("Patchy Cloud server", () => {
     expect(update.statusCode).toBe(500);
     const current = await db.findDraftVersion(createdBody.patchId);
     expect(current.version?.id).toBe(createdBody.versionId);
-    expect(await listFiles(storage.rootDir)).toEqual([
+    expect(await listFiles(config.storageDir)).toEqual([
       `drafts/${createdBody.patchId}/versions/${createdBody.versionId}.html`
     ]);
 
@@ -1802,8 +1777,9 @@ describe("Patchy Cloud server", () => {
     await db.initialize("dev-token");
     const auth = await db.findApiTokenByToken("dev-token");
     if (!auth) throw new Error("Expected bootstrap authentication.");
-    const storage = new ControlledHtmlStorage(path.join(tempDir, "cleanup-failure-drafts"));
-    const app = createApp({ config, db, storage, runtime: createTestRuntime({ db, config }) });
+    const storage = controlledContentStore();
+    const runtime = createTestRuntime({ db, config, contentStore: storage.layer });
+    const app = createApp({ config, db, runtime });
     const created = await app.inject({
       method: "POST",
       url: "/api/uploads",
@@ -1813,10 +1789,10 @@ describe("Patchy Cloud server", () => {
       }
     });
     const createdBody = created.json();
-    storage.afterPut = async () => {
+    storage.control.afterPut = async () => {
       await db.disableDraft(createdBody.patchId, auth.accountId, "policy race");
     };
-    storage.deleteError = new Error("Cleanup unavailable.");
+    storage.control.deleteError = new Error("Cleanup unavailable.");
 
     const update = await app.inject({
       method: "POST",
@@ -1830,7 +1806,7 @@ describe("Patchy Cloud server", () => {
 
     expect(update.statusCode).toBe(500);
     expect(update.json()).toEqual({ ok: false, error: "Internal server error." });
-    expect(await listFiles(storage.rootDir)).toHaveLength(2);
+    expect(await listFiles(config.storageDir)).toHaveLength(2);
 
     await app.close();
     await db.close();
@@ -1840,8 +1816,9 @@ describe("Patchy Cloud server", () => {
     const config = testConfig();
     const db = new CommitIndeterminateJsonDb(path.join(tempDir, "indeterminate-db.json"));
     await db.initialize("dev-token");
-    const storage = new ControlledHtmlStorage(path.join(tempDir, "indeterminate-drafts"));
-    const app = createApp({ config, db, storage, runtime: createTestRuntime({ db, config }) });
+    const storage = controlledContentStore();
+    const runtime = createTestRuntime({ db, config, contentStore: storage.layer });
+    const app = createApp({ config, db, runtime });
     const created = await app.inject({
       method: "POST",
       url: "/api/uploads",
@@ -1867,8 +1844,8 @@ describe("Patchy Cloud server", () => {
     const current = await db.findDraftVersion(createdBody.patchId);
     expect(current.version?.versionNumber).toBe(2);
     if (!current.version) throw new Error("Expected committed version.");
-    expect(await listFiles(storage.rootDir)).toHaveLength(2);
-    await expect(storage.getHtmlObject(current.version.objectKey)).resolves.toContain("committed");
+    expect(await listFiles(config.storageDir)).toHaveLength(2);
+    await expect(getObject(runtime, current.version.objectKey)).resolves.toContain("committed");
 
     await app.close();
     await db.close();
@@ -1878,8 +1855,7 @@ describe("Patchy Cloud server", () => {
     const config = testConfig();
     const db = new JsonFilePatchyDb(path.join(tempDir, "legacy-null-db.json"));
     await db.initialize("dev-token");
-    const storage = new FileSystemHtmlStorage(path.join(tempDir, "legacy-null-drafts"));
-    const app = createApp({ config, db, storage, runtime: createTestRuntime({ db, config }) });
+    const app = createApp({ config, db, runtime: createTestRuntime({ db, config }) });
 
     const upload = await app.inject({
       method: "POST",
@@ -1911,8 +1887,7 @@ describe("Patchy Cloud server", () => {
     await db.initialize("dev-token");
     const auth = await db.findApiTokenByToken("dev-token");
     if (!auth) throw new Error("Expected bootstrap authentication.");
-    const storage = new FileSystemHtmlStorage(path.join(tempDir, "legacy-key-drafts"));
-    const app = createApp({ config, db, storage, runtime: createTestRuntime({ db, config }) });
+    const app = createApp({ config, db, runtime: createTestRuntime({ db, config }) });
 
     const upload = await app.inject({
       method: "POST",
@@ -1939,8 +1914,7 @@ describe("Patchy Cloud server", () => {
     const config = testConfig();
     const db = new JsonFilePatchyDb(path.join(tempDir, "explicit-intent-db.json"));
     await db.initialize("dev-token");
-    const storage = new FileSystemHtmlStorage(path.join(tempDir, "explicit-intent-drafts"));
-    const app = createApp({ config, db, storage, runtime: createTestRuntime({ db, config }) });
+    const app = createApp({ config, db, runtime: createTestRuntime({ db, config }) });
 
     for (const patchId of ["", 123]) {
       const upload = await app.inject({
@@ -2365,15 +2339,15 @@ describe("Patchy Cloud server", () => {
   });
 
   it("counts an object it could not delete once the record is already gone", async () => {
+    const storage = controlledContentStore();
     const clocked = await createClockedApp("expiry-sweep-storage-failure", {
-      openStorage: (dir) => new ControlledHtmlStorage(dir)
+      contentStore: storage.layer
     });
-    const storage = clocked.storage as ControlledHtmlStorage;
 
     try {
       const patchId = await publishDraft(clocked.app, "Object outlives its record");
       clocked.advanceDays(91);
-      storage.deleteError = new Error("Storage delete failed.");
+      storage.control.deleteError = new Error("Storage delete failed.");
 
       expect(await clocked.app.sweepExpiredDrafts()).toEqual({
         deleted: 1,
@@ -3227,8 +3201,7 @@ async function createServedDraft(
   const clock = (): number => now;
   const db = new JsonFilePatchyDb(path.join(tempDir, `${safeLabel}-db.json`), { clock });
   await db.initialize("dev-token");
-  const storage = new FileSystemHtmlStorage(path.join(tempDir, `${safeLabel}-drafts`));
-  const app = createApp({ config, db, storage, runtime: createTestRuntime({ clock, db, config }) });
+  const app = createApp({ config, db, runtime: createTestRuntime({ clock, db, config }) });
 
   const upload = await app.inject({
     method: "POST",
@@ -3268,14 +3241,14 @@ async function uploadSourceIp(options: {
   forwardedFor?: string;
 }): Promise<SourceIpAttribution> {
   const apiToken = "trusted-proxy-token";
-  const config = getServerConfig(
-    options.trustProxy === undefined ? {} : { PATCHY_TRUST_PROXY: options.trustProxy }
-  );
+  const config = getServerConfig({
+    PATCHY_STORAGE_DIR: path.join(tempDir, "drafts"),
+    ...(options.trustProxy === undefined ? {} : { PATCHY_TRUST_PROXY: options.trustProxy })
+  });
   const dbFile = path.join(tempDir, "trusted-proxy-db.json");
   const db = new JsonFilePatchyDb(dbFile);
   await db.initialize(apiToken);
-  const storage = new FileSystemHtmlStorage(path.join(tempDir, "trusted-proxy-drafts"));
-  const app = createApp({ config, db, storage, runtime: createTestRuntime({ db, config }) });
+  const app = createApp({ config, db, runtime: createTestRuntime({ db, config }) });
 
   try {
     const upload = await app.inject({
@@ -3344,8 +3317,7 @@ async function createScopedTokenApp(label: string, clock?: () => number): Promis
     token: "admin-only-token",
     scopes: ["admin"]
   });
-  const storage = new FileSystemHtmlStorage(path.join(tempDir, `${safeLabel}-drafts`));
-  const app = createApp({ config, db, storage, runtime: createTestRuntime({ clock, db, config }) });
+  const app = createApp({ config, db, runtime: createTestRuntime({ clock, db, config }) });
   return { app, db };
 }
 
@@ -3539,7 +3511,6 @@ type ScopedTokenApp = {
 
 type ClockedApp = {
   app: ReturnType<typeof createApp>;
-  storage: FileSystemHtmlStorage;
   /** Where this app's HTML objects land, so a test can watch them go. */
   storageDir: string;
   advanceDays(days: number): void;
@@ -3548,7 +3519,7 @@ type ClockedApp = {
 
 type ClockedAppOptions = {
   openDb?: (file: string, clock: () => number) => JsonFilePatchyDb;
-  openStorage?: (storageDir: string) => FileSystemHtmlStorage;
+  contentStore?: Layer.Layer<ContentStore.ContentStore>;
   /** Overrides `testConfig()`, for a clocked app that needs a posture changed. */
   config?: ServerConfig;
 };
@@ -3614,7 +3585,6 @@ async function createMintApp(
   let now = Date.UTC(2026, 0, 1);
   const clock = (): number => now;
   const dbFile = path.join(tempDir, `${label}-db.json`);
-  const storage = new FileSystemHtmlStorage(path.join(tempDir, `${label}-drafts`));
   const config: ServerConfig = {
     ...testConfig(),
     allowSelfServiceTokens: true,
@@ -3629,7 +3599,7 @@ async function createMintApp(
     const db = new JsonFilePatchyDb(dbFile, { clock });
     await db.initialize("dev-token");
     return {
-      app: createApp({ config, db, storage, runtime: createTestRuntime({ clock, db, config }) }),
+      app: createApp({ config, db, runtime: createTestRuntime({ clock, db, config }) }),
       db
     };
   };
@@ -3700,19 +3670,20 @@ async function createClockedApp(
   options: ClockedAppOptions = {}
 ): Promise<ClockedApp> {
   const openDb = options.openDb ?? ((file, clock) => new JsonFilePatchyDb(file, { clock }));
-  const openStorage = options.openStorage ?? ((dir) => new FileSystemHtmlStorage(dir));
   let now = Date.UTC(2026, 0, 1);
   const clock = (): number => now;
   const db = openDb(path.join(tempDir, `${label}-db.json`), clock);
   await db.initialize("dev-token");
   const storageDir = path.join(tempDir, `${label}-drafts`);
-  const storage = openStorage(storageDir);
-  const config = options.config ?? testConfig();
-  const app = createApp({ config, db, storage, runtime: createTestRuntime({ clock, db, config }) });
+  const config = { ...(options.config ?? testConfig()), storageDir };
+  const app = createApp({
+    config,
+    db,
+    runtime: createTestRuntime({ clock, db, config, contentStore: options.contentStore })
+  });
 
   return {
     app,
-    storage,
     storageDir,
     advanceDays(days) {
       now += days * DAY_MS;
@@ -3798,29 +3769,59 @@ function testConfig(): ServerConfig {
     dbDriver: "json",
     databaseUrl: null,
     jsonDbFile: path.join(tempDir, "db.json"),
-    storageDriver: "filesystem",
-    storageDir: path.join(tempDir, "drafts"),
-    azureStorageAccount: null,
-    azureStorageContainer: null,
-    azureStorageConnectionString: null
+    storageDir: path.join(tempDir, "drafts")
   };
 }
 
-class ControlledHtmlStorage extends FileSystemHtmlStorage {
-  afterPut: (() => Promise<void>) | null = null;
-  putError: Error | null = null;
-  deleteError: Error | null = null;
+interface ContentStoreControl {
+  /** Runs after a put has landed, while the request is still inside the store call. */
+  afterPut: (() => Promise<void>) | null;
+  putError: Error | null;
+  deleteError: Error | null;
+}
 
-  override async putHtmlObject(key: string, html: string): Promise<void> {
-    if (this.putError) throw this.putError;
-    await super.putHtmlObject(key, html);
-    if (this.afterPut) await this.afterPut();
-  }
-
-  override async deleteHtmlObject(key: string): Promise<void> {
-    if (this.deleteError) throw this.deleteError;
-    await super.deleteHtmlObject(key);
-  }
+/**
+ * The filesystem store with a hand on it: a put can be held or failed and a
+ * delete failed, so the upload contract's outcomes can be forced one by one.
+ */
+function controlledContentStore(): {
+  control: ContentStoreControl;
+  layer: Layer.Layer<ContentStore.ContentStore>;
+} {
+  const control: ContentStoreControl = { afterPut: null, putError: null, deleteError: null };
+  const layer = Layer.effect(
+    ContentStore.ContentStore,
+    Effect.map(ContentStore.ContentStore, (inner) =>
+      ContentStore.ContentStore.of({
+        put: (key, html) =>
+          control.putError
+            ? Effect.fail(
+                new ContentStore.StoreUnavailable({
+                  operation: "put",
+                  key,
+                  cause: control.putError
+                })
+              )
+            : inner
+                .put(key, html)
+                .pipe(
+                  Effect.andThen(Effect.promise(() => control.afterPut?.() ?? Promise.resolve()))
+                ),
+        get: inner.get,
+        delete: (key) =>
+          control.deleteError
+            ? Effect.fail(
+                new ContentStore.StoreUnavailable({
+                  operation: "delete",
+                  key,
+                  cause: control.deleteError
+                })
+              )
+            : inner.delete(key)
+      })
+    )
+  ).pipe(Layer.provide(FilesystemContentStore.layer));
+  return { control, layer };
 }
 
 class CommitIndeterminateJsonDb extends JsonFilePatchyDb {

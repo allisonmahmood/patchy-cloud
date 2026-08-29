@@ -137,7 +137,7 @@ for (const packageName of [
   "@patchy/config",
   "@patchy/core",
   "@patchy/db",
-  "@patchy/storage",
+  "@patchy/content-store",
 ]) {
   const entrypoint = fs.realpathSync(fileURLToPath(import.meta.resolve(packageName)));
   firstPartyRoots.push(path.dirname(path.dirname(entrypoint)));

@@ -16,7 +16,7 @@ A Turborepo monorepo managed with pnpm.
 - `packages/cli` — `@patchy/cli`, the `patchy` command-line publisher.
 - `packages/core` — shared HTML validation, hashing, and ID helpers (`@patchy/core`).
 - `packages/db` — metadata store with Postgres and JSON-file drivers, plus schema migrations (`@patchy/db`).
-- `packages/storage` — HTML object storage adapters: filesystem and Azure Blob (`@patchy/storage`).
+- `packages/content-store` — the object store for a patch's bytes, with filesystem and Azure Blob layers (`@patchy/content-store`).
 - `packages/config` — environment-variable parsing and server configuration (`@patchy/config`).
 - `skills/patchy` — the agent skill that teaches an assistant to produce safe static HTML and publish it.
 - `examples/plan.html` — a Patchy-styled starter draft.

@@ -1,9 +1,10 @@
 {
-  "name": "@patchy/storage",
+  "name": "@patchy/content-store",
   "version": "0.0.0",
   "private": true,
   "license": "UNLICENSED",
   "type": "module",
+  "description": "The platform's object store for a patch's bytes: one ContentStore service (put, get, delete by key) with a filesystem layer for dev and tests and an Azure Blob layer for production.",
   "exports": {
     ".": {
       "development": "./src/index.ts",
@@ -22,6 +23,11 @@
   "dependencies": {
     "@azure/identity": "^4.13.2",
     "@azure/storage-blob": "^12.27.0",
-    "@patchy/config": "workspace:*"
+    "@effect/platform-node": "catalog:",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "vitest": "^4.1.11"
   }
 }

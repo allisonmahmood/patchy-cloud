@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Analytics, PostHogClient } from "@patchy/analytics";
 import type { ServerConfig } from "@patchy/config";
 import { JsonFilePatchyDb } from "@patchy/db";
-import { FileSystemHtmlStorage } from "@patchy/storage";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { createApp } from "./app.js";
@@ -65,11 +64,7 @@ function testConfig(overrides: Partial<ServerConfig> = {}): ServerConfig {
     dbDriver: "json",
     databaseUrl: null,
     jsonDbFile: path.join(tempDir, "db.json"),
-    storageDriver: "filesystem",
     storageDir: path.join(tempDir, "drafts"),
-    azureStorageAccount: null,
-    azureStorageContainer: null,
-    azureStorageConnectionString: null,
     ...overrides
   };
 }
@@ -96,7 +91,6 @@ async function createWatchedApp(
   const recording = recordingAnalytics();
   const db = new JsonFilePatchyDb(path.join(tempDir, `${label}-db.json`), { clock });
   await db.initialize("dev-token");
-  const storage = new FileSystemHtmlStorage(path.join(tempDir, `${label}-drafts`));
   const config = testConfig({
     jsonDbFile: path.join(tempDir, `${label}-db.json`),
     ...options.config
@@ -107,7 +101,7 @@ async function createWatchedApp(
     config,
     analytics: options.analytics ?? recording.layer
   });
-  const app = createApp({ config, db, storage, runtime });
+  const app = createApp({ config, db, runtime });
 
   return {
     app,

@@ -105,10 +105,10 @@ Do not commit real database URLs or generated tokens.
 
 ## Azure Blob Storage
 
-If you use Azure Blob storage, these are the variables:
+The server writes a patch's bytes to Azure Blob whenever `AZURE_STORAGE_CONTAINER`
+is set, and to `PATCHY_STORAGE_DIR` on local disk otherwise:
 
 ```env
-PATCHY_STORAGE_DRIVER=azure-blob
 AZURE_STORAGE_ACCOUNT=
 AZURE_STORAGE_CONTAINER=
 ```

@@ -1,6 +1,6 @@
 # Hosting
 
-The service that receives uploads and serves published pages. Includes its supporting packages `@patchy/db`, `@patchy/storage`, and `@patchy/config`. Who may call it — tokens, principals, self-service minting, revocation — is [Auth](../packages/auth/CONTEXT.md)'s; the server serves that context's API group through its runtime seam and enforces the per-route scope on its own routes.
+The service that receives uploads and serves published pages. Includes its supporting packages `@patchy/db` and `@patchy/config`; where a patch's bytes go is [Content store](../packages/content-store/CONTEXT.md)'s. Who may call it — tokens, principals, self-service minting, revocation — is [Auth](../packages/auth/CONTEXT.md)'s; the server serves that context's API group through its runtime seam and enforces the per-route scope on its own routes.
 
 ## Language
 

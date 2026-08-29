@@ -7,7 +7,6 @@ import type { ServerConfig } from "@patchy/config";
 import { Tokens } from "@patchy/auth";
 import { PostgresPatchyDb } from "@patchy/db";
 import { layerFromUrl } from "@patchy/sql";
-import { FileSystemHtmlStorage } from "@patchy/storage";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import type { FastifyInstance } from "fastify";
@@ -321,7 +320,6 @@ async function createPostgresHttpHarness(
   const testDatabase = await createPostgresTestDatabase();
   const tempDir = await mkdtemp(path.join(os.tmpdir(), `patchy-server-postgres-${label}-`));
   const storageDir = path.join(tempDir, "drafts");
-  const storage = new FileSystemHtmlStorage(storageDir);
   const config: ServerConfig = {
     ...getServerConfig({
       PATCHY_BOOTSTRAP_API_TOKEN: "dev-token",
@@ -343,7 +341,6 @@ async function createPostgresHttpHarness(
       app: createApp({
         config,
         db,
-        storage,
         runtime: createTestRuntime({ clock, config, tokens })
       }),
       db

@@ -1,13 +1,15 @@
 /**
  * The runtime a test app runs on: no-op analytics unless a test provides its
- * own layer, the in-memory limiter, tokens over the test's store, the auth
- * capability's configuration read from the app's `ServerConfig`, and — when
- * a test winds a clock — that clock, so a window boundary is crossed without
- * waiting a minute.
+ * own layer, the in-memory limiter, tokens over the test's store, the
+ * filesystem content store under the config's `storageDir` unless a test
+ * provides its own layer, the auth capability's configuration read from the
+ * app's `ServerConfig`, and — when a test winds a clock — that clock, so a
+ * window boundary is crossed without waiting a minute.
  */
 import { Analytics } from "@patchy/analytics";
 import type { Tokens } from "@patchy/auth";
 import type { ServerConfig } from "@patchy/config";
+import { type ContentStore, FilesystemContentStore } from "@patchy/content-store";
 import { JsonTokens, type JsonFilePatchyDb } from "@patchy/db";
 import type { ConfigError } from "effect/Config";
 import * as Clock from "effect/Clock";
@@ -22,6 +24,7 @@ export type TestRuntimeOptions = {
   readonly config: ServerConfig;
   readonly clock?: () => number;
   readonly analytics?: Layer.Layer<Analytics.Analytics>;
+  readonly contentStore?: Layer.Layer<ContentStore.ContentStore>;
 } & (
   | { readonly db: JsonFilePatchyDb }
   | { readonly tokens: Layer.Layer<Tokens.Tokens, ConfigError | SqlError> }
@@ -31,9 +34,12 @@ export function createTestRuntime(options: TestRuntimeOptions): ServerRuntime {
   const services = Layer.orDie(
     layer({
       tokens: "db" in options ? JsonTokens.layer(options.db) : options.tokens,
-      analytics: options.analytics ?? Analytics.layerNoop
+      analytics: options.analytics ?? Analytics.layerNoop,
+      contentStore: options.contentStore ?? FilesystemContentStore.layer
     })
-  ).pipe(Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(authEnv(options.config)))));
+  ).pipe(
+    Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(capabilityEnv(options.config))))
+  );
   const clock = options.clock;
   if (clock === undefined) return ManagedRuntime.make(services);
   // Merged rather than only provided: the limiter reads the clock when it
@@ -57,9 +63,10 @@ export function createTestRuntime(options: TestRuntimeOptions): ServerRuntime {
   return ManagedRuntime.make(services.pipe(Layer.provideMerge(testClock)));
 }
 
-/** The auth capability's environment, as the app's config spells it. */
-function authEnv(config: ServerConfig): Record<string, string> {
+/** The ported capabilities' environment, as the app's config spells it. */
+function capabilityEnv(config: ServerConfig): Record<string, string> {
   return {
+    PATCHY_STORAGE_DIR: config.storageDir,
     ...(config.bootstrapApiToken === null
       ? {}
       : { PATCHY_BOOTSTRAP_API_TOKEN: config.bootstrapApiToken }),

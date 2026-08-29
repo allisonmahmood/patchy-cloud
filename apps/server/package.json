@@ -24,7 +24,7 @@
     "@patchy/db": "workspace:*",
     "@patchy/limits": "workspace:*",
     "@patchy/sql": "workspace:*",
-    "@patchy/storage": "workspace:*",
+    "@patchy/content-store": "workspace:*",
     "effect": "catalog:",
     "fastify": "^5.12.1"
   }

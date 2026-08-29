@@ -1,7 +1,10 @@
 import { getServerConfig } from "@patchy/config";
 import { openPatchyDb } from "@patchy/db";
-import { createHtmlStorage } from "@patchy/storage";
+import { AzureContentStore, BlobContainer, FilesystemContentStore } from "@patchy/content-store";
+import * as Config from "effect/Config";
+import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import { createApp } from "./app.js";
 import { layer } from "./runtime.js";
@@ -13,22 +16,24 @@ const { db, tokens } = await openPatchyDb({
   jsonDbFile: config.jsonDbFile,
   bootstrapApiToken: config.bootstrapApiToken
 });
-const storage = createHtmlStorage({
-  driver: config.storageDriver,
-  storageDir: config.storageDir,
-  azureStorageAccount: config.azureStorageAccount,
-  azureStorageContainer: config.azureStorageContainer,
-  azureStorageConnectionString: config.azureStorageConnectionString
-});
+
+// Where a patch's bytes go is wiring, not a setting: Azure Blob when its
+// container is configured, the local filesystem otherwise.
+const contentStore = Layer.unwrap(
+  Effect.map(Config.option(BlobContainer.container), (container) =>
+    Option.isSome(container) ? AzureContentStore.layer : FilesystemContentStore.layer
+  )
+);
 
 // The Effect side, built once and up front: analytics reports nothing unless
 // a key is configured, a malformed analytics setting fails startup here
-// rather than silently discarding every event, and the Postgres tokens layer
-// seeds the bootstrap token from `PATCHY_BOOTSTRAP_API_TOKEN`.
-const runtime = ManagedRuntime.make(Layer.orDie(layer({ tokens })));
+// rather than silently discarding every event, the Postgres tokens layer
+// seeds the bootstrap token from `PATCHY_BOOTSTRAP_API_TOKEN`, and an
+// incomplete Azure config fails startup rather than the first upload.
+const runtime = ManagedRuntime.make(Layer.orDie(layer({ tokens, contentStore })));
 await runtime.context();
 
-const app = createApp({ config, db, storage, runtime });
+const app = createApp({ config, db, runtime });
 
 /**
  * How often the expiry sweep runs. Nothing depends on the exact period: a

@@ -9,7 +9,13 @@ const SELF_HOSTING_GUIDE = new URL("../../../docs/SELF_HOSTING.md", import.meta.
  * Still the server's to document, so the fence covers them too. The list goes
  * with this package when the last capability moves.
  */
-const PORTED_VARIABLES = ["PATCHY_POSTHOG_API_KEY", "PATCHY_POSTHOG_HOST"];
+const PORTED_VARIABLES = [
+  "PATCHY_POSTHOG_API_KEY",
+  "PATCHY_POSTHOG_HOST",
+  "AZURE_STORAGE_ACCOUNT",
+  "AZURE_STORAGE_CONTAINER",
+  "AZURE_STORAGE_CONNECTION_STRING"
+];
 
 describe("server environment registry", () => {
   it("documents exactly the variables read by getServerConfig", () => {
