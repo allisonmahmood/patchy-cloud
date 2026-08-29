@@ -111,9 +111,9 @@ describe("renderPatchWrapper", () => {
     expect(html).not.toContain("<script");
 
     // An untitled patch still gets a title on the document and on the frame.
-    expect(html).toContain("<title>Patchy draft</title>");
-    expect(html).toContain('title="Patchy draft"');
-    expect(html).toContain(`<!-- draft:${patch.id} version:2 -->`);
+    expect(html).toContain("<title>Patchy patch</title>");
+    expect(html).toContain('title="Patchy patch"');
+    expect(html).toContain(`<!-- patch:${patch.id} version:2 -->`);
   });
 
   it("escapes the patch title into both the document and the frame", () => {

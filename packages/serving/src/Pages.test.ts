@@ -108,7 +108,7 @@ it.layer(layer)("pages", (it) => {
         assert.isUndefined(response.headers["www-authenticate"]);
         const body = yield* response.text;
         assert.include(body, "Serving Guarantees");
-        assert.include(body, 'class="draft-frame"');
+        assert.include(body, 'class="patch-frame"');
         assert.include(body, "&lt;h1&gt;Serving Guarantees&lt;/h1&gt;");
         assert.notInclude(body, "<script");
         assert.notInclude(body, "<form");

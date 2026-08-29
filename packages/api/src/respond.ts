@@ -16,6 +16,7 @@ import * as SchemaAST from "effect/SchemaAST";
 import type * as SchemaIssue from "effect/SchemaIssue";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { BadRequest, RateLimited } from "./schemas.js";
 
 const statusOf = SchemaAST.resolveAt<number>("httpApiStatus");
 const parseJson = Schema.decodeUnknownResult(Schema.fromJsonString(Schema.Unknown));
@@ -30,6 +31,23 @@ export const refuse = <S extends Schema.Top & Schema.Codec<unknown, unknown>>(
     headers
   });
 
+/** The one 429, with `Retry-After` saying the same seconds as the body. */
+export const rateLimited = (decision: { readonly retryAfterSeconds: number }) =>
+  refuse(
+    RateLimited,
+    {
+      ok: false,
+      error: "Rate limit exceeded.",
+      code: "rate_limited",
+      retryAfterSeconds: decision.retryAfterSeconds
+    },
+    { "retry-after": String(decision.retryAfterSeconds) }
+  );
+
+/** The one 400 for a body the route could not decode. */
+export const malformedBody = () =>
+  refuse(BadRequest, { ok: false, error: "Malformed request body." });
+
 /**
  * A body that is not JSON, or JSON the schema refused. `field` is the
  * top-level key the first issue points at, when it points at one, so a
@@ -37,7 +55,9 @@ export const refuse = <S extends Schema.Top & Schema.Codec<unknown, unknown>>(
  * the issue tree itself.
  */
 export class MalformedBody extends Schema.TaggedError<MalformedBody>()("MalformedBody", {
-  field: Schema.optionalKey(Schema.String)
+  field: Schema.optionalKey(Schema.String),
+  /** The read or parse failure underneath; absent for a body that decoded to the wrong shape. */
+  cause: Schema.optionalKey(Schema.Defect())
 }) {
   override get message() {
     return this.field === undefined
@@ -71,11 +91,13 @@ export const readBody = (maxBytes: number) =>
     }
     const text = yield* request.text.pipe(
       Effect.provideService(HttpServerRequest.MaxBodySize, FileSystem.Size(maxBytes)),
-      Effect.mapError(() => new MalformedBody({}))
+      Effect.mapError((cause) => new MalformedBody({ cause }))
     );
     if (text.trim().length === 0) return {} as unknown;
     const parsed = parseJson(text);
-    return Result.isSuccess(parsed) ? parsed.success : yield* new MalformedBody({});
+    return Result.isSuccess(parsed)
+      ? parsed.success
+      : yield* new MalformedBody({ cause: parsed.failure });
   });
 
 /** A decoder for one wire schema; compiled once, so build it outside the request. */

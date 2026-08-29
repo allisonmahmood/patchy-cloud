@@ -30,9 +30,10 @@ describe("classify", () => {
     assert.deepStrictEqual(classify("GET", "/apix"), open);
     assert.deepStrictEqual(classify("GET", "/d/abc"), open);
     assert.deepStrictEqual(classify("GET", "http://host?x=/api/%"), open);
-    // An encoded slash is one segment to the router, so this is no API route.
-    assert.deepStrictEqual(classify("POST", "/api%2Fuploads"), open);
     assert.deepStrictEqual(classify("GET", "/public/%"), open);
+    // An encoded slash is one segment to the router, so nothing routes here —
+    // but it reads as a probe of the API, and answers as one after the token.
+    assert.deepStrictEqual(classify("POST", "/api%2Fuploads"), { kind: "refused", status: 404 });
   });
 
   it("answers the shapes the router never sees, by the wire's status for each", () => {
@@ -53,7 +54,8 @@ describe("classify", () => {
     }
     for (const [method, target] of [
       ["POST", `/api/patches/${long}`],
-      ["DELETE", `/api/patches/${long}/disable`]
+      ["DELETE", `/api/patches/${long}/disable`],
+      ["PUT", `/api/patches/${long}/disable`]
     ] as const) {
       assert.deepStrictEqual(classify(method, target), { kind: "refused", status: 404 }, target);
     }
@@ -61,7 +63,6 @@ describe("classify", () => {
     // long outside the patch routes: the catch-all 404s it once it has a token.
     assert.deepStrictEqual(classify("GET", `/api/patches/${"x".repeat(100)}`), { kind: "route" });
     assert.deepStrictEqual(classify("POST", `/api/unmatched/${long}`), { kind: "route" });
-    assert.deepStrictEqual(classify("PUT", `/api/patches/${long}/disable`), { kind: "route" });
   });
 });
 
@@ -180,6 +181,78 @@ it.layer(
 
       yield* TestClock.adjust("61 seconds");
       assert.strictEqual((yield* upload(DEV_TOKEN, { html: html("Read now") })).status, 201);
+    })
+  );
+
+  it.effect("routes the spellings the router normalises, and answers the ones it cannot", () =>
+    Effect.gen(function* () {
+      yield* TestClock.adjust("61 seconds");
+      // A trailing or doubled slash is the real route: scope and limit apply,
+      // and the body decides the answer.
+      for (const target of ["/api/uploads/", "/api//uploads"]) {
+        assert.deepStrictEqual(
+          yield* answer(
+            yield* send(
+              HttpClientRequest.post(target).pipe(
+                HttpClientRequest.bearerToken(DEV_TOKEN),
+                HttpClientRequest.bodyJsonUnsafe({})
+              )
+            )
+          ),
+          { status: 400, body: { ok: false, error: "Missing HTML document." } },
+          target
+        );
+      }
+      assert.deepStrictEqual(yield* answer(yield* send(HttpClientRequest.post("/api%2Fuploads"))), {
+        status: 401,
+        body: UNAUTHORIZED
+      });
+      assert.deepStrictEqual(
+        yield* answer(
+          yield* send(
+            HttpClientRequest.post("/api%2Fuploads").pipe(HttpClientRequest.bearerToken(DEV_TOKEN))
+          )
+        ),
+        { status: 404, body: NOT_FOUND }
+      );
+    })
+  );
+
+  it.effect("answers a malformed or absent body on every payload route in the wire's words", () =>
+    Effect.gen(function* () {
+      yield* TestClock.adjust("61 seconds");
+      const malformed = (target: string) =>
+        send(
+          HttpClientRequest.post(target).pipe(
+            HttpClientRequest.bearerToken(DEV_TOKEN),
+            HttpClientRequest.setHeader("content-type", "application/json"),
+            HttpClientRequest.bodyText("{oops")
+          )
+        );
+      for (const target of ["/api/tokens", "/api/patches/abcdefghijkl/disable"]) {
+        assert.deepStrictEqual(
+          yield* answer(yield* malformed(target)),
+          { status: 400, body: { ok: false, error: "Malformed request body." } },
+          target
+        );
+      }
+      // No body at all is `{}`: a token with the defaults, a disable with no reason.
+      const issued = yield* send(
+        HttpClientRequest.post("/api/tokens").pipe(HttpClientRequest.bearerToken(DEV_TOKEN))
+      );
+      assert.strictEqual(issued.status, 201);
+      const created = yield* upload(DEV_TOKEN, { html: html("To disable") });
+      const { patchId } = (yield* created.json) as { patchId: string };
+      assert.deepStrictEqual(
+        yield* answer(
+          yield* send(
+            HttpClientRequest.post(`/api/patches/${patchId}/disable`).pipe(
+              HttpClientRequest.bearerToken(DEV_TOKEN)
+            )
+          )
+        ),
+        { status: 200, body: { ok: true } }
+      );
     })
   );
 

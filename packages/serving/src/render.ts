@@ -11,9 +11,9 @@ export function renderHome(options: { publicBaseUrl: string }): string {
         <header class="doc-head">
           <div class="head-line">
             <span class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</span>
-            <span class="kicker">Live draft host</span>
+            <span class="kicker">Live patch host</span>
           </div>
-          <h1>Upload-gated HTML draft hosting.</h1>
+          <h1>Upload-gated HTML patch hosting.</h1>
           <p class="lede">Patchy Cloud turns one validated static HTML file into a public review link. Publishing is authenticated by default; viewing is public and unlisted.</p>
           <div class="meta">
             <span class="pill pill-progress">Upload auth</span>
@@ -24,7 +24,7 @@ export function renderHome(options: { publicBaseUrl: string }): string {
 
         <section class="panel">
           <div>
-            <h2>Publish a draft</h2>
+            <h2>Publish a patch</h2>
             <p>Requires the <code>patchy</code> CLI on Node.js 22 or newer.</p>
             <p>Provide <code>PATCHY_SETUP_TOKEN</code> through a secret environment. This scoped workflow pins this endpoint, clears inherited credential overrides, and verifies the stored token before validation or upload.</p>
           </div>
@@ -49,17 +49,17 @@ export function renderHome(options: { publicBaseUrl: string }): string {
         <section class="grid">
           <article class="task">
             <h3><span class="num">1</span> Safe artifact <span class="pill pill-done">Validated</span></h3>
-            <p>Draft uploads reject scripts, forms, frames, unsafe URL schemes, and other constructs that do not belong in a static review document.</p>
+            <p>Patch uploads reject scripts, forms, frames, unsafe URL schemes, and other constructs that do not belong in a static review document.</p>
           </article>
           <article class="task">
             <h3><span class="num">2</span> Review link <span class="pill pill-progress">Public</span></h3>
-            <p>Anyone with the draft URL can view it. Use Patchy Cloud for material that is acceptable as an unlisted public link.</p>
+            <p>Anyone with the patch URL can view it. Use Patchy Cloud for material that is acceptable as an unlisted public link.</p>
           </article>
         </section>
 
         <div class="note note-warn">
           <span class="note-title">Visibility rule</span>
-          <p>Upload controls govern publishing; they do not make draft viewers private.</p>
+          <p>Upload controls govern publishing; they do not make served patches private.</p>
         </div>
 
         <p class="foot">Health check: <a href="/healthz">/healthz</a>.</p>
@@ -78,7 +78,7 @@ export function renderPatchWrapper(options: {
   version: Patches.PatchVersion;
   html: string;
 }): string {
-  const title = escapeHtml(options.patch.title || "Patchy draft");
+  const title = escapeHtml(options.patch.title || "Patchy patch");
 
   return `<!doctype html>
 <html lang="en">
@@ -98,7 +98,7 @@ export function renderPatchWrapper(options: {
       overflow: hidden;
     }
 
-    .draft-frame {
+    .patch-frame {
       display: block;
       width: 100%;
       height: 100%;
@@ -109,28 +109,28 @@ export function renderPatchWrapper(options: {
 </head>
 <body>
   <iframe
-    class="draft-frame"
+    class="patch-frame"
     title="${title}"
     sandbox=""
     referrerpolicy="no-referrer"
     srcdoc="${escapeAttribute(options.html)}"></iframe>
-  <!-- draft:${escapeHtml(options.patch.id)} version:${Number(options.version.versionNumber)} -->
+  <!-- patch:${escapeHtml(options.patch.id)} version:${Number(options.version.versionNumber)} -->
 </body>
 </html>`;
 }
 
 export function renderNotFound(): string {
   return htmlPage({
-    title: "Draft not found",
+    title: "Patch not found",
     body: `
       <main class="wrap compact">
         <header class="doc-head">
           <div class="head-line">
             <span class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</span>
-            <span class="kicker">Missing draft</span>
+            <span class="kicker">Missing patch</span>
           </div>
-          <h1>Draft not found.</h1>
-          <p class="lede">The requested draft is unavailable. It may have been disabled, deleted, or mistyped.</p>
+          <h1>Patch not found.</h1>
+          <p class="lede">The requested patch is unavailable. It may have been disabled, deleted, or mistyped.</p>
         </header>
       </main>
     `

@@ -1,10 +1,9 @@
 /**
  * The `patches` group of the Patchy API, implemented over `Content`,
-& 
+ * `Patches`, `Limits` and `Analytics`: the upload, the moderation reads,
  * disable, pin and unpin, delete. The principal comes from the bearer
  * middleware the group declares; this package never authenticates anyone.
- * The hosting server serves the group through its runtime seam until
- * `serving` mounts the whole API.
+ * The hosting server mounts the group with the rest of the API.
  */
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -17,10 +16,12 @@ import {
   Conflict,
   CurrentIdentity,
   decodeBody,
+  DisableRequest,
   Forbidden,
   hasScope,
   InvalidHtml,
   type MalformedBody,
+  malformedBody,
   ModeratedPatch as ModeratedPatchOnWire,
   NotFound,
   Ok,
@@ -30,7 +31,7 @@ import {
   PayloadTooLarge,
   Pinned,
   PrincipalPatches,
-  RateLimited,
+  rateLimited,
   readBody,
   refuse,
   UploadCreated,
@@ -57,19 +58,10 @@ const forbidden = () =>
 
 const notFound = () => refuse(NotFound, { ok: false, error: "Patch not found." });
 
-const rateLimited = (decision: Limits.ConsumeResult) =>
-  refuse(
-    RateLimited,
-    {
-      ok: false,
-      error: "Rate limit exceeded.",
-      code: "rate_limited",
-      retryAfterSeconds: decision.retryAfterSeconds
-    },
-    { "retry-after": String(decision.retryAfterSeconds) }
-  );
-
 const decodeUpload = decodeBody(UploadRequest);
+const decodeDisable = decodeBody(DisableRequest);
+/** A disable carries a reason and nothing else; this is room for one. */
+const MAX_DISABLE_BODY_BYTES = 16 * 1024;
 
 /**
  * Which field failed decides the answer, as it always has: no usable document
@@ -308,10 +300,20 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             });
           })
         )
-        .handle("disable", ({ params, payload }) =>
+        // Raw, so a body the schema refuses — or none at all, which is `{}` —
+        // answers in the wire's words rather than an empty 400.
+        .handleRaw("disable", ({ params }) =>
           Effect.gen(function* () {
             const identity = yield* CurrentIdentity;
             const admin = hasScope(identity, "admin");
+            const payload = yield* readBody(MAX_DISABLE_BODY_BYTES).pipe(
+              Effect.flatMap(decodeDisable),
+              Effect.catchTags({
+                MalformedBody: () => Effect.succeed(malformedBody()),
+                BodyTooLarge: () => Effect.succeed(malformedBody())
+              })
+            );
+            if (HttpServerResponse.isHttpServerResponse(payload)) return payload;
             const disabled = yield* patches
               .disable(
                 params.patchId,

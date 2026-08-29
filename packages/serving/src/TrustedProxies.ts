@@ -19,7 +19,6 @@ import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as SchemaGetter from "effect/SchemaGetter";
 import * as SchemaIssue from "effect/SchemaIssue";
 import * as HttpMiddleware from "effect/unstable/http/HttpMiddleware";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
@@ -34,37 +33,45 @@ const DEPRECATED_TRANSITIONAL_IPV6_PATTERN = /^::(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/
 const IPV4_MAPPED_IPV6_PATTERN = /^::ffff:((?:[0-9]{1,3}\.){3}[0-9]{1,3})$/i;
 
 /** One trusted network: an address family and the inclusive span it covers. */
-export class Range extends Schema.Class<Range>("TrustedProxyRange")({
-  family: Schema.Literals([4, 6]),
-  start: Schema.BigInt,
-  end: Schema.BigInt
-}) {}
+export interface Range {
+  readonly family: 4 | 6;
+  readonly start: bigint;
+  readonly end: bigint;
+}
 
 /**
- * `PATCHY_TRUST_PROXY` as written: comma-separated addresses or CIDR blocks.
- * Decodes to the ranges, or refuses the whole value when any entry is not one
- * or the list adds up to blanket trust.
+ * The ranges `PATCHY_TRUST_PROXY` names — comma-separated addresses or CIDR
+ * blocks — or `null` when any entry is not one or the list adds up to
+ * blanket trust. The whole value is refused, never part of it.
  */
-export const TrustedProxies = Schema.String.pipe(
-  Schema.decodeTo(Schema.Array(Range), {
-    decode: SchemaGetter.transformOrFail((value: string, options) => {
-      const ranges = parse(value);
-      return ranges === null
-        ? Effect.fail(
-            new SchemaIssue.InvalidValue(
-              { message: `Invalid PATCHY_TRUST_PROXY value: ${value}` },
-              value,
-              options
+export function parse(value: string): ReadonlyArray<Range> | null {
+  const ranges: Range[] = [];
+  for (const entry of value.split(",").map((part) => part.trim())) {
+    const range = parseRange(entry);
+    if (range === null) return null;
+    ranges.push(range);
+  }
+  if (coversFullAddressFamily(ranges, 4) || coversFullAddressFamily(ranges, 6)) return null;
+  return ranges;
+}
+
+/** The trusted networks: none unless configured, and startup fails on a value `parse` refuses. */
+export const config = Config.string("PATCHY_TRUST_PROXY").pipe(
+  Config.mapOrFail((value) => {
+    const ranges = parse(value);
+    return ranges === null
+      ? Effect.fail(
+          new Config.ConfigError(
+            new Schema.SchemaError(
+              new SchemaIssue.InvalidValue(
+                { message: `Invalid PATCHY_TRUST_PROXY value: ${value}` },
+                value
+              )
             )
           )
-        : Effect.succeed(ranges);
-    }),
-    encode: SchemaGetter.forbidden(() => "Trusted proxy ranges are read, never written.")
-  })
-);
-
-/** The trusted networks, none unless configured. */
-export const config = Config.schema(TrustedProxies, "PATCHY_TRUST_PROXY").pipe(
+        )
+      : Effect.succeed(ranges);
+  }),
   Config.withDefault([] as ReadonlyArray<Range>)
 );
 
@@ -126,18 +133,6 @@ function isTrusted(ranges: ReadonlyArray<Range>, address: string): boolean {
   );
 }
 
-/** The ranges the value names, or `null` when it is not a valid, non-blanket list. */
-function parse(value: string): ReadonlyArray<Range> | null {
-  const ranges: Range[] = [];
-  for (const entry of value.split(",").map((part) => part.trim())) {
-    const range = parseRange(entry);
-    if (range === null) return null;
-    ranges.push(range);
-  }
-  if (coversFullAddressFamily(ranges, 4) || coversFullAddressFamily(ranges, 6)) return null;
-  return ranges;
-}
-
 function parseRange(value: string): Range | null {
   if (value.includes("%")) return null;
 
@@ -168,7 +163,7 @@ function cidrRange(address: string, family: 4 | 6, prefixLength: number): Range 
   const value = family === 4 ? ipv4ToBigInt(address) : ipv6ToBigInt(address);
   const size = 1n << BigInt(bitWidth - prefixLength);
   const start = (value / size) * size;
-  return new Range({ family, start, end: start + size - 1n });
+  return { family, start, end: start + size - 1n };
 }
 
 function overlapsIpv4MappedIpv6Alias(range: Range): boolean {

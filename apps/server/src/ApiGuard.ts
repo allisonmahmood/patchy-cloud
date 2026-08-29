@@ -22,7 +22,14 @@ import * as HttpMiddleware from "effect/unstable/http/HttpMiddleware";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import type * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
-import { BadRequest, NotFound, RateLimited, refuse, RequestTargetTooLong } from "@patchy/api";
+import {
+  BadRequest,
+  NotFound,
+  PatchyApi,
+  rateLimited,
+  refuse,
+  RequestTargetTooLong
+} from "@patchy/api";
 import { Authorization, Tokens } from "@patchy/auth";
 import { Limits } from "@patchy/limits";
 
@@ -46,12 +53,18 @@ const SELF_SERVICE_MINT_PATH = "/api/tokens/self-service";
 const MAX_PARAM_LENGTH = 100;
 
 /**
- * The `POST /api/patches/:patchId/<suffix>` routes that exist. An overlong
- * parameter on one of these is a too-long target; on anything else it is a
- * route that was never there. Adding a route without adding it here turns its
- * overlong-parameter answer into a 404.
+ * The routes that take a patch id, read off the contract: `METHOD /api/patches/:patchId`
+ * and `METHOD /api/patches/:patchId/<suffix>`. An overlong parameter on one of
+ * these is a too-long target; on any other shape it is a route that never
+ * existed. Derived, so a route added to the API answers 414 without a table
+ * here to keep in step.
  */
-const PATCH_POST_SUFFIXES = new Set(["disable", "pin", "unpin"]);
+const PATCH_ROUTES = new Set(
+  Object.values(PatchyApi.groups)
+    .flatMap((group) => Object.values(group.endpoints))
+    .map((endpoint) => `${endpoint.method} ${endpoint.path}`)
+    .filter((route) => route.includes(" /api/patches/:patchId"))
+);
 
 /**
  * What the guard makes of a request target: not the API's business at all,
@@ -70,7 +83,14 @@ export function classify(method: string, requestTarget: string): Target {
       ? { kind: "refused", status: 400 }
       : { kind: "public" };
   }
-  if (!isApiPath(pathname) || pathname === SELF_SERVICE_MINT_PATH) return { kind: "public" };
+  if (pathname === SELF_SERVICE_MINT_PATH) return { kind: "public" };
+  if (!isApiPath(pathname)) {
+    // An encoded slash is one segment to the router, so `/api%2Fuploads` can
+    // never route; it still reads as a probe of the API, and answers as one.
+    return isApiPath(normalize(pathname.replace(/%2f/gi, "/")))
+      ? { kind: "refused", status: 404 }
+      : { kind: "public" };
+  }
   const status = overlongParamStatus(method, rawPath(requestTarget));
   return status === undefined ? { kind: "route" } : { kind: "refused", status };
 }
@@ -83,18 +103,6 @@ const refusal = (status: 400 | 404 | 414) =>
     : status === 404
       ? notFoundBody
       : refuse(RequestTargetTooLong, { ok: false, error: "Request target is too long." });
-
-const rateLimited = (decision: Limits.ConsumeResult) =>
-  refuse(
-    RateLimited,
-    {
-      ok: false,
-      error: "Rate limit exceeded.",
-      code: "rate_limited",
-      retryAfterSeconds: decision.retryAfterSeconds
-    },
-    { "retry-after": String(decision.retryAfterSeconds) }
-  );
 
 /** The identity behind the request, or the 401 it gets instead. */
 const authenticated = <E, R>(
@@ -162,8 +170,7 @@ function rawPath(requestTarget: string): string {
 /**
  * The path as the router will see it — escapes decoded, runs of slashes
  * collapsed, the trailing one dropped — or `null` when it does not decode at
- * all. An encoded slash stays one segment, as it does for the router: what
- * the router can never match is nobody's route.
+ * all. An encoded slash stays one segment, as it does for the router.
  */
 function canonicalPath(requestTarget: string): string | null {
   try {
@@ -201,8 +208,6 @@ function normalize(pathname: string): string {
  * the parameter is a length the routes take.
  */
 function overlongParamStatus(method: string, path: string): 404 | 414 | undefined {
-  if (method !== "GET" && method !== "POST" && method !== "DELETE") return undefined;
-
   const [leading, api, patches, parameter, suffix, ...rest] = path.split("/");
   if (
     leading !== "" ||
@@ -216,14 +221,7 @@ function overlongParamStatus(method: string, path: string): 404 | 414 | undefine
     return undefined;
   }
 
-  if (method === "POST") {
-    const registered =
-      suffix !== undefined && rest.length === 0 && PATCH_POST_SUFFIXES.has(decodeURI(suffix));
-    return registered ? 414 : 404;
-  }
-
-  // GET and DELETE both register the bare `/api/patches/:patchId` shape and
-  // nothing under it, so an overlong parameter there is a too-long target and
-  // anything deeper is a route that never existed.
-  return suffix === undefined ? 414 : 404;
+  const shape =
+    suffix === undefined ? "/api/patches/:patchId" : `/api/patches/:patchId/${decodeURI(suffix)}`;
+  return rest.length === 0 && PATCH_ROUTES.has(`${method} ${shape}`) ? 414 : 404;
 }

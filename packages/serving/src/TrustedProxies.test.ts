@@ -1,10 +1,12 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 import * as TrustedProxies from "./TrustedProxies.js";
 
-const decode = Schema.decodeUnknownSync(TrustedProxies.TrustedProxies);
-const ranges = (value: string) => decode(value);
+const ranges = (value: string) => {
+  const parsed = TrustedProxies.parse(value);
+  assert.isNotNull(parsed, value);
+  return parsed as ReadonlyArray<TrustedProxies.Range>;
+};
 const resolve = (trust: string | undefined, remote: string, forwardedFor?: string) =>
   Option.getOrNull(
     TrustedProxies.resolve(
@@ -54,7 +56,7 @@ describe("TrustedProxies", () => {
       "::fffe:0:0/95",
       "::ffff:0:0/95"
     ]) {
-      assert.throws(() => decode(value), /Invalid PATCHY_TRUST_PROXY value/, value);
+      assert.isNull(TrustedProxies.parse(value), value);
     }
     assert.deepStrictEqual(
       ranges("10.0.0.0/8, 2001:db8::/32").map((range) => range.family),
