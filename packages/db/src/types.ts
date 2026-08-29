@@ -1,6 +1,11 @@
 import type { DraftVisibility, UploadMetadata } from "@patchy/core";
 import type { SchemaMigration } from "./migrations.js";
 
+/*
+ * The token, mint and revocation shapes below belong to the JSON driver alone:
+ * `@patchy/auth` owns them on Postgres, and the JSON driver goes with the
+ * `patches` port. The `PatchyDb` port no longer names them.
+ */
 export interface ApiTokenAuth {
   id: string;
   accountId: string;
@@ -200,45 +205,6 @@ export interface DbDriverOptions {
 }
 
 export interface PatchyDb {
-  /**
-   * Seeds the bootstrap token when one is given. The JSON driver also migrates
-   * its state file here; a Postgres database must already be migrated.
-   */
-  initialize(bootstrapApiToken: string | null): Promise<void>;
-  findApiTokenByToken(token: string): Promise<ApiTokenAuth | null>;
-  createApiToken(input: CreateApiTokenInput): Promise<{ id: string; name: string }>;
-  /**
-   * How many self-service mints this source address has to its name inside the
-   * quota window ending now. The window is `mint-quota.ts`'s, read from the
-   * driver's own clock — the caller passes no instant, exactly as the live-draft
-   * tally takes no cutoff.
-   *
-   * A null address is a bucket like any other: mints the server could not
-   * attribute count together rather than each escaping the tally.
-   */
-  countSelfServiceMintsBySourceIp(sourceIp: string | null): Promise<number>;
-  /**
-   * Mints a self-service token: a fresh principal, the one token that controls
-   * it, and the mint record carrying source address and date, together. All
-   * three or none — a principal with no token owns drafts nobody can reach, and
-   * a token with no mint record is one the quota cannot see.
-   *
-   * The principal is 1:1 with the token by construction, which is the whole
-   * point: it reuses the account-scoped ownership checks unchanged, so a
-   * self-service token reaches its own drafts and no others without a second
-   * authorization model existing anywhere.
-   */
-  mintSelfServiceToken(input: MintSelfServiceTokenInput): Promise<MintSelfServiceTokenResult>;
-  /**
-   * Puts a token into the revoked state and reports what it found. `null` for a
-   * token that does not exist; otherwise the row, which survives — the
-   * version-history foreign key makes deleting a token that ever uploaded
-   * mechanically impossible, and the mint provenance is worth keeping anyway.
-   *
-   * Idempotent: revoking an already-revoked token is a no-op that returns the
-   * original `revokedAt`.
-   */
-  revokeApiToken(apiTokenId: string): Promise<ApiTokenRevocation | null>;
   /**
    * How many drafts this token created that are still live — neither deleted
    * nor disabled. The creating token is the one on a draft's first version, so

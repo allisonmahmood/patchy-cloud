@@ -13,4 +13,4 @@ The `schema_migrations` table Effect's Migrator keeps — `migration_id integer`
 _Avoid_: migration history, version table
 
 **Migration seam**:
-`migrateDatabase` in `packages/db/src/migrate.ts`: the Promise adapter that runs today's migrations through the Migrator for the server, the dev runner and the vitest template database, until the `auth` and `patches` packages take the migrations and the seam goes.
+`migrateDatabase` in `packages/db/src/migrate.ts`: the Promise adapter that runs `auth`'s record (ids 1–2) and today's draft steps (3 onward) through the Migrator for the server, the dev runner and the vitest template database, until the `patches` package takes the draft migrations and the seam goes.

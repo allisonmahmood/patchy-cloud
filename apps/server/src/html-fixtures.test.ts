@@ -28,12 +28,8 @@ describe("HTML fixture corpus", () => {
     const db = new JsonFilePatchyDb(path.join(tempDir, `${kind}-db.json`));
     await db.initialize(token);
     const storage = new FileSystemHtmlStorage(path.join(tempDir, `${kind}-drafts`));
-    const app = createApp({
-      config: getServerConfig({}),
-      db,
-      storage,
-      runtime: createTestRuntime()
-    });
+    const config = getServerConfig({});
+    const app = createApp({ config, db, storage, runtime: createTestRuntime({ db, config }) });
 
     try {
       for (const fixture of await readFixtureCorpus(kind)) {

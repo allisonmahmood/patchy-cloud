@@ -1,5 +1,5 @@
-import { getServerConfig, requireConfigValue } from "@patchy/config";
-import { createPatchyDb, migrateDatabase } from "@patchy/db";
+import { getServerConfig } from "@patchy/config";
+import { openPatchyDb } from "@patchy/db";
 import { createHtmlStorage } from "@patchy/storage";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
@@ -7,10 +7,11 @@ import { createApp } from "./app.js";
 import { layer } from "./runtime.js";
 
 const config = getServerConfig();
-const db = createPatchyDb({
+const { db, tokens } = await openPatchyDb({
   driver: config.dbDriver,
   databaseUrl: config.databaseUrl,
-  jsonDbFile: config.jsonDbFile
+  jsonDbFile: config.jsonDbFile,
+  bootstrapApiToken: config.bootstrapApiToken
 });
 const storage = createHtmlStorage({
   driver: config.storageDriver,
@@ -20,15 +21,11 @@ const storage = createHtmlStorage({
   azureStorageConnectionString: config.azureStorageConnectionString
 });
 
-if (config.dbDriver === "postgres") {
-  await migrateDatabase(requireConfigValue("DATABASE_URL", config.databaseUrl));
-}
-await db.initialize(config.bootstrapApiToken);
-
 // The Effect side, built once and up front: analytics reports nothing unless
-// a key is configured, and a malformed analytics setting fails startup here
-// rather than silently discarding every event.
-const runtime = ManagedRuntime.make(Layer.orDie(layer));
+// a key is configured, a malformed analytics setting fails startup here
+// rather than silently discarding every event, and the Postgres tokens layer
+// seeds the bootstrap token from `PATCHY_BOOTSTRAP_API_TOKEN`.
+const runtime = ManagedRuntime.make(Layer.orDie(layer({ tokens })));
 await runtime.context();
 
 const app = createApp({ config, db, storage, runtime });

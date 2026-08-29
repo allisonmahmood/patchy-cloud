@@ -1,5 +1,6 @@
 /**
- * The ordered schema-migration list both drivers share.
+ * The ordered schema-migration list both drivers share, the draft tables'
+ * half of the schema: `@patchy/auth` owns migrations 1 and 2.
  *
  * A migration is one additive schema step with an optional part per driver:
  * `postgres` is a DDL string, `json` is an idempotent transform that
@@ -49,39 +50,25 @@ const JSON_ROW_COLLECTIONS = [
   "uploadEvents"
 ] as const;
 
-/** The JSON collection `0005_self_service_mint_records` introduces. */
+/** The JSON collection `0007_self_service_mint_records` introduces. */
 const JSON_TOKEN_MINTS_COLLECTION = "tokenMints";
 
 /**
- * The retention window as of `0003_drafts_expiry_columns`, frozen here on
+ * The retention window as of `0005_drafts_expiry_columns`, frozen here on
  * purpose. A merged migration's behavior must not follow a later retuning of
  * the live policy, so this deliberately does not read `retention.ts` — and the
  * Postgres step spells the same 90 days out in SQL.
  */
-const MIGRATION_0003_BACKFILL_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
+const MIGRATION_0005_BACKFILL_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
 
 export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
   {
-    id: "0001_baseline_schema",
+    // Ids 1 and 2 are `@patchy/auth`'s (`accounts`, `api_tokens`,
+    // `token_mints`); the draft tables start at 3. The JSON step still
+    // initialises every collection, tokens included: the JSON driver keeps
+    // its own token store until the `patches` port deletes it.
+    id: "0003_drafts_baseline",
     postgres: `
-      CREATE TABLE accounts (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-      );
-
-      CREATE TABLE api_tokens (
-        id TEXT PRIMARY KEY,
-        account_id TEXT NOT NULL REFERENCES accounts(id),
-        name TEXT NOT NULL,
-        token_hash TEXT NOT NULL UNIQUE,
-        scopes JSONB NOT NULL DEFAULT '["upload"]'::jsonb,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-        last_used_at TIMESTAMPTZ,
-        revoked_at TIMESTAMPTZ
-      );
-
       CREATE TABLE drafts (
         id TEXT PRIMARY KEY,
         account_id TEXT NOT NULL REFERENCES accounts(id),
@@ -137,13 +124,13 @@ export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
     }
   },
   {
-    id: "0002_drafts_account_id_index",
+    id: "0004_drafts_account_id_index",
     // Ownership lookups (a principal's live drafts) scan by account today.
     // JSON has no index concept, so this migration has no JSON step.
     postgres: `CREATE INDEX drafts_account_id_idx ON drafts(account_id);`
   },
   {
-    id: "0003_drafts_expiry_columns",
+    id: "0005_drafts_expiry_columns",
     // The retention clock's anchor. Backfilling to migration time + the full
     // window is what keeps the deploy itself from expiring anything: every
     // pre-existing draft leaves this step with a whole window ahead of it.
@@ -160,7 +147,7 @@ export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
       const drafts = state.drafts;
       if (!Array.isArray(drafts)) return;
 
-      const backfill = new Date(Date.now() + MIGRATION_0003_BACKFILL_WINDOW_MS).toISOString();
+      const backfill = new Date(Date.now() + MIGRATION_0005_BACKFILL_WINDOW_MS).toISOString();
       for (const draft of drafts) {
         if (!draft || typeof draft !== "object") continue;
         const row = draft as Record<string, unknown>;
@@ -169,7 +156,7 @@ export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
     }
   },
   {
-    id: "0004_drafts_pinned_at",
+    id: "0006_drafts_pinned_at",
     // The pin: when an operator exempted this draft from expiry, or NULL for an
     // ordinary one. Nullable with no backfill on purpose — "unpinned" is the
     // absence of a pin, so every pre-existing draft is already correct, and the
@@ -197,38 +184,10 @@ export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
     }
   },
   {
-    id: "0005_self_service_mint_records",
-    // Self-service minting's provenance, in two pieces that answer two
-    // different questions.
-    //
-    // `token_mints` is the mint record: who was handed a token, from where, and
-    // when. It is what the per-IP mint quota counts, which is why it carries
-    // `source_ip` and why the index leads with it — the quota's only query is
-    // "how many rows for this address inside the window". Nullable because a
-    // request need not have a usable address; those mints share one bucket
-    // rather than escaping the count. The row outlives revocation on purpose:
-    // revoked is a state, and where a token came from stays reviewable.
-    //
-    // `accounts.self_service_minted_at` is the provenance mark on the principal
-    // itself. It is derivable from `token_mints` by join, and denormalized
-    // anyway so guardrails can key on "is this principal self-service" without
-    // one — the check sits on the authentication path, which every API request
-    // takes. NULL means operator-created, which is what every pre-existing
-    // account is; the JSON step below fills exactly that.
-    postgres: `
-      ALTER TABLE accounts ADD COLUMN self_service_minted_at TIMESTAMPTZ;
-
-      CREATE TABLE token_mints (
-        id TEXT PRIMARY KEY,
-        account_id TEXT NOT NULL REFERENCES accounts(id),
-        api_token_id TEXT NOT NULL REFERENCES api_tokens(id),
-        source_ip TEXT,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-      );
-
-      CREATE INDEX token_mints_source_ip_created_at_idx
-        ON token_mints(source_ip, created_at);
-    `,
+    id: "0007_self_service_mint_records",
+    // The JSON driver's mint records and its provenance mark on the principal.
+    // On Postgres both are `@patchy/auth`'s (`token_mints`, migration 2), so
+    // this step has no Postgres part.
     json(state) {
       if (!Array.isArray(state[JSON_TOKEN_MINTS_COLLECTION])) {
         state[JSON_TOKEN_MINTS_COLLECTION] = [];

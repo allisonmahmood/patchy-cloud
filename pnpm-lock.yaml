@@ -92,6 +92,9 @@ importers:
       "@patchy/api":
         specifier: workspace:*
         version: link:../../packages/api
+      "@patchy/auth":
+        specifier: workspace:*
+        version: link:../../packages/auth
       "@patchy/config":
         specifier: workspace:*
         version: link:../../packages/config
@@ -104,6 +107,9 @@ importers:
       "@patchy/limits":
         specifier: workspace:*
         version: link:../../packages/limits
+      "@patchy/sql":
+        specifier: workspace:*
+        version: link:../../packages/sql
       "@patchy/storage":
         specifier: workspace:*
         version: link:../../packages/storage
@@ -139,6 +145,34 @@ importers:
         specifier: 4.0.0-rc.112
         version: 4.0.0-rc.112
 
+  packages/auth:
+    dependencies:
+      "@patchy/analytics":
+        specifier: workspace:*
+        version: link:../analytics
+      "@patchy/api":
+        specifier: workspace:*
+        version: link:../api
+      "@patchy/core":
+        specifier: workspace:*
+        version: link:../core
+      "@patchy/limits":
+        specifier: workspace:*
+        version: link:../limits
+      "@patchy/sql":
+        specifier: workspace:*
+        version: link:../sql
+      effect:
+        specifier: 4.0.0-rc.112
+        version: 4.0.0-rc.112
+    devDependencies:
+      "@effect/vitest":
+        specifier: 4.0.0-rc.112
+        version: 4.0.0-rc.112(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.12)(yaml@2.9.0)))
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.12)(yaml@2.9.0))
+
   packages/cli:
     dependencies:
       commander:
@@ -165,6 +199,12 @@ importers:
 
   packages/db:
     dependencies:
+      "@patchy/api":
+        specifier: workspace:*
+        version: link:../api
+      "@patchy/auth":
+        specifier: workspace:*
+        version: link:../auth
       "@patchy/config":
         specifier: workspace:*
         version: link:../config

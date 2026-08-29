@@ -79,8 +79,9 @@ and the dev instance agree on what exists.
 detached supervisor under `node --import tsx`; the supervisor owns one Effect
 scope holding Postgres and the server, so either exiting — or `stop`'s
 SIGTERM — tears the other down. Migrations run through Effect's Migrator in
-`packages/sql`, behind `packages/db`'s `migrateDatabase` seam until the
-migrations move into their capability packages.
+`packages/sql`: `packages/auth` owns its own, and `packages/db`'s
+`migrateDatabase` seam composes them with the draft steps until those move
+into `packages/patches`.
 
 ## Running the server by hand
 

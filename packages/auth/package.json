@@ -1,9 +1,10 @@
 {
-  "name": "@patchy/db",
+  "name": "@patchy/auth",
   "version": "0.0.0",
   "private": true,
   "license": "UNLICENSED",
   "type": "module",
+  "description": "The auth capability: tokens and principals, self-service minting with its quota, revocation, bearer parsing, the accounts/api_tokens/token_mints migrations, and the auth HttpApi group.",
   "exports": {
     ".": {
       "development": "./src/index.ts",
@@ -20,15 +21,15 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@patchy/analytics": "workspace:*",
     "@patchy/api": "workspace:*",
-    "@patchy/auth": "workspace:*",
-    "@patchy/config": "workspace:*",
     "@patchy/core": "workspace:*",
+    "@patchy/limits": "workspace:*",
     "@patchy/sql": "workspace:*",
-    "effect": "catalog:",
-    "pg": "^8.23.0"
+    "effect": "catalog:"
   },
   "devDependencies": {
-    "@types/pg": "^8.23.1"
+    "@effect/vitest": "catalog:",
+    "vitest": "^4.1.11"
   }
 }
