@@ -1,12 +1,20 @@
 # Publishing
 
-The `@patchy/cli` package and its bundled skill — the tool agents use to put pages up. An agent is the primary operator and the CLI's output is its interface, so every message is written to be read by an agent first. Humans are not excluded: developers touching the cloud directly do drive it, so the human conveniences (completions, the wizard) stay, as long as they never change what an agent sees.
+The `@patchy/cli` package and its bundled skill — the tool agents use to put pages up. An agent is the primary operator and the CLI's output is its interface, so every message is written to be read by an agent first and what an agent sees is a written contract ([ADR-0004](../../docs/adr/ADR-0004-cli-contract-for-agents.md)). Humans are not excluded: developers touching the cloud directly do drive it, so the human conveniences (completions, the wizard) stay, as long as they never change what an agent sees.
 
 ## Language
 
 **Instance**:
-A Patchy Cloud server that drafts are published to, identified by its API URL. There is no hosted instance and no official one: the URL is always supplied by whoever is publishing — a flag, the environment, or saved config — and the built-in fallback is only a server running locally from this repo. A token and a cached draft each belong to exactly one instance.
+A Patchy Cloud server that drafts are published to, identified by its API URL. There is no hosted instance and no official one: the URL is always supplied by whoever is publishing — a flag, the dev env, the environment, or saved config, in that order — and the built-in fallback is only a server running locally from this repo. A token and a cached draft each belong to exactly one instance. Resolved once per command by the `Instance` service, which also remembers its **source**.
 _Avoid_: the server (ambiguous with the hosting codebase), host, backend, the official instance
+
+**Dev env**:
+The `.local/dev/env` a `pnpm dev` writes in a worktree — the instance URL and the seeded token. Found by walking up from the working directory and ranked above `PATCHY_API_URL`, so a checkout with a running dev instance publishes to it with nothing set and can never publish somewhere remote by accident.
+_Avoid_: dotenv, the env file
+
+**Exit-code ladder**:
+The contract an agent branches on: 0 ok, 1 `local` (fixable without the network), 2 `rejected` (the instance answered and said no), 3 `unreachable` (no usable answer), 130 interrupted, nothing else. Every failure is a `CliError` whose **kind** names its rung; the kind also rides in the `--json` failure document.
+_Avoid_: error code (ambiguous with the wire's `code`), status (ambiguous with HTTP and with the probe)
 
 **Auto-mint**:
 The publishing flow's act of requesting a self-service token from the target instance when it holds no token for that instance, announcing the mint as it happens. Never silent, and never triggered while any token is configured — a rejected token is an error, not a reason to mint again.

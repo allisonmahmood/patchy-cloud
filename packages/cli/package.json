@@ -1,7 +1,7 @@
 {
   "name": "@patchy/cli",
   "version": "0.0.1",
-  "description": "Upload static HTML drafts to a Patchy Cloud instance.",
+  "description": "Upload static HTML pages to a Patchy Cloud instance.",
   "type": "module",
   "private": true,
   "license": "UNLICENSED",
@@ -41,12 +41,12 @@
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
-  "dependencies": {
-    "commander": "^15.0.0",
-    "effect": "catalog:",
-    "parse5": "catalog:"
-  },
   "devDependencies": {
-    "@patchy/api": "workspace:*"
+    "@effect/platform-node": "catalog:",
+    "@effect/vitest": "catalog:",
+    "@patchy/api": "workspace:*",
+    "@patchy/core": "workspace:*",
+    "effect": "catalog:",
+    "vitest": "^4.1.11"
   }
 }

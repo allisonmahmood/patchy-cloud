@@ -48,10 +48,11 @@ Behavior:
 
 - There is no hosted or official instance, and no instance to fall back on: publishing
   always goes to the instance the user or their operator names, through `--api-url`, the
-  `PATCHY_API_URL` environment variable, or the saved config. With none of those set the
-  CLI tries `http://localhost:3000`, which only works if a server is running locally.
-  Settle the instance before uploading — `status --json` says which one is resolved and
-  where that came from.
+  `.local/dev/env` a `pnpm dev` wrote in this checkout, the `PATCHY_API_URL` environment
+  variable, or the saved config — in that order. With none of those set the CLI tries
+  `http://localhost:3000`, which only works if a server is running locally. Settle the
+  instance before uploading — `status --json` says which one is resolved and where that
+  came from, and `upload` prints it before publishing.
 - Every upload carries a publishing key. When no key is stored for the resolved instance,
   the first `upload` mints one, prints a mint announcement — which instance, the file the
   key was saved to, and how to keep an existing identity instead — and continues with the
@@ -72,9 +73,15 @@ Behavior:
 - CLI state lives in the state dir, `~/.patchy` by default. The `status --json` probe
   reports what this machine already holds, without touching the network; its seven keys
   and their values are tabled in `references/onboarding.md`.
+- The exit code says who has to act, so branch on it before reading the message: `1` is
+  yours to fix without the network (arguments, the file, validation, local state), `2`
+  means the instance answered and said no (a rejected key, a missing update target, a
+  quota), `3` means there was no usable answer (network, a 5xx) — try later or tell the
+  operator. `130` is an interruption.
 - Every command takes `--json`: one JSON document on stdout on success, `{ "ok": false,
-"error" }` on stderr on failure. `upload --json` prints the instance's response as it is
-  on the wire (`patchId`, `publicUrl`, `versionNumber`, `warnings`, …); the mint
+"error", "kind" }` on stderr on failure, where `kind` is `local`, `rejected` or
+  `unreachable` and matches the exit code. `upload --json` prints the instance's response
+  as it is on the wire (`patchId`, `publicUrl`, `versionNumber`, `warnings`, …); the mint
   announcement, when there is one, goes to stderr so stdout stays one document. Prefer it
   when the URL or the patch id is going into a script rather than to the user.
 

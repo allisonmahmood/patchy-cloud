@@ -411,7 +411,8 @@ try {
     objectDir,
     expectAuthoritativeNonEmpty: true,
     expectEmptyCliState: true,
-    stderr: /Blocked <script> tag found\./
+    stderr: /Blocked <script> tag found\./,
+    exitCode: 1
   });
 
   await checkedCall(() =>
@@ -425,8 +426,40 @@ try {
     cliStateDir,
     objectDir,
     sensitiveValues: ["invalid-env-credential"],
-    stderr: /Missing or invalid API token\./
+    stderr: /Missing or invalid API token\./,
+    exitCode: 2
   });
+
+  console.log("[packed-cli-e2e] proving the --json contract and the unreachable rung");
+  const rejectedJson = await runCli(cliPath, ["whoami", "--json"], {
+    cwd: consumerDir,
+    env: { ...cliEnv, PATCHY_API_TOKEN: "invalid-env-credential" },
+    allowFailure: true,
+    sensitiveValues: ["invalid-env-credential"]
+  });
+  assert.equal(rejectedJson.code, 2);
+  assert.equal(rejectedJson.stdout, "", "--json failure must leave stdout empty");
+  assert.deepEqual(JSON.parse(rejectedJson.stderr), {
+    ok: false,
+    error: "Missing or invalid API token.",
+    kind: "rejected"
+  });
+  const whoamiJson = await runCli(cliPath, ["whoami", "--json"], { cwd: consumerDir, env: cliEnv });
+  assert.equal(whoamiJson.stderr, "", "--json success must leave stderr empty");
+  assert.deepEqual(JSON.parse(whoamiJson.stdout), {
+    accountId: "acct_bootstrap",
+    accountName: "Bootstrap Account",
+    apiTokenId: "tok_bootstrap",
+    apiTokenName: "Bootstrap API Token",
+    scopes: ["admin", "upload"]
+  });
+  const unreachable = await runCli(cliPath, ["whoami", "--api-url", "http://127.0.0.1:1"], {
+    cwd: consumerDir,
+    env: { ...cliEnv, PATCHY_API_TOKEN: bootstrapToken },
+    allowFailure: true
+  });
+  assert.equal(unreachable.code, 3, `expected exit 3\nstderr:\n${unreachable.stderr}`);
+  assert.match(unreachable.stderr, /^http:\/\/127\.0\.0\.1:1 could not be reached\./);
 
   const invalidStoredStateDir = path.join(tempRoot, "cli state invalid stored");
   await checkedCall(() => mkdir(invalidStoredStateDir));
@@ -449,7 +482,8 @@ try {
     cliStateDir: invalidStoredStateDir,
     objectDir,
     sensitiveValues: [invalidStoredToken],
-    stderr: /Missing or invalid API token\./
+    stderr: /Missing or invalid API token\./,
+    exitCode: 2
   });
 
   // Auto-mint is the only credential-free path now, and this server implements
@@ -2555,7 +2589,8 @@ async function assertCliFailureNoMutation({
   expectAuthoritativeNonEmpty = false,
   expectEmptyCliState = false,
   sensitiveValues = [],
-  stderr
+  stderr,
+  exitCode
 }) {
   const authoritativeBefore = await authoritativeSnapshot(objectDir);
   const cliStateBefore = await snapshotTree(cliStateDir);
@@ -2571,7 +2606,8 @@ async function assertCliFailureNoMutation({
     allowFailure: true,
     sensitiveValues
   });
-  assert.notEqual(result.code, 0, "expected packed CLI invocation to fail");
+  // The ladder: 1 local, 2 rejected, 3 unreachable — the code says who has to act.
+  assert.equal(result.code, exitCode, `expected exit ${exitCode}\nstderr:\n${result.stderr}`);
   assert.match(result.stderr, stderr);
   assert.deepEqual(
     await authoritativeSnapshot(objectDir),

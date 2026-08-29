@@ -40,15 +40,15 @@ patchy status --json
 It is local-only and answers rather than passes or fails. All seven keys, and what each one
 settles:
 
-| Key               | Values                                   | Use it to                                                                                                                                                                                                                                               |
-| ----------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `instanceUrl`     | the resolved instance URL                | Know where the welcome draft would go. Trust it only when `instanceSource` is not `default`.                                                                                                                                                            |
-| `instanceSource`  | `flag` \| `env` \| `config` \| `default` | Settle step 2. `config` is a saved choice — confirm it, do not ask. `env` and `flag` came from this session's environment and will not persist, so say that. `default` means nothing has been chosen: the URL shown is only the local fallback, so ask. |
-| `hasToken`        | boolean                                  | `true` → they already publish. The welcome upload reuses that key, so nothing is minted and there is no announcement to relay.                                                                                                                          |
-| `tokenSource`     | `mint` \| `auth-set` \| `null`           | Tell a key this machine minted (`mint`) from one saved by hand for their own instance (`auth-set`). `null` with `hasToken: true` means the key comes from the environment, not the state dir — say so rather than promising the saved-file story.       |
-| `stateDir`        | absolute path                            | Locate `style.md` — it goes in this directory.                                                                                                                                                                                                          |
-| `hasDefaultStyle` | boolean                                  | `true` → onboarding already ran. Say what the current default look is and ask keep-or-redo instead of asking cold.                                                                                                                                      |
-| `cliVersion`      | version string                           | Only worth mentioning if something later misbehaves.                                                                                                                                                                                                    |
+| Key               | Values                                                | Use it to                                                                                                                                                                                                                                                                                                                                    |
+| ----------------- | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `instanceUrl`     | the resolved instance URL                             | Know where the welcome draft would go. Trust it only when `instanceSource` is not `default`.                                                                                                                                                                                                                                                 |
+| `instanceSource`  | `flag` \| `dev-env` \| `env` \| `config` \| `default` | Settle step 2. `config` is a saved choice — confirm it, do not ask. `dev-env` is this checkout's own `pnpm dev` instance, chosen for as long as it runs. `env` and `flag` came from this session's environment and will not persist, so say that. `default` means nothing has been chosen: the URL shown is only the local fallback, so ask. |
+| `hasToken`        | boolean                                               | `true` → they already publish. The welcome upload reuses that key, so nothing is minted and there is no announcement to relay.                                                                                                                                                                                                               |
+| `tokenSource`     | `mint` \| `auth-set` \| `null`                        | Tell a key this machine minted (`mint`) from one saved by hand for their own instance (`auth-set`). `null` with `hasToken: true` means the key comes from the environment, not the state dir — say so rather than promising the saved-file story.                                                                                            |
+| `stateDir`        | absolute path                                         | Locate `style.md` — it goes in this directory.                                                                                                                                                                                                                                                                                               |
+| `hasDefaultStyle` | boolean                                               | `true` → onboarding already ran. Say what the current default look is and ask keep-or-redo instead of asking cold.                                                                                                                                                                                                                           |
+| `cliVersion`      | version string                                        | Only worth mentioning if something later misbehaves.                                                                                                                                                                                                                                                                                         |
 
 ## The conversation
 
@@ -78,6 +78,8 @@ probe already answered this in most cases, so read it before opening your mouth:
 
 - `instanceSource` is `config` — a saved choice. Confirm it in passing ("your pages go to
   `pages.example.com` — each gets its own shareable link") and move on.
+- `instanceSource` is `dev-env` — the local dev instance of this checkout. Its pages are
+  for the developer's own eyes; say so and move on.
 - `instanceSource` is `env` or `flag` — chosen for this session only. Say so, and offer to
   save it with `--api-url` so it sticks.
 - `instanceSource` is `default` — nothing has been chosen. Ask, once: which address should
@@ -110,8 +112,8 @@ announcement in plain words rather than pasting it:
 
 If the probe reported `hasToken: true`, nothing is minted and there is nothing to relay —
 and check `tokenSource` before describing what they hold: `mint` or `auth-set` means the key
-is a file in the state dir, `null` means it came from the environment, so the copy-the-file
-story does not apply.
+is a file in the state dir, `null` means it came from the environment or the dev env, so the
+copy-the-file story does not apply.
 
 Then hand over the URL with the one fact that matters: **anyone with the link can see it,
 and it isn't listed anywhere.**
