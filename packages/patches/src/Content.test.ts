@@ -11,49 +11,65 @@ import * as Fixtures from "./test/fixtures.js";
 const { uploader } = Fixtures.identities;
 
 /**
- * An in-memory store whose next `put` or `delete` can be made to fail, and
- * which runs a hook after every put — the seam the upload contract's
- * rollback is tested through.
+ * An in-memory store that runs a hook after every put — the seam the upload
+ * contract's rollback race is forced through. Faults come from the layers
+ * below it, never from a switch on this one.
  */
-const controlledStore = Effect.gen(function* () {
+const memoryStore = Effect.gen(function* () {
   const objects = yield* Ref.make(new Map<string, string>());
-  const control = {
-    putError: null as ContentStore.StoreUnavailable | null,
-    deleteError: null as ContentStore.StoreUnavailable | null,
-    afterPut: Effect.void as Effect.Effect<void>
+  const control = { afterPut: Effect.void as Effect.Effect<void> };
+  const service = ContentStore.ContentStore.of({
+    put: (key, html) =>
+      Ref.update(objects, (map) => new Map(map).set(key, html)).pipe(
+        Effect.andThen(() => control.afterPut)
+      ),
+    get: (key) =>
+      Effect.flatMap(Ref.get(objects), (map) => {
+        const html = map.get(key);
+        return html === undefined
+          ? Effect.fail(new ContentStore.ObjectNotFound({ key }))
+          : Effect.succeed(html);
+      }),
+    delete: (key) =>
+      Ref.update(objects, (map) => {
+        const next = new Map(map);
+        next.delete(key);
+        return next;
+      })
+  });
+  return {
+    control,
+    service,
+    layer: Layer.succeed(ContentStore.ContentStore, service),
+    keys: Effect.map(Ref.get(objects), (map) => [...map.keys()].sort())
   };
-  const layer = Layer.succeed(
-    ContentStore.ContentStore,
-    ContentStore.ContentStore.of({
-      put: (key, html) =>
-        control.putError
-          ? Effect.fail(control.putError)
-          : Ref.update(objects, (map) => new Map(map).set(key, html)).pipe(
-              Effect.andThen(() => control.afterPut)
-            ),
-      get: (key) =>
-        Effect.flatMap(Ref.get(objects), (map) => {
-          const html = map.get(key);
-          return html === undefined
-            ? Effect.fail(new ContentStore.ObjectNotFound({ key }))
-            : Effect.succeed(html);
-        }),
-      delete: (key) =>
-        control.deleteError
-          ? Effect.fail(control.deleteError)
-          : Ref.update(objects, (map) => {
-              const next = new Map(map);
-              next.delete(key);
-              return next;
-            })
-    })
-  );
-  return { control, layer, keys: Effect.map(Ref.get(objects), (map) => [...map.keys()].sort()) };
 });
 
-const store = Effect.runSync(controlledStore);
-const unavailable = (operation: "put" | "delete") =>
-  new ContentStore.StoreUnavailable({ operation, key: "any", cause: new Error("down") });
+const store = Effect.runSync(memoryStore);
+const unavailable = (operation: "put" | "delete", key: string) =>
+  new ContentStore.StoreUnavailable({ operation, key, cause: new Error("down") });
+
+/** The same store, refusing every put. */
+const putFails = Layer.succeed(
+  ContentStore.ContentStore,
+  ContentStore.ContentStore.of({
+    ...store.service,
+    put: (key) => Effect.fail(unavailable("put", key))
+  })
+);
+
+/** The same store, refusing every delete. */
+const deleteFails = Layer.succeed(
+  ContentStore.ContentStore,
+  ContentStore.ContentStore.of({
+    ...store.service,
+    delete: (key) => Effect.fail(unavailable("delete", key))
+  })
+);
+
+/** `Content` over a faulty store, sharing the block's `Patches`. */
+const over = (faulty: Layer.Layer<ContentStore.ContentStore>) =>
+  Effect.provide(Layer.effect(Content.Content, Content.make).pipe(Layer.provide(faulty)));
 
 const content = Effect.flatMap(Content.Content, Effect.succeed);
 const patches = Effect.flatMap(Patches.Patches, Effect.succeed);
@@ -111,9 +127,10 @@ it.layer(
   it.effect("writes nothing when the store refuses the object", () =>
     Effect.gen(function* () {
       const created = yield* upload("<p>original</p>");
-      store.control.putError = unavailable("put");
-      const failed = yield* upload("<p>lost</p>", created.patchId).pipe(Effect.flip);
-      store.control.putError = null;
+      const failed = yield* upload("<p>lost</p>", created.patchId).pipe(
+        over(putFails),
+        Effect.flip
+      );
       assert.strictEqual(failed._tag, "StoreUnavailable");
       const current = Option.getOrThrow(yield* (yield* content).read(created.patchId));
       assert.strictEqual(current.version.id, created.versionId);
@@ -145,10 +162,11 @@ it.layer(
           .delete(created.patchId, uploader.accountId, { canModerateAnyPrincipal: false })
           .pipe(Effect.orDie, Effect.asVoid)
       );
-      store.control.deleteError = unavailable("delete");
-      const exit = yield* upload("<p>orphan</p>", created.patchId).pipe(Effect.exit);
+      const exit = yield* upload("<p>orphan</p>", created.patchId).pipe(
+        over(deleteFails),
+        Effect.exit
+      );
       store.control.afterPut = Effect.void;
-      store.control.deleteError = null;
       assert.isTrue(exit._tag === "Failure" && exit.cause.reasons.some((r) => r._tag === "Die"));
     })
   );

@@ -60,15 +60,8 @@ export const make = Effect.gen(function* () {
   const store = yield* ContentStore.ContentStore;
   const analytics = yield* Analytics.Analytics;
 
-  const sweepOne = Effect.fn("ExpirySweep.sweepOne")(function* (
-    patchId: string,
-    result: {
-      deleted: number;
-      skipped: number;
-      failed: number;
-      orphanedObjects: number;
-    }
-  ) {
+  /** One patch's share of a run: exactly one of `deleted`, `skipped` or `failed`, plus what it orphaned. */
+  const sweepOne = Effect.fn("ExpirySweep.sweepOne")(function* (patchId: string) {
     // Some(None) is a patch no longer the sweep's to take; None is a delete that failed.
     const taken = yield* patches.deleteExpired(patchId).pipe(
       Effect.map(Option.some),
@@ -80,17 +73,12 @@ export const make = Effect.gen(function* () {
           )
       })
     );
-    if (Option.isNone(taken)) {
-      result.failed += 1;
-      return;
-    }
-    if (Option.isNone(taken.value)) {
-      result.skipped += 1;
-      return;
-    }
+    if (Option.isNone(taken)) return { deleted: 0, skipped: 0, failed: 1, orphanedObjects: 0 };
+    if (Option.isNone(taken.value))
+      return { deleted: 0, skipped: 1, failed: 0, orphanedObjects: 0 };
     const keys = taken.value.value;
+    let orphanedObjects = 0;
 
-    result.deleted += 1;
     // Reported once the record is gone, which is the moment the patch stops
     // existing. No principal performed it — the clock ran out.
     yield* analytics.track({
@@ -108,16 +96,17 @@ export const make = Effect.gen(function* () {
           Effect.logWarning("Expiry sweep orphaned a stored object.", error).pipe(
             Effect.annotateLogs({ patchId, objectKey: key }),
             Effect.map(() => {
-              result.orphanedObjects += 1;
+              orphanedObjects += 1;
             })
           )
         )
       );
     }
+    return { deleted: 1, skipped: 0, failed: 0, orphanedObjects } satisfies SweepResult;
   });
 
   const sweep = Effect.gen(function* () {
-    const result = { deleted: 0, skipped: 0, failed: 0, orphanedObjects: 0 };
+    let result: SweepResult = { deleted: 0, skipped: 0, failed: 0, orphanedObjects: 0 };
     let attempted = 0;
 
     while (attempted < MAX_PER_RUN) {
@@ -130,7 +119,13 @@ export const make = Effect.gen(function* () {
       const deletedBefore = result.deleted;
       for (const patchId of patchIds) {
         attempted += 1;
-        yield* sweepOne(patchId, result);
+        const one = yield* sweepOne(patchId);
+        result = {
+          deleted: result.deleted + one.deleted,
+          skipped: result.skipped + one.skipped,
+          failed: result.failed + one.failed,
+          orphanedObjects: result.orphanedObjects + one.orphanedObjects
+        };
       }
 
       // A short batch is the end of the backlog. A full batch that deleted
@@ -139,7 +134,7 @@ export const make = Effect.gen(function* () {
       if (patchIds.length < batchLimit || result.deleted === deletedBefore) break;
     }
 
-    return result satisfies SweepResult;
+    return result;
   }).pipe(Effect.withSpan("ExpirySweep.sweep"));
 
   return ExpirySweep.of({ sweep });

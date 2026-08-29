@@ -85,6 +85,10 @@ export const make = Effect.gen(function* () {
   const patches = yield* Patches.Patches;
   const store = yield* ContentStore.ContentStore;
 
+  /** Deletes the object a refused row left behind, then re-raises the refusal. */
+  const rollback = <E>(key: string, refusal: E) =>
+    store.delete(key).pipe(Effect.orDie, Effect.andThen(Effect.fail(refusal)));
+
   const upload = Effect.fn("Content.upload")(function* (input: UploadInput) {
     const patchId = input.patchId ?? newPatchId();
     const versionId = newInternalId("ver");
@@ -119,9 +123,10 @@ export const make = Effect.gen(function* () {
         // A refused row is the one case the object must not survive. A rollback
         // that itself fails is a defect: an orphan reported as a clean refusal
         // would be a lie.
-        Effect.tapError((error) =>
-          error._tag === "SqlError" ? Effect.void : store.delete(key).pipe(Effect.orDie)
-        )
+        Effect.catchTags({
+          PatchUnavailable: (refusal) => rollback(key, refusal),
+          PatchConflict: (refusal) => rollback(key, refusal)
+        })
       );
   });
 

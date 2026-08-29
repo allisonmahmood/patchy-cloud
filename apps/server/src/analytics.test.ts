@@ -153,7 +153,7 @@ describe("server-side analytics", () => {
     await watched.close();
   });
 
-  it("reports a created draft and then an updated one, with its size and version", async () => {
+  it("reports a created patch and then an updated one, with its size and version", async () => {
     const watched = await createWatchedApp();
 
     const patchId = await watched.createPatch("First");
@@ -199,7 +199,7 @@ describe("server-side analytics", () => {
     await watched.close();
   });
 
-  it("reports a disabled draft and a deleted one, marking who acted", async () => {
+  it("reports a disabled patch and a deleted one, marking who acted", async () => {
     const watched = await createWatchedApp();
     const disabledId = await watched.createPatch("To disable");
     const deletedId = await watched.createPatch("To delete");
@@ -233,7 +233,7 @@ describe("server-side analytics", () => {
     await watched.close();
   });
 
-  it("marks a draft its own owner disabled or deleted as not an operator's act", async () => {
+  it("marks a patch its own owner disabled or deleted as not an operator's act", async () => {
     const watched = await createWatchedApp({
       config: { allowSelfServiceTokens: true }
     });
@@ -277,7 +277,7 @@ describe("server-side analytics", () => {
     await watched.close();
   });
 
-  it("reports nothing when a moderation request finds no draft", async () => {
+  it("reports nothing when a moderation request finds no patch", async () => {
     const watched = await createWatchedApp();
 
     const disable = await watched.app.inject({
@@ -298,7 +298,7 @@ describe("server-side analytics", () => {
     await watched.close();
   });
 
-  it("reports an expired draft when the sweep takes it, on no principal at all", async () => {
+  it("reports an expired patch when the sweep takes it, on no principal at all", async () => {
     const watched = await createWatchedApp();
     const patchId = await watched.createPatch("Ages out");
     watched.events.length = 0;
@@ -328,7 +328,7 @@ describe("server-side analytics", () => {
     await watched.close();
   });
 
-  it("reports nothing when a draft is served, at either URL", async () => {
+  it("reports nothing when a patch is served, at either URL", async () => {
     const watched = await createWatchedApp();
     const patchId = await watched.createPatch("Read me");
     watched.events.length = 0;

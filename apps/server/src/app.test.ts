@@ -12,7 +12,7 @@ import { Patches } from "@patchy/patches";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { createApp, isProtectedApiPath } from "./app.js";
-import { getObject, sweepExpiredPatches } from "./runtime.js";
+import { sweepExpiredPatches } from "./runtime.js";
 import { createTestApp, type TestApp } from "./test-harness.js";
 
 /** The bootstrap principal every `dev-token` upload lands on. */
@@ -64,7 +64,7 @@ describe("Patchy Cloud server", () => {
     expect(isProtectedApiPath("/%")).toBe(true);
   });
 
-  it("returns uploaded draft URLs on the configured public origin", async () => {
+  it("returns uploaded patch URLs on the configured public origin", async () => {
     const publicBaseUrl = "https://drafts.self-hoster.dev";
     const apiToken = "configured-origin-token";
     const harness = await createTestApp({ config: { publicBaseUrl, bootstrapApiToken: apiToken } });
@@ -92,7 +92,7 @@ describe("Patchy Cloud server", () => {
     await harness.close();
   });
 
-  it("requires auth for upload and renders uploaded drafts publicly", async () => {
+  it("requires auth for upload and renders uploaded patches publicly", async () => {
     const harness = await createTestApp();
     const { app } = harness;
 
@@ -212,7 +212,7 @@ describe("Patchy Cloud server", () => {
     }
   });
 
-  it("lets admin credentials alone moderate another principal's draft", async () => {
+  it("lets admin credentials alone moderate another principal's patch", async () => {
     const harness = await createTestApp({ config: { bootstrapApiToken: "admin-token" } });
     const { app } = harness;
     await harness.createToken({
@@ -442,7 +442,7 @@ describe("Patchy Cloud server", () => {
     }
   });
 
-  it("pins a draft only for an admin token, and only one that is there", async () => {
+  it("pins a patch only for an admin token, and only one that is there", async () => {
     const harness = await createScopedTokenApp("pin-admin-only");
     const { app } = harness;
 
@@ -1123,7 +1123,7 @@ describe("Patchy Cloud server", () => {
     }
   });
 
-  it("limits draft creates per minute per token without counting updates", async () => {
+  it("limits patch creates per minute per token without counting updates", async () => {
     let now = 1_000;
     const harness = await createTestApp({
       clock: () => now,
@@ -1166,7 +1166,7 @@ describe("Patchy Cloud server", () => {
     }
   });
 
-  it("caps live drafts per token from the database, across a restart", async () => {
+  it("caps live patches per token from the database, across a restart", async () => {
     // `dev-token` is the admin bootstrap token: the cap has no admin exemption.
     let harness = await createTestApp({ config: { livePatchesPerToken: 2 } });
     const { app } = harness;
@@ -1205,7 +1205,7 @@ describe("Patchy Cloud server", () => {
     }
   });
 
-  it("returns live-draft cap room when a draft is disabled or deleted", async () => {
+  it("returns live-patch cap room when a patch is disabled or deleted", async () => {
     const harness = await createTestApp({ config: { livePatchesPerToken: 1 } });
     const { app } = harness;
     await harness.createToken({
@@ -1345,7 +1345,7 @@ describe("Patchy Cloud server", () => {
       ).rejects.toThrow(/Invalid PATCHY_TRUST_PROXY/);
     }
   );
-  it("rejects an unknown client-supplied draft ID without creating a public draft", async () => {
+  it("rejects an unknown client-supplied patch ID without creating a public patch", async () => {
     const harness = await createTestApp();
     const { app, config } = harness;
     const patchId = "abcdefghijkl";
@@ -1401,7 +1401,7 @@ describe("Patchy Cloud server", () => {
     await harness.close();
   });
 
-  it("updates an existing owned draft and preserves its previous version", async () => {
+  it("updates an existing owned patch and preserves its previous version", async () => {
     const harness = await createTestApp();
     const { app } = harness;
     const headers = { authorization: "Bearer dev-token" };
@@ -1504,7 +1504,7 @@ describe("Patchy Cloud server", () => {
   it("removes only the new object when final eligibility recheck rejects", async () => {
     const storage = controlledContentStore();
     const harness = await createTestApp({ contentStore: storage.layer });
-    const { app, config, runtime } = harness;
+    const { app, config } = harness;
     const created = await app.inject({
       method: "POST",
       url: "/api/uploads",
@@ -1532,7 +1532,9 @@ describe("Patchy Cloud server", () => {
     expect(update.statusCode).toBe(404);
     expect(update.json()).toEqual({ ok: false, error: "Patch not found." });
     expect(await listFiles(config.storageDir)).toEqual([originalKey]);
-    await expect(getObject(runtime, originalKey)).resolves.toContain("original");
+    await expect(
+      harness.run(Effect.flatMap(ContentStore.ContentStore, (store) => store.get(originalKey)))
+    ).resolves.toContain("original");
 
     await harness.close();
   });
@@ -1606,7 +1608,7 @@ describe("Patchy Cloud server", () => {
     await harness.close();
   });
 
-  it("accepts the released CLI null draft marker as server-generated create intent", async () => {
+  it("accepts the released CLI null patch marker as server-generated create intent", async () => {
     const harness = await createTestApp();
     const { app } = harness;
 
@@ -1633,7 +1635,7 @@ describe("Patchy Cloud server", () => {
     await harness.close();
   });
 
-  it("names the rename to a client still sending draftId, instead of creating", async () => {
+  it("names the rename to a client still sending patchId, instead of creating", async () => {
     const harness = await createTestApp();
     const { app } = harness;
 
@@ -1663,7 +1665,7 @@ describe("Patchy Cloud server", () => {
     await harness.close();
   });
 
-  it("rejects invalid non-null draft IDs instead of treating them as creates", async () => {
+  it("rejects invalid non-null patch IDs instead of treating them as creates", async () => {
     const harness = await createTestApp();
     const { app } = harness;
 
@@ -1685,7 +1687,7 @@ describe("Patchy Cloud server", () => {
     await harness.close();
   });
 
-  it("serves drafts noindexed, unwatched, and open to machines", async () => {
+  it("serves patches noindexed, unwatched, and open to machines", async () => {
     const served = await createServedPatch("serving-guarantees");
 
     for (const url of [served.latestUrl, served.versionUrl]) {
@@ -1717,7 +1719,7 @@ describe("Patchy Cloud server", () => {
     await served.close();
   });
 
-  it("caches version URLs immutably, latest-draft URLs briefly, and everything else never", async () => {
+  it("caches version URLs immutably, latest-patch URLs briefly, and everything else never", async () => {
     const served = await createServedPatch("serving-cache-headers");
 
     const latest = await served.app.inject({ method: "GET", url: served.latestUrl });
@@ -1765,7 +1767,7 @@ describe("Patchy Cloud server", () => {
     await served.close();
   });
 
-  it("locks the draft content security policy with no script sources", async () => {
+  it("locks the patch content security policy with no script sources", async () => {
     const served = await createServedPatch("serving-csp");
 
     for (const url of [served.latestUrl, served.versionUrl]) {
@@ -1782,7 +1784,7 @@ describe("Patchy Cloud server", () => {
     await served.close();
   });
 
-  it("serves a draft as the framed document and nothing else", async () => {
+  it("serves a patch as the framed document and nothing else", async () => {
     const served = await createServedPatch("bare-wrapper");
 
     for (const url of [served.latestUrl, served.versionUrl]) {
@@ -1802,7 +1804,7 @@ describe("Patchy Cloud server", () => {
     await served.close();
   });
 
-  it("stops serving and stops updating a draft once its retention clock runs out", async () => {
+  it("stops serving and stops updating a patch once its retention clock runs out", async () => {
     const clocked = await createClockedApp("expiry");
 
     try {
@@ -1845,7 +1847,7 @@ describe("Patchy Cloud server", () => {
     }
   });
 
-  it("keeps a visited draft alive, and lets it go once the visits stop", async () => {
+  it("keeps a visited patch alive, and lets it go once the visits stop", async () => {
     const clocked = await createClockedApp("visit-topup");
 
     try {
@@ -1872,7 +1874,7 @@ describe("Patchy Cloud server", () => {
     }
   });
 
-  it("serves a draft whose visit top-up write fails, without moving its clock", async () => {
+  it("serves a patch whose visit top-up write fails, without moving its clock", async () => {
     const clocked = await createClockedApp("visit-write-failure");
 
     try {
@@ -1931,7 +1933,7 @@ describe("Patchy Cloud server", () => {
     }
   });
 
-  it("takes an expired draft's content and record together, with no way back", async () => {
+  it("takes an expired patch's content and record together, with no way back", async () => {
     const clocked = await createClockedApp("expiry-sweep");
 
     try {
@@ -1977,7 +1979,7 @@ describe("Patchy Cloud server", () => {
     }
   });
 
-  it("keeps a pinned draft serving forever, and lets it go once it is unpinned", async () => {
+  it("keeps a pinned patch serving forever, and lets it go once it is unpinned", async () => {
     const clocked = await createClockedApp("expiry-sweep-pinned");
 
     try {
@@ -2021,7 +2023,7 @@ describe("Patchy Cloud server", () => {
     }
   });
 
-  it("frees a pinned draft the operator deleted, pin and all", async () => {
+  it("frees a pinned patch the operator deleted, pin and all", async () => {
     const clocked = await createClockedApp("expiry-sweep-pinned-then-deleted");
 
     try {
@@ -2127,7 +2129,7 @@ describe("Patchy Cloud server", () => {
     }
   });
 
-  it("answers an admin draft read with the principal and the token to revoke", async () => {
+  it("answers an admin patch read with the principal and the token to revoke", async () => {
     const moderated = await createModerationApp("moderation-read");
 
     try {
@@ -2204,7 +2206,7 @@ describe("Patchy Cloud server", () => {
     }
   });
 
-  it("lists a principal's drafts for an admin and nobody else", async () => {
+  it("lists a principal's patches for an admin and nobody else", async () => {
     const moderated = await createModerationApp("moderation-list");
 
     try {
@@ -2395,7 +2397,7 @@ describe("Patchy Cloud server", () => {
     }
   });
 
-  it("lets a revoked token's drafts run out the clock they had left", async () => {
+  it("lets a revoked token's patches run out the clock they had left", async () => {
     const clocked = await createClockedApp("revocation-freeze");
 
     try {
@@ -2553,7 +2555,7 @@ describe("Patchy Cloud server", () => {
     }
   });
 
-  it("answers a moderation read for a draft the expiry sweep has already taken", async () => {
+  it("answers a moderation read for a patch the expiry sweep has already taken", async () => {
     const clocked = await createClockedApp("moderation-after-sweep");
 
     try {
@@ -2816,7 +2818,7 @@ describe("self-service minting", () => {
     }
   });
 
-  it("gives every mint its own principal with own-drafts-only rights", async () => {
+  it("gives every mint its own principal with own-patches-only rights", async () => {
     const minting = await createMintApp("mint-rights");
 
     try {
@@ -2898,7 +2900,7 @@ describe("self-service minting", () => {
     }
   });
 
-  it("subjects a minted principal's drafts to expiry like any other", async () => {
+  it("subjects a minted principal's patches to expiry like any other", async () => {
     const minting = await createMintApp("mint-expiry");
 
     try {

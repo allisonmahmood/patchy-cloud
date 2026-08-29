@@ -8,8 +8,8 @@
  */
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Result from "effect/Result";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import { Analytics } from "@patchy/analytics";
 import {
@@ -178,20 +178,18 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
               })
               .pipe(
                 Effect.catchTags({
+                  // An unavailable target — unknown, unowned, disabled, deleted
+                  // or expired — is one 404, so the answer never says which.
+                  PatchUnavailable: () => Effect.succeed(notFound()),
+                  PatchConflict: () =>
+                    Effect.succeed(refuse(Conflict, { ok: false, error: "Patch already exists." })),
                   SqlError: Effect.die,
                   InvalidObjectKey: Effect.die,
                   StoreUnavailable: Effect.die
-                }),
-                Effect.result
+                })
               );
-            if (Result.isFailure(uploaded)) {
-              // An unavailable target — unknown, unowned, disabled, deleted or
-              // expired — is one 404, so the answer never says which.
-              return uploaded.failure._tag === "PatchUnavailable"
-                ? notFound()
-                : refuse(Conflict, { ok: false, error: "Patch already exists." });
-            }
-            const recorded = uploaded.success;
+            if (HttpServerResponse.isHttpServerResponse(uploaded)) return uploaded;
+            const recorded = uploaded;
 
             // Reported once the upload is committed, so the event describes a
             // patch that exists. The size is the stored bytes, not the content.

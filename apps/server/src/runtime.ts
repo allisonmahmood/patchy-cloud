@@ -85,11 +85,6 @@ export type ServerServices =
 
 export type ServerRuntime = ManagedRuntime.ManagedRuntime<ServerServices, never>;
 
-/** Reads a patch version's HTML back; rejects with `ObjectNotFound` when nothing is there. */
-export function getObject(runtime: ServerRuntime, key: string): Promise<string> {
-  return runtime.runPromise(Effect.flatMap(ContentStore.ContentStore, (store) => store.get(key)));
-}
-
 /** Spends one attempt of a rate limit; see `Limits.consume`. */
 export function consume(
   runtime: ServerRuntime,
