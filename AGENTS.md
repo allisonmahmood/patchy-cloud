@@ -54,7 +54,7 @@ The five canonical triage roles, each label string equal to its name. See `docs/
 
 ### Domain docs
 
-Multi-context — a root `CONTEXT-MAP.md` pointing at one `CONTEXT.md` per context (hosting server, CLI publisher). See `docs/agents/domain.md`.
+Multi-context — a root `CONTEXT-MAP.md` naming the contexts (Auth, Patches, Serving, Publishing), the shared kernel and the infrastructure packages, each with a `CONTEXT.md` beside its code. See `docs/agents/domain.md`.
 
 ### Review specs
 
@@ -78,7 +78,7 @@ Before writing Effect code, read `node_modules/effect/AGENTS.md` — how Effect 
 
 ### Packages by capability
 
-Decided on [#56](https://github.com/allisonmahmood/patchy-cloud/issues/56); `CONTEXT-MAP.md` is the map. `core` (html-policy, ids), `api` (wire schemas, the `HttpApi`, the derived client), `sql` (client and Migrator, no tables), `auth`, `content-store`, `patches` (owns the expiry sweep), `serving` (pages, reads through `patches`), `analytics`, `limits`, `cli`. Each capability owns its migrations and its `HttpApi` group; `apps/server` is wiring plus the API guard.
+`CONTEXT-MAP.md` is the map (decided on [#56](https://github.com/allisonmahmood/patchy-cloud/issues/56)). Each capability owns its migrations and its `HttpApi` group; `apps/server` is wiring plus the API guard.
 
 ### Tests
 

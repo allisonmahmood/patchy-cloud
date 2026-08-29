@@ -45,7 +45,7 @@ settles:
 | `instanceUrl`     | the resolved instance URL                             | Know where the welcome draft would go. Trust it only when `instanceSource` is not `default`.                                                                                                                                                                                                                                                 |
 | `instanceSource`  | `flag` \| `dev-env` \| `env` \| `config` \| `default` | Settle step 2. `config` is a saved choice — confirm it, do not ask. `dev-env` is this checkout's own `pnpm dev` instance, chosen for as long as it runs. `env` and `flag` came from this session's environment and will not persist, so say that. `default` means nothing has been chosen: the URL shown is only the local fallback, so ask. |
 | `hasToken`        | boolean                                               | `true` → they already publish. The welcome upload reuses that key, so nothing is minted and there is no announcement to relay.                                                                                                                                                                                                               |
-| `tokenSource`     | `mint` \| `auth-set` \| `null`                        | Tell a key this machine minted (`mint`) from one saved by hand for their own instance (`auth-set`). `null` with `hasToken: true` means the key comes from the environment, not the state dir — say so rather than promising the saved-file story.                                                                                            |
+| `tokenSource`     | `mint` \| `auth-set` \| `null`                        | Tell a key this machine minted (`mint`) from one saved by hand from the operator (`auth-set`). `null` with `hasToken: true` means the key comes from the environment, not the state dir — say so rather than promising the saved-file story.                                                                                                 |
 | `stateDir`        | absolute path                                         | Locate `style.md` — it goes in this directory.                                                                                                                                                                                                                                                                                               |
 | `hasDefaultStyle` | boolean                                               | `true` → onboarding already ran. Say what the current default look is and ask keep-or-redo instead of asking cold.                                                                                                                                                                                                                           |
 | `cliVersion`      | version string                                        | Only worth mentioning if something later misbehaves.                                                                                                                                                                                                                                                                                         |
@@ -53,7 +53,7 @@ settles:
 ## The conversation
 
 One question at a time. The user is not technical. _Token_, _instance_, _mint_, and _API_
-never reach them outside the own-instance path; the credential is their **publishing key**.
+never reach them outside the operator-token path; the credential is their **publishing key**.
 
 ### 1. Style — the only question
 
@@ -72,9 +72,9 @@ re-asking. A project's own house style still overrides it.
 
 ### 2. Where pages live — settled from the probe, asked only if it must be
 
-There is no service to publish to by default. Pages go to a Patchy Cloud instance someone
-runs: the user's own server, their team's, or one they started locally from the repo. The
-probe already answered this in most cases, so read it before opening your mouth:
+Pages go to Patchy Cloud, or to the dev instance of a checkout; the CLI bakes in no
+address, so one has to be chosen. The probe already answered this in most cases, so read
+it before opening your mouth:
 
 - `instanceSource` is `config` — a saved choice. Confirm it in passing ("your pages go to
   `pages.example.com` — each gets its own shareable link") and move on.
@@ -86,12 +86,12 @@ probe already answered this in most cases, so read it before opening your mouth:
   their pages be published to? If they are running the server themselves on this machine,
   the fallback the probe printed is the right answer and no token step is needed.
 
-Once the address is known, operator vocabulary is correct for this step: take the
-instance's API URL, save the token their operator issued through a hidden prompt with
-`patchy auth set --api-url`, and confirm it with `patchy whoami` before continuing. See the
-own-instance section of `SKILL.md`. If they have no token yet, that is a question for
-whoever runs the instance — do not guess at one, and do not publish somewhere else
-instead.
+Once the address is known and the user holds an operator-issued token, operator
+vocabulary is correct for this step: save the token through a hidden prompt with
+`patchy auth set --api-url`, and confirm it with `patchy whoami` before continuing. See
+the operator-token section of `SKILL.md`. With no token, the first upload mints one if the
+instance allows it; if it does not, that is a question for Patchy Cloud's operator — do not
+guess at one, and do not publish somewhere else instead.
 
 ### 3. Publish the welcome draft
 
@@ -154,9 +154,9 @@ you; never invent one, and never carry these into a real session.
 > **User**: yes but the green should be darker, like the footer
 >
 > **Agent**: Got it — footer green it is. Saved. Last thing: nothing here says where your
-> pages should be published. What's the address of your Patchy Cloud server?
+> pages should be published. What's the Patchy Cloud address you were given?
 >
-> **User**: pages.greenfield.internal, IT gave me a token
+> **User**: pages.greenfield.internal, and IT gave me a token
 >
 > **Agent**: Perfect. I'll take the token in a hidden prompt so it never lands in the
 > chat… Verified against pages.greenfield.internal. Publishing your welcome page there

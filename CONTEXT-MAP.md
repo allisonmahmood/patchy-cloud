@@ -29,8 +29,8 @@ Packages that hold no domain vocabulary of their own; each defines the few terms
 - **Publishing → `api`**: the CLI creates and updates patches through the derived client and never through hand-built requests; it authenticates with tokens Auth mints (self-service, or minted for it by the Patchy Cloud operator)
 - **Serving → Patches**: a page reads the record and its HTML through `Content` and records the visit through `Patches`; Serving never touches bytes and never imports Auth
 - **Patches → Content store**: the upload contract and the sweep put, get and delete a patch's bytes through `ContentStore`; nothing else touches them
-- **Auth and Patches → SQL, Analytics, Limits**: both read and write through the `SQL` client, report through `Analytics`, and spend their per-minute limits (mint, create) through `Limits`. `patch_versions` names the Auth token that made a version and the visit rule reads whether it is revoked, so the two share one database — but Patches never imports Auth: every handler receives the principal from the bearer middleware
-- **Hosting → everything**: the server mounts both API groups behind Auth's bearer middleware, its guard identifies a caller through Auth for the requests the router never matches and spends the protected-API limit through `Limits`, it mounts Serving's pages, forks Patches' `ExpirySweep`, and builds Analytics in its scope so the finalizer flushes on shutdown
+- **Auth, Patches → SQL, Analytics, Limits**: both query through the `SQL` client, report through `Analytics` and spend their per-minute limits through `Limits`. They share one database (`patch_versions` names the token that made a version) but Patches never imports Auth: every handler receives the principal from the bearer middleware
+- **Hosting → everything**: mounts both API groups behind Auth's bearer middleware, the guard ahead of them, Serving's pages, and forks Patches' `ExpirySweep`; nothing here is a term of its own
 
 ## Decisions
 

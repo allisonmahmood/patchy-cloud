@@ -46,10 +46,10 @@ patchy validate './plan.html' && patchy upload './plan.html'
 
 Behavior:
 
-- There is no hosted or official instance, and no instance to fall back on: publishing
-  always goes to the instance the user or their operator names, through `--api-url`, the
-  `.local/dev/env` a `pnpm dev` wrote in this checkout, the `PATCHY_API_URL` environment
-  variable, or the saved config — in that order. With none of those set the CLI tries
+- Pages go to Patchy Cloud, or to the `pnpm dev` instance of a checkout. The CLI bakes in
+  no address for either: publishing always goes to the instance named through
+  `--api-url`, the `.local/dev/env` a `pnpm dev` wrote in this checkout, the
+  `PATCHY_API_URL` environment variable, or the saved config — in that order. With none of those set the CLI tries
   `http://localhost:3000`, which only works if a server is running locally. Settle the
   instance before uploading — `status --json` says which one is resolved and where that
   came from, and `upload` prints it before publishing.
@@ -62,7 +62,7 @@ Behavior:
 - Relay the mint announcement to the user in plain words — their publishing key is saved
   on this machine, and copying that file to another computer is how they publish from
   there with the same editing rights. _Token_, _instance_, and _mint_ are vocabulary for
-  you, not for them: off the own-instance path the user hears **publishing key**, and
+  you, not for them: off the operator-token path the user hears **publishing key**, and
   nothing is a token, an instance, or a mint. `references/onboarding.md` §3 has the
   wording.
 - Local validation runs before any mint, so invalid HTML never costs a key.
@@ -85,15 +85,12 @@ Behavior:
   announcement, when there is one, goes to stderr so stdout stays one document. Prefer it
   when the URL or the patch id is going into a script rather than to the user.
 
-## Publishing to the user's own instance
+## Publishing with an operator-issued token
 
-Take this path whenever the instance is one the user or their operator runs, which is
-every instance that is not a local server they started themselves. Operator vocabulary —
-instance, token, API URL — is correct here and nowhere else.
-
-An instance issues tokens through its operator; it does not hand them out on request
-unless its operator turned that on. Ask the user for the token their operator
-issued, then set it with a hidden prompt:
+Take this path when the user was handed a token by Patchy Cloud's operator instead of
+minting one: when self-service minting is off, or when they were issued a named
+credential. Operator vocabulary — instance, token, API URL — is correct here and nowhere
+else. Ask the user for the token, then set it with a hidden prompt:
 
 ```bash
 patchy auth set --api-url 'https://pages.example.com'

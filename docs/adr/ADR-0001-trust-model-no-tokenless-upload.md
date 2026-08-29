@@ -1,6 +1,6 @@
 # ADR-0001 — Trust model: self-service tokens, no tokenless upload
 
-- **Status**: Superseded by [ADR-0003](./ADR-0003-postgres-only.md) and [ADR-0004](./ADR-0004-cli-contract-for-agents.md) (2026-08-29)
+- **Status**: Superseded by [ADR-0002](./ADR-0002-api-is-the-contract-package.md), [ADR-0003](./ADR-0003-postgres-only.md) and [ADR-0004](./ADR-0004-cli-contract-for-agents.md) (2026-08-29)
 - **Date**: 2026-08-14
 - **Contexts**: Hosting (`apps/server`) and Publishing (`packages/cli`) — the decision spans both, so it lives in the root ADR home.
 - **Source**: resolution of #90, from Wayfinder map #87; implemented by #108 and its successors under spec #106.
@@ -14,7 +14,7 @@ the operators that refusal protected are all upstream's. And the "official insta
 named in decision 8 is upstream PatchPage's — this repo runs no instance and ships no
 production default._
 
-_Retired by the Effect v4 port, recorded on the [port map (#54)](https://github.com/allisonmahmood/patchy-cloud/issues/54) and its spec (#68). The trust model survives — every upload carries a bearer token, minting is server-side and zero-input, a self-service token reaches only what it owns, `admin` moderates — but it now lives where the code does: tokens, principals, minting and revocation in [Auth](../../packages/auth/CONTEXT.md), the records they own in [Patches](../../packages/patches/CONTEXT.md) under the `patch` name (`draft` below is the old word), the store both write to in ADR-0003, and the CLI's auto-mint in ADR-0004. The report-driven takedown loop this ADR anticipated was removed with reports. Everything below about private instances and operators other than Patchy Cloud no longer applies: Patchy Cloud is the only deployment, and `PATCHY_ALLOW_SELF_SERVICE_TOKENS` is simply its setting._
+_Retired by the Effect v4 port, recorded on the [port map (#54)](https://github.com/allisonmahmood/patchy-cloud/issues/54) and its spec (#68). The trust model survives — every upload carries a bearer token, minting is server-side and zero-input, a self-service token reaches only what it owns, `admin` moderates — but it now lives where the code does: tokens, principals, minting and revocation in [Auth](../../packages/auth/CONTEXT.md), the records they own in [Patches](../../packages/patches/CONTEXT.md) under the `patch` name (`draft` below is the old word), the wire shapes of mint, `me` and revoke in ADR-0002's contract package, the store both write to in ADR-0003, and the CLI's auto-mint in ADR-0004. The report-driven takedown loop this ADR anticipated was removed with reports. Everything below about private instances and operators other than Patchy Cloud no longer applies: Patchy Cloud is the only deployment, and `PATCHY_ALLOW_SELF_SERVICE_TOKENS` is simply its setting._
 
 ## Context
 
