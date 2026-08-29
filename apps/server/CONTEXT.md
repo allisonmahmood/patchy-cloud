@@ -1,20 +1,8 @@
 # Hosting
 
-The service that receives uploads and serves published pages. Includes its supporting packages `@patchy/db`, `@patchy/storage`, and `@patchy/config`.
+The service that receives uploads and serves published pages. Includes its supporting packages `@patchy/db`, `@patchy/storage`, and `@patchy/config`. Who may call it — tokens, principals, self-service minting, revocation — is [Auth](../packages/auth/CONTEXT.md)'s; the server serves that context's API group through its runtime seam and enforces the per-route scope on its own routes.
 
 ## Language
-
-**Self-service token**:
-An auth token the server mints for anyone who asks, on instances that allow it; it controls exactly the drafts it creates.
-_Avoid_: anonymous token, first-run token
-
-**Self-service minting**:
-The zero-input, server-side operation that creates a self-service token and returns its plaintext exactly once.
-_Avoid_: signup, registration, anonymous uploads (retired — there is no upload without a token)
-
-**Principal**:
-The internal ownership row behind a token, one per self-service mint. Plumbing, never surfaced to users.
-_Avoid_: account (in product language)
 
 **Draft expiry**:
 The guardrail that removes a draft for good when its retention clock runs out. An upload resets the clock to the full window; a visit tops the remaining time up to the visit-extension window. Expiry is a hard delete — content and record both gone, no recovery — and applies to every draft regardless of who owns it, unless the draft is pinned.
@@ -32,14 +20,6 @@ _Avoid_: view, hit, page load (a visit is a serving that succeeded, not a reques
 A draft that still counts against its creator's quota: neither deleted nor disabled. A draft leaves the tally the moment it is deleted or disabled, and for good when expiry hard-deletes it — an expired draft still counts until the sweep removes it, because its row and its stored content are both still there. Which token created it is fixed at creation; a later update by another token never moves it.
 _Avoid_: active draft, published draft (every draft is published), open draft
 
-**Mint record**:
-The row a self-service mint leaves behind: which principal and token were created, from what source address, and when. It is what the mint quota counts, and it outlives revocation — a token can be turned off, but where it came from stays reviewable.
-_Avoid_: audit log, signup record
-
-**Mint quota**:
-The ceiling on self-service mints one source address may be handed. Counted from the database at mint time over a rolling day, so it survives a restart — unlike the per-minute mint rate, which is in-memory and may reset. Mints the server could not attribute to an address share one bucket rather than each escaping the count.
-_Avoid_: mint limit (ambiguous with the per-minute mint rate), signup limit
-
 **Draft quota**:
 The ceiling on live drafts one token may hold at once. Counted from the database on every create, so it survives a restart — unlike the per-minute create limit, which is in-memory and may reset. Per token, not per account, and uniform: no exemption for admin tokens.
 _Avoid_: draft limit (ambiguous with the per-minute create limit), storage quota (this counts drafts, not bytes)
@@ -47,10 +27,6 @@ _Avoid_: draft limit (ambiguous with the per-minute create limit), storage quota
 **Pinned draft**:
 A draft exempted from expiry by an operator, for pages the instance itself maintains (welcome page, docs). Pinning is an admin-only act; a pinned draft is otherwise an ordinary draft — served, updatable by its owner, counted against its creator's quota. The clock keeps running underneath the pin and visits keep topping it up, so unpinning hands the draft back to whatever time it had left: a page still being read keeps its visit window, and one nobody has read in months expires at once. A pin only ever holds a draft that is in service: deleting or disabling one ends its pin, and a draft already deleted or disabled cannot be pinned — moderation and deletion outrank a pin, so neither can leave content the sweep may never take.
 _Avoid_: permanent draft, system page
-
-**Revocation**:
-An operator's act of permanently disabling an auth token. Revoked is a state the token enters, never a deletion — the record of where and when it was minted survives for later review. A revoked token can do nothing; its drafts stay up until draft expiry, but their clock only runs down from that moment: visits no longer top it up, and nothing self-service can touch them again.
-_Avoid_: ban, token deletion
 
 **Serving guarantee**:
 A fixed promise about how a published draft reaches its reader, binding on every served response. There are four, and they hold together: pages are **share-a-link-never-be-found** (`X-Robots-Tag: noindex` keeps them out of search results, and that is the only measure taken against discovery); readers are **unwatched** (no cookies, no auth or session on the serving host, a fully locked CSP with no script sources and so no analytics JavaScript); draft URLs are **open to machines** — never bot-blocked, challenged, or put behind a WAF human-check, because an agent handed a pasted link must be able to fetch it; and caching is **keyed to URL shape** — a version URL names content that can never change, so it is cached for a year and marked immutable, while the latest-draft URL follows the draft and gets a short window that lets an update land on its own. Everything else, API routes included, stays `no-store`. A cache lifetime is never coupled to a CDN purge API: the window expiring is the only invalidation there is.

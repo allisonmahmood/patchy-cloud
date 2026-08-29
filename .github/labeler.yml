@@ -3,8 +3,8 @@
 # The first three areas mirror the contexts in CONTEXT-MAP.md, so pull
 # requests and the domain docs stay in the same vocabulary. `db`, `storage`
 # and `config` roll into `area:server` because docs/agents/domain.md treats
-# them as the hosting context's supporting packages. `analytics` and `limits`
-# are the hosting server's first ported capability packages.
+# them as the hosting context's supporting packages. `analytics`, `limits`
+# and `auth` are the hosting server's ported capability packages.
 #
 # A pull request can carry several area labels; that is intended.
 
@@ -17,6 +17,7 @@
           - "packages/config/**"
           - "packages/analytics/**"
           - "packages/limits/**"
+          - "packages/auth/**"
 
 "area:cli":
   - changed-files:

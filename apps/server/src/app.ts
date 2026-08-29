@@ -4,7 +4,6 @@ import Fastify from "fastify";
 import type { ServerConfig } from "@patchy/config";
 import { isUploadTargetError } from "@patchy/db";
 import type {
-  ApiTokenAuth,
   ModeratedDraftRecord,
   PatchyDb,
   RecordUploadInput,
@@ -16,14 +15,10 @@ import type { HtmlStorage } from "@patchy/storage";
 import {
   BadRequest,
   Conflict,
-  CreatedToken,
-  CreateTokenRequest,
   DisableRequest,
   Forbidden,
-  Identity,
+  type Identity,
   InvalidHtml,
-  MintedToken,
-  MintQuotaExceeded,
   type ModeratedPatch,
   NotFound,
   Ok,
@@ -34,18 +29,17 @@ import {
   PrincipalPatches,
   RateLimited,
   RequestTargetTooLong,
-  RevokedToken,
-  SelfServiceDisabled,
   Unauthorized,
   UploadCreated,
   UploadRequest,
   UploadUpdated
 } from "@patchy/api";
-import { contentHash, newDraftId, newInternalId, randomToken, validateHtml } from "@patchy/core";
+import { Bearer, Tokens } from "@patchy/auth";
+import { contentHash, newDraftId, newInternalId, validateHtml } from "@patchy/core";
 import type { UploadMetadata } from "@patchy/core";
 import { createExpirySweep, type ExpirySweepResult } from "./expiry-sweep.js";
 import { getDraftPublicUrl } from "./public-url.js";
-import { consume, track, type ServerRuntime } from "./runtime.js";
+import { authenticate, consume, serveAuthApi, track, type ServerRuntime } from "./runtime.js";
 import { renderDraftWrapper, renderHome, renderNotFound } from "./render.js";
 import {
   DRAFT_CONTENT_SECURITY_POLICY,
@@ -60,19 +54,17 @@ export interface CreateAppOptions {
   config: ServerConfig;
   db: PatchyDb;
   storage: HtmlStorage;
-  clock?: () => number;
-  /** The Effect side — analytics and the rate limiter — behind one runtime. */
+  /** The Effect side — analytics, the rate limiter, tokens and the auth API — behind one runtime. */
   runtime: ServerRuntime;
 }
 
 /**
  * The per-minute limits the app enforces. Only these live in memory; the
- * long-window ceilings (mint quota, draft quota) are database counts, so a
- * restart empties these buckets but not those. Every limit shares one store,
- * so each prefixes its keys with its own name.
+ * long-window ceiling (draft quota) is a database count, so a restart empties
+ * these buckets but not that. Every limit shares one store, so each prefixes
+ * its keys with its own name. The mint limit is `@patchy/auth`'s.
  */
-type RateLimitName =
-  "protected-api" | "authenticated-upload" | "self-service-mint" | "draft-create";
+type RateLimitName = "protected-api" | "authenticated-upload" | "draft-create";
 
 type ConsumeLimit = (name: RateLimitName, key: string) => Promise<Limits.ConsumeResult>;
 
@@ -87,7 +79,7 @@ declare module "fastify" {
   }
 
   interface FastifyRequest {
-    auth?: ApiTokenAuth;
+    auth?: Identity;
     authState?: ApiRequestAuthState;
     preBodyAuthorizedScopes?: Set<string>;
     preBodyUploadLimiterConsumed?: boolean;
@@ -95,10 +87,7 @@ declare module "fastify" {
 }
 
 type ApiRequestAuthState =
-  { kind: "missing" } | { kind: "invalid" } | { kind: "authenticated"; auth: ApiTokenAuth };
-
-export type AuthorizationCredential =
-  { kind: "missing" } | { kind: "invalid" } | { kind: "bearer"; token: string };
+  { kind: "missing" } | { kind: "invalid" } | { kind: "authenticated"; auth: Identity };
 
 interface ProtectedApiHookOptions {
   uploadLimit?: boolean;
@@ -115,12 +104,9 @@ type ApiRequestTargetPolicy =
     };
 
 /**
- * Self-service minting's route. Deliberately under `/api/tokens/` and just as
- * deliberately not `/api/tokens`: the admin token-creation endpoint keeps its
- * name, its body, and its admin-only posture, and this is a different operation
- * with a different audience — zero input, no credential, its own guardrails.
- *
- * It is the service's only unauthenticated write.
+ * Self-service minting's route, the service's only unauthenticated write. The
+ * operation is `@patchy/auth`'s; the path is named here because the routing
+ * policy below has to know it admits a request with no credential.
  */
 const SELF_SERVICE_MINT_PATH = "/api/tokens/self-service";
 
@@ -152,14 +138,9 @@ type MarkedIncomingMessage = IncomingMessage & {
 };
 
 export function createApp(options: CreateAppOptions): FastifyInstance {
-  const clock = options.clock ?? Date.now;
   const limitPerMinute: Record<RateLimitName, number> = {
     "protected-api": options.config.protectedApiRateLimitPerMinute,
     "authenticated-upload": options.config.authenticatedUploadRateLimitPerMinute,
-    // Keyed by source address rather than by token, since a caller asking
-    // for its first token has no token to key on yet. The only limit on an
-    // unauthenticated route.
-    "self-service-mint": options.config.selfServiceMintRateLimitPerMinute,
     "draft-create": options.config.draftCreateRateLimitPerMinute
   };
   const consumeLimit: ConsumeLimit = (name, key) =>
@@ -183,7 +164,7 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
     }
   });
 
-  app.addHook("onRequest", protectedApiPrefixGuard(options.db, consumeLimit));
+  app.addHook("onRequest", protectedApiPrefixGuard(options.runtime, consumeLimit));
 
   const protectedApi = (requiredScope?: string, hookOptions: ProtectedApiHookOptions = {}) =>
     protectedApiRouteHook(requiredScope, hookOptions, consumeLimit);
@@ -204,43 +185,16 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
 
   app.get("/healthz", async () => ({ ok: true }));
 
-  app.get("/api/me", { onRequest: protectedApi() }, async (request, reply) => {
-    const auth = authenticatedRequest(request);
-
-    return sendWire(reply, Identity, {
-      accountId: auth.accountId,
-      accountName: auth.accountName,
-      apiTokenId: auth.id,
-      apiTokenName: auth.name,
-      scopes: auth.scopes
-    });
-  });
-
-  app.post("/api/tokens", { onRequest: protectedApi("admin") }, async (request, reply) => {
-    const auth = authenticatedRequest(request);
-
-    const body = decodeBody(CreateTokenRequest, request.body);
-    if (!body.ok) return sendMalformedBody(reply);
-    const token = `pp_${randomToken(32)}`;
-    const scopes = normalizeScopes(body.value.scopes);
-    const apiToken = await options.db.createApiToken({
-      accountId: auth.accountId,
-      name: cleanText(body.value.name) || "CLI API Token",
-      token,
-      scopes
-    });
-
-    // A token minted is a token minted, whichever door it came through. The
-    // flag is what tells the operator's own issuing apart from the self-service
-    // flow, so the event list stays one narrative rather than two.
-    track(options.runtime, {
-      name: "token.minted",
-      principalId: auth.accountId,
-      properties: { apiTokenId: apiToken.id, selfService: false }
-    });
-
-    return sendWire(reply, CreatedToken, { ok: true, apiToken, token });
-  });
+  // The `auth` group — `/api/me`, token issue and revocation, the mint — is
+  // answered by `@patchy/auth`'s handlers through the runtime seam. The
+  // guard above still runs first, so the auth-before-body contract and the
+  // per-minute protected-API limit are exactly what they are for every other
+  // protected route; the handlers check the admin scope again themselves.
+  const authApi = (request: FastifyRequest, reply: FastifyReply) =>
+    serveAuthApi(options.runtime, request, reply);
+  app.get("/api/me", { onRequest: protectedApi() }, authApi);
+  app.post("/api/tokens", { onRequest: protectedApi("admin") }, authApi);
+  app.post("/api/tokens/:apiTokenId/revoke", { onRequest: protectedApi("admin") }, authApi);
 
   // The mint route parses its own body. The operation takes no input at all, so
   // both an absent body and `{}` have to be accepted — and Fastify's stock JSON
@@ -269,40 +223,8 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
       }
     );
 
-    mintScope.post(SELF_SERVICE_MINT_PATH, async (request, reply) =>
-      mintSelfServiceToken(options, consumeLimit, clock, request, reply)
-    );
+    mintScope.post(SELF_SERVICE_MINT_PATH, authApi);
   });
-
-  // Revocation is the moderation loop's last step and its only irreversible
-  // one. It sets a state, never deletes: the row survives with its mint
-  // provenance, the token's drafts stay up until expiry with their top-ups
-  // frozen, and the token itself becomes indistinguishable from a bad one on
-  // every route. There is no un-revoke — a replacement is a fresh mint.
-  app.post(
-    "/api/tokens/:apiTokenId/revoke",
-    { onRequest: protectedApi("admin") },
-    async (request, reply) => {
-      const apiTokenId = (request.params as { apiTokenId: string }).apiTokenId;
-      const revocation = await options.db.revokeApiToken(apiTokenId);
-      if (!revocation) {
-        return sendWire(reply, NotFound, { ok: false, error: "API token not found." });
-      }
-
-      // Idempotent: revoking twice is the same answer, with the original
-      // moment intact, because that moment is when the freeze began.
-      return sendWire(reply, RevokedToken, {
-        ok: true,
-        alreadyRevoked: revocation.alreadyRevoked,
-        apiToken: {
-          id: revocation.id,
-          name: revocation.name,
-          principalId: revocation.accountId,
-          revokedAt: revocation.revokedAt
-        }
-      });
-    }
-  );
 
   // The moderation loop's first step: a flagged URL, answered with the
   // principal behind it and the token to revoke. Admin-scoped, and deliberately
@@ -386,7 +308,7 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
         // client parked at the quota is throttled instead of being free to
         // re-count the database at the higher upload-limit rate. The cost is
         // that such a client sees 403 flip to 429 once its bucket empties.
-        const createAttempt = await consumeLimit("draft-create", auth.id);
+        const createAttempt = await consumeLimit("draft-create", auth.apiTokenId);
         if (!createAttempt.allowed) {
           sendRateLimited(reply, createAttempt);
           return reply;
@@ -395,7 +317,7 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
         // Recounted from the database every time, so the ceiling outlives a
         // restart. Concurrent creates can overshoot it by at most the burst the
         // per-minute limiter above allows through.
-        const liveDrafts = await options.db.countLiveDraftsByCreatorApiToken(auth.id);
+        const liveDrafts = await options.db.countLiveDraftsByCreatorApiToken(auth.apiTokenId);
         if (liveDrafts >= options.config.liveDraftsPerToken) {
           return sendLiveDraftQuotaExceeded(reply, options.config.liveDraftsPerToken);
         }
@@ -413,7 +335,7 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
         draftId,
         versionId,
         accountId: auth.accountId,
-        apiTokenId: auth.id,
+        apiTokenId: auth.apiTokenId,
         title,
         objectKey,
         contentHash: contentHash(html),
@@ -458,7 +380,7 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
         principalId: auth.accountId,
         properties: {
           draftId: upload.draftId,
-          apiTokenId: auth.id,
+          apiTokenId: auth.apiTokenId,
           versionNumber: upload.versionNumber,
           htmlBytes: uploadInput.fileSize
         }
@@ -487,14 +409,14 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
       if (!body.ok) return sendMalformedBody(reply);
       const reason = cleanText(body.value.reason) || "Disabled.";
       const disabled = await options.db.disableDraft(draftId, auth.accountId, reason, {
-        canModerateAnyPrincipal: hasScope(auth, "admin")
+        canModerateAnyPrincipal: Tokens.hasScope(auth, "admin")
       });
       if (!disabled) return sendPatchNotFound(reply);
 
       track(options.runtime, {
         name: "draft.disabled",
         principalId: auth.accountId,
-        properties: { draftId, admin: hasScope(auth, "admin") }
+        properties: { draftId, admin: Tokens.hasScope(auth, "admin") }
       });
       return sendWire(reply, Ok, { ok: true });
     }
@@ -527,14 +449,14 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
 
     const draftId = (request.params as { patchId: string }).patchId;
     const deleted = await options.db.deleteDraft(draftId, auth.accountId, {
-      canModerateAnyPrincipal: hasScope(auth, "admin")
+      canModerateAnyPrincipal: Tokens.hasScope(auth, "admin")
     });
     if (!deleted) return sendPatchNotFound(reply);
 
     track(options.runtime, {
       name: "draft.deleted",
       principalId: auth.accountId,
-      properties: { draftId, admin: hasScope(auth, "admin") }
+      properties: { draftId, admin: Tokens.hasScope(auth, "admin") }
     });
     return sendWire(reply, Ok, { ok: true });
   });
@@ -568,87 +490,6 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
   });
 
   return app;
-}
-
-/**
- * Self-service minting: the zero-input operation that hands a caller a token
- * and the fresh principal that token controls.
- *
- * Three refusals guard it, and the order they run in is the point. The enabled
- * flag first, because a private instance owes an unauthenticated caller nothing
- * but "no". The per-minute rate next, before the quota is counted, for the same
- * reason draft creates do it in that order: a caller parked at the daily
- * ceiling should be throttled rather than left free to re-count the database as
- * fast as it can ask. The daily quota last, because it is the expensive one.
- */
-async function mintSelfServiceToken(
-  options: CreateAppOptions,
-  consumeLimit: ConsumeLimit,
-  clock: () => number,
-  request: FastifyRequest,
-  reply: FastifyReply
-): Promise<FastifyReply> {
-  if (!options.config.allowSelfServiceTokens) {
-    return sendWire(reply, SelfServiceDisabled, {
-      ok: false,
-      error: "This instance does not issue self-service tokens. Ask its operator for a token.",
-      code: "self_service_disabled"
-    });
-  }
-
-  const sourceIp = request.ip || null;
-
-  const mintAttempt = await consumeLimit("self-service-mint", sourceIp ?? "");
-  if (!mintAttempt.allowed) {
-    sendRateLimited(reply, mintAttempt);
-    return reply;
-  }
-
-  // Recounted from the database on every mint, so the ceiling outlives a
-  // restart. Concurrent mints can overshoot it by at most the burst the
-  // per-minute limiter above lets through.
-  const quota = options.config.selfServiceMintsPerIpPerDay;
-  const recentMints = await options.db.countSelfServiceMintsBySourceIp(sourceIp);
-  if (recentMints >= quota) {
-    return sendWire(reply, MintQuotaExceeded, {
-      ok: false,
-      // "Within a day", not "tomorrow": the window rolls off each mint 24 hours
-      // after it happened, so the next slot opens on the oldest mint's clock
-      // rather than at midnight.
-      error: `Mint quota reached: ${quota} self-service tokens per address per 24 hours. Reuse the token you already hold, or retry once the oldest of those mints is a day old.`,
-      code: "mint_quota_exceeded",
-      quota
-    });
-  }
-
-  const token = `pp_${randomToken(32)}`;
-  const minted = await options.db.mintSelfServiceToken({
-    token,
-    name: selfServiceTokenName(clock()),
-    sourceIp
-  });
-
-  // The principal and its token, and nothing about where the mint came from:
-  // the source address is what the mint quota counts and what the mint record
-  // keeps, not something to report.
-  track(options.runtime, {
-    name: "token.minted",
-    principalId: minted.accountId,
-    properties: { apiTokenId: minted.apiTokenId, selfService: true }
-  });
-
-  // The plaintext appears here and nowhere else, exactly once. Only its hash is
-  // stored, so no later response — and no operator — can produce it again.
-  return sendWire(reply, MintedToken, { ok: true, token });
-}
-
-/**
- * The internal name a mint assigns its principal and token. The client chooses
- * nothing here — the operation takes no input — so the mint date is what makes
- * the row legible to an operator reading the table later.
- */
-function selfServiceTokenName(now: number): string {
-  return `Self-service token ${new Date(now).toISOString().slice(0, 10)}`;
 }
 
 async function renderDraft(
@@ -690,7 +531,7 @@ async function renderDraft(
   return reply.type("text/html").send(renderDraftWrapper({ draft, version, html }));
 }
 
-function protectedApiPrefixGuard(db: PatchyDb, consumeLimit: ConsumeLimit) {
+function protectedApiPrefixGuard(runtime: ServerRuntime, consumeLimit: ConsumeLimit) {
   return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
     const targetPolicy = classifyApiRequestTargetPolicy(request.url);
     if (!targetPolicy.protected) return;
@@ -701,7 +542,7 @@ function protectedApiPrefixGuard(db: PatchyDb, consumeLimit: ConsumeLimit) {
       return;
     }
 
-    const authState = await authenticateApiRequest(db, request);
+    const authState = await authenticateApiRequest(runtime, request);
     request.authState = authState;
 
     // No configuration admits a tokenless request: a missing credential and a
@@ -720,7 +561,7 @@ function protectedApiPrefixGuard(db: PatchyDb, consumeLimit: ConsumeLimit) {
     }
 
     if (targetPolicy.requiredScope) {
-      if (!hasScope(authState.auth, targetPolicy.requiredScope)) {
+      if (!Tokens.hasScope(authState.auth, targetPolicy.requiredScope)) {
         sendForbidden(reply);
         return;
       }
@@ -728,7 +569,7 @@ function protectedApiPrefixGuard(db: PatchyDb, consumeLimit: ConsumeLimit) {
     }
 
     if (targetPolicy.uploadLimit) {
-      const uploadAttempt = await consumeLimit("authenticated-upload", authState.auth.id);
+      const uploadAttempt = await consumeLimit("authenticated-upload", authState.auth.apiTokenId);
       request.preBodyUploadLimiterConsumed = true;
       if (!uploadAttempt.allowed) {
         sendRateLimited(reply, uploadAttempt);
@@ -757,13 +598,13 @@ function protectedApiRouteHook(
 
     const scopeAlreadyChecked =
       requiredScope && request.preBodyAuthorizedScopes?.has(requiredScope);
-    if (requiredScope && !scopeAlreadyChecked && !hasScope(auth, requiredScope)) {
+    if (requiredScope && !scopeAlreadyChecked && !Tokens.hasScope(auth, requiredScope)) {
       sendForbidden(reply);
       return;
     }
 
     if (options.uploadLimit && !request.preBodyUploadLimiterConsumed) {
-      const uploadAttempt = await consumeLimit("authenticated-upload", auth.id);
+      const uploadAttempt = await consumeLimit("authenticated-upload", auth.apiTokenId);
       request.preBodyUploadLimiterConsumed = true;
       if (!uploadAttempt.allowed) {
         sendRateLimited(reply, uploadAttempt);
@@ -896,10 +737,6 @@ function normalizePolicyPath(pathname: string): string {
   return collapsed.length > 1 ? collapsed.replace(/\/+$/g, "") : collapsed;
 }
 
-function hasScope(auth: ApiTokenAuth, scope: string): boolean {
-  return auth.scopes.includes(scope) || auth.scopes.includes("admin");
-}
-
 function markPreBodyAuthorizedScope(request: FastifyRequest, scope: string): void {
   request.preBodyAuthorizedScopes ??= new Set();
   request.preBodyAuthorizedScopes.add(scope);
@@ -995,60 +832,18 @@ function sendApiNotFound(reply: FastifyReply): void {
 }
 
 async function authenticateApiRequest(
-  db: PatchyDb,
+  runtime: ServerRuntime,
   request: FastifyRequest
 ): Promise<ApiRequestAuthState> {
-  const credential = authorizationCredential(request);
+  const credential = Bearer.parse(request.headers.authorization);
   if (credential.kind === "missing") return { kind: "missing" };
   if (credential.kind === "invalid") return { kind: "invalid" };
 
-  const auth = await db.findApiTokenByToken(credential.token);
+  const auth = await authenticate(runtime, credential.token);
   return auth ? { kind: "authenticated", auth } : { kind: "invalid" };
 }
 
-function authorizationCredential(request: FastifyRequest): AuthorizationCredential {
-  return classifyAuthorizationHeader(request.headers.authorization);
-}
-
-export function classifyAuthorizationHeader(
-  authHeader: string | undefined
-): AuthorizationCredential {
-  if (authHeader === undefined) return { kind: "missing" };
-
-  const bearerScheme = "bearer";
-  if (authHeader.length <= bearerScheme.length) return { kind: "invalid" };
-  for (let index = 0; index < bearerScheme.length; index += 1) {
-    if ((authHeader.charCodeAt(index) | 32) !== bearerScheme.charCodeAt(index)) {
-      return { kind: "invalid" };
-    }
-  }
-
-  let cursor = bearerScheme.length;
-  if (!isAuthorizationWhitespace(authHeader.charCodeAt(cursor))) {
-    return { kind: "invalid" };
-  }
-  while (cursor < authHeader.length && isAuthorizationWhitespace(authHeader.charCodeAt(cursor))) {
-    cursor += 1;
-  }
-
-  const tokenStart = cursor;
-  while (cursor < authHeader.length && !isAuthorizationWhitespace(authHeader.charCodeAt(cursor))) {
-    cursor += 1;
-  }
-  if (cursor === tokenStart) return { kind: "invalid" };
-
-  const token = authHeader.slice(tokenStart, cursor);
-  while (cursor < authHeader.length && isAuthorizationWhitespace(authHeader.charCodeAt(cursor))) {
-    cursor += 1;
-  }
-  return cursor === authHeader.length ? { kind: "bearer", token } : { kind: "invalid" };
-}
-
-function isAuthorizationWhitespace(charCode: number): boolean {
-  return charCode === 0x20 || charCode === 0x09;
-}
-
-function authenticatedRequest(request: FastifyRequest): ApiTokenAuth {
+function authenticatedRequest(request: FastifyRequest): Identity {
   if (!request.auth) {
     throw new Error("Authenticated request is missing API token auth state.");
   }
@@ -1067,18 +862,8 @@ function normalizeMetadata(value: unknown): UploadMetadata {
   };
 }
 
-function normalizeScopes(value: unknown): string[] {
-  if (!Array.isArray(value)) return ["upload"];
-  const scopes = value.map((scope) => cleanText(scope)).filter(isString);
-  return scopes.length ? [...new Set(scopes)] : ["upload"];
-}
-
 function cleanText(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed ? trimmed.slice(0, 255) : null;
-}
-
-function isString(value: string | null): value is string {
-  return typeof value === "string";
 }

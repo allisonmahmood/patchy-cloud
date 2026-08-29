@@ -14,8 +14,8 @@ import path from "node:path";
 import { TextDecoder, types as utilTypes } from "node:util";
 import { newInternalId, sha256 } from "@patchy/core";
 import { applyJsonMigrations, JSON_MIGRATION_LEDGER_KEY, SCHEMA_MIGRATIONS } from "./migrations.js";
-import { BOOTSTRAP_API_TOKEN_ID, BOOTSTRAP_PRINCIPAL_ID } from "./internal-principals.js";
-import { countsTowardMintQuota } from "./mint-quota.js";
+import { Tokens } from "@patchy/auth";
+import * as Duration from "effect/Duration";
 import { expiryAfterUpload, expiryAfterVisit, isExpired } from "./retention.js";
 import { UploadTargetError } from "./types.js";
 import type { JsonMigrationState, SchemaMigration } from "./migrations.js";
@@ -200,9 +200,9 @@ export class JsonFilePatchyDb implements PatchyDb {
 
   async countSelfServiceMintsBySourceIp(sourceIp: string | null): Promise<number> {
     const state = await this.readState();
-    const now = this.clock();
+    const windowStart = this.clock() - Duration.toMillis(Tokens.MINT_QUOTA_WINDOW);
     return state.tokenMints.filter(
-      (mint) => mint.sourceIp === sourceIp && countsTowardMintQuota(mint.createdAt, now)
+      (mint) => mint.sourceIp === sourceIp && Date.parse(mint.createdAt) >= windowStart
     ).length;
   }
 
@@ -1104,12 +1104,12 @@ function ensureBootstrapState(
 ): void {
   if (!bootstrapApiToken) return;
 
-  const account = state.accounts.find((row) => row.id === BOOTSTRAP_PRINCIPAL_ID);
+  const account = state.accounts.find((row) => row.id === Tokens.BOOTSTRAP_PRINCIPAL_ID);
   if (account) {
     account.updatedAt = now;
   } else {
     state.accounts.push({
-      id: BOOTSTRAP_PRINCIPAL_ID,
+      id: Tokens.BOOTSTRAP_PRINCIPAL_ID,
       name: "Bootstrap Account",
       createdAt: now,
       updatedAt: now,
@@ -1118,15 +1118,15 @@ function ensureBootstrapState(
     });
   }
 
-  const token = state.apiTokens.find((row) => row.id === BOOTSTRAP_API_TOKEN_ID);
+  const token = state.apiTokens.find((row) => row.id === Tokens.BOOTSTRAP_API_TOKEN_ID);
   if (token) {
     token.tokenHash = sha256(bootstrapApiToken);
     token.scopes = ["admin", "upload"];
     token.revokedAt = null;
   } else {
     state.apiTokens.push({
-      id: BOOTSTRAP_API_TOKEN_ID,
-      accountId: BOOTSTRAP_PRINCIPAL_ID,
+      id: Tokens.BOOTSTRAP_API_TOKEN_ID,
+      accountId: Tokens.BOOTSTRAP_PRINCIPAL_ID,
       name: "Bootstrap API Token",
       tokenHash: sha256(bootstrapApiToken),
       scopes: ["admin", "upload"],

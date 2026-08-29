@@ -53,13 +53,15 @@ which looks like the clock working and proves nothing.
 
 ## Schema migrations
 
-One ordered list in `src/migrations.ts` — `SCHEMA_MIGRATIONS` — is the schema for
-both drivers. Each entry has an ID and an optional step per driver, as
-`0003_drafts_expiry_columns` does for the retention clock's anchor:
+One ordered list in `src/migrations.ts` — `SCHEMA_MIGRATIONS` — is the draft
+half of the schema for both drivers; `accounts`, `api_tokens` and `token_mints`
+are `@patchy/auth`'s migrations 1 and 2, so the list starts at 3. Each entry has
+an ID and an optional step per driver, as `0005_drafts_expiry_columns` does for
+the retention clock's anchor:
 
 ```ts
 {
-  id: "0003_drafts_expiry_columns",
+  id: "0005_drafts_expiry_columns",
   postgres: `ALTER TABLE drafts ADD COLUMN expires_at TIMESTAMPTZ; /* … */`,
   json(state) {
     /* default-fill `expiresAt` on every stored draft row */
@@ -72,19 +74,20 @@ example of an additive column with a backfill, and its Postgres step shows the
 whole additive sequence — add the column, backfill every existing row, only then
 constrain it.
 
-`initialize()` seeds the bootstrap token when one is configured. Seeding is not
-a migration: it re-runs on every startup and must stay idempotent.
-`src/internal-principals.ts` names the two fixed IDs it seeds — a fixed ID is a
-contract with a deployed database, so it is spelled once.
+The JSON driver's `initialize()` seeds the bootstrap token when one is
+configured; on Postgres the `@patchy/auth` tokens layer seeds it from
+`PATCHY_BOOTSTRAP_API_TOKEN`. Seeding is not a migration: it re-runs on every
+startup and must stay idempotent. `Tokens` in `@patchy/auth` names the two fixed
+IDs it seeds — a fixed ID is a contract with a deployed database, so it is
+spelled once.
 
-**`0002_drafts_account_id_index`, `0003_drafts_expiry_columns`,
-`0004_drafts_pinned_at`, and `0005_self_service_mint_records` are the shipped
+**`0004_drafts_account_id_index`, `0005_drafts_expiry_columns`,
+`0006_drafts_pinned_at`, and `0007_self_service_mint_records` are the shipped
 additive migrations** — each ships permanently and none supersedes another;
-`0002` exists because ownership lookups scan `drafts` by account, `0004` adds
-the pin plus the partial index the sweep scans, and `0005` adds the
-`token_mints` table the per-address mint quota counts plus the provenance mark
-on `accounts`. (`0006_draft_reports` shipped for a while and was removed with the
-report feature before any production database existed.) The **probe migrations
+`0004` exists because ownership lookups scan `drafts` by account, `0006` adds
+the pin plus the partial index the sweep scans, and `0007` adds the JSON
+driver's mint records (on Postgres they are `@patchy/auth`'s `token_mints`).
+The **probe migrations
 in `src/migration-fixtures.fixture.ts` are test-only** and never ship: they
 exercise a column-level additive step on the JSON driver without putting a
 placeholder column in the shipped schema.
@@ -92,12 +95,12 @@ placeholder column in the shipped schema.
 ### Postgres
 
 The Postgres steps run through Effect's Migrator in `@patchy/sql`, behind the
-`migrateDatabase` seam in `src/migrate.ts` (`packages/sql/CONTEXT.md` has the
-contract). The Migrator's `schema_migrations` ledger is the guard, so a step is
+`migrateDatabase` seam in `src/migrate.ts`, which composes them with
+`@patchy/auth`'s record (`packages/sql/CONTEXT.md` has the contract). The Migrator's `schema_migrations` ledger is the guard, so a step is
 plain DDL — no `IF NOT EXISTS` — and every pending step runs in one transaction
 under an `ACCESS EXCLUSIVE` lock: a failing step rolls the whole batch back. The
 server, the dev runner and the vitest template database all migrate through the
-seam before the driver is opened; `PostgresPatchyDb.initialize()` only seeds.
+seam before the driver is opened (`openPatchyDb` in `src/factory.ts` does both).
 
 ### JSON: the default-fill convention
 

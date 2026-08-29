@@ -94,7 +94,6 @@ async function createWatchedApp(
   let now = Date.UTC(2026, 0, 1);
   const clock = (): number => now;
   const recording = recordingAnalytics();
-  const runtime = createTestRuntime({ clock, analytics: options.analytics ?? recording.layer });
   const db = new JsonFilePatchyDb(path.join(tempDir, `${label}-db.json`), { clock });
   await db.initialize("dev-token");
   const storage = new FileSystemHtmlStorage(path.join(tempDir, `${label}-drafts`));
@@ -102,7 +101,13 @@ async function createWatchedApp(
     jsonDbFile: path.join(tempDir, `${label}-db.json`),
     ...options.config
   });
-  const app = createApp({ config, db, storage, clock, runtime });
+  const runtime = createTestRuntime({
+    clock,
+    db,
+    config,
+    analytics: options.analytics ?? recording.layer
+  });
+  const app = createApp({ config, db, storage, runtime });
 
   return {
     app,

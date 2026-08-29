@@ -1,20 +1,13 @@
 import pg from "pg";
-import { newInternalId, sha256 } from "@patchy/core";
-import { BOOTSTRAP_API_TOKEN_ID, BOOTSTRAP_PRINCIPAL_ID } from "./internal-principals.js";
-import { mintQuotaWindowStart } from "./mint-quota.js";
+import { newInternalId } from "@patchy/core";
 import { DRAFT_VISIT_EXTENSION_WINDOW_MS, expiryAfterUpload } from "./retention.js";
 import { UploadTargetError } from "./types.js";
 import type {
-  ApiTokenAuth,
-  ApiTokenRevocation,
-  CreateApiTokenInput,
   DbDriverOptions,
   DraftRecord,
   DraftModerationOptions,
   DraftVersionLookup,
   DraftVersionRecord,
-  MintSelfServiceTokenInput,
-  MintSelfServiceTokenResult,
   ModeratedDraftRecord,
   PatchyDb,
   PrincipalDraftListing,
@@ -103,178 +96,19 @@ export class PostgresPatchyDb implements PatchyDb {
    * `expires_at`. Deliberately not SQL `now()`: the clock is injectable, and
    * `now()` would make the window untestable and drift from the JSON driver.
    *
-   * `expires_at` and `token_mints.created_at` are on this clock here, because
-   * both are anchors a window is measured from — retention's and the mint
-   * quota's. Every other stamp in this driver (`last_used_at`, the remaining
-   * `created_at` columns, `disabled_at`, `deleted_at`, `revoked_at`) stays on
-   * SQL `now()`, where it is a column default or a `SET x = now()` clause,
-   * while the JSON driver puts all of its stamps on the injected clock.
-   * `revoked_at` belongs on that side because the revocation freeze keys on the
-   * column being non-null, never on the instant it holds. See the note
-   * on `JsonFilePatchyDb.nowIso` — the drivers agree on the retention anchor
-   * and drift on the rest under a wound-forward clock, which is deliberate.
-   * Do not "fix" one driver's non-retention stamps without the other's.
+   * `expires_at` is on this clock here because it is the anchor retention is
+   * measured from (`@patchy/auth` keeps `token_mints.created_at`, the mint
+   * quota's anchor, on the Effect clock for the same reason). Every other
+   * stamp in this driver (`created_at` columns, `disabled_at`, `deleted_at`)
+   * stays on SQL `now()`, where it is a column default or a `SET x = now()`
+   * clause, while the JSON driver puts all of its stamps on the injected
+   * clock. See the note on `JsonFilePatchyDb.nowIso` — the drivers agree on
+   * the retention anchor and drift on the rest under a wound-forward clock,
+   * which is deliberate. Do not "fix" one driver's non-retention stamps
+   * without the other's.
    */
   private nowIso(): string {
     return new Date(this.clock()).toISOString();
-  }
-
-  /** Expects a migrated database (`migrateDatabase` in `migrate.ts`); only seeds. */
-  async initialize(bootstrapApiToken: string | null): Promise<void> {
-    if (bootstrapApiToken) {
-      await this.ensureBootstrapToken(bootstrapApiToken);
-    }
-  }
-
-  async findApiTokenByToken(token: string): Promise<ApiTokenAuth | null> {
-    const result = await this.pool.query(
-      `
-        SELECT api_tokens.id, api_tokens.account_id, api_tokens.name, api_tokens.scopes,
-               accounts.name AS account_name,
-               accounts.self_service_minted_at
-        FROM api_tokens
-        JOIN accounts ON accounts.id = api_tokens.account_id
-        WHERE api_tokens.token_hash = $1
-          AND api_tokens.revoked_at IS NULL
-        LIMIT 1
-      `,
-      [sha256(token)]
-    );
-
-    const row = result.rows[0];
-    if (!row) return null;
-
-    await this.pool.query("UPDATE api_tokens SET last_used_at = now() WHERE id = $1", [row.id]);
-
-    return {
-      id: row.id,
-      accountId: row.account_id,
-      accountName: row.account_name,
-      name: row.name,
-      scopes: normalizeScopes(row.scopes),
-      selfService: row.self_service_minted_at !== null
-    };
-  }
-
-  async createApiToken(input: CreateApiTokenInput): Promise<{ id: string; name: string }> {
-    const id = newInternalId("tok");
-    const name = cleanText(input.name) || "API Token";
-
-    await this.pool.query(
-      `
-        INSERT INTO api_tokens (id, account_id, name, token_hash, scopes)
-        VALUES ($1, $2, $3, $4, $5::jsonb)
-      `,
-      [id, input.accountId, name, sha256(input.token), JSON.stringify(input.scopes)]
-    );
-
-    return { id, name };
-  }
-
-  async countSelfServiceMintsBySourceIp(sourceIp: string | null): Promise<number> {
-    // `IS NOT DISTINCT FROM` so a null address matches the null rows rather
-    // than matching nothing: unattributable mints share one bucket instead of
-    // each one escaping the tally.
-    const result = await this.pool.query(
-      `
-        SELECT count(*) AS mints
-        FROM token_mints
-        WHERE source_ip IS NOT DISTINCT FROM $1
-          AND created_at >= $2::timestamptz
-      `,
-      [sourceIp, mintQuotaWindowStart(this.clock())]
-    );
-    return Number(result.rows[0]?.mints ?? 0);
-  }
-
-  async mintSelfServiceToken(
-    input: MintSelfServiceTokenInput
-  ): Promise<MintSelfServiceTokenResult> {
-    const accountId = newInternalId("acct");
-    const apiTokenId = newInternalId("tok");
-    const name = cleanText(input.name) || "Self-service token";
-    // The quota counts these rows, so the mint stamp is on the injected clock
-    // for the same reason `expires_at` is — see `nowIso`.
-    const mintedAt = this.nowIso();
-
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
-
-      await client.query(
-        `
-          INSERT INTO accounts (id, name, self_service_minted_at)
-          VALUES ($1, $2, $3::timestamptz)
-        `,
-        [accountId, name, mintedAt]
-      );
-
-      await client.query(
-        `
-          INSERT INTO api_tokens (id, account_id, name, token_hash, scopes)
-          VALUES ($1, $2, $3, $4, '["upload"]'::jsonb)
-        `,
-        [apiTokenId, accountId, name, sha256(input.token)]
-      );
-
-      await client.query(
-        `
-          INSERT INTO token_mints (id, account_id, api_token_id, source_ip, created_at)
-          VALUES ($1, $2, $3, $4, $5::timestamptz)
-        `,
-        [newInternalId("mint"), accountId, apiTokenId, input.sourceIp, mintedAt]
-      );
-
-      await client.query("COMMIT");
-      return { accountId, apiTokenId, apiTokenName: name };
-    } catch (error) {
-      await client.query("ROLLBACK").catch(() => undefined);
-      throw error;
-    } finally {
-      client.release();
-    }
-  }
-
-  async revokeApiToken(apiTokenId: string): Promise<ApiTokenRevocation | null> {
-    // Read the row under a lock, stamp it only if it is not already stamped,
-    // and report the state it was in beforehand — one statement, so two
-    // concurrent revocations of the same token cannot both claim the first.
-    // The first revocation's stamp stands: it is when top-ups froze.
-    const result = await this.pool.query(
-      `
-        WITH prior AS (
-          SELECT id, account_id, name, revoked_at
-          FROM api_tokens
-          WHERE id = $1
-          FOR UPDATE
-        ),
-        revoked AS (
-          UPDATE api_tokens
-          SET revoked_at = now()
-          FROM prior
-          WHERE api_tokens.id = prior.id AND prior.revoked_at IS NULL
-          RETURNING api_tokens.revoked_at
-        )
-        SELECT prior.id,
-               prior.account_id,
-               prior.name,
-               COALESCE((SELECT revoked_at FROM revoked), prior.revoked_at) AS revoked_at,
-               prior.revoked_at IS NOT NULL AS already_revoked
-        FROM prior
-      `,
-      [apiTokenId]
-    );
-
-    const row = result.rows[0];
-    if (!row) return null;
-
-    return {
-      id: row.id,
-      accountId: row.account_id,
-      name: row.name,
-      revokedAt: toIso(row.revoked_at),
-      alreadyRevoked: Boolean(row.already_revoked)
-    };
   }
 
   async countLiveDraftsByCreatorApiToken(apiTokenId: string): Promise<number> {
@@ -694,29 +528,6 @@ export class PostgresPatchyDb implements PatchyDb {
   async close(): Promise<void> {
     await this.pool.end();
   }
-
-  private async ensureBootstrapToken(token: string): Promise<void> {
-    await this.pool.query(
-      `
-        INSERT INTO accounts (id, name)
-        VALUES ($1, 'Bootstrap Account')
-        ON CONFLICT (id) DO UPDATE SET updated_at = now()
-      `,
-      [BOOTSTRAP_PRINCIPAL_ID]
-    );
-
-    await this.pool.query(
-      `
-        INSERT INTO api_tokens (id, account_id, name, token_hash, scopes)
-        VALUES ($2, $3, 'Bootstrap API Token', $1, '["admin", "upload"]'::jsonb)
-        ON CONFLICT (id) DO UPDATE
-          SET token_hash = EXCLUDED.token_hash,
-              scopes = EXCLUDED.scopes,
-              revoked_at = NULL
-      `,
-      [sha256(token), BOOTSTRAP_API_TOKEN_ID, BOOTSTRAP_PRINCIPAL_ID]
-    );
-  }
 }
 
 function mapDraft(row: DraftRow): DraftRecord {
@@ -759,19 +570,6 @@ function mapDraftVersion(row: DraftVersionRow): DraftVersionRecord {
     originalFilename: row.original_filename,
     createdAt: toIso(row.created_at)
   };
-}
-
-function normalizeScopes(value: unknown): string[] {
-  if (Array.isArray(value)) return value.map(String);
-  if (typeof value === "string") {
-    try {
-      const parsed = JSON.parse(value);
-      return Array.isArray(parsed) ? parsed.map(String) : [];
-    } catch {
-      return [];
-    }
-  }
-  return [];
 }
 
 function toIso(value: unknown): string {

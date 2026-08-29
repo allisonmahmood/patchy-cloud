@@ -3,7 +3,15 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { Tokens } from "@patchy/auth";
 import { newDraftId, newInternalId, randomToken } from "@patchy/core";
+import { layerFromUrl } from "@patchy/sql";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as ManagedRuntime from "effect/ManagedRuntime";
+import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
+import { DEV_SEED } from "../../../scripts/dev/src/seed.js";
 import { JsonFilePatchyDb } from "./json-db.js";
 import {
   deployedJsonStateFixture,
@@ -34,10 +42,20 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 /** Where the retention tests start their clock. Any fixed instant would do. */
 const RETENTION_EPOCH = Date.UTC(2026, 0, 1);
 
+/** The token a contract case uploads as: what `RecordUploadInput` needs of it. */
+type UploadAuth = Pick<ApiTokenAuth, "id" | "accountId">;
+
 interface ContractHarness {
   db: PatchyDb;
   peerDb: PatchyDb;
-  auth: ApiTokenAuth;
+  auth: UploadAuth;
+  /**
+   * Tokens over the same store: `@patchy/auth` on Postgres, the JSON driver's
+   * own on JSON. The contract cases only need to mint, issue and revoke.
+   */
+  createToken(name: string): Promise<UploadAuth>;
+  mint(sourceIp: string): Promise<UploadAuth>;
+  revoke(apiTokenId: string): Promise<{ alreadyRevoked: boolean } | null>;
   /** Another handle on the same store, optionally on a different clock. */
   openDb(options?: DbDriverOptions): PatchyDb;
   close(): Promise<void>;
@@ -306,8 +324,8 @@ function describeUploadContract(driverName: string, createHarness: ContractHarne
       const foreign = newDraftId();
 
       try {
-        const creator = await createUploadToken(harness, "Quota creator token");
-        const other = await createUploadToken(harness, "Quota other token");
+        const creator = await harness.createToken("Quota creator token");
+        const other = await harness.createToken("Quota other token");
 
         expect(await harness.db.countLiveDraftsByCreatorApiToken(creator.id)).toBe(0);
 
@@ -335,8 +353,8 @@ function describeUploadContract(driverName: string, createHarness: ContractHarne
       const draftId = newDraftId();
 
       try {
-        const creator = await createUploadToken(harness, "Quota update creator token");
-        const editor = await createUploadToken(harness, "Quota update editor token");
+        const creator = await harness.createToken("Quota update creator token");
+        const editor = await harness.createToken("Quota update editor token");
 
         await harness.db.recordUpload(uploadInput("create", draftId, creator));
         const updated = await harness.db.recordUpload(uploadInput("update", draftId, editor));
@@ -349,93 +367,12 @@ function describeUploadContract(driverName: string, createHarness: ContractHarne
       }
     });
 
-    it("counts self-service mints per source address across a rolling day", async () => {
-      const harness = await createHarness();
-      const sourceIp = uniqueSourceIp();
-      const otherIp = uniqueSourceIp();
-      // Anchored at the wall clock so the default-clock peer handle below reads
-      // the same window this one writes into.
-      let now = Date.now();
-      const clocked = harness.openDb({ clock: () => now });
-
-      try {
-        await clocked.initialize(null);
-        expect(await clocked.countSelfServiceMintsBySourceIp(sourceIp)).toBe(0);
-
-        await mintToken(clocked, sourceIp);
-        await mintToken(clocked, sourceIp);
-        await mintToken(clocked, otherIp);
-
-        expect(await clocked.countSelfServiceMintsBySourceIp(sourceIp)).toBe(2);
-        expect(await clocked.countSelfServiceMintsBySourceIp(otherIp)).toBe(1);
-
-        // The tally is stored, not remembered: another handle on the same store
-        // counts the same mints without having seen one of them happen.
-        expect(await harness.peerDb.countSelfServiceMintsBySourceIp(sourceIp)).toBe(2);
-
-        // A mint the server could not attribute lands in a bucket of its own
-        // rather than escaping the count altogether.
-        const unattributedBefore = await clocked.countSelfServiceMintsBySourceIp(null);
-        await mintToken(clocked, null);
-        expect(await clocked.countSelfServiceMintsBySourceIp(null)).toBe(unattributedBefore + 1);
-        expect(await clocked.countSelfServiceMintsBySourceIp(sourceIp)).toBe(2);
-
-        // Still inside the day, then past it: the window rolls off the mints
-        // themselves rather than resetting at a fixed hour.
-        now += DAY_MS - 1_000;
-        expect(await clocked.countSelfServiceMintsBySourceIp(sourceIp)).toBe(2);
-        now += 2_000;
-        expect(await clocked.countSelfServiceMintsBySourceIp(sourceIp)).toBe(0);
-      } finally {
-        await harness.close();
-      }
-    });
-
-    it("mints a fresh marked principal holding one upload-only token", async () => {
-      const harness = await createHarness();
-      const token = randomToken();
-      const name = "Self-service token 2026-01-01";
-
-      try {
-        const minted = await harness.db.mintSelfServiceToken({
-          token,
-          name,
-          sourceIp: uniqueSourceIp()
-        });
-
-        const auth = await harness.db.findApiTokenByToken(token);
-        expect(auth).toMatchObject({
-          id: minted.apiTokenId,
-          accountId: minted.accountId,
-          name,
-          scopes: ["upload"],
-          // The provenance mark, read back on the path every request takes.
-          selfService: true
-        });
-        expect(minted.apiTokenName).toBe(name);
-
-        // The operator's own principal was seeded, not minted, so it is unmarked.
-        expect(harness.auth.selfService).toBe(false);
-
-        // One principal per mint, and one token per principal.
-        const second = await harness.db.mintSelfServiceToken({
-          token: randomToken(),
-          name,
-          sourceIp: uniqueSourceIp()
-        });
-        expect(second.accountId).not.toBe(minted.accountId);
-        expect(second.apiTokenId).not.toBe(minted.apiTokenId);
-      } finally {
-        await harness.close();
-      }
-    });
-
     it("owns exactly the drafts a minted principal creates", async () => {
       const harness = await createHarness();
       const draftId = newDraftId();
 
       try {
-        const minted = await mintedAuth(harness, uniqueSourceIp());
+        const minted = await harness.mint(uniqueSourceIp());
 
         await harness.db.recordUpload(uploadInput("create", draftId, minted));
         const own = await harness.db.recordUpload(uploadInput("update", draftId, minted));
@@ -812,7 +749,7 @@ function describeUploadContract(driverName: string, createHarness: ContractHarne
       const clocked = harness.openDb({ clock: () => now });
 
       try {
-        const creator = await createUploadToken(harness, "Expiry sweep quota token");
+        const creator = await harness.createToken("Expiry sweep quota token");
         for (const draftId of draftIds) {
           await clocked.recordUpload(uploadInput("create", draftId, creator));
         }
@@ -957,8 +894,8 @@ function describeUploadContract(driverName: string, createHarness: ContractHarne
       const clocked = harness.openDb({ clock: () => now });
 
       try {
-        const creator = await createUploadToken(harness, "Moderation read creator token");
-        const editor = await createUploadToken(harness, "Moderation read editor token");
+        const creator = await harness.createToken("Moderation read creator token");
+        const editor = await harness.createToken("Moderation read editor token");
         await clocked.recordUpload(uploadInput("create", draftId, creator));
 
         expect(await clocked.findDraftForModeration(draftId)).toMatchObject({
@@ -1006,7 +943,7 @@ function describeUploadContract(driverName: string, createHarness: ContractHarne
       const clocked = harness.openDb({ clock: () => now });
 
       try {
-        const creator = await createUploadToken(harness, "Principal listing creator token");
+        const creator = await harness.createToken("Principal listing creator token");
         for (const draftId of [deleted, oldest, middle, newest]) {
           await clocked.recordUpload(uploadInput("create", draftId, creator));
           now += DAY_MS;
@@ -1034,76 +971,6 @@ function describeUploadContract(driverName: string, createHarness: ContractHarne
       }
     });
 
-    it("revokes a token as a state its row keeps, exactly once", async () => {
-      const harness = await createHarness();
-
-      try {
-        const token = randomToken();
-        const created = await harness.db.createApiToken({
-          accountId: harness.auth.accountId,
-          name: "Revocable token",
-          token,
-          scopes: ["upload"]
-        });
-        expect(await harness.db.findApiTokenByToken(token)).not.toBeNull();
-
-        const revocation = await harness.db.revokeApiToken(created.id);
-        expect(revocation).toMatchObject({
-          id: created.id,
-          accountId: harness.auth.accountId,
-          name: "Revocable token",
-          alreadyRevoked: false
-        });
-        expect(revocation?.revokedAt).toEqual(expect.any(String));
-
-        // Revoked is a state, never a deletion: the token authenticates nothing
-        // any more, and the row it left behind is still there to be read.
-        expect(await harness.db.findApiTokenByToken(token)).toBeNull();
-
-        const again = await harness.db.revokeApiToken(created.id);
-        expect(again).toMatchObject({ id: created.id, alreadyRevoked: true });
-        // The first moment stands — it is when the drafts' top-ups froze.
-        expect(again?.revokedAt).toBe(revocation?.revokedAt);
-
-        expect(await harness.db.revokeApiToken("tok_never_existed")).toBeNull();
-      } finally {
-        await harness.close();
-      }
-    });
-
-    it("lets only one of two concurrent revocations claim the first stamp", async () => {
-      const harness = await createHarness();
-
-      try {
-        const token = randomToken();
-        const created = await harness.db.createApiToken({
-          accountId: harness.auth.accountId,
-          name: "Doubly revoked token",
-          token,
-          scopes: ["upload"]
-        });
-
-        // Two handles on the same store, racing. The freeze moment is the thing
-        // being protected: if both calls could stamp, the later one would move
-        // it forward and hand the token's drafts back the clock they had lost.
-        const [first, second] = await Promise.all([
-          harness.db.revokeApiToken(created.id),
-          harness.peerDb.revokeApiToken(created.id)
-        ]);
-
-        expect([first?.alreadyRevoked, second?.alreadyRevoked].sort()).toEqual([false, true]);
-        // Both report the same instant, and it is the one that actually stuck.
-        expect(first?.revokedAt).toBe(second?.revokedAt);
-        expect(await harness.db.findApiTokenByToken(token)).toBeNull();
-
-        const settled = await harness.db.revokeApiToken(created.id);
-        expect(settled).toMatchObject({ alreadyRevoked: true });
-        expect(settled?.revokedAt).toBe(first?.revokedAt);
-      } finally {
-        await harness.close();
-      }
-    });
-
     it("freezes visit top-ups from the moment a draft's creating token is revoked", async () => {
       const harness = await createHarness();
       const draftId = newDraftId();
@@ -1111,7 +978,7 @@ function describeUploadContract(driverName: string, createHarness: ContractHarne
       const clocked = harness.openDb({ clock: () => now });
 
       try {
-        const creator = await createUploadToken(harness, "Revocation freeze creator token");
+        const creator = await harness.createToken("Revocation freeze creator token");
         await clocked.recordUpload(uploadInput("create", draftId, creator));
 
         // Day 70, twenty days left: this visit lands before the revocation and
@@ -1120,7 +987,7 @@ function describeUploadContract(driverName: string, createHarness: ContractHarne
         await clocked.recordDraftVisit(draftId);
 
         now = RETENTION_EPOCH + 71 * DAY_MS;
-        expect((await clocked.revokeApiToken(creator.id))?.alreadyRevoked).toBe(false);
+        expect((await harness.revoke(creator.id))?.alreadyRevoked).toBe(false);
 
         // Revocation is not a takedown: the page is still served.
         expect((await clocked.findDraftVersion(draftId)).draft?.id).toBe(draftId);
@@ -1348,10 +1215,27 @@ async function createJsonHarness(): Promise<JsonMigrationHarness> {
   const auth = await db.findApiTokenByToken(token);
   if (!auth) throw new Error("Expected bootstrap authentication.");
 
+  const authenticate = async (token: string): Promise<UploadAuth> => {
+    const found = await db.findApiTokenByToken(token);
+    if (!found) throw new Error("Expected authentication for a fresh token.");
+    return found;
+  };
+
   return {
     db,
     peerDb,
     auth,
+    async createToken(name) {
+      const token = randomToken();
+      await db.createApiToken({ accountId: auth.accountId, name, token, scopes: ["upload"] });
+      return authenticate(token);
+    },
+    async mint(sourceIp) {
+      const token = randomToken();
+      await db.mintSelfServiceToken({ token, name: "Self-service token 2026-01-01", sourceIp });
+      return authenticate(token);
+    },
+    revoke: (apiTokenId) => db.revokeApiToken(apiTokenId),
     openDb,
     async resetToDeployedSchema() {
       await writeFile(filePath, `${JSON.stringify(deployedJsonStateFixture(), null, 2)}\n`, "utf8");
@@ -1380,18 +1264,45 @@ async function createPostgresHarness(): Promise<ContractHarness> {
 
   const db = openDb();
   const peerDb = openDb();
-  const token = randomToken();
-  await db.initialize(token);
-  const auth = await db.findApiTokenByToken(token);
-  if (!auth) throw new Error("Expected bootstrap authentication.");
+  // Tokens are `@patchy/auth`'s on Postgres; the template database already
+  // holds the dev seed's principal, which is the one the cases upload as.
+  const runtime = ManagedRuntime.make(
+    Tokens.layer.pipe(Layer.provide(layerFromUrl(Redacted.make(connectionString))))
+  );
+  const tokens = await runtime.runPromise(Effect.flatMap(Tokens.Tokens, Effect.succeed));
+  const run = <A, E>(effect: Effect.Effect<A, E>) => runtime.runPromise(Effect.orDie(effect));
 
   return {
     db,
     peerDb,
-    auth,
+    auth: { id: DEV_SEED.tokenId, accountId: DEV_SEED.accountId },
+    async createToken(name) {
+      const created = await run(
+        tokens.create({
+          accountId: DEV_SEED.accountId,
+          name,
+          scopes: ["upload"],
+          token: randomToken()
+        })
+      );
+      return { id: created.id, accountId: DEV_SEED.accountId };
+    },
+    async mint(sourceIp) {
+      const minted = await run(
+        tokens.mint({
+          sourceIp,
+          quota: 1,
+          name: "Self-service token 2026-01-01",
+          token: randomToken()
+        })
+      );
+      return { id: minted.apiTokenId, accountId: minted.accountId };
+    },
+    revoke: (apiTokenId) => run(tokens.revoke(apiTokenId)).then(Option.getOrNull),
     openDb,
     async close() {
       await Promise.all(opened.map((opening) => opening.close()));
+      await runtime.dispose();
       await testDatabase.drop();
     }
   };
@@ -1400,56 +1311,14 @@ async function createPostgresHarness(): Promise<ContractHarness> {
 /**
  * A token nobody else in the test shares, so its tally starts from zero.
  */
-async function createUploadToken(harness: ContractHarness, name: string): Promise<ApiTokenAuth> {
-  const token = randomToken();
-  await harness.db.createApiToken({
-    accountId: harness.auth.accountId,
-    name,
-    token,
-    scopes: ["upload"]
-  });
-  const auth = await harness.db.findApiTokenByToken(token);
-  if (!auth) throw new Error(`Expected authentication for ${name}.`);
-  return auth;
-}
-
-/**
- * A source address no other scenario in the test shares, so its quota tally
- * starts from zero. The column is text, so this has to be unique, not routable —
- * hence the documentation range with a random host part.
- */
 function uniqueSourceIp(): string {
   return `2001:db8::${randomUUID().slice(0, 8)}`;
-}
-
-async function mintToken(db: PatchyDb, sourceIp: string | null): Promise<void> {
-  await db.mintSelfServiceToken({
-    token: randomToken(),
-    name: "Self-service token 2026-01-01",
-    sourceIp
-  });
-}
-
-/** Mints, then reads back the principal the minted token authenticates as. */
-async function mintedAuth(
-  harness: ContractHarness,
-  sourceIp: string | null
-): Promise<ApiTokenAuth> {
-  const token = randomToken();
-  await harness.db.mintSelfServiceToken({
-    token,
-    name: "Self-service token 2026-01-01",
-    sourceIp
-  });
-  const auth = await harness.db.findApiTokenByToken(token);
-  if (!auth) throw new Error("Expected authentication for a minted token.");
-  return auth;
 }
 
 function uploadInput(
   intent: UploadIntent,
   draftId: string,
-  auth: ApiTokenAuth,
+  auth: UploadAuth,
   overrides: Partial<IntendedRecordUploadInput> = {}
 ): IntendedRecordUploadInput {
   const versionId = newInternalId("ver");

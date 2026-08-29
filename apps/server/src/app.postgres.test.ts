@@ -4,14 +4,16 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { getServerConfig } from "@patchy/config";
 import type { ServerConfig } from "@patchy/config";
+import { Tokens } from "@patchy/auth";
 import { PostgresPatchyDb } from "@patchy/db";
+import { layerFromUrl } from "@patchy/sql";
 import { FileSystemHtmlStorage } from "@patchy/storage";
+import * as Layer from "effect/Layer";
+import * as Redacted from "effect/Redacted";
 import type { FastifyInstance } from "fastify";
 import { createPostgresTestDatabase } from "../../../test/postgres.js";
 import { createApp } from "./app.js";
 import { createTestRuntime } from "./testing.js";
-
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 describe("Patchy Cloud HTTP with Postgres", () => {
   it("creates, updates, and serves a draft", async () => {
@@ -302,38 +304,12 @@ describe("Patchy Cloud HTTP with Postgres", () => {
       await harness.close();
     }
   });
-
-  it("keeps the daily mint quota across a restart", async () => {
-    const harness = await createPostgresHttpHarness("mint-quota", {
-      allowSelfServiceTokens: true,
-      selfServiceMintsPerIpPerDay: 2
-    });
-    const sourceIp = "203.0.113.30";
-
-    try {
-      expect((await mintSelfServiceToken(harness.app, sourceIp)).statusCode).toBe(201);
-      expect((await mintSelfServiceToken(harness.app, sourceIp)).statusCode).toBe(201);
-
-      const exceeded = await mintSelfServiceToken(harness.app, sourceIp);
-      expect(exceeded.statusCode).toBe(429);
-      expect(exceeded.json()).toMatchObject({ code: "mint_quota_exceeded", quota: 2 });
-
-      await harness.restart();
-      expect((await mintSelfServiceToken(harness.app, sourceIp)).statusCode).toBe(429);
-
-      harness.advanceMs(DAY_MS + 1_000);
-      expect((await mintSelfServiceToken(harness.app, sourceIp)).statusCode).toBe(201);
-    } finally {
-      await harness.close();
-    }
-  });
 });
 
 interface PostgresHttpHarness {
   readonly app: FastifyInstance;
   readonly storageDir: string;
   advanceDays(days: number): void;
-  advanceMs(ms: number): void;
   restart(): Promise<void>;
   close(): Promise<void>;
 }
@@ -356,11 +332,20 @@ async function createPostgresHttpHarness(
   let now = Date.UTC(2026, 0, 1);
   const clock = (): number => now;
 
+  // Tokens over the same database; the runtime's config seeds `dev-token`.
+  const tokens = Tokens.layer.pipe(
+    Layer.provide(layerFromUrl(Redacted.make(testDatabase.connectionString)))
+  );
+
   const open = async (): Promise<{ app: FastifyInstance; db: PostgresPatchyDb }> => {
     const db = new PostgresPatchyDb(testDatabase.connectionString, { clock });
-    await db.initialize(config.bootstrapApiToken);
     return {
-      app: createApp({ config, db, storage, clock, runtime: createTestRuntime({ clock }) }),
+      app: createApp({
+        config,
+        db,
+        storage,
+        runtime: createTestRuntime({ clock, config, tokens })
+      }),
       db
     };
   };
@@ -373,10 +358,7 @@ async function createPostgresHttpHarness(
     },
     storageDir,
     advanceDays(days) {
-      now += days * DAY_MS;
-    },
-    advanceMs(ms) {
-      now += ms;
+      now += days * 24 * 60 * 60 * 1000;
     },
     async restart() {
       await running.app.close();
