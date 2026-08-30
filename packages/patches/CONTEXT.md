@@ -5,8 +5,36 @@ What the instance holds and how long it holds it. `packages/patches` owns the pa
 ## Language
 
 **Patch**:
-The runtime-agnostic record of one published thing: an id, an owning principal, a title, its versions and the one that serves, a retention clock, a pin, and the stamps that take it out of service. Today every patch is a tier 0 static page; nothing in the record says so. The public URL is `/d/<id>`, which is contract and does not change with the rename.
-_Avoid_: draft (the old name, gone from tables, code and the wire), page (what a patch is served as, not what it is), document (the HTML a version holds)
+A built unit in a company's cloud: one thing, stored, permissioned and provisioned as one, at one address, running at one tier. Made by a person or their agent, published as immutable versions, live to the whole company from the moment it is published, and never expiring on its own. Today every patch is a tier 0 static page; nothing in the record says so.
+_Avoid_: draft (the old name, retired everywhere — see [Publishing](../cli/CONTEXT.md)), page (what a tier 0 patch is served as, not what it is), app (a tier 2 patch is one; the word says nothing about the rest), document (the HTML a version holds)
+
+**Tier**:
+The runtime a patch runs at, exactly one per patch, declared in its patch repo: tier 0 static (no code runs anywhere), tier 1 in the browser as the viewer, tier 2 with its own server side, tier 3 with work that runs without a viewer. The tree's structure implies a tier too, and a publish whose tree says more than the declared tier is refused.
+_Avoid_: runtime (the thing a tier names), level, plan (tiers are capability, not pricing)
+
+**Patch repo**:
+The folder a patch is built in — the file tree that is the patch, plus its id, declared tier and base config. Created by the CLI (`init`) or linked to an existing patch; one repo is the working copy of exactly one patch, and the first publish from a repo with no id creates the patch and writes it back. Today's single HTML file is a one-file tree without a repo.
+_Avoid_: project, workspace, source (a repo holds the source; it is also the unit)
+
+**Publish**:
+The act that puts a patch up: a new version, live at once to everyone the patch is shared with. There is no unpublished patch and no working copy in the cloud — the working copy is the repo.
+_Avoid_: deploy, upload (the wire route, not the act), release, promote
+
+**Primitive**:
+A capability the cloud provisions a patch with because it says it needs one — file storage, its own tables, a company integration. Provisioned per patch, as part of the patch, never shared out of it.
+_Avoid_: resource, service, addon
+
+**Extension**:
+A patch that plugs into another patch. Reserved for the long run: promised, not defined, and nothing today composes patches beyond linking by address.
+_Avoid_: plugin, module
+
+**Retire**:
+The owner taking a patch off its address while keeping it — restorable, and still the owner's. Today the same state as `disable`, reached by moderation; the owner's act and the operator's act share the state and differ in who took it.
+_Avoid_: unpublish, archive, disable (the moderation act)
+
+**Delete**:
+The owner or operator removing a patch for good, after a recovery window. The one exit that frees a patch's bytes.
+_Avoid_: destroy, purge
 
 **Version**:
 One upload of a patch: the object key its bytes sit under, their hash and size, the token that made it, and where it came from. Numbered from 1 per patch; the first version's token is the patch's creator for good, whatever token uploads later. A version URL (`/d/<id>/v/<n>`) names content that never changes.
@@ -21,7 +49,7 @@ The one anchor every patch carries, `expiresAt`, and the rules that move it: an 
 _Avoid_: TTL, lease
 
 **Patch expiry**:
-The consequence of the clock running out: the patch stops serving and refuses updates at that instant, and the sweep removes it for good later. Expiry is a hard delete — content and record both gone, no recovery, republishing is the way back — and applies to every patch whoever owns it, unless the patch is pinned.
+The consequence of the clock running out: the patch stops serving and refuses updates at that instant, and the sweep removes it for good later. Expiry is a hard delete — content and record both gone, no recovery, republishing is the way back — and applies to every patch whoever owns it, unless the patch is pinned. Inherited from public hosting and decided out ([What a patch is](https://github.com/allisonmahmood/patchy-cloud/issues/16)): a patch in a company's cloud never expires; the clock, the sweep and pins leave with the build that lands ownership.
 _Avoid_: soft delete, archival, retention (that is the clock; expiry is the consequence)
 
 **Expiry sweep**:

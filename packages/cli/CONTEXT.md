@@ -1,11 +1,11 @@
 # Publishing
 
-The `@patchy/cli` package and its bundled skill — the tool agents use to put pages up. An agent is the primary operator and the CLI's output is its interface, so every message is written to be read by an agent first and what an agent sees is a written contract ([ADR-0004](../../docs/adr/ADR-0004-cli-contract-for-agents.md)). Humans are not excluded: developers touching the cloud directly do drive it, so the human conveniences (completions, the wizard) stay, as long as they never change what an agent sees. A _draft_ in the CLI's copy is a patch on the instance: the CLI keeps the word its users know, and only the wire says `patch`.
+The `@patchy/cli` package and its bundled skill — the tool agents use to put pages up. An agent is the primary operator and the CLI's output is its interface, so every message is written to be read by an agent first and what an agent sees is a written contract ([ADR-0004](../../docs/adr/ADR-0004-cli-contract-for-agents.md)). Humans are not excluded: developers touching the cloud directly do drive it, so the human conveniences (completions, the wizard) stay, as long as they never change what an agent sees. The CLI's word for the thing it publishes is _patch_, same as the wire and the [Patches](../patches/CONTEXT.md) glossary; _draft_ is retired, and the copy still saying it is a filed rename.
 
 ## Language
 
 **Instance**:
-The Patchy Cloud server drafts are published to, identified by its API URL: the deployment, or the `pnpm dev` instance of a checkout. The CLI bakes in no address for the deployment; the URL is always supplied by whoever is publishing — a flag, the dev env, the environment, or saved config, in that order — and the built-in fallback is only a server running locally from this repo. A token and a cached draft each belong to exactly one instance. Resolved once per command by the `Instance` service, which also remembers its **source**.
+The Patchy Cloud server patches are published to, identified by its API URL: the deployment, or the `pnpm dev` instance of a checkout. The CLI bakes in no address for the deployment; the URL is always supplied by whoever is publishing — a flag, the dev env, the environment, or saved config, in that order — and the built-in fallback is only a server running locally from this repo. A token and a cached patch each belong to exactly one instance. Resolved once per command by the `Instance` service, which also remembers its **source**.
 _Avoid_: the server (ambiguous with the hosting codebase), host, backend, your own instance (there is one deployment; the rest are dev instances)
 
 **Dev env**:
@@ -21,7 +21,7 @@ The publishing flow's act of requesting a self-service token from the target ins
 _Avoid_: anonymous upload (retired), silent fallback, registration
 
 **State dir**:
-The per-user directory where the CLI keeps everything it remembers between runs: instance choice, credentials, the draft cache, and the default style.
+The per-user directory where the CLI keeps everything it remembers between runs: instance choice, credentials, the patch cache, and the default style.
 _Avoid_: config directory, dotfiles
 
 **Default style**:
@@ -33,19 +33,20 @@ The line the publishing flow prints when auto-mint fires: which instance, where 
 _Avoid_: warning (it reports success, not a problem)
 
 **Onboarding**:
-The agent-led first-time setup conversation — establish which instance to publish to, one question capturing the default style, then publish the welcome draft. Hosting is never assumed: with nothing configured there is nowhere to publish yet, so the instance is asked for or read from local state before anything is uploaded. Asked for by the user, or suggested after a mint announcement; always optional.
+The agent-led first-time setup conversation — establish which instance to publish to, one question capturing the default style, then publish the welcome patch. Hosting is never assumed: with nothing configured there is nowhere to publish yet, so the instance is asked for or read from local state before anything is uploaded. Asked for by the user, or suggested after a mint announcement; always optional.
 _Avoid_: signup, registration, setup wizard
 
 **Setup prompt**:
-The copy-paste block in the README that a user hands their agent to get started: install the skill, run onboarding through to the welcome draft, and establish the "publish this with patchy" habit. Its onboarding sentence is the sole primary trigger — installing the skill runs nothing by itself. Written to be readable by the human pasting it, so it doubles as a plain description of what they are authorizing.
+The copy-paste block in the README that a user hands their agent to get started: install the skill, run onboarding through to the welcome patch, and establish the "publish this with patchy" habit. Its onboarding sentence is the sole primary trigger — installing the skill runs nothing by itself. Written to be readable by the human pasting it, so it doubles as a plain description of what they are authorizing.
 _Avoid_: install snippet (older internal name), install command (only one of its parts)
 
 **Publishing key**:
 What an auth token is called in front of the user — "your publishing key, saved on this machine". _Token_, _instance_, and _mint_ stay out of user-facing copy except on the operator-token path, where operator vocabulary is correct.
 _Avoid_: token (in user-facing copy), password, account
 
-**Draft cache**:
-The per-instance record linking a local file to the draft it produced, so republishing the same file updates that draft instead of creating a new one.
+**Patch cache**:
+The per-instance record linking a local file to the patch it produced, so republishing the same file updates that patch instead of creating a new one.
+_Avoid_: draft cache
 _Avoid_: upload history, manifest
 
 **Onboarding probe**:
