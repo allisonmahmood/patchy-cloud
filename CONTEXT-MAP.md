@@ -7,7 +7,7 @@ Patchy Cloud is one deployment: the hosting server on one side, the `patchy` CLI
 - [Auth](./packages/auth/CONTEXT.md) — `packages/auth`, tokens and principals, self-service minting and its quota, revocation, and the `auth` API group
 - [Patches](./packages/patches/CONTEXT.md) — `packages/patches`, patch and version records, the upload contract, the retention clock and its sweep, pins, moderation, the patch quota, and the `patches` API group
 - [Serving](./packages/serving/CONTEXT.md) — `packages/serving`, the serving guarantees, the page routes and the trusted-proxy schema
-- [Publishing](./packages/cli/CONTEXT.md) — `packages/cli` and the bundled skill, the `patchy` CLI agents use to put pages up; its user-facing word for a patch is _draft_
+- [Publishing](./packages/cli/CONTEXT.md) — `packages/cli` and the bundled skill, the `patchy` CLI agents use to publish patches
 
 ## Shared kernel
 
