@@ -28,7 +28,7 @@ Ownership: today a patch belongs to the token that created it. Once auth lands, 
 
 A published patch is visible to **everyone in the company** by default. Its owner can tighten that (for now, to the builder alone) or widen it to anyone with the link. No patch is public without a login unless someone chose that.
 
-Finding a patch is a portal of everything you have access to. A patch's identity is its **id**, so two sales dashboards made by two salespeople never collide; human-readable addresses — a company patch under `company/patch`, a personal one under `company/mark/patch` — are wanted and not yet designed.
+Finding a patch is a portal of everything you have access to. A patch's identity is its **id**, so two sales dashboards made by two salespeople never collide; its human-readable address follows its sharing scope (see [Addresses](#addresses)).
 
 ### Updating, retiring, deleting
 
@@ -75,3 +75,33 @@ When a patch asks for data the viewer may not reach, the viewer is told plainly 
 ### Declaring and changing a tier
 
 The tier is an explicit field in the patch repo, written by `init`, and the cloud checks it against the tree on every publish: a tree with server code cannot claim tier 1, a tree with script cannot claim tier 0. A **version** has exactly one tier; the patch's tier is the tier of the version it serves. Changing tier is publishing a version built for the new tier — there is no move in place, because tier 2 code is not tier 1 code. Rolling back to an older version rolls the tier back with it. Primitives belong to the patch, not the tier, so they persist across the change.
+
+## Companies
+
+A **company** is the tenant everything on Patchy Cloud hangs off, and the unit that pays. Every patch, connection, group and user lives in exactly one company; usage is counted against the company; nothing inside crosses the company line except a patch someone chose to make public. A company is flat — no sub-tenants; groups are access, not structure — and carries a globally unique **handle** alongside its display name.
+
+A company comes to exist at signup: the person signing up names it and becomes its first admin. Self-serve billing — put in a card, set when it tops up, invite others — is the intended path. There is no person without a company: a solo builder is a company of one.
+
+### Users, admins, groups
+
+A **user** is one individual with one account, in exactly one company. They sign in, and they hold expiring, rotatable tokens on the machines they build patches from — how sign-in and tokens work is the identity effort's to design.
+
+An **admin** is a user with the role that runs the company: invites users, creates groups, sets permissions, connects company integrations, and — alone — reassigns a patch's owner. A company always has at least one admin, and the last admin cannot demote themself.
+
+A **group** is a named set of users an admin creates; a user can be in many. "Team", "department", "north-american-sales" are names companies give their groups, not concepts of their own. A group is purely a grant surface — access to patches and connections — never a container that owns anything.
+
+### Ownership and deactivation
+
+A patch belongs to a user, and everything ultimately belongs to the company, because the company is what pays. The two sentences meet at **deactivation**: an admin deactivating a user ends their sign-in and tokens and wipes the credentials of their personal connections, keeps all data, and takes down the patches only they could reach — a deactivated user's owner-only patches, and those patches' provisioned primitives, enter the same kept-but-off state as retire, so a thousand departed builders never leave a thousand dead patches running. Patches shared to a group or company-wide stay up; managing those is what admins are for. Deleting a user is a separate, later act: the deletion flow prompts the admin to reassign any of the user's patches, and what is not reassigned goes with the account.
+
+### Integrations and connections
+
+Patchy ships the **integration** — Salesforce-the-capability, the same for every company, built by Patchy the way primitives are. What a company holds is a **connection**: the live, credentialed instance of an integration, connected by an admin and granted to groups or company-wide. Some integrations connect per user — sign into your own email — making a personal connection that dies with the user's account: credential wiped, stored data kept. A user needs no admin enablement to make a personal connection. A patch always uses a connection, never the integration in the abstract, and no patch at any tier ever sees a credential.
+
+### Addresses
+
+A patch's sharing scope is single-select — the owner (plus named users), exactly one group, or the whole company — and its human-readable address follows that scope: `company/user/patch`, `company/group/patch`, `company/patch`. Users and groups draw their handles from one per-company namespace, so the two middle shapes never collide. Names are first-come and never reserved: widening a patch to company-wide prompts for a name free at `company/`, the old address keeps redirecting, and a new patch later taking that name simply wins the address. The patch's identity stays its id throughout — addresses are pointers, and a move never touches the patch.
+
+### The operator
+
+The **operator** — Patchy, running the platform — is not a company role and holds no company powers. Its powers are platform-shaped: create, suspend or delete a company, quotas, and moderation, which stays what it is today — taking a patch off its address, never acting inside the company. Support means being invited like anyone else; a customer-support role is not designed. **Suspension** is the operator's act on a whole company — nothing serves, nothing publishes, data kept — and is also where a company lands when it runs out of credits and cannot top up. Deleting a company is its admin's act, with a recovery window; the handle is released only after it.

@@ -39,3 +39,19 @@ _Avoid_: ban, token deletion
 **Bearer parsing**:
 How the hosting server reads `Authorization`: the scheme is case-insensitive, one or more spaces or tabs separate it from the credential, trailing whitespace is tolerated, anything else on the line is invalid. Missing and invalid are told apart here only; on the wire both are one 401, `{ ok: false, error: "Missing or invalid API token." }`, so no configuration ever admits a tokenless request.
 _Avoid_: header validation
+
+**Company**:
+The tenant everything on Patchy Cloud hangs off, and the unit that pays: every patch, connection, group and user lives in exactly one, usage is counted against it, and nothing inside crosses its line except a patch made public. Flat — groups are access, not structure — with a globally unique handle. Created at signup by its first admin; suspended by the operator (including running out of credits), deleted by its admin with a recovery window. (Not yet in the code: the door arrives with auth.)
+_Avoid_: organization, workspace, team, tenant (this document's word for the concept, never the product's)
+
+**User**:
+One individual with one account, in exactly one company. Signs in, and holds expiring, rotatable tokens on the machines they build from. Deactivated (an admin's act: sign-in and tokens end, personal connection credentials are wiped, data kept, owner-only patches go dark) is distinct from deleted (a later act, where the admin is prompted to reassign the user's patches and what is not reassigned goes with the account).
+_Avoid_: member, account (the wire's word for a principal), person (a user is the account, not the human)
+
+**Admin**:
+A user with the role that runs the company: invites users, creates groups, sets permissions, connects company integrations, and — alone — reassigns a patch's owner. A company always has at least one, and the last admin cannot demote themself.
+_Avoid_: owner (patches have owners; companies have admins), operator (Patchy, never a company role), superadmin
+
+**Group**:
+A named set of users an admin creates; a user can be in many. Purely a grant surface — access to patches and connections — never a container that owns anything. "Team" and "department" are names companies give their groups.
+_Avoid_: team, department (labels, not concepts), role (what an admin has; a group is who), space
