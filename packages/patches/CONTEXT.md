@@ -9,8 +9,16 @@ A built unit in a company's cloud: one thing, stored, permissioned and provision
 _Avoid_: draft (the old name, retired everywhere — see [Publishing](../cli/CONTEXT.md)), page (what a tier 0 patch is served as, not what it is), app (a tier 2 patch is one; the word says nothing about the rest), document (the HTML a version holds)
 
 **Tier**:
-The runtime a patch runs at, exactly one per patch, declared in its patch repo: tier 0 static (no code runs anywhere), tier 1 in the browser as the viewer, tier 2 with its own server side, tier 3 with work that runs without a viewer. The tree's structure implies a tier too, and a publish whose tree says more than the declared tier is refused.
+Where a patch's code runs, and nothing else: tier 0 _static_ (no code runs anywhere), tier 1 _browser_ (code runs in the viewer's browser, as the viewer), tier 2 _hosted_ (server-side code too, run by the cloud only while a viewer has the patch open); tier 3 (work with no viewer present) and tier 4 (an agent's own computer) are named and not designed. Declared as an explicit field in the patch repo, checked against the tree on every publish — a tree that says more than its declared tier is refused. A version has exactly one tier and the patch's tier is its served version's; changing tier is publishing a version built for the new tier, never a move in place. A tier never changes who may open a patch, what it may declare, or how it is published, shared or found.
 _Avoid_: runtime (the thing a tier names), level, plan (tiers are capability, not pricing)
+
+**Viewer**:
+The person who has a patch open. From tier 1 up, patch code acts as the viewer and never as more: it learns who they are as claims and reaches primitives and integrations only through the cloud, within the viewer's own permissions. An anonymous viewer of a public patch carries no identity, so nothing acts as them.
+_Avoid_: reader (a tier 0 word: the page cannot act for anyone), user (ambiguous with the builder), end user
+
+**Patch identity**:
+The principal a tier 2 patch's server side runs as when it reaches the patch's own primitives — distinct from any viewer, accountable to the patch's owner and reassignable with it, starting with nothing but the patch's own primitives and gaining a shared integration only when a company admin grants one. It never holds a raw credential; nothing at any tier does.
+_Avoid_: service account (the shape, not the term), the owner's token (the patch does not inherit the owner's reach)
 
 **Patch repo**:
 The folder a patch is built in — the file tree that is the patch, plus its id, declared tier and base config. Created by the CLI (`init`) or linked to an existing patch; one repo is the working copy of exactly one patch, and the first publish from a repo with no id creates the patch and writes it back. Today's single HTML file is a one-file tree without a repo.
