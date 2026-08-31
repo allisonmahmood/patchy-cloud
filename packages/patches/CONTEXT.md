@@ -37,7 +37,7 @@ A patch that plugs into another patch. Reserved for the long run: promised, not 
 _Avoid_: plugin, module
 
 **Retire**:
-The owner taking a patch off its address while keeping it — restorable, and still the owner's. Today the same state as `disable`, reached by moderation; the owner's act and the operator's act share the state and differ in who took it.
+The owner taking a patch off its address while keeping it — restorable, and still the owner's. Today the same state as `disable`, reached by moderation; once companies land, deactivating a patch's owner is the third road into it. The three acts share the state and differ in who took it.
 _Avoid_: unpublish, archive, disable (the moderation act)
 
 **Delete**:
