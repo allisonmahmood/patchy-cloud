@@ -56,6 +56,18 @@ _Avoid_: owner (patches have owners; companies have admins), operator (Patchy, n
 A named set of users an admin creates; a user can be in many. Purely a grant surface — access to patches and connections — never a container that owns anything. "Team" and "department" are names companies give their groups.
 _Avoid_: team, department (labels, not concepts), role (what an admin has; a group is who), space
 
+**Integration**:
+A capability Patchy ships — Salesforce, Gmail, Postgres — built and maintained by Patchy, the same for every company, declaring the connection mode or modes it supports: company, personal, or both. A company-scoped primitive (see [Patches](../patches/CONTEXT.md)). There is no bring-your-own source: companies request integrations and Patchy builds them.
+_Avoid_: connector, app (Zapier's word), resource (Retool and Windmill's word), toolkit
+
+**Connection**:
+The live, credentialed instance of an integration. Company mode: connected once by an admin, granted to groups or company-wide, carrying a handle alongside its integration (`postgres/warehouse`) so a company can hold many per integration. A patch uses it through the cloud as the viewer — the credential applied server-side, the viewer's grant checked, every call logged — and patch code never sees the credential at any tier.
+_Avoid_: datasource, connected account, credential (what it holds, not what it is)
+
+**Personal connection**:
+A connection in personal mode: one user's own — their Gmail — made by the user with no admin involved, at most one per integration per user, dying with the account (credential wiped, stored data kept). Holding it is sufficient: any patch the user opens that declares the integration acts on it as them, with no per-patch consent step.
+_Avoid_: user resource, private connection
+
 **Member**:
 The role every user has who is not an admin. A member builds — publishes patches with no gate — and reaches whatever is shared with them; the role exists only so admin has something to be more than.
 _Avoid_: viewer (the person with a patch open, whatever their role), builder (a description, not a role), guest
