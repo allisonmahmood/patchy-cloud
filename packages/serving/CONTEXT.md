@@ -10,7 +10,7 @@ _Avoid_: hardening, bot protection (the serving surface is deliberately open to 
 
 **Page**:
 A patch as a reader receives it: the uploaded document in a sandboxed frame and nothing else — no chrome, no script, no first-party link out. A page's 404 keeps the patch URL's headers (noindexed, no referrer, uncached), so an expired or unknown patch answers under the same guarantees a served one did. The home page and the 404 are first-party chrome and share one shell; the served page is deliberately not that shell.
-_Avoid_: viewer (the old name), wrapper (the frame is the page)
+_Avoid_: viewer (the [Patches](../patches/CONTEXT.md) word for the person with a patch open, who from tier 1 up is acted for; a tier 0 page has a reader because it acts for no one), wrapper (the frame is the page)
 
 **Trusted proxy**:
 A network — an address or CIDR block in `PATCHY_TRUST_PROXY` — whose `X-Forwarded-For` is believed. The client's address is the socket's unless the socket is a trusted proxy's, in which case the chain is walked from the right and the first address outside a trusted network wins. From a direct peer the header is ignored, since anyone can write one; a list that would trust a whole address family is refused at startup, because it would let any direct peer choose its own attribution. Every per-address decision on the server keys on the resolved address.

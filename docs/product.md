@@ -26,7 +26,7 @@ Ownership: today a patch belongs to the token that created it. Once auth lands, 
 
 ### Sharing and finding
 
-A published patch is visible to **everyone in the company** by default. Its owner can tighten that (for now, to the builder alone) or widen it to anyone with the link. No patch is public without a login unless someone chose that.
+A published patch is visible to **everyone in the company** by default. Its owner can tighten that (to the owner plus named users, or to one group) or widen it to anyone with the link. No patch is public without a login unless someone chose that; who may open, and who may change, a patch is spelled out under [Identity and access](#access-to-a-patch).
 
 Finding a patch is a portal of everything you have access to. A patch's identity is its **id**, so two sales dashboards made by two salespeople never collide; its human-readable address follows its sharing scope (see [Addresses](#addresses)).
 
@@ -84,7 +84,7 @@ A company comes to exist at signup: the person signing up names it and becomes i
 
 ### Users, admins, groups
 
-A **user** is one individual with one account, in exactly one company. They sign in, and they hold expiring, rotatable tokens on the machines they build patches from — how sign-in and tokens work is the identity effort's to design.
+A **user** is one individual with one account, in exactly one company. They sign in, and they hold expiring, rotatable tokens on the machines they build patches from — see [Identity and access](#identity-and-access).
 
 An **admin** is a user with the role that runs the company: invites users, creates groups, sets permissions, connects company integrations, and — alone — reassigns a patch's owner. A company always has at least one admin, and the last admin cannot demote themself.
 
@@ -105,3 +105,55 @@ A patch's sharing scope is single-select — the owner (plus named users), exact
 ### The operator
 
 The **operator** — Patchy, running the platform — is not a company role and holds no company powers. Its powers are platform-shaped: create, suspend or delete a company, quotas, and moderation, which stays what it is today — taking a patch off its address, never acting inside the company. Support means being invited like anyone else; a customer-support role is not designed. **Suspension** is the operator's act on a whole company — nothing serves, nothing publishes, data kept — and is also where a company lands when it runs out of credits and cannot top up. Deleting a company is its admin's act, with a recovery window; the handle is released only after it.
+
+## Identity and access
+
+Log in once, and every patch you have access to opens when someone sends you its link. That is the whole promise, and everything below serves it. Patchy does not run its own identity system: **Clerk** holds who a person is, their sign-in and their browser session; Patchy holds the company, what each user may reach, and which machines may act as them.
+
+### Signing in
+
+A person signs in with **Google**, **Microsoft**, or a **code sent to their email**. There are no passwords — every other route gives Patchy nothing to protect and no reset flow to run. Signing in produces one session that is good across all of Patchy Cloud: a patch at `acme/sales/pipeline` and the portal that lists it are the same login. A link to a patch opened without a session shows the login door, and the door lands you back on the patch (the tier decision already placed the door in front of the page at every tier).
+
+A company that wants its own identity provider turns on **SSO**: Patchy flips the flag for the company, and the company's admin sets up SAML or OIDC against their IdP themselves — Patchy never handles the IdP credentials. SSO is enforced on the company's verified domain, so once it is on, everyone at `acme.com` signs in through Acme's IdP and nothing else. SSO is a paid feature; the price is a pricing question, not a design one.
+
+### Getting into a company
+
+There is no person without a company. A sign-in with no company behind it lands on **create or join**: either the person's work-email domain has been verified by an existing company and they join it, or they create a company of their own — which is the full onboarding, card included, because a company is the unit that pays.
+
+**Invite** is the default way in: an admin invites an email address, the person signs in, they are in. An admin may also verify the company's **domain** — proven by email, never a consumer domain like `gmail.com`, and one domain belongs to one company — after which anyone signing in with an `@acme.com` work identity joins Acme automatically. Verifying a domain never stops inviting: a contractor on another domain is invited like anyone else.
+
+A user is in **exactly one company**, and the rule is hard. Inviting someone who is already in another company is refused; they must leave that company first. Someone who created a company of one and is then invited (or whose domain a real company verifies) must either delete that company or add someone else and leave it — its patches do not come along. Merging a company of one into a company is not designed. Agencies and consultants who need several companies were deliberately deferred with the company decision.
+
+### Roles
+
+Two: **member** and **admin**. **Everyone in a company builds** — a member publishes patches with no gate and no permission to ask, because that is the point of the product. Admin adds running the company: invites, groups, domain and SSO, company connections, and reassigning a patch's owner. A company always has at least one admin and the last cannot demote themself. There is no builder role and no viewer role; if a company ever wants "can't publish", that is a setting to add, not a third role.
+
+### Access to a patch
+
+Who may **open** a patch is its sharing scope: the owner plus named users, one group, the whole company, or — by explicit choice — anyone with the link. Who may **change** a patch is its **owner** alone: publish a version, roll back, change the scope, retire, delete. There are no editors. When two people want to work on one patch, the repo is where they collaborate, and the owner publishes; when the owner is away, an admin reassigns ownership.
+
+**Admins see everything.** An admin has every patch in the company in view, owner-only ones included, and can act on any of them. The company owns what is built in it; "owner-only" is a sharing default, not a secret from the company. Making that more nuanced is a later decision.
+
+Across the company line there is nothing but **public**: a patch is inside the company or it is anyone-with-the-link. Guests — a named outsider with a login — are not a thing Patchy does yet.
+
+What the wrong person sees: not signed in, the login door, then the patch if they may open it. Signed in, in the same company, but outside the scope: "you don't have access to this patch", who owns it, and a **request access** button that asks the owner — inside a company a patch's existence is not a secret. Signed in from a different company, or the link points at nothing: "no such patch", confirming nothing, exactly as public hosting does today.
+
+### Machines and tokens
+
+A person's agent works on a machine — their laptop, a server, later a sandbox Patchy runs — and that machine needs to act as them. `patchy login` does it: the CLI prints a URL and a short code (as JSON under `--json`, so the agent relays both and waits), the person opens the URL in a browser they are already signed into, **sees the same code and confirms it is the one on their terminal**, and names the machine on a first login — "allison's macbook". The CLI receives a **machine token** and saves it on the machine, outside any project tree. The confirmation step, not the code entry, is what defeats the phishing that hit device logins elsewhere: someone who never ran `patchy login` has no code to match. The device flow is the one login route for now; a browser-on-the-same-machine fast path can come later.
+
+A machine token is **the user's**, one per machine, shared by every agent on that machine — Claude Code now and Codex an hour later use the same one, under the same name. Re-authenticating keeps the name. The token is Patchy's own, not the identity provider's: publishing never waits on a third party, and the token dies in the same act as everything else the user holds. It expires **90 days** after login and **30 days** after its last use, whichever comes first; a busy builder signs in once a quarter, a laptop left in a drawer stops being a credential on its own. Every version records the token that published it, so "which machine — which agent — did this" is always answerable without an agent ever being a principal.
+
+**Your machines** is the page that lists a user's tokens by name and last use, revokes one, or revokes all. Deactivating a user revokes every token and ends every session at once, including tier 1 and tier 2 patches they have open. CI holds a token from the same page, set through `PATCHY_API_TOKEN`; there is no company-owned or non-human token kind, so everything published has a human owner. Company-owned tokens for CI that is nobody's come back when someone needs them.
+
+With login, **self-service minting retires**: the zero-input token anyone could ask for was public hosting's door, and `patchy login` is Patchy Cloud's. A person with no account reaches sign-up from the same login page, so the agent-native first run stays one step — the login handoff simply replaces the mint announcement.
+
+### Who's who
+
+- **Person** — the human. Never an authorization key: names and emails change, the account does not.
+- **User** — one person's one account, in exactly one company. The subject of every permission.
+- **Agent** — software acting for a user, with that user's machine token. Never a who, always a how; it is indistinguishable from its user except by the token's machine name.
+- **Member**, **admin** — the two roles a user has in the company.
+- **Owner** — the one user a patch belongs to; the only one who changes it.
+- **Viewer** — the person who has a patch open; from tier 1 up, the identity patch code acts as. A tier 0 page has a **reader** instead, because a page that runs nothing cannot act for anyone.
+- **Operator** — Patchy, running the platform. Platform powers only, never a role inside a company, and never the word for whoever drives the CLI — that is the agent, the CLI's primary **driver**.
