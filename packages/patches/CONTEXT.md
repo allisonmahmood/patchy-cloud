@@ -16,6 +16,10 @@ _Avoid_: runtime (the thing a tier names), level, plan (tiers are capability, no
 The person who has a patch open. From tier 1 up, patch code acts as the viewer and never as more: it learns who they are as claims and reaches primitives and integrations only through the cloud, within the viewer's own permissions. An anonymous viewer of a public patch carries no identity, so nothing acts as them.
 _Avoid_: reader (a tier 0 word: the page cannot act for anyone), user (ambiguous with the builder), end user
 
+**Owner**:
+The one user a patch belongs to, and the only one who changes it — publishes a version, rolls back, sets the sharing scope, retires, deletes. There are no editors: people collaborate in the repo and the owner publishes; an admin reassigns ownership when the owner is gone. Today the owner is the token that created the patch; with login it is a user.
+_Avoid_: creator (the first version's token; the owner can change), editor, author
+
 **Patch identity**:
 The principal a tier 2 patch's server side runs as when it reaches the patch's own primitives — distinct from any viewer, accountable to the patch's owner and reassignable with it, starting with nothing but the patch's own primitives and gaining a shared integration only when a company admin grants one. It never holds a raw credential; nothing at any tier does.
 _Avoid_: service account (the shape, not the term), the owner's token (the patch does not inherit the owner's reach)

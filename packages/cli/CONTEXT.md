@@ -1,6 +1,6 @@
 # Publishing
 
-The `@patchy/cli` package and its bundled skill — the tool agents use to put pages up. An agent is the primary operator and the CLI's output is its interface, so every message is written to be read by an agent first and what an agent sees is a written contract ([ADR-0004](../../docs/adr/ADR-0004-cli-contract-for-agents.md)). Humans are not excluded: developers touching the cloud directly do drive it, so the human conveniences (completions, the wizard) stay, as long as they never change what an agent sees. The CLI's word for the thing it publishes is _patch_, same as the wire and the [Patches](../patches/CONTEXT.md) glossary; _draft_ is retired, and the copy still saying it is a filed rename.
+The `@patchy/cli` package and its bundled skill — the tool agents use to put pages up. An agent is the primary driver and the CLI's output is its interface, so every message is written to be read by an agent first and what an agent sees is a written contract ([ADR-0004](../../docs/adr/ADR-0004-cli-contract-for-agents.md)). Humans are not excluded: developers touching the cloud directly do drive it, so the human conveniences (completions, the wizard) stay, as long as they never change what an agent sees. The CLI's word for the thing it publishes is _patch_, same as the wire and the [Patches](../patches/CONTEXT.md) glossary; _draft_ is retired, and the copy still saying it is a filed rename.
 
 ## Language
 
@@ -17,7 +17,7 @@ The contract an agent branches on: 0 ok, 1 `local` (fixable without the network)
 _Avoid_: error code (ambiguous with the wire's `code`), status (ambiguous with HTTP and with the probe)
 
 **Auto-mint**:
-The publishing flow's act of requesting a self-service token from the target instance when it holds no token for that instance, announcing the mint as it happens. Never silent, and never triggered while any token is configured — a rejected token is an error, not a reason to mint again.
+The publishing flow's act of requesting a self-service token from the target instance when it holds no token for that instance, announcing the mint as it happens. Never silent, and never triggered while any token is configured — a rejected token is an error, not a reason to mint again. Retires with login: the login handoff takes its place in the flow.
 _Avoid_: anonymous upload (retired), silent fallback, registration
 
 **State dir**:
@@ -32,6 +32,18 @@ _Avoid_: house style (a project's own style, which overrides it), theme, templat
 The line the publishing flow prints when auto-mint fires: which instance, where the token was saved, and how to keep an existing identity instead. It is the signal an agent relays to the user, and the lazy cue to suggest onboarding.
 _Avoid_: warning (it reports success, not a problem)
 
+**Login handoff**:
+What replaces the mint announcement once login lands: the URL and code the CLI prints (as JSON under `--json`) for the agent to relay to the person, then waits on. The one moment in publishing that needs a human; the agent never opens a browser on someone's desktop.
+_Avoid_: prompt, browser login
+
+**Driver**:
+Whoever is running the CLI — an agent first, a developer touching the cloud directly second. The word is deliberately not _operator_, which is Patchy running the platform ([Auth](../auth/CONTEXT.md)).
+_Avoid_: operator, user (ambiguous with the account the driver acts as)
+
+**Agent**:
+Software acting for a user, with that user's machine token: the CLI's primary driver. Never a who, always a how — it is indistinguishable from its user except by the machine name on the token, and it holds no identity of its own.
+_Avoid_: bot, service account, agent identity
+
 **Onboarding**:
 The agent-led first-time setup conversation — establish which instance to publish to, one question capturing the default style, then publish the welcome patch. Hosting is never assumed: with nothing configured there is nowhere to publish yet, so the instance is asked for or read from local state before anything is uploaded. Asked for by the user, or suggested after a mint announcement; always optional.
 _Avoid_: signup, registration, setup wizard
@@ -41,7 +53,7 @@ The copy-paste block in the README that a user hands their agent to get started:
 _Avoid_: install snippet (older internal name), install command (only one of its parts)
 
 **Publishing key**:
-What an auth token is called in front of the user — "your publishing key, saved on this machine". _Token_, _instance_, and _mint_ stay out of user-facing copy except on the operator-token path, where operator vocabulary is correct.
+What an auth token — today's self-service token, tomorrow's machine token — is called in front of the user: "your publishing key, saved on this machine". _Token_, _instance_, and _mint_ stay out of user-facing copy except on the operator-token path, where operator vocabulary is correct.
 _Avoid_: token (in user-facing copy), password, account
 
 **Patch cache**:
