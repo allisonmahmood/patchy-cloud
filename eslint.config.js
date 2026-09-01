@@ -6,7 +6,8 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    ignores: ["**/dist/**", "**/coverage/**", "**/node_modules/**", "**/.turbo/**"]
+    // `.claude/` holds agent worktrees: full copies of the repo that type-aware linting must not load.
+    ignores: ["**/dist/**", "**/coverage/**", "**/node_modules/**", "**/.turbo/**", ".claude/**"]
   },
   {
     files: ["**/*.{ts,mts,cts,tsx}"],
