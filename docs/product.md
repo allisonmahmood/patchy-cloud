@@ -12,7 +12,7 @@ A patch is a **file tree**. The folder it is built in is the **patch repo**: the
 
 A patch has exactly one tier, declared in its repo. The structure of the tree says what the code is trying to do — client code, server code, and from tier 3 work that runs with no viewer present — so the cloud checks the declared tier against the tree and refuses a publish that claims less than the tree does. A patch is never two tiers at once.
 
-A patch may say it needs a **primitive** — file storage, tables, a company integration — and the cloud provisions it as part of the patch.
+A patch may say it needs a **primitive** — its own file storage or tables, or a company connection — and the cloud provides it: the patch's own are provisioned as part of the patch, a connection must already exist in the company (see [Integrations](#integrations)).
 
 ### Who makes one, and how it gets in
 
@@ -40,7 +40,7 @@ Today patches reference each other by address, nothing more. The long-run vision
 
 ### What a patch is not
 
-Not an **integration** (a connected source belongs to the company, and a patch uses it), not a **primitive** (a patch is provisioned with those), not a **company**, not a **version** (part of a patch), not an **agent** or a skill (those make patches). A patch is not a source of data, not a place data lives, and not the people using it.
+Not a **connection** (a connected source belongs to the company or a user, and a patch uses it), not a **primitive** (a patch declares and uses those), not a **company**, not a **version** (part of a patch), not an **agent** or a skill (those make patches). A patch is not a source of data, not a place data lives, and not the people using it.
 
 ## Runtime tiers
 
@@ -96,7 +96,7 @@ A patch belongs to a user, and everything ultimately belongs to the company, bec
 
 ### Integrations and connections
 
-Patchy ships the **integration** — Salesforce-the-capability, the same for every company, built by Patchy the way primitives are. What a company holds is a **connection**: the live, credentialed instance of an integration, connected by an admin and granted to groups or company-wide. Some integrations connect per user — sign into your own email — making a personal connection that dies with the user's account: credential wiped, stored data kept. A user needs no admin enablement to make a personal connection. A patch always uses a connection, never the integration in the abstract, and no patch at any tier ever sees a credential.
+Patchy ships the **integration** — Salesforce-the-capability, the same for every company, a company-scoped primitive built by Patchy. What a company holds is a **connection**: the live, credentialed instance of an integration, connected by an admin and granted to groups or company-wide. Some integrations connect per user — sign into your own email — making a personal connection that dies with the user's account: credential wiped, stored data kept. A user needs no admin enablement to make a personal connection. A patch always uses a connection, never the integration in the abstract, and no patch at any tier ever sees a credential. The layer itself — modes, handles, declaring, what patch code is handed — is spelled out under [Integrations](#integrations).
 
 ### Addresses
 
@@ -157,3 +157,39 @@ With login, **self-service minting retires**: the zero-input token anyone could 
 - **Owner** — the one user a patch belongs to; the only one who changes it.
 - **Viewer** — the person who has a patch open; from tier 1 up, the identity patch code acts as. A tier 0 page has a **reader** instead, because a page that runs nothing cannot act for anyone.
 - **Operator** — Patchy, running the platform. Platform powers only, never a role inside a company, and never the word for whoever drives the CLI — that is the agent, the CLI's primary **driver**.
+
+## Integrations
+
+An **integration** is a capability Patchy ships — Salesforce, Gmail, Postgres — built and maintained by Patchy, the same for every company. What a company holds is a **connection**: the live, credentialed instance of one. That distinction was drawn with [Companies](#integrations-and-connections); this section is the layer itself — how a connection comes to exist, how a patch declares and uses one, and what patch code is actually handed.
+
+Integrations sit inside the **primitive** model. A primitive is what the cloud provides a patch because the patch declared the need, and primitives come in two scopes. **Patch-scoped** primitives — the patch's own tables, its file storage — are provisioned with the patch, are part of it, and go with it. **Company-scoped** primitives — connections, and the company database a patch's tables live in — exist once for the whole company; a patch uses them and never owns them. A patch's tables are patch-scoped wherever they physically live: an extra table in the company database belongs to that patch, not to every patch.
+
+### Company and personal connections
+
+Every integration declares the mode or modes it supports, fixed by Patchy when the integration is built — never chosen at connect time. A **company** connection is made once by an admin and granted to groups or the whole company: one shared credential, where "as the viewer" means Patchy checks the viewer holds the grant and records who acted — the source itself sees the shared identity. A **personal** connection is one user's own — sign into your own Gmail — made by the user with no admin involved, and dying with their account. An integration that honestly supports both is two declarations to a patch: "Salesforce, shared" and "Salesforce, as each rep" are different things to build against.
+
+A company holds as many connections of one integration as it likes — two databases, a production and a sandbox CRM — so every company connection carries a **handle** alongside its integration: `postgres/warehouse`, `salesforce/sandbox`. Handles are per integration per company, first-come like every name. Personal connections need none: a user holds at most one per integration.
+
+### Declaring, granting, opening
+
+A patch declares the connections it needs in its repo, the way it declares its tier — the integration and, for a company connection, the handle. The CLI lists the integrations Patchy ships and the connections the company already holds, so an agent builds against what is actually there, and publish tells the owner when the declaration names a connection the company does not have.
+
+Using a company connection takes no per-patch grant on the viewer path: if the viewer holds the connection — through a group or company-wide — every patch they open can act through it as them. The declaration is not a permission; it is what lets the cloud be honest up front. A viewer without the grant is told plainly that this is their access, not the patch being broken, exactly as the tiers decision put it.
+
+Holding a personal connection is likewise sufficient: any patch the viewer opens that declares the integration acts on the viewer's own connection, with no per-patch consent step. That is deliberate — inside a company, the patches are your colleagues' — and per-patch consent comes back as its own decision if the threat proves real.
+
+The connect moment sits in front of the page, exactly like the login door: a viewer opening a patch that declares a personal connection they have not made is walked through connecting it, then lands on the patch. Patch code is written against the promise that every declared connection is present — no "not connected" branch to write. An admin disconnecting or un-granting a company connection breaks that promise mid-flight; the patch's calls then fail as that same access message, and the door reappears on the next open.
+
+### What patch code sees
+
+A **typed client** per integration, from the SDK — `salesforce.query(…)`, never raw HTTP against the source. Building and maintaining that surface is Patchy's job: that is why Patchy builds integrations instead of letting each company wire its own, and it is what keeps the surface simple for agents. No patch at any tier ever sees a credential — credentials live in Patchy's own encrypted store, applied server-side, and every call through the layer is logged with the patch, the connection and the identity it ran as.
+
+There is no bring-your-own source: no generic REST escape hatch and no "connect an MCP server". A company that needs an integration Patchy has not shipped requests it, and Patchy builds it; opening the catalog is its own later decision if that pressure proves real.
+
+### Development
+
+The builder's agent reaches connections through the same layer, as its user: the machine token stands in for the session, so the dev loop sees exactly what the user would see in the browser — their grants, their personal connections, nothing more. There are no mocks and no per-connection staging environments; the blast radius of an agent is the blast radius of its user.
+
+### The edges
+
+A tier 2 patch's own **patch identity** against a shared connection is sketched under [Runtime tiers](#tier-2--hosted); its mechanics are settled when tier 2 is designed. The company database as a shared data surface — company-wide tables several patches read — is undesigned, and belongs with composition.

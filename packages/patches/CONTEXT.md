@@ -13,7 +13,7 @@ Where a patch's code runs, and nothing else: tier 0 _static_ (no code runs anywh
 _Avoid_: runtime (the thing a tier names), level, plan (tiers are capability, not pricing)
 
 **Viewer**:
-The person who has a patch open. From tier 1 up, patch code acts as the viewer and never as more: it learns who they are as claims and reaches primitives and integrations only through the cloud, within the viewer's own permissions. An anonymous viewer of a public patch carries no identity, so nothing acts as them.
+The person who has a patch open. From tier 1 up, patch code acts as the viewer and never as more: it learns who they are as claims and reaches primitives — the patch's own, and the company's connections — only through the cloud, within the viewer's own permissions. An anonymous viewer of a public patch carries no identity, so nothing acts as them.
 _Avoid_: reader (a tier 0 word: the page cannot act for anyone), user (ambiguous with the builder), end user
 
 **Owner**:
@@ -33,7 +33,7 @@ The act that puts a patch up: a new version, live at once to everyone the patch 
 _Avoid_: deploy, upload (the wire route, not the act), release, promote
 
 **Primitive**:
-A capability the cloud provisions a patch with because it says it needs one — file storage, its own tables, a company integration. Provisioned per patch, as part of the patch, never shared out of it.
+A capability the cloud provides a patch because it declared the need, in one of two scopes: patch-scoped — the patch's own tables, its file storage — provisioned with the patch, part of it, gone with it; company-scoped — a connection, the company database — existing once for the whole company, used by patches and owned by none. A patch's tables are patch-scoped wherever they physically live.
 _Avoid_: resource, service, addon
 
 **Extension**:
