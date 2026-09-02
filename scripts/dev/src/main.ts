@@ -52,6 +52,12 @@ class SupervisorBusy extends Schema.TaggedError<SupervisorBusy>()("SupervisorBus
   }
 }
 
+class NotHealthy extends Schema.TaggedError<NotHealthy>()("NotHealthy", { apiUrl: Schema.String }) {
+  override get message() {
+    return `${this.apiUrl} is not serving; run \`pnpm dev\`.`;
+  }
+}
+
 class NoPlan extends Schema.TaggedError<NoPlan>()("NoPlan", { worktree: Schema.String }) {
   override get message() {
     return `No dev instance has been started in ${this.worktree}; run \`pnpm dev\`.`;
@@ -216,6 +222,17 @@ const StatusReport = Schema.fromJsonString(
 );
 const encodeStatus = Schema.encodeSync(StatusReport);
 
+const renderStatus = (report: typeof StatusReport.Type) => {
+  const state = (part: typeof ProcessState.Type) =>
+    part === null ? "not started" : part.alive ? `pid ${part.pid}` : `pid ${part.pid} (dead)`;
+  return [
+    `${report.healthy ? "healthy" : "not healthy"}  ${report.apiUrl}`,
+    `  supervisor  ${state(report.supervisor)}`,
+    `  server      ${state(report.server)}`,
+    `  postgres    ${state(report.postgres)}`
+  ].join("\n");
+};
+
 const status = Command.make(
   "status",
   { json },
@@ -232,19 +249,11 @@ const status = Command.make(
       server: yield* probe(plan.pids?.server),
       postgres: yield* probe(plan.pids?.postgres)
     };
-    if (json) return yield* Console.log(encodeStatus(report));
-    const state = (part: typeof ProcessState.Type) =>
-      part === null ? "not started" : part.alive ? `pid ${part.pid}` : `pid ${part.pid} (dead)`;
-    yield* Console.log(
-      [
-        `${report.healthy ? "healthy" : "not healthy"}  ${plan.apiUrl}`,
-        `  supervisor  ${state(report.supervisor)}`,
-        `  server      ${state(report.server)}`,
-        `  postgres    ${state(report.postgres)}`
-      ].join("\n")
-    );
+    if (json) yield* Console.log(encodeStatus(report));
+    else yield* Console.log(renderStatus(report));
+    if (!report.healthy) return yield* new NotHealthy({ apiUrl: plan.apiUrl });
   }, userFacing)
-).pipe(Command.withDescription("Report what is running for this worktree"));
+).pipe(Command.withDescription("Report what is running for this worktree; exit 1 unless healthy"));
 
 /** SIGTERM the recorded supervisor and wait; state stays for the next start. */
 const stopInstance = Effect.fn("stop")(function* (plan: Plan) {
