@@ -57,7 +57,7 @@ What an auth token — today's self-service token, tomorrow's machine token — 
 _Avoid_: token (in user-facing copy), password, account
 
 **Patch cache**:
-The per-instance record linking a local file to the patch it produced, so republishing the same file updates that patch instead of creating a new one.
+The per-instance record linking a local file to the patch it produced, so republishing the same file updates that patch instead of creating a new one, and deleting by file finds the patch to take down. A deleted patch is forgotten.
 _Avoid_: draft cache
 _Avoid_: upload history, manifest
 

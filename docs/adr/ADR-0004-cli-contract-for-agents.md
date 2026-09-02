@@ -22,7 +22,7 @@ onto `effect/unstable/cli` was the moment to write the contract down.
 | ---- | ------------- | ------------------------------------ | ----------------------------------------------------------------------------------- |
 | 0    | ok            |                                      |                                                                                     |
 | 1    | `local`       | fixable without touching the network | bad args, file missing, HTML fails validation, no token stored, malformed state dir |
-| 2    | `rejected`    | the instance answered and said no    | 401/403, 404 on an update, 409, 413, 429, a server-side 400                         |
+| 2    | `rejected`    | the instance answered and said no    | 401/403, 404 on an update or a delete, 409, 413, 429, a server-side 400             |
 | 3    | `unreachable` | no usable answer from the instance   | DNS/connect/timeout, 5xx, an unparseable body                                       |
 | 130  | interrupted   | SIGINT/SIGTERM → fiber interruption  |                                                                                     |
 
@@ -39,8 +39,8 @@ its code; no command exits on its own.
 
 ### `--json`: a global flag on every command
 
-- Success: stdout is exactly one JSON document. For `whoami` and `upload` it is
-  the wire shape from `@patchy/api`; `validate` prints `{ ok, warnings }`,
+- Success: stdout is exactly one JSON document. For `whoami`, `upload` and
+  `delete` it is the wire shape from `@patchy/api`; `validate` prints `{ ok, warnings }`,
   `auth set` `{ ok, instanceUrl }`, `status` its report (its only format).
   Upload warnings ride in `warnings: []`, never on stderr.
 - Failure: stderr is `{ "ok": false, "error": "<the one-line message>", "kind": "local" | "rejected" | "unreachable" }`,

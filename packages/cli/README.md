@@ -1,6 +1,6 @@
 # @patchy/cli
 
-Command-line uploader for [Patchy Cloud](https://github.com/allisonmahmood/patchy-cloud). It sends static HTML patches to a Patchy Cloud instance, which serves them behind unlisted, link-viewable URLs. Every upload carries a bearer API token; patch viewer URLs are public and unlisted, so anyone with the link can view the rendered page.
+Command-line uploader for [Patchy Cloud](https://github.com/allisonmahmood/patchy-cloud). It sends static HTML patches to a Patchy Cloud instance, which serves them behind unlisted, link-viewable URLs, and takes them down again. Every upload carries a bearer API token; patch viewer URLs are public and unlisted, so anyone with the link can view the rendered page.
 
 An agent is the primary operator, so the CLI promises a contract an agent can branch on without reading prose: an [exit code that says who has to act](#exit-codes), `--json` on every command, and one resolution of which instance is being targeted. The contract is [ADR-0004](../../docs/adr/ADR-0004-cli-contract-for-agents.md).
 
@@ -117,17 +117,30 @@ Credential selection is deterministic: `PATCHY_API_TOKEN` wins, then the token a
 
 With credentials, uploading a file the CLI has seen before updates that same patch (a new version). If that cached patch is unavailable, the upload fails; pass `--new` to create a brand-new patch with a server-generated ID. `--patch <patch-id>` is update-only: it can add a version to an existing active patch your own token owns, but it never creates a patch at a caller-chosen ID. Unknown, unavailable, or unowned targets fail with the same generic update error.
 
+### `patchy delete <file> | --patch <patch-id>`
+
+Delete a patch. Irreversible: the page stops serving at once, so confirm with the user first. Name the file the patch was uploaded from and the CLI finds the patch in its cache, or pass `--patch <patch-id>` to name it outright; one or the other, not both. On success the cache forgets the patch, so a later upload from that file creates a new one.
+
+```sh
+patchy delete ./plan.html
+# Deleting from https://pages.example.com (target came from the saved config).
+# Deleted patch
+# Patch ID: k7f2m9x1a3b8
+```
+
+The delete carries the same credential chain as an upload, and only the key that published a patch can delete it. Unlike `upload`, a missing key is an error rather than a reason to mint: a fresh key would own nothing. A patch that is not there, or that the key does not own, is a `rejected` failure; the cache keeps its entry until the instance says yes.
+
 ## Exit codes
 
 The code says who has to act, so an agent can branch on it without reading the message:
 
-| code | kind          | meaning                              | examples                                                                            |
-| ---- | ------------- | ------------------------------------ | ----------------------------------------------------------------------------------- |
-| 0    | ok            |                                      |                                                                                     |
-| 1    | `local`       | fixable without touching the network | bad args, file missing, HTML fails validation, no token stored, malformed state dir |
-| 2    | `rejected`    | the instance answered and said no    | a rejected token, an update target that is not there, a quota, a rate limit         |
-| 3    | `unreachable` | no usable answer from the instance   | DNS/connect/timeout, a 5xx, a body the CLI could not read                           |
-| 130  | interrupted   | SIGINT or SIGTERM                    |                                                                                     |
+| code | kind          | meaning                              | examples                                                                              |
+| ---- | ------------- | ------------------------------------ | ------------------------------------------------------------------------------------- |
+| 0    | ok            |                                      |                                                                                       |
+| 1    | `local`       | fixable without touching the network | bad args, file missing, HTML fails validation, no token stored, malformed state dir   |
+| 2    | `rejected`    | the instance answered and said no    | a rejected token, an update or delete target that is not there, a quota, a rate limit |
+| 3    | `unreachable` | no usable answer from the instance   | DNS/connect/timeout, a 5xx, a body the CLI could not read                             |
+| 130  | interrupted   | SIGINT or SIGTERM                    |                                                                                       |
 
 Nothing else. A bug in the CLI is one `Unexpected error: <message>` line and exit 1; add `--log-level debug` for the stack.
 
@@ -136,19 +149,20 @@ Nothing else. A bug in the CLI is one `Unexpected error: <message>` line and exi
 Every command takes these, before or after the subcommand:
 
 - `--api-url <url>` — the instance to talk to, overriding every other source; see [precedence](#environment-variables).
-- `--json` — print the result as one JSON document on stdout and nothing else: `auth set` prints `{ "ok": true, "instanceUrl" }`, `validate` prints `{ "ok": true, "warnings" }`, and `whoami` and `upload` print the instance's response exactly as [`docs/API.md`](../../docs/API.md) describes it. A failure is `{ "ok": false, "error", "kind" }` on stderr, stdout empty, with the exit code for `kind`. Stderr is otherwise empty, except that an upload that minted a key still prints the mint announcement there. `status` prints JSON either way.
+- `--json` — print the result as one JSON document on stdout and nothing else: `auth set` prints `{ "ok": true, "instanceUrl" }`, `validate` prints `{ "ok": true, "warnings" }`, and `whoami`, `upload` and `delete` print the instance's response exactly as [`docs/API.md`](../../docs/API.md) describes it (`delete` prints `{ "ok": true }`). A failure is `{ "ok": false, "error", "kind" }` on stderr, stdout empty, with the exit code for `kind`. Stderr is otherwise empty, except that an upload that minted a key still prints the mint announcement there. `status` prints JSON either way.
 
 ## Command flags
 
 - `--token-stdin` — on `auth set`, read exactly one non-empty token from redirected stdin. This is the explicit automation path and is rejected when stdin is a terminal.
 - `--new` — on `upload`, always create a new patch with a server-generated ID instead of updating the one previously uploaded from this path. It cannot be combined with `--patch`.
 - `--patch <patch-id>` — on `upload`, update a specific existing patch. This is update-only and never creates a new patch. It cannot be combined with `--new`.
+- `--patch <patch-id>` — on `delete`, name the patch outright instead of finding it from the file it was uploaded from. It cannot be combined with a file argument.
 - `--anonymous` — deprecated and ignored. Uploads always use a publishing token; one is minted automatically when none is stored for the instance.
 
 ## Environment variables
 
 - `PATCHY_API_URL` — API base URL. Overrides the stored config; overridden by `--api-url` and by a dev env. Default: `http://localhost:3000`.
-- `PATCHY_API_TOKEN` — API token for ordinary authenticated commands such as `whoami` and `upload`. It overrides every other token and is useful in CI; `auth set` does not read it. When no token is configured, `upload` mints a publishing token for the resolved instance and uses that; there is no credential-free upload.
+- `PATCHY_API_TOKEN` — API token for ordinary authenticated commands such as `whoami`, `upload` and `delete`. It overrides every other token and is useful in CI; `auth set` does not read it. When no token is configured, `upload` mints a publishing token for the resolved instance and uses that; there is no credential-free upload.
 - `PATCHY_STATE_DIR` — directory for the CLI's config, credentials, and patch cache. Default: `~/.patchy`.
 
 Setting any of these to the empty string means the same thing as leaving it unset.
@@ -161,7 +175,7 @@ The CLI stores state under `~/.patchy` (or `PATCHY_STATE_DIR`):
 
 - `config.json` — the saved API base URL.
 - `credentials.json` — saved API tokens, keyed by instance. On Unix, every save creates or repairs this file to owner-only (`0600`) permissions.
-- `patches.json` — the patch cache, keyed by instance and then by absolute file path, so later uploads from the same path update the same patch.
+- `patches.json` — the patch cache, keyed by instance and then by absolute file path, so later uploads from the same path update the same patch and `delete` can find it from the path. A successful `delete` drops every entry that pointed at the patch.
 - `style.md` — the default style, owned and written by the agent skill. The CLI never reads its contents; `status` reports only whether it exists.
 
 Both files are keyed by the resolved API base URL under exact string equality, so instances that differ only by scheme, host, or port are separate entries by design:

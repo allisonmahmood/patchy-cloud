@@ -639,6 +639,41 @@ try {
   });
   assert.equal((await snapshotTree(objectDir)).length, 6);
 
+  console.log("[packed-cli-e2e] proving delete takes a patch down with the key that published it");
+  // Its own upload on the authenticated state dir, so deleting by file resolves
+  // to the patch this step created, whatever the script cached before it.
+  const doomedHtml = validHtml("Packed contract doomed", "packed-contract-doomed");
+  await checkedCall(() => writeFile(fixturePath, doomedHtml, "utf8"));
+  const doomed = parseUpload(
+    await runCli(cliPath, ["upload", fixtureArgument, "--new"], { cwd: consumerDir, env: cliEnv })
+  );
+  assert.equal((await fetchViewer(doomed.publicUrl)).response.status, 200);
+  const removed = await runCli(cliPath, ["delete", fixtureArgument], {
+    cwd: consumerDir,
+    env: cliEnv
+  });
+  assert.equal(
+    removed.stdout,
+    `Deleting from ${publicBaseUrl} (target came from the saved config).\nDeleted patch\nPatch ID: ${doomed.patchId}\n`
+  );
+  assert.equal(removed.stderr, "");
+  const removedViewer = await fetchViewer(doomed.publicUrl);
+  assert.equal(removedViewer.response.status, 404, "a deleted patch must stop serving at once");
+  const cacheAfterDelete = JSON.parse(
+    await checkedCall(() => readFile(path.join(cliStateDir, "patches.json"), "utf8"))
+  );
+  assert.equal(
+    cacheAfterDelete.hosts[publicBaseUrl].files[fixtureCachePath],
+    undefined,
+    "a successful delete must drop the patch from the per-instance cache"
+  );
+  const removedAgain = await runCli(cliPath, ["delete", "--patch", doomed.patchId], {
+    cwd: consumerDir,
+    env: cliEnv,
+    allowFailure: true
+  });
+  assert.equal(removedAgain.code, 2, "deleting a patch that is gone is the instance's refusal");
+
   console.log(
     "[packed-cli-e2e] PASS: spaced consumer/artifact/state paths and quoted POSIX sh commands"
   );

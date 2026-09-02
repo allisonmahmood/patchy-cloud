@@ -1,5 +1,5 @@
 /**
- * The five commands. Each handler yields what it needs — the resolved
+ * The six commands. Each handler yields what it needs — the resolved
  * `Instance`, the `State` dir, the derived client — and fails only with a
  * `CliError`, so the contract in `Output` is the whole of what an agent sees.
  * User-facing copy calls a token a publishing key, except on the own-instance
@@ -20,7 +20,14 @@ import * as Argument from "effect/unstable/cli/Argument";
 import * as Command from "effect/unstable/cli/Command";
 import * as Flag from "effect/unstable/cli/Flag";
 import * as Prompt from "effect/unstable/cli/Prompt";
-import { Identity, UploadCreated, UploadMetadata, UploadRequest, UploadUpdated } from "@patchy/api";
+import {
+  Identity,
+  Ok,
+  UploadCreated,
+  UploadMetadata,
+  UploadRequest,
+  UploadUpdated
+} from "@patchy/api";
 import { sha256, validateHtml } from "@patchy/core";
 import * as Api from "./Api.js";
 import { type CliError, LocalError, RejectedError, UnreachableError } from "./CliError.js";
@@ -47,10 +54,11 @@ const run = <A, R>(handler: Effect.Effect<A, CliError, R>) =>
 const encodeIdentity = Schema.encodeSync(Identity);
 // A create is 201, an update 200; the wire names them separately.
 const encodeUpload = Schema.encodeSync(Schema.Union([UploadCreated, UploadUpdated]));
+const encodeOk = Schema.encodeSync(Ok);
 
 /** Wire literal of the 401 (`Unauthorized` in `@patchy/api`); the hint below keys on it. */
 const UNAUTHORIZED = "Missing or invalid API token.";
-/** Wire literal of the upload 404; `upload` turns it into its next action. */
+/** Wire literal of the patch-route 404; `upload` and `delete` each turn it into their next action. */
 const PATCH_NOT_FOUND = "Patch not found.";
 
 /**
@@ -471,10 +479,102 @@ const upload = Command.make(
     )
 ).pipe(Command.withDescription("Upload or update an HTML patch."));
 
+// --- delete -----------------------------------------------------------------
+
+/**
+ * The patch to delete: the one cached for the file, or the id given outright.
+ * Exactly one of the two, because a file and an id that disagree would leave
+ * the cache pointing at whichever was not deleted.
+ */
+const deleteTarget = Effect.fn("deleteTarget")(function* (
+  file: Option.Option<string>,
+  patch: Option.Option<string>
+) {
+  if (Option.isSome(file) && Option.isSome(patch)) {
+    return yield* new LocalError({
+      message: "Pass the file the patch was uploaded from, or --patch <patch-id>, not both."
+    });
+  }
+  if (Option.isSome(patch)) return patch.value;
+  if (Option.isNone(file)) {
+    return yield* new LocalError({
+      message: "Pass the file the patch was uploaded from, or --patch <patch-id>."
+    });
+  }
+  const path = yield* Path.Path;
+  const { apiUrl } = yield* Instance.Instance;
+  const state = yield* State.State;
+  const resolved = path.resolve(file.value);
+  const cached = yield* state.readCachedPatch(apiUrl, resolved);
+  if (Option.isNone(cached)) {
+    return yield* new LocalError({
+      message:
+        `No patch on ${apiUrl} was uploaded from ${resolved}.\n` +
+        "Pass --patch <patch-id> to delete by ID."
+    });
+  }
+  return cached.value.patchId;
+});
+
+/**
+ * Never mints: a fresh key owns nothing, so with no key there is nothing this
+ * machine can delete. The cache forgets the patch only once the instance has
+ * said yes, so a refusal leaves the local picture as it was.
+ */
+const del = Command.make(
+  "delete",
+  {
+    file: Argument.string("file").pipe(
+      Argument.withDescription("The HTML file the patch was uploaded from"),
+      Argument.optional
+    ),
+    patch: Flag.string("patch").pipe(
+      Flag.withDescription("Delete this patch by ID instead of by file"),
+      Flag.optional
+    )
+  },
+  (options) =>
+    run(
+      Effect.gen(function* () {
+        const patchId = yield* deleteTarget(options.file, options.patch);
+        const instance = yield* Instance.Instance;
+        const state = yield* State.State;
+        const token = yield* configuredToken;
+        if (Option.isNone(token)) {
+          return yield* new LocalError({
+            message:
+              `No publishing key is stored for ${instance.apiUrl}, so nothing there can be deleted from this machine.\n` +
+              `Save the one that published the patch with: patchy auth set --api-url ${instance.apiUrl}`
+          });
+        }
+        yield* Output.notice(
+          `Deleting from ${instance.apiUrl} (target came from ${Instance.describeSource(instance.source)}).`
+        );
+        const client = yield* Api.client(token);
+        const ok = yield* client.delete({ params: { patchId } }).pipe(
+          Effect.catch((error) => {
+            if (Api.isRefusal(error) && error.error === PATCH_NOT_FOUND) {
+              return new RejectedError({
+                message: `Patch ${patchId} is unavailable for deletion: it is not on ${instance.apiUrl}, or this publishing key does not own it.`
+              });
+            }
+            return refused(error, "Delete failed.");
+          })
+        );
+        yield* state.forgetPatch(instance.apiUrl, patchId);
+        yield* Output.report(encodeOk(ok), ["Deleted patch", `Patch ID: ${patchId}`]);
+      })
+    )
+).pipe(
+  Command.withDescription(
+    "Delete a patch from the instance. Irreversible. Confirm with the user first."
+  )
+);
+
 // --- the tree ---------------------------------------------------------------
 
 export const root = Command.make("patchy").pipe(
   Command.withDescription("Upload static HTML patches to a Patchy Cloud instance."),
-  Command.withSubcommands([auth, whoami, status, validate, upload]),
+  Command.withSubcommands([auth, whoami, status, validate, upload, del]),
   Command.withGlobalFlags([Output.JsonFlag, Instance.ApiUrlFlag])
 );

@@ -551,6 +551,79 @@ describe("patchy upload", async () => {
   });
 });
 
+describe("patchy delete", async () => {
+  it("takes down the patch a file was uploaded from with the key that published it, then the patch is gone", async () => {
+    // The stub remembers what is live, so a delete after a delete is a real 404.
+    const live = new Set<string>();
+    const instance = await stubInstance((request, respond) => {
+      if (request.url === "/api/uploads") {
+        const body = request.body as { patchId?: string };
+        if (body.patchId !== undefined) {
+          return live.has(body.patchId)
+            ? respond(200, upload(200, body.patchId, 2))
+            : respond(404, { ok: false, error: "Patch not found." });
+        }
+        live.add("abcdefghijkl");
+        return respond(201, upload(201, "abcdefghijkl", 1));
+      }
+      const patchId = request.url.replace("/api/patches/", "");
+      if (request.method === "DELETE" && live.delete(patchId)) return respond(200, { ok: true });
+      return respond(404, { ok: false, error: "Patch not found." });
+    });
+    const dir = tempDir();
+    const file = htmlFile(dir, "page.html", validHtml);
+    const copy = htmlFile(dir, "copy.html", validHtml);
+    const env = { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" };
+    expect((await runCli(["upload", file], { stateDir: dir, env })).status).toBe(0);
+    // A second file pointed at the same patch by hand; the cache now names it twice.
+    expect(
+      (await runCli(["upload", copy, "--patch", "abcdefghijkl"], { stateDir: dir, env })).status
+    ).toBe(0);
+
+    const deleted = await runCli(["delete", file, "--json"], { stateDir: dir, env });
+    expect(deleted).toMatchObject({ status: 0, stdout: '{"ok":true}\n', stderr: "" });
+    expect(instance.requests[2]).toMatchObject({
+      method: "DELETE",
+      url: "/api/patches/abcdefghijkl",
+      authorization: "Bearer pp_owner"
+    });
+    // Every file that pointed at the patch is forgotten, not only the one named,
+    // so no later upload tries to update a patch that is gone.
+    expect(readJson(path.join(dir, "patches.json"))).toEqual({
+      hosts: { [instance.url]: { files: {} } }
+    });
+
+    const forgotten = await runCli(["delete", file], { stateDir: dir, env });
+    expect(forgotten.status).toBe(1);
+    expect(forgotten.stderr).toMatch(/^No patch on .* was uploaded from /);
+    expect(instance.requests).toHaveLength(3);
+
+    const gone = await runCli(["delete", "--patch", "abcdefghijkl"], { stateDir: dir, env });
+    expect(gone.status).toBe(2);
+    expect(gone.stderr).toBe(
+      `Patch abcdefghijkl is unavailable for deletion: it is not on ${instance.url}, or this publishing key does not own it.\n`
+    );
+
+    // Neither target and both targets are told what to pass, in different words.
+    const neither = await runCli(["delete"], { stateDir: dir, env });
+    expect(neither.status).toBe(1);
+    expect(neither.stderr).toBe(
+      "Pass the file the patch was uploaded from, or --patch <patch-id>.\n"
+    );
+    const both = await runCli(["delete", file, "--patch", "abcdefghijkl"], { stateDir: dir, env });
+    expect(both.status).toBe(1);
+    expect(both.stderr).toBe(
+      "Pass the file the patch was uploaded from, or --patch <patch-id>, not both.\n"
+    );
+
+    // With no key there is nothing to delete with, and none is ever minted for it.
+    const keyless = await runCli(["delete", "--patch", "abcdefghijkl", "--api-url", instance.url]);
+    expect(keyless.status).toBe(1);
+    expect(keyless.stderr).toMatch(/^No publishing key is stored for /);
+    expect(instance.requests).toHaveLength(4);
+  });
+});
+
 describe("patchy status", async () => {
   it("reports local state only, naming which link chose the instance", async () => {
     const dir = tempDir();
