@@ -66,6 +66,19 @@ The five canonical triage roles, each label string equal to its name. See `docs/
 
 Multi-context — a root `CONTEXT-MAP.md` naming the product's contexts (Patches, Serving, Companies, Auth, Integrations, Publishing), the shared kernel and the infrastructure packages, each with a `CONTEXT.md` at its package's path — written before the code where the package does not exist yet. `docs/product.md` is the product's shape. See `docs/agents/domain.md`.
 
+## Hit every surface
+
+The most common defect here is a change that lands on the path you tested and is missing everywhere else it is mirrored. Before calling work done, walk this list and say which entries applied:
+
+- **The wire contract.** A request, response or route in `packages/api` follows through to the server handler, the CLI command and its `--json` shape, and `docs/API.md`. The api package is the source; the rest mirror it.
+- **The CLI.** A new or changed command, flag or exit code follows through to `packages/cli/README.md`, the contract in ADR-0004, and the public `patchy` skill that teaches agents to drive it. When that skill's `SKILL.md` changes, refresh the hash in `skills-lock.json` by hand; nothing in CI checks it.
+- **The dev loop.** A change to the runner under `scripts/dev`, its seed, or how the CLI finds a local instance follows through to `docs/DEVELOPMENT.md`, the `patchy-dev-loop` skill, and the vitest Postgres template that applies the same seed rows.
+- **Vocabulary and product shape.** A new or renamed concept follows through to the owning `CONTEXT.md` glossary, `CONTEXT-MAP.md` when a context gains or loses a package, and `docs/product.md` when the product's shape moved. An ADR the change contradicts is updated or deleted, never left standing.
+- **Migrations.** A package that gains its first migration record is spread into three places: the server's migrator run, the dev runner's, and the vitest template's. Miss one and that place silently does not migrate.
+- **Served pages.** What a reader receives runs through the `ui-consistency` spec; what HTML is accepted or rejected lands as fixtures under `packages/core/fixtures`, which the policy tests and `pnpm seed:dev` both read.
+- **Reverse states.** If you add a way in, add the way out and the way to see it. Pin needs unpin, a minted token needs revoke. A one-way door is a bug.
+- **The repo layout.** Adding, renaming or removing a package follows through to the README's layout list, and to Where to look above if it is a doc an agent needs.
+
 ### Review specs
 
 Standards sources for `/code-review`'s Standards axis, one `SKILL.md` each under `.agents/skills/`: `effect-service-conventions` when the diff creates, moves, refactors, or consumes an Effect service; `ui-consistency` when it touches rendered HTML or CSS. Pass the matching file(s) to the Standards sub-agent.
