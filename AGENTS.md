@@ -40,6 +40,16 @@ The rest of this document is meant to help you navigate the codebase and make ch
 
 # The tech
 
+## Where to look
+
+One line each; only the things you would not find by reading the tree.
+
+- `docs/product.md` — the product's shape: patches, tiers, companies, identity, integrations. Read it before designing anything user-facing.
+- `CONTEXT-MAP.md` and each package's `CONTEXT.md` — the vocabulary. Use their words; see `docs/agents/domain.md`.
+- `docs/DEVELOPMENT.md` — `pnpm dev` runs a full local instance per worktree (embedded Postgres, seeded company and token). Start there, not with the server by hand.
+- `packages/sql/README.md` — how migrations and row decoding work.
+- `docs/adr/ADR-0004-cli-contract-for-agents.md` — the CLI's exit codes and `--json` contract; keep it when touching `packages/cli`.
+
 ## Agent skills
 
 Review notes belong in PR comments, not in the working tree.
