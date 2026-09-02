@@ -12,6 +12,7 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "node --import tsx --conditions=development scripts/dev/src/main.ts",
+    "patchy": "node --import tsx --conditions=development packages/cli/src/index.ts",
     "seed:dev": "node scripts/seed-dev.mjs",
     "test": "vitest run",
     "test:all": "sh scripts/test-all.sh",
