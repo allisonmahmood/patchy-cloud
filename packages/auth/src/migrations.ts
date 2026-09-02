@@ -50,5 +50,16 @@ export const migrations: Migrations = {
 
     CREATE INDEX token_mints_source_ip_created_at_idx
       ON token_mints(source_ip, created_at);
+  `),
+  // PROTOTYPE for #119 (throwaway): the Clerk user -> Patchy account match the
+  // login door reads on every page load. Id 90 leaves the real sequence alone.
+  "0090_prototype_users": ddl(`
+    CREATE TABLE prototype_users (
+      clerk_user_id TEXT PRIMARY KEY,
+      account_id TEXT NOT NULL REFERENCES accounts(id),
+      email TEXT NOT NULL,
+      name TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
   `)
 };

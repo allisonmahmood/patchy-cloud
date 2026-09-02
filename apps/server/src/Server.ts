@@ -18,7 +18,14 @@ import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import { Analytics } from "@patchy/analytics";
 import { PatchyApi } from "@patchy/api";
-import { AuthApi, Authorization, migrations as authMigrations, Tokens } from "@patchy/auth";
+import {
+  AuthApi,
+  Authorization,
+  ClerkSession,
+  migrations as authMigrations,
+  PrototypeUsers,
+  Tokens
+} from "@patchy/auth";
 import { AzureContentStore, BlobContainer, FilesystemContentStore } from "@patchy/content-store";
 import { Limits } from "@patchy/limits";
 import {
@@ -97,8 +104,14 @@ const middleware = HttpRouter.middleware(
   { global: true }
 );
 
+/**
+ * PROTOTYPE for #119 (throwaway): the pages need the login door's two
+ * services. `ClerkSession` builds without keys and the door then fails closed.
+ */
+const pages = Pages.layer.pipe(Layer.provide([ClerkSession.layer, PrototypeUsers.layer]));
+
 /** The routes and middleware as one router application. */
-const app = Layer.mergeAll(api, Pages.layer, middleware);
+const app = Layer.mergeAll(api, pages, middleware);
 
 /** The server: serving the app, sweeping, and closing both with the scope. */
 export const layer = Layer.mergeAll(

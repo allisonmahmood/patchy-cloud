@@ -6,12 +6,18 @@
  * visit that keeps a patch alive goes to `Patches` — and never touch bytes
  * themselves. The serving guarantees these routes answer under are
  * `serving-headers.ts`.
+ *
+ * PROTOTYPE for #119 (throwaway): the routes are registered in two layers,
+ * the open ones and the ones behind the login door (`LoginDoor.prototype.ts`),
+ * which is route-scoped middleware provided to the second layer only.
  */
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import { Content, Patches, PatchesConfig } from "@patchy/patches";
+import * as LoginDoor from "./LoginDoor.prototype.js";
 import { renderHome, renderNotFound, renderPatchWrapper } from "./render.js";
 import {
   NO_REFERRER_POLICY,
@@ -87,17 +93,24 @@ const versionNumberOf = (segment: string | undefined) =>
   segment !== undefined && /^[1-9]\d*$/.test(segment) ? Number(segment) : undefined;
 
 /**
- * The page routes. Registered in one pass so the catch-all 404 comes last:
- * the router prefers a static or parametric match over the wildcard either
- * way, and the order keeps that from depending on how layers happen to build.
+ * The open routes: home, health, and the catch-all 404. The router prefers a
+ * static or parametric match over the wildcard, so the 404 can live in its
+ * own layer without depending on how layers happen to build.
  */
-export const layer = HttpRouter.use((router) =>
+const open = HttpRouter.use((router) =>
   Effect.gen(function* () {
     const publicBaseUrl = yield* PatchesConfig.publicBaseUrl;
     const home = HttpServerResponse.html(renderHome({ publicBaseUrl }));
 
     yield* router.add("GET", "/", home);
     yield* router.add("GET", "/healthz", HttpServerResponse.jsonUnsafe({ ok: true }));
+    yield* router.add("*", "/*", notFound);
+  })
+);
+
+/** PROTOTYPE for #119: the routes behind the login door. */
+const doored = HttpRouter.use((router) =>
+  Effect.gen(function* () {
     yield* router.add(
       "GET",
       "/d/:patchId",
@@ -113,6 +126,11 @@ export const layer = HttpRouter.use((router) =>
           : servePatch(params.patchId ?? "", versionNumber);
       })
     );
-    yield* router.add("*", "/*", notFound);
+    yield* router.add("GET", "/login/device", LoginDoor.device);
+    yield* router.add("POST", "/login/device", LoginDoor.deviceConfirm);
+    yield* router.add("POST", "/sign-out", LoginDoor.signOut);
   })
-);
+).pipe(Layer.provide(LoginDoor.layer));
+
+/** The page routes, open and doored. */
+export const layer = Layer.mergeAll(open, doored);

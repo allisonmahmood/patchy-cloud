@@ -21,13 +21,13 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@patchy/auth": "workspace:*",
     "@patchy/patches": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
-    "@patchy/auth": "workspace:*",
     "@patchy/content-store": "workspace:*",
     "@patchy/sql": "workspace:*",
     "vitest": "^4.1.11"

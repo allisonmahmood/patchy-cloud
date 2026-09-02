@@ -137,7 +137,7 @@ export function renderNotFound(): string {
   });
 }
 
-function htmlPage(options: { title: string; body: string }): string {
+export function htmlPage(options: { title: string; body: string }): string {
   return `<!doctype html>
 <html lang="en">
 <head>
