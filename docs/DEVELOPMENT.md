@@ -34,14 +34,14 @@ patchy upload examples/plan.html
 
 ### Subcommands
 
-| Command                     | What it does                                                                      |
-| --------------------------- | --------------------------------------------------------------------------------- |
-| `pnpm dev`                  | Start (or confirm) this worktree's instance and print the plan.                   |
-| `pnpm dev --dry-run --json` | Print the plan this worktree would run with, as JSON; touches nothing.            |
-| `pnpm dev status`           | Which of the recorded processes are alive and whether `/healthz` answers.         |
-| `pnpm dev stop`             | SIGTERM the recorded supervisor; Postgres and the server go with it. State stays. |
-| `pnpm dev logs`             | Print `dev.log`.                                                                  |
-| `pnpm dev reset`            | Stop, wipe `.local/dev/`, and start a fresh seeded instance.                      |
+| Command                     | What it does                                                                                     |
+| --------------------------- | ------------------------------------------------------------------------------------------------ |
+| `pnpm dev`                  | Start (or confirm) this worktree's instance and print the plan.                                  |
+| `pnpm dev --dry-run --json` | Print the plan this worktree would run with, as JSON; touches nothing.                           |
+| `pnpm dev status`           | Which of the recorded processes are alive and whether `/healthz` answers; exit 1 unless healthy. |
+| `pnpm dev stop`             | SIGTERM the recorded supervisor; Postgres and the server go with it. State stays.                |
+| `pnpm dev logs`             | Print `dev.log`.                                                                                 |
+| `pnpm dev reset`            | Stop, wipe `.local/dev/`, and start a fresh seeded instance.                                     |
 
 `reset` is also the answer when the migration ledger changes shape under an
 instance you already have (as it did when migrations moved onto Effect's Migrator).
