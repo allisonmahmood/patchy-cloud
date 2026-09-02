@@ -24,7 +24,7 @@ the user, which are the source of truth for user-facing copy anywhere in this sk
 - implementation plans
 - architecture notes
 - design briefs
-- stakeholder-facing updates
+- stakeholder-facing drafts
 - polished reports
 - quick visual previews of agent-generated work
 

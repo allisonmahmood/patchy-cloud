@@ -507,7 +507,10 @@ describe("patchy upload", async () => {
     );
     const dir = tempDir();
     const file = htmlFile(dir, "page.html", validHtml);
-    writeFileSync(path.join(dir, "drafts.json"), JSON.stringify({ hosts: {} }));
+    // Refused even beside a patches.json: the CLI never guesses which one is current.
+    for (const name of ["drafts.json", "patches.json"]) {
+      writeFileSync(path.join(dir, name), JSON.stringify({ hosts: {} }));
+    }
 
     const result = await runCli(["upload", file], {
       stateDir: dir,

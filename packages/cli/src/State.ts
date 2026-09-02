@@ -133,8 +133,8 @@ export const make = Effect.gen(function* () {
   const configPath = path.join(dir, "config.json");
   const credentialsPath = path.join(dir, "credentials.json");
   const patchesPath = path.join(dir, "patches.json");
-  // The cache before patch replaced draft. Never read: an upload that forgot it
-  // would create a new patch at a new URL instead of updating the one it had.
+  // The cache under its old name. Never read: forgetting it would create a
+  // new patch at a new URL instead of updating the one it remembers.
   const retiredPatchesPath = path.join(dir, "drafts.json");
   const stylePath = path.join(dir, "style.md");
 
@@ -191,9 +191,8 @@ export const make = Effect.gen(function* () {
     });
 
   const readCredentialFile = readHostKeyed(credentialsPath, "apiToken", credentialErrors);
-  const exists = (file: string) => fs.exists(file).pipe(Effect.orElseSucceed(() => false));
   const readPatchFile = Effect.gen(function* () {
-    if (!(yield* exists(patchesPath)) && (yield* exists(retiredPatchesPath))) {
+    if (yield* fs.exists(retiredPatchesPath).pipe(Effect.orElseSucceed(() => true))) {
       return yield* new LocalError({ message: cacheMoved });
     }
     return yield* readHostKeyed(patchesPath, "files", patchErrors);
