@@ -69,6 +69,21 @@ State lives in `<worktree>/.local/dev/` (gitignored):
   `[postgres]` or `[server]`.
 - `postgres/` — the cluster's data directory; `storage/` — uploaded HTML.
 
+### Developer secrets
+
+Anything the server needs that must not live in the repo — today the Clerk
+development keys — goes in one file per developer, shared by every worktree:
+`~/.config/patchy-cloud/dev.env` (`$XDG_CONFIG_HOME` is honoured), plain
+`KEY=value` lines. The supervisor hands every line to the server, under the
+plan's own values, and `dev.log` names which keys it loaded. The Clerk CLI
+writes it directly:
+
+```sh
+clerk env pull --app <app id> --file ~/.config/patchy-cloud/dev.env
+```
+
+Nothing else from your shell reaches the server: its env is otherwise closed.
+
 ### Seed
 
 The instance is seeded with one company (`Patchy Dev`, `acct_dev`) and one
