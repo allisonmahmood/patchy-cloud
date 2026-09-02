@@ -1,12 +1,14 @@
 # Context Map
 
-Patchy Cloud is one deployment: the hosting server on one side, the `patchy` CLI agents publish through on the other, and a wire contract between them. The hosting side is cut into capability packages, each with its own `CONTEXT.md`; `apps/server` only wires them.
+Patchy Cloud is one deployment: the hosting server on one side, the `patchy` CLI agents publish through on the other, and a wire contract between them. The contexts below are the product's, not the packages': each names the package that implements it today, or says that no code exists yet. A context with no code keeps its `CONTEXT.md` at the path its package will take, so the glossary is written before the code and the package is born beside it. `docs/product.md` carries the product's shape; the glossaries carry its words.
 
 ## Contexts
 
-- [Auth](./packages/auth/CONTEXT.md) — `packages/auth`, tokens and principals, self-service minting and its quota, revocation, and the `auth` API group
-- [Patches](./packages/patches/CONTEXT.md) — `packages/patches`, patch and version records, the upload contract, the retention clock and its sweep, pins, moderation, the patch quota, and the `patches` API group
-- [Serving](./packages/serving/CONTEXT.md) — `packages/serving`, the serving guarantees, the page routes and the trusted-proxy schema
+- [Patches](./packages/patches/CONTEXT.md) — `packages/patches`. The unit: patch, version, patch repo, declared tier, publish, owner, sharing scope and address, retire and delete, the primitives a patch declares. Today also the upload contract, the retention clock and its sweep, pins, moderation, the patch quota, and the `patches` API group
+- [Serving](./packages/serving/CONTEXT.md) — `packages/serving`. A patch reaching its viewer, at every tier: the page, the doors in front of it (login, connect), the serving guarantees, the visit, the trusted-proxy schema, and the identity patch code acts as from tier 1 up. Today it serves tier 0; the tier 1 and tier 2 runtimes build on it
+- [Companies](./packages/companies/CONTEXT.md) — no code yet. The tenant and who is in it: company and handle, user, member and admin, group, invite, verified domain, SSO, deactivation, suspension, and the operator
+- [Auth](./packages/auth/CONTEXT.md) — `packages/auth`. Who a caller is: the browser session, device login, the machine token and _Your machines_, the principal behind a credential, bearer parsing. Today also self-service minting and its quota, which retire with login, and the `auth` API group
+- [Integrations](./packages/integrations/CONTEXT.md) — no code yet. The company-scoped primitive that reaches outside systems: integration, connection and personal connection, connection handle, the typed client patch code is handed, the call log
 - [Publishing](./packages/cli/CONTEXT.md) — `packages/cli` and the bundled skill, the `patchy` CLI agents use to publish patches
 
 ## Shared kernel
@@ -26,12 +28,14 @@ Packages that hold no domain vocabulary of their own; each defines the few terms
 
 ## Relationships
 
-- **Publishing → `api`**: the CLI creates and updates patches through the derived client and never through hand-built requests; it authenticates with tokens Auth mints (self-service, or minted for it by the Patchy Cloud operator)
-- **Serving → Patches**: a page reads the record and its HTML through `Content` and records the visit through `Patches`; Serving never touches bytes and never imports Auth
+- **Publishing → `api`**: the CLI creates and updates patches through the derived client and never through hand-built requests; it authenticates with tokens Auth issues (self-service today, the machine token once login lands)
+- **Serving → Patches**: a page reads the record and its HTML through `Content` and records the visit through `Patches`; Serving never touches bytes and never imports Auth. Once login lands, the login door asks Auth who opened the page and Patches whether they may
 - **Patches → Content store**: the upload contract and the sweep put, get and delete a patch's bytes through `ContentStore`; nothing else touches them
 - **Auth, Patches → SQL, Analytics, Limits**: both query through the `SQL` client, report through `Analytics` and spend their per-minute limits through `Limits`. They share one database (`patch_versions` names the token that made a version) but Patches never imports Auth: every handler receives the principal from the bearer middleware
+- **Companies → Auth, Patches**: a user is a company's; Auth resolves a session or machine token to a user, Patches keys ownership and sharing scope on users and groups. Not yet in code
+- **Integrations → Companies, Serving**: a connection is a company's or a user's, and a patch reaches it only through the cloud, as the viewer Serving established. Not yet in code
 - **Hosting → everything**: mounts both API groups behind Auth's bearer middleware, the guard ahead of them, Serving's pages, and forks Patches' `ExpirySweep`; nothing here is a term of its own
 
 ## Decisions
 
-System-wide decisions are in [`docs/adr/`](./docs/adr/): ADR-0002 (the `api` contract package), ADR-0003 (Postgres only), ADR-0004 (the CLI contract for agents). ADR-0000 and ADR-0001 are retired; the Effect v4 port that retired them is recorded on the [port map (#54)](https://github.com/allisonmahmood/patchy-cloud/issues/54). No package has a `docs/adr/` of its own yet; the first context-scoped decision creates one beside that package's `CONTEXT.md`.
+System-wide decisions are in [`docs/adr/`](./docs/adr/): ADR-0002 (the `api` contract package), ADR-0003 (Postgres only), ADR-0004 (the CLI contract for agents). Product decisions not yet built are recorded in `docs/product.md`, and the PR that builds one writes its ADR. A superseded ADR is deleted, not kept: its replacement names what it replaced and git holds the old text. No package has a `docs/adr/` of its own yet; the first context-scoped decision creates one beside that package's `CONTEXT.md`.

@@ -6,7 +6,7 @@ Static-page publishing — grown from PatchPage — is the first thing it can de
 
 ## Relationship to PatchPage
 
-[PatchPage](https://github.com/allisonmahmood/PatchPage) remains a separate, free product with its own repository and its own live instance. This repository is a full-history copy of it, taken in a different direction. It neither runs that service nor publishes anything to it: no shared release channel, no shared package name, no shared instance. See [ADR-0000](docs/adr/ADR-0000-origin-grown-from-patchpage.md).
+[PatchPage](https://github.com/allisonmahmood/PatchPage) remains a separate, free product with its own repository and its own live instance. This repository is a full-history copy of it, taken in a different direction. It neither runs that service nor publishes anything to it: no shared release channel, no shared package name, no shared instance. Commits from before the split describe PatchPage, not Patchy Cloud; read them as provenance, never as a description of anything here.
 
 ## Repository layout
 

@@ -1,6 +1,6 @@
 # Auth
 
-Who may talk to the hosting API, and who a person is once the door lands. `packages/auth` owns tokens and the principals behind them, self-service minting with its quota and mint records, revocation, bearer parsing, the `accounts` / `api_tokens` / `token_mints` migrations (ids 1 and 2), and the `auth` group of the wire contract — `/api/tokens/self-service`, `/api/me`, `/api/tokens`, `/api/tokens/:id/revoke`. It emits `token.minted` through Analytics and spends the per-minute mint limit through Limits. Nothing here knows what a patch is: `patches` receives the principal from the bearer middleware and never imports this package.
+Who a caller is. `packages/auth` owns the credentials a request carries and the principal behind each: today the token, self-service minting with its quota and mint records, revocation, bearer parsing, the `accounts` / `api_tokens` / `token_mints` migrations (ids 1 and 2), and the `auth` group of the wire contract — `/api/tokens/self-service`, `/api/me`, `/api/tokens`, `/api/tokens/:id/revoke`; once login lands, the browser session, device login and the machine token that replaces self-service minting. It emits `token.minted` through Analytics and spends the per-minute mint limit through Limits. Nothing here knows what a patch is (`patches` receives the principal from the bearer middleware and never imports this package), and nothing here knows what a company is: the tenant, its users, roles and groups are [Companies](../companies/CONTEXT.md)'.
 
 ## Language
 
@@ -40,53 +40,9 @@ _Avoid_: ban, token deletion
 How the hosting server reads `Authorization`: the scheme is case-insensitive, one or more spaces or tabs separate it from the credential, trailing whitespace is tolerated, anything else on the line is invalid. Missing and invalid are told apart here only; on the wire both are one 401, `{ ok: false, error: "Missing or invalid API token." }`, so no configuration ever admits a tokenless request.
 _Avoid_: header validation
 
-**Company**:
-The tenant everything on Patchy Cloud hangs off, and the unit that pays: every patch, connection, group and user lives in exactly one, usage is counted against it, and nothing inside crosses its line except a patch made public. Flat — groups are access, not structure — with a globally unique handle. Created at signup by its first admin; suspended by the operator (including running out of credits), deleted by its admin with a recovery window. (Not yet in the code: the door arrives with auth.)
-_Avoid_: organization, workspace, team, tenant (this document's word for the concept, never the product's)
-
-**User**:
-One individual with one account, in exactly one company. Signs in (through Clerk: Google, Microsoft or an emailed code, never a password) and holds one machine token per machine they build from. Has one of two roles, member or admin; every member builds. Deactivated (an admin's act: sign-in and tokens end, personal connection credentials are wiped, data kept, owner-only patches go dark) is distinct from deleted (a later act, where the admin is prompted to reassign the user's patches and what is not reassigned goes with the account).
-_Avoid_: account (the wire's word for a principal), person (a user is the account, not the human), builder (every user is one)
-
-**Admin**:
-A user with the role that runs the company: invites users, creates groups, verifies the domain and turns on SSO, connects company integrations, sees every patch in the company (owner-only ones included), and — alone — reassigns a patch's owner. A company always has at least one, and the last admin cannot demote themself.
-_Avoid_: owner (patches have owners; companies have admins), operator (Patchy, never a company role), superadmin
-
-**Group**:
-A named set of users an admin creates; a user can be in many. Purely a grant surface — access to patches and connections — never a container that owns anything. "Team" and "department" are names companies give their groups.
-_Avoid_: team, department (labels, not concepts), role (what an admin has; a group is who), space
-
-**Integration**:
-A capability Patchy ships — Salesforce, Gmail, Postgres — built and maintained by Patchy, the same for every company, declaring the connection mode or modes it supports: company, personal, or both. A company-scoped primitive (see [Patches](../patches/CONTEXT.md)). There is no bring-your-own source: companies request integrations and Patchy builds them.
-_Avoid_: connector, app (Zapier's word), resource (Retool and Windmill's word), toolkit
-
-**Connection**:
-The live, credentialed instance of an integration. Company mode: connected once by an admin, granted to groups or company-wide, carrying a handle alongside its integration (`postgres/warehouse`) so a company can hold many per integration. A patch uses it through the cloud as the viewer — the credential applied server-side, the viewer's grant checked, every call logged — and patch code never sees the credential at any tier.
-_Avoid_: datasource, connected account, credential (what it holds, not what it is)
-
-**Personal connection**:
-A connection in personal mode: one user's own — their Gmail — made by the user with no admin involved, at most one per integration per user, dying with the account (credential wiped, stored data kept). Holding it is sufficient: any patch the user opens that declares the integration acts on it as them, with no per-patch consent step.
-_Avoid_: user resource, private connection
-
-**Member**:
-The role every user has who is not an admin. A member builds — publishes patches with no gate — and reaches whatever is shared with them; the role exists only so admin has something to be more than.
-_Avoid_: viewer (the person with a patch open, whatever their role), builder (a description, not a role), guest
-
 **Session**:
 What signing in produces: one login, good across every Patchy Cloud page and patch, held by Clerk on the browser. A link opened without one shows the login door and lands back on the patch. Deactivation ends every session of the user at once, including patches they have open.
 _Avoid_: token (a machine's credential, not a browser's), cookie (how, not what)
-
-**Invite**:
-An admin's act of admitting one email address to the company; the person signs in and is in. The default way in, and always available — verifying a domain never replaces it. Refused for someone already in another company: a user is in exactly one, and must leave first.
-_Avoid_: add user, share the company
-
-**Verified domain**:
-A company's email domain, proven by an admin, after which anyone signing in with a work identity on it joins the company automatically. Never a consumer domain; one domain belongs to one company, first-come. Also where SSO is enforced.
-_Avoid_: allowed domain, auto-join (the effect, not the thing)
-
-**SSO**:
-A company signing its users in through its own identity provider (SAML or OIDC) instead of Google, Microsoft or an emailed code. Patchy flips the flag for the company, the admin sets the connection up themself, and it is enforced on the verified domain — everyone at that domain uses it and nothing else. Paid.
-_Avoid_: enterprise connection (Clerk's word), SAML (one of the two shapes)
 
 **Device login**:
 How a machine comes to act as a user: `patchy login` prints a URL and a short code, the person opens the URL in a browser already signed in, confirms the code on screen is the one on their terminal, names the machine on a first login, and the CLI receives a machine token. The confirmation is what defeats a relayed code. The only login route for now.
@@ -99,7 +55,3 @@ _Avoid_: API key, personal access token, agent token (an agent has no token of i
 **Your machines**:
 The user's list of their machine tokens — name, last use — with revoke-one and revoke-all. The self-service side of revocation.
 _Avoid_: sessions (a browser's), API keys
-
-**Operator**:
-Patchy, running the platform. Platform powers only — create, suspend or delete a company, quotas, moderation — never a role inside a company, and never the word for whoever drives the CLI (that is the agent, see [Publishing](../cli/CONTEXT.md)).
-_Avoid_: admin (a company role), superuser, staff, the CLI's user

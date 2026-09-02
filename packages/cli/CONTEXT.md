@@ -37,7 +37,7 @@ What replaces the mint announcement once login lands: the URL and code the CLI p
 _Avoid_: prompt, browser login
 
 **Driver**:
-Whoever is running the CLI — an agent first, a developer touching the cloud directly second. The word is deliberately not _operator_, which is Patchy running the platform ([Auth](../auth/CONTEXT.md)).
+Whoever is running the CLI — an agent first, a developer touching the cloud directly second. The word is deliberately not _operator_, which is Patchy running the platform ([Companies](../companies/CONTEXT.md)).
 _Avoid_: operator, user (ambiguous with the account the driver acts as)
 
 **Agent**:
