@@ -24,13 +24,16 @@ Starting is idempotent: a second `pnpm dev` finds the running instance and
 prints the same plan. The processes outlive the shell that started them, so an
 agent can start once and keep using the instance across turns.
 
-Point the CLI at it by sourcing the env file the runner writes:
+`pnpm patchy` runs the CLI from source, and inside the worktree the CLI finds
+the runner's env file by itself:
 
 ```sh
-set -a; . .local/dev/env; set +a
-patchy whoami
-patchy upload examples/plan.html
+pnpm patchy whoami
+pnpm patchy upload examples/plan.html
 ```
+
+For anything else that needs the URL, token or database (`curl`, `psql`),
+source the env file: `set -a; . .local/dev/env; set +a`.
 
 ### Subcommands
 
