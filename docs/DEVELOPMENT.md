@@ -24,24 +24,27 @@ Starting is idempotent: a second `pnpm dev` finds the running instance and
 prints the same plan. The processes outlive the shell that started them, so an
 agent can start once and keep using the instance across turns.
 
-Point the CLI at it by sourcing the env file the runner writes:
+`pnpm patchy` runs the CLI from source, and inside the worktree the CLI finds
+the runner's env file by itself:
 
 ```sh
-set -a; . .local/dev/env; set +a
-patchy whoami
-patchy upload examples/plan.html
+pnpm patchy whoami
+pnpm patchy upload examples/plan.html
 ```
+
+For anything else that needs the URL, token or database (`curl`, `psql`),
+source the env file: `set -a; . .local/dev/env; set +a`.
 
 ### Subcommands
 
-| Command                     | What it does                                                                      |
-| --------------------------- | --------------------------------------------------------------------------------- |
-| `pnpm dev`                  | Start (or confirm) this worktree's instance and print the plan.                   |
-| `pnpm dev --dry-run --json` | Print the plan this worktree would run with, as JSON; touches nothing.            |
-| `pnpm dev status`           | Which of the recorded processes are alive and whether `/healthz` answers.         |
-| `pnpm dev stop`             | SIGTERM the recorded supervisor; Postgres and the server go with it. State stays. |
-| `pnpm dev logs`             | Print `dev.log`.                                                                  |
-| `pnpm dev reset`            | Stop, wipe `.local/dev/`, and start a fresh seeded instance.                      |
+| Command                     | What it does                                                                                     |
+| --------------------------- | ------------------------------------------------------------------------------------------------ |
+| `pnpm dev`                  | Start (or confirm) this worktree's instance and print the plan.                                  |
+| `pnpm dev --dry-run --json` | Print the plan this worktree would run with, as JSON; touches nothing.                           |
+| `pnpm dev status`           | Which of the recorded processes are alive and whether `/healthz` answers; exit 1 unless healthy. |
+| `pnpm dev stop`             | SIGTERM the recorded supervisor; Postgres and the server go with it. State stays.                |
+| `pnpm dev logs`             | Print `dev.log`.                                                                                 |
+| `pnpm dev reset`            | Stop, wipe `.local/dev/`, and start a fresh seeded instance.                                     |
 
 `reset` is also the answer when the migration ledger changes shape under an
 instance you already have (as it did when migrations moved onto Effect's Migrator).
