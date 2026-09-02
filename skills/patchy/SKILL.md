@@ -70,6 +70,9 @@ Behavior:
   Pass `--new` to force a fresh draft, or `--draft` to update a known draft only.
 - Draft view URLs are public and unlisted: anyone holding the link can read the page, and
   the page is listed nowhere. Say that when handing over a link.
+- "Take that page down" is `patchy delete './plan.html'` — the file it was published
+  from — or `patchy delete --draft <id>`. It is irreversible and only the key that
+  published the page can do it, so confirm with the user before running it.
 - CLI state lives in the state dir, `~/.patchy` by default. The `status --json` probe
   reports what this machine already holds, without touching the network; its seven keys
   and their values are tabled in `references/onboarding.md`.

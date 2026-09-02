@@ -639,6 +639,35 @@ try {
   });
   assert.equal((await snapshotTree(objectDir)).length, 6);
 
+  console.log("[packed-cli-e2e] proving delete takes a draft down with the key that published it");
+  // The authenticated state dir last cached the deprecated-flag upload for the
+  // artifact path, so deleting by file resolves to that draft.
+  const removed = await runCli(cliPath, ["delete", fixtureArgument], {
+    cwd: consumerDir,
+    env: cliEnv
+  });
+  assert.equal(
+    removed.stdout,
+    `Deleting from ${publicBaseUrl} (target came from the saved config).\nDeleted draft\nDraft ID: ${deprecatedFlag.draftId}\n`
+  );
+  assert.equal(removed.stderr, "");
+  const removedViewer = await fetchViewer(`${publicBaseUrl}/d/${deprecatedFlag.draftId}`);
+  assert.equal(removedViewer.response.status, 404, "a deleted draft must stop serving at once");
+  const cacheAfterDelete = JSON.parse(
+    await checkedCall(() => readFile(path.join(cliStateDir, "drafts.json"), "utf8"))
+  );
+  assert.equal(
+    cacheAfterDelete.hosts[publicBaseUrl].files[fixtureCachePath],
+    undefined,
+    "a successful delete must drop the draft from the per-instance cache"
+  );
+  const removedAgain = await runCli(cliPath, ["delete", "--draft", deprecatedFlag.draftId], {
+    cwd: consumerDir,
+    env: cliEnv,
+    allowFailure: true
+  });
+  assert.equal(removedAgain.code, 2, "deleting a draft that is gone is the instance's refusal");
+
   console.log(
     "[packed-cli-e2e] PASS: spaced consumer/artifact/state paths and quoted POSIX sh commands"
   );

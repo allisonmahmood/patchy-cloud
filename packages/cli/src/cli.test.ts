@@ -528,6 +528,61 @@ describe("patchy upload", async () => {
   });
 });
 
+describe("patchy delete", async () => {
+  it("takes down the draft a file was uploaded from with the key that published it, then the draft is gone", async () => {
+    // The stub remembers what is live, so a delete after a delete is a real 404.
+    const live = new Set<string>();
+    const instance = await stubInstance((request, respond) => {
+      if (request.url === "/api/uploads") {
+        live.add("abcdefghijkl");
+        return respond(201, upload(201, "abcdefghijkl", 1));
+      }
+      const patchId = request.url.replace("/api/patches/", "");
+      if (request.method === "DELETE" && live.delete(patchId)) return respond(200, { ok: true });
+      return respond(404, { ok: false, error: "Patch not found." });
+    });
+    const dir = tempDir();
+    const file = htmlFile(dir, "page.html", validHtml);
+    const env = { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" };
+    expect((await runCli(["upload", file], { stateDir: dir, env })).status).toBe(0);
+
+    const deleted = await runCli(["delete", file, "--json"], { stateDir: dir, env });
+    expect(deleted).toMatchObject({ status: 0, stdout: '{"ok":true}\n', stderr: "" });
+    expect(instance.requests[1]).toMatchObject({
+      method: "DELETE",
+      url: "/api/patches/abcdefghijkl",
+      authorization: "Bearer pp_owner"
+    });
+    // The cache no longer knows the file, so the next upload from it is a create.
+    expect(readJson(path.join(dir, "drafts.json"))).toEqual({
+      hosts: { [instance.url]: { files: {} } }
+    });
+
+    const forgotten = await runCli(["delete", file], { stateDir: dir, env });
+    expect(forgotten.status).toBe(1);
+    expect(forgotten.stderr).toMatch(/^No draft on .* was uploaded from /);
+    expect(instance.requests).toHaveLength(2);
+
+    const gone = await runCli(["delete", "--draft", "abcdefghijkl"], { stateDir: dir, env });
+    expect(gone.status).toBe(2);
+    expect(gone.stderr).toBe(
+      `Draft abcdefghijkl is unavailable for deletion: it is not on ${instance.url}, or this publishing key does not own it.\n`
+    );
+
+    const both = await runCli(["delete", file, "--draft", "abcdefghijkl"], { stateDir: dir, env });
+    expect(both.status).toBe(1);
+    expect(both.stderr).toBe(
+      "Pass the file the draft was uploaded from, or --draft <draft-id>, not both.\n"
+    );
+
+    // With no key there is nothing to delete with, and none is ever minted for it.
+    const keyless = await runCli(["delete", "--draft", "abcdefghijkl", "--api-url", instance.url]);
+    expect(keyless.status).toBe(1);
+    expect(keyless.stderr).toMatch(/^No publishing token is stored for /);
+    expect(instance.requests).toHaveLength(3);
+  });
+});
+
 describe("patchy status", async () => {
   it("reports local state only, naming which link chose the instance", async () => {
     const dir = tempDir();

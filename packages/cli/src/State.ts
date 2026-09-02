@@ -70,6 +70,7 @@ const decodeSavedConfig = Schema.decodeUnknownEffect(SavedConfig);
 const decodeHostCredential = Schema.decodeUnknownEffect(HostCredential);
 const decodeFiles = Schema.decodeUnknownEffect(Files);
 const decodeStoredPatch = Schema.decodeUnknownEffect(StoredPatch);
+const decodeStoredPatchOption = Schema.decodeUnknownOption(StoredPatch);
 const encodeCachedPatch = Schema.encodeSync(CachedPatch);
 
 /** The moment an entry was written, as the ISO string the files have always held. */
@@ -117,6 +118,13 @@ export class State extends Context.Service<
       file: string,
       patch: CachedPatch
     ) => Effect.Effect<void, LocalError>;
+    /**
+     * Drops every entry on this instance that points at `patchId` — a patch
+     * the instance no longer has is not one a later upload should try to
+     * update. Entries for other patches, and ones the cache cannot read, are
+     * carried across as stored; other instances are never touched.
+     */
+    readonly forgetPatch: (apiUrl: string, patchId: string) => Effect.Effect<void, LocalError>;
   }
 >()("@patchy/cli/State") {}
 
@@ -287,6 +295,22 @@ export const make = Effect.gen(function* () {
         const existing =
           apiUrl in hosts ? yield* entry(decodeFiles(hosts[apiUrl]), draftErrors.invalid) : {};
         const files = { ...existing.files, [file]: encodeCachedPatch(patch) };
+        yield* writeJson(draftsPath, { hosts: { ...hosts, [apiUrl]: { files } } });
+      }),
+    forgetPatch: (apiUrl, patchId) =>
+      Effect.gen(function* () {
+        const { hosts } = yield* readDraftFile;
+        if (!(apiUrl in hosts)) return;
+        const existing = yield* entry(decodeFiles(hosts[apiUrl]), draftErrors.invalid);
+        // An entry that does not decode is not this command's to judge; only
+        // one that names the patch, under either key, is dropped.
+        const pointsAt = (stored: unknown) =>
+          decodeStoredPatchOption(stored).pipe(
+            Option.exists((patch) => (patch.patchId ?? patch.draftId) === patchId)
+          );
+        const files = Object.fromEntries(
+          Object.entries(existing.files ?? {}).filter(([, stored]) => !pointsAt(stored))
+        );
         yield* writeJson(draftsPath, { hosts: { ...hosts, [apiUrl]: { files } } });
       })
   });

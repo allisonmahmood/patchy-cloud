@@ -65,7 +65,7 @@ description annotations on the endpoints, which is where an agent reading the
 `HttpApi` finds it too.
 
 **`--json` is uniform.** Every CLI command prints one stdout document on
-success — for `whoami` and `upload`, exactly the wire shape — and
+success — for `whoami`, `upload` and `delete`, exactly the wire shape — and
 `{ ok: false, error }` on stderr on failure. The `kind` field and the exit-code
 ladder arrive with the `cli` port.
 
