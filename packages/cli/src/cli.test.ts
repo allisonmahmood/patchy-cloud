@@ -350,7 +350,7 @@ describe("patchy upload", async () => {
     expect(first.status).toBe(0);
     expect(first.stdout).toMatch(
       new RegExp(
-        `^Publishing to ${instance.url} \\(target came from --api-url\\)\\.\nMinted a new publishing token for ${instance.url};.*\nUploaded draft\nURL: http://instance\\.test/d/abcdefghijkl\nDraft ID: abcdefghijkl\nVersion: 1\n$`
+        `^Publishing to ${instance.url} \\(target came from --api-url\\)\\.\nMinted a new publishing token for ${instance.url};.*\nUploaded patch\nURL: http://instance\\.test/d/abcdefghijkl\nPatch ID: abcdefghijkl\nVersion: 1\n$`
       )
     );
     expect(first.stderr).toBe("Warning: No <title> found.\n");
@@ -458,17 +458,17 @@ describe("patchy upload", async () => {
     const file = htmlFile(dir, "page.html", validHtml);
     const env = { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp" };
 
-    const explicit = await runCli(["upload", file, "--draft", "abcdefghijkl"], {
+    const explicit = await runCli(["upload", file, "--patch", "abcdefghijkl"], {
       stateDir: dir,
       env
     });
     expect(explicit.status).toBe(2);
     expect(explicit.stderr).toBe(
-      "Draft is unavailable for update. --draft never creates a new draft.\n"
+      "Patch is unavailable for update. --patch never creates a new patch.\n"
     );
 
     writeFileSync(
-      path.join(dir, "drafts.json"),
+      path.join(dir, "patches.json"),
       JSON.stringify({
         hosts: {
           [instance.url]: {
@@ -487,18 +487,38 @@ describe("patchy upload", async () => {
     const cached = await runCli(["upload", file], { stateDir: dir, env });
     expect(cached.status).toBe(2);
     expect(cached.stderr).toBe(
-      "Cached draft is unavailable for update. Use --new to create a new draft.\n"
+      "Cached patch is unavailable for update. Use --new to create a new patch.\n"
     );
     // The pre-rename `draftId` entry was read as the same page.
     expect(instance.requests[1]?.body).toMatchObject({ patchId: "mnopqrstuvwx" });
     expect(instance.requests).toHaveLength(2);
 
-    const conflict = await runCli(["upload", file, "--draft", "abcdefghijkl", "--new"], {
+    const conflict = await runCli(["upload", file, "--patch", "abcdefghijkl", "--new"], {
       stateDir: dir,
       env
     });
     expect(conflict.status).toBe(1);
-    expect(conflict.stderr).toBe("--draft and --new cannot be used together.\n");
+    expect(conflict.stderr).toBe("--patch and --new cannot be used together.\n");
+  });
+
+  it("refuses to publish past a patch cache still named drafts.json", async () => {
+    const instance = await stubInstance((_, respond) =>
+      respond(201, upload(201, "abcdefghijkl", 1))
+    );
+    const dir = tempDir();
+    const file = htmlFile(dir, "page.html", validHtml);
+    writeFileSync(path.join(dir, "drafts.json"), JSON.stringify({ hosts: {} }));
+
+    const result = await runCli(["upload", file], {
+      stateDir: dir,
+      env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp" }
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toBe(
+      `The patch cache is now ${path.join(dir, "patches.json")} but the old file is still here: ${path.join(dir, "drafts.json")}\n` +
+        "Rename it to patches.json to keep updating the patches it remembers, or delete it to start a fresh cache.\n"
+    );
+    expect(instance.requests).toHaveLength(0);
   });
 
   it("fails closed on invalid stored credentials for this instance, and only this instance", async () => {

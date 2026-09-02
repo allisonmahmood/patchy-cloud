@@ -324,20 +324,20 @@ try {
       sensitiveValues: [bootstrapToken, hostileInheritedApiToken, hostileInheritedToken]
     })
   );
-  assert.equal(first.label, "Uploaded draft");
+  assert.equal(first.label, "Uploaded patch");
   assert.equal(first.versionNumber, 1);
   assert.equal(first.publicUrl, `${publicBaseUrl}/d/${first.draftId}`);
   const fixtureCachePath = await checkedCall(() => realpath(fixturePath));
-  const shellDraftCache = JSON.parse(
-    await checkedCall(() => readFile(path.join(cliStateDir, "drafts.json"), "utf8"))
+  const shellPatchCache = JSON.parse(
+    await checkedCall(() => readFile(path.join(cliStateDir, "patches.json"), "utf8"))
   );
   assert.deepEqual(
-    Object.keys(shellDraftCache.hosts ?? {}),
+    Object.keys(shellPatchCache.hosts ?? {}),
     [publicBaseUrl],
-    "the draft cache must be keyed by the instance the upload targeted"
+    "the patch cache must be keyed by the instance the upload targeted"
   );
   assert.deepEqual(
-    Object.keys(shellDraftCache.hosts[publicBaseUrl].files ?? {}),
+    Object.keys(shellPatchCache.hosts[publicBaseUrl].files ?? {}),
     [fixtureCachePath],
     "quoted POSIX sh upload must cache the resolved spaced artifact path"
   );
@@ -346,7 +346,7 @@ try {
   const second = parseUpload(
     await runCli(cliPath, ["upload", fixtureArgument], { cwd: consumerDir, env: cliEnv })
   );
-  assert.equal(second.label, "Updated draft");
+  assert.equal(second.label, "Updated patch");
   assert.equal(second.draftId, first.draftId);
   assert.equal(second.versionNumber, 2);
 
@@ -357,7 +357,7 @@ try {
       env: cliEnv
     })
   );
-  assert.equal(fresh.label, "Uploaded draft");
+  assert.equal(fresh.label, "Uploaded patch");
   assert.equal(fresh.versionNumber, 1);
   assert.notEqual(fresh.draftId, first.draftId);
 
@@ -505,7 +505,7 @@ try {
     { cwd: consumerDir, env: mintEnv }
   );
   const minted = parseUpload(mintedResult);
-  assert.equal(minted.label, "Uploaded draft");
+  assert.equal(minted.label, "Uploaded patch");
   assert.equal(minted.versionNumber, 1);
   assert.ok(
     mintedResult.stdout.includes(`Minted a new publishing token for ${publicBaseUrl};`),
@@ -574,19 +574,19 @@ try {
     "expected the deprecation notice on stderr"
   );
   const deprecatedFlag = parseUpload(deprecatedFlagResult);
-  assert.equal(deprecatedFlag.label, "Uploaded draft");
+  assert.equal(deprecatedFlag.label, "Uploaded patch");
   assert.equal(deprecatedFlag.versionNumber, 1);
   assert.notEqual(deprecatedFlag.draftId, first.draftId);
   assert.notEqual(deprecatedFlag.draftId, fresh.draftId);
-  // The upload is ordinary in every respect, including keeping the draft cache:
+  // The upload is ordinary in every respect, including keeping the patch cache:
   // the flag no longer excuses it from the per-instance update state.
   const deprecatedFlagCache = JSON.parse(
-    await checkedCall(() => readFile(path.join(cliStateDir, "drafts.json"), "utf8"))
+    await checkedCall(() => readFile(path.join(cliStateDir, "patches.json"), "utf8"))
   );
   assert.equal(
     deprecatedFlagCache.hosts[publicBaseUrl].files[fixtureCachePath].patchId,
     deprecatedFlag.draftId,
-    "the deprecated flag must still update the per-instance draft cache"
+    "the deprecated flag must still update the per-instance patch cache"
   );
   const metadataAfterDeprecatedFlag = await readMetadata();
   // The credential the flag used to bypass is the one that published it.
@@ -2666,9 +2666,9 @@ async function snapshotTree(rootDir) {
 }
 
 function parseUpload(result) {
-  const label = result.stdout.match(/^(Uploaded draft|Updated draft)$/m)?.[1];
+  const label = result.stdout.match(/^(Uploaded patch|Updated patch)$/m)?.[1];
   const publicUrl = result.stdout.match(/^URL: (.+)$/m)?.[1];
-  const draftId = result.stdout.match(/^Draft ID: ([a-z0-9]{12})$/m)?.[1];
+  const draftId = result.stdout.match(/^Patch ID: ([a-z0-9]{12})$/m)?.[1];
   const versionNumber = Number(result.stdout.match(/^Version: (\d+)$/m)?.[1]);
   assert.ok(label, `missing upload label in CLI output:\n${result.stdout}`);
   assert.ok(publicUrl, `missing public URL in CLI output:\n${result.stdout}`);

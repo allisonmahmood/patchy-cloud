@@ -30,7 +30,7 @@ pnpm patchy upload examples/plan.html --json
 
 `pnpm patchy` runs the CLI from source; there is no build step. Run it from inside the worktree and it finds `.local/dev/env` on its own (it says `target came from .local/dev/env`). Passing `--api-url` switches that discovery off and the CLI then wants a stored token, so leave the flag out locally.
 
-The upload's `publicUrl` is the page. Uploading the same file again bumps the version of the same patch at the same URL; if the CLI answers `Cached draft is unavailable for update`, the patch it remembers is gone from this instance (a `reset` does that) and `--new` creates a fresh one.
+The upload's `publicUrl` is the page. Uploading the same file again bumps the version of the same patch at the same URL; if the CLI answers `Cached patch is unavailable for update`, the patch it remembers is gone from this instance (a `reset` does that) and `--new` creates a fresh one.
 
 For `curl` against the API with the token, or for `DATABASE_URL`, export the env file: `set -a; . .local/dev/env; set +a`.
 

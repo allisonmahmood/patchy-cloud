@@ -12,7 +12,7 @@ briefings for Patchy Cloud.
 - System fonts only.
 - Pure CSS imagery unless the user supplies assets.
 - The document must remain readable with CSS stripped.
-- Every upload carries a publishing key; draft viewer URLs are public/unlisted.
+- Every upload carries a publishing key; patch viewer URLs are public/unlisted.
 
 ## Brand Read
 
@@ -196,7 +196,7 @@ Avoid hype, emoji, "seamless", "revolutionary", and vague AI-dashboard language.
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{{TITLE}}</title>
     <style>
-      /* Insert tokens, baseline CSS, and only the components used by this draft. */
+      /* Insert tokens, baseline CSS, and only the components used by this patch. */
     </style>
   </head>
   <body>

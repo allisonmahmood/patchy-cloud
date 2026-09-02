@@ -1,6 +1,6 @@
 # @patchy/cli
 
-Command-line uploader for [Patchy Cloud](https://github.com/allisonmahmood/patchy-cloud). It sends static HTML drafts to a Patchy Cloud instance, which serves them behind unlisted, link-viewable URLs. Every upload carries a bearer API token; draft viewer URLs are public and unlisted, so anyone with the link can view the rendered page.
+Command-line uploader for [Patchy Cloud](https://github.com/allisonmahmood/patchy-cloud). It sends static HTML patches to a Patchy Cloud instance, which serves them behind unlisted, link-viewable URLs. Every upload carries a bearer API token; patch viewer URLs are public and unlisted, so anyone with the link can view the rendered page.
 
 An agent is the primary operator, so the CLI promises a contract an agent can branch on without reading prose: an [exit code that says who has to act](#exit-codes), `--json` on every command, and one resolution of which instance is being targeted. The contract is [ADR-0004](../../docs/adr/ADR-0004-cli-contract-for-agents.md).
 
@@ -17,7 +17,7 @@ node packages/cli/dist/index.js upload ./plan.html
 
 The build puts an executable at `packages/cli/dist/index.js`. Put that file on your `PATH` as `patchy` — symlink it, or add its directory — and every command below runs as plain `patchy`, which is how the rest of this document writes them.
 
-A publishing key is minted on first upload against an instance that hands them out, the URL prints on success, and uploading the same file again updates the same draft.
+A publishing key is minted on first upload against an instance that hands them out, the URL prints on success, and uploading the same file again updates the same patch.
 
 For CI and other automation, set `PATCHY_SETUP_URL` to the instance you are publishing to and provide `PATCHY_SETUP_TOKEN` through a secret environment variable. This scoped workflow pins the intended instance, clears inherited credential overrides, verifies the stored token, and exits before upload if authentication or validation fails:
 
@@ -100,22 +100,22 @@ Validate an HTML file locally without uploading. Exits non-zero if validation fa
 patchy validate ./plan.html
 ```
 
-### `patchy upload <file> [--draft <draft-id>] [--new] [--api-url <url>]`
+### `patchy upload <file> [--patch <patch-id>] [--new] [--api-url <url>]`
 
-Validate the file, then upload it. On success it prints the public URL, the draft ID, and the version number, after a line naming the instance and where that choice came from.
+Validate the file, then upload it. On success it prints the public URL, the patch ID, and the version number, after a line naming the instance and where that choice came from.
 
 ```sh
 patchy upload ./plan.html
 # Publishing to https://pages.example.com (target came from the saved config).
-# Uploaded draft
+# Uploaded patch
 # URL: https://pages.example.com/d/k7f2m9x1a3b8
-# Draft ID: k7f2m9x1a3b8
+# Patch ID: k7f2m9x1a3b8
 # Version: 1
 ```
 
 Credential selection is deterministic: `PATCHY_API_TOKEN` wins, then the token a dev env seeded beside its URL, then the token stored for the resolved instance. When none exists, the CLI mints a publishing token for that instance and uses it. Every upload carries a bearer token; no configuration accepts a credential-free upload, and an authentication failure is reported as-is rather than retried without credentials.
 
-With credentials, uploading a file the CLI has seen before updates that same draft (a new version). If that cached draft is unavailable, the upload fails; pass `--new` to create a brand-new draft with a server-generated ID. `--draft <draft-id>` is update-only: it can add a version to an existing active draft your own token owns, but it never creates a draft at a caller-chosen ID. Unknown, unavailable, or unowned targets fail with the same generic update error.
+With credentials, uploading a file the CLI has seen before updates that same patch (a new version). If that cached patch is unavailable, the upload fails; pass `--new` to create a brand-new patch with a server-generated ID. `--patch <patch-id>` is update-only: it can add a version to an existing active patch your own token owns, but it never creates a patch at a caller-chosen ID. Unknown, unavailable, or unowned targets fail with the same generic update error.
 
 ## Exit codes
 
@@ -141,15 +141,15 @@ Every command takes these, before or after the subcommand:
 ## Command flags
 
 - `--token-stdin` — on `auth set`, read exactly one non-empty token from redirected stdin. This is the explicit automation path and is rejected when stdin is a terminal.
-- `--new` — on `upload`, always create a new draft with a server-generated ID instead of updating the one previously uploaded from this path. It cannot be combined with `--draft`.
-- `--draft <draft-id>` — on `upload`, update a specific existing draft. This is update-only and never creates a new draft. It cannot be combined with `--new`.
+- `--new` — on `upload`, always create a new patch with a server-generated ID instead of updating the one previously uploaded from this path. It cannot be combined with `--patch`.
+- `--patch <patch-id>` — on `upload`, update a specific existing patch. This is update-only and never creates a new patch. It cannot be combined with `--new`.
 - `--anonymous` — deprecated and ignored. Uploads always use a publishing token; one is minted automatically when none is stored for the instance.
 
 ## Environment variables
 
 - `PATCHY_API_URL` — API base URL. Overrides the stored config; overridden by `--api-url` and by a dev env. Default: `http://localhost:3000`.
 - `PATCHY_API_TOKEN` — API token for ordinary authenticated commands such as `whoami` and `upload`. It overrides every other token and is useful in CI; `auth set` does not read it. When no token is configured, `upload` mints a publishing token for the resolved instance and uses that; there is no credential-free upload.
-- `PATCHY_STATE_DIR` — directory for the CLI's config, credentials, and draft cache. Default: `~/.patchy`.
+- `PATCHY_STATE_DIR` — directory for the CLI's config, credentials, and patch cache. Default: `~/.patchy`.
 
 Setting any of these to the empty string means the same thing as leaving it unset.
 
@@ -161,7 +161,7 @@ The CLI stores state under `~/.patchy` (or `PATCHY_STATE_DIR`):
 
 - `config.json` — the saved API base URL.
 - `credentials.json` — saved API tokens, keyed by instance. On Unix, every save creates or repairs this file to owner-only (`0600`) permissions.
-- `drafts.json` — the draft cache, keyed by instance and then by absolute file path, so later uploads from the same path update the same draft.
+- `patches.json` — the patch cache, keyed by instance and then by absolute file path, so later uploads from the same path update the same patch.
 - `style.md` — the default style, owned and written by the agent skill. The CLI never reads its contents; `status` reports only whether it exists.
 
 Both files are keyed by the resolved API base URL under exact string equality, so instances that differ only by scheme, host, or port are separate entries by design:
@@ -169,11 +169,11 @@ Both files are keyed by the resolved API base URL under exact string equality, s
 ```jsonc
 // credentials.json
 { "hosts": { "https://pages.example.com": { "token": "…", "updatedAt": "…", "source": "auth-set" } } }
-// drafts.json
+// patches.json
 { "hosts": { "https://pages.example.com": { "files": { "/abs/plan.html": { "patchId": "…", "publicUrl": "…", "latestVersionNumber": 3, "updatedAt": "…" } } } } }
 ```
 
-A token saved for one instance is never sent to another, and a draft ID cached for one instance is never replayed against another. Files written by an older CLI in the previous single-instance format are not migrated: the CLI stops with an error naming the file, so a token that still controls live drafts is never discarded silently. Copy anything you need out of the old file, then delete it.
+A token saved for one instance is never sent to another, and a patch ID cached for one instance is never replayed against another. Files written by an older CLI in the previous single-instance format are not migrated: the CLI stops with an error naming the file, so a token that still controls live patches is never discarded silently. Copy anything you need out of the old file, then delete it. A patch cache still named `drafts.json`, from before _patch_ replaced _draft_, is refused the same way: rename it to `patches.json` to keep updating the patches it remembers, or delete it.
 
 ## Agent skill
 
