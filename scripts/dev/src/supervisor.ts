@@ -21,7 +21,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { migrations as authMigrations } from "@patchy/auth";
 import { migrations as patchesMigrations } from "@patchy/patches";
 import { layerFromUrl, migrate } from "@patchy/sql";
-import { developerEnvFile, readDeveloperEnv } from "./developerEnv.js";
+import { developerEnvFile, readClerkKeys } from "./developerEnv.js";
 import { DATABASE_NAME, Plan } from "./plan.js";
 import { alive } from "./process.js";
 import { PG_FLAGS, PG_PASSWORD, PG_USER, applyDevSeed } from "./seed.js";
@@ -153,16 +153,16 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
 
   // The server: plain node with the tsx loader so the pid we record is the
   // one signals reach. Its env is closed: the plan, what a process needs to
-  // run at all, and the developer's own `dev.env` (Clerk keys), so nothing
-  // exported in the agent's shell (another DATABASE_URL, a storage driver, a
-  // bootstrap token) leaks in. The plan's values win over the file's.
+  // run at all, and the two Clerk keys from the developer's `dev.env`, so
+  // nothing exported in the agent's shell (another DATABASE_URL, a storage
+  // driver, a bootstrap token) leaks in.
   const inherited = yield* Config.all({
     PATH: Config.string("PATH"),
     HOME: Config.string("HOME").pipe(Config.withDefault(plan.stateDir))
   });
   const devEnvFile = yield* developerEnvFile(inherited.HOME);
-  const developer = yield* readDeveloperEnv(devEnvFile);
-  yield* say(`developer env: ${Object.keys(developer).join(", ") || "none"} (${devEnvFile})`);
+  const clerk = yield* readClerkKeys(devEnvFile);
+  yield* say(`clerk keys: ${Object.keys(clerk).join(", ") || "none"} (${devEnvFile})`);
   const server = yield* spawner.spawn(
     ChildProcess.make(
       process.execPath,
@@ -176,7 +176,7 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
         cwd: plan.worktree,
         env: {
           ...inherited,
-          ...developer,
+          ...clerk,
           PORT: String(plan.ports.server),
           DATABASE_URL: plan.databaseUrl,
           PATCHY_STORAGE_DIR: files.storageDir,

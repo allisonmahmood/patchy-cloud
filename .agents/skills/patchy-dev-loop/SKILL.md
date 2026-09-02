@@ -21,7 +21,11 @@ Start is idempotent. Run it whenever you are unsure: a running instance is found
 
 Done when `pnpm dev status` exits 0.
 
-The server's env is closed: nothing exported in your shell reaches it. Secrets it needs — the Clerk development keys — come from `~/.config/patchy-cloud/dev.env`, one file per developer for every worktree; `pnpm dev logs | grep 'developer env'` shows which keys were loaded. Missing keys are fixed there (`clerk env pull --file ~/.config/patchy-cloud/dev.env`), never in the repo.
+The server's env is closed: nothing exported in your shell reaches it. The one exception is the two Clerk development keys, read from `$XDG_CONFIG_HOME/patchy-cloud/dev.env` (`~/.config/patchy-cloud/dev.env` by default), one file per developer for every worktree; `pnpm dev logs | grep 'clerk keys'` shows which were loaded. Missing keys are fixed there, never in the repo:
+
+```sh
+clerk env pull --app app_3ImZuFeZJb8038U0oFds84rupA2 --file "${XDG_CONFIG_HOME:-$HOME/.config}/patchy-cloud/dev.env"
+```
 
 ## 2. Drive the CLI
 
