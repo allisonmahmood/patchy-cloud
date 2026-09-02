@@ -1,6 +1,6 @@
 # Publishing
 
-The `@patchy/cli` package and its bundled skill — the tool agents use to put pages up. An agent is the primary driver and the CLI's output is its interface, so every message is written to be read by an agent first and what an agent sees is a written contract ([ADR-0004](../../docs/adr/ADR-0004-cli-contract-for-agents.md)). Humans are not excluded: developers touching the cloud directly do drive it, so the human conveniences (completions, the wizard) stay, as long as they never change what an agent sees. The CLI's word for the thing it publishes is _patch_, same as the wire and the [Patches](../patches/CONTEXT.md) glossary; _draft_ is retired, and the copy still saying it is a filed rename.
+The `@patchy/cli` package and its bundled skill — the tool agents use to put pages up. An agent is the primary driver and the CLI's output is its interface, so every message is written to be read by an agent first and what an agent sees is a written contract ([ADR-0004](../../docs/adr/ADR-0004-cli-contract-for-agents.md)). Humans are not excluded: developers touching the cloud directly do drive it, so the human conveniences (completions, the wizard) stay, as long as they never change what an agent sees. The CLI's word for the thing it publishes is _patch_, same as the wire and the [Patches](../patches/CONTEXT.md) glossary; _draft_ is retired.
 
 ## Language
 

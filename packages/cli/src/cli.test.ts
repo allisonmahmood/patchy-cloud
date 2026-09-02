@@ -350,7 +350,7 @@ describe("patchy upload", async () => {
     expect(first.status).toBe(0);
     expect(first.stdout).toMatch(
       new RegExp(
-        `^Publishing to ${instance.url} \\(target came from --api-url\\)\\.\nMinted a new publishing token for ${instance.url};.*\nUploaded draft\nURL: http://instance\\.test/d/abcdefghijkl\nDraft ID: abcdefghijkl\nVersion: 1\n$`
+        `^Publishing to ${instance.url} \\(target came from --api-url\\)\\.\nMinted a new publishing token for ${instance.url};.*\nUploaded patch\nURL: http://instance\\.test/d/abcdefghijkl\nPatch ID: abcdefghijkl\nVersion: 1\n$`
       )
     );
     expect(first.stderr).toBe("Warning: No <title> found.\n");
@@ -458,17 +458,17 @@ describe("patchy upload", async () => {
     const file = htmlFile(dir, "page.html", validHtml);
     const env = { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp" };
 
-    const explicit = await runCli(["upload", file, "--draft", "abcdefghijkl"], {
+    const explicit = await runCli(["upload", file, "--patch", "abcdefghijkl"], {
       stateDir: dir,
       env
     });
     expect(explicit.status).toBe(2);
     expect(explicit.stderr).toBe(
-      "Draft is unavailable for update. --draft never creates a new draft.\n"
+      "Patch is unavailable for update. --patch never creates a new patch.\n"
     );
 
     writeFileSync(
-      path.join(dir, "drafts.json"),
+      path.join(dir, "patches.json"),
       JSON.stringify({
         hosts: {
           [instance.url]: {
@@ -487,18 +487,41 @@ describe("patchy upload", async () => {
     const cached = await runCli(["upload", file], { stateDir: dir, env });
     expect(cached.status).toBe(2);
     expect(cached.stderr).toBe(
-      "Cached draft is unavailable for update. Use --new to create a new draft.\n"
+      "Cached patch is unavailable for update. Use --new to create a new patch.\n"
     );
     // The pre-rename `draftId` entry was read as the same page.
     expect(instance.requests[1]?.body).toMatchObject({ patchId: "mnopqrstuvwx" });
     expect(instance.requests).toHaveLength(2);
 
-    const conflict = await runCli(["upload", file, "--draft", "abcdefghijkl", "--new"], {
+    const conflict = await runCli(["upload", file, "--patch", "abcdefghijkl", "--new"], {
       stateDir: dir,
       env
     });
     expect(conflict.status).toBe(1);
-    expect(conflict.stderr).toBe("--draft and --new cannot be used together.\n");
+    expect(conflict.stderr).toBe("--patch and --new cannot be used together.\n");
+  });
+
+  it("refuses to publish past a patch cache still named drafts.json", async () => {
+    const instance = await stubInstance((_, respond) =>
+      respond(201, upload(201, "abcdefghijkl", 1))
+    );
+    const dir = tempDir();
+    const file = htmlFile(dir, "page.html", validHtml);
+    // Refused even beside a patches.json: the CLI never guesses which one is current.
+    for (const name of ["drafts.json", "patches.json"]) {
+      writeFileSync(path.join(dir, name), JSON.stringify({ hosts: {} }));
+    }
+
+    const result = await runCli(["upload", file], {
+      stateDir: dir,
+      env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp" }
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toBe(
+      `The patch cache is now ${path.join(dir, "patches.json")} but the old file is still here: ${path.join(dir, "drafts.json")}\n` +
+        "Rename it to patches.json to keep updating the patches it remembers, or delete it to start a fresh cache.\n"
+    );
+    expect(instance.requests).toHaveLength(0);
   });
 
   it("fails closed on invalid stored credentials for this instance, and only this instance", async () => {
@@ -529,11 +552,17 @@ describe("patchy upload", async () => {
 });
 
 describe("patchy delete", async () => {
-  it("takes down the draft a file was uploaded from with the key that published it, then the draft is gone", async () => {
+  it("takes down the patch a file was uploaded from with the key that published it, then the patch is gone", async () => {
     // The stub remembers what is live, so a delete after a delete is a real 404.
     const live = new Set<string>();
     const instance = await stubInstance((request, respond) => {
       if (request.url === "/api/uploads") {
+        const body = request.body as { patchId?: string };
+        if (body.patchId !== undefined) {
+          return live.has(body.patchId)
+            ? respond(200, upload(200, body.patchId, 2))
+            : respond(404, { ok: false, error: "Patch not found." });
+        }
         live.add("abcdefghijkl");
         return respond(201, upload(201, "abcdefghijkl", 1));
       }
@@ -543,43 +572,55 @@ describe("patchy delete", async () => {
     });
     const dir = tempDir();
     const file = htmlFile(dir, "page.html", validHtml);
+    const copy = htmlFile(dir, "copy.html", validHtml);
     const env = { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" };
     expect((await runCli(["upload", file], { stateDir: dir, env })).status).toBe(0);
+    // A second file pointed at the same patch by hand; the cache now names it twice.
+    expect(
+      (await runCli(["upload", copy, "--patch", "abcdefghijkl"], { stateDir: dir, env })).status
+    ).toBe(0);
 
     const deleted = await runCli(["delete", file, "--json"], { stateDir: dir, env });
     expect(deleted).toMatchObject({ status: 0, stdout: '{"ok":true}\n', stderr: "" });
-    expect(instance.requests[1]).toMatchObject({
+    expect(instance.requests[2]).toMatchObject({
       method: "DELETE",
       url: "/api/patches/abcdefghijkl",
       authorization: "Bearer pp_owner"
     });
-    // The cache no longer knows the file, so the next upload from it is a create.
-    expect(readJson(path.join(dir, "drafts.json"))).toEqual({
+    // Every file that pointed at the patch is forgotten, not only the one named,
+    // so no later upload tries to update a patch that is gone.
+    expect(readJson(path.join(dir, "patches.json"))).toEqual({
       hosts: { [instance.url]: { files: {} } }
     });
 
     const forgotten = await runCli(["delete", file], { stateDir: dir, env });
     expect(forgotten.status).toBe(1);
-    expect(forgotten.stderr).toMatch(/^No draft on .* was uploaded from /);
-    expect(instance.requests).toHaveLength(2);
+    expect(forgotten.stderr).toMatch(/^No patch on .* was uploaded from /);
+    expect(instance.requests).toHaveLength(3);
 
-    const gone = await runCli(["delete", "--draft", "abcdefghijkl"], { stateDir: dir, env });
+    const gone = await runCli(["delete", "--patch", "abcdefghijkl"], { stateDir: dir, env });
     expect(gone.status).toBe(2);
     expect(gone.stderr).toBe(
-      `Draft abcdefghijkl is unavailable for deletion: it is not on ${instance.url}, or this publishing key does not own it.\n`
+      `Patch abcdefghijkl is unavailable for deletion: it is not on ${instance.url}, or this publishing key does not own it.\n`
     );
 
-    const both = await runCli(["delete", file, "--draft", "abcdefghijkl"], { stateDir: dir, env });
+    // Neither target and both targets are told what to pass, in different words.
+    const neither = await runCli(["delete"], { stateDir: dir, env });
+    expect(neither.status).toBe(1);
+    expect(neither.stderr).toBe(
+      "Pass the file the patch was uploaded from, or --patch <patch-id>.\n"
+    );
+    const both = await runCli(["delete", file, "--patch", "abcdefghijkl"], { stateDir: dir, env });
     expect(both.status).toBe(1);
     expect(both.stderr).toBe(
-      "Pass the file the draft was uploaded from, or --draft <draft-id>, not both.\n"
+      "Pass the file the patch was uploaded from, or --patch <patch-id>, not both.\n"
     );
 
     // With no key there is nothing to delete with, and none is ever minted for it.
-    const keyless = await runCli(["delete", "--draft", "abcdefghijkl", "--api-url", instance.url]);
+    const keyless = await runCli(["delete", "--patch", "abcdefghijkl", "--api-url", instance.url]);
     expect(keyless.status).toBe(1);
-    expect(keyless.stderr).toMatch(/^No publishing token is stored for /);
-    expect(instance.requests).toHaveLength(3);
+    expect(keyless.stderr).toMatch(/^No publishing key is stored for /);
+    expect(instance.requests).toHaveLength(4);
   });
 });
 

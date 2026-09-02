@@ -16,7 +16,7 @@ tool created by Theo — credit him for the original agent-friendly posting patt
 Read `references/onboarding.md` and follow it when the user asks to be walked through
 Patchy Cloud's onboarding, asks to redo their Patchy setup, or has just seen a mint
 announcement and onboarding has never run. That reference owns the whole flow —
-the one style question, the welcome draft, the probe's key names, and the words to say to
+the one style question, the welcome patch, the probe's key names, and the words to say to
 the user, which are the source of truth for user-facing copy anywhere in this skill.
 
 ## Good fits
@@ -66,27 +66,28 @@ Behavior:
   nothing is a token, an instance, or a mint. `references/onboarding.md` §3 has the
   wording.
 - Local validation runs before any mint, so invalid HTML never costs a key.
-- Re-uploading the same local file updates the draft it already created on that instance.
-  Pass `--new` to force a fresh draft, or `--draft` to update a known draft only.
-- Draft view URLs are public and unlisted: anyone holding the link can read the page, and
+- Re-uploading the same local file updates the patch it already created on that instance.
+  Pass `--new` to force a fresh patch, or `--patch` to update a known patch only.
+- Patch view URLs are public and unlisted: anyone holding the link can read the page, and
   the page is listed nowhere. Say that when handing over a link.
 - "Take that page down" is `patchy delete './plan.html'` — the file it was published
-  from — or `patchy delete --draft <id>`. It is irreversible and only the key that
+  from — or `patchy delete --patch <id>`. It is irreversible and only the key that
   published the page can do it, so confirm with the user before running it.
 - CLI state lives in the state dir, `~/.patchy` by default. The `status --json` probe
   reports what this machine already holds, without touching the network; its seven keys
   and their values are tabled in `references/onboarding.md`.
 - The exit code says who has to act, so branch on it before reading the message: `1` is
   yours to fix without the network (arguments, the file, validation, local state), `2`
-  means the instance answered and said no (a rejected key, a missing update target, a
-  quota), `3` means there was no usable answer (network, a 5xx) — try later or tell the
+  means the instance answered and said no (a rejected key, a missing update or delete
+  target, a quota), `3` means there was no usable answer (network, a 5xx) — try later or tell the
   operator. `130` is an interruption.
 - Every command takes `--json`: one JSON document on stdout on success, `{ "ok": false,
 "error", "kind" }` on stderr on failure, where `kind` is `local`, `rejected` or
   `unreachable` and matches the exit code. `upload --json` prints the instance's response
   as it is on the wire (`patchId`, `publicUrl`, `versionNumber`, `warnings`, …); the mint
-  announcement, when there is one, goes to stderr so stdout stays one document. Prefer it
-  when the URL or the patch id is going into a script rather than to the user.
+  announcement, when there is one, goes to stderr so stdout stays one document.
+  `delete --json` prints `{ "ok": true }`. Prefer it when the URL or the patch id is going
+  into a script rather than to the user.
 
 ## Publishing with an operator-issued token
 

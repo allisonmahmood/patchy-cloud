@@ -297,7 +297,7 @@ const validate = Command.make("validate", { file: fileArgument }, ({ file }) =>
       for (const warning of warnings) yield* Output.warn(`Warning: ${warning}`);
     })
   )
-).pipe(Command.withDescription("Validate a static HTML draft without uploading it."));
+).pipe(Command.withDescription("Validate a static HTML patch without uploading it."));
 
 // --- upload -----------------------------------------------------------------
 
@@ -383,12 +383,12 @@ const upload = Command.make(
   "upload",
   {
     file: fileArgument,
-    draft: Flag.string("draft").pipe(
-      Flag.withDescription("Update an existing draft only; never creates a draft"),
+    patch: Flag.string("patch").pipe(
+      Flag.withDescription("Update an existing patch only; never creates a patch"),
       Flag.optional
     ),
     new: Flag.boolean("new").pipe(
-      Flag.withDescription("Always create a new draft"),
+      Flag.withDescription("Always create a new patch"),
       Flag.withDefault(false)
     ),
     anonymous: Flag.boolean("anonymous").pipe(
@@ -399,8 +399,8 @@ const upload = Command.make(
   (options) =>
     run(
       Effect.gen(function* () {
-        if (Option.isSome(options.draft) && options.new) {
-          return yield* new LocalError({ message: "--draft and --new cannot be used together." });
+        if (Option.isSome(options.patch) && options.new) {
+          return yield* new LocalError({ message: "--patch and --new cannot be used together." });
         }
         // A no-op rather than an error: the flag's old invocations keep working
         // through the transition, so it is announced and then ignored.
@@ -427,7 +427,7 @@ const upload = Command.make(
         const cached = yield* state.readCachedPatch(instance.apiUrl, resolved);
         const patchId = options.new
           ? null
-          : Option.getOrElse(options.draft, () =>
+          : Option.getOrElse(options.patch, () =>
               Option.getOrNull(Option.map(cached, (c) => c.patchId))
             );
 
@@ -449,9 +449,9 @@ const upload = Command.make(
             Effect.catch((error) => {
               if (patchId !== null && Api.isRefusal(error) && error.error === PATCH_NOT_FOUND) {
                 return new RejectedError({
-                  message: Option.isSome(options.draft)
-                    ? "Draft is unavailable for update. --draft never creates a new draft."
-                    : "Cached draft is unavailable for update. Use --new to create a new draft."
+                  message: Option.isSome(options.patch)
+                    ? "Patch is unavailable for update. --patch never creates a new patch."
+                    : "Cached patch is unavailable for update. Use --new to create a new patch."
                 });
               }
               return refused(error, "Upload failed.");
@@ -469,31 +469,36 @@ const upload = Command.make(
           })
         );
         yield* Output.report(encodeUpload(upload), [
-          patchId !== null ? "Updated draft" : "Uploaded draft",
+          patchId !== null ? "Updated patch" : "Uploaded patch",
           `URL: ${upload.publicUrl}`,
-          `Draft ID: ${upload.patchId}`,
+          `Patch ID: ${upload.patchId}`,
           `Version: ${upload.versionNumber}`
         ]);
         for (const warning of upload.warnings) yield* Output.warn(`Warning: ${warning}`);
       })
     )
-).pipe(Command.withDescription("Upload or update an HTML draft."));
+).pipe(Command.withDescription("Upload or update an HTML patch."));
 
 // --- delete -----------------------------------------------------------------
 
 /**
- * The draft to delete: the one cached for the file, or the id given outright.
+ * The patch to delete: the one cached for the file, or the id given outright.
  * Exactly one of the two, because a file and an id that disagree would leave
  * the cache pointing at whichever was not deleted.
  */
 const deleteTarget = Effect.fn("deleteTarget")(function* (
   file: Option.Option<string>,
-  draft: Option.Option<string>
+  patch: Option.Option<string>
 ) {
-  if (Option.isSome(draft) && Option.isNone(file)) return draft.value;
-  if (Option.isNone(file) || Option.isSome(draft)) {
+  if (Option.isSome(file) && Option.isSome(patch)) {
     return yield* new LocalError({
-      message: "Pass the file the draft was uploaded from, or --draft <draft-id>, not both."
+      message: "Pass the file the patch was uploaded from, or --patch <patch-id>, not both."
+    });
+  }
+  if (Option.isSome(patch)) return patch.value;
+  if (Option.isNone(file)) {
+    return yield* new LocalError({
+      message: "Pass the file the patch was uploaded from, or --patch <patch-id>."
     });
   }
   const path = yield* Path.Path;
@@ -504,8 +509,8 @@ const deleteTarget = Effect.fn("deleteTarget")(function* (
   if (Option.isNone(cached)) {
     return yield* new LocalError({
       message:
-        `No draft on ${apiUrl} was uploaded from ${resolved}.\n` +
-        "Pass --draft <draft-id> to delete by ID."
+        `No patch on ${apiUrl} was uploaded from ${resolved}.\n` +
+        "Pass --patch <patch-id> to delete by ID."
     });
   }
   return cached.value.patchId;
@@ -513,33 +518,33 @@ const deleteTarget = Effect.fn("deleteTarget")(function* (
 
 /**
  * Never mints: a fresh key owns nothing, so with no key there is nothing this
- * machine can delete. The cache forgets the draft only once the instance has
+ * machine can delete. The cache forgets the patch only once the instance has
  * said yes, so a refusal leaves the local picture as it was.
  */
 const del = Command.make(
   "delete",
   {
     file: Argument.string("file").pipe(
-      Argument.withDescription("The HTML file the draft was uploaded from"),
+      Argument.withDescription("The HTML file the patch was uploaded from"),
       Argument.optional
     ),
-    draft: Flag.string("draft").pipe(
-      Flag.withDescription("Delete this draft by ID instead of by file"),
+    patch: Flag.string("patch").pipe(
+      Flag.withDescription("Delete this patch by ID instead of by file"),
       Flag.optional
     )
   },
   (options) =>
     run(
       Effect.gen(function* () {
-        const patchId = yield* deleteTarget(options.file, options.draft);
+        const patchId = yield* deleteTarget(options.file, options.patch);
         const instance = yield* Instance.Instance;
         const state = yield* State.State;
         const token = yield* configuredToken;
         if (Option.isNone(token)) {
           return yield* new LocalError({
             message:
-              `No publishing token is stored for ${instance.apiUrl}, so nothing there can be deleted from this machine.\n` +
-              `Save the one that published the draft with: patchy auth set --api-url ${instance.apiUrl}`
+              `No publishing key is stored for ${instance.apiUrl}, so nothing there can be deleted from this machine.\n` +
+              `Save the one that published the patch with: patchy auth set --api-url ${instance.apiUrl}`
           });
         }
         yield* Output.notice(
@@ -550,26 +555,26 @@ const del = Command.make(
           Effect.catch((error) => {
             if (Api.isRefusal(error) && error.error === PATCH_NOT_FOUND) {
               return new RejectedError({
-                message: `Draft ${patchId} is unavailable for deletion: it is not on ${instance.apiUrl}, or this publishing key does not own it.`
+                message: `Patch ${patchId} is unavailable for deletion: it is not on ${instance.apiUrl}, or this publishing key does not own it.`
               });
             }
             return refused(error, "Delete failed.");
           })
         );
         yield* state.forgetPatch(instance.apiUrl, patchId);
-        yield* Output.report(encodeOk(ok), ["Deleted draft", `Draft ID: ${patchId}`]);
+        yield* Output.report(encodeOk(ok), ["Deleted patch", `Patch ID: ${patchId}`]);
       })
     )
 ).pipe(
   Command.withDescription(
-    "Delete a draft from the instance. Irreversible. Confirm with the user first."
+    "Delete a patch from the instance. Irreversible. Confirm with the user first."
   )
 );
 
 // --- the tree ---------------------------------------------------------------
 
 export const root = Command.make("patchy").pipe(
-  Command.withDescription("Upload static HTML drafts to a Patchy Cloud instance."),
+  Command.withDescription("Upload static HTML patches to a Patchy Cloud instance."),
   Command.withSubcommands([auth, whoami, status, validate, upload, del]),
   Command.withGlobalFlags([Output.JsonFlag, Instance.ApiUrlFlag])
 );
