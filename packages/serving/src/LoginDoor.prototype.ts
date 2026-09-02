@@ -47,6 +47,12 @@ const doorMode = Config.string("PROTOTYPE_DOOR_MODE").pipe(
   Config.map((value): "page" | "redirect" => (value === "redirect" ? "redirect" : "page"))
 );
 
+/** `PROTOTYPE_DOOR_SUFFIX_FIX=1`: mirror a refreshed session token across Clerk's cookie families (#119 lane B). */
+const suffixFix = Config.string("PROTOTYPE_DOOR_SUFFIX_FIX").pipe(
+  Config.withDefault("0"),
+  Config.map((value) => value === "1")
+);
+
 // --- copying Clerk's headers onto an Effect response --------------------------
 
 /**
@@ -77,6 +83,27 @@ const redirect307 = (location: string, headers: Headers) =>
     }),
     headers
   );
+
+// --- the suffix mismatch (#119 lane B experiment) ------------------------------
+
+/**
+ * The handshake establishes the unsuffixed `__client_uat` / `__session` pair,
+ * but the SDK's refresh sets only `__session_<suffix>`, and its
+ * `usesSuffixedCookies()` stays false while there is no suffixed
+ * `__client_uat`, so the refreshed token is never read and every later load
+ * refreshes again. When a refresh directive is present, mirror the token into
+ * `__session` with the same attributes, so the SDK keeps reading the family
+ * the handshake chose. (Mirroring `__client_uat` into its suffixed name
+ * instead flips the SDK to the suffixed family wholesale; on a development
+ * instance it then wants `__clerk_db_jwt_<suffix>` too and signs the person
+ * out on the next load. Measured on #119.)
+ */
+const mirrorRefreshedSession = (headers: Headers, suffix: string): void => {
+  const refreshed = headers.getSetCookie().find((d) => d.startsWith(`__session_${suffix}=`));
+  if (refreshed !== undefined) {
+    headers.append("set-cookie", refreshed.replace(`__session_${suffix}=`, "__session="));
+  }
+};
 
 // --- logging -----------------------------------------------------------------
 
@@ -279,6 +306,7 @@ export const make = Effect.gen(function* () {
   const users = yield* PrototypeUsers.PrototypeUsers;
   const publicBaseUrl = yield* PatchesConfig.publicBaseUrl;
   const mode = yield* doorMode;
+  const mirror = yield* suffixFix;
 
   // A route handler does not see the context its layer was built in, so what
   // the handlers behind the door need is provided per request, here.
@@ -319,6 +347,7 @@ export const make = Effect.gen(function* () {
         report(request, verdict, "-");
         return notConfiguredPage(outcome.missing);
       }
+      if (mirror) mirrorRefreshedSession(outcome.headers, clerk.cookieSuffix);
 
       // Sign-out gets through whatever the verdict: it clears cookies either way.
       if (request.method === "POST" && path === "/sign-out") {
