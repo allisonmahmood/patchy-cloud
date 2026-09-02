@@ -5,6 +5,7 @@ How the engineering skills should consume this repo's domain documentation when 
 ## Before exploring, read these
 
 - **`CONTEXT-MAP.md`** at the repo root — it points at one `CONTEXT.md` per context. Read each one relevant to the topic.
+- **`docs/product.md`** — the product's shape, one section per decision. A product decision that is not built yet is recorded there and nowhere else; read the section for the area you are about to build.
 - **`docs/adr/`** — system-wide decisions. Read ADRs that touch the area you're about to work in.
 - **`<context>/docs/adr/`** — context-scoped decisions, alongside that context's `CONTEXT.md`.
 
@@ -12,18 +13,25 @@ If any of these files don't exist, **proceed silently**. Don't flag their absenc
 
 ## Layout
 
-This is a **multi-context** repo — a pnpm workspace whose two sides are the service that hosts pages and the CLI agents run to put pages up, with the hosting side cut into capability packages. `CONTEXT-MAP.md` names the contexts (Auth, Patches, Serving, Publishing), the shared kernel (`core`), the infrastructure packages (`api`, `sql`, `content-store`, `analytics`, `limits`, and `apps/server` as wiring) and the relationships between them; every context and infrastructure package but `core` and `api` has a `CONTEXT.md` beside its code.
+This is a **multi-context** repo — a pnpm workspace whose two sides are the service that hosts patches and the CLI agents run to publish them, with the hosting side cut into capability packages. `CONTEXT-MAP.md` names the product's contexts (Patches, Serving, Companies, Auth, Integrations, Publishing), the shared kernel (`core`), the infrastructure packages (`api`, `sql`, `content-store`, `analytics`, `limits`, and `apps/server` as wiring) and the relationships between them. Every context and infrastructure package but `core` and `api` has a `CONTEXT.md` at its package's path.
+
+A context can exist before its code: its `CONTEXT.md` sits alone at the path the package will take (`packages/companies/CONTEXT.md`), so the words are settled before the build and the package is born beside them. A folder with no `package.json` is invisible to pnpm and turbo.
 
 ```
 /
 ├── CONTEXT-MAP.md                     ← the map
+├── docs/product.md                    ← the product's shape
 ├── docs/adr/                          ← system-wide decisions
 ├── apps/server/CONTEXT.md             ← wiring terms only
-└── packages/<name>/CONTEXT.md         ← one per context and infrastructure package
+└── packages/<name>/CONTEXT.md         ← one per context and infrastructure package, code or not
     └── docs/adr/                      ← that package's decisions, once it has one
 ```
 
 A term belongs to the package that introduced it; `core` and `api` define none of their own.
+
+## ADRs are current or gone
+
+An ADR records a decision that is hard to reverse, surprising without context, and the result of a real trade-off. The PR that builds a decision writes its ADR; a product decision that is not built yet lives in `docs/product.md`, not in an ADR describing code that does not exist. When a decision is superseded, its ADR is **deleted**: the replacement names what it replaced, and git holds the old text. There are no inherited, retired or superseded ADRs in the tree, because an outdated ADR misleads the agent that reads it.
 
 ## Use the glossary's vocabulary
 

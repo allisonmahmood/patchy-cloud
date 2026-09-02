@@ -1,6 +1,6 @@
 # Patches
 
-What the instance holds and how long it holds it. `packages/patches` owns the patch and version records, the upload contract, visits and the retention clock, pins, moderation, the patch quota, the expiry sweep, the `patches` / `patch_versions` migration (id 3), and the `patches` group of the wire contract — `/api/uploads`, `/api/patches/:id` and its `disable`, `pin`, `unpin` and delete, `/api/principals/:id/patches`. It is the one place a patch's bytes are touched, through [Content store](../content-store/CONTEXT.md); it reports `patch.*` events through [Analytics](../analytics/CONTEXT.md) and spends the per-token create limit through [Limits](../limits/CONTEXT.md). Who is calling is never its question: every handler receives the principal from the bearer middleware [Auth](../auth/CONTEXT.md) implements, and this package never imports that one.
+What the instance holds and how long it holds it. `packages/patches` owns the patch and version records, the upload contract, visits and the retention clock, pins, moderation, the patch quota, the expiry sweep, the `patches` / `patch_versions` migration (id 3), and the `patches` group of the wire contract — `/api/uploads`, `/api/patches/:id` and its `disable`, `pin`, `unpin` and delete, `/api/principals/:id/patches`. It is the one place a patch's bytes are touched, through [Content store](../content-store/CONTEXT.md); it reports `patch.*` events through [Analytics](../analytics/CONTEXT.md) and spends the per-token create limit through [Limits](../limits/CONTEXT.md). Who is calling is never its question: every handler receives the principal from the bearer middleware [Auth](../auth/CONTEXT.md) implements, and this package never imports that one. Who has a patch open, and what patch code acts as from tier 1 up, is [Serving](../serving/CONTEXT.md)'s (_viewer_, _patch identity_); the company a patch lives in and the users and groups its scope names are [Companies](../companies/CONTEXT.md)'.
 
 ## Language
 
@@ -9,20 +9,12 @@ A built unit in a company's cloud: one thing, stored, permissioned and provision
 _Avoid_: draft (the old name, retired everywhere — see [Publishing](../cli/CONTEXT.md)), page (what a tier 0 patch is served as, not what it is), app (a tier 2 patch is one; the word says nothing about the rest), document (the HTML a version holds)
 
 **Tier**:
-Where a patch's code runs, and nothing else: tier 0 _static_ (no code runs anywhere), tier 1 _browser_ (code runs in the viewer's browser, as the viewer), tier 2 _hosted_ (server-side code too, run by the cloud only while a viewer has the patch open); tier 3 (work with no viewer present) and tier 4 (an agent's own computer) are named and not designed. Declared as an explicit field in the patch repo, checked against the tree on every publish — a tree that says more than its declared tier is refused. A version has exactly one tier and the patch's tier is its served version's; changing tier is publishing a version built for the new tier, never a move in place. A tier never changes who may open a patch, what it may declare, or how it is published, shared or found.
+Where a patch's code runs, and nothing else: tier 0 _static_ (no code runs anywhere), tier 1 _browser_ (code runs in the [viewer](../serving/CONTEXT.md)'s browser, as the viewer), tier 2 _hosted_ (server-side code too, run by the cloud only while a viewer has the patch open); tier 3 (work with no viewer present) and tier 4 (an agent's own computer) are named and not designed. Declared as an explicit field in the patch repo, checked against the tree on every publish — a tree that says more than its declared tier is refused. A version has exactly one tier and the patch's tier is its served version's; changing tier is publishing a version built for the new tier, never a move in place. A tier never changes who may open a patch, what it may declare, or how it is published, shared or found.
 _Avoid_: runtime (the thing a tier names), level, plan (tiers are capability, not pricing)
-
-**Viewer**:
-The person who has a patch open. From tier 1 up, patch code acts as the viewer and never as more: it learns who they are as claims and reaches primitives — the patch's own, and the company's connections — only through the cloud, within the viewer's own permissions. An anonymous viewer of a public patch carries no identity, so nothing acts as them.
-_Avoid_: reader (a tier 0 word: the page cannot act for anyone), user (ambiguous with the builder), end user
 
 **Owner**:
 The one user a patch belongs to, and the only one who changes it — publishes a version, rolls back, sets the sharing scope, retires, deletes. There are no editors: people collaborate in the repo and the owner publishes; an admin reassigns ownership when the owner is gone. Today the owner is the token that created the patch; with login it is a user.
 _Avoid_: creator (the first version's token; the owner can change), editor, author
-
-**Patch identity**:
-The principal a tier 2 patch's server side runs as when it reaches the patch's own primitives — distinct from any viewer, accountable to the patch's owner and reassignable with it, starting with nothing but the patch's own primitives and gaining a shared integration only when a company admin grants one. It never holds a raw credential; nothing at any tier does.
-_Avoid_: service account (the shape, not the term), the owner's token (the patch does not inherit the owner's reach)
 
 **Patch repo**:
 The folder a patch is built in — the file tree that is the patch, plus its id, declared tier and base config. Created by the CLI (`init`) or linked to an existing patch; one repo is the working copy of exactly one patch, and the first publish from a repo with no id creates the patch and writes it back. Today's single HTML file is a one-file tree without a repo.
@@ -33,7 +25,7 @@ The act that puts a patch up: a new version, live at once to everyone the patch 
 _Avoid_: deploy, upload (the wire route, not the act), release, promote
 
 **Primitive**:
-A capability the cloud provides a patch because it declared the need, in one of two scopes: patch-scoped — the patch's own tables, its file storage — provisioned with the patch, part of it, gone with it; company-scoped — a connection, the company database — existing once for the whole company, used by patches and owned by none. A patch's tables are patch-scoped wherever they physically live.
+A capability the cloud provides a patch because it declared the need, in one of two scopes: patch-scoped — the patch's own tables, its file storage — provisioned with the patch, part of it, gone with it; company-scoped — a connection ([Integrations](../integrations/CONTEXT.md)), the company database — existing once for the whole company, used by patches and owned by none. A patch's tables are patch-scoped wherever they physically live.
 _Avoid_: resource, service, addon
 
 **Extension**:

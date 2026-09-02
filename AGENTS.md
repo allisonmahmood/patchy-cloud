@@ -54,7 +54,7 @@ The five canonical triage roles, each label string equal to its name. See `docs/
 
 ### Domain docs
 
-Multi-context — a root `CONTEXT-MAP.md` naming the contexts (Auth, Patches, Serving, Publishing), the shared kernel and the infrastructure packages, each with a `CONTEXT.md` beside its code. See `docs/agents/domain.md`.
+Multi-context — a root `CONTEXT-MAP.md` naming the product's contexts (Patches, Serving, Companies, Auth, Integrations, Publishing), the shared kernel and the infrastructure packages, each with a `CONTEXT.md` at its package's path — written before the code where the package does not exist yet. `docs/product.md` is the product's shape. See `docs/agents/domain.md`.
 
 ### Review specs
 
