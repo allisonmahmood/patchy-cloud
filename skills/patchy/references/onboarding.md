@@ -1,10 +1,10 @@
 # Onboarding
 
 Agent-led first-time setup: capture how the user's pages should look, then publish their
-welcome draft. One question, then a live link.
+welcome patch. One question, then a live link.
 
 The user's own words for it are "my welcome page" — that is what to say out loud.
-_Welcome draft_ is the term for it here.
+_Welcome patch_ is the term for it here.
 
 Onboarding is always optional. It makes later publishing nicer; publishing works fine
 without it.
@@ -42,7 +42,7 @@ settles:
 
 | Key               | Values                                                | Use it to                                                                                                                                                                                                                                                                                                                                    |
 | ----------------- | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `instanceUrl`     | the resolved instance URL                             | Know where the welcome draft would go. Trust it only when `instanceSource` is not `default`.                                                                                                                                                                                                                                                 |
+| `instanceUrl`     | the resolved instance URL                             | Know where the welcome patch would go. Trust it only when `instanceSource` is not `default`.                                                                                                                                                                                                                                                 |
 | `instanceSource`  | `flag` \| `dev-env` \| `env` \| `config` \| `default` | Settle step 2. `config` is a saved choice — confirm it, do not ask. `dev-env` is this checkout's own `pnpm dev` instance, chosen for as long as it runs. `env` and `flag` came from this session's environment and will not persist, so say that. `default` means nothing has been chosen: the URL shown is only the local fallback, so ask. |
 | `hasToken`        | boolean                                               | `true` → they already publish. The welcome upload reuses that key, so nothing is minted and there is no announcement to relay.                                                                                                                                                                                                               |
 | `tokenSource`     | `mint` \| `auth-set` \| `null`                        | Tell a key this machine minted (`mint`) from one saved by hand from the operator (`auth-set`). `null` with `hasToken: true` means the key comes from the environment, not the state dir — say so rather than promising the saved-file story.                                                                                                 |
@@ -93,9 +93,9 @@ the operator-token section of `SKILL.md`. With no token, the first upload mints 
 instance allows it; if it does not, that is a question for Patchy Cloud's operator — do not
 guess at one, and do not publish somewhere else instead.
 
-### 3. Publish the welcome draft
+### 3. Publish the welcome patch
 
-Write `welcome.html` from `welcome-draft.html` in this directory, restyled to the chosen
+Write `welcome.html` from `welcome-patch.html` in this directory, restyled to the chosen
 look — the structure and copy are the deliverable, the styling is theirs — then:
 
 ```bash

@@ -582,7 +582,7 @@
         <div class="note note-info">
           <span class="note-title">Public by link</span>
           <p>
-            Draft viewer URLs are public and unlisted. Anyone with the link can open the rendered
+            Patch viewer URLs are public and unlisted. Anyone with the link can open the rendered
             artifact, so publish only material that is safe to share with every link holder.
           </p>
         </div>
@@ -642,8 +642,8 @@
             <p>
               Every upload requires a bearer API token, on every configuration. The server rejects a
               request that carries no token with 401, and a present but invalid token stays 401.
-              Authenticated uploads create drafts and update drafts the publisher owns; uploading
-              the same known file updates its cached draft unless <code>--new</code> is passed.
+              Authenticated uploads create patches and update patches the publisher owns; uploading
+              the same known file updates its cached patch unless <code>--new</code> is passed.
             </p>
           </article>
         </div>
@@ -661,7 +661,7 @@
               <tr>
                 <td>Authenticated upload</td>
                 <td>Token required</td>
-                <td>Create new drafts or update drafts owned by the publisher.</td>
+                <td>Create new patches or update patches owned by the publisher.</td>
               </tr>
               <tr>
                 <td>Upload without a token</td>
@@ -669,7 +669,7 @@
                 <td>Retired posture; no server setting restores it.</td>
               </tr>
               <tr>
-                <td>Draft URL</td>
+                <td>Patch URL</td>
                 <td>Public and unlisted</td>
                 <td>Anyone with the link can open the artifact without an account.</td>
               </tr>

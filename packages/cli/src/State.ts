@@ -1,6 +1,6 @@
 /**
  * The state dir: everything the CLI remembers between runs, filed per
- * instance. `credentials.json` holds one token per instance, `drafts.json`
+ * instance. `credentials.json` holds one token per instance, `patches.json`
  * one cache entry per instance and file, `config.json` the saved instance
  * URL; `style.md` is the skill's and is only ever checked for existence.
  *
@@ -35,7 +35,7 @@ export class HostCredential extends Schema.Class<HostCredential>("HostCredential
   source: Schema.optionalKey(Schema.Literals(["mint", "auth-set"]))
 }) {}
 
-/** One entry of `drafts.json`, keyed per instance then per absolute file path. */
+/** One entry of `patches.json`, keyed per instance then per absolute file path. */
 export class CachedPatch extends Schema.Class<CachedPatch>("CachedPatch")({
   patchId: Schema.NonEmptyString,
   publicUrl: Schema.String,
@@ -132,7 +132,10 @@ export const make = Effect.gen(function* () {
   );
   const configPath = path.join(dir, "config.json");
   const credentialsPath = path.join(dir, "credentials.json");
-  const draftsPath = path.join(dir, "drafts.json");
+  const patchesPath = path.join(dir, "patches.json");
+  // The cache under its old name. Never read: forgetting it would create a
+  // new patch at a new URL instead of updating the one it remembers.
+  const retiredPatchesPath = path.join(dir, "drafts.json");
   const stylePath = path.join(dir, "style.md");
 
   const credentialErrors: HostKeyedErrors = {
@@ -144,14 +147,17 @@ export const make = Effect.gen(function* () {
       "Patchy Cloud now stores one token per instance and does not migrate the old file.\n" +
       "Copy the token out of that file if you still need it, delete the file, then run: patchy auth set"
   };
-  const draftErrors: HostKeyedErrors = {
-    unreadable: `The stored draft cache could not be read: ${draftsPath}\nCheck permissions, or delete that file to start a fresh cache.`,
-    invalid: `The stored draft cache is invalid: ${draftsPath}\nDelete that file to start a fresh cache. Drafts already published are unaffected.`,
+  const patchErrors: HostKeyedErrors = {
+    unreadable: `The stored patch cache could not be read: ${patchesPath}\nCheck permissions, or delete that file to start a fresh cache.`,
+    invalid: `The stored patch cache is invalid: ${patchesPath}\nDelete that file to start a fresh cache. Patches already published are unaffected.`,
     legacy:
-      `The stored draft cache uses the retired single-instance format: ${draftsPath}\n` +
-      "Patchy Cloud now caches drafts per instance and does not migrate the old file.\n" +
-      "Delete that file to start a fresh cache. Drafts already published are unaffected."
+      `The stored patch cache uses the retired single-instance format: ${patchesPath}\n` +
+      "Patchy Cloud now caches patches per instance and does not migrate the old file.\n" +
+      "Delete that file to start a fresh cache. Patches already published are unaffected."
   };
+  const cacheMoved =
+    `The patch cache is now ${patchesPath} but the old file is still here: ${retiredPatchesPath}\n` +
+    "Rename it to patches.json to keep updating the patches it remembers, or delete it to start a fresh cache.";
 
   /** `None` when the file does not exist; the caller's errors for anything else. */
   const readDocument = (file: string, errors: { unreadable: string; invalid: string }) =>
@@ -185,7 +191,12 @@ export const make = Effect.gen(function* () {
     });
 
   const readCredentialFile = readHostKeyed(credentialsPath, "apiToken", credentialErrors);
-  const readDraftFile = readHostKeyed(draftsPath, "files", draftErrors);
+  const readPatchFile = Effect.gen(function* () {
+    if (yield* fs.exists(retiredPatchesPath).pipe(Effect.orElseSucceed(() => true))) {
+      return yield* new LocalError({ message: cacheMoved });
+    }
+    return yield* readHostKeyed(patchesPath, "files", patchErrors);
+  });
 
   /**
    * Written whole, to a sibling temp file first, and owner-only from the first
@@ -272,22 +283,22 @@ export const make = Effect.gen(function* () {
       }),
     readCachedPatch: (apiUrl, file) =>
       Effect.gen(function* () {
-        const { hosts } = yield* readDraftFile;
+        const { hosts } = yield* readPatchFile;
         if (!(apiUrl in hosts)) return Option.none<CachedPatch>();
-        const files = (yield* entry(decodeFiles(hosts[apiUrl]), draftErrors.invalid)).files ?? {};
+        const files = (yield* entry(decodeFiles(hosts[apiUrl]), patchErrors.invalid)).files ?? {};
         if (!(file in files)) return Option.none<CachedPatch>();
-        const stored = yield* entry(decodeStoredPatch(files[file]), draftErrors.invalid);
+        const stored = yield* entry(decodeStoredPatch(files[file]), patchErrors.invalid);
         const patchId = stored.patchId ?? stored.draftId;
-        if (patchId === undefined) return yield* new LocalError({ message: draftErrors.invalid });
+        if (patchId === undefined) return yield* new LocalError({ message: patchErrors.invalid });
         return Option.some(new CachedPatch({ ...stored, patchId }));
       }),
     cachePatch: (apiUrl, file, patch) =>
       Effect.gen(function* () {
-        const { hosts } = yield* readDraftFile;
+        const { hosts } = yield* readPatchFile;
         const existing =
-          apiUrl in hosts ? yield* entry(decodeFiles(hosts[apiUrl]), draftErrors.invalid) : {};
+          apiUrl in hosts ? yield* entry(decodeFiles(hosts[apiUrl]), patchErrors.invalid) : {};
         const files = { ...existing.files, [file]: encodeCachedPatch(patch) };
-        yield* writeJson(draftsPath, { hosts: { ...hosts, [apiUrl]: { files } } });
+        yield* writeJson(patchesPath, { hosts: { ...hosts, [apiUrl]: { files } } });
       })
   });
 });

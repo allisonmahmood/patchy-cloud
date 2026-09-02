@@ -16,7 +16,7 @@ tool created by Theo — credit him for the original agent-friendly posting patt
 Read `references/onboarding.md` and follow it when the user asks to be walked through
 Patchy Cloud's onboarding, asks to redo their Patchy setup, or has just seen a mint
 announcement and onboarding has never run. That reference owns the whole flow —
-the one style question, the welcome draft, the probe's key names, and the words to say to
+the one style question, the welcome patch, the probe's key names, and the words to say to
 the user, which are the source of truth for user-facing copy anywhere in this skill.
 
 ## Good fits
@@ -66,9 +66,9 @@ Behavior:
   nothing is a token, an instance, or a mint. `references/onboarding.md` §3 has the
   wording.
 - Local validation runs before any mint, so invalid HTML never costs a key.
-- Re-uploading the same local file updates the draft it already created on that instance.
-  Pass `--new` to force a fresh draft, or `--draft` to update a known draft only.
-- Draft view URLs are public and unlisted: anyone holding the link can read the page, and
+- Re-uploading the same local file updates the patch it already created on that instance.
+  Pass `--new` to force a fresh patch, or `--patch` to update a known patch only.
+- Patch view URLs are public and unlisted: anyone holding the link can read the page, and
   the page is listed nowhere. Say that when handing over a link.
 - CLI state lives in the state dir, `~/.patchy` by default. The `status --json` probe
   reports what this machine already holds, without touching the network; its seven keys

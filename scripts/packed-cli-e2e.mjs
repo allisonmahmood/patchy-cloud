@@ -324,20 +324,20 @@ try {
       sensitiveValues: [bootstrapToken, hostileInheritedApiToken, hostileInheritedToken]
     })
   );
-  assert.equal(first.label, "Uploaded draft");
+  assert.equal(first.label, "Uploaded patch");
   assert.equal(first.versionNumber, 1);
-  assert.equal(first.publicUrl, `${publicBaseUrl}/d/${first.draftId}`);
+  assert.equal(first.publicUrl, `${publicBaseUrl}/d/${first.patchId}`);
   const fixtureCachePath = await checkedCall(() => realpath(fixturePath));
-  const shellDraftCache = JSON.parse(
-    await checkedCall(() => readFile(path.join(cliStateDir, "drafts.json"), "utf8"))
+  const shellPatchCache = JSON.parse(
+    await checkedCall(() => readFile(path.join(cliStateDir, "patches.json"), "utf8"))
   );
   assert.deepEqual(
-    Object.keys(shellDraftCache.hosts ?? {}),
+    Object.keys(shellPatchCache.hosts ?? {}),
     [publicBaseUrl],
-    "the draft cache must be keyed by the instance the upload targeted"
+    "the patch cache must be keyed by the instance the upload targeted"
   );
   assert.deepEqual(
-    Object.keys(shellDraftCache.hosts[publicBaseUrl].files ?? {}),
+    Object.keys(shellPatchCache.hosts[publicBaseUrl].files ?? {}),
     [fixtureCachePath],
     "quoted POSIX sh upload must cache the resolved spaced artifact path"
   );
@@ -346,8 +346,8 @@ try {
   const second = parseUpload(
     await runCli(cliPath, ["upload", fixtureArgument], { cwd: consumerDir, env: cliEnv })
   );
-  assert.equal(second.label, "Updated draft");
-  assert.equal(second.draftId, first.draftId);
+  assert.equal(second.label, "Updated patch");
+  assert.equal(second.patchId, first.patchId);
   assert.equal(second.versionNumber, 2);
 
   await checkedCall(() => writeFile(fixturePath, newHtml, "utf8"));
@@ -357,36 +357,36 @@ try {
       env: cliEnv
     })
   );
-  assert.equal(fresh.label, "Uploaded draft");
+  assert.equal(fresh.label, "Uploaded patch");
   assert.equal(fresh.versionNumber, 1);
-  assert.notEqual(fresh.draftId, first.draftId);
+  assert.notEqual(fresh.patchId, first.patchId);
 
   console.log("[packed-cli-e2e] validating current and explicit public versions");
-  const currentViewer = await fetchViewer(`${publicBaseUrl}/d/${first.draftId}`);
-  assertViewer(currentViewer, first.draftId, 2, "packed-contract-version-two");
+  const currentViewer = await fetchViewer(`${publicBaseUrl}/d/${first.patchId}`);
+  assertViewer(currentViewer, first.patchId, 2, "packed-contract-version-two");
   assert.ok(!currentViewer.body.includes("packed-contract-version-one"));
 
-  const firstVersionViewer = await fetchViewer(`${publicBaseUrl}/d/${first.draftId}/v/1`);
-  assertViewer(firstVersionViewer, first.draftId, 1, "packed-contract-version-one");
+  const firstVersionViewer = await fetchViewer(`${publicBaseUrl}/d/${first.patchId}/v/1`);
+  assertViewer(firstVersionViewer, first.patchId, 1, "packed-contract-version-one");
   assert.ok(!firstVersionViewer.body.includes("packed-contract-version-two"));
 
-  const secondVersionViewer = await fetchViewer(`${publicBaseUrl}/d/${first.draftId}/v/2`);
-  assertViewer(secondVersionViewer, first.draftId, 2, "packed-contract-version-two");
+  const secondVersionViewer = await fetchViewer(`${publicBaseUrl}/d/${first.patchId}/v/2`);
+  assertViewer(secondVersionViewer, first.patchId, 2, "packed-contract-version-two");
 
   const freshViewer = await fetchViewer(fresh.publicUrl);
-  assertViewer(freshViewer, fresh.draftId, 1, "packed-contract-new-draft");
+  assertViewer(freshViewer, fresh.patchId, 1, "packed-contract-new-draft");
 
   const metadata = await readMetadata();
   assert.equal(metadata.drafts.length, 2);
   assert.equal(metadata.draftVersions.length, 3);
   await assertStoredDraft(metadata, objectDir, {
-    draftId: first.draftId,
+    patchId: first.patchId,
     expectedHtmlByVersion: [firstHtml, secondHtml],
     accountId: "acct_bootstrap",
     apiTokenId: "tok_bootstrap"
   });
   await assertStoredDraft(metadata, objectDir, {
-    draftId: fresh.draftId,
+    patchId: fresh.patchId,
     expectedHtmlByVersion: [newHtml],
     accountId: "acct_bootstrap",
     apiTokenId: "tok_bootstrap"
@@ -505,7 +505,7 @@ try {
     { cwd: consumerDir, env: mintEnv }
   );
   const minted = parseUpload(mintedResult);
-  assert.equal(minted.label, "Uploaded draft");
+  assert.equal(minted.label, "Uploaded patch");
   assert.equal(minted.versionNumber, 1);
   assert.ok(
     mintedResult.stdout.includes(`Minted a new publishing token for ${publicBaseUrl};`),
@@ -533,7 +533,7 @@ try {
 
   // A fresh 1:1 principal, not the operator's: the draft it published is owned
   // by an account that did not exist before this upload.
-  const mintedDraft = metadataAfterMint.drafts.find((draft) => draft.id === minted.draftId);
+  const mintedDraft = metadataAfterMint.drafts.find((draft) => draft.id === minted.patchId);
   assert.ok(mintedDraft, "expected the auto-minted draft on the instance");
   assert.notEqual(
     mintedDraft.accountId,
@@ -541,7 +541,7 @@ try {
     "an auto-minted draft must not land on the operator's account"
   );
   const mintedVersion = metadataAfterMint.draftVersions.find(
-    (version) => version.draftId === minted.draftId
+    (version) => version.patchId === minted.patchId
   );
   assert.notEqual(
     mintedVersion.createdByApiTokenId,
@@ -549,13 +549,13 @@ try {
     "an auto-minted draft must not be published by the operator's token"
   );
   await assertStoredDraft(metadataAfterMint, objectDir, {
-    draftId: minted.draftId,
+    patchId: minted.patchId,
     expectedHtmlByVersion: [mintedHtml],
     accountId: mintedDraft.accountId,
     apiTokenId: mintedVersion.createdByApiTokenId
   });
   const mintedViewer = await fetchViewer(minted.publicUrl);
-  assertViewer(mintedViewer, minted.draftId, 1, "auto-minted-self-service-principal");
+  assertViewer(mintedViewer, minted.patchId, 1, "auto-minted-self-service-principal");
 
   console.log("[packed-cli-e2e] proving --anonymous is a deprecated no-op");
   const deprecatedFlagHtml = validHtml(
@@ -574,24 +574,24 @@ try {
     "expected the deprecation notice on stderr"
   );
   const deprecatedFlag = parseUpload(deprecatedFlagResult);
-  assert.equal(deprecatedFlag.label, "Uploaded draft");
+  assert.equal(deprecatedFlag.label, "Uploaded patch");
   assert.equal(deprecatedFlag.versionNumber, 1);
-  assert.notEqual(deprecatedFlag.draftId, first.draftId);
-  assert.notEqual(deprecatedFlag.draftId, fresh.draftId);
-  // The upload is ordinary in every respect, including keeping the draft cache:
+  assert.notEqual(deprecatedFlag.patchId, first.patchId);
+  assert.notEqual(deprecatedFlag.patchId, fresh.patchId);
+  // The upload is ordinary in every respect, including keeping the patch cache:
   // the flag no longer excuses it from the per-instance update state.
   const deprecatedFlagCache = JSON.parse(
-    await checkedCall(() => readFile(path.join(cliStateDir, "drafts.json"), "utf8"))
+    await checkedCall(() => readFile(path.join(cliStateDir, "patches.json"), "utf8"))
   );
   assert.equal(
     deprecatedFlagCache.hosts[publicBaseUrl].files[fixtureCachePath].patchId,
-    deprecatedFlag.draftId,
-    "the deprecated flag must still update the per-instance draft cache"
+    deprecatedFlag.patchId,
+    "the deprecated flag must still update the per-instance patch cache"
   );
   const metadataAfterDeprecatedFlag = await readMetadata();
   // The credential the flag used to bypass is the one that published it.
   await assertStoredDraft(metadataAfterDeprecatedFlag, objectDir, {
-    draftId: deprecatedFlag.draftId,
+    patchId: deprecatedFlag.patchId,
     expectedHtmlByVersion: [deprecatedFlagHtml],
     accountId: "acct_bootstrap",
     apiTokenId: "tok_bootstrap"
@@ -632,7 +632,7 @@ try {
     "the auto-minted principal must control exactly the draft it published"
   );
   await assertStoredDraft(finalMetadata, objectDir, {
-    draftId: envPrecedence.draftId,
+    patchId: envPrecedence.patchId,
     expectedHtmlByVersion: [envPrecedenceHtml],
     accountId: "acct_bootstrap",
     apiTokenId: "tok_bootstrap"
@@ -2666,15 +2666,15 @@ async function snapshotTree(rootDir) {
 }
 
 function parseUpload(result) {
-  const label = result.stdout.match(/^(Uploaded draft|Updated draft)$/m)?.[1];
+  const label = result.stdout.match(/^(Uploaded patch|Updated patch)$/m)?.[1];
   const publicUrl = result.stdout.match(/^URL: (.+)$/m)?.[1];
-  const draftId = result.stdout.match(/^Draft ID: ([a-z0-9]{12})$/m)?.[1];
+  const patchId = result.stdout.match(/^Patch ID: ([a-z0-9]{12})$/m)?.[1];
   const versionNumber = Number(result.stdout.match(/^Version: (\d+)$/m)?.[1]);
   assert.ok(label, `missing upload label in CLI output:\n${result.stdout}`);
   assert.ok(publicUrl, `missing public URL in CLI output:\n${result.stdout}`);
-  assert.ok(draftId, `missing draft ID in CLI output:\n${result.stdout}`);
+  assert.ok(patchId, `missing patch ID in CLI output:\n${result.stdout}`);
   assert.ok(Number.isInteger(versionNumber), `missing version in CLI output:\n${result.stdout}`);
-  return { label, publicUrl, draftId, versionNumber };
+  return { label, publicUrl, patchId, versionNumber };
 }
 
 async function fetchViewer(url) {
@@ -2682,7 +2682,7 @@ async function fetchViewer(url) {
   return { response, body: await response.text() };
 }
 
-function assertViewer(viewer, draftId, versionNumber, marker) {
+function assertViewer(viewer, patchId, versionNumber, marker) {
   // Serving guarantees: cache policy is keyed to URL shape. A version URL names
   // content that can never change; the latest-draft URL follows the draft.
   const versionUrl = /\/v\/\d+$/.test(new URL(viewer.response.url).pathname);
@@ -2702,7 +2702,7 @@ function assertViewer(viewer, draftId, versionNumber, marker) {
   );
   assert.ok(viewer.body.includes(marker), `viewer is missing ${marker}`);
   assert.ok(
-    viewer.body.includes(`<!-- patch:${draftId} version:${versionNumber} -->`),
+    viewer.body.includes(`<!-- patch:${patchId} version:${versionNumber} -->`),
     "viewer rendered the wrong draft version"
   );
 }
@@ -2780,7 +2780,7 @@ async function readMetadata() {
         )
       ).map((row) => ({
         id: row.id,
-        draftId: row.patch_id,
+        patchId: row.patch_id,
         versionNumber: row.version_number,
         objectKey: row.object_key,
         createdByApiTokenId: row.created_by_api_token_id
@@ -2797,14 +2797,14 @@ async function readMetadata() {
 async function assertStoredDraft(
   metadata,
   objectDir,
-  { draftId, expectedHtmlByVersion, accountId, apiTokenId }
+  { patchId, expectedHtmlByVersion, accountId, apiTokenId }
 ) {
-  const draft = metadata.drafts.find((candidate) => candidate.id === draftId);
-  assert.ok(draft, `metadata is missing draft ${draftId}`);
+  const draft = metadata.drafts.find((candidate) => candidate.id === patchId);
+  assert.ok(draft, `metadata is missing draft ${patchId}`);
   assert.equal(draft.accountId, accountId);
 
   const versions = metadata.draftVersions
-    .filter((version) => version.draftId === draftId)
+    .filter((version) => version.patchId === patchId)
     .sort((left, right) => left.versionNumber - right.versionNumber);
   assert.equal(versions.length, expectedHtmlByVersion.length);
   assert.equal(draft.currentVersionId, versions.at(-1).id);

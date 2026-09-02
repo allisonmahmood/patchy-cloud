@@ -289,7 +289,7 @@ const validate = Command.make("validate", { file: fileArgument }, ({ file }) =>
       for (const warning of warnings) yield* Output.warn(`Warning: ${warning}`);
     })
   )
-).pipe(Command.withDescription("Validate a static HTML draft without uploading it."));
+).pipe(Command.withDescription("Validate a static HTML patch without uploading it."));
 
 // --- upload -----------------------------------------------------------------
 
@@ -375,12 +375,12 @@ const upload = Command.make(
   "upload",
   {
     file: fileArgument,
-    draft: Flag.string("draft").pipe(
-      Flag.withDescription("Update an existing draft only; never creates a draft"),
+    patch: Flag.string("patch").pipe(
+      Flag.withDescription("Update an existing patch only; never creates a patch"),
       Flag.optional
     ),
     new: Flag.boolean("new").pipe(
-      Flag.withDescription("Always create a new draft"),
+      Flag.withDescription("Always create a new patch"),
       Flag.withDefault(false)
     ),
     anonymous: Flag.boolean("anonymous").pipe(
@@ -391,8 +391,8 @@ const upload = Command.make(
   (options) =>
     run(
       Effect.gen(function* () {
-        if (Option.isSome(options.draft) && options.new) {
-          return yield* new LocalError({ message: "--draft and --new cannot be used together." });
+        if (Option.isSome(options.patch) && options.new) {
+          return yield* new LocalError({ message: "--patch and --new cannot be used together." });
         }
         // A no-op rather than an error: the flag's old invocations keep working
         // through the transition, so it is announced and then ignored.
@@ -419,7 +419,7 @@ const upload = Command.make(
         const cached = yield* state.readCachedPatch(instance.apiUrl, resolved);
         const patchId = options.new
           ? null
-          : Option.getOrElse(options.draft, () =>
+          : Option.getOrElse(options.patch, () =>
               Option.getOrNull(Option.map(cached, (c) => c.patchId))
             );
 
@@ -441,9 +441,9 @@ const upload = Command.make(
             Effect.catch((error) => {
               if (patchId !== null && Api.isRefusal(error) && error.error === PATCH_NOT_FOUND) {
                 return new RejectedError({
-                  message: Option.isSome(options.draft)
-                    ? "Draft is unavailable for update. --draft never creates a new draft."
-                    : "Cached draft is unavailable for update. Use --new to create a new draft."
+                  message: Option.isSome(options.patch)
+                    ? "Patch is unavailable for update. --patch never creates a new patch."
+                    : "Cached patch is unavailable for update. Use --new to create a new patch."
                 });
               }
               return refused(error, "Upload failed.");
@@ -461,20 +461,20 @@ const upload = Command.make(
           })
         );
         yield* Output.report(encodeUpload(upload), [
-          patchId !== null ? "Updated draft" : "Uploaded draft",
+          patchId !== null ? "Updated patch" : "Uploaded patch",
           `URL: ${upload.publicUrl}`,
-          `Draft ID: ${upload.patchId}`,
+          `Patch ID: ${upload.patchId}`,
           `Version: ${upload.versionNumber}`
         ]);
         for (const warning of upload.warnings) yield* Output.warn(`Warning: ${warning}`);
       })
     )
-).pipe(Command.withDescription("Upload or update an HTML draft."));
+).pipe(Command.withDescription("Upload or update an HTML patch."));
 
 // --- the tree ---------------------------------------------------------------
 
 export const root = Command.make("patchy").pipe(
-  Command.withDescription("Upload static HTML drafts to a Patchy Cloud instance."),
+  Command.withDescription("Upload static HTML patches to a Patchy Cloud instance."),
   Command.withSubcommands([auth, whoami, status, validate, upload]),
   Command.withGlobalFlags([Output.JsonFlag, Instance.ApiUrlFlag])
 );
