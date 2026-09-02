@@ -7,6 +7,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import { signedInNow } from "@patchy/auth/testing";
 import { answer, DEV_TOKEN, html, send, server, upload } from "./test/server.js";
 
 it.layer(
@@ -44,10 +45,16 @@ it.layer(
       assert.strictEqual(created.status, 201);
       assert.strictEqual(body.publicUrl, `https://patchy.example/d/${body.patchId}`);
 
-      const page = yield* send(HttpClientRequest.get(`/d/${body.patchId}`));
+      // PROTOTYPE for #119: a signed-in reader's document request, and the
+      // door marks what it serves private.
+      const page = yield* send(
+        HttpClientRequest.get(`/d/${body.patchId}`).pipe(
+          HttpClientRequest.setHeaders({ cookie: signedInNow(), accept: "text/html" })
+        )
+      );
       assert.strictEqual(page.status, 200);
       assert.strictEqual(page.headers["x-robots-tag"], "noindex");
-      assert.strictEqual(page.headers["cache-control"], "public, max-age=60");
+      assert.strictEqual(page.headers["cache-control"], "private, no-store");
       assert.include(yield* page.text, "Booted");
 
       // The socket is the trusted proxy, so the rightmost address it did not

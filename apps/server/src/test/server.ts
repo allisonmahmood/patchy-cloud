@@ -15,6 +15,7 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import { migrations as authMigrations } from "@patchy/auth";
+import { clerkEnv, seedDevAccount } from "@patchy/auth/testing";
 import { migrations as patchesMigrations } from "@patchy/patches";
 import * as Testing from "@patchy/sql/testing";
 import * as Server from "../Server.js";
@@ -22,15 +23,22 @@ import * as Server from "../Server.js";
 /** The bootstrap token every test server seeds. */
 export const DEV_TOKEN = "dev-token";
 
+/**
+ * PROTOTYPE for #119: the offline Clerk instance's keys ride in with the
+ * config so the door is configured and verifies sessions locally, and the
+ * door's just-in-time user row has `acct_dev` to join.
+ */
 export const server = (env: Record<string, string> = {}) =>
   Server.layer.pipe(
     Layer.provideMerge(NodeHttpServer.layerTest),
+    Layer.provideMerge(Layer.effectDiscard(seedDevAccount)),
     Layer.provideMerge(Testing.layer({ ...authMigrations, ...patchesMigrations })),
     Layer.provide(
       ConfigProvider.layer(
         ConfigProvider.fromUnknown({
           PATCHY_BOOTSTRAP_API_TOKEN: DEV_TOKEN,
           PATCHY_STORAGE_DIR: mkdtempSync(path.join(os.tmpdir(), "patchy-server-")),
+          ...clerkEnv("test"),
           ...env
         })
       )

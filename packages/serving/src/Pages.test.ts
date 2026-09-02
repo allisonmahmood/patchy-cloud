@@ -8,7 +8,8 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { migrations as authMigrations } from "@patchy/auth";
+import { ClerkSession, migrations as authMigrations, PrototypeUsers } from "@patchy/auth";
+import { clerkEnv, seedDevAccount, signedInNow } from "@patchy/auth/testing";
 import { ContentStore } from "@patchy/content-store";
 import { Content, migrations as patchesMigrations, Patches } from "@patchy/patches";
 import * as Testing from "@patchy/sql/testing";
@@ -20,12 +21,16 @@ const CSP =
   "default-src 'none'; style-src 'unsafe-inline'; img-src https: data:; " +
   "frame-src 'self' about:; base-uri 'none'; form-action 'none'";
 
-/** A principal and a token to hold patches; the pages never look at either. */
+/**
+ * A principal and a token to hold patches; the pages never look at either.
+ * PROTOTYPE for #119: the door's just-in-time user row joins `acct_dev`.
+ */
 const seed = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`INSERT INTO accounts (id, name) VALUES ('acct_pages', 'Pages')`;
   yield* sql`INSERT INTO api_tokens (id, account_id, name, token_hash, scopes)
     VALUES ('tok_pages', 'acct_pages', 'Pages token', 'hash:tok_pages', '["upload"]'::jsonb)`;
+  yield* seedDevAccount;
 });
 
 const memoryStore = Layer.sync(ContentStore.ContentStore, () => {
@@ -43,9 +48,17 @@ const memoryStore = Layer.sync(ContentStore.ContentStore, () => {
   });
 });
 
-/** The pages behind the serving headers, on a real socket, over a fresh database. */
+/**
+ * The pages behind the serving headers, on a real socket, over a fresh
+ * database. PROTOTYPE for #119: the doored routes need the door's two
+ * services, and the offline instance's keys come through the config, as
+ * they do in production.
+ */
 const layer = HttpRouter.serve(
-  Layer.mergeAll(Pages.layer, HttpRouter.middleware(servingHeaders, { global: true })),
+  Layer.mergeAll(
+    Pages.layer.pipe(Layer.provide([ClerkSession.layer, PrototypeUsers.layer])),
+    HttpRouter.middleware(servingHeaders, { global: true })
+  ),
   { disableLogger: true, disableListenLog: true }
 ).pipe(
   Layer.provideMerge(NodeHttpServer.layerTest),
@@ -53,16 +66,17 @@ const layer = HttpRouter.serve(
   Layer.provideMerge(Layer.mergeAll(Patches.layer, memoryStore)),
   Layer.provideMerge(Layer.effectDiscard(seed)),
   Layer.provideMerge(Testing.layer({ ...authMigrations, ...patchesMigrations })),
-  Layer.provide(
-    ConfigProvider.layer(
-      ConfigProvider.fromUnknown({ PATCHY_PUBLIC_BASE_URL: "https://patchy.example" })
-    )
-  )
+  Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(clerkEnv("test"))))
 );
 
+/** A signed-in reader's document request: the door in front of `/d/*` wants both. */
 const get = (url: string, headers: Record<string, string> = {}) =>
   Effect.flatMap(HttpClient.HttpClient, (client) =>
-    client.execute(HttpClientRequest.get(url).pipe(HttpClientRequest.setHeaders(headers)))
+    client.execute(
+      HttpClientRequest.get(url).pipe(
+        HttpClientRequest.setHeaders({ cookie: signedInNow(), accept: "text/html", ...headers })
+      )
+    )
   );
 
 const publish = (title: string) =>
@@ -85,24 +99,19 @@ const publish = (title: string) =>
   );
 
 it.layer(layer)("pages", (it) => {
-  it.effect("serves a patch noindexed, unwatched, locked down and cached by URL shape", () =>
+  it.effect("serves a patch noindexed, unwatched, locked down and private behind the door", () =>
     Effect.gen(function* () {
       const { patchId } = yield* publish("Serving Guarantees");
-      for (const [url, cacheControl] of [
-        [`/d/${patchId}`, "public, max-age=60"],
-        [`/d/${patchId}/v/1`, "public, max-age=31536000, immutable"]
-      ]) {
-        // A credential and a cookie are neither required nor consulted, and a
-        // bad one never turns into a challenge.
-        const response = yield* get(url as string, {
-          authorization: "Bearer not-a-real-token",
-          cookie: "session=whatever"
-        });
+      // PROTOTYPE for #119: behind the door every served patch is private and
+      // uncached, whatever URL shape named it. An API bearer would be read as a
+      // Clerk session token and refused, so none is sent.
+      for (const url of [`/d/${patchId}`, `/d/${patchId}/v/1`]) {
+        const response = yield* get(url);
         assert.strictEqual(response.status, 200, url);
         assert.strictEqual(response.headers["x-robots-tag"], "noindex");
         assert.strictEqual(response.headers["referrer-policy"], "no-referrer");
         assert.strictEqual(response.headers["content-security-policy"], CSP);
-        assert.strictEqual(response.headers["cache-control"], cacheControl);
+        assert.strictEqual(response.headers["cache-control"], "private, no-store");
         assert.strictEqual(response.headers["x-content-type-options"], "nosniff");
         assert.isUndefined(response.headers["set-cookie"]);
         assert.isUndefined(response.headers["www-authenticate"]);
@@ -123,7 +132,8 @@ it.layer(layer)("pages", (it) => {
         const response = yield* get(url);
         assert.strictEqual(response.status, 404, url);
         assert.strictEqual(response.headers["x-robots-tag"], "noindex");
-        assert.strictEqual(response.headers["cache-control"], "no-store");
+        // PROTOTYPE for #119: the door marks everything it lets through private.
+        assert.strictEqual(response.headers["cache-control"], "private, no-store");
         assert.include(response.headers["content-type"], "text/html");
         assert.notInclude(yield* response.text, "One version");
       }
