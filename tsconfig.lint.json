@@ -6,6 +6,7 @@
       "@patchy/analytics": ["./packages/analytics/src/index.ts"],
       "@patchy/api": ["./packages/api/src/index.ts"],
       "@patchy/auth": ["./packages/auth/src/index.ts"],
+      "@patchy/auth/testing": ["./packages/auth/src/testing.ts"],
       "@patchy/core": ["./packages/core/src/index.ts"],
       "@patchy/limits": ["./packages/limits/src/index.ts"],
       "@patchy/patches": ["./packages/patches/src/index.ts"],
