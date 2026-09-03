@@ -26,3 +26,13 @@ export const mintRateLimitPerMinute = Config.int(
 export const mintsPerIpPerDay = Config.int("PATCHY_SELF_SERVICE_MINTS_PER_IP_PER_DAY").pipe(
   Config.withDefault(5)
 );
+
+/**
+ * PROTOTYPE for #131 (throwaway): where the confirm page lives, for the URL
+ * the login handoff prints. The same variable Serving reads; a real build
+ * would take it from one place.
+ */
+export const publicBaseUrl = Config.string("PATCHY_PUBLIC_BASE_URL").pipe(
+  Config.withDefault("http://localhost:3000"),
+  Config.map((value) => value.trim().replace(/\/+$/, ""))
+);

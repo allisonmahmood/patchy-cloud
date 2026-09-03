@@ -18,6 +18,12 @@ import {
   Conflict,
   CreatedToken,
   CreateTokenRequest,
+  DeviceLoginComplete,
+  DeviceLoginGone,
+  DeviceLoginPending,
+  DeviceLoginPollRequest,
+  DeviceLoginStarted,
+  DeviceLoginStartRequest,
   DisableRequest,
   Forbidden,
   Identity,
@@ -89,6 +95,33 @@ export class AuthGroup extends HttpApiGroup.make("auth", { topLevel: true })
           "first token — so the instance's enabled flag, a per-address rate limit and a per-address " +
           "daily quota stand in for authentication. The plaintext token appears in this response " +
           "and nowhere else."
+      )
+    ),
+    // PROTOTYPE for #131 (throwaway): device login. Both routes admit a
+    // request with no credential — the CLI has no token yet — so the guard
+    // names them beside the mint, and a per-address limit stands in.
+    HttpApiEndpoint.post("deviceLoginStart", "/login/device", {
+      payload: DeviceLoginStartRequest,
+      success: DeviceLoginStarted,
+      error: [BadRequest, RateLimited]
+    }).annotateMerge(
+      describe(
+        "PROTOTYPE (#131). Start a device login: answers the device code the CLI polls with, " +
+          "the eight-character user code the person confirms, the confirm page's URL with and " +
+          "without that code, the poll interval and the expiry (ten minutes). Unauthenticated; " +
+          "per-address rate limited."
+      )
+    ),
+    HttpApiEndpoint.post("deviceLoginPoll", "/login/device/token", {
+      payload: DeviceLoginPollRequest,
+      success: Schema.Union([DeviceLoginPending, DeviceLoginComplete]),
+      error: [BadRequest, RateLimited, DeviceLoginGone]
+    }).annotateMerge(
+      describe(
+        "PROTOTYPE (#131). Poll a device login by its device code. `pending` until the person " +
+          "answers (`slow_down` when polled faster than the interval); `complete` carries the " +
+          "machine token exactly once and deletes the login. A 410 says why there will never be " +
+          "a token: `expired`, `denied`, or `unknown` — a code that was already reported is unknown."
       )
     ),
     HttpApiEndpoint.get("me", "/me", {

@@ -18,6 +18,31 @@ Responses:
 - `403` { ok: false, error: string, code: "self_service_disabled" }
 - `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer } | { ok: false, error: string, code: "mint_quota_exceeded", quota: integer }
 
+### `POST /api/login/device`
+
+PROTOTYPE (#131). Start a device login: answers the device code the CLI polls with, the eight-character user code the person confirms, the confirm page's URL with and without that code, the poll interval and the expiry (ten minutes). Unauthenticated; per-address rate limited.
+
+Request body: [DeviceLoginStartRequest](#deviceloginstartrequest)
+
+Responses:
+
+- `201` [DeviceLoginStarted](#deviceloginstarted)
+- `400` { ok: false, error: string }
+- `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
+
+### `POST /api/login/device/token`
+
+PROTOTYPE (#131). Poll a device login by its device code. `pending` until the person answers (`slow_down` when polled faster than the interval); `complete` carries the machine token exactly once and deletes the login. A 410 says why there will never be a token: `expired`, `denied`, or `unknown` — a code that was already reported is unknown.
+
+Request body: [DeviceLoginPollRequest](#deviceloginpollrequest)
+
+Responses:
+
+- `200` [DeviceLoginPending](#deviceloginpending) | [DeviceLoginComplete](#devicelogincomplete)
+- `400` { ok: false, error: string }
+- `410` { ok: false, error: string, code: "expired" | "denied" | "unknown" }
+- `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
+
 ### `GET /api/me`
 
 Who the bearer token is: its principal, its own id and name, and its scopes.
@@ -173,6 +198,63 @@ Responses:
 {
   ok: true,
   token: string
+}
+```
+
+### DeviceLoginStartRequest
+
+```
+{
+  machineName?: string | null,
+  previousTokenId?: string | null
+}
+```
+
+### DeviceLoginStarted
+
+```
+{
+  ok: true,
+  deviceCode: string,
+  userCode: string,
+  verificationUrl: string,
+  verificationUrlComplete: string,
+  expiresAt: string (ISO-8601),
+  interval: integer
+}
+```
+
+### DeviceLoginPollRequest
+
+```
+{
+  deviceCode: string
+}
+```
+
+### DeviceLoginPending
+
+```
+{
+  ok: true,
+  status: "pending" | "slow_down",
+  expiresAt: string (ISO-8601)
+}
+```
+
+### DeviceLoginComplete
+
+```
+{
+  ok: true,
+  status: "complete",
+  token: string,
+  machine: {
+    id: string,
+    name: string
+  },
+  accountId: string,
+  accountName: string
 }
 ```
 

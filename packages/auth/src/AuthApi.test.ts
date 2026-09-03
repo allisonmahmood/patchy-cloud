@@ -14,6 +14,7 @@ import * as Testing from "@patchy/sql/testing";
 import * as AuthApi from "./AuthApi.js";
 import * as Authorization from "./Authorization.js";
 import { migrations } from "./migrations.js";
+import * as DeviceLogins from "./DeviceLogins.prototype.js";
 import * as Tokens from "./Tokens.js";
 
 /** The client side of the bearer middleware: one layer per credential a test presents. */
@@ -35,6 +36,8 @@ const layer = (env: Record<string, string>) =>
     // The group captures its middleware when it builds, so the server side
     // of the bearer middleware is provided to it, and merged for the client.
     Layer.provideMerge(Authorization.layer),
+    // PROTOTYPE for #131: the device-login rows behind the two new routes.
+    Layer.provideMerge(DeviceLogins.layer),
     Layer.provideMerge(Layer.mergeAll(Tokens.layer, Limits.layer, Analytics.layerNoop)),
     Layer.provideMerge(Testing.layer(migrations)),
     Layer.provide(

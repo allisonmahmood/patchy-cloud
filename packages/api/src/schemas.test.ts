@@ -152,6 +152,8 @@ describe("PatchyApi", () => {
     const paths = Object.keys(OpenApi.fromApi(PatchyApi).paths);
     expect(paths).toEqual([
       "/api/tokens/self-service",
+      "/api/login/device",
+      "/api/login/device/token",
       "/api/me",
       "/api/tokens",
       "/api/tokens/{apiTokenId}/revoke",

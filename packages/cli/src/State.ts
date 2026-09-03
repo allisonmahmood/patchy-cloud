@@ -27,12 +27,35 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { LocalError } from "./CliError.js";
 
-export type CredentialSource = "mint" | "auth-set";
+export type CredentialSource = "mint" | "auth-set" | "login";
+
+/** PROTOTYPE for #131: the machine token's id and the name the person gave it. */
+export class Machine extends Schema.Class<Machine>("Machine")({
+  id: Schema.String,
+  name: Schema.String
+}) {}
 
 export class HostCredential extends Schema.Class<HostCredential>("HostCredential")({
   token: Schema.NonEmptyString,
   updatedAt: Schema.optionalKey(Schema.String),
-  source: Schema.optionalKey(Schema.Literals(["mint", "auth-set"]))
+  source: Schema.optionalKey(Schema.Literals(["mint", "auth-set", "login"])),
+  machine: Schema.optionalKey(Machine)
+}) {}
+
+/**
+ * PROTOTYPE for #131: a `patchy login` in flight, kept in `device-login.json`
+ * so the second call has what the poll needs. The device code is a secret
+ * (it is what the token comes back on), so the file is owner-only like the
+ * credentials.
+ */
+export class PendingLogin extends Schema.Class<PendingLogin>("PendingLogin")({
+  deviceCode: Schema.NonEmptyString,
+  userCode: Schema.NonEmptyString,
+  verificationUrl: Schema.String,
+  verificationUrlComplete: Schema.String,
+  expiresAt: Schema.String,
+  interval: Schema.Number,
+  startedAt: Schema.String
 }) {}
 
 /** One entry of `patches.json`, keyed per instance then per absolute file path. */
@@ -72,6 +95,9 @@ const decodeFiles = Schema.decodeUnknownEffect(Files);
 const decodeStoredPatch = Schema.decodeUnknownEffect(StoredPatch);
 const decodeStoredPatchOption = Schema.decodeUnknownOption(StoredPatch);
 const encodeCachedPatch = Schema.encodeSync(CachedPatch);
+const decodePendingLogin = Schema.decodeUnknownEffect(PendingLogin);
+const encodePendingLogin = Schema.encodeSync(PendingLogin);
+const encodeMachine = Schema.encodeSync(Machine);
 
 /** The moment an entry was written, as the ISO string the files have always held. */
 export const now = DateTime.now.pipe(Effect.map(DateTime.formatIso));
@@ -106,8 +132,18 @@ export class State extends Context.Service<
     readonly saveCredential: (
       apiUrl: string,
       token: Redacted.Redacted,
-      source: CredentialSource
+      source: CredentialSource,
+      machine?: Machine
     ) => Effect.Effect<void, LocalError>;
+    /** PROTOTYPE for #131: the login in flight for this instance, if any. */
+    readonly readPendingLogin: (
+      apiUrl: string
+    ) => Effect.Effect<Option.Option<PendingLogin>, LocalError>;
+    readonly savePendingLogin: (
+      apiUrl: string,
+      login: PendingLogin
+    ) => Effect.Effect<void, LocalError>;
+    readonly forgetPendingLogin: (apiUrl: string) => Effect.Effect<void, LocalError>;
     readonly readCachedPatch: (
       apiUrl: string,
       file: string
@@ -141,6 +177,7 @@ export const make = Effect.gen(function* () {
   const configPath = path.join(dir, "config.json");
   const credentialsPath = path.join(dir, "credentials.json");
   const patchesPath = path.join(dir, "patches.json");
+  const pendingLoginPath = path.join(dir, "device-login.json");
   // The cache under its old name. Never read: forgetting it would create a
   // new patch at a new URL instead of updating the one it remembers.
   const retiredPatchesPath = path.join(dir, "drafts.json");
@@ -199,6 +236,12 @@ export const make = Effect.gen(function* () {
     });
 
   const readCredentialFile = readHostKeyed(credentialsPath, "apiToken", credentialErrors);
+  const pendingErrors: HostKeyedErrors = {
+    unreadable: `The pending login could not be read: ${pendingLoginPath}\nDelete that file and run: patchy login`,
+    invalid: `The pending login is invalid: ${pendingLoginPath}\nDelete that file and run: patchy login`,
+    legacy: ""
+  };
+  const readPendingFile = readHostKeyed(pendingLoginPath, "\u0000never", pendingErrors);
   const readPatchFile = Effect.gen(function* () {
     if (yield* fs.exists(retiredPatchesPath).pipe(Effect.orElseSucceed(() => true))) {
       return yield* new LocalError({ message: cacheMoved });
@@ -269,7 +312,7 @@ export const make = Effect.gen(function* () {
           )
         );
       }),
-    saveCredential: (apiUrl, token, source) =>
+    saveCredential: (apiUrl, token, source, machine) =>
       Effect.gen(function* () {
         // Read in two steps so the retired file is refused by its shape, and a
         // document with no salvageable host map is replaced rather than fatal.
@@ -286,8 +329,34 @@ export const make = Effect.gen(function* () {
               Effect.orElseSucceed(() => ({ hosts: {} as Record<string, unknown> }))
             )
         });
-        const entry = { token: Redacted.value(token), updatedAt: yield* now, source };
+        const entry = {
+          token: Redacted.value(token),
+          updatedAt: yield* now,
+          source,
+          ...(machine === undefined ? {} : { machine: encodeMachine(machine) })
+        };
         yield* writeJson(credentialsPath, { hosts: { ...hosts, [apiUrl]: entry } });
+      }),
+    readPendingLogin: (apiUrl) =>
+      Effect.gen(function* () {
+        const { hosts } = yield* readPendingFile;
+        if (!(apiUrl in hosts)) return Option.none<PendingLogin>();
+        return Option.some(yield* entry(decodePendingLogin(hosts[apiUrl]), pendingErrors.invalid));
+      }),
+    savePendingLogin: (apiUrl, login) =>
+      Effect.gen(function* () {
+        const { hosts } = yield* readPendingFile;
+        yield* writeJson(pendingLoginPath, {
+          hosts: { ...hosts, [apiUrl]: encodePendingLogin(login) }
+        });
+      }),
+    forgetPendingLogin: (apiUrl) =>
+      Effect.gen(function* () {
+        const { hosts } = yield* readPendingFile;
+        if (!(apiUrl in hosts)) return;
+        yield* writeJson(pendingLoginPath, {
+          hosts: Object.fromEntries(Object.entries(hosts).filter(([host]) => host !== apiUrl))
+        });
       }),
     readCachedPatch: (apiUrl, file) =>
       Effect.gen(function* () {

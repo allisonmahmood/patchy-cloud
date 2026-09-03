@@ -22,6 +22,7 @@ import {
   AuthApi,
   Authorization,
   ClerkSession,
+  DeviceLogins,
   migrations as authMigrations,
   PrototypeUsers,
   Tokens
@@ -61,7 +62,7 @@ const migrated = Layer.effectDiscard(migrate({ ...authMigrations, ...patchesMigr
  * a key is configured; the tokens layer seeds the bootstrap token from
  * `PATCHY_BOOTSTRAP_API_TOKEN`.
  */
-const services = Layer.mergeAll(Content.layer, ExpirySweep.layer).pipe(
+const services = Layer.mergeAll(Content.layer, ExpirySweep.layer, DeviceLogins.layer).pipe(
   Layer.provideMerge(
     Layer.mergeAll(Analytics.layer, Limits.layer, contentStore, Tokens.layer, Patches.layer)
   ),

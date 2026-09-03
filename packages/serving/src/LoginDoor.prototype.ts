@@ -12,6 +12,7 @@
  */
 // @effect-diagnostics globalConsole:off -- prototype instrumentation.
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -25,7 +26,7 @@ import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import * as UrlParams from "effect/unstable/http/UrlParams";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
-import { ClerkSession, PrototypeUsers } from "@patchy/auth";
+import { ClerkSession, DeviceLogins, PrototypeUsers } from "@patchy/auth";
 import { PatchesConfig } from "@patchy/patches";
 import { escapeAttribute, escapeHtml, htmlPage, renderNotFound } from "./render.js";
 import { NO_REFERRER_POLICY, PATCH_ROBOTS_TAG } from "./serving-headers.js";
@@ -262,51 +263,227 @@ const notConfiguredPage = (missing: ReadonlyArray<string>) =>
     })
   ).pipe(HttpServerResponse.setStatus(503), HttpServerResponse.setHeaders(doorHeaders));
 
-const devicePage = (code: string, user: PrototypeUsers.PrototypeUser, next: string) =>
-  HttpServerResponse.html(
-    htmlPage({
-      title: "Confirm a device",
-      body: `
-      <main class="wrap compact">
-        <header class="doc-head">
-          <div class="head-line">
-            <span class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</span>
-            <span class="kicker">Device login</span>
-          </div>
-          <h1>Confirm this device.</h1>
-          <p class="lede">A machine wants to publish as <strong>${escapeHtml(user.accountName)}</strong>. You are confirming as <code>${escapeHtml(user.email)}</code>${user.name ? ` (${escapeHtml(user.name)})` : ""}.</p>
-          <p style="font-family:var(--font-mono);font-size:3rem;font-weight:900;letter-spacing:.08em;color:var(--ink)">${escapeHtml(code || "no code")}</p>
-          <form method="post" action="/login/device">
-            <input type="hidden" name="code" value="${escapeAttribute(code)}">
-            <label style="display:block;margin-bottom:1rem">Machine name<br>
-              <input name="machine" placeholder="allison-laptop" style="font:inherit;padding:.5em .7em;border:2px solid var(--ink);border-radius:8px;min-width:18rem">
-            </label>
-            <button type="submit" name="action" value="confirm" style="font:inherit;font-weight:750;padding:.5em 1em;border:2px solid var(--ink);border-radius:8px;background:var(--green);box-shadow:3px 3px 0 var(--ink);cursor:pointer">Confirm</button>
-            <button type="submit" name="action" value="deny" style="font:inherit;font-weight:750;padding:.5em 1em;border:2px solid var(--ink);border-radius:8px;background:var(--white);box-shadow:3px 3px 0 var(--ink);cursor:pointer;margin-left:.5rem">Deny</button>
-          </form>
-          ${signOutForm(next)}
-        </header>
-      </main>`
-    })
-  ).pipe(HttpServerResponse.setHeaders(doorHeaders));
+// --- the confirm page (PROTOTYPE for #131) ------------------------------------
 
-const donePage = (action: string, machine: string) =>
+/**
+ * Three copy variants of the confirm page on the real route, switchable with
+ * `?v=a|b|c` (the prototype skill's UI shape): A leads with the code, B with
+ * the machine and the person, C with a checklist. A floating bar at the
+ * bottom flips between them; it is links, since the door's CSP allows no
+ * script. `/prototype/login/device` renders the same page with sample data
+ * and no door in front, for looking without logging in.
+ */
+export type Variant = "a" | "b" | "c";
+const VARIANTS: ReadonlyArray<{ key: Variant; name: string }> = [
+  { key: "a", name: "Code first" },
+  { key: "b", name: "Machine first" },
+  { key: "c", name: "Checklist" }
+];
+export const variantOf = (raw: unknown): Variant => (raw === "b" || raw === "c" ? raw : "a");
+
+export interface ConfirmData {
+  readonly code: string;
+  readonly company: string;
+  readonly email: string;
+  readonly name: string | null;
+  /** What the name field starts with: the old token's name on a re-login, else the CLI's hostname. */
+  readonly machineName: string;
+  /** Set on a re-login: the name the previous key had, which confirm revokes. */
+  readonly replaces: string | null;
+  readonly expiresInMinutes: number;
+  readonly error: string | null;
+  /** Set when the person was bounced back here by #122 item 9: their session had gone stale under the form. */
+  readonly notice: string | null;
+  readonly next: string;
+  readonly mock: boolean;
+}
+
+const button = (label: string, value: "confirm" | "deny", primary: boolean) =>
+  `<button type="submit" name="action" value="${value}" style="font:inherit;font-weight:750;padding:.55em 1.1em;border:2px solid var(--ink);border-radius:8px;background:${primary ? "var(--green)" : "var(--white)"};box-shadow:3px 3px 0 var(--ink);cursor:pointer;margin-right:.6rem">${escapeHtml(label)}</button>`;
+
+const nameField = (data: ConfirmData, label: string) => `
+  <label style="display:block;margin:1.2rem 0">
+    <span style="display:block;font-weight:750;color:var(--ink);margin-bottom:.3rem">${escapeHtml(label)}</span>
+    <input name="machine" value="${escapeAttribute(data.machineName)}" required minlength="1" maxlength="64" autocomplete="off" style="font:inherit;padding:.5em .7em;border:2px solid var(--ink);border-radius:8px;min-width:min(22rem,100%);background:var(--white)">
+    ${data.replaces === null ? "" : `<span style="display:block;color:var(--muted);font-size:.92rem;margin-top:.3rem">Replaces the key named <code>${escapeHtml(data.replaces)}</code>, which stops working when you confirm.</span>`}
+  </label>`;
+
+const errorLine = (data: ConfirmData) =>
+  (data.notice === null
+    ? ""
+    : `<p style="color:var(--blue-dark);font-weight:750;border:2px solid var(--blue);border-radius:8px;padding:.5em .8em;background:var(--paper-blue)">${escapeHtml(data.notice)}</p>`) +
+  (data.error === null
+    ? ""
+    : `<p style="color:var(--amber-ink);font-weight:750;border:2px solid var(--yellow);border-radius:8px;padding:.5em .8em;background:var(--paper-amber)">${escapeHtml(data.error)}</p>`);
+
+const bigCode = (code: string) =>
+  `<p style="font-family:var(--font-mono);font-size:3.4rem;font-weight:900;letter-spacing:.12em;color:var(--ink);margin:.2em 0 .6em">${escapeHtml(code)}</p>`;
+
+const formOpen = (data: ConfirmData, variant: Variant) => `
+  <form method="post" action="/login/device">
+    <input type="hidden" name="code" value="${escapeAttribute(data.code)}">
+    <input type="hidden" name="v" value="${variant}">`;
+
+const person = (data: ConfirmData) =>
+  data.name
+    ? `${escapeHtml(data.name)} (<code>${escapeHtml(data.email)}</code>)`
+    : `<code>${escapeHtml(data.email)}</code>`;
+
+/** A: the code is the headline; the person checks it against the terminal, names the machine, confirms. */
+const variantA = (data: ConfirmData) => `
+  <main class="wrap compact">
+    <header class="doc-head">
+      <div class="head-line">
+        <span class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</span>
+        <span class="kicker">Device login</span>
+      </div>
+      <p class="lede" style="margin-bottom:0">Is this the code on your terminal?</p>
+      ${bigCode(data.code)}
+      <p class="lede">A terminal just ran <code>patchy login</code> and wants to publish at <strong>${escapeHtml(data.company)}</strong> as ${person(data)}. If the code matches, name the machine and confirm. If you didn't run it, deny: nothing happens.</p>
+      ${errorLine(data)}
+      ${formOpen(data, "a")}
+        ${nameField(data, "Machine name")}
+        ${button("Confirm", "confirm", true)}${button("Deny", "deny", false)}
+      </form>
+      <p class="foot" style="margin-top:1.5rem">The code expires in ${data.expiresInMinutes} minutes. The key it makes works for 90 days, or 30 days unused, and can be revoked any time on <em>Your machines</em>.</p>
+    </header>
+  </main>`;
+
+/** B: the machine is the headline; the code is one row of a receipt. */
+const variantB = (data: ConfirmData) => `
+  <main class="wrap compact">
+    <header class="doc-head">
+      <div class="head-line">
+        <span class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</span>
+        <span class="kicker">A machine wants in</span>
+      </div>
+      <h1>Let <span style="font-family:var(--font-mono)">${escapeHtml(data.machineName || "this machine")}</span> publish as you?</h1>
+      <p class="lede">Someone ran <code>patchy login</code> on a machine calling itself <strong>${escapeHtml(data.machineName || "(unnamed)")}</strong>. Confirming hands it a key to publish and manage patches at <strong>${escapeHtml(data.company)}</strong> as ${person(data)}, until you revoke it on <em>Your machines</em>.</p>
+      <table style="border-collapse:collapse;margin:1rem 0 1.5rem;font-size:1rem">
+        <tr><th style="text-align:left;padding:.3em 1.2em .3em 0;color:var(--muted);font-weight:750">Code on the terminal</th><td style="font-family:var(--font-mono);font-weight:900;font-size:1.3rem;letter-spacing:.08em;color:var(--ink)">${escapeHtml(data.code)}</td></tr>
+        <tr><th style="text-align:left;padding:.3em 1.2em .3em 0;color:var(--muted);font-weight:750">Company</th><td>${escapeHtml(data.company)}</td></tr>
+        <tr><th style="text-align:left;padding:.3em 1.2em .3em 0;color:var(--muted);font-weight:750">Acting as</th><td>${person(data)}</td></tr>
+        <tr><th style="text-align:left;padding:.3em 1.2em .3em 0;color:var(--muted);font-weight:750">Offer expires</th><td>in ${data.expiresInMinutes} minutes</td></tr>
+      </table>
+      ${errorLine(data)}
+      ${formOpen(data, "b")}
+        ${nameField(data, "Call this machine")}
+        ${button("Confirm, that's my machine", "confirm", true)}${button("Not me", "deny", false)}
+      </form>
+    </header>
+  </main>`;
+
+/** C: three checks the person ticks in their head before the one button. */
+const variantC = (data: ConfirmData) => `
+  <main class="wrap compact">
+    <header class="doc-head">
+      <div class="head-line">
+        <span class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</span>
+        <span class="kicker">Check, then confirm</span>
+      </div>
+      <h1>Is this you?</h1>
+      <p class="lede">You're signed in as ${person(data)} at <strong>${escapeHtml(data.company)}</strong>. Confirm only if all three are true.</p>
+      ${errorLine(data)}
+      ${formOpen(data, "c")}
+        <ol style="padding-left:1.4em;margin:1.2rem 0;font-size:1.08rem;color:var(--ink)">
+          <li style="margin-bottom:.8rem">You just ran <code>patchy login</code> yourself.</li>
+          <li style="margin-bottom:.8rem">Your terminal shows <span style="font-family:var(--font-mono);font-weight:900;font-size:1.25rem;letter-spacing:.08em">${escapeHtml(data.code)}</span>.</li>
+          <li>It's on a machine you'd call
+            <input name="machine" value="${escapeAttribute(data.machineName)}" required minlength="1" maxlength="64" autocomplete="off" style="font:inherit;padding:.3em .6em;border:2px solid var(--ink);border-radius:8px;min-width:14rem;background:var(--white)">
+            ${data.replaces === null ? "" : `<span style="display:block;color:var(--muted);font-size:.92rem;margin-top:.3rem">Replaces the key named <code>${escapeHtml(data.replaces)}</code>, which stops working when you confirm.</span>`}
+          </li>
+        </ol>
+        ${button("All three: log it in", "confirm", true)}${button("No", "deny", false)}
+      </form>
+      <p class="foot" style="margin-top:1.5rem">If someone else sent you this link, that's the trick this page exists to catch: press No. The code dies in ${data.expiresInMinutes} minutes either way.</p>
+    </header>
+  </main>`;
+
+const switcher = (current: Variant, data: ConfirmData) => {
+  const index = VARIANTS.findIndex((v) => v.key === current);
+  const at = (offset: number) => VARIANTS[(index + offset + VARIANTS.length) % VARIANTS.length]!;
+  const href = (v: Variant) =>
+    data.mock ? `?v=${v}` : `?code=${encodeURIComponent(data.code)}&v=${v}`;
+  return `
+  <nav aria-label="prototype variants" style="position:fixed;left:50%;bottom:18px;transform:translateX(-50%);display:flex;gap:14px;align-items:center;padding:8px 16px;border:2px solid var(--ink);border-radius:999px;background:var(--ink);color:var(--white);font-weight:850;font-size:.9rem;box-shadow:4px 4px 0 var(--yellow)">
+    <a href="${href(at(-1).key)}" style="color:var(--white);text-decoration:none">&larr;</a>
+    <span>prototype ${current.toUpperCase()} (${escapeHtml(VARIANTS[index]!.name)})</span>
+    <a href="${href(at(1).key)}" style="color:var(--white);text-decoration:none">&rarr;</a>
+  </nav>`;
+};
+
+export const renderConfirmPage = (data: ConfirmData, variant: Variant) =>
+  htmlPage({
+    title: "Confirm a machine login",
+    body:
+      (variant === "b" ? variantB(data) : variant === "c" ? variantC(data) : variantA(data)) +
+      switcher(variant, data) +
+      signOutForm(data.next).replace(
+        'style="margin-top:1.5rem"',
+        'style="margin:0 auto 5rem;width:min(760px,calc(100% - 40px))"'
+      )
+  });
+
+/** The one-message pages around the confirm: done, denied, and the three ways a code is no good. */
+const messagePage = (kicker: string, title: string, lede: string, status = 200) =>
   HttpServerResponse.html(
     htmlPage({
-      title: "Done",
+      title,
       body: `
       <main class="wrap compact">
         <header class="doc-head">
           <div class="head-line">
             <span class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</span>
-            <span class="kicker">${action === "confirm" ? "Confirmed" : "Denied"}</span>
+            <span class="kicker">${escapeHtml(kicker)}</span>
           </div>
-          <h1>Done, you can close this tab.</h1>
-          <p class="lede">${action === "confirm" ? `The prototype recorded a confirm for${machine ? ` <code>${escapeHtml(machine)}</code>` : " this machine"}. Nothing was minted: no device token exists yet.` : "The prototype recorded a deny. Nothing was minted either way: no device token exists yet."}</p>
+          <h1>${escapeHtml(title)}</h1>
+          <p class="lede">${lede}</p>
         </header>
       </main>`
     })
-  ).pipe(HttpServerResponse.setHeaders(doorHeaders));
+  ).pipe(HttpServerResponse.setStatus(status), HttpServerResponse.setHeaders(doorHeaders));
+
+const confirmedPage = (machine: string, company: string, email: string) =>
+  messagePage(
+    "Logged in",
+    `${machine} is logged in.`,
+    `It can publish and manage patches at <strong>${escapeHtml(company)}</strong> as <code>${escapeHtml(email)}</code> until you revoke it on <em>Your machines</em>. Your terminal already knows; you can close this tab.`
+  );
+
+const deniedPage = (code: string) =>
+  messagePage(
+    "Denied",
+    "Nothing was logged in.",
+    `The code <code>${escapeHtml(code)}</code> is dead and no key was made. If you didn't run <code>patchy login</code>, there is nothing else to do.`
+  );
+
+const expiredPage = messagePage(
+  "Code expired",
+  "This code has expired.",
+  "A login code lasts ten minutes. Run <code>patchy login</code> again on the machine and open the new link it prints.",
+  410
+);
+
+const answeredPage = messagePage(
+  "Already answered",
+  "This code was already used.",
+  "Each code is answered once. Run <code>patchy login</code> again if the machine still needs a key.",
+  410
+);
+
+const unknownPage = messagePage(
+  "No login waiting",
+  "Nothing is waiting for this code.",
+  "Check the link you opened, or run <code>patchy login</code> again on the machine and open the new link it prints.",
+  404
+);
+
+/** `/login/device` with no code: the question of whether this page should exist at all. */
+const barePage = messagePage(
+  "Device login",
+  "Open the link your terminal printed.",
+  "<code>patchy login</code> prints a link that carries its own code, so there is nothing to type here. If someone sent you here to type a code, don't: that is the trick the link is designed to avoid."
+);
 
 const wrongOrigin = HttpServerResponse.text("Refused: the form did not come from this origin.", {
   status: 403
@@ -445,6 +622,22 @@ export const make = Effect.gen(function* () {
         return redirect307(location, outcome.headers);
       }
 
+      // #122 item 9: a POST is neither refresh- nor handshake-eligible, so a
+      // Confirm pressed on a stale session arrives signed-out. Send the person
+      // back through the door to the GET with the code intact.
+      if (outcome._tag === "signed-out" && request.method === "POST" && path === "/login/device") {
+        const body = yield* request.urlParamsBody.pipe(Effect.orElseSucceed(() => UrlParams.empty));
+        const code = Option.getOrElse(UrlParams.getFirst(body, "code"), () => "");
+        report(request, verdict, "-", " item9=303-to-get");
+        return withClerkHeaders(
+          HttpServerResponse.redirect(`/login/device?code=${encodeURIComponent(code)}&again=1`, {
+            status: 303,
+            headers: doorHeaders
+          }),
+          outcome.headers
+        );
+      }
+
       if (outcome._tag === "signed-out") {
         report(request, verdict, "-");
         const signIn = clerk.signInUrl(publicUrl);
@@ -540,27 +733,143 @@ export const layer = HttpRouter.middleware<{ provides: DoorAuth | ClerkSession.C
 const sameOrigin = (request: HttpServerRequest.HttpServerRequest, publicBaseUrl: string) =>
   request.headers["origin"] === new URL(publicBaseUrl).origin;
 
-/** GET `/login/device?code=XXXX-XXXX`: the code, a machine name, Confirm and Deny. */
+const minutesLeft = (expiresAt: Date, now: number) =>
+  Math.max(1, Math.ceil((expiresAt.getTime() - now) / 60_000));
+
+/** The confirm page for a pending login, with its name prefilled: the old key's name on a re-login, else the CLI's hostname. */
+const confirmFor = (
+  found: Extract<DeviceLogins.Lookup, { _tag: "pending" }>,
+  user: PrototypeUsers.PrototypeUser,
+  now: number,
+  next: string,
+  override: { machineName?: string; error?: string; notice?: string } = {}
+): ConfirmData => {
+  const inherited =
+    found.previousToken !== null && found.previousToken.accountId === user.accountId
+      ? found.previousToken
+      : null;
+  return {
+    code: found.userCode,
+    company: user.accountName,
+    email: user.email,
+    name: user.name,
+    machineName: override.machineName ?? inherited?.name ?? found.machineNameHint ?? "",
+    replaces: inherited?.name ?? null,
+    expiresInMinutes: minutesLeft(found.expiresAt, now),
+    error: override.error ?? null,
+    notice: override.notice ?? null,
+    next,
+    mock: false
+  };
+};
+
+const lookupPage = (found: Exclude<DeviceLogins.Lookup, { _tag: "pending" }>) =>
+  found._tag === "expired" ? expiredPage : found._tag === "answered" ? answeredPage : unknownPage;
+
+/** GET `/login/device?code=XXXX-XXXX[&v=a|b|c]`: the confirm page, or why this code is no good. */
 export const device = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;
   const params = yield* HttpServerRequest.ParsedSearchParams;
   const publicBaseUrl = yield* PatchesConfig.publicBaseUrl;
+  const deviceLogins = yield* DeviceLogins.DeviceLogins;
   const { user } = yield* DoorAuth;
-  const code = params["code"];
   const next = new URL(request.originalUrl, publicBaseUrl).href;
-  return devicePage(typeof code === "string" ? code : "", Option.getOrThrow(user), next);
+  const raw = params["code"];
+  if (typeof raw !== "string" || raw === "") return barePage;
+  const code = DeviceLogins.normalizeUserCode(raw);
+  if (code === undefined) return unknownPage;
+  const found = yield* deviceLogins.lookup(code).pipe(Effect.orDie);
+  console.log(`[door]   device lookup code=${code} -> ${found._tag}`);
+  if (found._tag !== "pending") return lookupPage(found);
+  const now = yield* Clock.currentTimeMillis;
+  const data = confirmFor(found, Option.getOrThrow(user), now, next, {
+    ...(params["again"] === "1"
+      ? {
+          notice:
+            "Your sign-in was refreshed before that went through. Check the code and press Confirm again."
+        }
+      : {})
+  });
+  return HttpServerResponse.html(renderConfirmPage(data, variantOf(params["v"]))).pipe(
+    HttpServerResponse.setHeaders(doorHeaders)
+  );
 });
 
-/** POST `/login/device`: the Origin check, then "done". */
+/** POST `/login/device`: the Origin check, then confirm (mint, name, revoke the old key) or deny. */
 export const deviceConfirm = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;
   const publicBaseUrl = yield* PatchesConfig.publicBaseUrl;
+  const deviceLogins = yield* DeviceLogins.DeviceLogins;
   if (!sameOrigin(request, publicBaseUrl)) return wrongOrigin;
+  const user = Option.getOrThrow((yield* DoorAuth).user);
   const body = yield* request.urlParamsBody.pipe(Effect.orDie);
   const action = Option.getOrElse(UrlParams.getFirst(body, "action"), () => "deny");
-  const machine = Option.getOrElse(UrlParams.getFirst(body, "machine"), () => "");
-  console.log(`[door]   device ${action} machine=<len ${machine.length}>`);
-  return donePage(action, machine);
+  const machine = Option.getOrElse(UrlParams.getFirst(body, "machine"), () => "").trim();
+  const variant = variantOf(Option.getOrUndefined(UrlParams.getFirst(body, "v")));
+  const code = DeviceLogins.normalizeUserCode(
+    Option.getOrElse(UrlParams.getFirst(body, "code"), () => "")
+  );
+  if (code === undefined) return unknownPage;
+  const next = `${publicBaseUrl}/login/device?code=${code}`;
+
+  if (action !== "confirm") {
+    const denied = yield* deviceLogins.deny(code).pipe(Effect.orDie);
+    console.log(`[door]   device deny code=${code} -> ${denied ? "denied" : "not pending"}`);
+    if (!denied) return lookupPage(yield* deviceLogins.lookup(code).pipe(Effect.orDie));
+    return deniedPage(code);
+  }
+
+  if (machine.length === 0 || machine.length > 64) {
+    const found = yield* deviceLogins.lookup(code).pipe(Effect.orDie);
+    if (found._tag !== "pending") return lookupPage(found);
+    const now = yield* Clock.currentTimeMillis;
+    const data = confirmFor(found, user, now, next, {
+      machineName: machine.slice(0, 64),
+      error: "Give the machine a name, up to 64 characters."
+    });
+    return HttpServerResponse.html(renderConfirmPage(data, variant)).pipe(
+      HttpServerResponse.setStatus(422),
+      HttpServerResponse.setHeaders(doorHeaders)
+    );
+  }
+
+  const minted = yield* deviceLogins
+    .confirm({
+      userCode: code,
+      accountId: user.accountId,
+      machineName: machine,
+      confirmedBy: user.email
+    })
+    .pipe(Effect.orDie);
+  console.log(
+    `[door]   device confirm code=${code} machine=<len ${machine.length}> -> ${Option.isSome(minted) ? `minted ${minted.value.id}` : "not pending"}`
+  );
+  if (Option.isNone(minted)) return lookupPage(yield* deviceLogins.lookup(code).pipe(Effect.orDie));
+  return confirmedPage(minted.value.name, user.accountName, user.email);
+});
+
+/** GET `/prototype/login/device?v=`: the confirm page with sample data and no door, for looking. */
+export const mock = Effect.gen(function* () {
+  const params = yield* HttpServerRequest.ParsedSearchParams;
+  const data: ConfirmData = {
+    code: "WXYZ-4RT9",
+    company: "Patchy Dev",
+    email: "allison@example.com",
+    name: "Allison Mahmood",
+    machineName: "allison-laptop",
+    replaces: params["relogin"] === "1" ? "allison-laptop" : null,
+    expiresInMinutes: 10,
+    error: null,
+    notice:
+      params["again"] === "1"
+        ? "Your sign-in was refreshed before that went through. Check the code and press Confirm again."
+        : null,
+    next: "/prototype/login/device",
+    mock: true
+  };
+  return HttpServerResponse.html(renderConfirmPage(data, variantOf(params["v"]))).pipe(
+    HttpServerResponse.setHeaders(doorHeaders)
+  );
 });
 
 /**

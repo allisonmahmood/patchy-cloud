@@ -206,3 +206,62 @@ export class PrincipalPatches extends Schema.Class<PrincipalPatches>("PrincipalP
   patches: Schema.Array(ModeratedPatch),
   truncated: Schema.Boolean
 }) {}
+
+// --- device login (PROTOTYPE for #131, throwaway) -----------------------------
+
+/**
+ * `POST /api/login/device`: what the CLI knows about itself when it starts a
+ * login. The machine name is a hint the confirm page prefills; the previous
+ * token id is the re-login path, so the new token inherits the old name.
+ */
+export class DeviceLoginStartRequest extends Schema.Class<DeviceLoginStartRequest>(
+  "DeviceLoginStartRequest"
+)({
+  machineName: OptionalText,
+  previousTokenId: OptionalText
+}) {}
+
+/** The handoff: the device code the CLI polls with, the user code the person confirms. */
+export class DeviceLoginStarted extends Schema.Class<DeviceLoginStarted>("DeviceLoginStarted")(
+  {
+    ok: Schema.Literal(true),
+    deviceCode: Schema.String,
+    userCode: Schema.String,
+    /** The bare confirm page (RFC 8628 `verification_uri`). */
+    verificationUrl: Schema.String,
+    /** The confirm page with the user code in it (`verification_uri_complete`). */
+    verificationUrlComplete: Schema.String,
+    expiresAt: Timestamp,
+    /** Seconds between polls. */
+    interval: Schema.Int
+  },
+  { httpApiStatus: 201 }
+) {}
+
+export class DeviceLoginPollRequest extends Schema.Class<DeviceLoginPollRequest>(
+  "DeviceLoginPollRequest"
+)({
+  deviceCode: Schema.String
+}) {}
+
+/** Not answered yet; `slow_down` when the poll came sooner than the interval. */
+export class DeviceLoginPending extends Schema.Class<DeviceLoginPending>("DeviceLoginPending")({
+  ok: Schema.Literal(true),
+  status: Schema.Literals(["pending", "slow_down"]),
+  expiresAt: Timestamp
+}) {}
+
+/** Confirmed: the machine token, once. The row behind it is gone after this answer. */
+export class DeviceLoginComplete extends Schema.Class<DeviceLoginComplete>("DeviceLoginComplete")({
+  ok: Schema.Literal(true),
+  status: Schema.Literal("complete"),
+  token: Schema.String,
+  machine: Schema.Struct({ id: Schema.String, name: Schema.String }),
+  accountId: Schema.String,
+  accountName: Schema.String
+}) {}
+
+/** The login is over without a token: it expired, the person denied it, or the code is unknown. */
+export const DeviceLoginGone = failure(410, {
+  code: Schema.Literals(["expired", "denied", "unknown"])
+});

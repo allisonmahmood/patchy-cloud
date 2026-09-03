@@ -17,6 +17,10 @@ import {
   CreateTokenRequest,
   CurrentIdentity,
   decodeBody,
+  DeviceLoginComplete,
+  DeviceLoginGone,
+  DeviceLoginPending,
+  DeviceLoginStarted,
   Forbidden,
   hasScope,
   malformedBody,
@@ -33,6 +37,7 @@ import {
 import { randomToken } from "@patchy/core";
 import { Limits } from "@patchy/limits";
 import * as AuthConfig from "./AuthConfig.js";
+import * as DeviceLogins from "./DeviceLogins.prototype.js";
 import * as Tokens from "./Tokens.js";
 
 /** A token request is small; this is room for one, not a document. */
@@ -68,6 +73,9 @@ export const layer = HttpApiBuilder.group(PatchyApi, "auth", (handlers) =>
     const allowSelfServiceTokens = yield* AuthConfig.allowSelfServiceTokens;
     const mintRateLimitPerMinute = yield* AuthConfig.mintRateLimitPerMinute;
     const mintsPerIpPerDay = yield* AuthConfig.mintsPerIpPerDay;
+    // PROTOTYPE for #131 (throwaway).
+    const deviceLogins = yield* DeviceLogins.DeviceLogins;
+    const publicBaseUrl = yield* AuthConfig.publicBaseUrl;
 
     return (
       handlers
@@ -131,6 +139,72 @@ export const layer = HttpApiBuilder.group(PatchyApi, "auth", (handlers) =>
               properties: { apiTokenId: minted.value.apiTokenId, selfService: true }
             });
             return new MintedToken({ ok: true, token });
+          })
+        )
+        // PROTOTYPE for #131 (throwaway): the handoff. Per address like the
+        // mint, since the caller has no token to key on.
+        .handle("deviceLoginStart", ({ payload }) =>
+          Effect.gen(function* () {
+            const request = yield* HttpServerRequest.HttpServerRequest;
+            const sourceIp = Option.getOrNull(request.remoteAddress);
+            const attempt = yield* limits.consume({
+              key: `device-login-start:${sourceIp ?? ""}`,
+              limit: mintRateLimitPerMinute,
+              window: "1 minute"
+            });
+            if (!attempt.allowed) return rateLimited(attempt);
+            const started = yield* deviceLogins
+              .start({
+                machineName: cleanText(payload.machineName)?.slice(0, 64) ?? null,
+                previousTokenId: cleanText(payload.previousTokenId)
+              })
+              .pipe(Effect.catchTags({ SqlError: Effect.die }));
+            return new DeviceLoginStarted({
+              ok: true,
+              deviceCode: started.deviceCode,
+              userCode: started.userCode,
+              verificationUrl: `${publicBaseUrl}/login/device`,
+              verificationUrlComplete: `${publicBaseUrl}/login/device?code=${started.userCode}`,
+              expiresAt: started.expiresAt.toISOString(),
+              interval: DeviceLogins.POLL_INTERVAL_SECONDS
+            });
+          })
+        )
+        // PROTOTYPE for #131 (throwaway): the poll. Keyed by the device code
+        // itself, which only the CLI that started the login holds.
+        .handle("deviceLoginPoll", ({ payload }) =>
+          Effect.gen(function* () {
+            const result = yield* deviceLogins
+              .poll(payload.deviceCode)
+              .pipe(Effect.catchTags({ SqlError: Effect.die }));
+            switch (result._tag) {
+              case "pending":
+                return new DeviceLoginPending({
+                  ok: true,
+                  status: result.slowDown ? "slow_down" : "pending",
+                  expiresAt: result.expiresAt.toISOString()
+                });
+              case "complete":
+                return new DeviceLoginComplete({
+                  ok: true,
+                  status: "complete",
+                  token: result.token,
+                  machine: result.machine,
+                  accountId: result.accountId,
+                  accountName: result.accountName
+                });
+              case "gone":
+                return refuse(DeviceLoginGone, {
+                  ok: false,
+                  error:
+                    result.code === "expired"
+                      ? "This login expired before anyone confirmed it."
+                      : result.code === "denied"
+                        ? "This login was denied."
+                        : "No login is pending for this device code.",
+                  code: result.code
+                });
+            }
           })
         )
         .handle("me", () => CurrentIdentity)

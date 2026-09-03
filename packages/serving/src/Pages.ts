@@ -104,6 +104,8 @@ const open = HttpRouter.use((router) =>
 
     yield* router.add("GET", "/", home);
     yield* router.add("GET", "/healthz", HttpServerResponse.jsonUnsafe({ ok: true }));
+    // PROTOTYPE for #131 (throwaway): the confirm page's variants, undoored, with sample data.
+    yield* router.add("GET", "/prototype/login/device", LoginDoor.mock);
     yield* router.add("*", "/*", notFound);
   })
 );

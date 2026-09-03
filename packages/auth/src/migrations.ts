@@ -61,5 +61,25 @@ export const migrations: Migrations = {
       name TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+  `),
+  // PROTOTYPE for #131 (throwaway): one row per `patchy login` in flight.
+  // The device code is stored hashed; the plaintext machine token sits here
+  // between confirm and the poll that reports it, then the row is deleted.
+  "0091_prototype_device_logins": ddl(`
+    CREATE TABLE prototype_device_logins (
+      id TEXT PRIMARY KEY,
+      device_code_hash TEXT NOT NULL UNIQUE,
+      user_code TEXT NOT NULL UNIQUE,
+      machine_name TEXT,
+      previous_token_id TEXT,
+      status TEXT NOT NULL DEFAULT 'pending',
+      account_id TEXT REFERENCES accounts(id),
+      api_token_id TEXT REFERENCES api_tokens(id),
+      token_plaintext TEXT,
+      confirmed_by TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      expires_at TIMESTAMPTZ NOT NULL,
+      last_polled_at TIMESTAMPTZ
+    );
   `)
 };

@@ -47,6 +47,16 @@ export const protectedApiRateLimitPerMinute = Config.int(
 const SELF_SERVICE_MINT_PATH = "/api/tokens/self-service";
 
 /**
+ * PROTOTYPE for #131 (throwaway): the two device-login routes are the other
+ * unauthenticated writes — the CLI has no token until the poll hands it one.
+ */
+const PUBLIC_API_PATHS = new Set([
+  SELF_SERVICE_MINT_PATH,
+  "/api/login/device",
+  "/api/login/device/token"
+]);
+
+/**
  * The longest path parameter a patch route takes. Longer is a too-long target
  * on a route that exists, and a route that never existed anywhere else.
  */
@@ -83,7 +93,7 @@ export function classify(method: string, requestTarget: string): Target {
       ? { kind: "refused", status: 400 }
       : { kind: "public" };
   }
-  if (pathname === SELF_SERVICE_MINT_PATH) return { kind: "public" };
+  if (PUBLIC_API_PATHS.has(pathname)) return { kind: "public" };
   if (!isApiPath(pathname)) {
     // An encoded slash is one segment to the router, so `/api%2Fuploads` can
     // never route; it still reads as a probe of the API, and answers as one.

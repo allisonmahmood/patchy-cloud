@@ -4,7 +4,13 @@
  * `CliError`, so the contract in `Output` is the whole of what an agent sees.
  * User-facing copy calls a token a publishing key, except on the own-instance
  * path where operator vocabulary is right.
+ *
+ * PROTOTYPE for #131 (throwaway): `login` is the device login, in the two
+ * shapes the ticket compares, switched by `PATCHY_LOGIN_SHAPE`.
  */
+// @effect-diagnostics nodeBuiltinImport:off -- PROTOTYPE #131: the machine's name is the OS's to give.
+import { hostname } from "node:os";
+import * as Clock from "effect/Clock";
 import * as Console from "effect/Console";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -21,6 +27,8 @@ import * as Command from "effect/unstable/cli/Command";
 import * as Flag from "effect/unstable/cli/Flag";
 import * as Prompt from "effect/unstable/cli/Prompt";
 import {
+  DeviceLoginPollRequest,
+  DeviceLoginStartRequest,
   Identity,
   Ok,
   UploadCreated,
@@ -94,13 +102,18 @@ const environmentToken = Effect.gen(function* () {
  * signal that this instance has no key yet, which `upload` answers by minting.
  */
 const configuredToken = Effect.gen(function* () {
-  const env = yield* environmentToken;
+  const env = yield* Instance.optionalSecret("PATCHY_API_TOKEN");
   if (Option.isSome(env)) return env;
-  const { apiUrl } = yield* Instance.Instance;
+  const instance = yield* Instance.Instance;
   const state = yield* State.State;
-  return Option.map(yield* state.readCredential(apiUrl), (credential) =>
-    Redacted.make(credential.token)
-  );
+  const stored = yield* state.readCredential(instance.apiUrl);
+  // PROTOTYPE for #131: a `patchy login` on this machine outranks the token
+  // the dev env seeded, or the login could never be seen working in a worktree.
+  if (Option.isSome(stored) && stored.value.source === "login") {
+    return Option.some(Redacted.make(stored.value.token));
+  }
+  if (Option.isSome(instance.token)) return instance.token;
+  return Option.map(stored, (credential) => Redacted.make(credential.token));
 });
 
 const readHtml = Effect.fn("readHtml")(function* (file: string) {
@@ -571,10 +584,298 @@ const del = Command.make(
   )
 );
 
+// --- login (PROTOTYPE for #131, throwaway) ------------------------------------
+
+/**
+ * The environment variables an agent harness sets. Stripe's gate: an agent
+ * with a real TTY must not be blocked on an answer nobody at the keyboard
+ * will give, so this — not `isatty` — decides whether `login` waits.
+ */
+const AGENT_SIGNALS = [
+  "CLAUDECODE",
+  "CLAUDE_CODE_ENTRYPOINT",
+  "CURSOR_AGENT",
+  "CODEX_SANDBOX",
+  "CODEX_SANDBOX_NETWORK_DISABLED",
+  "GEMINI_CLI",
+  "OPENCODE",
+  "CLINE_ACTIVE",
+  "AI_AGENT",
+  "CI"
+] as const;
+
+const detectAgent = Effect.gen(function* () {
+  for (const name of AGENT_SIGNALS) {
+    if (Option.isSome(yield* Instance.optionalEnv(name))) return Option.some(name);
+  }
+  return Option.none<string>();
+});
+
+/** `stripe` (default): block for a human, one document plus `--complete` otherwise. `two-step`: never block; the same command resumes. */
+const loginShape = Instance.optionalEnv("PATCHY_LOGIN_SHAPE").pipe(
+  Effect.map((value) =>
+    Option.getOrElse(value, () => "stripe") === "two-step" ? "two-step" : "stripe"
+  )
+);
+
+const minutesUntil = (iso: string, now: number) =>
+  Math.max(0, Math.round((Date.parse(iso) - now) / 60_000));
+
+const nextCommand = (shape: "stripe" | "two-step", userCode: string) =>
+  shape === "two-step" ? "patchy login" : `patchy login --complete ${userCode}`;
+
+const handoffLines = (pending: State.PendingLogin, apiUrl: string, now: number) => [
+  `Log in to ${apiUrl} from this machine (${hostname()}).`,
+  "",
+  `  Open   ${pending.verificationUrlComplete}`,
+  `  Code   ${pending.userCode}`,
+  "",
+  `Confirm it in a browser where you are signed in. The code expires in ${minutesUntil(pending.expiresAt, now)} minutes.`
+];
+
+const handoffDocument = (
+  pending: State.PendingLogin,
+  shape: "stripe" | "two-step",
+  reason: string
+) => ({
+  ok: true,
+  status: "awaiting_confirmation",
+  verificationUrl: pending.verificationUrlComplete,
+  verificationUrlBare: pending.verificationUrl,
+  userCode: pending.userCode,
+  expiresAt: pending.expiresAt,
+  interval: pending.interval,
+  next: nextCommand(shape, pending.userCode),
+  agentNextSteps:
+    "Show the person the URL and the code and ask them to confirm it in a browser where they are signed in. Do not open a browser yourself. Then run the next command; it waits up to a minute and says pending if they have not confirmed yet.",
+  notWaitingBecause: reason
+});
+
+/**
+ * Polls until the person answers or `deadline` passes. Complete saves the
+ * key and forgets the pending login; denied, expired and unknown forget it
+ * and are `rejected`; still pending at the deadline is a document naming the
+ * next command, exit 0.
+ */
+const completeLogin = (
+  pending: State.PendingLogin,
+  shape: "stripe" | "two-step",
+  deadline: number
+) =>
+  Effect.gen(function* () {
+    const instance = yield* Instance.Instance;
+    const state = yield* State.State;
+    const client = yield* Api.client(Option.none());
+    let interval = pending.interval;
+    for (;;) {
+      const answer = yield* client
+        .deviceLoginPoll({
+          payload: new DeviceLoginPollRequest({ deviceCode: pending.deviceCode })
+        })
+        .pipe(
+          Effect.catch((error) => {
+            if (
+              Api.isRefusal(error) &&
+              typeof error.code === "string" &&
+              error.code !== "rate_limited"
+            ) {
+              return Effect.succeed({ gone: error.code, error: error.error ?? "" } as const);
+            }
+            return Api.classify(error, "Could not check the login.");
+          })
+        );
+      if ("gone" in answer) {
+        yield* state.forgetPendingLogin(instance.apiUrl);
+        const why =
+          answer.gone === "expired"
+            ? `The login expired before it was confirmed (codes last ten minutes).`
+            : answer.gone === "denied"
+              ? `The login was denied in the browser. Nothing was saved.`
+              : `No login is pending for code ${pending.userCode} on ${instance.apiUrl}; it may already have been reported.`;
+        return yield* new RejectedError({ message: `${why}\nRun: patchy login` });
+      }
+      if (answer.status === "complete") {
+        yield* state.saveCredential(
+          instance.apiUrl,
+          Redacted.make(answer.token),
+          "login",
+          new State.Machine(answer.machine)
+        );
+        yield* state.forgetPendingLogin(instance.apiUrl);
+        yield* Output.report(
+          {
+            ok: true,
+            status: "logged_in",
+            instanceUrl: instance.apiUrl,
+            accountId: answer.accountId,
+            accountName: answer.accountName,
+            machine: answer.machine,
+            credentialsPath: state.credentialsPath
+          },
+          [
+            `Logged in to ${instance.apiUrl} as ${answer.accountName}. This machine is "${answer.machine.name}".`,
+            `Publishing key saved to ${state.credentialsPath}.`
+          ]
+        );
+        return;
+      }
+      const now = yield* Clock.currentTimeMillis;
+      if (now >= deadline) {
+        yield* Output.report(
+          {
+            ok: true,
+            status: "pending",
+            verificationUrl: pending.verificationUrlComplete,
+            userCode: pending.userCode,
+            expiresAt: pending.expiresAt,
+            next: nextCommand(shape, pending.userCode),
+            agentNextSteps:
+              "Not confirmed yet. Check the person has the URL and the code, then run the next command again."
+          },
+          [
+            `Not confirmed yet. The code ${pending.userCode} is good for ${minutesUntil(pending.expiresAt, now)} more minutes.`,
+            `Then run: ${nextCommand(shape, pending.userCode)}`
+          ]
+        );
+        return;
+      }
+      if (answer.status === "slow_down") interval += 5;
+      yield* Effect.sleep(`${interval} seconds`);
+    }
+  });
+
+const login = Command.make(
+  "login",
+  {
+    complete: Flag.boolean("complete").pipe(
+      Flag.withDescription(
+        "Finish a login started earlier: wait for the confirmation, then save the key"
+      ),
+      Flag.withDefault(false)
+    ),
+    wait: Flag.integer("wait").pipe(
+      Flag.withDescription(
+        "Seconds to wait for the confirmation before reporting pending (default 60; the human path waits until the code expires)"
+      ),
+      Flag.optional
+    ),
+    block: Flag.boolean("block").pipe(
+      Flag.withDescription("Prototype: wait in this process even when an agent is detected"),
+      Flag.withDefault(false)
+    ),
+    code: Argument.string("code").pipe(
+      Argument.withDescription("The code being finished, as a check; optional"),
+      Argument.optional
+    )
+  },
+  (options) =>
+    run(
+      Effect.gen(function* () {
+        const instance = yield* Instance.Instance;
+        const state = yield* State.State;
+        const shape = yield* loginShape;
+        const agent = yield* detectAgent;
+        const json = yield* Output.JsonFlag;
+        const tty = yield* Effect.flatMap(Stdio.Stdio, (stdio) => stdio.stdinIsTerminal);
+        const now = yield* Clock.currentTimeMillis;
+        const pending = yield* state.readPendingLogin(instance.apiUrl);
+        const live = Option.filter(pending, (p) => Date.parse(p.expiresAt) > now);
+
+        // Finishing: `--complete` says so; under two-step the same command
+        // resumes whenever a login is in flight.
+        if (options.complete || (shape === "two-step" && Option.isSome(live))) {
+          if (Option.isNone(live)) {
+            yield* state.forgetPendingLogin(instance.apiUrl);
+            return yield* new LocalError({
+              message: Option.isSome(pending)
+                ? `The pending login for ${instance.apiUrl} expired. Run: patchy login`
+                : `No login is pending for ${instance.apiUrl}. Run: patchy login`
+            });
+          }
+          if (Option.isSome(options.code)) {
+            const given = options.code.value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+            if (given !== live.value.userCode.replace("-", "")) {
+              return yield* new LocalError({
+                message: `The pending login on ${instance.apiUrl} has code ${live.value.userCode}, not ${options.code.value}. Run: ${nextCommand(shape, live.value.userCode)}`
+              });
+            }
+          }
+          const waitSeconds = Option.getOrElse(options.wait, () => 60);
+          return yield* completeLogin(live.value, shape, now + waitSeconds * 1_000);
+        }
+
+        // Starting. A re-login sends the old key's id so the new one inherits
+        // its name and the old dies on confirm.
+        const stored = yield* state.readCredential(instance.apiUrl);
+        const previous = Option.flatMap(stored, (c) =>
+          c.source === "login" ? Option.fromUndefinedOr(c.machine) : Option.none()
+        );
+        const client = yield* Api.client(Option.none());
+        const started = yield* client
+          .deviceLoginStart({
+            payload: new DeviceLoginStartRequest({
+              machineName: hostname(),
+              previousTokenId: Option.getOrNull(Option.map(previous, (m) => m.id))
+            })
+          })
+          .pipe(Effect.catch((error) => Api.classify(error, "Could not start a login.")));
+        const record = new State.PendingLogin({
+          deviceCode: started.deviceCode,
+          userCode: started.userCode,
+          verificationUrl: started.verificationUrl,
+          verificationUrlComplete: started.verificationUrlComplete,
+          expiresAt: started.expiresAt,
+          interval: started.interval,
+          startedAt: yield* State.now
+        });
+        yield* state.savePendingLogin(instance.apiUrl, record);
+        if (Option.isSome(previous)) {
+          yield* Output.notice(
+            `This machine is already logged in as "${previous.value.name}"; confirming replaces that key.`
+          );
+        }
+
+        const blocking =
+          options.block || (shape === "stripe" && !json && tty && Option.isNone(agent));
+        if (!blocking) {
+          const reason = json
+            ? "--json"
+            : Option.isSome(agent)
+              ? `${agent.value} is set`
+              : !tty
+                ? "stdin is not a terminal"
+                : "PATCHY_LOGIN_SHAPE=two-step";
+          yield* Output.report(handoffDocument(record, shape, reason), [
+            ...handoffLines(record, instance.apiUrl, now),
+            `Then run: ${nextCommand(shape, record.userCode)}`,
+            `(Not waiting here: ${reason}.)`
+          ]);
+          return;
+        }
+
+        // Blocking: the handoff before the poll starts, on stderr under
+        // --json (stdout is the one document), on stdout otherwise.
+        for (const line of handoffLines(record, instance.apiUrl, now)) {
+          yield* json ? Console.error(line) : Console.log(line);
+        }
+        yield* json ? Console.error("Waiting...") : Console.log("Waiting...");
+        const deadline = Option.match(options.wait, {
+          onNone: () => Date.parse(record.expiresAt),
+          onSome: (seconds) => now + seconds * 1_000
+        });
+        yield* completeLogin(record, shape, deadline);
+      })
+    )
+).pipe(
+  Command.withDescription(
+    "Log this machine in: a link to confirm in your browser, then a publishing key."
+  )
+);
+
 // --- the tree ---------------------------------------------------------------
 
 export const root = Command.make("patchy").pipe(
   Command.withDescription("Upload static HTML patches to a Patchy Cloud instance."),
-  Command.withSubcommands([auth, whoami, status, validate, upload, del]),
+  Command.withSubcommands([auth, login, whoami, status, validate, upload, del]),
   Command.withGlobalFlags([Output.JsonFlag, Instance.ApiUrlFlag])
 );
