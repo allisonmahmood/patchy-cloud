@@ -237,7 +237,7 @@ const outsiderPage = (email: string, next: string) =>
             <span class="kicker">No company</span>
           </div>
           <h1>You are not in a company.</h1>
-          <p class="lede">You are signed in as <code>${escapeHtml(email)}</code>, but that account is not part of the company this patch is shared in.</p>
+          <p class="lede">You are signed in as <code>${escapeHtml(email)}</code>, but that account is not in any company yet. The product's answer to this state is create or join a company, which this prototype does not build.</p>
           ${signOutForm(next)}
         </header>
       </main>`
@@ -302,7 +302,7 @@ const donePage = (action: string, machine: string) =>
             <span class="kicker">${action === "confirm" ? "Confirmed" : "Denied"}</span>
           </div>
           <h1>Done, you can close this tab.</h1>
-          <p class="lede">${action === "confirm" ? `The device${machine ? ` <code>${escapeHtml(machine)}</code>` : ""} was confirmed.` : "The device was denied."}</p>
+          <p class="lede">${action === "confirm" ? `The prototype recorded a confirm for${machine ? ` <code>${escapeHtml(machine)}</code>` : " this machine"}. Nothing was minted: no device token exists yet.` : "The prototype recorded a deny. Nothing was minted either way: no device token exists yet."}</p>
         </header>
       </main>`
     })
