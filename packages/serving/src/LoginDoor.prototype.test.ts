@@ -399,10 +399,13 @@ it.layer(server("test"))("the login door on a development key, offline", (it) =>
           "POST https://api.clerk.com/v1/sessions/sess_test/revoke"
         ]);
         const suffix = ClerkSession.cookieSuffixOf(publishableKey("test"));
-        const expiredNames = ["__session", "__clerk_db_jwt", "__refresh"].flatMap((name) => [
-          name,
-          `${name}_${suffix}`
-        ]);
+        const expiredNames = [
+          "__session",
+          "__clerk_db_jwt",
+          "__refresh",
+          "__clerk_handshake",
+          "__clerk_handshake_nonce"
+        ].flatMap((name) => [name, `${name}_${suffix}`]);
         const cookies = signedOut.cookies.cookies;
         assert.deepStrictEqual(
           Object.keys(cookies).sort(),
@@ -582,8 +585,9 @@ it.layer(server("live"))("the login door on a production key, offline", (it) => 
       assert.isUndefined(response.headers["x-clerk-auth-reason"]);
       assert.isUndefined(response.headers["x-clerk-auth-message"]);
 
-      // The payload's directives, and only those: nothing expires
-      // `__clerk_handshake`, so the cookie FAPI set outlives its use.
+      // The payload's directives, and only those: the resolution response does
+      // not expire `__clerk_handshake`, so the cookie FAPI set outlives the
+      // request that spent it. Only sign-out clears it, below.
       const cookies = response.cookies.cookies;
       assert.deepStrictEqual(Object.keys(cookies).sort(), [
         "__client_uat",
@@ -598,9 +602,10 @@ it.layer(server("live"))("the login door on a production key, offline", (it) => 
       // Resolving it cost nothing: no JWKS fetch, no Backend API call.
       assert.deepStrictEqual(outbound, []);
 
-      // Nothing clears `__clerk_handshake` — not the SDK, which only ever
-      // reads it (index.js:6470), and not the door, whose sign-out expires the
-      // six session cookies and no others. So the cookie survives sign-out...
+      // The SDK never clears `__clerk_handshake`; it only ever reads it
+      // (index.js:6470). Its payload is a standing `__session` directive, so a
+      // browser that kept the cookie would be signed in again on the next
+      // document GET. Sign-out therefore expires the handshake pair itself...
       const signedOut = yield* Effect.flatMap(HttpClient.HttpClient, (client) =>
         client.execute(
           HttpClientRequest.post("/sign-out").pipe(
@@ -610,20 +615,17 @@ it.layer(server("live"))("the login door on a production key, offline", (it) => 
         )
       );
       assert.strictEqual(signedOut.status, 303);
-      assert.notInclude(Object.keys(signedOut.cookies.cookies), "__clerk_handshake");
+      assert.strictEqual(signedOut.cookies.cookies["__clerk_handshake"]?.value, "");
+      assert.strictEqual(signedOut.cookies.cookies[`__clerk_handshake_${suffix}`]?.value, "");
       assert.deepStrictEqual(outbound, ["POST https://api.clerk.com/v1/sessions/sess_test/revoke"]);
 
-      // ...and the browser that kept it walks straight back in: the payload is
-      // a standing `__session` directive, so replaying the cookie alone — no
-      // session cookie, no `__client_uat` — mints the session again.
+      // ...and the browser that honoured the 303 has nothing left to replay:
+      // the next document GET is the door again, not the patch.
       outbound.length = 0;
-      const replay = yield* get(`/d/${patchId}`, {
-        cookie: cookieHeader({ __clerk_handshake: signHandshake(directives) }),
-        accept: "text/html"
-      });
-      assert.strictEqual(replay.status, 200);
-      assert.include(yield* replay.text, "Production return leg");
-      assert.strictEqual(replay.cookies.cookies["__session"]?.value, sessionJwt);
+      const replay = yield* get(`/d/${patchId}`, { accept: "text/html" });
+      assert.strictEqual(replay.status, 401);
+      assert.strictEqual(replay.headers["x-clerk-auth-reason"], "session-token-and-uat-missing");
+      assert.notInclude(yield* replay.text, "Production return leg");
       assert.deepStrictEqual(outbound, []);
     })
   );

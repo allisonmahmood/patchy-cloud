@@ -210,8 +210,14 @@ export const make = Effect.gen(function* () {
     request: HttpServerRequest.HttpServerRequest,
     publicUrl: string
   ) {
-    // The URL is the public one on purpose: the SDK builds the handshake's
-    // `redirect_url` from it, and `toURL` would answer with the socket's view.
+    // The URL is built from the public base URL, but the SDK does not read its
+    // host: `deriveUrlFromHeaders` rebuilds the origin from `X-Forwarded-Host`
+    // (else `Host`) and `X-Forwarded-Proto`, and ignores the URL's own host. So
+    // the public URL supplies only the path and query, and the handshake's
+    // `redirect_url` comes back on whatever host the socket saw (#119 finding
+    // M1; test T2 watches the Host header win). The real door has to pin `host`
+    // and the `x-forwarded-*` headers from `publicBaseUrl` as well as the URL,
+    // or the round trip lands the reader on the wrong origin.
     const headers = new Headers();
     for (const [name, value] of Object.entries(request.headers)) headers.set(name, value);
     const web = new Request(publicUrl, { method: request.method, headers });

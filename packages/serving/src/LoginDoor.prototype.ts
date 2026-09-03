@@ -32,7 +32,7 @@ import { NO_REFERRER_POLICY, PATCH_ROBOTS_TAG } from "./serving-headers.js";
 
 /** The door's own pages: no script, inline style, forms only to this origin. */
 export const DOOR_CONTENT_SECURITY_POLICY =
-  "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'";
+  "default-src 'none'; style-src 'unsafe-inline'; img-src data:; form-action 'self'; base-uri 'none'";
 
 const doorHeaders = {
   "content-security-policy": DOOR_CONTENT_SECURITY_POLICY,
@@ -314,9 +314,21 @@ const wrongOrigin = HttpServerResponse.text("Refused: the form did not come from
 
 // --- the middleware ----------------------------------------------------------
 
-/** The Clerk cookies the server itself must expire on sign-out, unsuffixed and suffixed. */
+/**
+ * The Clerk cookies the server itself must expire on sign-out, unsuffixed and
+ * suffixed. The handshake pair is on the list because nothing else clears it:
+ * the SDK only ever reads `__clerk_handshake` (index.js:6470), and the payload
+ * inside it is a standing `__session` directive, so a browser that kept the
+ * cookie is signed in again on its next document GET (#119 finding M2-3, T8).
+ */
 const sessionCookieNames = (suffix: string) =>
-  ["__session", "__clerk_db_jwt", "__refresh"].flatMap((name) => [name, `${name}_${suffix}`]);
+  [
+    "__session",
+    "__clerk_db_jwt",
+    "__refresh",
+    "__clerk_handshake",
+    "__clerk_handshake_nonce"
+  ].flatMap((name) => [name, `${name}_${suffix}`]);
 
 /**
  * The `sid` claim of a session cookie, unverified: a sign-out POST arrives
