@@ -133,3 +133,42 @@ export const seedDevAccount = Effect.gen(function* () {
     VALUES ('tok_dev', ${DEV_ACCOUNT_ID}, 'Dev Token', 'hash:tok_dev', '["upload"]'::jsonb)
     ON CONFLICT (id) DO NOTHING`;
 });
+
+// --- the handshake return leg ---------------------------------------------------------
+
+/**
+ * The directives FAPI's handshake payload carries back, in the shape the dev
+ * instance returned on #119: the `__client_uat` it just set (host-scoped by a
+ * `Domain`), the session token, an opaque refresh token under the suffixed
+ * name, and — on a development instance — the dev-browser cookie.
+ */
+export const handshakeDirectives = (options: {
+  readonly jwt: string;
+  readonly iat: number;
+  readonly suffix: string;
+  readonly devBrowser?: boolean;
+}) => {
+  const expires = new Date((options.iat + 365 * 24 * 60 * 60) * 1000).toUTCString();
+  const domain = new URL(PUBLIC_BASE_URL).hostname;
+  return [
+    `__client_uat=${options.iat}; Path=/; Domain=${domain}; Max-Age=315360000; Secure; SameSite=None`,
+    `__session=${options.jwt}; Path=/; Expires=${expires}; Secure; SameSite=None`,
+    `__refresh_${options.suffix}=${"r".repeat(48)}; Path=/; Expires=${expires}; HttpOnly; Secure; SameSite=None`,
+    ...(options.devBrowser === true
+      ? [`__clerk_db_jwt=dev-browser; Path=/; Expires=${expires}; Secure; SameSite=None`]
+      : [])
+  ];
+};
+
+/**
+ * The handshake JWT FAPI hands back, signed by the test keypair. Its payload
+ * is `{ handshake: [<Set-Cookie directive>, ...] }` and its header is a
+ * session token's: `verifyHandshakeJwt` checks `typ`, `alg`, the absence of a
+ * non-session `cat`, and the signature — nothing else, no `exp`, no `iss` —
+ * so under `CLERK_JWT_KEY` resolving one costs no network at all
+ * (`@clerk/backend@3.17.0/dist/index.js:7125-7154`, `:7157-7176`). The live
+ * instance's own handshake tokens carry `cat: "cl_B7d4PD111AAA"`, the session
+ * category, which that check also allows; omitting it is the same to the SDK.
+ */
+export const signHandshake = (directives: ReadonlyArray<string>) =>
+  signSession({ handshake: directives });

@@ -28,6 +28,7 @@ import {
   clerkEnv,
   cookieHeader,
   FRONTEND_API,
+  handshakeDirectives,
   nowSeconds,
   outbound,
   PUBLIC_BASE_URL,
@@ -36,6 +37,7 @@ import {
   seedDevAccount,
   sessionClaims,
   signedInCookies,
+  signHandshake,
   signSession
 } from "@patchy/auth/testing";
 import { ContentStore } from "@patchy/content-store";
@@ -117,6 +119,14 @@ const publish = (title: string) =>
       sourceIp: null,
       userAgent: "vitest"
     })
+  );
+
+/** Every response header Clerk's SDK added, and nothing the door or the page added. */
+const clerkHeadersOf = (headers: Record<string, string>) =>
+  Object.fromEntries(
+    Object.entries(headers).filter(
+      ([name]) => name.startsWith("access-control-") || name.startsWith("x-clerk-")
+    )
   );
 
 /** The handshake `Location` the SDK built, taken apart. */
@@ -439,6 +449,61 @@ it.layer(server("test"))("the login door on a development key, offline", (it) =>
         assert.strictEqual(handshakeOf(session.headers["location"]).reason, "dev-browser-missing");
       })
   );
+
+  // T9. The development return leg. A development Frontend API is cross-site
+  // to the app, so it cannot set the cookie T8 uses: it hands the resolved
+  // handshake back as `?__clerk_handshake=<jwt>` on the redirect instead
+  // (confirmed against the real instance on #119). The SDK verifies it through
+  // `CLERK_JWT_KEY` with no network, then — because the instance is
+  // development — strips the handshake parameters and asks for one more hop to
+  // the clean URL, with the whole cookie family riding on the redirect.
+  it.effect("T9: a ?__clerk_handshake resolves offline into a 307 to the clean URL", () =>
+    Effect.gen(function* () {
+      const { patchId } = yield* publish("Development return leg");
+      const iat = nowSeconds();
+      const suffix = ClerkSession.cookieSuffixOf(publishableKey("test"));
+      const sessionJwt = signSession(sessionClaims(iat, 60));
+      const directives = handshakeDirectives({
+        jwt: sessionJwt,
+        iat,
+        suffix,
+        devBrowser: true
+      });
+      outbound.length = 0;
+
+      const response = yield* get(`/d/${patchId}?__clerk_handshake=${signHandshake(directives)}`, {
+        cookie: cookieHeader({ __clerk_db_jwt: "dev-browser", __client_uat: "0" }),
+        accept: "text/html"
+      });
+
+      // Resolved, and signed in — but a development instance still wants the
+      // clean URL, so the answer is the extra hop, not the page.
+      assert.strictEqual(response.status, 307);
+      const address = (yield* HttpServer.HttpServer).address;
+      const port = address._tag === "TcpAddress" ? address.port : 0;
+      assert.strictEqual(response.headers["location"], `https://127.0.0.1:${port}/d/${patchId}`);
+      assert.strictEqual(response.headers["cache-control"], "no-store");
+      // The same two headers, and again no `x-clerk-auth-*`.
+      assert.deepStrictEqual(clerkHeadersOf(response.headers), {
+        "access-control-allow-origin": "null",
+        "access-control-allow-credentials": "true"
+      });
+
+      // Every directive from the payload rides on the redirect, and the loop
+      // guard is not touched: this response is the end of the handshake.
+      const cookies = response.cookies.cookies;
+      assert.deepStrictEqual(Object.keys(cookies).sort(), [
+        "__clerk_db_jwt",
+        "__client_uat",
+        `__refresh_${suffix}`,
+        "__session"
+      ]);
+      assert.strictEqual(cookies["__session"]?.value, sessionJwt);
+      assert.strictEqual(cookies["__client_uat"]?.value, String(iat));
+
+      assert.deepStrictEqual(outbound, []);
+    })
+  );
 });
 
 // --- a production instance -----------------------------------------------------------
@@ -470,5 +535,96 @@ it.layer(server("live"))("the login door on a production key, offline", (it) => 
         assert.include(yield* session.text, "Live key");
         assert.deepStrictEqual(outbound, []);
       })
+  );
+
+  // T8. The production return leg. FAPI hands the resolved handshake back as a
+  // `__clerk_handshake` cookie on the app's own domain; the SDK verifies it
+  // through `CLERK_JWT_KEY` with no network. On a pk_live_ key there is no
+  // clean-URL hop, so the resolution response IS the page: the session cookies
+  // and the SDK's CORS headers land on the patch itself.
+  it.effect("T8: a __clerk_handshake cookie resolves offline and the answer is the page", () =>
+    Effect.gen(function* () {
+      const { patchId } = yield* publish("Production return leg");
+      const iat = nowSeconds();
+      const suffix = ClerkSession.cookieSuffixOf(publishableKey("live"));
+      const sessionJwt = signSession(sessionClaims(iat, 60));
+      const directives = handshakeDirectives({ jwt: sessionJwt, iat, suffix });
+      const handshakeCookie = cookieHeader({
+        __clerk_handshake: signHandshake(directives),
+        __client_uat: "0"
+      });
+      outbound.length = 0;
+
+      const response = yield* get(`/d/${patchId}`, {
+        cookie: handshakeCookie,
+        accept: "text/html"
+      });
+
+      // No Location, no second hop: the patch is the handshake's answer.
+      assert.strictEqual(response.status, 200);
+      assert.isUndefined(response.headers["location"]);
+      assert.include(yield* response.text, "Production return leg");
+      assert.strictEqual(response.headers["cache-control"], "private, no-store");
+
+      // Everything `resolveHandshake` puts on that page, exhaustively. The two
+      // Access-Control headers are unconditional (index.js:7275-7278): the SDK
+      // opens the served patch to any `null`-origin document, with
+      // credentials, on the one response the reader's session is made on.
+      // There is no `x-clerk-auth-status: signed-in` to go with them, here or
+      // anywhere: `signedOut` and `handshake` run through `withDebugHeaders`
+      // (index.js:7029, :7050) and `signedIn` does not (index.js:6988-7019),
+      // so a served page never says what the door decided.
+      assert.deepStrictEqual(clerkHeadersOf(response.headers), {
+        "access-control-allow-origin": "null",
+        "access-control-allow-credentials": "true"
+      });
+      assert.isUndefined(response.headers["x-clerk-auth-status"]);
+      assert.isUndefined(response.headers["x-clerk-auth-reason"]);
+      assert.isUndefined(response.headers["x-clerk-auth-message"]);
+
+      // The payload's directives, and only those: nothing expires
+      // `__clerk_handshake`, so the cookie FAPI set outlives its use.
+      const cookies = response.cookies.cookies;
+      assert.deepStrictEqual(Object.keys(cookies).sort(), [
+        "__client_uat",
+        `__refresh_${suffix}`,
+        "__session"
+      ]);
+      assert.strictEqual(cookies["__session"]?.value, sessionJwt);
+      assert.strictEqual(cookies["__client_uat"]?.value, String(iat));
+      assert.strictEqual(cookies["__client_uat"]?.options?.domain, "patchy.example");
+      assert.strictEqual(cookies[`__refresh_${suffix}`]?.options?.httpOnly, true);
+
+      // Resolving it cost nothing: no JWKS fetch, no Backend API call.
+      assert.deepStrictEqual(outbound, []);
+
+      // Nothing clears `__clerk_handshake` — not the SDK, which only ever
+      // reads it (index.js:6470), and not the door, whose sign-out expires the
+      // six session cookies and no others. So the cookie survives sign-out...
+      const signedOut = yield* Effect.flatMap(HttpClient.HttpClient, (client) =>
+        client.execute(
+          HttpClientRequest.post("/sign-out").pipe(
+            HttpClientRequest.setHeaders({ cookie: handshakeCookie, origin: PUBLIC_BASE_URL }),
+            HttpClientRequest.bodyUrlParams({ next: `/d/${patchId}` })
+          )
+        )
+      );
+      assert.strictEqual(signedOut.status, 303);
+      assert.notInclude(Object.keys(signedOut.cookies.cookies), "__clerk_handshake");
+      assert.deepStrictEqual(outbound, ["POST https://api.clerk.com/v1/sessions/sess_test/revoke"]);
+
+      // ...and the browser that kept it walks straight back in: the payload is
+      // a standing `__session` directive, so replaying the cookie alone — no
+      // session cookie, no `__client_uat` — mints the session again.
+      outbound.length = 0;
+      const replay = yield* get(`/d/${patchId}`, {
+        cookie: cookieHeader({ __clerk_handshake: signHandshake(directives) }),
+        accept: "text/html"
+      });
+      assert.strictEqual(replay.status, 200);
+      assert.include(yield* replay.text, "Production return leg");
+      assert.strictEqual(replay.cookies.cookies["__session"]?.value, sessionJwt);
+      assert.deepStrictEqual(outbound, []);
+    })
   );
 });
