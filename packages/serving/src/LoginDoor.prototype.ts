@@ -4,6 +4,8 @@
  * that asks `ClerkSession` what the request is, copies Clerk's headers onto
  * the answer, and either redirects for the handshake, shows the door page,
  * refuses an outsider, or lets the patch through with one user-row read.
+ * Behind `PROTOTYPE_R2_6` it also answers the third wrong-person state: a
+ * signed-in person from another company gets the missing-patch 404.
  * The door's own pages (door, outsider, device confirm, not-configured) and
  * the sign-out route live here too. Every doored request logs one `[door]`
  * line; that log is most of what the prototype is for.
@@ -12,16 +14,21 @@
 import * as Cause from "effect/Cause";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Cookies from "effect/unstable/http/Cookies";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import * as UrlParams from "effect/unstable/http/UrlParams";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import { ClerkSession, PrototypeUsers } from "@patchy/auth";
 import { PatchesConfig } from "@patchy/patches";
-import { escapeAttribute, escapeHtml, htmlPage } from "./render.js";
+import { escapeAttribute, escapeHtml, htmlPage, renderNotFound } from "./render.js";
+import { NO_REFERRER_POLICY, PATCH_ROBOTS_TAG } from "./serving-headers.js";
 
 /** The door's own pages: no script, inline style, forms only to this origin. */
 export const DOOR_CONTENT_SECURITY_POLICY =
@@ -51,6 +58,34 @@ const doorMode = Config.string("PROTOTYPE_DOOR_MODE").pipe(
 const suffixFix = Config.string("PROTOTYPE_DOOR_SUFFIX_FIX").pipe(
   Config.withDefault("0"),
   Config.map((value) => value === "1")
+);
+
+// --- the company check (#119 lane R2-6 experiment) -----------------------------
+
+/**
+ * `PROTOTYPE_R2_6=1`: after the user row, a second read for the patch's
+ * company, and a signed-in person from another company gets the same 404 a
+ * missing patch gets; `PROTOTYPE_R2_6=fold`: the user row and the patch's
+ * company in one read. Off by default: the door then serves any user with a row.
+ */
+const companyCheck = Config.string("PROTOTYPE_R2_6").pipe(
+  Config.withDefault("0"),
+  Config.map((value): "off" | "second" | "fold" =>
+    value === "1" ? "second" : value === "fold" ? "fold" : "off"
+  )
+);
+
+/** The patch id a doored path names (`/d/:patchId` or `/d/:patchId/v/:n`), or nothing for the door's own routes. */
+const patchIdOf = (path: string) => /^\/d\/([^/]+)(?:\/v\/[^/]+)?$/.exec(path)?.[1];
+
+/** The 404 a patch URL gets from `Pages`, byte for byte, with the door's own caching. */
+const patchNotFound = HttpServerResponse.html(renderNotFound()).pipe(
+  HttpServerResponse.setStatus(404),
+  HttpServerResponse.setHeaders({
+    "x-robots-tag": PATCH_ROBOTS_TAG,
+    "referrer-policy": NO_REFERRER_POLICY,
+    "cache-control": "private, no-store"
+  })
 );
 
 // --- copying Clerk's headers onto an Effect response --------------------------
@@ -131,7 +166,8 @@ export const redactSetCookie = (directive: string): string => {
 const report = (
   request: HttpServerRequest.HttpServerRequest,
   verdict: ClerkSession.Verdict,
-  dbMs: number | "-"
+  dbMs: number | "-",
+  extra = ""
 ): void => {
   const { outcome } = verdict;
   const reason =
@@ -145,7 +181,7 @@ const report = (
   const path = request.originalUrl.split("?")[0] ?? request.originalUrl;
   console.log(
     `[door] ${request.method} ${path} status=${outcome._tag} reason=${reason} ` +
-      `authMs=${verdict.authMs} dbMs=${typeof dbMs === "number" ? dbMs.toFixed(1) : dbMs} net=${verdict.netCalls} azp=${azp} exp-iat=${expIat}`
+      `authMs=${verdict.authMs} dbMs=${typeof dbMs === "number" ? dbMs.toFixed(1) : dbMs} net=${verdict.netCalls} azp=${azp} exp-iat=${expIat}${extra}`
   );
   if (outcome._tag === "handshake") {
     console.log(`[door]   -> 307 ${describeUrl(outcome.location)}`);
@@ -307,6 +343,34 @@ export const make = Effect.gen(function* () {
   const publicBaseUrl = yield* PatchesConfig.publicBaseUrl;
   const mode = yield* doorMode;
   const mirror = yield* suffixFix;
+  const check = yield* companyCheck;
+  const sql = yield* SqlClient.SqlClient;
+
+  /** R2-6 `second`: the patch's company, one read by primary key. */
+  const patchAccountRow = SqlSchema.findOneOption({
+    Request: Schema.String,
+    Result: Schema.Struct({ accountId: Schema.String }),
+    execute: (patchId) => sql`SELECT account_id AS "accountId" FROM patches WHERE id = ${patchId}`
+  });
+
+  /** R2-6 `fold`: the user row and the patch's company in one read. */
+  const foldRow = SqlSchema.findOneOption({
+    Request: Schema.Struct({ clerkUserId: Schema.String, patchId: Schema.String }),
+    Result: Schema.Struct({
+      clerkUserId: Schema.String,
+      accountId: Schema.String,
+      accountName: Schema.String,
+      email: Schema.String,
+      name: Schema.NullOr(Schema.String),
+      patchAccountId: Schema.NullOr(Schema.String)
+    }),
+    execute: ({ clerkUserId, patchId }) => sql`
+      SELECT u.clerk_user_id AS "clerkUserId", u.account_id AS "accountId",
+             a.name AS "accountName", u.email, u.name, p.account_id AS "patchAccountId"
+      FROM prototype_users u JOIN accounts a ON a.id = u.account_id
+      LEFT JOIN patches p ON p.id = ${patchId}
+      WHERE u.clerk_user_id = ${clerkUserId}`
+  });
 
   // A route handler does not see the context its layer was built in, so what
   // the handlers behind the door need is provided per request, here.
@@ -381,7 +445,35 @@ export const make = Effect.gen(function* () {
       }
 
       // Signed in: one read, then either the page or the outsider refusal.
-      const found = yield* users.find(outcome.userId).pipe(Effect.orDie);
+      // R2-6: with the company check on, the patch's company rides along
+      // (`fold`) or comes from a second read (`second`), and a person from
+      // another company gets the missing-patch 404 without reaching `Pages`.
+      const patchId = check === "off" ? undefined : patchIdOf(path);
+      let found: PrototypeUsers.Found;
+      let patchAccountId: string | null | undefined;
+      let reads = 1;
+      if (check === "fold" && patchId !== undefined) {
+        const [duration, row] = yield* Effect.timed(
+          foldRow({ clerkUserId: outcome.userId, patchId })
+        ).pipe(Effect.orDie);
+        found = {
+          user: Option.map(
+            row,
+            (r) =>
+              new PrototypeUsers.PrototypeUser({
+                clerkUserId: r.clerkUserId,
+                accountId: r.accountId,
+                accountName: r.accountName,
+                email: r.email,
+                name: r.name
+              })
+          ),
+          dbMs: Duration.toMillis(duration)
+        };
+        patchAccountId = Option.isSome(row) ? row.value.patchAccountId : undefined;
+      } else {
+        found = yield* users.find(outcome.userId).pipe(Effect.orDie);
+      }
       let user = found.user;
       if (Option.isNone(user)) {
         const email = outcome.email ?? `${outcome.userId}@no-email-claim.invalid`;
@@ -395,7 +487,28 @@ export const make = Effect.gen(function* () {
             .pipe(Effect.orDie)
         );
       }
-      report(request, verdict, found.dbMs);
+      let extra = "";
+      if (patchId !== undefined) {
+        let patchMs: number | undefined;
+        if (patchAccountId === undefined) {
+          const [duration, row] = yield* Effect.timed(patchAccountRow(patchId)).pipe(Effect.orDie);
+          reads += 1;
+          patchMs = Duration.toMillis(duration);
+          patchAccountId = Option.isSome(row) ? row.value.accountId : null;
+        }
+        const company =
+          patchAccountId === null
+            ? "missing"
+            : patchAccountId === Option.getOrThrow(user).accountId
+              ? "ok"
+              : "other";
+        extra = ` company=${company} reads=${reads}${patchMs === undefined ? "" : ` patchMs=${patchMs.toFixed(1)}`}`;
+        if (company !== "ok") {
+          report(request, verdict, found.dbMs, extra);
+          return withClerkHeaders(patchNotFound, outcome.headers);
+        }
+      }
+      report(request, verdict, found.dbMs, extra);
       const response = yield* provided(app, { verdict, user });
       return withClerkHeaders(
         HttpServerResponse.setHeader(response, "cache-control", "private, no-store"),

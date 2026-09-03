@@ -3,9 +3,10 @@
  * read the login door makes per page load: the Clerk user id to a Patchy
  * user row in the `prototype_users` table (migration `0090_prototype_users`),
  * joined to its company. Every signed-in person the prototype has not seen
- * before joins the seeded dev company `acct_dev` just in time; the door keeps
- * `+outsider` addresses out before it gets here. `find` is timed because the
- * read's cost is one of the prototype's answers.
+ * before joins the seeded dev company `acct_dev` just in time, unless the
+ * address says `+other` (lane R2-6's second company, `acct_other`); the door
+ * keeps `+outsider` addresses out before it gets here. `find` is timed because
+ * the read's cost is one of the prototype's answers.
  */
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -19,6 +20,16 @@ import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 
 /** The seeded dev company every prototype user joins (`scripts/dev/src/seed.ts`). */
 export const DEV_ACCOUNT_ID = "acct_dev";
+
+/**
+ * The second company lane R2-6 inserted by hand, so the door has someone who
+ * is signed in, known, and from the wrong company for `acct_dev`'s patches.
+ */
+export const OTHER_ACCOUNT_ID = "acct_other";
+
+/** Which company a just-in-time user joins: `+other` addresses land in the second one. */
+export const accountIdFor = (email: string): string =>
+  email.includes("+other") ? OTHER_ACCOUNT_ID : DEV_ACCOUNT_ID;
 
 export class PrototypeUser extends Schema.Class<PrototypeUser>("PrototypeUser")({
   clerkUserId: Schema.String,
@@ -73,7 +84,7 @@ export const make = Effect.gen(function* () {
   }) {
     yield* sql`
       INSERT INTO prototype_users (clerk_user_id, account_id, email, name)
-      VALUES (${input.clerkUserId}, ${DEV_ACCOUNT_ID}, ${input.email}, ${input.name})
+      VALUES (${input.clerkUserId}, ${accountIdFor(input.email)}, ${input.email}, ${input.name})
       ON CONFLICT (clerk_user_id) DO NOTHING`;
     const { user } = yield* find(input.clerkUserId);
     // Just inserted (or already there): absence here is a bug, not a state.
