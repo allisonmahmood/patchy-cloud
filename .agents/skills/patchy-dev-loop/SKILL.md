@@ -11,9 +11,11 @@ metadata:
 
 To bind the seeded admin to your own Clerk development user, set
 `PATCHY_DEV_CLERK_USER_ID=user_...` in the developer `dev.env` described below,
-then restart the instance. Sign in at `/join` to land in Patchy Dev as admin;
-without the override, a real sign-in lands on create-or-join. `/join` has
-**Not you? Sign out**, returning to `/login`.
+then restart the instance. Sign in at `/join` to land on `/company` in Patchy
+Dev as admin; without the override, a real sign-in lands on create-or-join.
+Before joining, `/join` has **Not you? Sign out**, returning to `/login`.
+Invites from `/company` send real mail through the developer's Clerk application;
+use a `+clerk_test` address for live verification and revoke test invites afterward.
 
 ## 1. Start
 
