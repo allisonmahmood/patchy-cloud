@@ -6,6 +6,8 @@ import * as Redacted from "effect/Redacted";
 export interface LiveSettings {
   runId: string;
   email: string;
+  browserEmail: string;
+  outsiderEmail: string;
   inviteEmail: string;
   publicBaseUrl: string;
   authorizedParty: string;
@@ -17,12 +19,26 @@ export function liveSettings(env: NodeJS.ProcessEnv): LiveSettings {
   if (!secretKey?.trim()) throw new Error("CLERK_SECRET_KEY is required for the live Clerk tier.");
   if (!publishableKey?.trim())
     throw new Error("CLERK_PUBLISHABLE_KEY is required for the live Clerk tier.");
+  if (env.GITHUB_ACTIONS) {
+    let frontendApi = "";
+    try {
+      if (publishableKey.startsWith("pk_test_")) frontendApi = atob(publishableKey.slice(8));
+    } catch {
+      // Report the expected application, never the supplied key.
+    }
+    if (frontendApi !== "super-whale-1225.clerk.accounts.dev$")
+      throw new Error(
+        "CI live Clerk tests require the patchy-cloud-ci publishable key (super-whale-1225.clerk.accounts.dev)."
+      );
+  }
   const runId = env.CLERK_TEST_RUN_ID;
   if (!runId || !/^[a-z0-9-]{1,40}$/.test(runId))
     throw new Error("CLERK_TEST_RUN_ID must be 1–40 lowercase letters, digits or hyphens.");
   return {
     runId,
     email: `ci-${runId}+clerk_test@example.com`,
+    browserEmail: `ci-${runId}-browser+clerk_test@example.com`,
+    outsiderEmail: `ci-${runId}-outsider+clerk_test@example.com`,
     inviteEmail: `ci-${runId}-invite+clerk_test@example.com`,
     publicBaseUrl: env.PATCHY_PUBLIC_BASE_URL ?? "http://127.0.0.1:3000",
     authorizedParty:
@@ -43,15 +59,16 @@ export const liveClient = Effect.gen(function* () {
 /** Exact email matching keeps teardown confined to this run, including after a lost create response. */
 export const sweep = Effect.fn("ClerkLive.sweep")(function* (settings: LiveSettings) {
   const client = yield* liveClient;
+  const emails = [settings.email, settings.browserEmail, settings.outsiderEmail];
   const users = yield* Effect.promise(() =>
-    client.users.getUserList({ emailAddress: [settings.email], limit: 100 })
+    client.users.getUserList({ emailAddress: emails, limit: 100 })
   );
   for (const user of users.data) {
-    if (user.emailAddresses.some((email) => email.emailAddress === settings.email))
+    if (user.emailAddresses.some((email) => emails.includes(email.emailAddress)))
       yield* Effect.promise(() => client.users.deleteUser(user.id));
   }
   const remaining = yield* Effect.promise(() =>
-    client.users.getUserList({ emailAddress: [settings.email], limit: 1 })
+    client.users.getUserList({ emailAddress: emails, limit: 1 })
   );
   if (remaining.totalCount !== 0) throw new Error(`Clerk users remain for run ${settings.runId}.`);
   const invitations = yield* Effect.promise(() =>

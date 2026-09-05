@@ -55,8 +55,10 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Verify live sessions and invitations
-        run: pnpm exec vitest run --config vitest.clerk.config.ts
+      - name: Install Chromium and system dependencies
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Verify live Clerk API and browser workflows
+        run: pnpm test:clerk
       - name: Sweep this run's Clerk fixtures
         if: always()
         run: pnpm test:clerk --cleanup
