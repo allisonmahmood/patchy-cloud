@@ -35,6 +35,9 @@ overrides:
   "@effect/sql-pg": "catalog:"
   "@effect/vitest": "catalog:"
   "@effect/language-service": "catalog:"
+# embedded-postgres's beforeExit hook must preserve Vitest failures, not exit 0.
+patchedDependencies:
+  async-exit-hook@2.0.1: patches/async-exit-hook@2.0.1.patch
 allowBuilds:
   esbuild: true
   "@embedded-postgres/darwin-arm64": true

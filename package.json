@@ -15,6 +15,7 @@
     "patchy": "node --import tsx --conditions=development packages/cli/src/index.ts",
     "seed:dev": "node scripts/seed-dev.mjs",
     "test": "vitest run",
+    "test:clerk": "node --import tsx --conditions=development scripts/test-clerk.ts",
     "test:all": "sh scripts/test-all.sh",
     "test:packed-cli-e2e": "node scripts/packed-cli-e2e.mjs",
     "prepare": "effect-language-service patch && simple-git-hooks",
