@@ -370,6 +370,18 @@ export function htmlPage(options: {
 
     .auth-card .brand { margin-bottom: 32px; }
     .auth-card h1 { max-width: none; font-size: 2rem; line-height: 1.12; }
+    .auth-card label { display: block; margin: 18px 0 6px; font-size: .9rem; font-weight: 750; }
+    .auth-card input, .auth-card select {
+      width: 100%;
+      min-height: 48px;
+      padding: 10px 12px;
+      border: 1.5px solid var(--ink);
+      border-radius: 6px;
+      background: white;
+      color: var(--ink);
+      font: inherit;
+    }
+    .auth-hint { margin: 8px 0 20px; color: var(--muted); font-size: .8rem; }
     .auth-action {
       display: inline-flex;
       align-items: center;
