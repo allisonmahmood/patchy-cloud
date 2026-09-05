@@ -1,10 +1,10 @@
 /**
  * The state dir: everything the CLI remembers between runs, filed per
- * instance. `credentials.json` holds one token per instance, `patches.json`
- * one cache entry per instance and file, `config.json` the saved instance
- * URL; `style.md` is the skill's and is only ever checked for existence.
+ * instance. `credentials.json` holds one token per instance, `device-login.json`
+ * its pending login, `patches.json` one cache entry per instance and file,
+ * `config.json` the saved instance URL; `style.md` is only checked for existence.
  *
- * Both host-keyed files are read without interpreting the other instances'
+ * Host-keyed files are read without interpreting the other instances'
  * entries, so a write is a real merge — an entry this command neither reads
  * nor understands is carried across untouched — and corruption over there can
  * neither block publishing here nor be mistaken for a reason to discard it.
@@ -27,13 +27,31 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { LocalError } from "./CliError.js";
 
-export type CredentialSource = "auth-set";
+const Machine = Schema.Struct({ id: Schema.String, name: Schema.String });
+export const HostCredential = Schema.Union([
+  Schema.Struct({
+    token: Schema.NonEmptyString,
+    updatedAt: Schema.optionalKey(Schema.String),
+    source: Schema.Literal("login"),
+    machine: Machine
+  }),
+  Schema.Struct({
+    token: Schema.NonEmptyString,
+    updatedAt: Schema.optionalKey(Schema.String),
+    source: Schema.optionalKey(Schema.Literal("auth-set"))
+  })
+]);
+export type HostCredential = typeof HostCredential.Type;
 
-export class HostCredential extends Schema.Class<HostCredential>("HostCredential")({
-  token: Schema.NonEmptyString,
-  updatedAt: Schema.optionalKey(Schema.String),
-  source: Schema.optionalKey(Schema.Literal("auth-set"))
+export class PendingLogin extends Schema.Class<PendingLogin>("PendingLogin")({
+  deviceCode: Schema.NonEmptyString,
+  userCode: Schema.NonEmptyString,
+  verificationUrl: Schema.String,
+  verificationUrlBare: Schema.String,
+  interval: Schema.Number.check(Schema.isGreaterThan(0)),
+  expiresAt: Schema.String
 }) {}
+const decodePendingLogin = Schema.decodeUnknownEffect(PendingLogin);
 
 /** One entry of `patches.json`, keyed per instance then per absolute file path. */
 export class CachedPatch extends Schema.Class<CachedPatch>("CachedPatch")({
@@ -96,7 +114,7 @@ export class State extends Context.Service<
       apiUrl: string
     ) => Effect.Effect<Option.Option<HostCredential>, LocalError>;
     /**
-     * Saves a key supplied through `auth set`. A file with no salvageable host
+     * Saves a key from `login` or `auth set`. A file with no salvageable host
      * map is overwritten — `auth set` is the documented way to replace
      * credentials that cannot be read — but a retired flat file still fails
      * closed, and every other instance's entry is kept verbatim.
@@ -104,8 +122,22 @@ export class State extends Context.Service<
     readonly saveCredential: (
       apiUrl: string,
       token: Redacted.Redacted,
-      source: CredentialSource
+      metadata:
+        | { readonly source: "auth-set" }
+        | {
+            readonly source: "login";
+            readonly machine: typeof Machine.Type;
+          }
     ) => Effect.Effect<void, LocalError>;
+    readonly forgetCredential: (apiUrl: string) => Effect.Effect<void, LocalError>;
+    readonly readPendingLogin: (
+      apiUrl: string
+    ) => Effect.Effect<Option.Option<PendingLogin>, LocalError>;
+    readonly savePendingLogin: (
+      apiUrl: string,
+      login: PendingLogin
+    ) => Effect.Effect<void, LocalError>;
+    readonly forgetPendingLogin: (apiUrl: string) => Effect.Effect<void, LocalError>;
     readonly readCachedPatch: (
       apiUrl: string,
       file: string
@@ -138,6 +170,7 @@ export const make = Effect.gen(function* () {
   );
   const configPath = path.join(dir, "config.json");
   const credentialsPath = path.join(dir, "credentials.json");
+  const deviceLoginPath = path.join(dir, "device-login.json");
   const patchesPath = path.join(dir, "patches.json");
   // The cache under its old name. Never read: forgetting it would create a
   // new patch at a new URL instead of updating the one it remembers.
@@ -197,6 +230,12 @@ export const make = Effect.gen(function* () {
     });
 
   const readCredentialFile = readHostKeyed(credentialsPath, "apiToken", credentialErrors);
+  const loginErrors = {
+    unreadable: `Pending logins could not be read: ${deviceLoginPath}. Check permissions.`,
+    invalid: `Pending logins are invalid: ${deviceLoginPath}. Remove that file and run: patchy login`,
+    legacy: `Pending logins use an invalid format: ${deviceLoginPath}. Remove that file and run: patchy login`
+  };
+  const readLoginFile = readHostKeyed(deviceLoginPath, "deviceCode", loginErrors);
   const readPatchFile = Effect.gen(function* () {
     if (yield* fs.exists(retiredPatchesPath).pipe(Effect.orElseSucceed(() => true))) {
       return yield* new LocalError({ message: cacheMoved });
@@ -245,6 +284,18 @@ export const make = Effect.gen(function* () {
   const entry = <A>(decoded: Effect.Effect<A, Schema.SchemaError>, message: string) =>
     decoded.pipe(Effect.mapError((cause) => new LocalError({ message, cause })));
 
+  const forgetHost = Effect.fn("State.forgetHost")(function* (
+    file: string,
+    document: Effect.Effect<typeof HostKeyed.Type, LocalError>,
+    apiUrl: string
+  ) {
+    const { hosts } = yield* document;
+    if (!(apiUrl in hosts)) return;
+    const remaining = { ...hosts };
+    delete remaining[apiUrl];
+    yield* writeJson(file, { hosts: remaining });
+  });
+
   return State.of({
     dir,
     credentialsPath,
@@ -267,7 +318,7 @@ export const make = Effect.gen(function* () {
           )
         );
       }),
-    saveCredential: (apiUrl, token, source) =>
+    saveCredential: (apiUrl, token, metadata) =>
       Effect.gen(function* () {
         // Read in two steps so the retired file is refused by its shape, and a
         // document with no salvageable host map is replaced rather than fatal.
@@ -284,9 +335,22 @@ export const make = Effect.gen(function* () {
               Effect.orElseSucceed(() => ({ hosts: {} as Record<string, unknown> }))
             )
         });
-        const entry = { token: Redacted.value(token), updatedAt: yield* now, source };
+        const entry = { token: Redacted.value(token), updatedAt: yield* now, ...metadata };
         yield* writeJson(credentialsPath, { hosts: { ...hosts, [apiUrl]: entry } });
       }),
+    forgetCredential: (apiUrl) => forgetHost(credentialsPath, readCredentialFile, apiUrl),
+    readPendingLogin: (apiUrl) =>
+      Effect.gen(function* () {
+        const { hosts } = yield* readLoginFile;
+        if (!(apiUrl in hosts)) return Option.none<PendingLogin>();
+        return Option.some(yield* entry(decodePendingLogin(hosts[apiUrl]), loginErrors.invalid));
+      }),
+    savePendingLogin: (apiUrl, login) =>
+      Effect.gen(function* () {
+        const { hosts } = yield* readLoginFile;
+        yield* writeJson(deviceLoginPath, { hosts: { ...hosts, [apiUrl]: login } });
+      }),
+    forgetPendingLogin: (apiUrl) => forgetHost(deviceLoginPath, readLoginFile, apiUrl),
     readCachedPatch: (apiUrl, file) =>
       Effect.gen(function* () {
         const { hosts } = yield* readPatchFile;
