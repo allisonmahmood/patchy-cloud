@@ -119,6 +119,8 @@ DATABASE_URL=postgres://... PATCHY_PUBLIC_BASE_URL=http://localhost:3000 \
   PATCHY_STORAGE_DIR=.local/manual-storage pnpm --filter @patchy/server dev
 ```
 
+`DATABASE_URL` and `PATCHY_PUBLIC_BASE_URL` are required; neither has a default.
+Startup refuses a missing public base URL rather than publishing links to localhost.
 Startup migrates but creates no credential. Against a disposable local database,
 apply `applyDevSeed(DATABASE_URL)` from `@patchy/auth/seed` after migration,
 then use `PATCHY_API_TOKEN=patchy-dev-token`. The seed is for development only.

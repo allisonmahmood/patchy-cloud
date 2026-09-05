@@ -1,10 +1,8 @@
 /** The patches capability's configuration, read from the environment through Effect `Config`. */
 import * as Config from "effect/Config";
 
-/** The origin a patch's public URL is built on. */
-export const publicBaseUrl = Config.string("PATCHY_PUBLIC_BASE_URL").pipe(
-  Config.withDefault("http://localhost:3000")
-);
+/** The required origin a patch's public URL is built on. */
+export const publicBaseUrl = Config.string("PATCHY_PUBLIC_BASE_URL");
 
 /** The largest document an upload may carry, in bytes. */
 export const maxHtmlBytes = Config.int("PATCHY_MAX_HTML_BYTES").pipe(
