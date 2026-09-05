@@ -24,10 +24,9 @@ import * as Option from "effect/Option";
 import * as PostHogClient from "./PostHogClient.js";
 
 /**
- * The events the instance reports. Business-shaped and named for what
- * happened, so a mint on the CLI side and a mint on the server side read as
- * the same moment in one narrative. The list is closed on purpose — serving a
- * patch is not on it.
+ * Business-shaped events, named for what happened. `token.minted` is retained
+ * for the device-login poll (auth spec §9); it has no emitter until that lands.
+ * The list is closed on purpose — serving a patch is not on it.
  */
 export type AnalyticsEventName =
   "token.minted" | "patch.created" | "patch.updated" | "patch.deleted" | "patch.expired";
@@ -85,8 +84,8 @@ export const make = Effect.gen(function* () {
         event: event.name,
         properties: {
           ...event.properties,
-          // A principal is an ownership row, not a person, and a reader is
-          // nobody at all. Person profiles would turn both into one.
+          // User ids attribute business events without creating person profiles.
+          // Reader visits are never analytics events.
           $process_person_profile: false
         }
       })

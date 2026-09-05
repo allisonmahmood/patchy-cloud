@@ -47,9 +47,7 @@ its code; no command exits on its own.
   stdout is empty, the exit code follows `kind`. The same shape as the
   server's 401 body, plus `kind`. No `code` field until an agent flow branches
   on one.
-- Stderr under `--json` carries exactly one thing besides a failure: the mint
-  announcement, when an upload minted a key — the one fact an agent must relay
-  whatever the mode.
+- Stderr under `--json` carries failures only.
 
 ### `--api-url`: a global flag feeding one `Instance` service
 

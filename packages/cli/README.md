@@ -17,31 +17,18 @@ node packages/cli/dist/index.js upload ./plan.html
 
 The build puts an executable at `packages/cli/dist/index.js`. Put that file on your `PATH` as `patchy` — symlink it, or add its directory — and every command below runs as plain `patchy`, which is how the rest of this document writes them.
 
-A publishing key is minted on first upload against an instance that hands them out, the URL prints on success, and uploading the same file again updates the same patch.
+Save a machine token you already hold with `patchy auth set`, or use the seed through
+`pnpm dev`. Uploading the same file again updates the same patch.
 
-For CI and other automation, set `PATCHY_SETUP_URL` to the instance you are publishing to and provide `PATCHY_SETUP_TOKEN` through a secret environment variable. This scoped workflow pins the intended instance, clears inherited credential overrides, verifies the stored token, and exits before upload if authentication or validation fails:
+For automation, save a key you already hold through a secret environment variable:
 
 <!-- patchy-packed-cli-e2e:start -->
 
 ```sh
-(
-  set +x
-  set -eu
-  : "${PATCHY_SETUP_URL:?Set PATCHY_SETUP_URL to your Patchy Cloud instance}"
-  : "${PATCHY_SETUP_TOKEN:?Set PATCHY_SETUP_TOKEN to a Patchy Cloud API token}"
-  PATCHY_API_URL="$PATCHY_SETUP_URL"
-  export PATCHY_API_URL
-  unset PATCHY_SETUP_URL
-  unset PATCHY_API_TOKEN
-  unset TOKEN
-  ARTIFACT_PATH='./review artifact.html'
-
-  printf '%s' "$PATCHY_SETUP_TOKEN" | patchy auth set --token-stdin --api-url "$PATCHY_API_URL"
-  unset PATCHY_SETUP_TOKEN
-  patchy whoami &&
-    patchy validate "$ARTIFACT_PATH" &&
-    patchy upload "$ARTIFACT_PATH"
-)
+set +x
+: "${PATCHY_SETUP_URL:?Set PATCHY_SETUP_URL to your Patchy Cloud instance}"
+: "${PATCHY_SETUP_TOKEN:?Set PATCHY_SETUP_TOKEN to a machine token you already hold}"
+printf '%s' "$PATCHY_SETUP_TOKEN" | patchy auth set --token-stdin --api-url "$PATCHY_SETUP_URL"
 ```
 
 <!-- patchy-packed-cli-e2e:end -->
@@ -56,17 +43,18 @@ Save an API token to local state, under the instance it resolves for: `--api-url
 patchy auth set --api-url https://pages.example.com
 ```
 
-For automation, use the fail-closed workflow above. It clears inherited URL and token overrides, stores the setup token through stdin, and verifies the stored credential before validation or upload.
+For automation, the example above saves a key through stdin without putting it in an argument.
 
 ### `patchy whoami [--api-url <url>]`
 
-Verify the stored credentials against the instance. Prints the account, the token name, and the token's scopes.
+Verify the configured credentials against the instance. Prints the user, company, role and machine.
 
 ```sh
 patchy whoami
-# Account: Bootstrap Account (acct_bootstrap)
-# API token: laptop (tok_1a2b3c...)
-# Scopes: upload
+# User: Patchy Dev (dev@patchy.local)
+# Company: Patchy Dev (patchy-dev)
+# Role: admin
+# Machine: Dev Machine (tok_dev)
 ```
 
 ### `patchy status [--api-url <url>]`
@@ -86,9 +74,9 @@ patchy status
 # }
 ```
 
-`instanceSource` names the link of the precedence chain that chose `instanceUrl`: `flag` (`--api-url`), `dev-env` (a `.local/dev/env` written by `pnpm dev`, found at or above the working directory), `env` (`PATCHY_API_URL`), `config` (the saved `config.json`), or `default`. `hasToken` walks the same credential chain an upload would, so `true` means an upload would have that token to send. Read `false` as _no token this command can vouch for_ — usually nothing is stored, but it also covers local state the probe declined to interpret. `tokenSource` is the stored credential's own `source` (`mint` or `auth-set`); it is `null` when there is no token, when the token came from `PATCHY_API_TOKEN` or the dev env, or when the stored entry predates that field. The token itself is never printed.
+`instanceSource` names what selected the URL: `flag`, `dev-env`, `env`, `config`, or `default`. `hasToken` walks the same credential chain as upload. `tokenSource` is `auth-set` for a saved key, or `null` for an environment/dev-env key, an older entry without provenance, or no usable key. The token itself is never printed.
 
-Local state the probe cannot read — a file in the retired single-instance format, malformed JSON, an unreadable file, or an invalid entry for this instance — is reported as `hasToken: false` rather than raised as an error, because a probe that cannot answer is worse than one that answers narrowly. The commands that would actually spend a token keep failing closed on exactly those files: `upload` and `whoami` stop with an error naming the file and its next action, and never treat it as a reason to publish without credentials.
+Local state the probe cannot read — a file in the retired single-instance format, malformed JSON, an unreadable file, or an invalid entry for this instance — is reported as `hasToken: false` rather than raised as an error, because a probe that cannot answer is worse than one that answers narrowly. The commands that would actually spend a token keep failing closed on exactly those files: `upload`, `delete` and `whoami` stop with an error naming the file and its next action, and never treat it as a reason to publish without credentials.
 
 So this report is a picture of local state, not a prediction of what `upload` will do. `hasToken: false` does not promise the next upload proceeds without a token, and it never means this machine has no token — a token may be sitting in a file the probe refused to guess about.
 
@@ -113,9 +101,9 @@ patchy upload ./plan.html
 # Version: 1
 ```
 
-Credential selection is deterministic: `PATCHY_API_TOKEN` wins, then the token a dev env seeded beside its URL, then the token stored for the resolved instance. When none exists, the CLI mints a publishing token for that instance and uses it. Every upload carries a bearer token; no configuration accepts a credential-free upload, and an authentication failure is reported as-is rather than retried without credentials.
+Credential selection is deterministic: `PATCHY_API_TOKEN` wins, then the token stored for the resolved instance, then the token seeded beside a dev-env URL. With no key, upload exits 1 (`local`) naming `patchy auth set --api-url <url>`. A rejected credential is reported as-is; the CLI never obtains a replacement on your behalf.
 
-With credentials, uploading a file the CLI has seen before updates that same patch (a new version). If that cached patch is unavailable, the upload fails; pass `--new` to create a brand-new patch with a server-generated ID. `--patch <patch-id>` is update-only: it can add a version to an existing active patch your own token owns, but it never creates a patch at a caller-chosen ID. Unknown, unavailable, or unowned targets fail with the same generic update error.
+Uploading a previously seen file updates the same patch. If it is unavailable, the upload fails; pass `--new` to create a new patch with a server-generated ID. `--patch <patch-id>` is update-only for an active patch owned by your user, through any of that user's machine tokens. Unknown, unavailable and unowned targets fail with the same generic error.
 
 ### `patchy delete <file> | --patch <patch-id>`
 
@@ -128,7 +116,7 @@ patchy delete ./plan.html
 # Patch ID: k7f2m9x1a3b8
 ```
 
-The delete carries the same credential chain as an upload, and only the key that published a patch can delete it. Unlike `upload`, a missing key is an error rather than a reason to mint: a fresh key would own nothing. A patch that is not there, or that the key does not own, is a `rejected` failure; the cache keeps its entry until the instance says yes.
+Delete uses the same credential chain as upload. Any machine token for the owner user can delete the patch. With no key it exits 1 (`local`) naming `patchy auth set --api-url <url>`; a missing or unowned patch is `rejected`, and the cache keeps its entry until the instance says yes.
 
 ## Exit codes
 
@@ -149,7 +137,7 @@ Nothing else. A bug in the CLI is one `Unexpected error: <message>` line and exi
 Every command takes these, before or after the subcommand:
 
 - `--api-url <url>` — the instance to talk to, overriding every other source; see [precedence](#environment-variables).
-- `--json` — print the result as one JSON document on stdout and nothing else: `auth set` prints `{ "ok": true, "instanceUrl" }`, `validate` prints `{ "ok": true, "warnings" }`, and `whoami`, `upload` and `delete` print the instance's response exactly as [`docs/API.md`](../../docs/API.md) describes it (`delete` prints `{ "ok": true }`). A failure is `{ "ok": false, "error", "kind" }` on stderr, stdout empty, with the exit code for `kind`. Stderr is otherwise empty, except that an upload that minted a key still prints the mint announcement there. `status` prints JSON either way.
+- `--json` — one result document on stdout: `auth set` prints `{ "ok": true, "instanceUrl" }`, `validate` prints `{ "ok": true, "warnings" }`, and `whoami`, `upload` and `delete` print the instance's response exactly as [`docs/API.md`](../../docs/API.md) describes it. A failure is `{ "ok": false, "error", "kind" }` on stderr, stdout empty, with the exit code for `kind`. Stderr is otherwise empty. `status` prints JSON either way.
 
 ## Command flags
 
@@ -157,12 +145,11 @@ Every command takes these, before or after the subcommand:
 - `--new` — on `upload`, always create a new patch with a server-generated ID instead of updating the one previously uploaded from this path. It cannot be combined with `--patch`.
 - `--patch <patch-id>` — on `upload`, update a specific existing patch. This is update-only and never creates a new patch. It cannot be combined with `--new`.
 - `--patch <patch-id>` — on `delete`, name the patch outright instead of finding it from the file it was uploaded from. It cannot be combined with a file argument.
-- `--anonymous` — deprecated and ignored. Uploads always use a publishing token; one is minted automatically when none is stored for the instance.
 
 ## Environment variables
 
 - `PATCHY_API_URL` — API base URL. Overrides the stored config; overridden by `--api-url` and by a dev env. Default: `http://localhost:3000`.
-- `PATCHY_API_TOKEN` — API token for ordinary authenticated commands such as `whoami`, `upload` and `delete`. It overrides every other token and is useful in CI; `auth set` does not read it. When no token is configured, `upload` mints a publishing token for the resolved instance and uses that; there is no credential-free upload.
+- `PATCHY_API_TOKEN` — machine token for authenticated commands such as `whoami`, `upload` and `delete`. It overrides every other token; `auth set` does not read it. No configured key means a local error directing you to `patchy auth set`.
 - `PATCHY_STATE_DIR` — directory for the CLI's config, credentials, and patch cache. Default: `~/.patchy`.
 
 Setting any of these to the empty string means the same thing as leaving it unset.

@@ -45,16 +45,6 @@ export const warn = (line: string) =>
     if (!(yield* JsonFlag)) yield* Console.error(line);
   });
 
-/**
- * A fact an agent must relay whatever the mode — today only the mint
- * announcement. Stdout in text mode; stderr under `--json`, where stdout is
- * the one document and nothing else.
- */
-export const announce = (line: string) =>
-  Effect.gen(function* () {
-    yield* (yield* JsonFlag) ? Console.error(line) : Console.log(line);
-  });
-
 /** Already rendered; carries only the exit code, so the runtime prints nothing more. */
 class Failed extends Data.Error<{ readonly code: number }> {
   readonly [Runtime.errorExitCode]: number;

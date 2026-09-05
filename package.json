@@ -29,6 +29,7 @@
     "@effect/sql-pg": "catalog:",
     "@effect/vitest": "catalog:",
     "@eslint/js": "^10.0.1",
+    "@patchy/auth": "workspace:*",
     "@types/node": "^22",
     "@types/pg": "^8.23.1",
     "effect": "catalog:",

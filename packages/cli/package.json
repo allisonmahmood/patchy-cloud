@@ -45,6 +45,7 @@
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
     "@patchy/api": "workspace:*",
+    "@patchy/auth": "workspace:*",
     "@patchy/core": "workspace:*",
     "effect": "catalog:",
     "vitest": "^4.1.11"

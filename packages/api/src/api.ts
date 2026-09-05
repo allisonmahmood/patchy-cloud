@@ -18,15 +18,13 @@ import {
   Conflict,
   Identity,
   InvalidHtml,
-  MintedToken,
-  MintQuotaExceeded,
+  LoggedOut,
   NotFound,
   Ok,
   PatchQuotaExceeded,
   PayloadTooLarge,
   RateLimited,
   RequestTargetTooLong,
-  SelfServiceDisabled,
   Unauthorized,
   UploadCreated,
   UploadRequest,
@@ -70,27 +68,18 @@ const describe = (description: string) => OpenApi.annotations({ description });
 
 export class AuthGroup extends HttpApiGroup.make("auth", { topLevel: true })
   .add(
-    HttpApiEndpoint.post("mint", "/tokens/self-service", {
-      success: MintedToken,
-      error: [BadRequest, SelfServiceDisabled, RateLimited, MintQuotaExceeded]
-    }).annotateMerge(
-      describe(
-        "Mint a self-service token. Takes no input: an absent body and `{}` are both accepted. " +
-          "The only route that admits a request with no credential — it is how a caller gets its " +
-          "first token — so the instance's enabled flag, a per-address rate limit and a per-address " +
-          "daily quota stand in for authentication. The plaintext token appears in this response " +
-          "and nowhere else."
-      )
-    ),
     HttpApiEndpoint.get("me", "/me", {
       success: Identity,
       error: protectedErrors
-    })
-      .middleware(Authorization)
-      .annotateMerge(
-        describe("Who the bearer token is: its principal, its own id and name, and its scopes.")
-      )
+    }).annotateMerge(describe("Who the bearer acts as: the user, company, role and machine.")),
+    HttpApiEndpoint.post("logout", "/logout", {
+      success: LoggedOut,
+      error: protectedErrors
+    }).annotateMerge(
+      describe("Revoke the bearer itself. A concurrent revocation is reported as `alreadyRevoked`.")
+    )
   )
+  .middleware(Authorization)
   .prefix("/api") {}
 
 export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true })
@@ -101,10 +90,10 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
       error: [PatchQuotaExceeded, ...protectedErrors, InvalidHtml, Conflict, PayloadTooLarge]
     }).annotateMerge(
       describe(
-        "Publish a document for the bearer token's principal. With no `patchId` it creates a patch " +
-          "and answers 201; with one it adds a version to that principal's patch and answers 200. " +
+        "Publish a document for the bearer token's user. With no `patchId` it creates a patch " +
+          "and answers 201; with one it adds a version to that user's patch and answers 200. " +
           "The HTML is checked against the safe-HTML policy first, and a 422 lists what failed. A create also debits " +
-          "the per-token create limit and counts against the live-patch quota; an update costs " +
+          "per-token create limit and counts against the user's live-patch quota; an update costs " +
           "nothing against either."
       )
     ),
@@ -114,7 +103,7 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
       error: patchRouteErrors
     }).annotateMerge(
       describe(
-        "Delete a patch owned by the bearer token's principal. The patch stops serving at once " +
+        "Delete a patch owned by the bearer token's user. The patch stops serving at once " +
           "and its content goes with the next expiry sweep."
       )
     )
@@ -128,7 +117,7 @@ export class PatchyApi extends HttpApi.make("patchy")
     OpenApi.annotations({
       title: "Patchy Cloud API",
       description:
-        "Every route lives under `/api` and speaks JSON. Every route but the self-service mint " +
+        "Every route lives under `/api` and speaks JSON. Every route " +
         "needs `Authorization: Bearer <token>`; a missing or invalid token is a 401 with " +
         "`{ ok: false, error }`. A refusal is always `{ ok: false, error }`, plus a `code` and " +
         "the number a client needs on the ones it branches on. A 429 also carries a " +

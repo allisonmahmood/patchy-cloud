@@ -4,8 +4,8 @@
  * The API's own bearer middleware authenticates every route the router
  * matches, before a body is read. What it cannot cover is everything that
  * never reaches a handler, and the contract there is the same one: every
- * `/api/*` request but the self-service mint spends one attempt of the
- * per-address protected-API limit, then needs a token. A request the router
+ * `/api/*` request spends one attempt of the per-address protected-API limit,
+ * then needs a token. A request the router
  * would refuse for its shape — a malformed target, an overlong patch id — or
  * not find at all learns that only once it has authenticated, so a caller
  * with no token cannot map the API by its status codes, and a flood of them
@@ -30,7 +30,7 @@ import {
   refuse,
   RequestTargetTooLong
 } from "@patchy/api";
-import { Authorization, Tokens } from "@patchy/auth";
+import { Authorization, MachineTokens } from "@patchy/auth";
 import { Limits } from "@patchy/limits";
 
 /** Protected-API attempts admitted per source address per minute, in memory. */
@@ -38,13 +38,8 @@ export const protectedApiRateLimitPerMinute = Config.int(
   "PATCHY_PROTECTED_API_RATE_LIMIT_PER_MINUTE"
 ).pipe(Config.withDefault(60));
 
-/**
- * Self-service minting's route, the API's only unauthenticated write. The
- * operation is `@patchy/auth`'s; the path is named here because the guard has
- * to know it admits a request with no credential — it is how a caller gets its
- * first token, and the mint's own guardrails stand in for authentication.
- */
-const SELF_SERVICE_MINT_PATH = "/api/tokens/self-service";
+/** No API paths admit unauthenticated callers until device login lands. */
+const UNAUTHENTICATED_PATHS: Readonly<Record<string, true>> = {};
 
 /**
  * The longest path parameter a patch route takes. Longer is a too-long target
@@ -83,7 +78,7 @@ export function classify(method: string, requestTarget: string): Target {
       ? { kind: "refused", status: 400 }
       : { kind: "public" };
   }
-  if (pathname === SELF_SERVICE_MINT_PATH) return { kind: "public" };
+  if (Object.hasOwn(UNAUTHENTICATED_PATHS, pathname)) return { kind: "public" };
   if (!isApiPath(pathname)) {
     // An encoded slash is one segment to the router, so `/api%2Fuploads` can
     // never route; it still reads as a probe of the API, and answers as one.
@@ -110,7 +105,7 @@ const authenticated = <E, R>(
 ): Effect.Effect<
   HttpServerResponse.HttpServerResponse,
   E,
-  R | HttpServerRequest.HttpServerRequest | Tokens.Tokens
+  R | HttpServerRequest.HttpServerRequest | MachineTokens.MachineTokens
 > =>
   Effect.flatMap(Authorization.identify, (identity) =>
     Option.isNone(identity) ? Effect.succeed(Authorization.unauthorized) : answer
@@ -122,7 +117,7 @@ const authenticated = <E, R>(
  */
 export const make = Effect.gen(function* () {
   const limits = yield* Limits.Limits;
-  const tokens = yield* Tokens.Tokens;
+  const tokens = yield* MachineTokens.MachineTokens;
   const limit = yield* protectedApiRateLimitPerMinute;
 
   return HttpMiddleware.make((app) =>
@@ -142,7 +137,7 @@ export const make = Effect.gen(function* () {
 
       if (target.kind === "route") return yield* app;
       return yield* authenticated(Effect.succeed(refusal(target.status))).pipe(
-        Effect.provideService(Tokens.Tokens, tokens)
+        Effect.provideService(MachineTokens.MachineTokens, tokens)
       );
     })
   );

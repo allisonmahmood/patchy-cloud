@@ -1,0 +1,9 @@
+# ADR-0007 — Patchy holds the company; Clerk knows the user
+
+Patchy's company is a Patchy table, not a Clerk Organization. Clerk owns sign-in and browser sessions; Patchy owns each user's exactly-one-company membership, roles, invitations and deactivation. Those relationships stay transactionally beside the patches they authorize, without an active-organization session state or a webhook mirror.
+
+Clerk Organizations would supply membership UI and organization invitations, but the [research recorded on #114](https://github.com/allisonmahmood/patchy-cloud/issues/114#issuecomment-5514015549) found a 20-member cap without the B2B Authentication add-on ($100/month, or $85/month billed annually, as of 2026-09-02). Organizations allow multiple memberships per user; Patchy's exactly-one-company invariant and last-active-admin rule remain Patchy's responsibility either way. Paying for Organizations now would not remove those rules.
+
+Patchy therefore creates the company and its first admin atomically, matches invitations by email, and serializes role and deactivation changes so concurrent actions cannot remove the last active admin. Reactivation restores membership access, not revoked machine tokens. Clerk's application-level invitations can deliver the email when the company pages land; membership remains local.
+
+Organizations return when company SSO needs linked or self-serve enterprise connections. That is a reason to adopt the integration then, not to make Clerk the company authority today. The [company-and-user decision](https://github.com/allisonmahmood/patchy-cloud/issues/121#issuecomment-5532380313) and [auth spec](https://github.com/allisonmahmood/patchy-cloud/issues/135) fix this boundary.

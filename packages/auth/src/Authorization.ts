@@ -17,7 +17,7 @@ import * as Option from "effect/Option";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import { Authorization, CurrentIdentity, type Identity, refuse, Unauthorized } from "@patchy/api";
 import * as Bearer from "./Bearer.js";
-import * as Tokens from "./Tokens.js";
+import * as MachineTokens from "./MachineTokens.js";
 
 /**
  * The one 401, as the wire spells it. Answered as a response rather than
@@ -31,28 +31,30 @@ export const unauthorized = refuse(Unauthorized, {
 
 /**
  * The identity the current request's bearer token resolves to, or `None` for
- * a missing, malformed, unknown or revoked one. A database failure is a
- * defect, not a `None`: it must never look like a bad token.
+ * a missing, malformed, unknown, revoked, expired, idle or deactivated one.
+ * A database failure is a defect, not a `None`: it must never look like a bad token.
  */
 export const identify: Effect.Effect<
   Option.Option<Identity>,
   never,
-  HttpServerRequest.HttpServerRequest | Tokens.Tokens
+  HttpServerRequest.HttpServerRequest | MachineTokens.MachineTokens
 > = Effect.gen(function* () {
-  const tokens = yield* Tokens.Tokens;
+  const tokens = yield* MachineTokens.MachineTokens;
   const request = yield* HttpServerRequest.HttpServerRequest;
   const credential = Bearer.parse(request.headers.authorization);
   if (credential.kind !== "bearer") return Option.none();
   return yield* tokens
     .authenticate(credential.token)
-    .pipe(Effect.catchTags({ SqlError: Effect.die }));
+    .pipe(Effect.map(Option.fromNullishOr), Effect.catchTags({ SqlError: Effect.die }));
 });
 
 export const make = Effect.gen(function* () {
-  const tokens = yield* Tokens.Tokens;
+  const tokens = yield* MachineTokens.MachineTokens;
   return Authorization.of({
     bearer: Effect.fn("Authorization.bearer")(function* (httpEffect) {
-      const identity = yield* identify.pipe(Effect.provideService(Tokens.Tokens, tokens));
+      const identity = yield* identify.pipe(
+        Effect.provideService(MachineTokens.MachineTokens, tokens)
+      );
       if (Option.isNone(identity)) return unauthorized;
       return yield* Effect.provideService(httpEffect, CurrentIdentity, identity.value);
     })

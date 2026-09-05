@@ -1,9 +1,6 @@
 /**
- * What the patches tests need from the auth schema: its tables (the
- * `patches` rows reference them) and a few principals and tokens to hold
- * patches. The package itself never imports `@patchy/auth`; the tests seed
- * rows with plain SQL and present identities through a stand-in bearer
- * middleware, which is exactly how the handlers meet a principal in production.
+ * Users and machines added to the seeded template. Production Patches never
+ * imports Auth: handlers receive identities from the bearer middleware.
  */
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -12,67 +9,80 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpApiMiddleware from "effect/unstable/httpapi/HttpApiMiddleware";
 import { Authorization, CurrentIdentity, Identity } from "@patchy/api";
-import { migrations as authMigrations } from "@patchy/auth";
+import { DEV_SEED } from "@patchy/auth/seed";
 import * as Testing from "@patchy/sql/testing";
-import { migrations } from "../migrations.js";
 
-/** The identities the tests act as; each token is its own bearer credential. */
+const company = {
+  id: DEV_SEED.companyId,
+  handle: DEV_SEED.companyHandle,
+  name: DEV_SEED.companyName
+};
+
+/** The identities the tests act as; two machines may act as the same user. */
 export const identities = {
   admin: new Identity({
-    accountId: "acct_admin",
-    accountName: "Admin",
-    apiTokenId: "tok_admin",
-    apiTokenName: "Admin token",
-    scopes: ["admin", "upload"]
+    user: { id: DEV_SEED.userId, email: DEV_SEED.email, name: DEV_SEED.userName },
+    company,
+    role: DEV_SEED.role,
+    machine: { id: DEV_SEED.tokenId, name: DEV_SEED.tokenName }
   }),
   uploader: new Identity({
-    accountId: "acct_uploader",
-    accountName: "Uploader",
-    apiTokenId: "tok_uploader",
-    apiTokenName: "Upload token",
-    scopes: ["upload"]
+    user: { id: "usr_uploader", email: "uploader@patchy.local", name: "Uploader" },
+    company,
+    role: "member",
+    machine: { id: "tok_uploader", name: "Upload machine" }
   }),
-  /** A second token on the uploader's principal. */
   sibling: new Identity({
-    accountId: "acct_uploader",
-    accountName: "Uploader",
-    apiTokenId: "tok_sibling",
-    apiTokenName: "Sibling token",
-    scopes: ["upload"]
+    user: { id: "usr_uploader", email: "uploader@patchy.local", name: "Uploader" },
+    company,
+    role: "member",
+    machine: { id: "tok_sibling", name: "Sibling machine" }
   }),
   reader: new Identity({
-    accountId: "acct_reader",
-    accountName: "Reader",
-    apiTokenId: "tok_reader",
-    apiTokenName: "Read token",
-    scopes: ["read"]
+    user: { id: "usr_reader", email: "reader@patchy.local", name: "Reader" },
+    company,
+    role: "member",
+    machine: { id: "tok_reader", name: "Reader machine" }
+  }),
+  quota: new Identity({
+    user: { id: "usr_quota", email: "quota@patchy.local", name: "Quota" },
+    company,
+    role: "member",
+    machine: { id: "tok_quota", name: "Quota machine" }
+  }),
+  quotaSibling: new Identity({
+    user: { id: "usr_quota", email: "quota@patchy.local", name: "Quota" },
+    company,
+    role: "member",
+    machine: { id: "tok_quota_sibling", name: "Second quota machine" }
   })
 } as const;
 
 const seed = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   for (const identity of Object.values(identities)) {
-    yield* sql`INSERT INTO accounts (id, name) VALUES (${identity.accountId}, ${identity.accountName})
+    if (identity.machine.id === DEV_SEED.tokenId) continue;
+    yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
+      VALUES (${identity.user.id}, ${`clerk_${identity.user.id}`}, ${identity.company.id},
+              ${identity.user.email}, ${identity.user.name}, ${identity.role})
       ON CONFLICT (id) DO NOTHING`;
-    yield* sql`INSERT INTO api_tokens (id, account_id, name, token_hash, scopes)
-      VALUES (${identity.apiTokenId}, ${identity.accountId}, ${identity.apiTokenName},
-              ${`hash:${identity.apiTokenId}`}, ${JSON.stringify(identity.scopes)}::jsonb)`;
+    yield* sql`INSERT INTO machine_tokens (id, user_id, name, token_hash, created_at, expires_at, last_used_at)
+      VALUES (${identity.machine.id}, ${identity.user.id}, ${identity.machine.name},
+              ${`hash:${identity.machine.id}`}, now(), now() + interval '90 days', now())`;
   }
 });
 
-/** A migrated database with both capabilities' tables and the fixtures above. */
-export const database = Layer.effectDiscard(seed).pipe(
-  Layer.provideMerge(Testing.layer({ ...authMigrations, ...migrations }))
-);
+/** The seeded template with the additional users and machines above. */
+export const database = Layer.effectDiscard(seed).pipe(Layer.provideMerge(Testing.layer()));
 
-/** Revokes a seeded token, as auth's `Tokens.revoke` would. */
-export const revoke = (apiTokenId: string) =>
+/** Revokes a fixture machine, as Auth's MachineTokens service would. */
+export const revoke = (machineTokenId: string) =>
   Effect.flatMap(
     SqlClient.SqlClient,
-    (sql) => sql`UPDATE api_tokens SET revoked_at = now() WHERE id = ${apiTokenId}`
+    (sql) => sql`UPDATE machine_tokens SET revoked_at = now() WHERE id = ${machineTokenId}`
   );
 
-/** The server side of the bearer middleware: the token is the identity's own id. */
+/** The server side of the bearer middleware: the credential is the machine's id. */
 export const authorization = Layer.succeed(
   Authorization,
   Authorization.of({
@@ -80,7 +90,7 @@ export const authorization = Layer.succeed(
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
         const token = request.headers.authorization?.replace(/^Bearer /, "");
-        const identity = Object.values(identities).find((it) => it.apiTokenId === token);
+        const identity = Object.values(identities).find((it) => it.machine.id === token);
         if (identity === undefined) {
           return yield* Effect.fail({
             ok: false as const,
@@ -92,8 +102,8 @@ export const authorization = Layer.succeed(
   })
 );
 
-/** The client side: present this identity's token on every request. */
+/** The client side: present this identity's credential on every request. */
 export const as = (identity: Identity) =>
   HttpApiMiddleware.layerClient(Authorization, ({ next, request }) =>
-    next(HttpClientRequest.bearerToken(request, identity.apiTokenId))
+    next(HttpClientRequest.bearerToken(request, identity.machine.id))
   );

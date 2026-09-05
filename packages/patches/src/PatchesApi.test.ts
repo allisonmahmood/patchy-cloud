@@ -15,7 +15,7 @@ import * as Patches from "./Patches.js";
 import * as PatchesApi from "./PatchesApi.js";
 import * as Fixtures from "./test/fixtures.js";
 
-const { admin, reader, uploader } = Fixtures.identities;
+const { admin, reader, sibling, uploader } = Fixtures.identities;
 
 const memoryStore = Layer.sync(ContentStore.ContentStore, () => {
   const objects = new Map<string, string>();
@@ -50,7 +50,7 @@ const layer = Layer.mergeAll(PatchesApi.layer, HttpServer.layerServices).pipe(
       ConfigProvider.fromUnknown({
         PATCHY_PUBLIC_BASE_URL: "https://patchy.example/",
         PATCHY_PATCH_CREATE_RATE_LIMIT_PER_MINUTE: "3",
-        PATCHY_LIVE_PATCHES_PER_TOKEN: "2"
+        PATCHY_LIVE_PATCHES_PER_USER: "2"
       })
     )
   )
@@ -68,7 +68,7 @@ it.layer(layer)("patches group", (it) => {
       assert.deepStrictEqual(created.warnings, []);
 
       const updated = yield* upload({ html: html("Second"), patchId: created.patchId }).pipe(
-        Effect.provide(Fixtures.as(uploader))
+        Effect.provide(Fixtures.as(sibling))
       );
       assert.instanceOf(updated, UploadUpdated);
       assert.strictEqual(updated.versionNumber, 2);
@@ -91,7 +91,7 @@ it.layer(layer)("patches group", (it) => {
       const admins = yield* upload({ html: html("Theirs") }).pipe(
         Effect.provide(Fixtures.as(admin))
       );
-      // Unknown and another principal's: one 404, never saying which.
+      // Unknown and another user's: one 404, never saying which.
       for (const patchId of ["abcdefabcdef", admins.patchId]) {
         const refused = yield* upload({ html: html("x"), patchId }).pipe(
           Effect.provide(asUploader),
@@ -103,15 +103,21 @@ it.layer(layer)("patches group", (it) => {
   );
 
   it.effect(
-    "throttles creates per token, then holds them to the live-patch quota, never updates",
+    "throttles creates per machine and keeps the owner's quota across machine changes",
     () =>
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.UTC(2026, 0, 1));
-        const as = Fixtures.as(Fixtures.identities.sibling);
+        const as = Fixtures.as(Fixtures.identities.quota);
         const first = yield* upload({ html: html("One") }).pipe(Effect.provide(as));
         yield* upload({ html: html("Two") }).pipe(Effect.provide(as));
         const quota = yield* upload({ html: html("Three") }).pipe(Effect.provide(as), Effect.flip);
         assert.include(quota, { ok: false, code: "live_patch_quota_exceeded", quota: 2 });
+        const asSibling = Fixtures.as(Fixtures.identities.quotaSibling);
+        const newMachineQuota = yield* upload({ html: html("New machine") }).pipe(
+          Effect.provide(asSibling),
+          Effect.flip
+        );
+        assert.include(newMachineQuota, { ok: false, code: "live_patch_quota_exceeded", quota: 2 });
         // The bucket is spent before the quota is counted.
         const throttled = yield* upload({ html: html("Four") }).pipe(
           Effect.provide(as),
@@ -120,7 +126,7 @@ it.layer(layer)("patches group", (it) => {
         assert.include(throttled, { ok: false, code: "rate_limited", retryAfterSeconds: 60 });
         // An update costs nothing against either.
         const updated = yield* upload({ html: html("Still one"), patchId: first.patchId }).pipe(
-          Effect.provide(as)
+          Effect.provide(asSibling)
         );
         assert.strictEqual(updated.versionNumber, 2);
 
@@ -132,7 +138,7 @@ it.layer(layer)("patches group", (it) => {
       })
   );
 
-  it.effect("lets owners publish without an upload scope, but gives an admin no reach", () =>
+  it.effect("lets members publish, but gives another user's admin role no ownership reach", () =>
     Effect.gen(function* () {
       const asOwner = yield* client.pipe(Effect.provide(Fixtures.as(reader)));
       const asAdmin = yield* client.pipe(Effect.provide(Fixtures.as(admin)));

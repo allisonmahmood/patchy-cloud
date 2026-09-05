@@ -1,6 +1,6 @@
 # Limits
 
-The fixed-window rate limiter behind every per-minute limit the hosting server enforces. `packages/limits` owns the window, the store and its cap; which limits exist, what they key on and how many attempts they admit is the consumer's, and the long-window ceilings (mint quota, patch quota) are database counts owned elsewhere.
+The fixed-window rate limiter behind every per-minute limit the hosting server enforces. `packages/limits` owns the window, the store and its cap; consumers own the keys and ceilings, while the patch quota is a database count owned by Patches.
 
 ## Language
 

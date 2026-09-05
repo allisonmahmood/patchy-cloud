@@ -16,10 +16,6 @@ _Avoid_: dotenv, the env file
 The contract an agent branches on: 0 ok, 1 `local` (fixable without the network), 2 `rejected` (the instance answered and said no), 3 `unreachable` (no usable answer), 130 interrupted, nothing else. Every failure is a `CliError` whose **kind** names its rung; the kind also rides in the `--json` failure document.
 _Avoid_: error code (ambiguous with the wire's `code`), status (ambiguous with HTTP and with the probe)
 
-**Auto-mint**:
-The publishing flow's act of requesting a self-service token from the target instance when it holds no token for that instance, announcing the mint as it happens. Never silent, and never triggered while any token is configured — a rejected token is an error, not a reason to mint again. Retires with login: the login handoff takes its place in the flow.
-_Avoid_: anonymous upload (retired), silent fallback, registration
-
 **State dir**:
 The per-user directory where the CLI keeps everything it remembers between runs: instance choice, credentials, the patch cache, and the default style.
 _Avoid_: config directory, dotfiles
@@ -28,12 +24,8 @@ _Avoid_: config directory, dotfiles
 The user-level style preference captured during onboarding and kept in the state dir; it applies whenever a project does not declare its own house style.
 _Avoid_: house style (a project's own style, which overrides it), theme, template
 
-**Mint announcement**:
-The line the publishing flow prints when auto-mint fires: which instance, where the token was saved, and how to keep an existing identity instead. It is the signal an agent relays to the user, and the lazy cue to suggest onboarding.
-_Avoid_: warning (it reports success, not a problem)
-
 **Login handoff**:
-What replaces the mint announcement once login lands: the URL and code the CLI prints (as JSON under `--json`) for the agent to relay to the person, then waits on. The one moment in publishing that needs a human; the agent never opens a browser on someone's desktop.
+Once device login lands, the URL and code the CLI prints for the agent to relay to the person confirming the machine. The one moment in publishing that needs a human; the agent never opens a browser on someone's desktop.
 _Avoid_: prompt, browser login
 
 **Driver**:
@@ -45,7 +37,7 @@ Software acting for a user, with that user's machine token: the CLI's primary dr
 _Avoid_: bot, service account, agent identity
 
 **Onboarding**:
-The agent-led first-time setup conversation — establish which instance to publish to, one question capturing the default style, then publish the welcome patch. Hosting is never assumed: with nothing configured there is nowhere to publish yet, so the instance is asked for or read from local state before anything is uploaded. Asked for by the user, or suggested after a mint announcement; always optional.
+The optional, user-requested first-time setup conversation — establish where to publish, capture a default style, then publish the welcome patch. With no publishing key, setup saves a key the user already holds before uploading.
 _Avoid_: signup, registration, setup wizard
 
 **Setup prompt**:
@@ -53,7 +45,7 @@ The copy-paste block in the README that a user hands their agent to get started:
 _Avoid_: install snippet (older internal name), install command (only one of its parts)
 
 **Publishing key**:
-What an auth token — today's self-service token, tomorrow's machine token — is called in front of the user: "your publishing key, saved on this machine". _Token_, _instance_, and _mint_ stay out of user-facing copy except on the operator-token path, where operator vocabulary is correct.
+The user-facing name for the machine token: the credential saved on this machine that lets it publish as its user. A replacement key for the same user keeps the same editing rights.
 _Avoid_: token (in user-facing copy), password, account
 
 **Patch cache**:

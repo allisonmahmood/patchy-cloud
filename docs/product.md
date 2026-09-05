@@ -18,7 +18,7 @@ A patch may say it needs a **primitive** — its own file storage or tables, or 
 
 A person, or an agent acting for them, through the `patchy` CLI. That is the only route today. The later routes are the same route: the SDK is what `init` puts in the repo, and the AI builder is an agent with the same skills and SDK, working on a sandboxed computer Patchy runs instead of the person's own machine. All three produce the same unit.
 
-Ownership: today a patch belongs to the token that created it. Once auth lands, a patch belongs to a **person** in a company; the person holds a token per device, every token acts for the person, and the company sets what the person may do.
+Ownership: a patch belongs to a **user** in a company. The user holds a machine token per device, every token acts for that user, and replacing a token never changes who owns their patches.
 
 ### Versions and publishing
 
@@ -148,7 +148,7 @@ A machine token is **the user's**, one per machine, shared by every agent on tha
 
 **Your machines** is the page that lists a user's tokens by name and last use, revokes one, or revokes all. Deactivating a user revokes every token and ends every session at once, including tier 1 and tier 2 patches they have open. CI holds a token from the same page, set through `PATCHY_API_TOKEN`; there is no company-owned or non-human token kind, so everything published has a human owner. Company-owned tokens for CI that is nobody's come back when someone needs them.
 
-With login, **self-service minting retires**: the zero-input token anyone could ask for was public hosting's door, and `patchy login` is Patchy Cloud's. A person with no account reaches sign-up from the same login page, so the agent-native first run stays one step — the login handoff simply replaces the mint announcement.
+**Self-service minting is gone.** Until device login lands, `patchy auth set` saves a machine token the user already holds, and the dev loop supplies its seeded key. The intended first run is `patchy login`: a URL and code relayed by the agent for the person to confirm.
 
 ### Who's who
 

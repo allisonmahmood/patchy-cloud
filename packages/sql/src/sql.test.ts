@@ -30,7 +30,7 @@ const tables = Effect.flatMap(
     }>`SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name`
 ).pipe(Effect.map((rows) => rows.map((row) => row.table_name)));
 
-it.layer(Testing.layer({ ...widgets, ...gadgets }))("migrator", (it) => {
+it.layer(Testing.emptyLayer({ ...widgets, ...gadgets }))("migrator", (it) => {
   it.effect("migrates an empty database in id order and records the ledger once", () =>
     Effect.gen(function* () {
       assert.deepStrictEqual(yield* ledger, [

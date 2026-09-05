@@ -57,7 +57,7 @@ the Frontend API. A doored response is per-viewer and may carry `Set-Cookie`,
 so it is `private, no-store`; caching stays URL-shaped only for public patches.
 
 **Clerk's keys are required configuration.** The server refuses to start
-without them, like the bootstrap token; there is no half-up state. Sign-out is a
+without them; there is no half-up state. Sign-out is a
 Patchy `POST` that revokes the Clerk session through the Backend API and clears
 every Clerk cookie with the `Domain` and `Path` its setter used.
 

@@ -1,5 +1,4 @@
 import { assert, it } from "@effect/vitest";
-import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { TestClock } from "effect/testing";
@@ -7,117 +6,119 @@ import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpServer from "effect/unstable/http/HttpServer";
 import * as HttpApiMiddleware from "effect/unstable/httpapi/HttpApiMiddleware";
 import * as HttpApiTest from "effect/unstable/httpapi/HttpApiTest";
-import { Analytics } from "@patchy/analytics";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { Authorization as AuthorizationTag, PatchyApi } from "@patchy/api";
-import { Limits } from "@patchy/limits";
 import * as Testing from "@patchy/sql/testing";
 import * as AuthApi from "./AuthApi.js";
 import * as Authorization from "./Authorization.js";
-import { migrations } from "./migrations.js";
-import * as Tokens from "./Tokens.js";
+import * as MachineTokens from "./MachineTokens.js";
+import { DEV_SEED } from "./seed.js";
 
-/** The client side of the bearer middleware: one layer per credential a test presents. */
 const bearer = (token: string) =>
   HttpApiMiddleware.layerClient(AuthorizationTag, ({ next, request }) =>
     next(HttpClientRequest.bearerToken(request, token))
   );
 
-/** The header verbatim, for the forms `HttpClientRequest.bearerToken` would normalise. */
 const rawAuthorization = (value: string) =>
   HttpApiMiddleware.layerClient(AuthorizationTag, ({ next, request }) =>
     next(HttpClientRequest.setHeader(request, "authorization", value))
   );
 
 const client = HttpApiTest.groups(PatchyApi, ["auth"]);
+const layer = Layer.mergeAll(AuthApi.layer, HttpServer.layerServices).pipe(
+  Layer.provideMerge(Authorization.layer),
+  Layer.provideMerge(MachineTokens.layer),
+  Layer.provideMerge(Testing.layer())
+);
 
-const layer = (env: Record<string, string>) =>
-  Layer.mergeAll(AuthApi.layer, HttpServer.layerServices).pipe(
-    // The group captures its middleware when it builds, so the server side
-    // of the bearer middleware is provided to it, and merged for the client.
-    Layer.provideMerge(Authorization.layer),
-    Layer.provideMerge(Layer.mergeAll(Tokens.layer, Limits.layer, Analytics.layerNoop)),
-    Layer.provideMerge(Testing.layer(migrations)),
-    Layer.provide(
-      ConfigProvider.layer(
-        ConfigProvider.fromUnknown({ PATCHY_BOOTSTRAP_API_TOKEN: "dev-token", ...env })
-      )
-    )
-  );
-
-it.layer(layer({}))("auth group: tokens and me", (it) => {
-  it.effect("answers /api/me for a live token", () =>
+it.layer(layer)("auth group: machine identity and logout", (it) => {
+  it.effect("answers the one identity wire shape for the seeded bearer", () =>
     Effect.gen(function* () {
       const identity = yield* (yield* client).me();
       assert.deepStrictEqual(
         { ...identity },
         {
-          accountId: Tokens.BOOTSTRAP_PRINCIPAL_ID,
-          accountName: "Bootstrap Account",
-          apiTokenId: Tokens.BOOTSTRAP_API_TOKEN_ID,
-          apiTokenName: "Bootstrap API Token",
-          scopes: ["admin", "upload"]
+          user: { id: DEV_SEED.userId, email: DEV_SEED.email, name: DEV_SEED.userName },
+          company: {
+            id: DEV_SEED.companyId,
+            handle: DEV_SEED.companyHandle,
+            name: DEV_SEED.companyName
+          },
+          role: DEV_SEED.role,
+          machine: { id: DEV_SEED.tokenId, name: DEV_SEED.tokenName }
         }
       );
-    }).pipe(Effect.provide(bearer("dev-token")))
+    }).pipe(Effect.provide(bearer(DEV_SEED.token)))
   );
 
-  it.effect("reads the header as Bearer.parse does: tabs and trailing whitespace are fine", () =>
+  it.effect("accepts the whitespace and casing allowed by Bearer.parse", () =>
     Effect.gen(function* () {
-      assert.strictEqual((yield* (yield* client).me()).apiTokenId, Tokens.BOOTSTRAP_API_TOKEN_ID);
-    }).pipe(Effect.provide(rawAuthorization("bEaReR\t dev-token \t")))
+      assert.strictEqual((yield* (yield* client).me()).machine.id, DEV_SEED.tokenId);
+    }).pipe(Effect.provide(rawAuthorization(`bEaReR\t ${DEV_SEED.token} \t`)))
   );
 
-  it.effect("401s an unknown token with the pinned body", () =>
+  it.effect("answers the same 401 for every dead credential on both protected routes", () =>
     Effect.gen(function* () {
-      const error = yield* (yield* client).me().pipe(Effect.flip);
-      assert.deepStrictEqual(error, { ok: false, error: "Missing or invalid API token." });
-    }).pipe(Effect.provide(bearer("nope")))
+      const now = Date.UTC(2026, 0, 1);
+      yield* TestClock.setTime(now);
+      const tokens = yield* MachineTokens.MachineTokens;
+      const sql = yield* SqlClient.SqlClient;
+      const revoked = yield* tokens.mint({ userId: DEV_SEED.userId, name: "Revoked" });
+      const expired = yield* tokens.mint({ userId: DEV_SEED.userId, name: "Expired" });
+      const idle = yield* tokens.mint({ userId: DEV_SEED.userId, name: "Idle" });
+      yield* tokens.revoke(revoked.id);
+      yield* sql`UPDATE machine_tokens SET expires_at = to_timestamp(${(now - 1) / 1_000}) WHERE id = ${expired.id}`;
+      yield* sql`UPDATE machine_tokens SET last_used_at = to_timestamp(${(now - 30 * 24 * 60 * 60 * 1_000 - 1) / 1_000}) WHERE id = ${idle.id}`;
+      yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
+      VALUES ('usr_api_inactive', 'user_api_inactive', ${DEV_SEED.companyId}, 'inactive@api.test', 'Inactive', 'member')`;
+      const deactivated = yield* tokens.mint({ userId: "usr_api_inactive", name: "Deactivated" });
+      yield* sql`UPDATE users SET deactivated_at = to_timestamp(${now / 1_000}) WHERE id = 'usr_api_inactive'`;
+      for (const token of [
+        "unknown-credential",
+        revoked.token,
+        expired.token,
+        idle.token,
+        deactivated.token
+      ]) {
+        const api = yield* client.pipe(Effect.provide(bearer(token)));
+        const expected = { ok: false, error: "Missing or invalid API token." };
+        assert.deepStrictEqual(yield* api.me().pipe(Effect.flip), expected);
+        assert.deepStrictEqual(yield* api.logout().pipe(Effect.flip), expected);
+      }
+    })
   );
 
-  it.effect("refuses to mint while self-service is disabled", () =>
+  it.effect("refuses missing and malformed authorization", () =>
     Effect.gen(function* () {
-      const refused = yield* (yield* client).mint().pipe(Effect.flip);
-      assert.deepStrictEqual(refused, {
-        ok: false,
-        error: "This instance does not issue self-service tokens. Ask its operator for a token.",
-        code: "self_service_disabled"
-      });
-    }).pipe(Effect.provide(bearer("unused")))
+      const expected = { ok: false, error: "Missing or invalid API token." };
+      const withoutHeader = HttpApiMiddleware.layerClient(AuthorizationTag, ({ next, request }) =>
+        next(request)
+      );
+      const missing = yield* client.pipe(Effect.provide(withoutHeader));
+      assert.deepStrictEqual(yield* missing.me().pipe(Effect.flip), expected);
+      const malformed = yield* client.pipe(Effect.provide(rawAuthorization("Basic not-a-bearer")));
+      assert.deepStrictEqual(yield* malformed.logout().pipe(Effect.flip), expected);
+    })
   );
-});
 
-it.layer(
-  layer({
-    PATCHY_ALLOW_SELF_SERVICE_TOKENS: "true",
-    PATCHY_SELF_SERVICE_MINT_RATE_LIMIT_PER_MINUTE: "2",
-    PATCHY_SELF_SERVICE_MINTS_PER_IP_PER_DAY: "3"
-  })
-)("auth group: self-service minting", (it) => {
-  it.effect("mints a token that authenticates, then throttles, then hits the quota", () =>
+  it.effect("logout revokes only this machine, then refuses its credential", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(Date.UTC(2026, 0, 1));
-      const api = yield* client.pipe(Effect.provide(bearer("unused")));
-      const minted = yield* api.mint();
-      assert.deepStrictEqual(Object.keys(minted).sort(), ["ok", "token"]);
-
-      const me = yield* (yield* client.pipe(Effect.provide(bearer(minted.token)))).me();
-      assert.strictEqual(me.apiTokenName, "Self-service token 2026-01-01");
-      assert.deepStrictEqual(me.scopes, ["upload"]);
-
-      yield* api.mint();
-      // The per-minute limit comes before the quota is counted.
-      const throttled = yield* api.mint().pipe(Effect.flip);
-      assert.deepStrictEqual(throttled, {
+      const tokens = yield* MachineTokens.MachineTokens;
+      const machine = yield* tokens.mint({ userId: DEV_SEED.userId, name: "Logging out" });
+      const other = yield* tokens.mint({ userId: DEV_SEED.userId, name: "Other laptop" });
+      const api = yield* client.pipe(Effect.provide(bearer(machine.token)));
+      assert.deepStrictEqual({ ...(yield* api.logout()) }, { ok: true, alreadyRevoked: false });
+      assert.deepStrictEqual(yield* api.me().pipe(Effect.flip), {
         ok: false,
-        error: "Rate limit exceeded.",
-        code: "rate_limited",
-        retryAfterSeconds: 60
+        error: "Missing or invalid API token."
       });
-
-      yield* TestClock.adjust("1 minute");
-      yield* api.mint();
-      const exceeded = yield* api.mint().pipe(Effect.flip);
-      assert.include(exceeded, { ok: false, code: "mint_quota_exceeded", quota: 3 });
+      assert.deepStrictEqual(yield* api.logout().pipe(Effect.flip), {
+        ok: false,
+        error: "Missing or invalid API token."
+      });
+      const stillLive = yield* client.pipe(Effect.provide(bearer(other.token)));
+      assert.strictEqual((yield* stillLive.me()).machine.id, other.id);
     })
   );
 });

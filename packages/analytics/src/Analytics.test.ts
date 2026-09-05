@@ -13,7 +13,7 @@ import * as PostHogClient from "./PostHogClient.js";
 
 const event: Analytics.AnalyticsEvent = {
   name: "patch.created",
-  principalId: "acct_1",
+  principalId: "usr_1",
   properties: { patchId: "pch_1", versionNumber: 1 }
 };
 
@@ -60,7 +60,7 @@ it.effect("reports an event on its principal without a person profile", () =>
     );
     assert.deepStrictEqual(client.messages, [
       {
-        distinctId: "acct_1",
+        distinctId: "usr_1",
         event: "patch.created",
         properties: { patchId: "pch_1", versionNumber: 1, $process_person_profile: false }
       }

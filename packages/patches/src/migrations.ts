@@ -1,7 +1,7 @@
 /**
  * The patches capability's schema: id 3 of the global migration sequence
  * (`packages/sql/CONTEXT.md`), the baseline for `patches` and
- * `patch_versions`. `auth` holds 1 and 2, which these tables reference.
+ * `patch_versions`. Companies holds 1 and Auth holds 2.
  */
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -19,7 +19,9 @@ export const migrations: Migrations = {
   "0003_patches_baseline": ddl(`
     CREATE TABLE patches (
       id TEXT PRIMARY KEY,
-      account_id TEXT NOT NULL REFERENCES accounts(id),
+      company_id TEXT NOT NULL REFERENCES companies(id),
+      owner_user_id TEXT NOT NULL REFERENCES users(id),
+      scope TEXT NOT NULL DEFAULT 'company' CHECK (scope IN ('company', 'public')),
       title TEXT NOT NULL,
       current_version_id TEXT,
       repo_org TEXT,
@@ -39,7 +41,7 @@ export const migrations: Migrations = {
       object_key TEXT NOT NULL,
       content_hash TEXT NOT NULL,
       file_size INTEGER NOT NULL,
-      created_by_api_token_id TEXT NOT NULL REFERENCES api_tokens(id),
+      created_by_machine_token_id TEXT NOT NULL REFERENCES machine_tokens(id),
       source_ip TEXT,
       user_agent TEXT,
       cli_version TEXT,
@@ -50,7 +52,8 @@ export const migrations: Migrations = {
       UNIQUE (patch_id, version_number)
     );
 
-    CREATE INDEX patches_account_id_idx ON patches(account_id);
+    CREATE INDEX patches_company_id_idx ON patches(company_id);
+    CREATE INDEX patches_owner_user_id_idx ON patches(owner_user_id);
     CREATE INDEX patch_versions_patch_id_idx ON patch_versions(patch_id);
   `)
 };

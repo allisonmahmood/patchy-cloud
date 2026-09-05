@@ -5,7 +5,7 @@ The Postgres client every capability package queries through, and the Migrator t
 ## Language
 
 **Migration**:
-One schema step a capability package owns, keyed `<id>_<name>` in that package's migration record and run once through Effect's Migrator. Ids form one global integer sequence across every package — `auth` takes 1–2, `patches` 3 onward — so a duplicate id anywhere fails the whole run before any step executes. Every pending step runs in one transaction under an `ACCESS EXCLUSIVE` lock on the ledger; a failing step rolls the batch back. Steps are plain DDL: the ledger is the guard, so no `IF NOT EXISTS`.
+One schema step a capability package owns, keyed `<id>_<name>` in its migration record and run once through Effect's Migrator. Ids form one global sequence — Companies owns baseline 1, Auth 2 and Patches 3 — and duplicate ids fail before any step executes; pending steps run transactionally under an exclusive ledger lock, so a failure rolls the batch back.
 _Avoid_: schema version, patch (that word is the product's), idempotent migration (they are not, by design)
 
 **Ledger**:
