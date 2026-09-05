@@ -76,5 +76,6 @@ test("patchy-login: browser confirmation logs the packed CLI in; browser revoke 
   const revoked = await live.cli(["whoami", "--json"]);
   expect(revoked.status).toBe(2);
   expect(revoked.stdout).toBe("");
-  expect(decodeFailure(revoked.stderr).kind).toBe("rejected");
+  // CLI JSON omits HTTP status; this literal is the API's Unauthorized (401) wire contract.
+  expect(decodeFailure(revoked.stderr).error).toBe("Missing or invalid API token.");
 });
