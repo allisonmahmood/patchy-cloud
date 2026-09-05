@@ -30,12 +30,7 @@ import * as PostHogClient from "./PostHogClient.js";
  * patch is not on it.
  */
 export type AnalyticsEventName =
-  | "token.minted"
-  | "patch.created"
-  | "patch.updated"
-  | "patch.disabled"
-  | "patch.deleted"
-  | "patch.expired";
+  "token.minted" | "patch.created" | "patch.updated" | "patch.deleted" | "patch.expired";
 
 /** What an event property may hold. Ids, sizes, counts, and states — nothing else. */
 export type AnalyticsPropertyValue = string | number | boolean | null;

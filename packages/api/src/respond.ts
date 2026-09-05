@@ -3,7 +3,7 @@
  * the wire schema that names it, at that schema's status, and a JSON body is
  * read and decoded through the schema that describes it.
  *
- * Several refusals share one body shape (`Forbidden` and `NotFound` are both
+ * Several refusals share one body shape (`BadRequest` and `NotFound` are both
  * `{ ok, error }`), so which schema encodes a body is the only thing that
  * tells them apart — a handler chooses it here rather than failing with a
  * value the endpoint's error union could encode as either.
@@ -16,7 +16,7 @@ import * as SchemaAST from "effect/SchemaAST";
 import type * as SchemaIssue from "effect/SchemaIssue";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
-import { BadRequest, RateLimited } from "./schemas.js";
+import { RateLimited } from "./schemas.js";
 
 const statusOf = SchemaAST.resolveAt<number>("httpApiStatus");
 const parseJson = Schema.decodeUnknownResult(Schema.fromJsonString(Schema.Unknown));
@@ -43,10 +43,6 @@ export const rateLimited = (decision: { readonly retryAfterSeconds: number }) =>
     },
     { "retry-after": String(decision.retryAfterSeconds) }
   );
-
-/** The one 400 for a body the route could not decode. */
-export const malformedBody = () =>
-  refuse(BadRequest, { ok: false, error: "Malformed request body." });
 
 /**
  * A body that is not JSON, or JSON the schema refused. `field` is the
@@ -77,11 +73,10 @@ export class BodyTooLarge extends Schema.TaggedError<BodyTooLarge>()("BodyTooLar
 
 /**
  * The current request's body as JSON, capped at `maxBytes`. An absent or
- * blank body is `{}`: every payload the contract takes has only optional
- * fields, so nothing sent is the same request as nothing in it. A declared
- * length over the cap is refused before the body is read; a body that fails
- * to read — the cap hit mid-stream, or the client gone — is malformed, since
- * there is no whole body to decode.
+ * blank body is `{}`; the route's schema decides whether it is valid.
+ * A declared length over the cap is refused before the body is read; a body
+ * that fails to read — the cap hit mid-stream, or the client gone — is
+ * malformed, since there is no whole body to decode.
  */
 export const readBody = (maxBytes: number) =>
   Effect.gen(function* () {

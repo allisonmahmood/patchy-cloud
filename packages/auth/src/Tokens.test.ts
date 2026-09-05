@@ -39,21 +39,21 @@ it.layer(Tokens.layer.pipe(Layer.provideMerge(Testing.layer(migrations)), Layer.
     it.effect("revokes a token as a state its row keeps, exactly once", () =>
       Effect.gen(function* () {
         const service = yield* tokens;
-        const created = yield* service.create({
-          accountId: Tokens.BOOTSTRAP_PRINCIPAL_ID,
+        const created = yield* service.mint({
+          sourceIp: "192.0.2.136",
+          quota: 2,
           name: "Revocable token",
-          scopes: ["upload"],
           token: "revocable"
         });
         assert.strictEqual(
           Option.getOrThrow(yield* service.authenticate("revocable")).apiTokenId,
-          created.id
+          created.apiTokenId
         );
 
-        const first = Option.getOrThrow(yield* service.revoke(created.id));
+        const first = Option.getOrThrow(yield* service.revoke(created.apiTokenId));
         assert.deepStrictEqual(first, {
-          id: created.id,
-          accountId: Tokens.BOOTSTRAP_PRINCIPAL_ID,
+          id: created.apiTokenId,
+          accountId: created.accountId,
           name: "Revocable token",
           revokedAt: first.revokedAt,
           alreadyRevoked: false
@@ -61,7 +61,7 @@ it.layer(Tokens.layer.pipe(Layer.provideMerge(Testing.layer(migrations)), Layer.
         // Revoked is a state, never a deletion: the token authenticates nothing
         // any more, and the row it left behind is still there to be read.
         assert.isTrue(Option.isNone(yield* service.authenticate("revocable")));
-        const again = Option.getOrThrow(yield* service.revoke(created.id));
+        const again = Option.getOrThrow(yield* service.revoke(created.apiTokenId));
         assert.strictEqual(again.alreadyRevoked, true);
         // The first moment stands — it is when the patches' top-ups froze.
         assert.strictEqual(again.revokedAt, first.revokedAt);
@@ -72,14 +72,14 @@ it.layer(Tokens.layer.pipe(Layer.provideMerge(Testing.layer(migrations)), Layer.
     it.effect("lets only one of two concurrent revocations claim the first stamp", () =>
       Effect.gen(function* () {
         const service = yield* tokens;
-        const created = yield* service.create({
-          accountId: Tokens.BOOTSTRAP_PRINCIPAL_ID,
+        const created = yield* service.mint({
+          sourceIp: "192.0.2.137",
+          quota: 1,
           name: "Doubly revoked token",
-          scopes: ["upload"],
           token: "doubly"
         });
         const [first, second] = yield* Effect.all(
-          [service.revoke(created.id), service.revoke(created.id)],
+          [service.revoke(created.apiTokenId), service.revoke(created.apiTokenId)],
           { concurrency: "unbounded" }
         ).pipe(Effect.map((results) => results.map(Option.getOrThrow)));
         assert.deepStrictEqual([first!.alreadyRevoked, second!.alreadyRevoked].sort(), [

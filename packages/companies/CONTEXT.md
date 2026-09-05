@@ -50,4 +50,5 @@ _Avoid_: freeze, lock, deactivate (an admin's act on a user)
 
 **Operator**:
 Patchy, running the platform. Platform powers only — create, suspend or delete a company, quotas, moderation — never a role inside a company, and never the word for whoever drives the CLI (that is the agent, see [Publishing](../cli/CONTEXT.md)).
+Its surfaces are a separate login and separate dashboards, never a company in the product and never in the `patchy` CLI.
 _Avoid_: admin (a company role), superuser, staff, the CLI's user

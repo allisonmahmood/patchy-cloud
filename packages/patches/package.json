@@ -4,7 +4,7 @@
   "private": true,
   "license": "UNLICENSED",
   "type": "module",
-  "description": "The patches capability: records and versions, the upload contract, visits and the retention clock, pins, moderation, the patch quota, the expiry sweep, the patches/patch_versions migrations, and the patches HttpApi group.",
+  "description": "The patches capability: records and versions, the upload contract, visits and the retention clock, owner-only deletion, the patch quota, the expiry sweep, the patches/patch_versions migrations, and the patches HttpApi group.",
   "exports": {
     ".": {
       "development": "./src/index.ts",
