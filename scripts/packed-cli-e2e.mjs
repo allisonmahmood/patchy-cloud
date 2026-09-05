@@ -591,10 +591,7 @@ try {
       objectDir,
       expectAuthoritativeNonEmpty: true,
       expectEmptyCliState: true,
-      stderr:
-        args[0] === "share"
-          ? /Run: patchy login --api-url http:\/\/127\.0\.0\.1:\d+/
-          : /Run: patchy auth set --api-url http:\/\/127\.0\.0\.1:\d+/,
+      stderr: /Run: patchy auth set --api-url http:\/\/127\.0\.0\.1:\d+/,
       exitCode: 1
     });
     assert.equal(failure.stdout, "", "--json failure must leave stdout empty");

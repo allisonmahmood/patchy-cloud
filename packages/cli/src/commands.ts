@@ -105,12 +105,12 @@ const configuredCredential = Effect.gen(function* () {
 });
 
 /** Protected commands fail locally before making a request without a key. */
-const requiredToken = Effect.fn("requiredToken")(function* (nextCommand = "auth set") {
+const requiredToken = Effect.fn("requiredToken")(function* () {
   const credential = yield* configuredCredential;
   if (Option.isSome(credential)) return credential.value.token;
   const { apiUrl } = yield* Instance.Instance;
   return yield* new LocalError({
-    message: `No publishing key is stored for ${apiUrl}.\nRun: patchy ${nextCommand} --api-url ${apiUrl}`
+    message: `No publishing key is stored for ${apiUrl}.\nRun: patchy auth set --api-url ${apiUrl}`
   });
 });
 
@@ -458,7 +458,7 @@ const share = Command.make(
           )
         );
         const patchId = yield* patchTarget(file, options.patch);
-        const token = yield* requiredToken("login");
+        const token = yield* requiredToken();
         const client = yield* Api.client(token);
         const shared = yield* client
           .share({ params: { patchId }, payload: new ShareRequest({ scope }) })
