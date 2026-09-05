@@ -64,10 +64,12 @@ it.layer(services)("first-party pages in memory", (it) => {
       for (const target of [
         "https://foreign.invalid/",
         "//foreign.invalid/",
+        "//[",
         "/\\foreign.invalid/",
         "/\n/foreign.invalid/"
       ]) {
         const response = yield* send(`/login?return=${encodeURIComponent(target)}`);
+        assert.strictEqual(response.status, 200);
         assert.include(
           yield* Effect.promise(() => response.text()),
           encodeURIComponent(`${origin}/join`)
@@ -156,6 +158,15 @@ it.layer(services)("first-party pages in memory", (it) => {
       assert.include(html, "Patchy Dev");
       assert.include(html, "Other Company");
       assert.notInclude(html, 'name="handle"');
+      const create = yield* send(
+        "/join",
+        post(
+          { action: "create", name: "Uninvited Company", handle: "uninvited-company" },
+          sessionCookie
+        )
+      );
+      assert.strictEqual(create.status, 409);
+      assert.strictEqual(yield* (yield* Users.Users).findByClerkId("user_invitee"), null);
       const joined = yield* send(
         "/join",
         post({ action: "join", inviteId: second.id }, sessionCookie)
