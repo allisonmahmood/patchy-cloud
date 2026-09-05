@@ -44,7 +44,7 @@ pnpm patchy upload examples/plan.html --json
 
 `pnpm patchy` runs the CLI from source; there is no build step. Run it from inside the worktree and it finds `.local/dev/env` on its own (it says `target came from .local/dev/env`). Passing `--api-url` switches that discovery off and the CLI then wants a stored token, so leave the flag out locally.
 
-The upload's `publicUrl` is the page. Uploading the same file again bumps the version of the same patch at the same URL; if the CLI answers `Cached patch is unavailable for update`, the patch it remembers is gone from this instance (a `reset` does that) and `--new` creates a fresh one.
+The upload's `publicUrl` is the company page, not an anonymous public link. Uploading the same file again bumps the version of the same patch at the same URL; if the CLI answers `Cached patch is unavailable for update`, the patch it remembers is gone from this instance (a `reset` does that) and `--new` creates a fresh one.
 
 For `curl` against the API with the token, or for `DATABASE_URL`, export the env file: `set -a; . .local/dev/env; set +a`.
 
@@ -55,6 +55,23 @@ Fetch the page and read what the server actually sent:
 ```sh
 curl -i <publicUrl>
 ```
+
+With no cookies, a newly published patch must answer **401** with the HTML
+**Sign in** door, `x-patchy-sign-in-url`, and `Cache-Control: private, no-store`,
+without `Location` or `WWW-Authenticate`. A machine token will not open it.
+Open it through the user's browser; bind the seeded admin to their Clerk user
+as above so they are in the patch's company. One sign-in returns to the patch;
+reload after 70 seconds to exercise the shell's session refresh.
+
+For sharing-path verification, use the disposable database to set that patch's
+`scope = 'public'` in `patches`: both latest and version URLs must answer 200
+with `Cache-Control: public, max-age=60` and the unchanged script-free CSP.
+Restore `scope = 'company'` afterward. A signed-in foreign-company reader and
+a missing patch must get the same private, uncached 404; unenrolled readers go
+to `/join` with the patch as `return`, and deactivated readers get 403.
+The packed CLI e2e checks the cookie-free 401 case; its public viewer assertions
+wait for the sharing command. Production-domain Clerk handshake verification
+remains a separate live check.
 
 The server logs nothing per request, so `pnpm dev logs` will not show a 401 or a 500; it answers "did it start, on which port". Filter it with `grep -E '\[(server|dev)\]'`, since most of the file is Postgres chatter, and expect one benign `relation "schema_migrations" does not exist` line on first run. Request-level evidence comes from the response itself.
 
@@ -70,7 +87,7 @@ pnpm dev stop && pnpm dev
 
 About five seconds. Uploads and the database survive it.
 
-`pnpm dev reset` is different: it wipes `.local/dev/` (every upload, the database, the log) and starts fresh on the same ports with the same seeded token. Reach for it when the migration ledger changed shape or the data is suspect, and expect earlier uploads to 404 afterwards.
+`pnpm dev reset` is different: it wipes `.local/dev/` (every upload, the database, the log) and starts fresh on the same ports with the same seeded token. Reach for it when the migration ledger changed shape or the data is suspect. Earlier uploads are then missing: an active signed-in reader gets 404, while a cookie-free fetch still gets the indistinguishable 401 door.
 
 ## 5. Stop
 

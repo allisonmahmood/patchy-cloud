@@ -73,8 +73,8 @@ it.layer(layer)("patches group", (it) => {
       assert.instanceOf(updated, UploadUpdated);
       assert.strictEqual(updated.versionNumber, 2);
 
-      const served = Option.getOrThrow(yield* (yield* Content.Content).read(created.patchId));
-      assert.include(served.html, "Second");
+      const served = Option.getOrThrow(yield* (yield* Patches.Patches).find(created.patchId));
+      assert.include(yield* (yield* Content.Content).read(served.version), "Second");
     })
   );
 
@@ -162,10 +162,12 @@ it.layer(layer)("patches group", (it) => {
         error: "Patch not found."
       });
       const content = yield* Content.Content;
-      assert.include(Option.getOrThrow(yield* content.read(created.patchId)).html, "Owner update");
+      const patches = yield* Patches.Patches;
+      const current = Option.getOrThrow(yield* patches.find(created.patchId));
+      assert.include(yield* content.read(current.version), "Owner update");
 
       assert.isTrue((yield* asOwner.delete({ params })).ok);
-      assert.isTrue(Option.isNone(yield* content.read(created.patchId)));
+      assert.isTrue(Option.isNone(yield* patches.find(created.patchId)));
       assert.deepStrictEqual(yield* asOwner.delete({ params }).pipe(Effect.flip), {
         ok: false,
         error: "Patch not found."

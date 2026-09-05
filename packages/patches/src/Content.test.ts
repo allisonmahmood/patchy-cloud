@@ -108,13 +108,12 @@ it.layer(
       assert.strictEqual(updated.versionNumber, 2);
 
       const service = yield* content;
-      const latest = Option.getOrThrow(yield* service.read(created.patchId));
-      assert.strictEqual(latest.html, "<p>two</p>");
+      const found = yield* patches;
+      const latest = Option.getOrThrow(yield* found.find(created.patchId));
+      assert.strictEqual(yield* service.read(latest.version), "<p>two</p>");
       assert.strictEqual(latest.version.sourceIp, "203.0.113.9");
-      const first = Option.getOrThrow(yield* service.read(created.patchId, 1));
-      assert.strictEqual(first.html, "<p>one</p>");
-      assert.isTrue(Option.isNone(yield* service.read(created.patchId, 3)));
-      assert.isTrue(Option.isNone(yield* service.read("nope")));
+      const first = Option.getOrThrow(yield* found.find(created.patchId, 1));
+      assert.strictEqual(yield* service.read(first.version), "<p>one</p>");
       assert.deepStrictEqual(
         yield* store.keys,
         [
@@ -133,8 +132,8 @@ it.layer(
         Effect.flip
       );
       assert.strictEqual(failed._tag, "StoreUnavailable");
-      const current = Option.getOrThrow(yield* (yield* content).read(created.patchId));
-      assert.strictEqual(current.version.id, created.versionId);
+      const current = Option.getOrThrow(yield* (yield* patches).find(created.patchId));
+      assert.strictEqual(yield* (yield* content).read(current.version), "<p>original</p>");
     })
   );
 

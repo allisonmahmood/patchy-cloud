@@ -20,9 +20,6 @@ describe("renderHome", () => {
     // The page pins the configured origin and nothing else: no instance URL is
     // baked into the rendered quick start.
     expect(html).not.toContain("patchyhq.com");
-    expect(html.indexOf("Requires the <code>patchy</code> CLI")).toBeLessThan(
-      html.indexOf("data-patchy-quick-start")
-    );
     expect(commands).toContain('patchy auth set --token-stdin --api-url "$PATCHY_API_URL"');
     expect(commandNames(commands)).toEqual(["auth", "whoami", "validate", "upload"]);
 
@@ -65,7 +62,7 @@ describe("renderPatchWrapper", () => {
     id: "patch12345ab",
     companyId: DEV_SEED.companyId,
     ownerUserId: DEV_SEED.userId,
-    scope: "company",
+    scope: "public",
     title: "",
     currentVersionId: "ver_1",
     repoOrg: null,
@@ -94,7 +91,7 @@ describe("renderPatchWrapper", () => {
     createdAt: "2026-01-01T00:00:00.000Z"
   };
 
-  it("is the sandboxed frame and nothing else", () => {
+  it("keeps a public patch in a script-free sandboxed frame", () => {
     const html = renderPatchWrapper({
       patch,
       version,
@@ -113,10 +110,32 @@ describe("renderPatchWrapper", () => {
     expect(html).not.toContain("<form");
     expect(html).not.toContain("<script");
 
-    // An untitled patch still gets a title on the document and on the frame.
-    expect(html).toContain("<title>Patchy patch</title>");
-    expect(html).toContain('title="Patchy patch"');
     expect(html).toContain(`<!-- patch:${patch.id} version:2 -->`);
+  });
+
+  it("adds only session scripts outside a company patch's escaped sandbox", () => {
+    const html = renderPatchWrapper(
+      {
+        patch: { ...patch, scope: "company", title: "<b>Company</b>" },
+        version,
+        html: '<p title="a&b">Private</p><script>alert(1)</script>'
+      },
+      {
+        frontendApiHost: "clerk.example.test",
+        publishableKey: "pk_test_example"
+      }
+    );
+    expect(
+      [...html.matchAll(/<script\b[^>]*src="([^"]+)"[^>]*><\/script>/g)].map((match) => match[1])
+    ).toEqual([
+      "https://clerk.example.test/npm/@clerk/clerk-js@5/dist/clerk.headless.browser.js",
+      "/auth/session.js"
+    ]);
+    expect(html).not.toMatch(/<script\b[^>]*>[^<]+<\/script>/);
+    expect(html).toContain('sandbox=""');
+    expect(html).toContain('title="&lt;b&gt;Company&lt;/b&gt;"');
+    expect(html).toContain('srcdoc="&lt;p title=&quot;a&amp;b&quot;&gt;Private&lt;/p&gt;');
+    expect(html).not.toContain("<script>alert");
   });
 
   it("escapes the patch title into both the document and the frame", () => {

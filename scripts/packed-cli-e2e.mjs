@@ -29,14 +29,6 @@ const npmCliEntry = path.join(repoRoot, "node_modules/npm/bin/npm-cli.js");
 let DEV_SEED;
 const packedCliTempRootBasePrefix = "patchy-packed-cli-e2e-";
 const probeOwnerEnvName = "PATCHY_PACKED_CLI_E2E_PROBE_OWNER_ID";
-const expectedViewerCsp = [
-  "default-src 'none'",
-  "style-src 'unsafe-inline'",
-  "img-src https: data:",
-  "frame-src 'self' about:",
-  "base-uri 'none'",
-  "form-action 'none'"
-].join("; ");
 const activeChildren = new Set();
 const childProcessGroupOwnership = new WeakMap();
 const trackedProcessGroups = new Set();
@@ -375,20 +367,17 @@ try {
   assert.equal(fresh.versionNumber, 1);
   assert.notEqual(fresh.patchId, first.patchId);
 
-  console.log("[packed-cli-e2e] validating current and explicit public versions");
-  const currentViewer = await fetchViewer(`${publicBaseUrl}/d/${first.patchId}`);
-  assertViewer(currentViewer, first.patchId, 2, "packed-contract-version-two");
-  assert.ok(!currentViewer.body.includes("packed-contract-version-one"));
-
-  const firstVersionViewer = await fetchViewer(`${publicBaseUrl}/d/${first.patchId}/v/1`);
-  assertViewer(firstVersionViewer, first.patchId, 1, "packed-contract-version-one");
-  assert.ok(!firstVersionViewer.body.includes("packed-contract-version-two"));
-
-  const secondVersionViewer = await fetchViewer(`${publicBaseUrl}/d/${first.patchId}/v/2`);
-  assertViewer(secondVersionViewer, first.patchId, 2, "packed-contract-version-two");
-
-  const freshViewer = await fetchViewer(fresh.publicUrl);
-  assertViewer(freshViewer, fresh.patchId, 1, "packed-contract-new-draft");
+  console.log("[packed-cli-e2e] validating the login door on current and explicit versions");
+  // Public viewer coverage returns here when the CLI can change sharing scope.
+  for (const url of [
+    first.publicUrl,
+    `${first.publicUrl}/v/1`,
+    `${first.publicUrl}/v/2`,
+    fresh.publicUrl,
+    `${fresh.publicUrl}/v/1`
+  ]) {
+    assertViewerDoor(await fetchViewer(url));
+  }
 
   const metadata = await readMetadata();
   assert.equal(metadata.drafts.length, 2);
@@ -546,6 +535,8 @@ try {
       env: { ...invalidStoredEnv, PATCHY_API_TOKEN: DEV_SEED.token }
     })
   );
+  assertViewerDoor(await fetchViewer(envPrecedence.publicUrl));
+  assertViewerDoor(await fetchViewer(`${envPrecedence.publicUrl}/v/1`));
 
   const finalMetadata = await readMetadata();
   assert.equal(finalMetadata.drafts.length, 3);
@@ -576,7 +567,9 @@ try {
   const doomed = parseUpload(
     await runCli(cliPath, ["upload", fixtureArgument, "--new"], { cwd: consumerDir, env: cliEnv })
   );
-  assert.equal((await fetchViewer(doomed.publicUrl)).response.status, 200);
+  const doomedViewer = await fetchViewer(doomed.publicUrl);
+  assertViewerDoor(doomedViewer);
+  assertViewerDoor(await fetchViewer(`${doomed.publicUrl}/v/1`));
   const removed = await runCli(cliPath, ["delete", fixtureArgument], {
     cwd: consumerDir,
     env: cliEnv
@@ -587,7 +580,13 @@ try {
   );
   assert.equal(removed.stderr, "");
   const removedViewer = await fetchViewer(doomed.publicUrl);
-  assert.equal(removedViewer.response.status, 404, "a deleted patch must stop serving at once");
+  assertViewerDoor(removedViewer);
+  assert.equal(removedViewer.body, doomedViewer.body, "the door must not disclose deletion");
+  const deletedMetadata = await readMetadata();
+  assert.ok(
+    deletedMetadata.drafts.find((draft) => draft.id === doomed.patchId)?.deletedAt,
+    "a successful delete must mark the stored patch deleted"
+  );
   const cacheAfterDelete = JSON.parse(
     await checkedCall(() => readFile(path.join(cliStateDir, "patches.json"), "utf8"))
   );
@@ -2652,29 +2651,20 @@ async function fetchViewer(url) {
   return { response, body: await response.text() };
 }
 
-function assertViewer(viewer, patchId, versionNumber, marker) {
-  // Serving guarantees: cache policy is keyed to URL shape. A version URL names
-  // content that can never change; the latest-draft URL follows the draft.
-  const versionUrl = /\/v\/\d+$/.test(new URL(viewer.response.url).pathname);
-  assert.equal(viewer.response.status, 200);
-  assert.equal(viewer.response.headers.get("content-security-policy"), expectedViewerCsp);
+function assertViewerDoor(viewer) {
+  assert.equal(viewer.response.status, 401);
+  assert.equal(viewer.response.headers.get("cache-control"), "private, no-store");
   assert.equal(viewer.response.headers.get("x-content-type-options"), "nosniff");
   assert.equal(viewer.response.headers.get("x-robots-tag"), "noindex");
-  assert.equal(
-    viewer.response.headers.get("cache-control"),
-    versionUrl ? "public, max-age=31536000, immutable" : "public, max-age=60"
-  );
   assert.equal(viewer.response.headers.get("content-type"), "text/html");
-  assert.ok(viewer.body.includes('sandbox=""'), "viewer iframe lost its empty sandbox");
-  assert.ok(
-    viewer.body.includes('referrerpolicy="no-referrer"'),
-    "viewer iframe lost its no-referrer policy"
-  );
-  assert.ok(viewer.body.includes(marker), `viewer is missing ${marker}`);
-  assert.ok(
-    viewer.body.includes(`<!-- patch:${patchId} version:${versionNumber} -->`),
-    "viewer rendered the wrong draft version"
-  );
+  assert.equal(viewer.response.headers.get("location"), null);
+  assert.equal(viewer.response.headers.get("www-authenticate"), null);
+  const signInUrl = viewer.response.headers.get("x-patchy-sign-in-url");
+  assert.ok(signInUrl, "the door must advertise the browser sign-in URL");
+  assert.equal(new URL(signInUrl).protocol, "https:");
+  assert.equal(viewer.body.match(/<a\b/g)?.length, 1, "the door must offer one sign-in link");
+  assert.ok(!viewer.body.includes("<iframe"), "the door must not disclose patch content");
+  assert.ok(!viewer.body.includes("<!-- patch:"), "the door must not disclose patch identity");
 }
 
 /**
@@ -2739,14 +2729,15 @@ async function readMetadata() {
     return {
       drafts: (
         await query(
-          "SELECT id, company_id, owner_user_id, scope, current_version_id FROM patches ORDER BY created_at"
+          "SELECT id, company_id, owner_user_id, scope, current_version_id, deleted_at FROM patches ORDER BY created_at"
         )
       ).map((row) => ({
         id: row.id,
         companyId: row.company_id,
         ownerUserId: row.owner_user_id,
         scope: row.scope,
-        currentVersionId: row.current_version_id
+        currentVersionId: row.current_version_id,
+        deletedAt: row.deleted_at
       })),
       draftVersions: (
         await query(
