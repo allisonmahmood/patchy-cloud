@@ -41,11 +41,56 @@ anyone with the link to read the page.
 Requires Node.js 22 or newer, and the `patchy` CLI on `PATH` — built from the
 patchy-cloud repo with `pnpm --filter @patchy/cli build`.
 
+First run without a publishing key is login, then upload:
+
 ```bash
-patchy validate './plan.html' && patchy upload './plan.html'
+patchy login --json
 ```
 
-Behavior:
+### Login handoff
+
+1. On `status: "awaiting_confirmation"`, show the person **both** `verificationUrl`
+   and `userCode`. Ask them to open the URL in their own browser, sign in if needed,
+   check the code, company and email, name the machine, and confirm. **Never open a
+   browser for a login handoff.** The user-facing words are in onboarding step 3.
+2. After relaying the handoff, run the returned `next` command
+   (`patchy login --complete <userCode>`). It waits up to a minute; `pending` is exit
+   0, not failure. Relay that it is still waiting and reuse `next` when the person
+   is ready. A rerun of `login` polls the live code once and reports its status,
+   not another handoff; keep the original URL/code. An explicit foreign code is
+   a local refusal. An unanswered request at the wait deadline is exit 3, not
+   `pending`: the outcome is unknown, so reuse the same completion command.
+   Denied, expired or unknown is exit 2: relay the refusal and start again only
+   when the person wants to.
+3. Continue only on `logged_in`, which names the instance, company, user and machine
+   and confirms the publishing key was saved. Then publish:
+
+```bash
+patchy validate './plan.html' && patchy upload './plan.html' --json
+```
+
+With a working key already configured, go straight to validate and upload. A person
+running `patchy login` at a real terminal with no agent variables and no `--json`
+gets the same handoff but waits in one command; an agent always uses the two-step flow.
+`--api-url <url>` on login saves the instance choice and stays in `next`.
+Keep that flag on subsequent publishing commands when overriding a worktree
+or environment-selected instance; both outrank saved config.
+
+Call the credential the user's **publishing key**: it is this machine's user-owned
+machine token, not the browser's sign-in. Say **sign in** for the person in their
+browser and **log this machine in** for publishing. Signing in uses Google,
+Microsoft or an emailed code; the key works for 90 days or 30 idle days and can
+be revoked on **Your machines**. `patchy whoami` names the user, company, role
+and machine without exposing the key.
+
+To log this machine out, run `patchy logout`. It forgets the stored publishing key
+and pending login first, then tries to revoke only that deleted key. A failed
+courtesy revocation is exit 0 with a warning, not a failed logout. Relay warnings:
+a worktree still publishes with its seeded key, and an environment key is not the
+CLI's to remove. `logout --json` returns `{ ok, instanceUrl, revoked, warnings }`;
+browser sign-out is a separate control on **Your machines**.
+
+### Publishing behavior
 
 - Pages go to Patchy Cloud, or to the `pnpm dev` instance of a checkout. The CLI bakes in
   no address for either: publishing always goes to the instance named through
@@ -55,11 +100,14 @@ Behavior:
   instance before uploading — `status --json` says which one is resolved and where that
   came from, and `upload` prints it before publishing.
 - Upload, share, delete and whoami require a publishing key. With no key, they exit
-  `1` (`local`); run `patchy auth set --api-url <url>` to save one the user already
-  holds. Keep the key out of chat.
-- A rejected stored or environment key is a hard error. Save a working key for
-  the same user to keep editing that user's pages.
-- Call the credential the user's **publishing key**; local validation runs before upload.
+  `1` (`local`), `Run: patchy login`; follow the login handoff above, then retry the
+  original command. No command starts a login on the caller's behalf.
+- The same credential chain applies everywhere: `PATCHY_API_TOKEN`, then the key
+  stored for this instance (`login` or `auth-set`), then the dev env's seeded key.
+  A login outranks the seed; an environment key overrides both.
+- A rejected key is a hard error. Log in again as the same user to keep editing
+  that user's pages; if an environment key overrides it, resolve that override.
+- Local validation runs before upload.
 - Re-uploading the same local file updates the patch it already created on that instance
   and preserves its sharing scope unless `--share company` or `--share public` is supplied.
   Pass `--new` to force a fresh patch, or `--patch` to update a known patch only.
@@ -116,18 +164,6 @@ When a page refuses access, report the refusal rather than treating its HTML as 
   belong to another company." Those cases are deliberately indistinguishable;
   do not claim which occurred or offer a request-access control that does not exist.
 
-## Saving a publishing key
-
-When no key is configured, save a key the user already holds through a hidden prompt:
-
-```bash
-patchy auth set --api-url 'https://pages.example.com'
-```
-
-Use the actual URL, never the placeholder. For automation, pass the key through
-`--token-stdin` from a secret environment variable, not a positional argument.
-Confirm the user and company with `patchy whoami` before publishing.
-
 ## Style
 
 Before writing a page, settle which style applies, in this order:
@@ -174,15 +210,15 @@ Blocked or unsafe:
    they clarify the work.
 3. Run `validate` until it passes.
 4. Upload with `--json` so the response gives the actual scope; set `--share` only for
-   an explicit sharing choice. With no key, run `patchy auth set --api-url <url>` before retrying.
+   an explicit sharing choice. With no key, finish the login handoff above before retrying.
 5. Return `publicUrl` and announce who can open it from the returned `scope`, as above.
 
 ## Pitfalls
 
 - Sharing scope controls readership; a publishing key controls publishing, not browser
   access. Confirm the user's company before publishing sensitive company material.
-- Keep tokens out of positional arguments. Use the hidden prompt for a person, explicit
-  `--token-stdin` for automation.
+- Keep publishing keys and private device codes out of chat, command arguments and
+  output. Login saves the key itself; relay only the handoff's URL and user code.
 - A publishing key acts as its user. Losing or revoking a key does not change
   ownership; another machine token for that user can still update, share or delete their pages.
 - Patchy Cloud is not a social scheduler. This flow hosts static HTML pages.

@@ -8,6 +8,7 @@
 import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as CliOutput from "effect/unstable/cli/CliOutput";
@@ -33,6 +34,8 @@ Command.run(root, { version: VERSION }).pipe(
     Layer.mergeAll(
       NodeServices.layer,
       NodeHttpClient.layerUndici,
+      // Login's agent gate tests presence, including explicitly empty variables.
+      ConfigProvider.layer(ConfigProvider.fromEnv({ preserveEmptyStrings: true })),
       output,
       Layer.succeed(Cwd, process.cwd())
     )

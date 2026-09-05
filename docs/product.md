@@ -160,7 +160,7 @@ A machine token is **the user's**, one per machine, shared by every agent on tha
 
 **Your machines** is the page that lists a user's live tokens by name, creation, last use and expiry, revokes one or all, and signs the browser out. Deactivating a user revokes every token and ends their access on the next request; ending access in open tier 1 and tier 2 patches comes with those runtimes. CI will hold a user-owned token set through `PATCHY_API_TOKEN` when that flow is built; Your machines offers no create or rename action today. There is no company-owned or non-human token kind, so everything published has a human owner. Company-owned tokens for CI that is nobody's come back when someone needs them.
 
-**Self-service minting is gone.** The server's device login starts with a URL and code, records the person's confirmation, then mints the machine token exactly once when the terminal polls. Until the `patchy login` command lands, this flow is drivable with HTTP and a browser; `patchy auth set` saves a machine token the user already holds, and the dev loop supplies its seeded key.
+**First publish is login, then upload.** `patchy login --json` returns the URL, code and next command for the agent to relay; the agent never opens a browser and finishes with `patchy login --complete`. A person at a real terminal runs the same login command and waits. Confirmation records the person's answer; the terminal's poll creates the machine token exactly once and saves the publishing key locally. `patchy logout` forgets it before courtesy revocation, while browser sign-out is separate. The dev loop's seeded key works without login, but a saved login outranks it; `PATCHY_API_TOKEN` overrides both.
 
 ### Who's who
 

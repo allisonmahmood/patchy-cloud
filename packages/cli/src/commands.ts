@@ -35,6 +35,7 @@ import * as Api from "./Api.js";
 import { type CliError, LocalError, RejectedError } from "./CliError.js";
 import * as Git from "./Git.js";
 import * as Instance from "./Instance.js";
+import * as Login from "./Login.js";
 import * as Output from "./Output.js";
 import * as State from "./State.js";
 
@@ -110,7 +111,7 @@ const requiredToken = Effect.fn("requiredToken")(function* () {
   if (Option.isSome(credential)) return credential.value.token;
   const { apiUrl } = yield* Instance.Instance;
   return yield* new LocalError({
-    message: `No publishing key is stored for ${apiUrl}.\nRun: patchy auth set --api-url ${apiUrl}`
+    message: `No publishing key is stored for ${apiUrl}.\nRun: patchy login`
   });
 });
 
@@ -204,7 +205,7 @@ const authSet = Command.make(
         const { apiUrl } = yield* Instance.Instance;
         const state = yield* State.State;
         if (Option.isSome(yield* Instance.ApiUrlFlag)) yield* state.saveConfigUrl(apiUrl);
-        yield* state.saveCredential(apiUrl, token, "auth-set");
+        yield* state.saveCredential(apiUrl, token, { source: "auth-set" });
         yield* Output.report({ ok: true, instanceUrl: apiUrl }, [
           `Patchy Cloud credentials saved for ${apiUrl}.`
         ]);
@@ -219,6 +220,24 @@ const authSet = Command.make(
 const auth = Command.make("auth").pipe(
   Command.withDescription("Manage CLI authentication."),
   Command.withSubcommands([authSet])
+);
+
+const login = Command.make(
+  "login",
+  {
+    complete: Flag.boolean("complete").pipe(Flag.withDefault(false)),
+    code: Argument.string("code").pipe(Argument.optional),
+    wait: Flag.float("wait").pipe(Flag.withDefault(60))
+  },
+  (options) => run(Login.login(options))
+).pipe(
+  Command.withDescription(
+    "Log this machine in; relay the URL and code, then use --complete [code]."
+  )
+);
+
+const logout = Command.make("logout", {}, () => run(Effect.flatMap(Cwd, Login.logout))).pipe(
+  Command.withDescription("Forget this machine's publishing key, then revoke it as a courtesy.")
 );
 
 // --- whoami -----------------------------------------------------------------
@@ -530,6 +549,6 @@ const del = Command.make(
 
 export const root = Command.make("patchy").pipe(
   Command.withDescription("Upload static HTML patches to a Patchy Cloud instance."),
-  Command.withSubcommands([auth, whoami, status, validate, upload, share, del]),
+  Command.withSubcommands([login, logout, auth, whoami, status, validate, upload, share, del]),
   Command.withGlobalFlags([Output.JsonFlag, Instance.ApiUrlFlag])
 );

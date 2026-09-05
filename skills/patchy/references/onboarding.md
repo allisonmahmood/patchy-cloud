@@ -1,7 +1,7 @@
 # Onboarding
 
-Agent-led first-time setup: capture how the user's pages should look, then publish their
-welcome patch. One question, then a live link.
+Agent-led first-time setup: capture how the user's pages should look, log the machine
+in if it has no publishing key, then publish their welcome patch.
 
 The user's own words for it are "my welcome page" — that is what to say out loud.
 _Welcome patch_ is the term for it here.
@@ -40,15 +40,22 @@ settles:
 | ----------------- | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `instanceUrl`     | the resolved instance URL                             | Know where the welcome patch would go. Trust it only when `instanceSource` is not `default`.                                                                                                                                                                                                                                                 |
 | `instanceSource`  | `flag` \| `dev-env` \| `env` \| `config` \| `default` | Settle step 2. `config` is a saved choice — confirm it, do not ask. `dev-env` is this checkout's own `pnpm dev` instance, chosen for as long as it runs. `env` and `flag` came from this session's environment and will not persist, so say that. `default` means nothing has been chosen: the URL shown is only the local fallback, so ask. |
-| `hasToken`        | boolean                                               | `true` means a key is available. If false, save a key the user already holds with `patchy auth set --api-url <url>` before publishing.                                                                                                                                                                                                       |
-| `tokenSource`     | `auth-set` \| `null`                                  | `auth-set` means a saved key; `null` with a key means environment, dev env or an older entry without provenance.                                                                                                                                                                                                                             |
+| `hasToken`        | boolean                                               | `true` means a key is available; verify who it acts as with `whoami`. If false, step 3 logs this machine in before publishing.                                                                                                                                                                                                               |
+| `tokenSource`     | `login` \| `auth-set` \| `null`                       | `login` is a saved device-login key; `auth-set` is a saved existing key. `null` with a key means environment, dev env or an older entry without provenance.                                                                                                                                                                                  |
 | `stateDir`        | absolute path                                         | Locate `style.md` — it goes in this directory.                                                                                                                                                                                                                                                                                               |
 | `hasDefaultStyle` | boolean                                               | `true` → onboarding already ran. Say what the current default look is and ask keep-or-redo instead of asking cold.                                                                                                                                                                                                                           |
 | `cliVersion`      | version string                                        | Only worth mentioning if something later misbehaves.                                                                                                                                                                                                                                                                                         |
 
+`hasToken` and `tokenSource` follow the publishing credential chain:
+`PATCHY_API_TOKEN`, then the stored key for this instance, then the dev env's
+seeded key. A saved login outranks the seed, but an environment key overrides
+both. The probe never proves a key is still accepted by the instance.
+
 ## The conversation
 
-One question at a time. Call the credential the user's **publishing key**.
+One question at a time. Call the machine token the user's **publishing key**.
+Say **sign in** for the person's browser session and **log this machine in**
+for the step that lets it publish as them.
 
 ### 1. Style — the only question
 
@@ -76,17 +83,50 @@ it before opening your mouth:
 - `instanceSource` is `dev-env` — the local dev instance of this checkout, not a deployed
   company instance; say so and move on. The upload's scope still determines readership.
 - `instanceSource` is `env` or `flag` — chosen for this session only. Say so, and offer to
-  save it with `--api-url` so it sticks.
+  save that choice with `login --api-url <url>` if step 3 needs a login.
 - `instanceSource` is `default` — nothing has been chosen. Ask, once: which address should
   their pages be published to? The local fallback works only with a running server
-  and a configured publishing key.
+  and, before publishing, a completed login or an available publishing key.
 
-With no key, run `patchy auth set --api-url <url>` using a key the user already
-holds, then confirm the user and company with `patchy whoami`. Use the hidden prompt,
-not chat. If the user has no key, stop publishing and say what is missing;
-do not guess one or publish somewhere else.
+Use the actual URL, never a placeholder. Carry an explicit `--api-url` choice
+on `whoami` and upload. Login saves that choice and retains the flag in `next`;
+keep using the flag when overriding a worktree or environment-selected instance,
+since either outranks saved config.
 
-### 3. Publish the welcome patch
+### 3. Log in, then publish the welcome patch
+
+If the probe found no key, or step 2 chose a different instance than the probe
+reported, run `patchy login --json` (with `--api-url <url>` for that choice).
+A key found for the old instance says nothing about the new one. On the handoff, say:
+
+> To publish as you, this machine needs to be logged in. Open `<verificationUrl>`
+> in your own browser and check that it shows `<userCode>`. Sign in if needed
+> with Google, Microsoft or an emailed code. Check the company and email,
+> name this machine, then confirm. I'll finish logging it in here.
+
+Show both the returned URL and code. **Never open a browser for the person.**
+After relaying them, run the returned `next` command. It waits up to a minute;
+`status: "pending"` is exit 0, not a failure. Say **"Still waiting for your
+confirmation; the same link and code work until `<expiresAt>`."** Run `next`
+again when they are ready, rather than starting another code. Denied, expired
+or unknown is exit 2: relay the refusal, and start again only if they want to.
+An unanswered request at the wait deadline is exit 3 (`unreachable`), not
+confirmation still pending. The local login record is retained: retry the same
+completion command rather than starting another code.
+
+Only `status: "logged_in"` means the key is saved. Say:
+
+> This machine is logged in to `<company.name>` as `<user.email>`, named
+> "`<machine.name>`". Its publishing key is saved here. I'll publish your
+> welcome page now.
+
+If the probe already found a key for this instance, skip login and run
+`patchy whoami` to name
+the user, company, role and machine before publishing. Describe the key as
+saved on this machine only for `tokenSource: "login"` or `"auth-set"`;
+environment and dev-env keys do not imply a saved credential file. A rejected
+key needs a fresh login, not repeated uploads; an environment key overrides
+a saved login and must be resolved separately.
 
 Write `welcome.html` from `welcome-patch.html` in this directory, restyled to the chosen
 look — the structure and copy are the deliverable, the styling is theirs — then:
@@ -95,9 +135,8 @@ look — the structure and copy are the deliverable, the styling is theirs — t
 patchy validate './welcome.html' && patchy upload './welcome.html' --json
 ```
 
-The upload uses the configured publishing key; it never creates one.
-Describe a key as saved on this machine only when the probe reported `auth-set`.
-Environment and dev-env keys do not imply a saved credential file.
+Uploading never starts a login or creates a key. If it says `Run: patchy login`,
+finish the handoff above and retry this upload.
 
 A new welcome patch defaults to `company`. Redoing onboarding updates the cached patch
 and preserves its current scope; pass `--share company` or `--share public` only when
@@ -122,6 +161,12 @@ returns too. Taking it back to company makes origin responses `private, no-store
 but a public copy may remain cached for 60 seconds at either latest or version URL,
 and downloaded copies cannot be recalled.
 
+To undo the machine login, run `patchy logout`: it forgets the stored key and
+pending login before courtesy revocation. Relay its warnings even though the
+local logout succeeded. A worktree can still publish with its seeded key, and
+`PATCHY_API_TOKEN` is not the CLI's to remove. This does not sign the browser
+out; **Sign out** on **Your machines** does that.
+
 ### 4. Sign-off
 
 Close with what to say next time, in their words: "publish this with patchy", "publish
@@ -132,7 +177,7 @@ this plan", "update my page", "take that page down". One line, not a manual.
 Hosts below are placeholders. Use whatever address the probe or the user actually gives
 you; never invent one, and never carry these into a real session.
 
-### Fast path — an instance is already saved
+### Fast path — an instance and working key are already available
 
 > **Agent**: Skill installed. One quick question and I'll publish your first page. Looks:
 > pages can use the Patchy look — warm paper, bold ink, friendly — or I can match your own
@@ -141,6 +186,7 @@ you; never invent one, and never carry these into a real session.
 > **User**: default is fine
 >
 > **Agent**: Done. Your pages go to `pages.example.com`, which is already set up here.
+> You're publishing as alex@example.com at Acme, from "Work laptop".
 > Publishing your welcome page now… Here it is: `https://pages.example.com/d/a1b2c3` —
 > signed-in colleagues in your company can open it. It was published
 > with your configured publishing key. Next time you want a page, just say
@@ -160,8 +206,17 @@ you; never invent one, and never carry these into a real session.
 > **Agent**: Got it — footer green it is. Saved. Last thing: nothing here says where your
 > pages should be published. What's the Patchy Cloud address you were given?
 >
-> **User**: pages.greenfield.internal, and IT gave me a token
+> **User**: pages.greenfield.internal
 >
-> **Agent**: Perfect. I'll take the token in a hidden prompt so it never lands in the
-> chat… Verified against pages.greenfield.internal. Publishing your welcome page there
-> now…
+> **Agent**: To publish as you, this machine needs to be logged in. Open
+> `https://pages.greenfield.internal/login/device?code=BCDF-GHJK` in your own browser
+> and check that it shows `BCDF-GHJK`. Sign in if needed, check the company and
+> email, name this machine, then confirm. I'll finish logging it in here.
+>
+> **User**: confirmed
+>
+> **Agent**: This machine is logged in to Greenfield Pottery as
+> alex@greenfieldpottery.com, named "Studio laptop". Its publishing key is saved
+> here. Publishing your welcome page now… Here it is:
+> `https://pages.greenfield.internal/d/a1b2c3` — signed-in colleagues in your
+> company can open it. Next time, just say "publish this with patchy".

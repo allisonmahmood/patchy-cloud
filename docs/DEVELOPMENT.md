@@ -24,16 +24,29 @@ Starting is idempotent: a second `pnpm dev` finds the running instance and
 prints the same plan. The processes outlive the shell that started them, so an
 agent can start once and keep using the instance across turns.
 
-`pnpm patchy` runs the CLI from source, and inside the worktree the CLI finds
-the runner's env file by itself:
+`pnpm patchy` runs the CLI from source. Inside the worktree it finds the runner's
+env file by itself and uses the seeded key unless a stored login or explicit
+`PATCHY_API_TOKEN` overrides it:
 
 ```sh
 pnpm patchy whoami
 pnpm patchy upload examples/plan.html
 ```
 
+`pnpm patchy login --json` returns the browser handoff without blocking an
+agent. Relay its URL and code to the person, then run the returned `next`
+as `pnpm patchy login --complete <code>`. After confirmation, `whoami` names
+the logged-in machine. `pnpm patchy logout` forgets that stored key and pending
+login, revokes only the deleted key as a courtesy, and says
+_This worktree's dev instance still publishes with its seeded key_;
+`whoami` then names **Dev Machine** again. The credential order everywhere is
+`PATCHY_API_TOKEN`, stored credential for this instance, dev seed.
+
 For anything else that needs the URL, token or database (`curl`, `psql`),
 source the env file: `set -a; . .local/dev/env; set +a`.
+Do this in a separate shell when checking login: exporting the seed as
+`PATCHY_API_TOKEN` makes it override the login. Logout cannot remove or revoke
+that environment token and warns about it.
 
 ### Subcommands
 
@@ -126,35 +139,51 @@ Open `/join` at the instance's API URL to sign in:
 A validated `return` path sends a person who has a company back to that page.
 Without one, `/join` leads to `/company`; `/login`'s sign-in link leads to `/machines`.
 
-### Device login before the CLI command lands
+### Device login through the CLI
 
-The server flow works with HTTP and a signed-in browser. With the URL from the
-runner (shown below as `$PATCHY_API_URL`), start a login:
-
-```sh
-curl -sS -X POST "$PATCHY_API_URL/api/login/device" \
-  -H 'Content-Type: application/json' \
-  -d '{"machineNameHint":"Work laptop"}'
-```
-
-Open the returned `verificationUrl` in your browser. Check the displayed code
-against `userCode`, check the company and person, then name the machine and
-**Confirm**, or **Deny** if you did not start the login. Confirmation alone
-creates no key. Poll with the returned `deviceCode`, at most every five seconds:
+With `PATCHY_DEV_CLERK_USER_ID` bound as above, a browser confirmation logs the
+machine in to **Patchy Dev** as your development user. Keep `PATCHY_API_TOKEN`
+unset so the login, not an exported seed, drives subsequent commands:
 
 ```sh
-curl -sS -X POST "$PATCHY_API_URL/api/login/device/token" \
-  -H 'Content-Type: application/json' \
-  -d '{"deviceCode":"<deviceCode from start>"}'
+pnpm patchy login --json
 ```
 
-A confirmed login returns `status: "complete"` and the token exactly once.
-A second poll returns 410 `unknown`. Keep the token out of logs and project
-files; pass it through `PATCHY_API_TOKEN` when checking `pnpm patchy whoami`.
-`/machines` lists the new key with its lifetime and last use. Revoke it there
-and the bearer immediately becomes a 401. **Sign out** revokes only the browser
-session, clears Clerk cookies and returns to `/login`; `/company` then shows
-the sign-in door.
+An agent shows the person the returned `verificationUrl` and `userCode`,
+never opens a browser, then runs `next` through the source CLI:
+
+```sh
+pnpm patchy login --complete <userCode>
+pnpm patchy whoami
+```
+
+The person opens the URL in their own browser, checks the code, company and
+email, names the machine and confirms. Confirmation alone creates no key;
+the CLI's successful poll saves it without printing it. Completion prints
+`Logged in to <instance> as Patchy Dev. This machine is "<name>".`
+`whoami` names that machine and the user, company and role.
+
+`pnpm patchy login --complete --wait 0` polls once and answers `pending` at
+exit 0 if confirmation has not happened. Completion normally waits up to a
+minute, including in-flight responses; an unanswered request at the deadline
+is exit 3, with the local login record kept for the same completion command.
+Reuse `next` after a pending answer. An agent rerun of `login` polls a pending
+code once and reports its status rather than another handoff. At a real terminal,
+with the agent variables unset and no `--json`, `pnpm patchy login` prints the
+handoff and waits in one command.
+
+```sh
+pnpm patchy logout
+pnpm patchy whoami
+```
+
+Logout forgets the stored key and pending login before attempting revocation,
+and remains exit 0 if the courtesy call cannot reach the instance. Inside this
+worktree it prints the seeded-key line and `whoami` returns to **Dev Machine**.
+Outside a worktree, with no environment key, `whoami` after logout is exit 1,
+`Run: patchy login`. `/machines` lists live publishing keys and can revoke
+one or all; **Sign out** there ends only the browser session, clears Clerk
+cookies and returns to `/login`.
 
 An unconfirmed login returns `pending`; polling too quickly returns `slow_down`.
 Codes last ten minutes. Expired and denied answers are 410 and consume the
