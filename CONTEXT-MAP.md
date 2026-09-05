@@ -4,20 +4,20 @@ Patchy Cloud is one deployment: the hosting server on one side, the `patchy` CLI
 
 ## Contexts
 
-- [Patches](./packages/patches/CONTEXT.md) — `packages/patches`. The unit: patch, version, patch repo, declared tier, publish, owner, sharing scope and address, retire and delete, the primitives a patch declares. Today also the upload contract, the retention clock and its sweep, the patch quota, and the `patches` API group
-- [Serving](./packages/serving/CONTEXT.md) — `packages/serving`. A patch reaching its viewer, at every tier: the page, the doors in front of it (login, connect), the serving guarantees, the visit, the trusted-proxy schema, and the identity patch code acts as from tier 1 up. Today it serves tier 0; the tier 1 and tier 2 runtimes build on it
-- [Companies](./packages/companies/CONTEXT.md) — `packages/companies`. The tenant and who is in it: company and handle, users and roles, invites, deactivation and reactivation; groups, verified domains, SSO, suspension and the operator remain future work
-- [Auth](./packages/auth/CONTEXT.md) — `packages/auth`. Who a caller is: browser sessions and viewers, machine tokens, device login, identity, revocation and bearer parsing, the sign-in and sign-out pages, Your machines, the `auth` API group and the shared dev seed
+- [Patches](./packages/patches/CONTEXT.md) — `packages/patches`. Patches and immutable versions, user ownership, company/public sharing, the upload contract, owner deletion, retention and its sweep, the owner quota, and the `patches` API group. Patch repos, declared tiers, primitives, human-readable addresses and retirement remain future work
+- [Serving](./packages/serving/CONTEXT.md) — `packages/serving`. Tier 0 pages, the login door, serving guarantees, admitted visits and trusted-proxy attribution. Higher runtimes, the connect door and patch identity remain future work
+- [Companies](./packages/companies/CONTEXT.md) — `packages/companies`. Companies and handles, users and roles, create-or-join, invitations, the company page, deactivation and reactivation. Groups, verified domains, SSO, billing, suspension and the operator's surfaces remain future work
+- [Auth](./packages/auth/CONTEXT.md) — `packages/auth`. Clerk session verification and viewers, user-owned machine tokens, device login, identity, revocation and bearer parsing, the sign-in and sign-out pages, Your machines, the `auth` API group and the shared dev seed
 - [Integrations](./packages/integrations/CONTEXT.md) — no code yet. The company-scoped primitive that reaches outside systems: integration, connection and personal connection, connection handle, the typed client patch code is handed, the call log
 - [Publishing](./packages/cli/CONTEXT.md) — `packages/cli` and the bundled skill, the `patchy` CLI agents use to publish patches
 
 ## Shared kernel
 
-- `packages/core` — the safe-HTML policy, first-party HTML shell and escape helpers, and the ID/crypto primitives every context depends on. No `CONTEXT.md`: a term it defines belongs to the context that introduced it, and a decision touching it goes in the root `docs/adr/`.
+- `packages/core` — the safe-HTML policy, first-party HTML shell and escape helpers, and shared ID/crypto primitives. No `CONTEXT.md`: a term it defines belongs to the context that introduced it, and a decision touching it goes in the root `docs/adr/`.
 
 ## Infrastructure
 
-Packages that hold no domain vocabulary of their own; each defines the few terms its consumers need in its `CONTEXT.md`.
+Supporting packages rather than product contexts; their glossaries define only the terms their consumers need.
 
 - `packages/api` — the wire schemas and the `HttpApi` both sides speak: the server implements it, the CLI's client is derived from it, `docs/API.md` is rendered from it. Belongs to neither side; see [ADR-0002](./docs/adr/ADR-0002-api-is-the-contract-package.md). No `CONTEXT.md`: its terms are the contexts' own
 - [SQL](./packages/sql/CONTEXT.md) — `packages/sql`, the Postgres client and Effect's Migrator every capability migrates through; owns no tables ([ADR-0003](./docs/adr/ADR-0003-postgres-only.md))
@@ -29,13 +29,14 @@ Packages that hold no domain vocabulary of their own; each defines the few terms
 ## Relationships
 
 - **Publishing → `api`**: the CLI creates and updates patches through the derived client and authenticates with a user-owned machine token
-- **Serving → Patches, Auth**: a page reads the record and its HTML through `Content` and records an admitted visit through `Patches`; Serving never touches bytes. Serving imports Auth for the route-scoped login door, which establishes the optional viewer; the page handler checks the patch's sharing scope
+- **Serving → Patches, Auth**: the page handler reads metadata through `Patches`, checks sharing against the admission supplied by Auth's session helpers, then reads HTML through `Content` and records an admitted visit through `Patches`. Serving never accesses the content store directly; its login middleware is scoped to the two patch routes
 - **Patches → Content store**: the upload contract and the sweep put, get and delete a patch's bytes through `ContentStore`; nothing else touches them
-- **Auth, Patches → SQL**: both query through the `SQL` client. `patch_versions` references `machine_tokens`, but Patches never imports Auth: every handler receives the identity from bearer middleware. Patches spends its per-machine rate limits through `Limits`
+- **Companies, Auth, Patches → SQL**: all query the shared Postgres client and own separate migration records. `patch_versions` references `machine_tokens`, but Patches imports neither Auth nor Companies: its handlers receive identity from bearer middleware. Companies revokes a deactivated user's machine tokens in the same transaction as deactivation, without importing Auth
 - **Auth, Patches → Analytics**: reports business events with the user as principal, or no user for expiry. Auth reports a machine token minted by the device-login poll and whether it replaced an old key
-- **Auth → Companies**: Companies owns the users and companies that bearer authentication joins with `machine_tokens`; its services own membership, roles and deactivation
-- **Integrations → Companies, Serving**: a connection is a company's or a user's, and a patch reaches it only through the cloud, as the viewer Serving established. Not yet in code
-- **Hosting → everything**: mounts the API groups with Auth's bearer middleware on protected endpoints and the guard ahead of them, Auth's and Serving's pages, and forks Patches' `ExpirySweep`; nothing here is a term of its own
+- **Auth → Companies**: Companies owns the users and companies that bearer authentication joins with `machine_tokens`; its services own membership, roles and deactivation. Auth mounts Companies' create-or-join and company page behind its session boundary
+- **Hosting, Auth, Patches → Limits**: Hosting limits device-login starts and protected API attempts by address; Auth limits polls by device code and confirm-page lookups by user; Patches limits uploads and creates by machine token
+- **Integrations → Companies, Serving**: a future connection belongs to a company or user, and a patch will reach it through the cloud within the authenticated viewer's permissions. The integration and higher-runtime boundaries are not implemented yet
+- **Hosting → runtime packages**: runs Companies', Auth's and Patches' migrations, mounts both API groups with Auth's bearer middleware on protected endpoints and the guard ahead of the router, mounts Auth's pages (including Companies' pages) and Serving's pages, and forks Patches' `ExpirySweep` in the server's scope
 
 ## Decisions
 

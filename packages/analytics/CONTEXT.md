@@ -1,11 +1,11 @@
 # Analytics
 
-The service every business moment the instance reports goes through. `packages/analytics` owns the event vocabulary, the PostHog layer and the no-op layer; Patches and Auth decide which moments are reported.
+The business moments the instance reports about itself. [Patches](../patches/CONTEXT.md) and [Auth](../auth/CONTEXT.md) decide which moments matter; Analytics owns their reporting vocabulary.
 
 ## Language
 
 **Analytics event**:
-One business moment the instance reports to itself: a patch created, updated, deleted or expired, or a machine token minted. Server-side and nothing else — a served patch carries no analytics JavaScript, so a **visit is never one**, and no event carries a reader's address, page content, a filename, or a URL; what ships is ids, sizes, counts and states. Reporting never fails a request: `track` swallows a backend failure into a log line. An instance with no key configured reports nothing, and that is the default: reporting is something an operator switches on, never something an instance starts doing on its own.
+A server-side business moment: a patch created, updated, deleted or expired, or a machine token minted. It carries ids, sizes, counts and states, never a visit, reader address, page content, filename or URL; reporting is optional and its failure never fails the caller's request.
 _Avoid_: telemetry, tracking, pageview, metric (an analytics event names what happened in the domain, not what the process measured)
 
 **Principal of an event**:
@@ -13,5 +13,5 @@ Who an event belongs to: the user who acted, or the instance itself for an expir
 _Avoid_: machine (the credential is provenance, not the actor), distinct id (PostHog's word for the same slot)
 
 **Shutdown flush**:
-The one bounded chance queued events get on the way down. The PostHog layer's finalizer flushes and gives up after three seconds, so a slow analytics backend never holds a shutdown.
+The bounded final opportunity for queued analytics events to be sent when the instance stops. An unavailable analytics backend must not hold shutdown open.
 _Avoid_: graceful drain

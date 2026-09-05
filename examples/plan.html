@@ -555,12 +555,12 @@
         </div>
         <h1>A static artifact, ready to share.</h1>
         <p class="lede">
-          Patchy Cloud validates one self-contained HTML document, gates publishing with token
-          authentication by default, and returns a public, unlisted review URL.
+          Patchy Cloud validates one self-contained HTML document, authenticates publishing with a
+          user-owned machine token, and returns a review URL shared with your company by default.
         </p>
         <div class="meta">
-          <span class="pill pill-progress">Token default</span>
-          <span class="pill pill-done">Public, unlisted views</span>
+          <span class="pill pill-progress">Machine-token publishing</span>
+          <span class="pill pill-done">Company by default</span>
           <span>Agent-operated</span>
         </div>
       </header>
@@ -580,10 +580,10 @@
           unsafe URL schemes before storing the document.
         </p>
         <div class="note note-info">
-          <span class="note-title">Public by link</span>
+          <span class="note-title">Choose who can read</span>
           <p>
-            Patch viewer URLs are public and unlisted. Anyone with the link can open the rendered
-            artifact, so publish only material that is safe to share with every link holder.
+            Company patches require a signed-in reader from your company. Choose public sharing
+            explicitly when anyone with the link should be able to open the artifact.
           </p>
         </div>
       </section>
@@ -591,19 +591,19 @@
       <section id="flow">
         <h2>Publish from a server you control</h2>
         <p>
-          Requires the <code>patchy</code> CLI on Node.js 22 or newer. Provide
-          <code>PATCHY_SETUP_TOKEN</code> through a secret environment. The scoped flow pins the
-          intended origin, clears inherited credential overrides, and verifies the stored token
-          before validation or upload.
+          Requires the <code>patchy</code> CLI on Node.js 22 or newer. Select your instance, then
+          run <code>patchy login --json</code>. Show its URL and code to the person: they sign in,
+          join or create a company if needed, check the code, name the machine and confirm. Run the
+          returned completion command before validating or uploading.
         </p>
         <div
           class="flow"
           role="img"
-          aria-label="Flow: Write, configure, verify, validate, upload, review"
+          aria-label="Flow: Write, log in, verify, validate, upload, review"
         >
           <span class="node">Write HTML</span>
           <span class="arrow" aria-hidden="true">&rarr;</span>
-          <span class="node">Configure</span>
+          <span class="node">Log in</span>
           <span class="arrow" aria-hidden="true">&rarr;</span>
           <span class="node">Verify</span>
           <span class="arrow" aria-hidden="true">&rarr;</span>
@@ -613,22 +613,18 @@
           <span class="arrow" aria-hidden="true">&rarr;</span>
           <span class="node is-accent">Share Link</span>
         </div>
-        <pre><code>(
-  set +x
-  set -eu
-  PATCHY_API_URL='https://patchy.example.com'
-  export PATCHY_API_URL
-  unset PATCHY_API_TOKEN
-  unset TOKEN
-  : "${PATCHY_SETUP_TOKEN:?Set PATCHY_SETUP_TOKEN to a Patchy Cloud API token}"
-  ARTIFACT_PATH='./plan.html'
-
-  printf '%s' "$PATCHY_SETUP_TOKEN" | patchy auth set --token-stdin --api-url "$PATCHY_API_URL"
-  unset PATCHY_SETUP_TOKEN
-  patchy whoami &amp;&amp;
-    patchy validate "$ARTIFACT_PATH" &amp;&amp;
-    patchy upload "$ARTIFACT_PATH"
-)</code></pre>
+        <pre><code>export PATCHY_API_URL='https://patchy.example.com'
+unset PATCHY_API_TOKEN
+patchy login --json
+# Relay verificationUrl and userCode; after the person confirms:
+patchy login --complete &lt;userCode&gt;
+patchy whoami &amp;&amp;
+  patchy validate ./plan.html &amp;&amp;
+  patchy upload ./plan.html
+# Only when the page is intended for anyone with the link:
+patchy share ./plan.html public
+# Bring it back inside:
+patchy share ./plan.html company</code></pre>
       </section>
 
       <section id="access">
@@ -636,14 +632,15 @@
         <div class="task-grid">
           <article class="task">
             <h3>
-              <span class="num">1</span> Token-authenticated publishing
+              <span class="num">1</span> Machine-token publishing
               <span class="pill pill-done">Required</span>
             </h3>
             <p>
-              Every upload requires a bearer API token, on every configuration. The server rejects a
-              request that carries no token with 401, and a present but invalid token stays 401.
-              Authenticated uploads create patches and update patches the publisher owns; uploading
-              the same known file updates its cached patch unless <code>--new</code> is passed.
+              Every upload requires a machine token acting as its user. The API answers 401 for a
+              missing or invalid token; the CLI with no key exits 1 and says to run
+              <code>patchy login</code>. Only the owner can update, share or delete a patch.
+              Uploading the same known file updates its cached patch unless <code>--new</code> is
+              passed.
             </p>
           </article>
         </div>
@@ -660,18 +657,20 @@
             <tbody>
               <tr>
                 <td>Authenticated upload</td>
-                <td>Token required</td>
-                <td>Create new patches or update patches owned by the publisher.</td>
+                <td>Machine token required</td>
+                <td>Create new patches or update patches owned by the user.</td>
               </tr>
               <tr>
                 <td>Upload without a token</td>
-                <td>Rejected with 401</td>
-                <td>Retired posture; no server setting restores it.</td>
+                <td>CLI asks for login; API answers 401</td>
+                <td>Run patchy login, confirm in your browser, then complete the login.</td>
               </tr>
               <tr>
                 <td>Patch URL</td>
-                <td>Public and unlisted</td>
-                <td>Anyone with the link can open the artifact without an account.</td>
+                <td>Company by default; public by choice</td>
+                <td>
+                  Read company pages through your signed-in browser; only public pages fetch by URL.
+                </td>
               </tr>
               <tr>
                 <td>Viewer</td>

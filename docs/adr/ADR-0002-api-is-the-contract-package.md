@@ -7,17 +7,13 @@
 
 ## Context
 
-Until #71 the HTTP API had no written shape. Request and response bodies were
-whatever `apps/server/src/app.ts` happened to send; the CLI re-typed the ones it
-read by hand, and its test stubs re-typed them a third time. Nothing checked that
-the three agreed, `--json` existed on one command, and there was no reference an
-agent could read before calling a route.
+The server and CLI need one written HTTP contract. Hand-written response bodies,
+client types and test stubs would otherwise be independent copies, with no
+guarantee that an agent's command reads what the server sends.
 
-The port moves the server onto Effect's `HttpApi`, which wants every route's
-schemas up front, and the CLI onto a client derived from the same definition.
-That raises the question of where those schemas live. The two candidates inside
-the existing map were the hosting context (the server "owns" its API) and the
-shared kernel `packages/core` (both sides import it).
+Effect's `HttpApi` declares the endpoint schemas and derives the client from
+them. The boundary decision is where that definition belongs: in the server,
+in the shared kernel, or in a package both consumers depend on.
 
 ## Decision
 
@@ -34,15 +30,15 @@ The wire contract is its own package, `@patchy/api`, beside neither context.
    `HttpApiClient` — is the whole of the package. It imports only `@patchy/core`
    and Effect, and no server or CLI code. Each capability package implements its
    own group; none defines one.
-3. **Refusals keep today's bodies.** A failure is `{ ok: false, error }` plus a
-   `code` and a number on the ones a client branches on, with today's status
-   codes. They are plain structs, never `Schema.TaggedError`: a `_tag` would be a
-   new field on the wire, and the CLI's exit-code ladder keys off status, not
-   body.
-4. **The wire says `patch`.** Paths are `/api/patches/*` and fields are
-   `patchId`, `patches`, `live_patch_quota_exceeded`, from the package's first
-   commit. Tables and code keep `draft` until the `patches` package ports them,
-   so agents see one wire break rather than two.
+3. **Refusals are wire data, not internal errors.** A failure is
+   `{ ok: false, error }`, with a `code` and supporting fields where a client
+   needs to branch. They are plain structs, never `Schema.TaggedError`:
+   a `_tag` would add an internal field to the wire. The CLI maps HTTP status
+   to its exit-code ladder and interprets domain codes where a command needs them.
+4. **The wire uses the domain's vocabulary.** Patch routes use `/api/patches/*`
+   and `patchId`; identity names the user, company, role and machine.
+   Publishing and sharing report the patch's `scope`; `publicUrl` is the link,
+   not a promise of anonymous access.
 
 ## Consequences
 
@@ -53,21 +49,16 @@ modules for the sake of a CLI that only needs to decode JSON. As a package of it
 own it is a thing both sides are held to, and the place a third consumer — a
 future web surface, a test harness — starts from.
 
-**Fastify is an adapter until the router ports.** `apps/server/src/wire.ts` is
-the interim seam: `decodeBody` and `sendWire` at every route boundary, no
-handler rewritten, no `runPromise`. The `serving` and `patches` tickets replace
-it with `HttpApiBuilder` groups and delete it.
-
 **The reference is a build product.** `docs/API.md` is rendered by a small
-renderer in `packages/api` from `OpenApi.fromApi(PatchyApi)` and pinned by a
+renderer in `packages/api` from `OpenApi.fromApi(PatchyApi)` and checked by a
 test, so it can only be as wrong as the schemas. Route prose lives as OpenAPI
 description annotations on the endpoints, which is where an agent reading the
 `HttpApi` finds it too.
 
-**`--json` is uniform.** Every CLI command prints one stdout document on
-success — for `whoami`, `upload` and `delete`, exactly the wire shape — and
-`{ ok: false, error }` on stderr on failure. The `kind` field and the exit-code
-ladder arrive with the `cli` port.
+**`--json` is uniform.** Command success is one stdout document; `whoami`,
+`upload`, `share` and `delete` expose the wire shape. Failure is one stderr
+document containing `{ ok: false, error, kind }`. The full CLI contract,
+including parse failures and login's receipts, is [ADR-0004](./ADR-0004-cli-contract-for-agents.md).
 
 ## Alternatives considered
 

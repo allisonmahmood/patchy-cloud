@@ -1,13 +1,13 @@
 # SQL
 
-The Postgres client every capability package queries through, and the Migrator that brings a database to the schema those packages declare. `packages/sql` owns no tables: each capability owns its migrations and this package only composes and runs them.
+The shared metadata store and the schema changes its consumers own. Each capability owns its tables and migrations; SQL supplies the common database boundary and migration ledger.
 
 ## Language
 
 **Migration**:
-One schema step a capability package owns, keyed `<id>_<name>` in its migration record and run once through Effect's Migrator. Ids form one global sequence — Companies owns baseline 1, Auth 2 and Patches 3 — and duplicate ids fail before any step executes; pending steps run transactionally under an exclusive ledger lock, so a failure rolls the batch back.
+One schema step owned by a capability and applied once in the database's shared sequence. Companies owns baseline 1, Auth 2 and Patches 3; a refused batch advances none of them.
 _Avoid_: schema version, patch (that word is the product's), idempotent migration (they are not, by design)
 
 **Ledger**:
-The `schema_migrations` table Effect's Migrator keeps — `migration_id integer`, `name`, `created_at` — recording each applied migration. Reading it is how a database says where it stands; nothing else writes it.
+The database's record of applied migrations. It identifies which schema steps have completed, rather than which application version last ran.
 _Avoid_: migration history, version table
