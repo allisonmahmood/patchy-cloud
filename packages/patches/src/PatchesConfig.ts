@@ -16,8 +16,8 @@ export const patchCreateRateLimitPerMinute = Config.int(
   "PATCHY_PATCH_CREATE_RATE_LIMIT_PER_MINUTE"
 ).pipe(Config.withDefault(10));
 
-/** The patch quota: live patches one token may hold at once, counted from the database. */
-export const livePatchesPerToken = Config.int("PATCHY_LIVE_PATCHES_PER_TOKEN").pipe(
+/** The patch quota: live patches one user may hold at once, counted from the database. */
+export const livePatchesPerUser = Config.int("PATCHY_LIVE_PATCHES_PER_USER").pipe(
   Config.withDefault(1_000)
 );
 

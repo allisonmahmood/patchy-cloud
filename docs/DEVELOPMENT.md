@@ -71,12 +71,11 @@ State lives in `<worktree>/.local/dev/` (gitignored):
 
 ### Clerk keys
 
-The server's env is closed: nothing exported in your shell reaches it. The one
-exception is the Clerk development keys, `CLERK_PUBLISHABLE_KEY` and
-`CLERK_SECRET_KEY`, read from one dotenv file per developer, shared by every
-worktree and never in the repo: `$XDG_CONFIG_HOME/patchy-cloud/dev.env`
-(`~/.config/patchy-cloud/dev.env` by default). `dev.log` names which of the
-two it loaded. The Clerk CLI writes the file:
+The server's env is closed: nothing exported in your shell reaches it. Its Clerk
+development keys, `CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY`, come from one
+dotenv file per developer, shared by every worktree and never in the repo:
+`$XDG_CONFIG_HOME/patchy-cloud/dev.env` (`~/.config/patchy-cloud/dev.env` by default).
+`dev.log` names which keys it loaded. The Clerk CLI writes the file:
 
 ```sh
 clerk env pull --app app_3ImZuFeZJb8038U0oFds84rupA2 --file "${XDG_CONFIG_HOME:-$HOME/.config}/patchy-cloud/dev.env"
@@ -84,10 +83,21 @@ clerk env pull --app app_3ImZuFeZJb8038U0oFds84rupA2 --file "${XDG_CONFIG_HOME:-
 
 ### Seed
 
-The instance is seeded with one company (`Patchy Dev`, `acct_dev`) and one
-admin token (`patchy-dev-token`). The fixture is `scripts/dev/src/seed.ts`; the
-vitest Postgres template (`test/postgres.ts`) applies the same rows, so tests
-and the dev instance agree on what exists.
+The shared `@patchy/auth/seed` entry exports `DEV_SEED` and `applyDevSeed`.
+It creates company **Patchy Dev** (`cmp_dev`, handle `patchy-dev`), its admin
+**Patchy Dev** (`usr_dev`, Clerk id `user_dev`, email `dev@patchy.local`), and
+the admin's machine **Dev Machine** (`tok_dev`, token `patchy-dev-token`).
+Only the token's hash is stored. Reapplying restores the dev user's active
+state and the machine's 90-day lifetime and last-use timestamp.
+
+Set `PATCHY_DEV_CLERK_USER_ID=user_...` in the same developer `dev.env` to bind
+the seeded admin to your Clerk development user. Restart `pnpm dev` to apply
+it; unset or empty keeps `user_dev`. Tests and packed e2e always use the
+default. The override changes only the seed, not the server's environment.
+
+The runner, the vitest template and the packed CLI e2e apply these same rows.
+`Testing.layer()` clones the seeded template; package fixtures add rows on
+top. SQL's migrator tests alone use its empty-database layer.
 
 ### How it works
 
@@ -95,9 +105,9 @@ and the dev instance agree on what exists.
 detached supervisor under `node --import tsx`; the supervisor owns one Effect
 scope holding Postgres and the server, so either exiting — or `stop`'s
 SIGTERM — tears the other down. Migrations run through Effect's Migrator in
-`packages/sql`: `packages/auth` and `packages/patches` each own theirs, and
-the server, the runner and the vitest template each spread the two records
-into one run.
+`packages/sql`: Companies, Auth and Patches own baselines 1, 2 and 3,
+respectively. The server, runner and vitest template each spread those three
+records into one run; server tests clone the template without migrations.
 
 ## Running the server by hand
 
@@ -105,12 +115,16 @@ The runner is the normal path. The server can still be started directly
 against a Postgres you point it at:
 
 ```sh
-DATABASE_URL=postgres://... PATCHY_BOOTSTRAP_API_TOKEN=dev-token pnpm --filter @patchy/server dev
+DATABASE_URL=postgres://... PATCHY_PUBLIC_BASE_URL=http://localhost:3000 \
+  PATCHY_STORAGE_DIR=.local/manual-storage pnpm --filter @patchy/server dev
 ```
 
-`pnpm seed:dev` uploads the accepted HTML fixture corpus to whatever
-`PATCHY_API_URL`/`PATCHY_API_TOKEN` point at (default `http://localhost:3000`
-with `dev-token`).
+Startup migrates but creates no credential. Against a disposable local database,
+apply `applyDevSeed(DATABASE_URL)` from `@patchy/auth/seed` after migration,
+then use `PATCHY_API_TOKEN=patchy-dev-token`. The seed is for development only.
+
+`pnpm seed:dev` uploads the accepted HTML fixture corpus. Both `PATCHY_API_URL`
+and `PATCHY_API_TOKEN` are required; neither has a default.
 
 ## Postgres
 

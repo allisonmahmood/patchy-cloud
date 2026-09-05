@@ -8,8 +8,8 @@
  * retention window; a visit with less than the visit-extension window
  * remaining moves the anchor to exactly that window out — never shorter,
  * never reviving an expired patch; the clock check is `expires_at < now`, and
- * nothing else. One thing outside this module stops the visit rule: revoking a
- * patch's creating token freezes its top-ups, so the clock only runs down.
+ * nothing else. Visits top up the clock regardless of the creating machine
+ * token's state.
  *
  * The clock is Effect's, read as `Clock.currentTimeMillis`, so a test winds
  * it. Only the retention anchor reads it: `created_at`, `updated_at`,
@@ -33,12 +33,12 @@ export const RETENTION_WINDOW = Duration.days(90);
 /** What a visit tops the remaining time up to, when less than this remains. */
 export const VISIT_EXTENSION_WINDOW = Duration.days(30);
 
-/** A patch's creating token is the one recorded on its first version. */
+/** The first upload starts a patch's version sequence. */
 const FIRST_VERSION_NUMBER = 1;
 
 /**
  * An update named a patch the caller cannot write: unknown, another
- * principal's, deleted, disabled or expired. One refusal for all five, so the
+ * user's, deleted, disabled or expired. One refusal for all five, so the
  * answer never says which.
  */
 export class PatchUnavailable extends Schema.TaggedError<PatchUnavailable>()("PatchUnavailable", {
@@ -60,7 +60,9 @@ export class PatchConflict extends Schema.TaggedError<PatchConflict>()("PatchCon
 
 export interface Patch {
   readonly id: string;
-  readonly accountId: string;
+  readonly companyId: string;
+  readonly ownerUserId: string;
+  readonly scope: "company" | "public";
   readonly title: string;
   readonly currentVersionId: string | null;
   readonly repoOrg: string | null;
@@ -81,7 +83,7 @@ export interface PatchVersion {
   readonly objectKey: string;
   readonly contentHash: string;
   readonly fileSize: number;
-  readonly createdByApiTokenId: string;
+  readonly createdByMachineTokenId: string;
   readonly sourceIp: string | null;
   readonly userAgent: string | null;
   readonly cliVersion: string | null;
@@ -94,12 +96,13 @@ export interface PatchVersion {
 export interface UploadTarget {
   readonly intent: "create" | "update";
   readonly patchId: string;
-  readonly accountId: string;
+  readonly ownerUserId: string;
 }
 
 export interface RecordInput extends UploadTarget {
+  readonly companyId: string;
   readonly versionId: string;
-  readonly apiTokenId: string;
+  readonly machineTokenId: string;
   readonly title: string;
   readonly objectKey: string;
   readonly contentHash: string;
@@ -125,12 +128,12 @@ export class Patches extends Context.Service<
   Patches,
   {
     /**
-     * How many patches this token created that are still live — neither
+     * How many patches this user owns that are still live — neither
      * deleted nor disabled. The durable half of the patch quota: recounted
      * from the database on every create, so a restart cannot reset it. An
      * expired patch still counts until the sweep takes its row.
      */
-    readonly countLive: (apiTokenId: string) => Effect.Effect<number, SqlError>;
+    readonly countLive: (ownerUserId: string) => Effect.Effect<number, SqlError>;
     /**
      * The upload contract's preflight, before any bytes are written: an
      * update needs a patch the caller may write, a create needs a free id.
@@ -159,8 +162,7 @@ export class Patches extends Context.Service<
     /**
      * Tops a served patch's clock up to the visit-extension window when less
      * than that remains. A no-op otherwise, including for a patch already
-     * expired, deleted or disabled, and for one whose creating token is
-     * revoked — from that moment its clock only runs down.
+     * expired, deleted or disabled.
      */
     readonly recordVisit: (patchId: string) => Effect.Effect<void, SqlError>;
     /**
@@ -179,7 +181,7 @@ export class Patches extends Context.Service<
       patchId: string
     ) => Effect.Effect<Option.Option<ReadonlyArray<string>>, SqlError>;
     /** Soft-deletes an owned patch; the row and its bytes go with the next sweep. `false` when unavailable. */
-    readonly delete: (patchId: string, accountId: string) => Effect.Effect<boolean, SqlError>;
+    readonly delete: (patchId: string, ownerUserId: string) => Effect.Effect<boolean, SqlError>;
   }
 >()("@patchy/patches/Patches") {}
 
@@ -189,7 +191,9 @@ const NullableStamp = Schema.NullOr(Schema.Date);
 
 class PatchRow extends Schema.Class<PatchRow>("PatchRow")({
   id: Schema.String,
-  accountId: Schema.String,
+  companyId: Schema.String,
+  ownerUserId: Schema.String,
+  scope: Schema.Literals(["company", "public"]),
   title: Schema.String,
   currentVersionId: Schema.NullOr(Schema.String),
   repoOrg: Schema.NullOr(Schema.String),
@@ -209,7 +213,7 @@ class VersionRow extends Schema.Class<VersionRow>("VersionRow")({
   objectKey: Schema.String,
   contentHash: Schema.String,
   fileSize: Schema.Int,
-  createdByApiTokenId: Schema.String,
+  createdByMachineTokenId: Schema.String,
   sourceIp: Schema.NullOr(Schema.String),
   userAgent: Schema.NullOr(Schema.String),
   cliVersion: Schema.NullOr(Schema.String),
@@ -229,7 +233,9 @@ const isoOrNull = (date: Date | null) => (date === null ? null : date.toISOStrin
 
 const toPatch = (row: PatchRow): Patch => ({
   id: row.id,
-  accountId: row.accountId,
+  companyId: row.companyId,
+  ownerUserId: row.ownerUserId,
+  scope: row.scope,
   title: row.title,
   currentVersionId: row.currentVersionId,
   repoOrg: row.repoOrg,
@@ -249,7 +255,7 @@ const toVersion = (row: VersionRow): PatchVersion => ({
   objectKey: row.objectKey,
   contentHash: row.contentHash,
   fileSize: row.fileSize,
-  createdByApiTokenId: row.createdByApiTokenId,
+  createdByMachineTokenId: row.createdByMachineTokenId,
   sourceIp: row.sourceIp,
   userAgent: row.userAgent,
   cliVersion: row.cliVersion,
@@ -264,7 +270,8 @@ const dieOnSchemaError = { SchemaError: Effect.die } as const;
 
 /** The columns of `patches`, aliased to the record's names. */
 const PATCH_COLUMNS = `
-  patches.id, patches.account_id AS "accountId", patches.title,
+  patches.id, patches.company_id AS "companyId",
+  patches.owner_user_id AS "ownerUserId", patches.scope, patches.title,
   patches.current_version_id AS "currentVersionId",
   patches.repo_org AS "repoOrg", patches.repo_name AS "repoName",
   patches.created_at AS "createdAt", patches.updated_at AS "updatedAt",
@@ -275,7 +282,7 @@ const PATCH_COLUMNS = `
 const VERSION_COLUMNS = `
   id, patch_id AS "patchId", version_number AS "versionNumber",
   object_key AS "objectKey", content_hash AS "contentHash", file_size AS "fileSize",
-  created_by_api_token_id AS "createdByApiTokenId", source_ip AS "sourceIp",
+  created_by_machine_token_id AS "createdByMachineTokenId", source_ip AS "sourceIp",
   user_agent AS "userAgent", cli_version AS "cliVersion", git_branch AS "gitBranch",
   git_commit_sha AS "gitCommitSha", original_filename AS "originalFilename",
   created_at AS "createdAt"`;
@@ -295,20 +302,18 @@ export const make = Effect.gen(function* () {
    */
   const notExpired = (at: Statement.Fragment) => sql`(patches.expires_at >= ${at})`;
 
-  /** A patch in service the principal may write: theirs, and neither taken down nor expired. */
-  const writable = (patchId: string, accountId: string, at: Statement.Fragment) =>
-    sql`patches.id = ${patchId} AND patches.account_id = ${accountId}
+  /** A patch in service the user may write: theirs, and neither taken down nor expired. */
+  const writable = (patchId: string, ownerUserId: string, at: Statement.Fragment) =>
+    sql`patches.id = ${patchId} AND patches.owner_user_id = ${ownerUserId}
         AND patches.deleted_at IS NULL AND patches.disabled_at IS NULL AND ${notExpired(at)}`;
 
   const countLiveRow = SqlSchema.findOne({
     Request: Schema.String,
     Result: Count,
-    execute: (apiTokenId) => sql`
+    execute: (ownerUserId) => sql`
       SELECT count(*)::int AS count
       FROM patches
-      JOIN patch_versions ON patch_versions.patch_id = patches.id
-        AND patch_versions.version_number = ${FIRST_VERSION_NUMBER}
-      WHERE patch_versions.created_by_api_token_id = ${apiTokenId}
+      WHERE patches.owner_user_id = ${ownerUserId}
         AND patches.deleted_at IS NULL
         AND patches.disabled_at IS NULL`
   });
@@ -364,8 +369,8 @@ export const make = Effect.gen(function* () {
       sql`SELECT object_key AS "objectKey" FROM patch_versions WHERE patch_id = ${patchId}`
   });
 
-  const countLive = Effect.fn("Patches.countLive")((apiTokenId: string) =>
-    countLiveRow(apiTokenId).pipe(
+  const countLive = Effect.fn("Patches.countLive")((ownerUserId: string) =>
+    countLiveRow(ownerUserId).pipe(
       Effect.map((row) => row.count),
       // `count(*)` always answers one row; no row is a bug, not a state.
       Effect.catchTags({ ...dieOnSchemaError, NoSuchElementError: Effect.die })
@@ -375,7 +380,7 @@ export const make = Effect.gen(function* () {
   const checkTarget = Effect.fn("Patches.checkTarget")(function* (target: UploadTarget) {
     if (target.intent === "update") {
       const rows =
-        yield* sql`SELECT 1 FROM patches WHERE ${writable(target.patchId, target.accountId, yield* now)}`;
+        yield* sql`SELECT 1 FROM patches WHERE ${writable(target.patchId, target.ownerUserId, yield* now)}`;
       if (rows.length === 0) return yield* new PatchUnavailable({ patchId: target.patchId });
       return;
     }
@@ -397,15 +402,15 @@ export const make = Effect.gen(function* () {
           // version number is allocated after it, so each waits its turn and
           // then sees the committed version before it.
           const locked = yield* sql`
-            SELECT id FROM patches WHERE ${writable(input.patchId, input.accountId, at)} FOR UPDATE`;
+            SELECT id FROM patches WHERE ${writable(input.patchId, input.ownerUserId, at)} FOR UPDATE`;
           if (locked.length === 0) return yield* new PatchUnavailable({ patchId: input.patchId });
           versionNumber = (yield* nextVersionNumber(input.patchId)).nextVersion;
         } else {
           versionNumber = FIRST_VERSION_NUMBER;
           const created = yield* sql`
-            INSERT INTO patches (id, account_id, title, current_version_id, repo_org, repo_name, expires_at)
-            VALUES (${input.patchId}, ${input.accountId}, ${input.title}, ${input.versionId},
-                    ${input.repoOrg}, ${input.repoName}, ${expiresAt})
+            INSERT INTO patches (id, company_id, owner_user_id, scope, title, current_version_id, repo_org, repo_name, expires_at)
+            VALUES (${input.patchId}, ${input.companyId}, ${input.ownerUserId}, 'company',
+                    ${input.title}, ${input.versionId}, ${input.repoOrg}, ${input.repoName}, ${expiresAt})
             ON CONFLICT (id) DO NOTHING
             RETURNING id`;
           if (created.length === 0) return yield* new PatchConflict({ patchId: input.patchId });
@@ -414,11 +419,11 @@ export const make = Effect.gen(function* () {
         yield* sql`
           INSERT INTO patch_versions (
             id, patch_id, version_number, object_key, content_hash, file_size,
-            created_by_api_token_id, source_ip, user_agent, cli_version,
+            created_by_machine_token_id, source_ip, user_agent, cli_version,
             git_branch, git_commit_sha, original_filename
           ) VALUES (
             ${input.versionId}, ${input.patchId}, ${versionNumber}, ${input.objectKey},
-            ${input.contentHash}, ${input.fileSize}, ${input.apiTokenId}, ${input.sourceIp},
+            ${input.contentHash}, ${input.fileSize}, ${input.machineTokenId}, ${input.sourceIp},
             ${input.userAgent}, ${input.cliVersion}, ${input.gitBranch}, ${input.gitCommitSha},
             ${input.filename}
           )`;
@@ -457,7 +462,6 @@ export const make = Effect.gen(function* () {
   // topped-up anchor is exactly "less than the visit-extension window
   // remains", and it is also exactly "this move does not shorten the clock".
   // The not-expired term keeps a visit from reviving an expired patch.
-  // The NOT EXISTS is the revocation freeze.
   const recordVisit = Effect.fn("Patches.recordVisit")(function* (patchId: string) {
     const millis = yield* Clock.currentTimeMillis;
     const at = stamp(millis);
@@ -469,14 +473,7 @@ export const make = Effect.gen(function* () {
         AND patches.deleted_at IS NULL
         AND patches.disabled_at IS NULL
         AND ${notExpired(at)}
-        AND patches.expires_at < ${toppedUp}
-        AND NOT EXISTS (
-          SELECT 1 FROM patch_versions
-          JOIN api_tokens ON api_tokens.id = patch_versions.created_by_api_token_id
-          WHERE patch_versions.patch_id = patches.id
-            AND patch_versions.version_number = ${FIRST_VERSION_NUMBER}
-            AND api_tokens.revoked_at IS NOT NULL
-        )`;
+        AND patches.expires_at < ${toppedUp}`;
   });
 
   const listExpired = Effect.fn("Patches.listExpired")(function* (limit: number) {
@@ -508,12 +505,12 @@ export const make = Effect.gen(function* () {
     )
   );
 
-  const delete_ = Effect.fn("Patches.delete")(function* (patchId: string, accountId: string) {
+  const delete_ = Effect.fn("Patches.delete")(function* (patchId: string, ownerUserId: string) {
     const rows = yield* sql`
       UPDATE patches
       SET deleted_at = now(), updated_at = now()
       WHERE id = ${patchId}
-        AND account_id = ${accountId}
+        AND owner_user_id = ${ownerUserId}
         AND deleted_at IS NULL
       RETURNING id`;
     return rows.length > 0;

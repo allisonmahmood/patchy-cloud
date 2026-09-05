@@ -23,8 +23,9 @@ import * as Patches from "./Patches.js";
 export interface UploadInput {
   /** The patch to add a version to, or `null` to create one. */
   readonly patchId: string | null;
-  readonly accountId: string;
-  readonly apiTokenId: string;
+  readonly companyId: string;
+  readonly ownerUserId: string;
+  readonly machineTokenId: string;
   readonly title: string;
   readonly html: string;
   readonly filename: string | null;
@@ -96,7 +97,7 @@ export const make = Effect.gen(function* () {
     const target = {
       intent: input.patchId === null ? "create" : "update",
       patchId,
-      accountId: input.accountId
+      ownerUserId: input.ownerUserId
     } satisfies Patches.UploadTarget;
 
     yield* patches.checkTarget(target);
@@ -105,7 +106,8 @@ export const make = Effect.gen(function* () {
       .record({
         ...target,
         versionId,
-        apiTokenId: input.apiTokenId,
+        companyId: input.companyId,
+        machineTokenId: input.machineTokenId,
         title: input.title,
         objectKey: key,
         contentHash: contentHash(input.html),

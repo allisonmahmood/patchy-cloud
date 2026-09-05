@@ -10,7 +10,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Hash from "effect/Hash";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { DEV_TOKEN, PG_PASSWORD, PG_USER } from "./seed.js";
+import { DEV_SEED } from "@patchy/auth/seed";
+import { PG_PASSWORD, PG_USER } from "./postgres.js";
 
 /**
  * The processes recorded in `plan.json`. `start` records the supervisor the
@@ -103,7 +104,7 @@ export const computePlan = Effect.fn("computePlan")(function* <E, R>(
         ports: { server, postgres },
         apiUrl: `http://127.0.0.1:${server}`,
         databaseUrl: `postgresql://${PG_USER}:${PG_PASSWORD}@127.0.0.1:${postgres}/${DATABASE_NAME}`,
-        token: DEV_TOKEN
+        token: DEV_SEED.token
       };
       return plan;
     }

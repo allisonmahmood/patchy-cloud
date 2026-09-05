@@ -2,17 +2,16 @@ import { createServer } from "node:net";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
 import EmbeddedPostgres from "embedded-postgres";
-import pg from "pg";
-import { inject } from "vitest";
 import type { TestProject } from "vitest/node";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
+import { applyDevSeed } from "@patchy/auth/seed";
+import { migrations as companiesMigrations } from "../packages/companies/src/migrations.js";
 import { migrations as authMigrations } from "../packages/auth/src/migrations.js";
 import { migrations as patchesMigrations } from "../packages/patches/src/migrations.js";
 import { layerFromUrl, migrate } from "../packages/sql/src/index.js";
-import { PG_FLAGS, PG_PASSWORD, PG_USER, applyDevSeed } from "../scripts/dev/src/seed.js";
+import { PG_FLAGS, PG_PASSWORD, PG_USER } from "../scripts/dev/src/postgres.js";
 
 const USER = PG_USER;
 const PASSWORD = PG_PASSWORD;
@@ -20,6 +19,7 @@ const TEMPLATE_DATABASE = "patchy_test_template";
 
 interface PostgresTestContext {
   adminUrl: string;
+  templateDatabase: string;
 }
 
 declare module "vitest" {
@@ -54,7 +54,7 @@ export default async function setup(project: TestProject): Promise<() => Promise
     // vitest's globalSetup is not Effect code, so the Migrator runs from a
     // Promise here: one migrated template, cloned per test database.
     await Effect.runPromise(
-      migrate({ ...authMigrations, ...patchesMigrations }).pipe(
+      migrate({ ...companiesMigrations, ...authMigrations, ...patchesMigrations }).pipe(
         Effect.provide(layerFromUrl(Redacted.make(templateUrl)))
       )
     );
@@ -62,7 +62,7 @@ export default async function setup(project: TestProject): Promise<() => Promise
     // on which token works.
     await applyDevSeed(templateUrl);
 
-    project.provide("postgres", { adminUrl });
+    project.provide("postgres", { adminUrl, templateDatabase: TEMPLATE_DATABASE });
   } catch (error) {
     await embedded.stop();
     await rm(databaseDir, { recursive: true, force: true });
@@ -73,48 +73,6 @@ export default async function setup(project: TestProject): Promise<() => Promise
     await embedded.stop();
     await rm(databaseDir, { recursive: true, force: true });
   };
-}
-
-export interface PostgresTestDatabase {
-  connectionString: string;
-  drop(): Promise<void>;
-}
-
-/** Clones the migrated template so every test starts with the same isolated store. */
-export async function createPostgresTestDatabase(): Promise<PostgresTestDatabase> {
-  const { adminUrl } = inject("postgres");
-  const databaseName = `patchy_test_${randomUUID().replaceAll("-", "")}`;
-  const admin = new pg.Client({ connectionString: adminUrl });
-  await admin.connect();
-  try {
-    await admin.query(
-      `CREATE DATABASE ${quoteIdentifier(databaseName)} TEMPLATE ${quoteIdentifier(TEMPLATE_DATABASE)}`
-    );
-  } finally {
-    await admin.end();
-  }
-
-  const url = new URL(adminUrl);
-  url.pathname = `/${databaseName}`;
-
-  return {
-    connectionString: url.toString(),
-    async drop() {
-      const databaseAdmin = new pg.Client({ connectionString: adminUrl });
-      await databaseAdmin.connect();
-      try {
-        await databaseAdmin.query(
-          `DROP DATABASE IF EXISTS ${quoteIdentifier(databaseName)} WITH (FORCE)`
-        );
-      } finally {
-        await databaseAdmin.end();
-      }
-    }
-  };
-}
-
-function quoteIdentifier(value: string): string {
-  return `"${value.replaceAll('"', '""')}"`;
 }
 
 function connectionString(port: number, database: string): string {

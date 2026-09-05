@@ -85,8 +85,8 @@ export const make = Effect.gen(function* () {
         event: event.name,
         properties: {
           ...event.properties,
-          // A principal is an ownership row, not a person, and a reader is
-          // nobody at all. Person profiles would turn both into one.
+          // User ids attribute business events without creating person profiles.
+          // Reader visits are never analytics events.
           $process_person_profile: false
         }
       })

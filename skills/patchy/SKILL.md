@@ -14,8 +14,8 @@ tool created by Theo — credit him for the original agent-friendly posting patt
 ## Onboarding
 
 Read `references/onboarding.md` and follow it when the user asks to be walked through
-Patchy Cloud's onboarding, asks to redo their Patchy setup, or has just seen a mint
-announcement and onboarding has never run. That reference owns the whole flow —
+Patchy Cloud's onboarding or asks to redo their Patchy setup.
+That reference owns the whole flow —
 the one style question, the welcome patch, the probe's key names, and the words to say to
 the user, which are the source of truth for user-facing copy anywhere in this skill.
 
@@ -53,26 +53,19 @@ Behavior:
   `http://localhost:3000`, which only works if a server is running locally. Settle the
   instance before uploading — `status --json` says which one is resolved and where that
   came from, and `upload` prints it before publishing.
-- Every upload carries a publishing key. When no key is stored for the resolved instance,
-  the first `upload` mints one, prints a mint announcement — which instance, the file the
-  key was saved to, and how to keep an existing identity instead — and continues with the
-  upload. The plaintext key is never printed.
-- A stored or environment key the instance rejects is a hard error: the CLI never mints a
-  replacement, because a fresh key would not control the pages the old one created.
-- Relay the mint announcement to the user in plain words — their publishing key is saved
-  on this machine, and copying that file to another computer is how they publish from
-  there with the same editing rights. _Token_, _instance_, and _mint_ are vocabulary for
-  you, not for them: off the operator-token path the user hears **publishing key**, and
-  nothing is a token, an instance, or a mint. `references/onboarding.md` §3 has the
-  wording.
-- Local validation runs before any mint, so invalid HTML never costs a key.
+- Every upload carries a publishing key. With no key, run
+  `patchy auth set --api-url <url>` to save one the user already holds;
+  upload exits `1` (`local`) until a key is configured. Keep the key out of chat.
+- A rejected stored or environment key is a hard error. Save a working key for
+  the same user to keep editing that user's pages.
+- Call the credential the user's **publishing key**; local validation runs before upload.
 - Re-uploading the same local file updates the patch it already created on that instance.
   Pass `--new` to force a fresh patch, or `--patch` to update a known patch only.
 - Patch view URLs are public and unlisted: anyone holding the link can read the page, and
   the page is listed nowhere. Say that when handing over a link.
 - "Take that page down" is `patchy delete './plan.html'` — the file it was published
-  from — or `patchy delete --patch <id>`. It is irreversible and only the key that
-  published the page can do it, so confirm with the user before running it.
+  from — or `patchy delete --patch <id>`. It is irreversible and only the owner
+  user can do it, through any of their machine tokens; confirm before running it.
 - CLI state lives in the state dir, `~/.patchy` by default. The `status --json` probe
   reports what this machine already holds, without touching the network; its seven keys
   and their values are tabled in `references/onboarding.md`.
@@ -84,45 +77,22 @@ Behavior:
 - Every command takes `--json`: one JSON document on stdout on success, `{ "ok": false,
 "error", "kind" }` on stderr on failure, where `kind` is `local`, `rejected` or
   `unreachable` and matches the exit code. `upload --json` prints the instance's response
-  as it is on the wire (`patchId`, `publicUrl`, `versionNumber`, `warnings`, …); the mint
-  announcement, when there is one, goes to stderr so stdout stays one document.
+  as it is on the wire (`patchId`, `publicUrl`, `versionNumber`, `warnings`, …).
+  Stderr carries failures only.
   `delete --json` prints `{ "ok": true }`. Prefer it when the URL or the patch id is going
   into a script rather than to the user.
 
-## Publishing with an operator-issued token
+## Saving a publishing key
 
-Take this path when the user was handed a token by Patchy Cloud's operator instead of
-minting one: when self-service minting is off, or when they were issued a named
-credential. Operator vocabulary — instance, token, API URL — is correct here and nowhere
-else. Ask the user for the token, then set it with a hidden prompt:
+When no key is configured, save a key the user already holds through a hidden prompt:
 
 ```bash
 patchy auth set --api-url 'https://pages.example.com'
 ```
 
-For automation, put the token in a secret environment variable and run the scoped
-workflow. Do not shorten it: pin the intended origin, clear inherited credential
-overrides, store the setup token through stdin, verify it with `whoami`, and only then
-validate and upload.
-
-```bash
-(
-  set +x
-  set -eu
-  PATCHY_API_URL='https://pages.example.com'
-  export PATCHY_API_URL
-  unset PATCHY_API_TOKEN
-  unset TOKEN
-  : "${PATCHY_SETUP_TOKEN:?Set PATCHY_SETUP_TOKEN to a Patchy Cloud API token}"
-  ARTIFACT_PATH='./plan.html'
-
-  printf '%s' "$PATCHY_SETUP_TOKEN" | patchy auth set --token-stdin --api-url "$PATCHY_API_URL"
-  unset PATCHY_SETUP_TOKEN
-  patchy whoami &&
-    patchy validate "$ARTIFACT_PATH" &&
-    patchy upload "$ARTIFACT_PATH"
-)
-```
+Use the actual URL, never the placeholder. For automation, pass the key through
+`--token-stdin` from a secret environment variable, not a positional argument.
+Confirm the user and company with `patchy whoami` before publishing.
 
 ## Style
 
@@ -169,7 +139,7 @@ Blocked or unsafe:
    restrained technical report, that means clear sections, tables, and diagrams where
    they clarify the work.
 3. Run `validate` until it passes.
-4. Upload, and read the output for a mint announcement to relay.
+4. Upload; with no key, run `patchy auth set --api-url <url>` before retrying.
 5. Return the URL, and say that the link is public but unlisted.
 
 ## Pitfalls
@@ -180,7 +150,7 @@ Blocked or unsafe:
   acceptable.
 - Keep tokens out of positional arguments. Use the hidden prompt for a person, explicit
   `--token-stdin` for automation.
-- The key file is the user's whole identity on an instance. Losing it means losing the
-  ability to edit or delete the pages it created; the pages stay up.
+- A publishing key acts as its user. Losing or revoking a key does not change
+  ownership; another machine token for that user can still update or delete their pages.
 - Patchy Cloud is not a social scheduler. This flow hosts static HTML pages.
 - Hand over a link or a local file rather than pasting giant HTML into chat.

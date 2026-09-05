@@ -1,7 +1,10 @@
 import { readFixtureCorpus } from "../test/html-fixtures.mjs";
 
-const apiUrl = process.env.PATCHY_API_URL ?? "http://localhost:3000";
-const apiToken = process.env.PATCHY_API_TOKEN ?? "dev-token";
+const apiUrl = process.env.PATCHY_API_URL;
+const apiToken = process.env.PATCHY_API_TOKEN;
+if (!apiUrl || !apiToken) {
+  throw new Error("PATCHY_API_URL and PATCHY_API_TOKEN must both be set to seed HTML fixtures.");
+}
 const uploadUrl = new URL("/api/uploads", apiUrl);
 const fixtures = await readFixtureCorpus("accept");
 

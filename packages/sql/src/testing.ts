@@ -1,7 +1,6 @@
 /**
- * The migrated-database test layer: an `it.layer` block gets an empty
- * database on the vitest Postgres cluster (`test/postgres.ts` provides its
- * admin URL), migrated by the given record, and dropped with the layer.
+ * Isolated databases on vitest's Postgres cluster, dropped with their layers.
+ * Capability tests clone the migrated, seeded template; migrator tests start empty.
  */
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -13,7 +12,7 @@ import { layerFromUrl, migrate, type Migrations } from "./index.js";
 
 declare module "vitest" {
   export interface ProvidedContext {
-    postgres: { adminUrl: string };
+    postgres: { adminUrl: string; templateDatabase: string };
   }
 }
 
@@ -28,9 +27,10 @@ const admin = (statement: string) =>
     Effect.provide(layerFromUrl(Redacted.make(inject("postgres").adminUrl)), { local: true })
   );
 
-const createEmptyDatabase = Effect.gen(function* () {
+const createDatabase = Effect.fn("Testing.createDatabase")(function* (template?: string) {
   const name = `patchy_test_${(yield* Random.nextInt).toString(36)}`;
-  yield* admin(`CREATE DATABASE "${name}"`);
+  const source = template === undefined ? "" : ` TEMPLATE "${template.replaceAll('"', '""')}"`;
+  yield* admin(`CREATE DATABASE "${name}"${source}`);
   const url = new URL(inject("postgres").adminUrl);
   url.pathname = `/${name}`;
   return { name, url: url.toString() } satisfies TestDatabase;
@@ -39,11 +39,23 @@ const createEmptyDatabase = Effect.gen(function* () {
 const dropDatabase = (database: TestDatabase) =>
   admin(`DROP DATABASE IF EXISTS "${database.name}" WITH (FORCE)`).pipe(Effect.orDie);
 
-/** A fresh database migrated by `migrations`, as `SqlClient`; the pool closes and the database drops with the layer. */
-export const layer = (migrations: Migrations) =>
+/** A clone of the migrated, seeded template, with its own scoped pool and database. */
+export const layer = () =>
   Layer.unwrap(
     Effect.gen(function* () {
-      const database = yield* Effect.acquireRelease(createEmptyDatabase, dropDatabase);
+      const database = yield* Effect.acquireRelease(
+        createDatabase(inject("postgres").templateDatabase),
+        dropDatabase
+      );
+      return layerFromUrl(Redacted.make(database.url));
+    })
+  );
+
+/** An empty database migrated by `migrations`, reserved for the migrator's own tests. */
+export const emptyLayer = (migrations: Migrations) =>
+  Layer.unwrap(
+    Effect.gen(function* () {
+      const database = yield* Effect.acquireRelease(createDatabase(), dropDatabase);
       return Layer.effectDiscard(migrate(migrations)).pipe(
         Layer.provideMerge(layerFromUrl(Redacted.make(database.url)))
       );

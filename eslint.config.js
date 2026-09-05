@@ -39,6 +39,8 @@ export default tseslint.config(
   },
   {
     files: ["packages/cli/src/**/*.{ts,mts,cts,tsx}"],
+    // Integration fixtures share Auth's dev seed; shipped CLI code stays wire-only.
+    ignores: ["**/*.test.ts"],
     rules: {
       "no-restricted-imports": [
         "error",

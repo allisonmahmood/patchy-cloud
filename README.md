@@ -8,7 +8,7 @@ A patch runs at one of a few **tiers**: tier 0 is a static page with no code run
 
 ## Where it is today
 
-Tier 0. An agent hands the server one self-contained HTML file and gets back an unlisted URL. Companies, login and the integration layer are written down in `docs/product.md` and not yet in code.
+Tier 0. An agent hands the server one self-contained HTML file and gets back an unlisted URL. Patches belong to users in companies and publishing uses machine tokens; browser login, the sharing door and integrations are not yet in code.
 
 This repository is a full-history copy of [PatchPage](https://github.com/allisonmahmood/PatchPage), taken in a different direction. PatchPage remains a separate, free product with its own instance; nothing here runs it or publishes to it, and commits from before the split describe PatchPage, not Patchy Cloud.
 
@@ -31,7 +31,8 @@ A Turborepo monorepo managed with pnpm. [AGENTS.md](AGENTS.md) is the guide to w
 - `packages/cli` — `@patchy/cli`, the `patchy` command-line publisher.
 - `packages/core` — shared HTML validation, hashing, and ID helpers (`@patchy/core`).
 - `packages/api` — the wire contract: schemas, the `HttpApi`, the derived client (`@patchy/api`).
-- `packages/auth` — tokens, principals, self-service minting, revocation, and the `auth` API group (`@patchy/auth`).
+- `packages/companies` — companies, users, roles, invites and membership lifecycle (`@patchy/companies`).
+- `packages/auth` — machine tokens, bearer identity, revocation, the shared development seed and the `auth` API group (`@patchy/auth`).
 - `packages/patches` — patches and versions, the upload contract, retention and the expiry sweep, owner-only deletion, and the `patches` API group (`@patchy/patches`).
 - `packages/serving` — the serving guarantees, the page routes, and the trusted-proxy schema (`@patchy/serving`).
 - `packages/content-store` — the object store for a patch's bytes, with filesystem and Azure Blob layers (`@patchy/content-store`).

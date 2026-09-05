@@ -25,21 +25,22 @@ contract suite are deleted; capability packages query `@effect/sql-pg` through
 `SqlSchema` directly, and every rule exists once, in SQL.
 
 1. **One baseline per owner.** Because nothing is deployed, the migration
-   history is rewritten rather than carried: `auth` owns ids 1–2
-   (`accounts`, `api_tokens`, `token_mints`), `patches` owns 3 onward
-   (`patches`, `patch_versions`). Additive steps that only ever existed to move
+   history is rewritten rather than carried: Companies owns baseline 1
+   (`companies`, `users`, `invites`), Auth owns 2 (`machine_tokens`,
+   `device_logins`), and Patches owns 3 (`patches`, `patch_versions`).
+   Additive steps that only ever existed to move
    the JSON file along — `visibility`, `upload_events`, the expiry-column
    backfill — are gone with it.
 2. **The rename lands in the tables.** `drafts` and `draft_versions` become
    `patches` and `patch_versions`; the wire had already renamed (ADR-0002).
 3. **Embedded Postgres is the dev and test store.** `pnpm dev` migrates and
-   seeds one per worktree; `@patchy/sql/testing` gives an `it.layer` block a
-   fresh migrated database, and the server's tests clone a migrated template.
+   seeds one per worktree; `@patchy/sql/testing` gives every `it.layer` block a
+   clone of the same seeded template, with an empty layer for migrator tests.
 
 ## Consequences
 
-**Every retention rule has one home.** The not-expired predicate, the visit
-top-up and the revocation freeze are SQL fragments in `Patches.ts`; there is
+**Every retention rule has one home.** The not-expired predicate and the visit
+top-up are SQL fragments in `Patches.ts`; there is
 no TypeScript twin and no suite to keep the two honest. The Effect clock reads
 into the query as `to_timestamp(...)`, so a test still winds time.
 

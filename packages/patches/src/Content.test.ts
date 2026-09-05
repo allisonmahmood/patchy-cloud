@@ -78,8 +78,9 @@ const upload = (html: string, patchId: string | null = null) =>
   Effect.flatMap(content, (service) =>
     service.upload({
       patchId,
-      accountId: uploader.accountId,
-      apiTokenId: uploader.apiTokenId,
+      companyId: uploader.company.id,
+      ownerUserId: uploader.user.id,
+      machineTokenId: uploader.machine.id,
       title: "Page",
       html,
       filename: null,
@@ -143,7 +144,7 @@ it.layer(
       const before = yield* store.keys;
       // The patch is taken down between the preflight and the row insert.
       store.control.afterPut = Effect.flatMap(patches, (service) =>
-        service.delete(created.patchId, uploader.accountId).pipe(Effect.orDie, Effect.asVoid)
+        service.delete(created.patchId, uploader.user.id).pipe(Effect.orDie, Effect.asVoid)
       );
       const refused = yield* upload("<p>rejected</p>", created.patchId).pipe(Effect.flip);
       store.control.afterPut = Effect.void;
@@ -156,7 +157,7 @@ it.layer(
     Effect.gen(function* () {
       const created = yield* upload("<p>original</p>");
       store.control.afterPut = Effect.flatMap(patches, (service) =>
-        service.delete(created.patchId, uploader.accountId).pipe(Effect.orDie, Effect.asVoid)
+        service.delete(created.patchId, uploader.user.id).pipe(Effect.orDie, Effect.asVoid)
       );
       const exit = yield* upload("<p>orphan</p>", created.patchId).pipe(
         over(deleteFails),

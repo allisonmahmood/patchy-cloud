@@ -5,9 +5,9 @@ The process that serves Patchy Cloud: wiring, and one guard. `apps/server` compo
 ## Language
 
 **API guard**:
-The middleware ahead of the router on every `/api/*` request but the self-service mint. It spends one attempt of the per-address protected-API limit, then — for the shapes the router never sees, a malformed target or an overlong patch id, and for every target the router has no handler for — requires a token before it answers 400, 414 or 404. A route the router matches authenticates through the API's own bearer middleware, before its body is read. The guard exists so a caller with no token cannot map the API by its status codes and a flood of them runs into the limit like any other; it is not authorization, which every handler decides for itself.
+The middleware ahead of the router on every `/api/*` request, with no unauthenticated paths yet. It spends the per-address protected-API limit and requires a token before answering malformed or unknown targets; matched routes authenticate through bearer middleware before reading the body, so unauthenticated callers cannot map the API by status codes.
 _Avoid_: firewall, auth middleware (that is the bearer middleware, which the guard sits ahead of)
 
 **Protected-API limit**:
-Attempts admitted per source address per minute across every guarded `/api/*` request, whatever it answers — `PATCHY_PROTECTED_API_RATE_LIMIT_PER_MINUTE`, spent before the token is checked, keyed on the address the trusted-proxy walk resolved. In memory, so a restart empties it. The mint has its own per-address limit in Auth and is not counted here.
+Attempts admitted per source address per minute across every guarded `/api/*` request, whatever it answers — `PATCHY_PROTECTED_API_RATE_LIMIT_PER_MINUTE`, spent before the token is checked and keyed on the address the trusted-proxy walk resolved. In memory, so a restart empties it.
 _Avoid_: global rate limit (pages are never limited)
