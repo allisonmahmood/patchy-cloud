@@ -29,8 +29,10 @@ without a login, and a saved login takes precedence over that seed.
 ### `patchy login [--complete [code]] [--wait <seconds>]`
 
 Log this machine in to the resolved instance. Start sends this machine's
-hostname as the name hint, plus the stored key's id on re-login. A rerun with
-a live login pending resumes it rather than creating another code.
+hostname as the name hint, plus the stored key's id on re-login. An agent rerun
+with a pending login polls once rather than creating another code: it returns
+`pending`, `logged_in`, or the instance's terminal refusal, not a new handoff.
+The original URL and code remain valid until answered or expired.
 `--api-url <url>` also saves the instance choice. The returned `next` retains
 that flag, since a worktree's dev env or `PATCHY_API_URL` outranks saved config.
 Keep the flag on later uploads when overriding those sources.
@@ -55,17 +57,24 @@ Login blocks only when stdin is a terminal, `--json` is absent, and none of
 `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, `CURSOR_AGENT`, `CODEX_SANDBOX`,
 `CODEX_SANDBOX_NETWORK_DISABLED`, `GEMINI_CLI`, `OPENCODE`, `CLINE_ACTIVE`,
 `AI_AGENT` or `CI` is set. That human path prints the handoff and waits until
-the person answers or the code expires. Otherwise it prints the handoff and
-why it did not wait, then exits 0. An agent relays both the URL and code,
-never opens a browser, and follows `next`.
+the person answers or the code expires. On a new login, every other path prints
+the handoff and why it did not wait, then exits 0. An agent relays both the URL
+and code, never opens a browser, and follows `next`.
 
 `--complete` uses the pending login; an optional code must match it or the
-command exits 1 (`local`), naming the live code. Polling follows the returned
-interval, adding five seconds on `slow_down`. `--wait` bounds completion
-polling (default 60 seconds); `--wait 0` polls once. Still pending is exit 0
-and can be resumed with the same `next`. Denied, expired and unknown are
-instance answers, exit 2 (`rejected`); the CLI polls even if the local expiry
-has passed. Completion saves the key and machine and clears the pending login.
+command exits 1 (`local`), naming the live code. Pass the code as a separate
+argument (`--complete XXXX-XXXX`, not `--complete=XXXX-XXXX`).
+Polling follows the returned interval, adding five seconds on `slow_down`.
+`--wait` bounds polling, including in-flight responses (default 60 seconds);
+`--wait 0` instead waits for one poll's answer. An unanswered request at the
+deadline is exit 3 (`unreachable`), not a fabricated `pending` answer; the local
+login record is retained for the same completion command. A real pending answer
+followed by exhaustion of the wait budget is exit 0 and can be resumed with `next`.
+Denied, expired and unknown are instance answers, exit 2 (`rejected`); the CLI
+polls even if the local expiry has passed. Completion saves the key and machine,
+clears the pending login, and prints the user/company receipt returned with the
+key. No further identity request is needed. Once a complete response arrives,
+the CLI finishes saving it even if local persistence runs past the wait deadline.
 
 Under `--json`, exactly one success document is written:
 

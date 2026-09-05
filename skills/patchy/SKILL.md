@@ -56,9 +56,12 @@ patchy login --json
 2. After relaying the handoff, run the returned `next` command
    (`patchy login --complete <userCode>`). It waits up to a minute; `pending` is exit
    0, not failure. Relay that it is still waiting and reuse `next` when the person
-   is ready. A rerun of `login` resumes the live code; an explicit foreign code is
-   a local refusal. Denied, expired or unknown is exit 2: relay the refusal and
-   start again only when the person wants to.
+   is ready. A rerun of `login` polls the live code once and reports its status,
+   not another handoff; keep the original URL/code. An explicit foreign code is
+   a local refusal. An unanswered request at the wait deadline is exit 3, not
+   `pending`: the outcome is unknown, so reuse the same completion command.
+   Denied, expired or unknown is exit 2: relay the refusal and start again only
+   when the person wants to.
 3. Continue only on `logged_in`, which names the instance, company, user and machine
    and confirms the publishing key was saved. Then publish:
 

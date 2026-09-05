@@ -109,12 +109,14 @@ export class DeviceLoginWaiting extends Schema.Class<DeviceLoginWaiting>("Device
   status: Schema.Literals(["pending", "slow_down"])
 }) {}
 
-/** The terminal receives the plaintext token only on the one completing poll. */
+/** The completing poll returns the plaintext token and confirming identity together. */
 export class DeviceLoginComplete extends Schema.Class<DeviceLoginComplete>("DeviceLoginComplete")({
   ok: Schema.Literal(true),
   status: Schema.Literal("complete"),
   token: Schema.String,
   machine: Schema.Struct({ id: Schema.String, name: Schema.String }),
+  company: Schema.Struct({ handle: Schema.String, name: Schema.String }),
+  user: Schema.Struct({ email: Schema.String }),
   expiresAt: Schema.String
 }) {}
 

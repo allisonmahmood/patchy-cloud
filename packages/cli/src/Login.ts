@@ -5,13 +5,16 @@ import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
+import * as Schema from "effect/Schema";
 import * as Stdio from "effect/Stdio";
-import { PollDeviceLoginRequest, StartDeviceLoginRequest } from "@patchy/api";
+import { DeviceLoginGone, PollDeviceLoginRequest, StartDeviceLoginRequest } from "@patchy/api";
 import * as Api from "./Api.js";
-import { LocalError, RejectedError } from "./CliError.js";
+import { isCliError, LocalError, RejectedError, UnreachableError } from "./CliError.js";
 import * as Instance from "./Instance.js";
 import * as Output from "./Output.js";
 import * as State from "./State.js";
+
+const isDeviceLoginGone = Schema.is(DeviceLoginGone);
 
 const agentVariables = [
   "CLAUDECODE",
@@ -72,46 +75,60 @@ const poll = Effect.fn("Login.poll")(function* (
   let login = initial;
   const next = yield* nextCommand(login);
   while (true) {
-    const result = yield* client
-      .pollDeviceLogin({ payload: new PollDeviceLoginRequest({ deviceCode: login.deviceCode }) })
-      .pipe(
-        Effect.catch((error) =>
-          Effect.gen(function* () {
-            if ("code" in error) {
-              yield* state.forgetPendingLogin(apiUrl);
-              const message =
-                error.code === "denied"
-                  ? "The login was denied in the browser. Nothing was saved. Run: patchy login"
-                  : error.code === "expired"
-                    ? "The login expired before it was confirmed (codes last ten minutes). Run: patchy login"
-                    : `No login is pending for code ${login.userCode} on ${apiUrl}; it may already have been reported. Run: patchy login`;
-              return yield* new RejectedError({ message, cause: error });
-            }
-            return yield* Api.classify(error, "Login could not complete.");
-          })
-        )
-      );
+    const request = client.pollDeviceLogin({
+      payload: new PollDeviceLoginRequest({ deviceCode: login.deviceCode })
+    });
+    // Bound the whole response, including decoding, but never interrupt saving a received key.
+    const result = yield* (
+      deadline === null || waitSeconds === 0
+        ? request
+        : request.pipe(
+            Effect.timeoutOrElse({
+              duration: Math.max(0, deadline - (yield* Clock.currentTimeMillis)),
+              orElse: () =>
+                new UnreachableError({
+                  instanceUrl: apiUrl,
+                  message:
+                    `The instance did not answer within the login wait budget. ` +
+                    `The outcome is unknown; the local login record was kept. Retry: ${next}`
+                })
+            })
+          )
+    ).pipe(
+      Effect.catch((error) =>
+        Effect.gen(function* () {
+          if (isCliError(error)) return yield* error;
+          if (isDeviceLoginGone(error)) {
+            yield* state.forgetPendingLogin(apiUrl);
+            const message =
+              error.code === "denied"
+                ? "The login was denied in the browser. Nothing was saved. Run: patchy login"
+                : error.code === "expired"
+                  ? "The login expired before it was confirmed (codes last ten minutes). Run: patchy login"
+                  : `No login is pending for code ${login.userCode} on ${apiUrl}; it may already have been reported. Run: patchy login`;
+            return yield* new RejectedError({ message, cause: error });
+          }
+          return yield* Api.classify(error, "Login could not complete.");
+        })
+      )
+    );
     if (result.status === "complete") {
       const token = Redacted.make(result.token);
-      // Persist the one-time secret before the additional identity request can fail.
+      // The mint response includes the receipt, so saving the key needs no further HTTP request.
       yield* state.saveCredential(apiUrl, token, { source: "login", machine: result.machine });
       yield* state.forgetPendingLogin(apiUrl);
-      const authenticated = yield* Api.client(token);
-      const identity = yield* authenticated
-        .me()
-        .pipe(Effect.catch((error) => Api.classify(error, "Authentication failed.")));
       yield* Output.report(
         {
           ok: true,
           status: "logged_in",
           instanceUrl: apiUrl,
-          company: { handle: identity.company.handle, name: identity.company.name },
-          user: { email: identity.user.email },
+          company: result.company,
+          user: result.user,
           machine: result.machine,
           credentialsPath: state.credentialsPath
         },
         [
-          `Logged in to ${apiUrl} as ${identity.company.name}. This machine is "${result.machine.name}".`
+          `Logged in to ${apiUrl} as ${result.company.name}. This machine is "${result.machine.name}".`
         ]
       );
       return;
