@@ -4,8 +4,8 @@
 
 `pnpm dev` runs a complete Patchy Cloud for the worktree you are in: an
 embedded Postgres, migrations, a seeded dev company with a working token, and
-the server. It returns as soon as `/healthz` answers and prints where
-everything is:
+the server. Before the first start, load the [Clerk development keys](#clerk-keys).
+It returns as soon as `/healthz` answers and prints where everything is:
 
 ```sh
 pnpm install
@@ -81,6 +81,21 @@ dotenv file per developer, shared by every worktree and never in the repo:
 clerk env pull --app app_3ImZuFeZJb8038U0oFds84rupA2 --file "${XDG_CONFIG_HOME:-$HOME/.config}/patchy-cloud/dev.env"
 ```
 
+Both Clerk keys are required at server startup. The runner supplies the other
+two required variables, `DATABASE_URL` and `PATCHY_PUBLIC_BASE_URL`, from its
+worktree plan; values for either in `dev.env` are ignored.
+
+`CLERK_JWT_KEY` is optional and primarily test-facing: a PEM public key makes
+session verification offline by avoiding Clerk's JWKS fetch. The server
+validates it at boot. If you need it in `dev.env`, enclose the complete
+multiline PEM in double quotes; its line breaks are preserved. Normal local
+sign-in uses your Clerk development keys without this override.
+
+`CLERK_AUTHORIZED_PARTIES` optionally restricts tokens to one origin. Leave it
+unset locally: a port-specific origin makes worktrees evict each other's
+sessions. The runner forwards these two optional Clerk settings, but no other
+settings from `dev.env` reach the server.
+
 ### Seed
 
 The shared `@patchy/auth/seed` entry exports `DEV_SEED` and `applyDevSeed`.
@@ -95,9 +110,30 @@ the seeded admin to your Clerk development user. Restart `pnpm dev` to apply
 it; unset or empty keeps `user_dev`. Tests and packed e2e always use the
 default. The override changes only the seed, not the server's environment.
 
+Open `/join` at the instance's API URL to sign in:
+
+- Signed out, it answers 401 with a **Sign in** link to Clerk's Account Portal.
+- With your `PATCHY_DEV_CLERK_USER_ID` bound to the seed, signing in lands on
+  **You are in Patchy Dev** as its admin.
+- Without the override, your real Clerk user lands on create-or-join. The page
+  names your email and offers every live invitation for it, or a form to
+  create a company with an editable handle. Creating makes you the admin;
+  the next `/join` names your company.
+- **Not you? Sign out** on `/join` revokes the session, clears Clerk's cookies
+  and returns to `/login`; the next `/join` is the signed-out door. A deactivated
+  user sees a 403 page with **Sign out**, not a sign-in loop.
+
+A validated `return` path sends a person who has a company back to that page.
+Without one, `/join` names the company until the company page exists.
+
 The runner, the vitest template and the packed CLI e2e apply these same rows.
 `Testing.layer()` clones the seeded template; package fixtures add rows on
 top. SQL's migrator tests alone use its empty-database layer.
+
+Session tests use `@patchy/auth/testing`: fake Clerk keys under `.invalid`, an
+RSA fixture and a loopback-only fetch guard. The packed CLI e2e starts its
+server with the same fake keys and PEM, never a real Clerk account. The dev
+runner imports only the separate seed entry, so it never installs that guard.
 
 ### How it works
 
@@ -116,11 +152,13 @@ against a Postgres you point it at:
 
 ```sh
 DATABASE_URL=postgres://... PATCHY_PUBLIC_BASE_URL=http://localhost:3000 \
+  CLERK_PUBLISHABLE_KEY=pk_test_... CLERK_SECRET_KEY=sk_test_... \
   PATCHY_STORAGE_DIR=.local/manual-storage pnpm --filter @patchy/server dev
 ```
 
-`DATABASE_URL` and `PATCHY_PUBLIC_BASE_URL` are required; neither has a default.
-Startup refuses a missing public base URL rather than publishing links to localhost.
+All four variables are required: `DATABASE_URL`, `CLERK_PUBLISHABLE_KEY`,
+`CLERK_SECRET_KEY` and `PATCHY_PUBLIC_BASE_URL`. None has a default; startup
+refuses a missing variable and names it.
 Startup migrates but creates no credential. Against a disposable local database,
 apply `applyDevSeed(DATABASE_URL)` from `@patchy/auth/seed` after migration,
 then use `PATCHY_API_TOKEN=patchy-dev-token`. The seed is for development only.

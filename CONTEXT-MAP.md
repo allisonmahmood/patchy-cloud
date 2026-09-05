@@ -7,13 +7,13 @@ Patchy Cloud is one deployment: the hosting server on one side, the `patchy` CLI
 - [Patches](./packages/patches/CONTEXT.md) — `packages/patches`. The unit: patch, version, patch repo, declared tier, publish, owner, sharing scope and address, retire and delete, the primitives a patch declares. Today also the upload contract, the retention clock and its sweep, the patch quota, and the `patches` API group
 - [Serving](./packages/serving/CONTEXT.md) — `packages/serving`. A patch reaching its viewer, at every tier: the page, the doors in front of it (login, connect), the serving guarantees, the visit, the trusted-proxy schema, and the identity patch code acts as from tier 1 up. Today it serves tier 0; the tier 1 and tier 2 runtimes build on it
 - [Companies](./packages/companies/CONTEXT.md) — `packages/companies`. The tenant and who is in it: company and handle, users and roles, invites, deactivation and reactivation; groups, verified domains, SSO, suspension and the operator remain future work
-- [Auth](./packages/auth/CONTEXT.md) — `packages/auth`. Who a caller is: machine tokens, identity, revocation and bearer parsing, the `auth` API group and the shared dev seed; browser sessions and device login arrive next
+- [Auth](./packages/auth/CONTEXT.md) — `packages/auth`. Who a caller is: browser sessions and viewers, machine tokens, identity, revocation and bearer parsing, the sign-in and sign-out pages, the `auth` API group and the shared dev seed; device login arrives next
 - [Integrations](./packages/integrations/CONTEXT.md) — no code yet. The company-scoped primitive that reaches outside systems: integration, connection and personal connection, connection handle, the typed client patch code is handed, the call log
 - [Publishing](./packages/cli/CONTEXT.md) — `packages/cli` and the bundled skill, the `patchy` CLI agents use to publish patches
 
 ## Shared kernel
 
-- `packages/core` — the safe-HTML policy and the ID/crypto primitives every context depends on. No `CONTEXT.md`: a term it defines belongs to the context that introduced it, and a decision touching it goes in the root `docs/adr/`.
+- `packages/core` — the safe-HTML policy, first-party HTML shell and escape helpers, and the ID/crypto primitives every context depends on. No `CONTEXT.md`: a term it defines belongs to the context that introduced it, and a decision touching it goes in the root `docs/adr/`.
 
 ## Infrastructure
 

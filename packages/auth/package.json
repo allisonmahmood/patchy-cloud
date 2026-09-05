@@ -4,7 +4,7 @@
   "private": true,
   "license": "UNLICENSED",
   "type": "module",
-  "description": "User-owned machine tokens, bearer authentication, auth migrations, the development seed, and the auth HttpApi group.",
+  "description": "Clerk browser sessions, user-owned machine tokens, bearer authentication, auth pages, migrations, and the development seed.",
   "exports": {
     ".": {
       "development": "./src/index.ts",
@@ -15,6 +15,11 @@
       "development": "./src/seed.ts",
       "types": "./dist/seed.d.ts",
       "import": "./dist/seed.js"
+    },
+    "./testing": {
+      "development": "./src/testing.ts",
+      "types": "./dist/testing.d.ts",
+      "import": "./dist/testing.js"
     }
   },
   "files": [
@@ -26,13 +31,17 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@clerk/backend": "3.17.0",
     "@patchy/api": "workspace:*",
+    "@patchy/companies": "workspace:*",
     "@patchy/core": "workspace:*",
     "@patchy/sql": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {
+    "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
+    "tough-cookie": "^6.0.2",
     "vitest": "^4.1.11"
   }
 }

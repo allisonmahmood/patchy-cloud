@@ -18,8 +18,15 @@ import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import { Analytics } from "@patchy/analytics";
 import { PatchyApi } from "@patchy/api";
-import { AuthApi, Authorization, migrations as authMigrations, MachineTokens } from "@patchy/auth";
-import { migrations as companiesMigrations } from "@patchy/companies";
+import {
+  AuthApi,
+  AuthPages,
+  Authorization,
+  migrations as authMigrations,
+  MachineTokens,
+  Session
+} from "@patchy/auth";
+import { Companies, Users, migrations as companiesMigrations } from "@patchy/companies";
 import { AzureContentStore, BlobContainer, FilesystemContentStore } from "@patchy/content-store";
 import { Limits } from "@patchy/limits";
 import {
@@ -58,7 +65,16 @@ const migrated = Layer.effectDiscard(
  */
 const services = Layer.mergeAll(Content.layer, ExpirySweep.layer).pipe(
   Layer.provideMerge(
-    Layer.mergeAll(Analytics.layer, Limits.layer, contentStore, MachineTokens.layer, Patches.layer)
+    Layer.mergeAll(
+      Analytics.layer,
+      Limits.layer,
+      contentStore,
+      MachineTokens.layer,
+      Patches.layer,
+      Companies.layer,
+      Users.layer,
+      Session.layer
+    )
   ),
   Layer.provide(migrated)
 );
@@ -100,7 +116,7 @@ const middleware = HttpRouter.middleware(
 );
 
 /** The routes and middleware as one router application. */
-const app = Layer.mergeAll(api, Pages.layer, middleware);
+const app = Layer.mergeAll(api, Pages.layer, AuthPages.layer, middleware);
 
 /** The server: serving the app, sweeping, and closing both with the scope. */
 export const layer = Layer.mergeAll(

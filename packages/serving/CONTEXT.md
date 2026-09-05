@@ -9,7 +9,7 @@ A fixed promise about how a published patch reaches its reader, binding on every
 _Avoid_: hardening, bot protection (the serving surface is deliberately open to machines), private (unlisted is not private)
 
 **Page**:
-A patch as a reader receives it: the uploaded document in a sandboxed frame and nothing else — no chrome, no script, no first-party link out. A page's 404 keeps the patch URL's headers (noindexed, no referrer, uncached), so an expired or unknown patch answers under the same guarantees a served one did. The home page and the 404 are first-party chrome and share one shell; the served page is deliberately not that shell.
+A patch as a reader receives it: the uploaded document in a sandboxed frame and nothing else — no chrome, no script, no first-party link out. A page's 404 keeps the patch URL's headers (noindexed, no referrer, uncached); the home page and 404 share the first-party shell now owned by `core`, while the served page deliberately remains separate.
 _Avoid_: viewer (the [Patches](../patches/CONTEXT.md) word for the person with a patch open, who from tier 1 up is acted for; a tier 0 page has a reader because it acts for no one), wrapper (the frame is the page)
 
 **Trusted proxy**:

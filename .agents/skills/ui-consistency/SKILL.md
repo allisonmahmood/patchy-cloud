@@ -10,11 +10,11 @@ metadata:
 
 Review changed page-rendering code and directly affected call sites against the rules below. Apply them when a change creates, moves, or modifies markup or styling on a served page. Do not demand unrelated repository-wide cleanup.
 
-Everything Patchy serves is server-rendered HTML with an inline `<style>` block, in `packages/serving/src/render.ts`. There is no component library, no utility-CSS framework, no client-side framework, and one light theme. Auth chrome, when it arrives, is still this shell: server-rendered pages and plain forms.
+First-party pages compose the server-rendered shell and inline `<style>` block in `packages/core/src/html.ts`; the served-patch wrapper stays in `packages/serving/src/render.ts`. There is no component library, utility-CSS framework, client-side framework, or second theme. Auth and Companies pages use plain forms; only the session shell loads Clerk's headless script and Patchy's external initializer, never inline script or analytics.
 
 Two page kinds, and the distinction drives most findings:
 
-- **First-party chrome** — the home page and the 404 — all composed through `htmlPage`.
+- **First-party chrome** — the home page, 404, sign-in, create-or-join and deactivated pages — all composed through `htmlPage`.
 - **Served patches** — `renderPatchWrapper`, which is user content and is deliberately _not_ `htmlPage`.
 
 ## The shell and its one exception
