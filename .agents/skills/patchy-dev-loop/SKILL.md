@@ -42,11 +42,32 @@ pnpm patchy whoami
 pnpm patchy upload examples/plan.html --json
 ```
 
-`pnpm patchy` runs the CLI from source; there is no build step. Run it from inside the worktree and it finds `.local/dev/env` on its own (it says `target came from .local/dev/env`). Passing `--api-url` switches that discovery off and the CLI then wants a stored token, so leave the flag out locally.
+`pnpm patchy` runs the CLI from source; there is no build step. Run it from inside the worktree and it finds `.local/dev/env` on its own (it says `target came from .local/dev/env`). Passing `--api-url` switches that discovery off, so leave the flag out locally. Every command selects a key in the same order: `PATCHY_API_TOKEN`, a stored credential for this instance, then the dev env's seed. A saved login therefore overrides **Dev Machine**.
+
+For a change to machine login, exercise the handoff and its reverse:
+
+```sh
+pnpm patchy login --json
+# Show verificationUrl and userCode to the person; never open their browser.
+pnpm patchy login --complete --wait 0
+# pending is exit 0. After the person confirms, run the returned next:
+pnpm patchy login --complete <userCode>
+pnpm patchy whoami
+pnpm patchy logout
+pnpm patchy whoami
+```
+
+Use the returned code. With the seed bound to the person's Clerk user, completion
+names **Patchy Dev** and `whoami` names the machine they chose. Logout deletes the
+stored key and pending login before courtesy revocation, says _This worktree's
+dev instance still publishes with its seeded key_, and the final `whoami` names
+**Dev Machine** again. A courtesy-call failure is a warning at exit 0. At a real
+terminal with no agent variables and no `--json`, `pnpm patchy login` waits in one
+command; an agent uses the handoff and `next`.
 
 The upload's `scope` determines who can open `publicUrl`; the field name does not promise anonymous access. New patches default to company scope. Uploading the same file again bumps the version of the same patch at the same URL and preserves scope unless `--share company` or `--share public` is given; if the CLI answers `Cached patch is unavailable for update`, the patch it remembers is gone from this instance (a `reset` does that) and `--new` creates a fresh one.
 
-For `curl` against the API with the token, or for `DATABASE_URL`, export the env file: `set -a; . .local/dev/env; set +a`.
+For `curl` against the API with the token, or for `DATABASE_URL`, export the env file in a separate shell: `set -a; . .local/dev/env; set +a`. Exporting the seed as `PATCHY_API_TOKEN` overrides a stored login; keep it unset for the login check. Logout cannot remove or revoke an environment key and warns about it.
 
 ## 3. Verify
 

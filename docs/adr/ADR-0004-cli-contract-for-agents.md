@@ -3,11 +3,11 @@
 - **Status**: Accepted
 - **Date**: 2026-08-29
 - **Contexts**: Publishing (`packages/cli`). System-wide because the contract is what every agent driving the CLI — and the dev runner's `.local/dev/env` — is held to.
-- **Source**: Effect v4 port spec (#68) §5; [CLI contract on Effect cli](https://github.com/allisonmahmood/patchy-cloud/issues/60#issuecomment-5456839739); [Local dev environment](https://github.com/allisonmahmood/patchy-cloud/issues/15) for the precedence; build ticket #78.
+- **Source**: Effect v4 port spec (#68) §5; [CLI contract on Effect cli](https://github.com/allisonmahmood/patchy-cloud/issues/60#issuecomment-5456839739); [Local dev environment](https://github.com/allisonmahmood/patchy-cloud/issues/15) for instance precedence; build ticket #78; [auth spec §10](https://github.com/allisonmahmood/patchy-cloud/issues/135) and [login/logout](https://github.com/allisonmahmood/patchy-cloud/issues/142) for device login and credential precedence.
 
 ## Context
 
-An agent is the CLI's primary operator, a developer a real secondary one. Both
+An agent is the CLI's primary driver, a developer a real secondary one. Both
 read the same two things — the exit code and one stream — and act on them
 without a human in the loop. Before the port the CLI exited 1 for everything,
 so an agent could not tell its own mistake from the instance's refusal from a
@@ -18,19 +18,23 @@ onto `effect/unstable/cli` was the moment to write the contract down.
 
 ### Exit codes: a ladder keyed by who has to act
 
-| code | kind          | meaning                              | examples                                                                            |
-| ---- | ------------- | ------------------------------------ | ----------------------------------------------------------------------------------- |
-| 0    | ok            |                                      |                                                                                     |
-| 1    | `local`       | fixable without touching the network | bad args, file missing, HTML fails validation, no token stored, malformed state dir |
-| 2    | `rejected`    | the instance answered and said no    | 401/403, 404 on an update, share or delete, 409, 413, 429, a server-side 400        |
-| 3    | `unreachable` | no usable answer from the instance   | DNS/connect/timeout, 5xx, an unparseable body                                       |
-| 130  | interrupted   | SIGINT/SIGTERM → fiber interruption  |                                                                                     |
+| code | kind          | meaning                              | examples                                                                                                       |
+| ---- | ------------- | ------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| 0    | ok            | the command's act succeeded          | login handoff or still pending; logout even when courtesy revocation fails                                     |
+| 1    | `local`       | fixable without touching the network | bad args, file missing, HTML fails validation, no key, foreign login code, malformed state dir                 |
+| 2    | `rejected`    | the instance answered and said no    | 401/403, 404 on an update, share or delete, 409, 413, 429, a server-side 400; denied, expired or unknown login |
+| 3    | `unreachable` | no usable answer from the instance   | DNS/connect/timeout, 5xx, an unparseable body                                                                  |
+| 130  | interrupted   | SIGINT/SIGTERM → fiber interruption  |                                                                                                                |
 
 Nothing else. A defect (a bug, an unmodelled error) is one `Unexpected error:
 <message>` line on stderr and exit 1, with the stack only at
 `--log-level debug`. HTTP status maps to kind as 4xx → `rejected`, everything
 that is not an answer — 5xx, connect, timeout, a body the wire schemas cannot
 read — → `unreachable`: "retry later, or tell the operator" is one action.
+
+A command whose local act succeeded reports a failed courtesy call as a warning,
+never as an exit code. `logout` forgets the credential and pending login first;
+failure to revoke that deleted key does not undo the local logout.
 
 In code: one `CliError` union (`packages/cli/src/CliError.ts`), each tag
 carrying its `kind`, and a single table `exitCode(kind)`. Every command runs
@@ -42,13 +46,81 @@ its code; no command exits on its own.
 - Success: stdout is exactly one JSON document. For `whoami`, `upload`, `share` and
   `delete` it is the wire shape from `@patchy/api`; `validate` prints `{ ok, warnings }`,
   `auth set` `{ ok, instanceUrl }`, `status` its report (its only format).
-  Upload warnings ride in `warnings: []`, never on stderr. Upload and share report
-  `scope`; the field name `publicUrl` alone does not imply anonymous access.
+  Login's three success shapes and logout's shape are below. Warnings ride in the
+  success document, never on stderr. Upload and share report `scope`; the field name
+  `publicUrl` alone does not imply anonymous access.
 - Failure: stderr is `{ "ok": false, "error": "<the one-line message>", "kind": "local" | "rejected" | "unreachable" }`,
   stdout is empty, the exit code follows `kind`. The same shape as the
   server's 401 body, plus `kind`. No `code` field until an agent flow branches
   on one.
 - Stderr under `--json` carries failures only.
+
+### Login, logout and identity
+
+`patchy login [--complete [code]] [--wait <seconds>]` starts a device login with
+`os.hostname()` as the machine-name hint and the stored key's id on re-login.
+It blocks only when stdin is a terminal, `--json` is absent, and none of
+`CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, `CURSOR_AGENT`, `CODEX_SANDBOX`,
+`CODEX_SANDBOX_NETWORK_DISABLED`, `GEMINI_CLI`, `OPENCODE`, `CLINE_ACTIVE`,
+`AI_AGENT` or `CI` is set. A terminal alone cannot identify a human: an agent
+may have a PTY while its tool buffers output until exit.
+
+The human path prints the handoff and waits until the person answers or the
+code expires. Every other path returns the URL, code, next command and reason
+for not waiting, then exits 0. The agent relays the URL and code, never opens a
+browser, and runs `next`. A rerun resumes a live pending login rather than
+orphaning the code the person is about to confirm.
+An explicitly supplied `--api-url` stays shell-quoted in `next` and the text
+`Then run` command. Saving config alone cannot preserve that override across
+the handoff: the dev env and `PATCHY_API_URL` outrank config.
+
+`--complete [code]` uses the pending login for the resolved instance; a foreign
+code is `local` and names the live code. It polls at the instance's interval,
+adding five seconds after `slow_down`. The default wait is 60 seconds;
+`--wait 0` polls once. A still-pending answer is success, not a timeout failure.
+Denied, expired and unknown are instance refusals (exit 2), even when the local
+record already says expired: the poll lets the instance report and consume it.
+Completion saves the publishing key with `source: "login"` and
+`machine: { id, name }`, forgets the pending login, and prints
+`Logged in to <instance> as <company>. This machine is "<name>".`
+
+| command/result                    | `--json` success document                                                                                                                               |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `login`, handoff                  | `{ ok, status: "awaiting_confirmation", verificationUrl, verificationUrlBare, userCode, expiresAt, interval, next, agentNextSteps, notWaitingBecause }` |
+| `login --complete`, still waiting | `{ ok, status: "pending", userCode, expiresAt, next, agentNextSteps }`                                                                                  |
+| `login`, complete                 | `{ ok, status: "logged_in", instanceUrl, company: { handle, name }, user: { email }, machine: { id, name }, credentialsPath }`                          |
+| `logout`                          | `{ ok, instanceUrl, revoked, warnings }`                                                                                                                |
+| `whoami`                          | `{ user: { id, email, name }, company: { id, handle, name }, role, machine: { id, name } }` (`Identity`, no `ok` wrapper)                               |
+
+`patchy logout` deletes the stored credential and pending login before
+`POST /api/logout` with only the token it just deleted. A 401 counts as
+successful revocation; an unreachable instance produces exit 0 and the warning:
+_Logged out on this machine. The key could not be revoked; it expires on its
+own after 30 idle days, or revoke it now on Your machines._
+It does not revoke a token selected from the environment or the dev seed.
+With `PATCHY_API_TOKEN` set it warns that the publishing key from the environment
+is not its to remove; in a worktree it says _This worktree's dev instance still publishes
+with its seeded key_. JSON carries these in `warnings`, with `revoked`
+reporting whether the deleted key was successfully revoked or already invalid.
+
+`upload`, `delete`, `share` and `whoami` with no key exit 1 (`local`),
+`Run: patchy login`. No command starts a login on the caller's behalf.
+
+### One credential chain
+
+Every command resolves credentials in this order: `PATCHY_API_TOKEN`, the
+credential stored for the resolved instance (`login` or `auth-set`), then the
+seeded token beside a dev-env URL. A login therefore outranks the dev seed;
+logout exposes the seed again, unless an environment token already overrides
+both. `status` uses that same chain for `hasToken` and `tokenSource`:
+`login`, `auth-set`, or `null` for an environment/dev-env key, an older stored
+entry without provenance, or no key.
+
+State is per instance. `credentials.json` keeps the key and its provenance,
+plus the machine for `source: "login"`. Owner-only `device-login.json` holds
+one pending login per instance: device code, user code, both verification
+URLs, polling interval and expiry. Neither the device code nor the publishing
+key appears in the handoff or command output.
 
 ### Publishing and sharing commands
 

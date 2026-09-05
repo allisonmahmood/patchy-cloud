@@ -7,15 +7,22 @@ import * as Effect from "effect/Effect";
 import type * as Redacted from "effect/Redacted";
 import type { SchemaError } from "effect/Schema";
 import type * as HttpClientError from "effect/unstable/http/HttpClientError";
-import { authorizationClient, makeClient } from "@patchy/api";
+import * as HttpApiMiddleware from "effect/unstable/httpapi/HttpApiMiddleware";
+import { Authorization, authorizationClient, makeClient } from "@patchy/api";
 import { LocalError, RejectedError, UnreachableError } from "./CliError.js";
 import * as Instance from "./Instance.js";
 
-/** A client for the resolved instance; the token rides on every protected route. */
-export const client = (token: Redacted.Redacted) =>
+/** Public login requests need no bearer; protected calls supply one explicitly. */
+export const client = (token?: Redacted.Redacted) =>
   Effect.gen(function* () {
     const instance = yield* Instance.Instance;
-    return yield* makeClient(instance.apiUrl).pipe(Effect.provide(authorizationClient(token)));
+    return yield* makeClient(instance.apiUrl).pipe(
+      Effect.provide(
+        token === undefined
+          ? HttpApiMiddleware.layerClient(Authorization, ({ next, request }) => next(request))
+          : authorizationClient(token)
+      )
+    );
   });
 
 /** What any refusal on the wire looks like: `{ ok: false, error }`, or the 422's `errors`. */

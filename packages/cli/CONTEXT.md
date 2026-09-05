@@ -21,7 +21,7 @@ The contract an agent branches on: 0 ok, 1 `local` (fixable without the network)
 _Avoid_: error code (ambiguous with the wire's `code`), status (ambiguous with HTTP and with the probe)
 
 **State dir**:
-The per-user directory where the CLI keeps everything it remembers between runs: instance choice, credentials, the patch cache, and the default style.
+The per-user directory where the CLI keeps everything it remembers between runs: instance choice, credentials, pending device logins in `device-login.json`, the patch cache, and the default style.
 _Avoid_: config directory, dotfiles
 
 **Default style**:
@@ -29,8 +29,12 @@ The user-level style preference captured during onboarding and kept in the state
 _Avoid_: house style (a project's own style, which overrides it), theme, template
 
 **Login handoff**:
-The URL and code returned when a device login starts, for the agent to relay to the person confirming the machine. The server handoff is available over HTTP; the forthcoming `patchy login` command will print it. The one moment in publishing that needs a human; the agent never opens a browser on someone's desktop.
+The URL, code and next command that `patchy login` returns for an agent to relay to the person confirming the machine in their own browser. The agent never opens that browser; it resumes with `patchy login --complete`, while a person running the command at a real terminal waits in one command.
 _Avoid_: prompt, browser login
+
+**Sign-in**:
+The person's browser session, opened with Google, Microsoft or an emailed code, which lets them read company patches and confirm a login handoff. Signing the browser out ends that session; logging the machine out forgets its publishing key, not the browser's sign-in.
+_Avoid_: authentication (in user-facing copy), publishing key (a machine's credential, not a browser session)
 
 **Driver**:
 Whoever is running the CLI — an agent first, a developer touching the cloud directly second. The word is deliberately not _operator_, which is Patchy running the platform ([Companies](../companies/CONTEXT.md)).
@@ -41,7 +45,7 @@ Software acting for a user, with that user's machine token: the CLI's primary dr
 _Avoid_: bot, service account, agent identity
 
 **Onboarding**:
-The optional, user-requested first-time setup conversation — establish where to publish, capture a default style, then publish the welcome patch. With no publishing key, setup saves a key the user already holds before uploading.
+The optional, user-requested first-time setup conversation — establish where to publish, capture a default style, then publish the welcome patch. With no publishing key, the login handoff comes before publishing.
 _Avoid_: signup, registration, setup wizard
 
 **Setup prompt**:
@@ -49,7 +53,7 @@ The copy-paste block in the README that a user hands their agent to get started:
 _Avoid_: install snippet (older internal name), install command (only one of its parts)
 
 **Publishing key**:
-The user-facing name for the machine token: the credential saved on this machine that lets it publish as its user. A replacement key for the same user keeps the same editing rights.
+The user-facing name for the user-owned machine token that lets this machine publish and manage its user's patches; a login saves it on this machine. Replacing or revoking a key never changes patch ownership.
 _Avoid_: token (in user-facing copy), password, account
 
 **Patch cache**:
@@ -58,5 +62,5 @@ _Avoid_: draft cache
 _Avoid_: upload history, manifest
 
 **Onboarding probe**:
-The local-only report of what publishing state this machine already holds for the resolved instance — `status --json`. Onboarding reads it once to skip questions it can already answer; it reaches no instance, and it answers rather than passing or failing, so it is never a per-session check.
+The local-only report of publishing state for the resolved instance — `status --json` — that lets onboarding skip settled questions and choose login-then-publish only when no key is available. It reaches no instance and reports the same credential precedence publishing uses, so it is a setup aid, never a per-session check or proof that a key still works.
 _Avoid_: health check, status check, doctor, preflight

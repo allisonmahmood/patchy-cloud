@@ -27,6 +27,7 @@ const serverEntry = path.join(repoRoot, "apps/server/dist/start.js");
 // hermetically; the CLI itself is private and is never published to a registry.
 const npmCliEntry = path.join(repoRoot, "node_modules/npm/bin/npm-cli.js");
 let DEV_SEED;
+let authTesting;
 const packedCliTempRootBasePrefix = "patchy-packed-cli-e2e-";
 const probeOwnerEnvName = "PATCHY_PACKED_CLI_E2E_PROBE_OWNER_ID";
 const activeChildren = new Set();
@@ -580,7 +581,8 @@ try {
   for (const args of [
     ["upload", fixtureArgument, "--json"],
     ["delete", "--patch", fresh.patchId, "--json"],
-    ["share", "--patch", fresh.patchId, "public", "--json"]
+    ["share", "--patch", fresh.patchId, "public", "--json"],
+    ["whoami", "--json"]
   ]) {
     const failure = await assertCliFailureNoMutation({
       cliPath,
@@ -591,7 +593,7 @@ try {
       objectDir,
       expectAuthoritativeNonEmpty: true,
       expectEmptyCliState: true,
-      stderr: /Run: patchy auth set --api-url http:\/\/127\.0\.0\.1:\d+/,
+      stderr: /Run: patchy login/,
       exitCode: 1
     });
     assert.equal(failure.stdout, "", "--json failure must leave stdout empty");
@@ -678,6 +680,238 @@ try {
     allowFailure: true
   });
   assert.equal(removedAgain.code, 2, "deleting a patch that is gone is the instance's refusal");
+
+  // Login uses its own state and dev env so it cannot replace the seeded key
+  // that the publishing scenarios above need. Revoke that seed only at the end.
+  console.log("[packed-cli-e2e] exercising the agent login handoff and resume");
+  const loginStateDir = path.join(tempRoot, "cli state login");
+  const loginWorktree = path.join(consumerDir, "login worktree");
+  const loginDevDir = path.join(loginWorktree, ".local", "dev");
+  await checkedCall(() =>
+    Promise.all([mkdir(loginStateDir), mkdir(loginDevDir, { recursive: true })])
+  );
+  await checkedCall(() =>
+    writeFile(
+      path.join(loginDevDir, "env"),
+      `PATCHY_API_URL=${publicBaseUrl}\nPATCHY_API_TOKEN=${DEV_SEED.token}\n`,
+      { mode: 0o600 }
+    )
+  );
+  const loginEnv = environment({ PATCHY_STATE_DIR: loginStateDir }, [
+    "PATCHY_API_TOKEN",
+    "PATCHY_API_URL"
+  ]);
+  const loginOptions = { cwd: loginWorktree, env: loginEnv, timeoutMs: 10_000 };
+  const handoffResult = await runCli(cliPath, ["login", "--json"], loginOptions);
+  assert.equal(handoffResult.stderr, "", "--json handoff must leave stderr empty");
+  const handoff = JSON.parse(handoffResult.stdout);
+  assertLoginHandoff(handoff, publicBaseUrl);
+  const completeArgs = handoff.next.split(" ");
+  assert.equal(completeArgs.shift(), "patchy");
+
+  const pendingDocument = {
+    ok: true,
+    status: "pending",
+    userCode: handoff.userCode,
+    expiresAt: handoff.expiresAt,
+    next: handoff.next,
+    agentNextSteps: handoff.agentNextSteps
+  };
+  const resumedResult = await runCli(cliPath, ["login", "--json"], loginOptions);
+  assert.equal(resumedResult.stderr, "");
+  assert.deepEqual(
+    JSON.parse(resumedResult.stdout),
+    pendingDocument,
+    "rerunning login must poll the code the person is about to confirm, not start another"
+  );
+  const pendingResult = await runCli(
+    cliPath,
+    ["login", "--complete", "--wait", "0", "--json"],
+    loginOptions
+  );
+  assert.equal(pendingResult.stderr, "", "--json pending is a success, not a failure");
+  assert.deepEqual(JSON.parse(pendingResult.stdout), pendingDocument);
+
+  console.log("[packed-cli-e2e] proving CLAUDECODE does not wait even with terminal stdin");
+  const ptyStateDir = path.join(tempRoot, "cli state pty login");
+  await checkedCall(() => mkdir(ptyStateDir));
+  await assertAgentLoginOnPty(cliPath, publicBaseUrl, {
+    ...loginOptions,
+    env: { ...loginEnv, PATCHY_STATE_DIR: ptyStateDir }
+  });
+
+  console.log("[packed-cli-e2e] confirming through the real offline-signed browser session");
+  const machineName = "Packed login machine";
+  const confirm = await fetch(handoff.verificationUrlBare, {
+    method: "POST",
+    headers: {
+      cookie: authTesting.signedInCookies(authTesting.signSession({ azp: publicBaseUrl })),
+      origin: publicBaseUrl
+    },
+    body: new URLSearchParams({ action: "confirm", code: handoff.userCode, machineName }),
+    redirect: "manual",
+    signal: AbortSignal.timeout(5_000)
+  });
+  assert.equal(confirm.status, 200, "the real confirm route must accept the signed-in user");
+  await confirm.arrayBuffer();
+  const completed = await runCli(cliPath, [...completeArgs, "--wait", "30", "--json"], {
+    ...loginOptions,
+    timeoutMs: 40_000
+  });
+  assert.equal(completed.stderr, "", "--json complete must leave stderr empty");
+  const loggedIn = JSON.parse(completed.stdout);
+  assertDocumentKeys(loggedIn, [
+    "ok",
+    "status",
+    "instanceUrl",
+    "company",
+    "user",
+    "machine",
+    "credentialsPath"
+  ]);
+  assert.equal(loggedIn.ok, true);
+  assert.equal(loggedIn.status, "logged_in");
+  assert.equal(loggedIn.instanceUrl, publicBaseUrl);
+  assert.deepEqual(loggedIn.company, {
+    handle: DEV_SEED.companyHandle,
+    name: DEV_SEED.companyName
+  });
+  assert.deepEqual(loggedIn.user, { email: DEV_SEED.email });
+  assertDocumentKeys(loggedIn.machine, ["id", "name"]);
+  assert.equal(loggedIn.machine.name, machineName);
+  assert.match(loggedIn.machine.id, /^tok_/);
+  assert.notEqual(loggedIn.machine.id, DEV_SEED.tokenId);
+  assert.equal(loggedIn.credentialsPath, path.join(loginStateDir, "credentials.json"));
+  const loginCredential = JSON.parse(
+    await checkedCall(() => readFile(loggedIn.credentialsPath, "utf8"))
+  ).hosts[publicBaseUrl];
+  const loginToken = loginCredential.token;
+  assert.ok(typeof loginToken === "string" && loginToken !== DEV_SEED.token);
+  assert.ok(
+    !`${completed.stdout}${completed.stderr}`.includes(loginToken),
+    "the newly minted publishing key must never appear in the login receipt"
+  );
+  const loggedInOptions = { ...loginOptions, sensitiveValues: [loginToken, foreignToken] };
+  const loginWhoami = await runCli(cliPath, ["whoami", "--json"], loggedInOptions);
+  assert.equal(loginWhoami.stderr, "");
+  assert.deepEqual(JSON.parse(loginWhoami.stdout), {
+    ...JSON.parse(whoamiJson.stdout),
+    machine: loggedIn.machine
+  });
+  const loginStatus = JSON.parse(
+    (await runCli(cliPath, ["status", "--json"], loggedInOptions)).stdout
+  );
+  assert.equal(loginStatus.hasToken, true);
+  assert.equal(loginStatus.tokenSource, "login", "a stored login must outrank the dev seed");
+  const consumed = await runCli(cliPath, ["login", "--complete", "--wait", "0", "--json"], {
+    ...loggedInOptions,
+    allowFailure: true
+  });
+  assert.equal(consumed.code, 1, "completion must forget the pending login locally");
+  assert.equal(consumed.stdout, "");
+  assert.equal(JSON.parse(consumed.stderr).kind, "local");
+
+  const envWhoami = await runCli(cliPath, ["whoami", "--json"], {
+    ...loggedInOptions,
+    env: { ...loginEnv, PATCHY_API_TOKEN: foreignToken }
+  });
+  assert.equal(JSON.parse(envWhoami.stdout).machine.id, "tok_packed_other");
+  console.log("[packed-cli-e2e] logging out the login key restores the worktree seed");
+  const loginLogout = await runCli(cliPath, ["logout"], loggedInOptions);
+  assert.match(
+    `${loginLogout.stdout}${loginLogout.stderr}`,
+    /This worktree's dev instance still publishes with its seeded key/
+  );
+  const fallbackWhoami = await runCli(cliPath, ["whoami", "--json"], loggedInOptions);
+  assert.equal(fallbackWhoami.stderr, "");
+  assert.deepEqual(JSON.parse(fallbackWhoami.stdout), JSON.parse(whoamiJson.stdout));
+  const fallbackStatus = JSON.parse(
+    (await runCli(cliPath, ["status", "--json"], loggedInOptions)).stdout
+  );
+  assert.equal(fallbackStatus.hasToken, true);
+  assert.equal(fallbackStatus.tokenSource, null);
+  const revokedLogin = await runCli(cliPath, ["whoami", "--json"], {
+    ...loggedInOptions,
+    env: { ...loginEnv, PATCHY_API_TOKEN: loginToken },
+    allowFailure: true
+  });
+  assert.equal(revokedLogin.code, 2, "logout must revoke the saved login key at the server");
+  assert.equal(revokedLogin.stdout, "");
+  assert.equal(JSON.parse(revokedLogin.stderr).kind, "rejected");
+  const outsideWhoami = await runCli(cliPath, ["whoami", "--api-url", publicBaseUrl, "--json"], {
+    ...loggedInOptions,
+    cwd: consumerDir,
+    allowFailure: true
+  });
+  assert.equal(outsideWhoami.code, 1, "outside a worktree logout leaves no publishing key");
+  assert.equal(outsideWhoami.stdout, "");
+  assert.equal(JSON.parse(outsideWhoami.stderr).kind, "local");
+  assert.match(JSON.parse(outsideWhoami.stderr).error, /Run: patchy login/);
+
+  console.log("[packed-cli-e2e] revoking only the auth-set seed, never the environment key");
+  const logoutPending = await runCli(cliPath, ["login", "--json"], {
+    cwd: consumerDir,
+    env: cliEnv
+  });
+  assertLoginHandoff(JSON.parse(logoutPending.stdout), publicBaseUrl);
+  const seedLogoutOptions = {
+    cwd: consumerDir,
+    env: { ...cliEnv, PATCHY_API_TOKEN: foreignToken },
+    sensitiveValues: [foreignToken, loginToken]
+  };
+  const seedLogout = await runCli(cliPath, ["logout", "--json"], seedLogoutOptions);
+  assert.equal(seedLogout.stderr, "", "courtesy warnings belong in the JSON success document");
+  const loggedOut = JSON.parse(seedLogout.stdout);
+  assertDocumentKeys(loggedOut, ["ok", "instanceUrl", "revoked", "warnings"]);
+  assert.equal(loggedOut.ok, true);
+  assert.equal(loggedOut.instanceUrl, publicBaseUrl);
+  assert.equal(loggedOut.revoked, true);
+  assert.ok(Array.isArray(loggedOut.warnings));
+  assert.ok(loggedOut.warnings.some((warning) => warning.includes("PATCHY_API_TOKEN")));
+  const environmentStillWorks = await runCli(cliPath, ["whoami", "--json"], seedLogoutOptions);
+  assert.equal(JSON.parse(environmentStillWorks.stdout).machine.id, "tok_packed_other");
+  const revokedSeed = await runCli(cliPath, ["whoami", "--json"], {
+    ...seedLogoutOptions,
+    env: { ...cliEnv, PATCHY_API_TOKEN: DEV_SEED.token },
+    allowFailure: true
+  });
+  assert.equal(revokedSeed.code, 2, "the stored seed must be revoked, not the environment key");
+  assert.equal(revokedSeed.stdout, "");
+  assert.equal(JSON.parse(revokedSeed.stderr).kind, "rejected");
+  const noPendingAfterLogout = await runCli(
+    cliPath,
+    ["login", "--complete", "--wait", "0", "--json"],
+    { cwd: consumerDir, env: cliEnv, allowFailure: true }
+  );
+  assert.equal(noPendingAfterLogout.code, 1, "logout must also forget a pending login");
+  assert.equal(noPendingAfterLogout.stdout, "");
+  assert.equal(JSON.parse(noPendingAfterLogout.stderr).kind, "local");
+  const noStoredAfterLogout = await runCli(cliPath, ["whoami", "--json"], {
+    cwd: consumerDir,
+    env: cliEnv,
+    allowFailure: true
+  });
+  assert.equal(noStoredAfterLogout.code, 1, "logout must delete the saved auth-set key");
+  assert.equal(noStoredAfterLogout.stdout, "");
+  assert.equal(JSON.parse(noStoredAfterLogout.stderr).kind, "local");
+
+  // Saving the now-revoked seed again exercises the courtesy call's 401 path.
+  await runCli(cliPath, ["auth", "set", "--token-stdin"], {
+    cwd: consumerDir,
+    env: cliEnv,
+    input: `${DEV_SEED.token}\n`
+  });
+  const alreadyRevoked = await runCli(cliPath, ["logout", "--json"], {
+    cwd: consumerDir,
+    env: cliEnv
+  });
+  assert.equal(alreadyRevoked.stderr, "");
+  assert.deepEqual(JSON.parse(alreadyRevoked.stdout), {
+    ok: true,
+    instanceUrl: publicBaseUrl,
+    revoked: true,
+    warnings: []
+  });
 
   console.log(
     "[packed-cli-e2e] PASS: spaced consumer/artifact/state paths and quoted POSIX sh commands"
@@ -2344,11 +2578,11 @@ async function startServerAttempt({ publicBaseUrl, objectDir, serverEntryPath })
   await maybeStartServerBindCollisionProbe(publicBaseUrl);
   throwIfSignalLatched();
 
-  const { clerkEnv } = await tsImport("../packages/auth/src/testing.ts", import.meta.url);
+  authTesting ??= await tsImport("../packages/auth/src/testing.ts", import.meta.url);
 
   const serverEnv = environment(
     {
-      ...clerkEnv(),
+      ...authTesting.clerkEnv(),
       PORT: new URL(publicBaseUrl).port,
       PATCHY_PUBLIC_BASE_URL: publicBaseUrl,
       PATCHY_MAX_HTML_BYTES: String(512 * 1024),
@@ -2607,6 +2841,72 @@ async function runPublicPosixSh(commandText, options) {
   return result;
 }
 
+function assertDocumentKeys(document, keys) {
+  assert.deepEqual(Object.keys(document).sort(), [...keys].sort());
+}
+
+function assertLoginHandoff(document, publicBaseUrl) {
+  assertDocumentKeys(document, [
+    "ok",
+    "status",
+    "verificationUrl",
+    "verificationUrlBare",
+    "userCode",
+    "expiresAt",
+    "interval",
+    "next",
+    "agentNextSteps",
+    "notWaitingBecause"
+  ]);
+  assert.equal(document.ok, true);
+  assert.equal(document.status, "awaiting_confirmation");
+  assert.match(document.userCode, /^[BCDFGHJKLMNPQRSTVWXZ]{4}-[BCDFGHJKLMNPQRSTVWXZ]{4}$/);
+  assert.equal(document.verificationUrl, `${publicBaseUrl}/login/device?code=${document.userCode}`);
+  assert.equal(document.verificationUrlBare, `${publicBaseUrl}/login/device`);
+  assert.ok(Date.parse(document.expiresAt) > Date.now(), "handoff must have a live expiry");
+  assert.equal(document.interval, 5);
+  assert.equal(document.next, `patchy login --complete ${document.userCode}`);
+  assert.equal(typeof document.agentNextSteps, "string");
+  assert.match(document.agentNextSteps, /do not open a browser/i);
+  assert.match(document.agentNextSteps, /next command/i);
+  assert.equal(document.notWaitingBecause, "--json");
+}
+
+async function assertAgentLoginOnPty(cliPath, publicBaseUrl, options) {
+  const env = { ...options.env, PATCHY_PACKED_CLI_PATH: cliPath, NO_COLOR: "1" };
+  for (const name of [
+    "CLAUDECODE",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CURSOR_AGENT",
+    "CODEX_SANDBOX",
+    "CODEX_SANDBOX_NETWORK_DISABLED",
+    "GEMINI_CLI",
+    "OPENCODE",
+    "CLINE_ACTIVE",
+    "AI_AGENT",
+    "CI"
+  ])
+    delete env[name];
+  env.CLAUDECODE = "1";
+  // Prove stdin is a terminal inside the same shell that execs the packed bin.
+  // Keep the spaced executable path in the environment, never shell-quote it.
+  const command =
+    'test -t 0 || exit 99; printf "PACKED_LOGIN_STDIN_IS_TTY\\n"; exec "$PATCHY_PACKED_CLI_PATH" login';
+  const args =
+    process.platform === "darwin"
+      ? ["-q", "/dev/null", "sh", "-c", command]
+      : ["-q", "-e", "-c", command, "/dev/null"];
+  const result = await runCli("script", args, { ...options, env });
+  const output = `${result.stdout}${result.stderr}`.replaceAll("\r\n", "\n");
+  assert.ok(output.includes("PACKED_LOGIN_STDIN_IS_TTY\n"));
+  const next = output.match(
+    /Then run: patchy login --complete ([BCDFGHJKLMNPQRSTVWXZ]{4}-[BCDFGHJKLMNPQRSTVWXZ]{4})/
+  );
+  assert.ok(next, "a terminal agent must receive a resumable handoff without waiting");
+  assert.ok(output.includes(`${publicBaseUrl}/login/device?code=${next[1]}`));
+  assert.match(output, /CLAUDECODE is set/);
+}
+
 async function runCli(cliPath, args, options) {
   const sensitiveValues = [DEV_SEED?.token, ...(options.sensitiveValues ?? [])].filter(Boolean);
   assert.ok(
@@ -2620,6 +2920,10 @@ async function runCli(cliPath, args, options) {
   assert.ok(
     sensitiveValues.every((sensitiveValue) => !output.includes(sensitiveValue)),
     "sensitive value leaked in CLI output"
+  );
+  assert.ok(
+    !/\bpp_[A-Za-z0-9_-]{43}\b/.test(output),
+    "a newly minted publishing key leaked before it could be read from local state"
   );
   return result;
 }
@@ -3162,7 +3466,7 @@ function redactSensitive(value, sensitiveValues) {
   for (const sensitiveValue of sensitiveValues) {
     if (sensitiveValue) redacted = redacted.split(sensitiveValue).join("[REDACTED]");
   }
-  return redacted;
+  return redacted.replace(/\bpp_[A-Za-z0-9_-]{43}\b/g, "[REDACTED]");
 }
 
 function terminateProcessGroup(child, signal) {
