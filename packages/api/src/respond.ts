@@ -3,7 +3,7 @@
  * the wire schema that names it, at that schema's status, and a JSON body is
  * read and decoded through the schema that describes it.
  *
- * Several refusals share one body shape (`Forbidden` and `NotFound` are both
+ * Several refusals share one body shape (`BadRequest` and `NotFound` are both
  * `{ ok, error }`), so which schema encodes a body is the only thing that
  * tells them apart — a handler chooses it here rather than failing with a
  * value the endpoint's error union could encode as either.

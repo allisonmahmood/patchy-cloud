@@ -32,7 +32,7 @@ Finding a patch is a portal of everything you have access to. A patch's identity
 
 ### Updating, retiring, deleting
 
-Updating is publishing again. A patch never expires on its own: expiry, the retention clock and pins are inherited from public hosting and go when ownership lands. Two exits remain: **retire** takes a patch off its address and keeps it, restorable by its owner; **delete** removes it for good after a recovery window.
+Updating is publishing again. A patch never expires on its own in the intended company model: expiry and the retention clock are inherited from public hosting and leave in the expiry-removal effort; pins are already gone. Two exits remain: **retire** takes a patch off its address and keeps it, restorable by its owner; **delete** removes it for good after a recovery window.
 
 ### Patches and other patches
 
@@ -105,6 +105,8 @@ A patch's sharing scope is single-select — the owner (plus named users), exact
 ### The operator
 
 The **operator** — Patchy, running the platform — is not a company role and holds no company powers. Its powers are platform-shaped: create, suspend or delete a company, quotas, and moderation, which stays what it is today — taking a patch off its address, never acting inside the company. Support means being invited like anyone else; a customer-support role is not designed. **Suspension** is the operator's act on a whole company — nothing serves, nothing publishes, data kept — and is also where a company lands when it runs out of credits and cannot top up. Deleting a company is its admin's act, with a recovery window; the handle is released only after it.
+
+Its surfaces are a separate login and separate dashboards, never a company in the product and never in the `patchy` CLI.
 
 ## Identity and access
 

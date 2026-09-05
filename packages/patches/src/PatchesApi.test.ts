@@ -7,13 +7,7 @@ import { TestClock } from "effect/testing";
 import * as HttpServer from "effect/unstable/http/HttpServer";
 import * as HttpApiTest from "effect/unstable/httpapi/HttpApiTest";
 import { Analytics } from "@patchy/analytics";
-import {
-  DisableRequest,
-  PatchyApi,
-  UploadCreated,
-  UploadRequest,
-  UploadUpdated
-} from "@patchy/api";
+import { PatchyApi, UploadCreated, UploadRequest, UploadUpdated } from "@patchy/api";
 import { ContentStore } from "@patchy/content-store";
 import { Limits } from "@patchy/limits";
 import * as Content from "./Content.js";
@@ -84,7 +78,7 @@ it.layer(layer)("patches group", (it) => {
     })
   );
 
-  it.effect("refuses what the policy, the scope and the target refuse, in wire words", () =>
+  it.effect("refuses what the policy and the target refuse, in wire words", () =>
     Effect.gen(function* () {
       const asUploader = Fixtures.as(uploader);
       const invalid = yield* upload({ html: "<script>alert(1)</script>" }).pipe(
@@ -94,19 +88,10 @@ it.layer(layer)("patches group", (it) => {
       assert.include(invalid, { ok: false });
       assert.isTrue("errors" in invalid && invalid.errors.length > 0);
 
-      const forbidden = yield* upload({ html: html("No") }).pipe(
-        Effect.provide(Fixtures.as(reader)),
-        Effect.flip
-      );
-      assert.deepStrictEqual(forbidden, {
-        ok: false,
-        error: "API token does not have the required scope."
-      });
-
       const admins = yield* upload({ html: html("Theirs") }).pipe(
         Effect.provide(Fixtures.as(admin))
       );
-      // Unknown, another principal's, disabled: one 404, never saying which.
+      // Unknown and another principal's: one 404, never saying which.
       for (const patchId of ["abcdefabcdef", admins.patchId]) {
         const refused = yield* upload({ html: html("x"), patchId }).pipe(
           Effect.provide(asUploader),
@@ -147,90 +132,38 @@ it.layer(layer)("patches group", (it) => {
       })
   );
 
-  it.effect(
-    "moderates: reads and lists for admins, disables and deletes for owners, pins for admins",
-    () =>
-      Effect.gen(function* () {
-        const asUploader = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
-        const asAdmin = yield* client.pipe(Effect.provide(Fixtures.as(admin)));
-        const mine = yield* upload({ html: html("Mine") }).pipe(
-          Effect.provide(Fixtures.as(uploader))
-        );
+  it.effect("lets owners publish without an upload scope, but gives an admin no reach", () =>
+    Effect.gen(function* () {
+      const asOwner = yield* client.pipe(Effect.provide(Fixtures.as(reader)));
+      const asAdmin = yield* client.pipe(Effect.provide(Fixtures.as(admin)));
+      const created = yield* asOwner.upload({
+        payload: new UploadRequest({ html: html("Owner create") })
+      });
+      const updated = yield* asOwner.upload({
+        payload: new UploadRequest({ html: html("Owner update"), patchId: created.patchId })
+      });
+      assert.strictEqual(updated.versionNumber, 2);
 
-        const forbidden = { ok: false, error: "API token does not have the required scope." };
-        assert.deepStrictEqual(
-          yield* asUploader.read({ params: { patchId: mine.patchId } }).pipe(Effect.flip),
-          forbidden
-        );
-        assert.deepStrictEqual(
-          yield* asUploader.pin({ params: { patchId: mine.patchId } }).pipe(Effect.flip),
-          forbidden
-        );
-        const view = yield* asAdmin.read({ params: { patchId: mine.patchId } });
-        assert.include(view.patch, {
-          id: mine.patchId,
-          principalId: uploader.accountId,
-          createdByApiTokenId: uploader.apiTokenId,
-          pinnedAt: null
-        });
-        assert.deepStrictEqual(
-          { ...(yield* asAdmin.pin({ params: { patchId: mine.patchId } })) },
-          {
-            ok: true,
-            pinned: true
-          }
-        );
-        assert.deepStrictEqual(
-          { ...(yield* asAdmin.unpin({ params: { patchId: mine.patchId } })) },
-          { ok: true, pinned: false }
-        );
+      const params = { patchId: created.patchId };
+      assert.deepStrictEqual(
+        yield* asAdmin
+          .upload({ payload: new UploadRequest({ html: html("Not yours"), ...params }) })
+          .pipe(Effect.flip),
+        { ok: false, error: "Patch not found." }
+      );
+      assert.deepStrictEqual(yield* asAdmin.delete({ params }).pipe(Effect.flip), {
+        ok: false,
+        error: "Patch not found."
+      });
+      const content = yield* Content.Content;
+      assert.include(Option.getOrThrow(yield* content.read(created.patchId)).html, "Owner update");
 
-        // The owner disables its own; nobody else's without admin scope.
-        const theirs = yield* upload({ html: html("Theirs") }).pipe(
-          Effect.provide(Fixtures.as(admin))
-        );
-        assert.deepStrictEqual(
-          yield* asUploader
-            .disable({ params: { patchId: theirs.patchId }, payload: new DisableRequest({}) })
-            .pipe(Effect.flip),
-          { ok: false, error: "Patch not found." }
-        );
-        assert.deepStrictEqual(
-          {
-            ...(yield* asUploader.disable({
-              params: { patchId: mine.patchId },
-              payload: new DisableRequest({ reason: " policy " })
-            }))
-          },
-          { ok: true }
-        );
-        assert.strictEqual(
-          (yield* asAdmin.read({ params: { patchId: mine.patchId } })).patch.disabledReason,
-          "policy"
-        );
-        // Disabled is out of service, so it cannot be pinned; it still lists.
-        assert.deepStrictEqual(
-          yield* asAdmin.pin({ params: { patchId: mine.patchId } }).pipe(Effect.flip),
-          { ok: false, error: "Patch not found." }
-        );
-        const listed = yield* asAdmin.listByPrincipal({
-          params: { principalId: uploader.accountId }
-        });
-        assert.isTrue(listed.patches.some((patch) => patch.id === mine.patchId));
-        assert.deepStrictEqual(
-          { ...(yield* asAdmin.delete({ params: { patchId: mine.patchId } })) },
-          {
-            ok: true
-          }
-        );
-        const after = yield* asAdmin.listByPrincipal({
-          params: { principalId: uploader.accountId }
-        });
-        assert.isFalse(after.patches.some((patch) => patch.id === mine.patchId));
-        assert.deepStrictEqual(
-          yield* asAdmin.delete({ params: { patchId: mine.patchId } }).pipe(Effect.flip),
-          { ok: false, error: "Patch not found." }
-        );
-      })
+      assert.isTrue((yield* asOwner.delete({ params })).ok);
+      assert.isTrue(Option.isNone(yield* content.read(created.patchId)));
+      assert.deepStrictEqual(yield* asOwner.delete({ params }).pipe(Effect.flip), {
+        ok: false,
+        error: "Patch not found."
+      });
+    })
   );
 });

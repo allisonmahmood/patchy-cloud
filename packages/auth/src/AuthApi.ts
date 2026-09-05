@@ -1,33 +1,23 @@
 /**
  * The `auth` group of the Patchy API, implemented over `Tokens`, `Limits` and
- * `Analytics`: self-service minting with its three guardrails, `/api/me`,
- * admin token issue and revocation. The hosting server serves it through its
- * runtime seam until `serving` mounts the whole API.
+ * `Analytics`: self-service minting with its three guardrails and `/api/me`.
+ * The hosting server serves it through its runtime seam until `serving`
+ * mounts the whole API.
  */
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import { Analytics } from "@patchy/analytics";
 import {
-  CreatedToken,
-  CreateTokenRequest,
   CurrentIdentity,
-  decodeBody,
-  Forbidden,
-  hasScope,
-  malformedBody,
   MintedToken,
   MintQuotaExceeded,
-  NotFound,
   PatchyApi,
   rateLimited,
-  readBody,
   refuse,
-  RevokedToken,
   SelfServiceDisabled
 } from "@patchy/api";
 import { randomToken } from "@patchy/core";
@@ -35,20 +25,8 @@ import { Limits } from "@patchy/limits";
 import * as AuthConfig from "./AuthConfig.js";
 import * as Tokens from "./Tokens.js";
 
-/** A token request is small; this is room for one, not a document. */
-const MAX_TOKEN_REQUEST_BYTES = 16 * 1024;
-const decodeCreateToken = decodeBody(CreateTokenRequest);
-
-const forbidden = () =>
-  refuse(Forbidden, { ok: false, error: "API token does not have the required scope." });
-
 /** A new plaintext token: shown once in the response that issues it, stored only as a hash. */
 const newToken = () => `pp_${randomToken(32)}`;
-
-const cleanText = (value: string | null | undefined) => {
-  const trimmed = value?.trim();
-  return trimmed ? trimmed.slice(0, 255) : null;
-};
 
 /**
  * The internal name a mint assigns its principal and token. The client
@@ -134,71 +112,6 @@ export const layer = HttpApiBuilder.group(PatchyApi, "auth", (handlers) =>
           })
         )
         .handle("me", () => CurrentIdentity)
-        // Raw, so a body the schema refuses — or none at all, which is `{}` —
-        // answers in the wire's words rather than an empty 400.
-        .handleRaw("createToken", () =>
-          Effect.gen(function* () {
-            const identity = yield* CurrentIdentity;
-            if (!hasScope(identity, "admin")) return forbidden();
-            const payload = yield* readBody(MAX_TOKEN_REQUEST_BYTES).pipe(
-              Effect.flatMap(decodeCreateToken),
-              Effect.catchTags({
-                MalformedBody: () => Effect.succeed(malformedBody()),
-                BodyTooLarge: () => Effect.succeed(malformedBody())
-              })
-            );
-            if (HttpServerResponse.isHttpServerResponse(payload)) return payload;
-
-            const token = newToken();
-            const apiToken = yield* tokens
-              .create({
-                accountId: identity.accountId,
-                name: cleanText(payload.name) ?? "CLI API Token",
-                scopes: normalizeScopes(payload.scopes),
-                token
-              })
-              .pipe(Effect.catchTags({ SqlError: Effect.die }));
-
-            // A token minted is a token minted, whichever door it came through;
-            // the flag tells the operator's issuing apart from self-service.
-            yield* analytics.track({
-              name: "token.minted",
-              principalId: identity.accountId,
-              properties: { apiTokenId: apiToken.id, selfService: false }
-            });
-            return new CreatedToken({ ok: true, apiToken, token });
-          })
-        )
-        // The moderation loop's last step and its only irreversible one. There
-        // is no un-revoke — a replacement is a fresh mint.
-        .handle("revokeToken", ({ params }) =>
-          Effect.gen(function* () {
-            const identity = yield* CurrentIdentity;
-            if (!hasScope(identity, "admin")) return forbidden();
-
-            const revocation = yield* tokens
-              .revoke(params.apiTokenId)
-              .pipe(Effect.catchTags({ SqlError: Effect.die }));
-            if (Option.isNone(revocation)) {
-              return refuse(NotFound, { ok: false, error: "API token not found." });
-            }
-            return new RevokedToken({
-              ok: true,
-              alreadyRevoked: revocation.value.alreadyRevoked,
-              apiToken: {
-                id: revocation.value.id,
-                name: revocation.value.name,
-                principalId: revocation.value.accountId,
-                revokedAt: revocation.value.revokedAt
-              }
-            });
-          })
-        )
     );
   })
 );
-
-function normalizeScopes(value: ReadonlyArray<string> | undefined): string[] {
-  const scopes = (value ?? []).map(cleanText).filter((scope) => scope !== null);
-  return scopes.length ? [...new Set(scopes)] : ["upload"];
-}

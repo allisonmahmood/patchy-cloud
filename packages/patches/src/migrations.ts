@@ -12,13 +12,10 @@ const ddl = (statement: string) =>
 
 export const migrations: Migrations = {
   // A patch is the runtime-agnostic record: who holds it, what it is called,
-  // which version serves, and the three clocks that decide whether it is up —
-  // the retention anchor (`expires_at`), the pin that exempts it, and the
-  // deleted / disabled stamps that take it out of service. A version is one
-  // upload: the object key its bytes sit under, and where the upload came from.
-  //
-  // The sweep's index is partial on purpose: it scans by anchor over unpinned
-  // rows only, which is exactly the set the sweep may take.
+  // which version serves, and the clocks that decide whether it is up —
+  // the retention anchor (`expires_at`), and the deleted / disabled stamps
+  // that take it out of service. A version is one upload: the object key its
+  // bytes sit under, and where the upload came from.
   "0003_patches_baseline": ddl(`
     CREATE TABLE patches (
       id TEXT PRIMARY KEY,
@@ -30,7 +27,6 @@ export const migrations: Migrations = {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       expires_at TIMESTAMPTZ NOT NULL,
-      pinned_at TIMESTAMPTZ,
       deleted_at TIMESTAMPTZ,
       disabled_at TIMESTAMPTZ,
       disabled_reason TEXT
@@ -55,7 +51,6 @@ export const migrations: Migrations = {
     );
 
     CREATE INDEX patches_account_id_idx ON patches(account_id);
-    CREATE INDEX patches_expiry_sweep_idx ON patches(expires_at) WHERE pinned_at IS NULL;
     CREATE INDEX patch_versions_patch_id_idx ON patch_versions(patch_id);
   `)
 };

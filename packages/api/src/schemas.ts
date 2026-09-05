@@ -16,9 +16,6 @@ export const PatchId = Schema.String.check(
   })
 );
 
-/** A moment on the wire is an ISO-8601 string, as the database already hands it out. */
-const Timestamp = Schema.String.annotate({ title: "Timestamp" });
-
 /** A request field a client may leave out or send as null. */
 const OptionalText = Schema.optionalKey(Schema.NullOr(Schema.String));
 
@@ -40,7 +37,6 @@ export const Unauthorized = Schema.Struct({
   ok: Schema.Literal(false),
   error: Schema.Literal("Missing or invalid API token.")
 }).pipe(HttpApiSchema.status(401));
-export const Forbidden = failure(403, {});
 export const NotFound = failure(404, {});
 export const Conflict = failure(409, {});
 export const PayloadTooLarge = failure(413, {});
@@ -87,10 +83,6 @@ export class Identity extends Schema.Class<Identity>("Identity")({
   scopes: Schema.Array(Schema.String)
 }) {}
 
-/** Whether an identity holds a scope; `admin` satisfies every scope. */
-export const hasScope = (identity: Identity, scope: string): boolean =>
-  identity.scopes.includes(scope) || identity.scopes.includes("admin");
-
 /** The plaintext appears here exactly once; only its hash is stored. */
 export class MintedToken extends Schema.Class<MintedToken>("MintedToken")(
   {
@@ -99,32 +91,6 @@ export class MintedToken extends Schema.Class<MintedToken>("MintedToken")(
   },
   { httpApiStatus: 201 }
 ) {}
-
-export class CreateTokenRequest extends Schema.Class<CreateTokenRequest>("CreateTokenRequest")({
-  name: OptionalText,
-  scopes: Schema.optionalKey(Schema.Array(Schema.String))
-}) {}
-
-export class CreatedToken extends Schema.Class<CreatedToken>("CreatedToken")(
-  {
-    ok: Schema.Literal(true),
-    apiToken: Schema.Struct({ id: Schema.String, name: Schema.String }),
-    token: Schema.String
-  },
-  { httpApiStatus: 201 }
-) {}
-
-/** Idempotent: revoking twice answers the same, with the first moment intact. */
-export class RevokedToken extends Schema.Class<RevokedToken>("RevokedToken")({
-  ok: Schema.Literal(true),
-  alreadyRevoked: Schema.Boolean,
-  apiToken: Schema.Struct({
-    id: Schema.String,
-    name: Schema.String,
-    principalId: Schema.String,
-    revokedAt: Timestamp
-  })
-}) {}
 
 // --- patches --------------------------------------------------------------
 
@@ -163,46 +129,4 @@ export class UploadCreated extends Schema.Class<UploadCreated>("UploadCreated")(
 /** An update: 200, and `versionNumber` moved. */
 export class UploadUpdated extends Schema.Class<UploadUpdated>("UploadUpdated")(uploadFields) {}
 
-export class DisableRequest extends Schema.Class<DisableRequest>("DisableRequest")({
-  reason: OptionalText
-}) {}
-
 export class Ok extends Schema.Class<Ok>("Ok")({ ok: Schema.Literal(true) }) {}
-
-export class Pinned extends Schema.Class<Pinned>("Pinned")({
-  ok: Schema.Literal(true),
-  pinned: Schema.Boolean
-}) {}
-
-/**
- * A patch as the moderation surface reports it: the principal behind it and
- * the token that created it, which is what revocation acts on. Answers for
- * disabled, deleted and expired patches too — an operator is asked about pages
- * that are off as often as pages that are on.
- */
-export class ModeratedPatch extends Schema.Class<ModeratedPatch>("ModeratedPatch")({
-  id: PatchId,
-  principalId: Schema.String,
-  createdByApiTokenId: Schema.NullOr(Schema.String),
-  title: Schema.String,
-  createdAt: Timestamp,
-  updatedAt: Timestamp,
-  expiresAt: Timestamp,
-  pinnedAt: Schema.NullOr(Timestamp),
-  deletedAt: Schema.NullOr(Timestamp),
-  disabledAt: Schema.NullOr(Timestamp),
-  disabledReason: Schema.NullOr(Schema.String)
-}) {}
-
-export class PatchView extends Schema.Class<PatchView>("PatchView")({
-  ok: Schema.Literal(true),
-  patch: ModeratedPatch
-}) {}
-
-/** Newest first, deleted patches omitted. `truncated` says the list is not whole. */
-export class PrincipalPatches extends Schema.Class<PrincipalPatches>("PrincipalPatches")({
-  ok: Schema.Literal(true),
-  principalId: Schema.String,
-  patches: Schema.Array(ModeratedPatch),
-  truncated: Schema.Boolean
-}) {}

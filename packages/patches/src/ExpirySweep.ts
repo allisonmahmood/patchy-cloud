@@ -4,7 +4,7 @@
  * A patch whose retention clock has run out already stops serving and
  * refuses updates; the row and its stored HTML are still there, still
  * costing storage, still counting against its creator's quota. The sweep is
- * what finishes the job: for each expired, unpinned patch it hard-deletes the
+ * what finishes the job: for each expired patch it hard-deletes the
  * record and then the content behind it. There is no recovery — republishing
  * is the way back.
  *
@@ -12,7 +12,7 @@
  * halves leaves unreachable objects rather than a live patch with no content;
  * an orphaned object costs storage, a contentless patch costs the reader the
  * page. Everything else follows from re-reading the database: a run is
- * idempotent, two runs overlapping is safe, and a patch pinned mid-run stays.
+ * idempotent and two overlapping runs are safe.
  *
  * `sweep` is one run. Deciding when to run is the server's: it forks
  * `Effect.repeat(sweep, Schedule.spaced("1 hour"))` in its scope, which also
@@ -39,7 +39,7 @@ const MAX_PER_RUN = 1_000;
 export interface SweepResult {
   /** Patches hard-deleted: record gone, content gone. */
   readonly deleted: number;
-  /** Patches no longer the sweep's to take — pinned, or already swept. */
+  /** Patches no longer the sweep's to take — already swept. */
   readonly skipped: number;
   /** Patches whose delete failed. They stay expired, and the next run retries. */
   readonly failed: number;
