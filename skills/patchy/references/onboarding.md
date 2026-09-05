@@ -99,8 +99,8 @@ The upload uses the configured publishing key; it never creates one.
 Describe a key as saved on this machine only when the probe reported `auth-set`.
 Environment and dev-env keys do not imply a saved credential file.
 
-Then hand over the URL with the one fact that matters: **anyone with the link can see it,
-and it isn't listed anywhere.**
+Then hand over the URL with the one fact that matters: **signed-in colleagues in your
+company can open it; people outside the company cannot.**
 
 ### 4. Sign-off
 
@@ -122,7 +122,7 @@ you; never invent one, and never carry these into a real session.
 >
 > **Agent**: Done. Your pages go to `pages.example.com`, which is already set up here.
 > Publishing your welcome page now… Here it is: `https://pages.example.com/d/a1b2c3` —
-> anyone with that link can see it, and it isn't listed anywhere. It was published
+> signed-in colleagues in your company can open it. It was published
 > with your configured publishing key. Next time you want a page, just say
 > "publish this with patchy".
 

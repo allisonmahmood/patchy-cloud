@@ -29,7 +29,7 @@ Packages that hold no domain vocabulary of their own; each defines the few terms
 ## Relationships
 
 - **Publishing → `api`**: the CLI creates and updates patches through the derived client and authenticates with a user-owned machine token
-- **Serving → Patches**: a page reads the record and its HTML through `Content` and records the visit through `Patches`; Serving never touches bytes and never imports Auth. Once login lands, the login door asks Auth who opened the page and Patches whether they may
+- **Serving → Patches, Auth**: a page reads the record and its HTML through `Content` and records an admitted visit through `Patches`; Serving never touches bytes. Serving imports Auth for the route-scoped login door, which establishes the optional viewer; the page handler checks the patch's sharing scope
 - **Patches → Content store**: the upload contract and the sweep put, get and delete a patch's bytes through `ContentStore`; nothing else touches them
 - **Auth, Patches → SQL**: both query through the `SQL` client. `patch_versions` references `machine_tokens`, but Patches never imports Auth: every handler receives the identity from bearer middleware. Patches spends its per-machine rate limits through `Limits`
 - **Patches → Analytics**: reports business events with the user as principal, or no user for expiry. Auth emits no events until the device-login poll restores mint reporting

@@ -1,3 +1,4 @@
+import { sessionScripts, type SessionShell } from "@patchy/auth";
 import { escapeAttribute, escapeHtml, htmlPage } from "@patchy/core";
 import type { Patches } from "@patchy/patches";
 
@@ -14,8 +15,8 @@ export function renderHome(options: { publicBaseUrl: string }): string {
             <span class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</span>
             <span class="kicker">Live patch host</span>
           </div>
-          <h1>Upload-gated HTML patch hosting.</h1>
-          <p class="lede">Patchy Cloud turns one validated static HTML file into a public review link. Publishing is authenticated by default; viewing is public and unlisted.</p>
+          <h1>Static pages for your company.</h1>
+          <p class="lede">Publish one validated HTML file and send your colleagues its link. Sign in once to open your company's patches.</p>
           <div class="meta">
             <span class="pill pill-progress">Upload auth</span>
             <span class="pill pill-done">Sandboxed view</span>
@@ -53,14 +54,14 @@ export function renderHome(options: { publicBaseUrl: string }): string {
             <p>Patch uploads reject scripts, forms, frames, unsafe URL schemes, and other constructs that do not belong in a static review document.</p>
           </article>
           <article class="task">
-            <h3><span class="num">2</span> Review link <span class="pill pill-progress">Public</span></h3>
-            <p>Anyone with the patch URL can view it. Use Patchy Cloud for material that is acceptable as an unlisted public link.</p>
+            <h3><span class="num">2</span> Company link <span class="pill pill-progress">Sign-in required</span></h3>
+            <p>Colleagues in your company can open the patch. People outside the company cannot view it.</p>
           </article>
         </section>
 
         <div class="note note-warn">
           <span class="note-title">Visibility rule</span>
-          <p>Upload controls govern publishing; they do not make served patches private.</p>
+          <p>New patches are company-only. Reading a company patch requires a browser session; a machine token only authorizes the CLI.</p>
         </div>
 
         <p class="foot">Health check: <a href="/healthz">/healthz</a>.</p>
@@ -70,15 +71,17 @@ export function renderHome(options: { publicBaseUrl: string }): string {
 }
 
 /**
- * The served-patch page: the uploaded document in a sandboxed frame, and
- * nothing else. No chrome, no brand credit, no script — this is someone else's
- * published page, and the wrapper's only job is to sandbox it.
+ * The uploaded document stays script-free in its sandboxed frame. Only a
+ * company patch's outer shell loads the session scripts; public pages load none.
  */
-export function renderPatchWrapper(options: {
-  patch: Patches.Patch;
-  version: Patches.PatchVersion;
-  html: string;
-}): string {
+export function renderPatchWrapper(
+  options: {
+    patch: Patches.Patch;
+    version: Patches.PatchVersion;
+    html: string;
+  },
+  shell?: SessionShell
+): string {
   const title = escapeHtml(options.patch.title || "Patchy patch");
 
   return `<!doctype html>
@@ -87,6 +90,7 @@ export function renderPatchWrapper(options: {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${title}</title>
+  ${shell ? sessionScripts(shell) : ""}
   <style>
     html,
     body {

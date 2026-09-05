@@ -49,13 +49,16 @@ export function withCookies(
   return HttpServerResponse.replaceCookies(response, Cookies.fromReadonlyRecord(cookies));
 }
 
+/** The only scripts in a session shell: Clerk headless and Patchy's external initializer. */
+export function sessionScripts(shell: SessionShell): string {
+  return `<script defer crossorigin="anonymous" data-clerk-publishable-key="${escapeAttribute(shell.publishableKey)}" src="https://${escapeAttribute(shell.frontendApiHost)}/npm/@clerk/clerk-js@5/dist/clerk.headless.browser.js"></script><script defer src="/auth/session.js"></script>`;
+}
+
 export function pageResponse(
   page: Page,
   shell?: SessionShell
 ): HttpServerResponse.HttpServerResponse {
-  const head = shell
-    ? `<script defer crossorigin="anonymous" data-clerk-publishable-key="${escapeAttribute(shell.publishableKey)}" src="https://${escapeAttribute(shell.frontendApiHost)}/npm/@clerk/clerk-js@5/dist/clerk.headless.js"></script><script defer src="/auth/session.js"></script>`
-    : undefined;
+  const head = shell ? sessionScripts(shell) : undefined;
   return HttpServerResponse.text(
     htmlPage({
       title: page.title,

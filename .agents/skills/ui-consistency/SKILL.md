@@ -20,16 +20,17 @@ Two page kinds, and the distinction drives most findings:
 ## The shell and its one exception
 
 - First-party pages compose `htmlPage`. A new page that re-emits its own `<head>`, base styles, or design tokens instead of composing the shell is a concrete finding.
-- `renderPatchWrapper` is the standing exception and stays one. It is a separate document on purpose: its own minimal `<head>`, no shell paper/grid/glyph styling, and a locked CSP (`form-action 'none'`, no script source) that nothing inside the wrapper may need to relax. Do not report it as a duplicated skeleton, and do not accept a change that folds it into `htmlPage`.
+- `renderPatchWrapper` is the standing exception and stays one. It is a separate document on purpose: its own minimal `<head>`, no shell paper/grid/glyph styling, and `form-action 'none'`. The public CSP keeps no script source; only the company session shell admits the session sources below. Do not report it as a duplicated skeleton, and do not accept a change that folds it into `htmlPage`.
 - When first-party pages repeat the same durable treatment — pills, notes, compact code panels — prefer a named shared class in the shell. Keep contextual layout, width, and color at the call site.
 - Flag call-site overrides that replace a shared class's core height, radius, padding, focus ring, or base colors. Extend the shared contract instead when the pattern is genuinely shared.
 
 ## Served patches
 
-- Served patches carry no JavaScript, anywhere in the wrapper. A control that needs script is the wrong control.
+- The patch runs no JavaScript. A public wrapper also runs none; a company wrapper loads only Clerk's headless script from the exact configured Frontend API host and Patchy's external `/auth/session.js` initializer. Its CSP admits only those script sources and that host for connections, never inline script.
 - Keep the patch iframe's `sandbox` and `title`, and its `srcdoc` escaping. Patch HTML reaches the attribute through `escapeAttribute`; a patch title reaching markup goes through `escapeHtml`. Flag any user-supplied value interpolated raw.
-- Readers of a served patch are unwatched: no cookies, no session, no analytics, no third-party requests from the wrapper. Flag anything that adds one.
-- The wrapper is the sandboxed frame and nothing else: no footer, no chrome, no first-party link out of the page. Flag anything that adds one.
+- Readers are unwatched by the patch: no analytics at either scope. Public wrappers keep their script-free, session-free policy; company wrappers may maintain Clerk's session, isolated from the patch.
+- The wrapper's visible content is the sandboxed frame and nothing else: no footer, no chrome, no first-party link out of the page. The company shell's session scripts do not change that.
+- The signed-out door reuses Auth's `/login` template with one **Sign in** link, not a second design or a form. Keep it in front of the patch; request-access controls wait until owner-only sharing returns.
 
 ## CSS ownership
 

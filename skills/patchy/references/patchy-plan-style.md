@@ -12,7 +12,6 @@ briefings for Patchy Cloud.
 - System fonts only.
 - Pure CSS imagery unless the user supplies assets.
 - The document must remain readable with CSS stripped.
-- Every upload carries a publishing key; patch viewer URLs are public/unlisted.
 
 ## Brand Read
 

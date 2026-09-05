@@ -37,7 +37,11 @@ export function signInUrl(session: Session.Session["Service"], path: string): st
     ? host.replace(/\.clerk\.accounts\.dev$/, ".accounts.dev")
     : host.replace(/^clerk\./, "accounts.");
   const url = new URL(`https://${portalHost}/sign-in`);
-  url.searchParams.set("redirect_url", new URL(path, session.publicBaseUrl).href);
+  const target = new URL(path, session.publicBaseUrl);
+  // A new sign-in must not replay the signed-out handshake that showed the door.
+  target.searchParams.delete("__clerk_handshake");
+  target.searchParams.delete("__clerk_handshake_nonce");
+  url.searchParams.set("redirect_url", target.href);
   return url.href;
 }
 
@@ -55,41 +59,49 @@ export function door(
   }).pipe(HttpServerResponse.setHeader("x-patchy-sign-in-url", url));
 }
 
+/** Shared cookie admission; a page's handler decides whether the result is required. */
+export const admission = Effect.gen(function* () {
+  const session = yield* Session.Session;
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const path = returnPath(request.url, session.publicBaseUrl) ?? "/join";
+  const result = yield* session.authenticate(
+    new Request(new URL(request.url, session.publicBaseUrl), {
+      method: request.method,
+      headers: request.headers
+    })
+  );
+  if (result.status === "handshake") {
+    return {
+      result: HttpServerResponse.empty({
+        status: result.response.status,
+        headers: {
+          location: result.response.headers.get("location") ?? "/join",
+          "cache-control": "private, no-store"
+        }
+      }),
+      cookies: result.response.headers.getSetCookie()
+    };
+  }
+  if (result.status === "signed-out") {
+    if (result.handshakeFailed)
+      yield* Effect.logWarning("Clerk sign-in could not complete").pipe(
+        Effect.annotateLogs({ reason: result.reason })
+      );
+    return { result: door(session, path, result.handshakeFailed), cookies: result.cookies };
+  }
+  return { result: result.claims, cookies: result.cookies };
+});
+
 /** Session-only admission also serves logout, which must work before a user row exists. */
 export const withSession = <E, R>(
   app: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>
 ) =>
   Effect.gen(function* () {
-    const session = yield* Session.Session;
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const path = returnPath(request.url, session.publicBaseUrl) ?? "/join";
-    const result = yield* session.authenticate(
-      new Request(new URL(request.url, session.publicBaseUrl), {
-        method: request.method,
-        headers: request.headers
-      })
-    );
-    if (result.status === "handshake") {
-      return withCookies(
-        HttpServerResponse.empty({
-          status: result.response.status,
-          headers: {
-            location: result.response.headers.get("location") ?? "/join",
-            "cache-control": "private, no-store"
-          }
-        }),
-        result.response.headers.getSetCookie()
-      );
-    }
-    if (result.status === "signed-out") {
-      if (result.handshakeFailed)
-        yield* Effect.logWarning("Clerk sign-in could not complete").pipe(
-          Effect.annotateLogs({ reason: result.reason })
-        );
-      return withCookies(door(session, path, result.handshakeFailed), result.cookies);
-    }
-    const response = yield* Effect.provideService(app, SignedIn, result.claims);
-    return withCookies(response, result.cookies);
+    const { result, cookies } = yield* admission;
+    const response = HttpServerResponse.isHttpServerResponse(result)
+      ? result
+      : yield* Effect.provideService(app, SignedIn, result);
+    return withCookies(response, cookies);
   });
 
 /** Every first-party POST is checked before authentication can start a handshake. */
@@ -111,7 +123,7 @@ export const sameOrigin = <E, R>(app: Effect.Effect<HttpServerResponse.HttpServe
   });
 
 /** Claim refresh and deactivation are shared by enrollment and ordinary doored pages. */
-const resolveViewer = Effect.gen(function* () {
+export const resolveViewer = Effect.gen(function* () {
   const claims = yield* SignedIn;
   const users = yield* Users.Users;
   const companies = yield* Companies.Companies;

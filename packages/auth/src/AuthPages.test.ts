@@ -118,7 +118,7 @@ it.layer(services)("first-party pages in memory", (it) => {
       assert.include(page.headers.get("content-security-policy")!, "form-action 'self'");
       // A no-referrer policy nulls a browser form's Origin and breaks the CSRF check.
       assert.strictEqual(page.headers.get("referrer-policy"), "same-origin");
-      assert.include(html, "clerk.headless.js");
+      assert.include(html, "clerk.headless.browser.js");
       assert.include(html, "/auth/session.js");
       const created = yield* send(
         enrollment,

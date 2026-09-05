@@ -14,7 +14,6 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import type { SqlError } from "effect/unstable/sql/SqlError";
 import { contentHash, newInternalId, newPatchId } from "@patchy/core";
 import { ContentStore } from "@patchy/content-store";
@@ -38,13 +37,6 @@ export interface UploadInput {
   readonly userAgent: string | null;
 }
 
-/** What a served page is built from: the patch, the version, and its HTML. */
-export interface Served {
-  readonly patch: Patches.Patch;
-  readonly version: Patches.PatchVersion;
-  readonly html: string;
-}
-
 export class Content extends Context.Service<
   Content,
   {
@@ -64,17 +56,12 @@ export class Content extends Context.Service<
       | ContentStore.StoreUnavailable
     >;
     /**
-     * A patch in service with its current or numbered version and the HTML
-     * behind it; `None` for anything `Patches.find` does not answer. The
-     * object missing under a recorded key is a fault, not an absence.
+     * Reads the bytes of a version whose metadata the caller has already loaded
+     * and authorized. A missing recorded object is a fault, not an absence.
      */
     readonly read: (
-      patchId: string,
-      versionNumber?: number
-    ) => Effect.Effect<
-      Option.Option<Served>,
-      SqlError | ContentStore.InvalidObjectKey | ContentStore.StoreUnavailable
-    >;
+      version: Patches.PatchVersion
+    ) => Effect.Effect<string, ContentStore.InvalidObjectKey | ContentStore.StoreUnavailable>;
   }
 >()("@patchy/patches/Content") {}
 
@@ -132,14 +119,9 @@ export const make = Effect.gen(function* () {
       );
   });
 
-  const read = Effect.fn("Content.read")(function* (patchId: string, versionNumber?: number) {
-    const found = yield* patches.find(patchId, versionNumber);
-    if (Option.isNone(found)) return Option.none();
-    const html = yield* store
-      .get(found.value.version.objectKey)
-      .pipe(Effect.catchTags({ ObjectNotFound: Effect.die }));
-    return Option.some({ ...found.value, html } satisfies Served);
-  });
+  const read = Effect.fn("Content.read")((version: Patches.PatchVersion) =>
+    store.get(version.objectKey).pipe(Effect.catchTags({ ObjectNotFound: Effect.die }))
+  );
 
   return Content.of({ upload, read });
 });
