@@ -10,6 +10,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import * as SchemaGetter from "effect/SchemaGetter";
 
 export class SessionError extends Schema.TaggedError<SessionError>()("SessionError", {
   operation: Schema.Literals(["configuration", "authenticate", "revoke"]),
@@ -26,7 +27,13 @@ export class SessionError extends Schema.TaggedError<SessionError>()("SessionErr
 export const SessionClaims = Schema.Struct({
   sub: Schema.NonEmptyString,
   email: Schema.NonEmptyString,
-  name: Schema.String,
+  // Email-only Clerk accounts have no display name; identity is still sub/email.
+  name: Schema.NullOr(Schema.String).pipe(
+    Schema.decodeTo(Schema.String, {
+      decode: SchemaGetter.transform((name) => name ?? ""),
+      encode: SchemaGetter.passthrough()
+    })
+  ),
   sid: Schema.NonEmptyString
 });
 

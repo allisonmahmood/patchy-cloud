@@ -44,17 +44,17 @@ Not a **connection** (a connected source belongs to the company or a user, and a
 
 ## Runtime tiers
 
-A **tier** is where a patch's code runs, and nothing else. Tier 0 is **static**: no code runs anywhere. Tier 1 is **browser**: code runs in the viewer's browser, as the viewer. Tier 2 is **hosted**: the patch also has server-side code Patchy runs for it, while someone has the patch open. Beyond them, and not designed: tier 3 runs with no viewer present — automations, a thing that persists — and tier 4 gives an agent its own computer to work in (the shape Daytona fits). The numbers are the names; the glosses are for context.
+A **tier** is where a patch's code runs, and nothing else. Tier 0 is **static**: no patch code runs anywhere. Tier 1 is **browser**: code runs in the viewer's browser, as the viewer. Tier 2 is **hosted**: the patch also has server-side code Patchy runs for it, while someone has the patch open. Beyond them, and not designed: tier 3 runs with no viewer present — automations, a thing that persists — and tier 4 gives an agent its own computer to work in (the shape Daytona fits). The numbers are the names; the glosses are for context.
 
 ### What a tier changes, and what it never changes
 
-A tier changes where code runs. It never changes who can open a patch, what a patch may declare it needs, or how it is published, versioned, retired, shared or found — those are identical at every tier. A person opening a patch never thinks about its tier: they are inside their company's cloud, so the patch opens; if they are not logged in they log in once and land back on it. That door is the same for a tier 0 page and a tier 2 CRM, and it sits in front of the page, not inside it. (Today there is no login; the door arrives with auth.)
+A tier changes where code runs. It never changes who can open a patch, what a patch may declare it needs, or how it is published, versioned, retired, shared or found — those are identical at every tier. A person opening a patch never thinks about its tier: they are inside their company's cloud, so the patch opens; if they are not logged in they log in once and land back on it. That door is the same for a tier 0 page and a tier 2 CRM, and it sits in front of the page, not inside it. Today the door protects tier 0; the higher runtimes are still to come.
 
 A patch may be set **public** — anyone with the link, no login — at any tier. That is a tier 0 story: a page the sales team hands a client. Above tier 0 it is allowed but pointless, because an anonymous viewer carries no identity and nothing acts as them, so a public tier 1 patch is client code with no company access and a public tier 2 patch serves through its own identity only. Setting a patch above tier 0 to public warns the agent and the person exactly that.
 
 ### Tier 0 — static
 
-The uploaded document and nothing else: no script runs in the page, so the page cannot watch the reader or reach anything. What carries over from public hosting is the part of the [serving guarantees](../packages/serving/CONTEXT.md) about the page itself — a locked, script-free CSP; caching keyed to URL shape, so a version URL is immutable and the latest URL follows the patch; open to any agent that may open it, never bot-blocked. What does not carry over is "no session on the serving host": once auth lands, the host knows who opened the page in order to let them in. The promise becomes _the page cannot watch you_, not _nobody knows you were here_.
+The uploaded document runs no script, so the patch cannot watch the reader or reach anything. The [serving guarantees](../packages/serving/CONTEXT.md) distinguish it from the shell: the patch remains in its script-free sandbox; a public shell runs no script, while a company shell runs only Patchy's own session script — Clerk's headless client and Patchy's external initializer — never analytics. Caching is keyed to sharing: a minute at most for a public page, never for a doored one, at both latest and version URLs. Pages stay open to any agent that may open them, never bot-blocked; an agent reads a company patch through its user's signed-in browser, not a machine token. The host knows who opened a company page in order to let them in. The promise is _the patch cannot watch you_, not _nobody knows you were here_.
 
 ### Tier 1 — browser
 
@@ -150,7 +150,7 @@ Who may **open** a patch is its sharing scope: the owner plus named users, one g
 
 Across the company line there is nothing but **public**: a patch is inside the company or it is anyone-with-the-link. Guests — a named outsider with a login — are not a thing Patchy does yet.
 
-What the wrong person sees: not signed in, the login door, then the patch if they may open it. Signed in, in the same company, but outside the scope: "you don't have access to this patch", who owns it, and a **request access** button that asks the owner — inside a company a patch's existence is not a secret. Signed in from a different company, or the link points at nothing: "no such patch", confirming nothing, exactly as public hosting does today.
+Today every published patch is company-scoped; changing sharing from the CLI arrives with the sharing work. A public patch opens without a session, but a company patch has three outcomes: an active colleague gets the page; a signed-out reader gets the login door with one **Sign in** link, then returns to the patch; a signed-in reader from another company gets the same "no such patch" as a missing link, confirming nothing. A signed-in person without a company goes through create-or-join with the patch as the return destination; a deactivated user sees the deactivated page instead of a sign-in loop. When owner-only sharing returns, a colleague outside that narrower scope will see "you don't have access to this patch", who owns it, and **request access**; that state is not offered today.
 
 ### Machines and tokens
 

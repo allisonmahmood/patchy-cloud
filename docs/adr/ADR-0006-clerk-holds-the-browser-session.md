@@ -54,7 +54,9 @@ load.
 **Reading a doored patch needs Clerk once a minute, in the browser, not on the
 server.** The server verifies with a public key; the browser's refresh goes to
 the Frontend API. A doored response is per-viewer and may carry `Set-Cookie`,
-so it is `private, no-store`; caching stays URL-shaped only for public patches.
+so it is `private, no-store`. Caching is keyed to sharing: public patches use
+`public, max-age=60` at both latest and version URLs, so a scope change can
+take a page back inside within a minute without a CDN purge.
 
 **Clerk's keys are required configuration.** The server refuses to start
 without them; there is no half-up state. Sign-out is a

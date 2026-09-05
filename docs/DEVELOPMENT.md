@@ -126,6 +126,31 @@ Open `/join` at the instance's API URL to sign in:
 A validated `return` path sends a person who has a company back to that page.
 Without one, `/join` and `/login`'s sign-in link lead to `/company`.
 
+### Reading a published patch
+
+Uploads are company-scoped, including the seeded admin's patches. The upload's
+`publicUrl` is a view URL, not a promise of anonymous access. A cookie-free
+`curl -i <publicUrl>` answers **401** with the same HTML door as `/login`, one
+**Sign in** link, `x-patchy-sign-in-url`, and `Cache-Control: private, no-store`;
+it has neither `Location` nor `WWW-Authenticate`. A machine token does not open
+the page. The latest and `/v/<n>` URL shapes follow the same access and cache rules.
+
+With the seed bound to your Clerk user, open the patch in your browser, click
+**Sign in**, and return to the patch. Reload after 70 seconds: the company
+shell's Clerk client keeps the session fresh, so it should reopen without
+another sign-in. A person without a company is sent to `/join?return=…` first;
+a deactivated user gets 403. A signed-in user of a different company and a
+missing patch get identical private, uncached 404 responses.
+
+To exercise the public path on this disposable instance, set that patch row's
+`scope` to `public` in `patches` by hand; sharing has no CLI command yet. Both
+URL shapes then answer **200** with `Cache-Control: public, max-age=60` and the
+unchanged script-free public CSP. Restore `scope = 'company'` afterward.
+The company shell permits only the configured Clerk Frontend API host and
+Patchy's external session initializer; the uploaded document's sandbox is unchanged.
+
+### Company management
+
 The company page lists users, roles, active/deactivated state and pending
 invites. Admins invite, revoke, resend, change roles, deactivate and reactivate;
 members read the same page without management actions. Both roles can **Sign out**
@@ -145,8 +170,12 @@ top. SQL's migrator tests alone use its empty-database layer.
 
 Session tests use `@patchy/auth/testing`: fake Clerk keys under `.invalid`, an
 RSA fixture and a loopback-only fetch guard. The packed CLI e2e starts its
-server with the same fake keys and PEM, never a real Clerk account. The dev
-runner imports only the separate seed entry, so it never installs that guard.
+server with the same fake keys and PEM, never a real Clerk account. Its viewer
+checks expect every cookie-free published patch to answer 401 with
+`Cache-Control: private, no-store`; public viewer assertions return with the
+sharing work. The dev runner imports only the separate seed entry, so it never
+installs that guard. The production-domain Clerk handshake is a separate live
+verification, not part of these offline checks.
 
 ### How it works
 

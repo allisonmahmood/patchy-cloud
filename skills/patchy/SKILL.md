@@ -1,6 +1,6 @@
 ---
 name: patchy
-description: Publish content as a polished, shareable HTML page on a Patchy Cloud instance and run Patchy Cloud's onboarding. Use when the user says "patchy", "publish this with patchy", "patchy page", "walk me through Patchy Cloud's onboarding", or asks for a "shareable HTML page".
+description: Publish content as a polished, shareable HTML page on a Patchy Cloud instance, read a Patchy page, and run Patchy Cloud's onboarding. Use when the user says "patchy", "publish this with patchy", "patchy page", asks to read a Patchy link, "walk me through Patchy Cloud's onboarding", or asks for a "shareable HTML page".
 ---
 
 # Patchy
@@ -28,14 +28,14 @@ the user, which are the source of truth for user-facing copy anywhere in this sk
 - polished reports
 - quick visual previews of agent-generated work
 
-Keep secrets, confidential material, private URLs, local filesystem paths, production
-documentation of record, interactive apps, forms, JavaScript, and anything needing viewer
-authentication off any published page.
+Keep secrets, private URLs, local filesystem paths, production documentation of record, interactive
+apps, forms, and JavaScript off any published page. Publish only material the intended
+audience may read: today that audience is the user's whole company.
 
 ## Publishing
 
-The `patchy` CLI uploads one safe static HTML document and returns a public, unlisted
-view URL.
+The `patchy` CLI uploads one safe static HTML document and returns its view URL.
+New patches are company-scoped; the CLI cannot change sharing yet.
 
 Requires Node.js 22 or newer, and the `patchy` CLI on `PATH` — built from the
 patchy-cloud repo with `pnpm --filter @patchy/cli build`.
@@ -61,8 +61,8 @@ Behavior:
 - Call the credential the user's **publishing key**; local validation runs before upload.
 - Re-uploading the same local file updates the patch it already created on that instance.
   Pass `--new` to force a fresh patch, or `--patch` to update a known patch only.
-- Patch view URLs are public and unlisted: anyone holding the link can read the page, and
-  the page is listed nowhere. Say that when handing over a link.
+- A company patch opens for signed-in colleagues, not everyone holding its link.
+  The response field is still named `publicUrl`; that name does not make the page public.
 - "Take that page down" is `patchy delete './plan.html'` — the file it was published
   from — or `patchy delete --patch <id>`. It is irreversible and only the owner
   user can do it, through any of their machine tokens; confirm before running it.
@@ -81,6 +81,26 @@ Behavior:
   Stderr carries failures only.
   `delete --json` prints `{ "ok": true }`. Prefer it when the URL or the patch id is going
   into a script rather than to the user.
+
+## Reading a patch
+
+Read a company patch through the user's signed-in browser. Only public patches can be
+fetched directly by URL; a publishing key never opens a `/d/*` page. If browser access
+is unavailable, say so and ask the user to open the link or supply the content.
+
+When a page refuses access, report the refusal rather than treating its HTML as the patch:
+
+- **401, Sign in**: "This patch needs your browser sign-in. Open its Sign in link,
+  then I'll read it through your browser." Use the door's link (also in
+  `x-patchy-sign-in-url`); it returns to the patch. Do not send a publishing key or
+  copy session cookies into a URL fetch.
+- **303 to `/join`**: "Sign-in worked; finish creating or joining your company in
+  the browser, then return to the patch."
+- **403, deactivated**: "Your Patchy user is deactivated. Ask a company admin to
+  reactivate it." Repeated sign-in will not restore access.
+- **404**: "I can't open this patch with your current access. It may be missing or
+  belong to another company." Those cases are deliberately indistinguishable;
+  do not claim which occurred or offer a request-access control that does not exist.
 
 ## Saving a publishing key
 
@@ -140,14 +160,12 @@ Blocked or unsafe:
    they clarify the work.
 3. Run `validate` until it passes.
 4. Upload; with no key, run `patchy auth set --api-url <url>` before retrying.
-5. Return the URL, and say that the link is public but unlisted.
+5. Return the URL, and say that signed-in colleagues in the user's company can open it.
 
 ## Pitfalls
 
-- A publishing key gates ownership and editing, never readability. Do not tell the user a
-  key makes a page private.
-- Publish sensitive or confidential material only when public-link visibility is
-  acceptable.
+- Sharing scope controls readership; a publishing key controls publishing, not browser
+  access. Confirm the user's company before publishing sensitive company material.
 - Keep tokens out of positional arguments. Use the hidden prompt for a person, explicit
   `--token-stdin` for automation.
 - A publishing key acts as its user. Losing or revoking a key does not change

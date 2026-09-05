@@ -21,11 +21,11 @@ How the hosting server reads `Authorization`: the scheme is case-insensitive, on
 _Avoid_: header validation
 
 **Session**:
-The browser's sign-in held by Clerk, verified locally by Patchy and refreshed while a person reads a first-party page. A session can exist before a company is chosen or after deactivation; sign-out is available in both states, while deactivation refuses access on the next page load.
+The browser's sign-in held by Clerk, verified locally by Patchy and refreshed while a person reads a first-party page or company patch. A session can exist before a company is chosen or after deactivation; sign-out is available in both states, while deactivation refuses access on the next page load.
 _Avoid_: token (a machine's credential, not a browser's), cookie (how, not what)
 
 **Viewer**:
-The signed-in user, their company and role on a first-party page, without a machine credential. A viewer exists only after create-or-join and while the user is active; their email and name follow their current sign-in.
+The signed-in user, their company and role on a first-party page or at a company patch's login door, without a machine credential. A viewer exists only after create-or-join and while the user is active; their email and name follow their current sign-in.
 _Avoid_: bearer, machine, principal
 
 **Device login**:

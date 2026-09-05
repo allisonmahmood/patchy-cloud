@@ -103,7 +103,7 @@ export const signSession = (
   claims: Partial<{
     sub: string;
     email: string;
-    name: string;
+    name: string | null;
     sid: string;
     iat: number;
     exp: number;
