@@ -2,7 +2,8 @@ import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import { DEV_SEED } from "@patchy/auth/seed";
 import type { Patches } from "@patchy/patches";
-import { escapeHtml, renderPatchWrapper, renderHome } from "./render.js";
+import { escapeHtml } from "@patchy/core";
+import { renderPatchWrapper, renderHome } from "./render.js";
 
 const configuredUrl = "https://origin.example.test/base?tenant=O'Reilly&mode=review";
 const setupToken = "render-setup-sentinel";

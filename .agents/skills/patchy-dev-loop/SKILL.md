@@ -11,7 +11,9 @@ metadata:
 
 To bind the seeded admin to your own Clerk development user, set
 `PATCHY_DEV_CLERK_USER_ID=user_...` in the developer `dev.env` described below,
-then restart the instance. Without it, the seed keeps `user_dev`.
+then restart the instance. Sign in at `/join` to land in Patchy Dev as admin;
+without the override, a real sign-in lands on create-or-join. `/join` has
+**Not you? Sign out**, returning to `/login`.
 
 ## 1. Start
 
@@ -25,7 +27,7 @@ Start is idempotent. Run it whenever you are unsure: a running instance is found
 
 Done when `pnpm dev status` exits 0.
 
-The server's env is closed: nothing exported in your shell reaches it. The one exception is the two Clerk development keys, read from `$XDG_CONFIG_HOME/patchy-cloud/dev.env` (`~/.config/patchy-cloud/dev.env` by default), one file per developer for every worktree; `pnpm dev logs | grep 'clerk keys'` shows which were loaded. Missing keys are fixed there, never in the repo:
+The server's env is closed: shell exports never reach it. Load the required `CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` in `$XDG_CONFIG_HOME/patchy-cloud/dev.env` (`~/.config/patchy-cloud/dev.env` by default), one developer file for every worktree; `pnpm dev logs` names the loaded keys, not their values. The runner supplies required `DATABASE_URL` and `PATCHY_PUBLIC_BASE_URL` from its plan. Optional `CLERK_JWT_KEY` accepts a quoted multiline PEM for offline verification; leave `CLERK_AUTHORIZED_PARTIES` unset locally so per-port origins do not evict sibling worktrees' sessions. `PATCHY_DEV_CLERK_USER_ID` affects only the seed. Fix missing Clerk keys in the developer file, never in the repo:
 
 ```sh
 clerk env pull --app app_3ImZuFeZJb8038U0oFds84rupA2 --file "${XDG_CONFIG_HOME:-$HOME/.config}/patchy-cloud/dev.env"

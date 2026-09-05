@@ -1,7 +1,7 @@
 /**
- * Clerk development keys and the seed's optional Clerk user id, from
+ * Clerk development settings and the seed's optional Clerk user id, from
  * `$XDG_CONFIG_HOME/patchy-cloud/dev.env` (`~/.config/patchy-cloud/dev.env`).
- * Only the two keys reach the server; the user id is consumed by the seed.
+ * Only Clerk settings reach the server; the user id is consumed by the seed.
  * Other settings in this developer-owned file never enter the dev instance.
  */
 import * as Config from "effect/Config";
@@ -13,6 +13,8 @@ import * as Path from "effect/Path";
 const DEVELOPER_ENV_NAMES = [
   "CLERK_PUBLISHABLE_KEY",
   "CLERK_SECRET_KEY",
+  "CLERK_JWT_KEY",
+  "CLERK_AUTHORIZED_PARTIES",
   "PATCHY_DEV_CLERK_USER_ID"
 ] as const;
 

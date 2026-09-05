@@ -161,7 +161,7 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
 
   // The server: plain node with the tsx loader so the pid we record is the
   // one signals reach. Its env is closed: the plan, what a process needs to
-  // run at all, and the two Clerk keys from the developer's `dev.env`, so
+  // run at all, and the Clerk settings from the developer's `dev.env`, so
   // nothing exported in the agent's shell (another DATABASE_URL, a storage
   // driver, an API token) leaks in.
   yield* say(`clerk keys: ${Object.keys(clerk).join(", ") || "none"} (${devEnvFile})`);

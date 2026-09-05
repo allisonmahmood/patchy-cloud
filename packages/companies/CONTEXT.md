@@ -32,6 +32,10 @@ _Avoid_: team, department (labels, not concepts), role (what an admin has; a gro
 An invitation for one email address to join a company with a role, live until revoked or consumed and matched case-insensitively at sign-in. Several companies may invite the same address, but each has at most one live invitation for it; joining creates one user in exactly one company, and an existing user cannot join another.
 _Avoid_: add user, share the company
 
+**Create-or-join**:
+The choice a signed-in person without a company makes: accept one of the live invitations for their email, or, without an invitation, name a company and choose its handle as its first admin. This choice creates their user and company membership together; the page names the email checked and offers sign-out for a wrong account.
+_Avoid_: onboarding wizard, organization picker
+
 **Verified domain**:
 A company's email domain, proven by an admin, after which anyone signing in with a work identity on it joins the company automatically. Never a consumer domain; one domain belongs to one company, first-come. Also where SSO is enforced.
 _Avoid_: allowed domain, auto-join (the effect, not the thing)

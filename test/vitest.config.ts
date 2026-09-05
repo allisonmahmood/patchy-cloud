@@ -6,6 +6,7 @@ export default defineConfig({
     conditions: ["development"]
   },
   test: {
+    setupFiles: [fileURLToPath(new URL("./setup.ts", import.meta.url))],
     globalSetup: fileURLToPath(new URL("./postgres.ts", import.meta.url))
   }
 });
