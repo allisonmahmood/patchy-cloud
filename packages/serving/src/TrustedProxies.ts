@@ -1,7 +1,7 @@
 /**
  * Which proxies to believe about where a request came from. Every per-address
- * decision on the server — the protected-API limit, the mint limit and quota,
- * the source address a version records — keys on the request's remote address,
+ * decision on the server — the protected-API limit and the source address a
+ * version records — keys on the request's remote address,
  * and behind a proxy that address is the proxy's. `PATCHY_TRUST_PROXY` names
  * the networks whose `X-Forwarded-For` is believed; from a direct peer the
  * header is ignored, since anyone can write one.

@@ -22,7 +22,7 @@ Packages that hold no domain vocabulary of their own; each defines the few terms
 - `packages/api` — the wire schemas and the `HttpApi` both sides speak: the server implements it, the CLI's client is derived from it, `docs/API.md` is rendered from it. Belongs to neither side; see [ADR-0002](./docs/adr/ADR-0002-api-is-the-contract-package.md). No `CONTEXT.md`: its terms are the contexts' own
 - [SQL](./packages/sql/CONTEXT.md) — `packages/sql`, the Postgres client and Effect's Migrator every capability migrates through; owns no tables ([ADR-0003](./docs/adr/ADR-0003-postgres-only.md))
 - [Content store](./packages/content-store/CONTEXT.md) — `packages/content-store`, the object store a patch's bytes go into; a filesystem layer and an Azure Blob layer
-- [Analytics](./packages/analytics/CONTEXT.md) — `packages/analytics`, the event service Auth and Patches report business moments through
+- [Analytics](./packages/analytics/CONTEXT.md) — `packages/analytics`, the event service Patches reports business moments through; Auth's mint reporting returns with device login
 - [Limits](./packages/limits/CONTEXT.md) — `packages/limits`, the fixed-window rate limiter behind every per-minute limit
 - [Hosting](./apps/server/CONTEXT.md) — `apps/server`, the process: composes every package into one Effect layer, guards `/api/*`, forks the sweep, listens. Its `CONTEXT.md` holds only wiring terms
 
@@ -31,7 +31,8 @@ Packages that hold no domain vocabulary of their own; each defines the few terms
 - **Publishing → `api`**: the CLI creates and updates patches through the derived client and authenticates with a user-owned machine token
 - **Serving → Patches**: a page reads the record and its HTML through `Content` and records the visit through `Patches`; Serving never touches bytes and never imports Auth. Once login lands, the login door asks Auth who opened the page and Patches whether they may
 - **Patches → Content store**: the upload contract and the sweep put, get and delete a patch's bytes through `ContentStore`; nothing else touches them
-- **Auth, Patches → SQL, Analytics**: both query through the `SQL` client and report business events with the user as principal. `patch_versions` references `machine_tokens`, but Patches never imports Auth: every handler receives the identity from bearer middleware. Patches spends its per-machine rate limits through `Limits`
+- **Auth, Patches → SQL**: both query through the `SQL` client. `patch_versions` references `machine_tokens`, but Patches never imports Auth: every handler receives the identity from bearer middleware. Patches spends its per-machine rate limits through `Limits`
+- **Patches → Analytics**: reports business events with the user as principal, or no user for expiry. Auth emits no events until the device-login poll restores mint reporting
 - **Auth → Companies**: Companies owns the users and companies that bearer authentication joins with `machine_tokens`; its services own membership, roles and deactivation
 - **Integrations → Companies, Serving**: a connection is a company's or a user's, and a patch reaches it only through the cloud, as the viewer Serving established. Not yet in code
 - **Hosting → everything**: mounts both API groups behind Auth's bearer middleware, the guard ahead of them, Serving's pages, and forks Patches' `ExpirySweep`; nothing here is a term of its own

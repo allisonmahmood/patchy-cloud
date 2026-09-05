@@ -5,10 +5,23 @@
  */
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { answer, html, send, server, upload } from "./test/server.js";
+
+it.effect("refuses startup without an explicit public base URL", () =>
+  Effect.gen(function* () {
+    const error = yield* server({ PATCHY_PUBLIC_BASE_URL: undefined }).pipe(
+      Layer.build,
+      Effect.scoped,
+      Effect.flip
+    );
+    assert.strictEqual(error._tag, "ConfigError");
+    assert.include(error.message, "PATCHY_PUBLIC_BASE_URL");
+  })
+);
 
 it.layer(
   server({ PATCHY_PUBLIC_BASE_URL: "https://patchy.example", PATCHY_TRUST_PROXY: "127.0.0.1" })

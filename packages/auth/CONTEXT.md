@@ -29,5 +29,5 @@ How a machine comes to act as a user: `patchy login` prints a URL and a short co
 _Avoid_: device flow (the protocol), OAuth, paste your token
 
 **Your machines**:
-The user's list of their machine tokens — name, last use — with revoke-one and revoke-all. The self-service side of revocation.
+The user's list of their machine tokens — name, last use — with revoke-one and revoke-all. The user's control over which machines may act for them.
 _Avoid_: sessions (a browser's), API keys

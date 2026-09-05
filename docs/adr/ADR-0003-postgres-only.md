@@ -2,7 +2,7 @@
 
 - **Status**: Accepted
 - **Date**: 2026-08-29
-- **Contexts**: Hosting (`apps/server`), Auth (`packages/auth`), Patches (`packages/patches`), SQL (`packages/sql`) — the decision is about the one store every capability writes to, so it lives in the root ADR home.
+- **Contexts**: Hosting (`apps/server`), Companies (`packages/companies`), Auth (`packages/auth`), Patches (`packages/patches`), SQL (`packages/sql`) — the decision is about the one store every capability writes to, so it lives in the root ADR home.
 - **Source**: Effect v4 port spec (#68) §2 and §3; build tickets #72 (`sql`), #74 (`auth`) and #76 (`patches`).
 
 ## Context
