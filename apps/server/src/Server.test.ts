@@ -81,14 +81,13 @@ it.layer(
         HttpClientRequest.post("/api/uploads").pipe(
           HttpClientRequest.bearerToken(DEV_SEED.token),
           HttpClientRequest.setHeader("x-forwarded-for", "203.0.113.9, 198.51.100.7"),
-          HttpClientRequest.bodyJsonUnsafe({ html: html("Booted") })
+          HttpClientRequest.bodyJsonUnsafe({ html: html("Booted"), scope: "public" })
         )
       );
       const body = (yield* created.json) as { patchId: string; publicUrl: string };
       assert.strictEqual(created.status, 201);
       assert.strictEqual(body.publicUrl, `https://patchy.example/d/${body.patchId}`);
       const sql = yield* SqlClient.SqlClient;
-      yield* sql`UPDATE patches SET scope = 'public' WHERE id = ${body.patchId}`;
 
       for (const path of [`/d/${body.patchId}`, `/d/${body.patchId}/v/1`]) {
         const page = yield* send(HttpClientRequest.get(path));
@@ -273,12 +272,13 @@ it.layer(
 
   it.effect("completes a public patch handshake before serving its cacheable document", () =>
     Effect.gen(function* () {
-      const created = yield* upload(DEV_SEED.token, { html: html("Public handshake") });
+      const created = yield* upload(DEV_SEED.token, {
+        html: html("Public handshake"),
+        scope: "public"
+      });
       const { patchId } = (yield* created.json) as { patchId: string };
       const privateUpload = yield* upload(DEV_SEED.token, { html: html("Signed-in destination") });
       const privatePatch = (yield* privateUpload.json) as { patchId: string };
-      const sql = yield* SqlClient.SqlClient;
-      yield* sql`UPDATE patches SET scope = 'public' WHERE id = ${patchId}`;
       for (const path of [`/d/${patchId}`, `/d/${patchId}/v/1`]) {
         const target = `${path}?view=chart`;
         const directives = sessionCookie()

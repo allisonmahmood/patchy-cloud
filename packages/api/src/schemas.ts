@@ -79,6 +79,9 @@ export class LoggedOut extends Schema.Class<LoggedOut>("LoggedOut")({
 
 // --- patches --------------------------------------------------------------
 
+/** Who may open a patch: signed-in company members, or anyone with the link. */
+export const SharingScope = Schema.Literals(["company", "public"]);
+
 /** What the CLI knows about where a document came from. Every field is optional. */
 export class UploadMetadata extends Schema.Class<UploadMetadata>("UploadMetadata")({
   repoOrg: OptionalText,
@@ -94,6 +97,7 @@ export class UploadRequest extends Schema.Class<UploadRequest>("UploadRequest")(
   html: Schema.String,
   filename: OptionalText,
   patchId: Schema.optionalKey(Schema.NullOr(PatchId)),
+  scope: Schema.optionalKey(SharingScope),
   metadata: Schema.optionalKey(UploadMetadata)
 }) {}
 
@@ -104,6 +108,7 @@ const uploadFields = {
   versionNumber: Schema.Int,
   title: Schema.String,
   publicUrl: Schema.String,
+  scope: SharingScope,
   warnings: Schema.Array(Schema.String)
 };
 
@@ -113,5 +118,17 @@ export class UploadCreated extends Schema.Class<UploadCreated>("UploadCreated")(
 }) {}
 /** An update: 200, and `versionNumber` moved. */
 export class UploadUpdated extends Schema.Class<UploadUpdated>("UploadUpdated")(uploadFields) {}
+
+/** Change an owned patch's sharing without publishing a version. */
+export class ShareRequest extends Schema.Class<ShareRequest>("ShareRequest")({
+  scope: SharingScope
+}) {}
+
+export class Shared extends Schema.Class<Shared>("Shared")({
+  ok: Schema.Literal(true),
+  patchId: PatchId,
+  scope: SharingScope,
+  publicUrl: Schema.String
+}) {}
 
 export class Ok extends Schema.Class<Ok>("Ok")({ ok: Schema.Literal(true) }) {}

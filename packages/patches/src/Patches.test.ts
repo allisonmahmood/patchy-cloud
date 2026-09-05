@@ -13,7 +13,7 @@ const patches = Effect.flatMap(Patches.Patches, Effect.succeed);
 
 let counter = 0;
 /** Records a first version for a fresh patch held by `identity`. */
-const create = (identity = uploader, title = "Page") =>
+const create = (identity = uploader, title = "Page", scope?: Patches.Patch["scope"]) =>
   Effect.gen(function* () {
     const id = `p${String(++counter).padStart(11, "0")}`;
     yield* (yield* patches).record({
@@ -23,6 +23,7 @@ const create = (identity = uploader, title = "Page") =>
       ownerUserId: identity.user.id,
       versionId: `ver_${id}_1`,
       machineTokenId: identity.machine.id,
+      scope,
       title,
       objectKey: `patches/${id}/versions/1.html`,
       contentHash: "sha256:x",
@@ -39,7 +40,7 @@ const create = (identity = uploader, title = "Page") =>
     return id;
   });
 
-const update = (patchId: string, identity = uploader) =>
+const update = (patchId: string, identity = uploader, scope?: Patches.Patch["scope"]) =>
   Effect.flatMap(patches, (service) =>
     service.record({
       intent: "update",
@@ -48,6 +49,7 @@ const update = (patchId: string, identity = uploader) =>
       ownerUserId: identity.user.id,
       versionId: `ver_${patchId}_${++counter}`,
       machineTokenId: identity.machine.id,
+      scope,
       title: "Updated",
       objectKey: `patches/${patchId}/versions/${counter}.html`,
       contentHash: "sha256:y",
@@ -120,6 +122,73 @@ it.layer(Patches.layer.pipe(Layer.provideMerge(Fixtures.database)))("Patches", (
       assert.isFalse(yield* isServed(owned));
       assert.isFalse(yield* isServed(owned, 1));
       assert.isFalse(yield* service.delete(owned, uploader.user.id));
+    })
+  );
+
+  it.effect(
+    "defaults creates to company and preserves or explicitly changes scope on updates",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* patches;
+        const company = yield* create();
+        assert.strictEqual(Option.getOrThrow(yield* service.find(company)).patch.scope, "company");
+        assert.strictEqual((yield* update(company)).scope, "company");
+
+        const published = yield* create(uploader, "Public", "public");
+        assert.strictEqual(Option.getOrThrow(yield* service.find(published)).patch.scope, "public");
+        assert.strictEqual((yield* update(published, sibling)).scope, "public");
+        assert.strictEqual(Option.getOrThrow(yield* service.find(published)).patch.scope, "public");
+        assert.strictEqual((yield* update(published, sibling, "company")).scope, "company");
+        assert.strictEqual(
+          Option.getOrThrow(yield* service.find(published)).patch.scope,
+          "company"
+        );
+        assert.strictEqual((yield* update(published, uploader, "public")).scope, "public");
+        assert.strictEqual(Option.getOrThrow(yield* service.find(published)).patch.scope, "public");
+      })
+  );
+
+  it.effect("shares only an owner's available patch, without a version or retention reset", () =>
+    Effect.gen(function* () {
+      const service = yield* patches;
+      yield* TestClock.setTime(Date.UTC(2026, 0, 1));
+      const owned = yield* create();
+      const foreign = yield* create(admin);
+      const disabled = yield* create();
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE patches SET disabled_at = now(), disabled_reason = 'off' WHERE id = ${disabled}`;
+      const deleted = yield* create();
+      yield* service.delete(deleted, uploader.user.id);
+      const before = Option.getOrThrow(yield* service.find(owned));
+
+      yield* TestClock.adjust(DAY);
+      assert.strictEqual(yield* service.setScope(owned, sibling.user.id, "public"), "public");
+      const published = Option.getOrThrow(yield* service.find(owned));
+      assert.strictEqual(published.patch.scope, "public");
+      assert.strictEqual(published.patch.expiresAt, before.patch.expiresAt);
+      assert.deepStrictEqual(published.version, before.version);
+      assert.isTrue(Option.isNone(yield* service.find(owned, 2)));
+
+      assert.strictEqual(yield* service.setScope(owned, uploader.user.id, "company"), "company");
+      const restricted = Option.getOrThrow(yield* service.find(owned));
+      assert.strictEqual(restricted.patch.scope, "company");
+      assert.strictEqual(restricted.patch.expiresAt, before.patch.expiresAt);
+      assert.deepStrictEqual(restricted.version, before.version);
+      for (const patchId of ["nope", foreign, disabled, deleted]) {
+        assert.strictEqual(
+          (yield* service.setScope(patchId, uploader.user.id, "public").pipe(Effect.flip))._tag,
+          "PatchUnavailable",
+          patchId
+        );
+      }
+      assert.strictEqual(Option.getOrThrow(yield* service.find(foreign)).patch.scope, "company");
+
+      yield* TestClock.adjust(89 * DAY + 1);
+      assert.isFalse(yield* isServed(owned));
+      assert.strictEqual(
+        (yield* service.setScope(owned, uploader.user.id, "public").pipe(Effect.flip))._tag,
+        "PatchUnavailable"
+      );
     })
   );
 

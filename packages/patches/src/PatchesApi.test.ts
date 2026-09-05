@@ -1,13 +1,22 @@
-import { assert, it } from "@effect/vitest";
+import { assert, expect, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { TestClock } from "effect/testing";
+import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpServer from "effect/unstable/http/HttpServer";
+import * as HttpApiMiddleware from "effect/unstable/httpapi/HttpApiMiddleware";
 import * as HttpApiTest from "effect/unstable/httpapi/HttpApiTest";
 import { Analytics } from "@patchy/analytics";
-import { PatchyApi, UploadCreated, UploadRequest, UploadUpdated } from "@patchy/api";
+import {
+  Authorization,
+  PatchyApi,
+  ShareRequest,
+  UploadCreated,
+  UploadRequest,
+  UploadUpdated
+} from "@patchy/api";
 import { ContentStore } from "@patchy/content-store";
 import { Limits } from "@patchy/limits";
 import * as Content from "./Content.js";
@@ -40,9 +49,17 @@ const html = (title: string) =>
 const upload = (payload: ConstructorParameters<typeof UploadRequest>[0]) =>
   Effect.flatMap(client, (api) => api.upload({ payload: new UploadRequest(payload) }));
 
+const events: Analytics.AnalyticsEvent[] = [];
+const recordingAnalytics = Layer.succeed(
+  Analytics.Analytics,
+  Analytics.Analytics.of({
+    track: (event) => Effect.sync(() => void events.push(event))
+  })
+);
+
 const layer = Layer.mergeAll(PatchesApi.layer, HttpServer.layerServices).pipe(
   Layer.provideMerge(Fixtures.authorization),
-  Layer.provideMerge(Layer.mergeAll(Content.layer, Limits.layer, Analytics.layerNoop)),
+  Layer.provideMerge(Layer.mergeAll(Content.layer, Limits.layer, recordingAnalytics)),
   Layer.provideMerge(Layer.mergeAll(Patches.layer, memoryStore)),
   Layer.provideMerge(Fixtures.database),
   Layer.provide(
@@ -64,17 +81,120 @@ it.layer(layer)("patches group", (it) => {
       );
       assert.instanceOf(created, UploadCreated);
       assert.strictEqual(created.title, "First");
+      assert.strictEqual(created.scope, "company");
       assert.strictEqual(created.publicUrl, `https://patchy.example/d/${created.patchId}`);
       assert.deepStrictEqual(created.warnings, []);
 
-      const updated = yield* upload({ html: html("Second"), patchId: created.patchId }).pipe(
-        Effect.provide(Fixtures.as(sibling))
-      );
+      const updated = yield* upload({
+        html: html("Second"),
+        patchId: created.patchId,
+        scope: "public"
+      }).pipe(Effect.provide(Fixtures.as(sibling)));
       assert.instanceOf(updated, UploadUpdated);
       assert.strictEqual(updated.versionNumber, 2);
+      assert.strictEqual(updated.scope, "public");
+
+      const preserved = yield* upload({ html: html("Third"), patchId: created.patchId }).pipe(
+        Effect.provide(Fixtures.as(sibling))
+      );
+      assert.strictEqual(preserved.scope, "public");
+      const restricted = yield* upload({
+        html: html("Fourth"),
+        patchId: created.patchId,
+        scope: "company"
+      }).pipe(Effect.provide(Fixtures.as(uploader)));
+      assert.strictEqual(restricted.scope, "company");
+      assert.deepStrictEqual(
+        events
+          .filter((event) => event.properties.patchId === created.patchId)
+          .map((event) => event.properties.scope),
+        ["company", "public", "public", "company"]
+      );
 
       const served = Option.getOrThrow(yield* (yield* Patches.Patches).find(created.patchId));
-      assert.include(yield* (yield* Content.Content).read(served.version), "Second");
+      assert.strictEqual(served.patch.scope, "company");
+      assert.include(yield* (yield* Content.Content).read(served.version), "Fourth");
+    })
+  );
+
+  it.effect(
+    "creates public patches and lets another machine of the owner share them both ways",
+    () =>
+      Effect.gen(function* () {
+        const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+        const sameUser = yield* client.pipe(Effect.provide(Fixtures.as(sibling)));
+        const anotherUser = yield* client.pipe(Effect.provide(Fixtures.as(admin)));
+        const created = yield* owner.upload({
+          payload: new UploadRequest({ html: html("Public"), scope: "public" })
+        });
+        assert.strictEqual(created.scope, "public");
+        const patches = yield* Patches.Patches;
+        assert.strictEqual(
+          Option.getOrThrow(yield* patches.find(created.patchId)).patch.scope,
+          "public"
+        );
+
+        const params = { patchId: created.patchId };
+        for (const scope of ["company", "public"] as const) {
+          const shared = yield* sameUser.share({ params, payload: new ShareRequest({ scope }) });
+          assert.deepStrictEqual(
+            { ...shared },
+            { ok: true, patchId: created.patchId, scope, publicUrl: created.publicUrl }
+          );
+          assert.strictEqual(
+            Option.getOrThrow(yield* patches.find(created.patchId)).patch.scope,
+            scope
+          );
+        }
+
+        for (const patchId of [created.patchId, "abcdefabcdef"]) {
+          assert.deepStrictEqual(
+            yield* anotherUser
+              .share({ params: { patchId }, payload: new ShareRequest({ scope: "company" }) })
+              .pipe(Effect.flip),
+            { ok: false, error: "Patch not found." }
+          );
+        }
+        assert.strictEqual(
+          Option.getOrThrow(yield* patches.find(created.patchId)).patch.scope,
+          "public"
+        );
+        yield* owner.delete({ params });
+        assert.deepStrictEqual(
+          yield* sameUser
+            .share({ params, payload: new ShareRequest({ scope: "public" }) })
+            .pipe(Effect.flip),
+          { ok: false, error: "Patch not found." }
+        );
+      })
+  );
+
+  it.effect("rejects null or unknown scopes on upload and share", () =>
+    Effect.gen(function* () {
+      for (const scope of [null, "everyone"]) {
+        const malformedScope = HttpApiMiddleware.layerClient(Authorization, ({ next, request }) =>
+          next(
+            request.pipe(
+              HttpClientRequest.bearerToken(uploader.machine.id),
+              HttpClientRequest.bodyJsonUnsafe({ html: html("Invalid scope"), scope })
+            )
+          )
+        );
+        const api = yield* client.pipe(Effect.provide(malformedScope));
+        const uploadResponse = yield* api.upload({
+          payload: new UploadRequest({ html: html("Invalid scope") }),
+          responseMode: "response-only"
+        });
+        assert.strictEqual(uploadResponse.status, 400);
+        expect(yield* uploadResponse.json).toEqual({ ok: false, error: expect.any(String) });
+        const shareResponse = yield* api.share({
+          params: { patchId: "abcdefabcdef" },
+          payload: new ShareRequest({ scope: "company" }),
+          responseMode: "response-only"
+        });
+        assert.strictEqual(shareResponse.status, 400);
+        expect(yield* shareResponse.json).toEqual({ ok: false, error: expect.any(String) });
+      }
     })
   );
 

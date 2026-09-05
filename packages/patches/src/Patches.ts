@@ -26,6 +26,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import type * as Statement from "effect/unstable/sql/Statement";
+import { SharingScope } from "@patchy/api";
 
 /** The window an upload gives a patch. */
 export const RETENTION_WINDOW = Duration.days(90);
@@ -37,7 +38,7 @@ export const VISIT_EXTENSION_WINDOW = Duration.days(30);
 const FIRST_VERSION_NUMBER = 1;
 
 /**
- * An update named a patch the caller cannot write: unknown, another
+ * A write named a patch the caller cannot write: unknown, another
  * user's, deleted, disabled or expired. One refusal for all five, so the
  * answer never says which.
  */
@@ -62,7 +63,7 @@ export interface Patch {
   readonly id: string;
   readonly companyId: string;
   readonly ownerUserId: string;
-  readonly scope: "company" | "public";
+  readonly scope: typeof SharingScope.Type;
   readonly title: string;
   readonly currentVersionId: string | null;
   readonly repoOrg: string | null;
@@ -103,6 +104,8 @@ export interface RecordInput extends UploadTarget {
   readonly companyId: string;
   readonly versionId: string;
   readonly machineTokenId: string;
+  /** Omitted creates are company-scoped; omitted updates retain the scope under the row lock. */
+  readonly scope?: Patch["scope"] | undefined;
   readonly title: string;
   readonly objectKey: string;
   readonly contentHash: string;
@@ -122,6 +125,7 @@ export interface Recorded {
   readonly versionId: string;
   readonly versionNumber: number;
   readonly title: string;
+  readonly scope: Patch["scope"];
 }
 
 export class Patches extends Context.Service<
@@ -150,6 +154,12 @@ export class Patches extends Context.Service<
     readonly record: (
       input: RecordInput
     ) => Effect.Effect<Recorded, PatchUnavailable | PatchConflict | SqlError>;
+    /** Changes an owned, available patch's audience without publishing or extending retention. */
+    readonly setScope: (
+      patchId: string,
+      ownerUserId: string,
+      scope: Patch["scope"]
+    ) => Effect.Effect<Patch["scope"], PatchUnavailable | SqlError>;
     /**
      * A patch in service and one of its versions — the current one, or the
      * numbered one asked for. Deleted, disabled and expired patches are
@@ -193,7 +203,7 @@ class PatchRow extends Schema.Class<PatchRow>("PatchRow")({
   id: Schema.String,
   companyId: Schema.String,
   ownerUserId: Schema.String,
-  scope: Schema.Literals(["company", "public"]),
+  scope: SharingScope,
   title: Schema.String,
   currentVersionId: Schema.NullOr(Schema.String),
   repoOrg: Schema.NullOr(Schema.String),
@@ -227,6 +237,7 @@ class Id extends Schema.Class<Id>("Id")({ id: Schema.String }) {}
 class Count extends Schema.Class<Count>("Count")({ count: Schema.Int }) {}
 class NextVersion extends Schema.Class<NextVersion>("NextVersion")({ nextVersion: Schema.Int }) {}
 class ObjectKey extends Schema.Class<ObjectKey>("ObjectKey")({ objectKey: Schema.String }) {}
+class ScopeRow extends Schema.Class<ScopeRow>("ScopeRow")({ scope: SharingScope }) {}
 
 const iso = (date: Date) => date.toISOString();
 const isoOrNull = (date: Date | null) => (date === null ? null : date.toISOString());
@@ -369,6 +380,19 @@ export const make = Effect.gen(function* () {
       sql`SELECT object_key AS "objectKey" FROM patch_versions WHERE patch_id = ${patchId}`
   });
 
+  const lockTarget = SqlSchema.findOneOption({
+    Request: Schema.Struct({
+      patchId: Schema.String,
+      ownerUserId: Schema.String,
+      nowMillis: Schema.Number
+    }),
+    Result: ScopeRow,
+    execute: ({ patchId, ownerUserId, nowMillis }) => sql`
+      SELECT scope FROM patches
+      WHERE ${writable(patchId, ownerUserId, stamp(nowMillis))}
+      FOR UPDATE`
+  });
+
   const countLive = Effect.fn("Patches.countLive")((ownerUserId: string) =>
     countLiveRow(ownerUserId).pipe(
       Effect.map((row) => row.count),
@@ -392,24 +416,28 @@ export const make = Effect.gen(function* () {
     sql.withTransaction(
       Effect.gen(function* () {
         const millis = yield* Clock.currentTimeMillis;
-        const at = stamp(millis);
         // An upload — first version or fifth — restarts the whole window.
         const expiresAt = stamp(millis + Duration.toMillis(RETENTION_WINDOW));
         let versionNumber: number;
+        let scope: Patch["scope"] = input.scope ?? "company";
 
         if (input.intent === "update") {
           // The row lock serialises concurrent updates of one patch: the
           // version number is allocated after it, so each waits its turn and
           // then sees the committed version before it.
-          const locked = yield* sql`
-            SELECT id FROM patches WHERE ${writable(input.patchId, input.ownerUserId, at)} FOR UPDATE`;
-          if (locked.length === 0) return yield* new PatchUnavailable({ patchId: input.patchId });
+          const locked = yield* lockTarget({
+            patchId: input.patchId,
+            ownerUserId: input.ownerUserId,
+            nowMillis: millis
+          });
+          if (Option.isNone(locked)) return yield* new PatchUnavailable({ patchId: input.patchId });
+          scope = input.scope ?? locked.value.scope;
           versionNumber = (yield* nextVersionNumber(input.patchId)).nextVersion;
         } else {
           versionNumber = FIRST_VERSION_NUMBER;
           const created = yield* sql`
             INSERT INTO patches (id, company_id, owner_user_id, scope, title, current_version_id, repo_org, repo_name, expires_at)
-            VALUES (${input.patchId}, ${input.companyId}, ${input.ownerUserId}, 'company',
+            VALUES (${input.patchId}, ${input.companyId}, ${input.ownerUserId}, ${scope},
                     ${input.title}, ${input.versionId}, ${input.repoOrg}, ${input.repoName}, ${expiresAt})
             ON CONFLICT (id) DO NOTHING
             RETURNING id`;
@@ -429,7 +457,7 @@ export const make = Effect.gen(function* () {
           )`;
         yield* sql`
           UPDATE patches
-          SET current_version_id = ${input.versionId}, title = ${input.title},
+          SET current_version_id = ${input.versionId}, title = ${input.title}, scope = ${scope},
               repo_org = COALESCE(${input.repoOrg}, repo_org),
               repo_name = COALESCE(${input.repoName}, repo_name),
               updated_at = now(), expires_at = ${expiresAt}
@@ -439,11 +467,26 @@ export const make = Effect.gen(function* () {
           patchId: input.patchId,
           versionId: input.versionId,
           versionNumber,
-          title: input.title
+          title: input.title,
+          scope
         } satisfies Recorded;
       }).pipe(Effect.catchTags({ ...dieOnSchemaError, NoSuchElementError: Effect.die }))
     )
   );
+
+  const setScope = Effect.fn("Patches.setScope")(function* (
+    patchId: string,
+    ownerUserId: string,
+    scope: Patch["scope"]
+  ) {
+    const rows = yield* sql`
+      UPDATE patches
+      SET scope = ${scope}, updated_at = now()
+      WHERE ${writable(patchId, ownerUserId, yield* now)}
+      RETURNING id`;
+    if (rows.length === 0) return yield* new PatchUnavailable({ patchId });
+    return scope;
+  });
 
   const find = Effect.fn("Patches.find")(function* (patchId: string, versionNumber?: number) {
     const nowMillis = yield* Clock.currentTimeMillis;
@@ -520,6 +563,7 @@ export const make = Effect.gen(function* () {
     countLive,
     checkTarget,
     record,
+    setScope,
     find,
     recordVisit,
     listExpired,

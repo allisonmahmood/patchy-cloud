@@ -5,7 +5,7 @@ What the instance holds and how long it holds it. `packages/patches` owns patche
 ## Language
 
 **Patch**:
-A built unit in a company's cloud: one thing, stored, permissioned and provisioned as one, at one address, running at one tier. Made by a person or their agent, published as immutable versions, live to the whole company from the moment it is published, and never expiring on its own. Today every patch is a tier 0 static page; nothing in the record says so.
+A built unit in a company's cloud: one thing, stored, permissioned and provisioned as one, at one address, running at one tier. Made by a person or their agent, published as immutable versions, shared with the company by default or made public on purpose, and never expiring on its own. Today every patch is a tier 0 static page; nothing in the record says so.
 _Avoid_: draft (the old name, retired everywhere — see [Publishing](../cli/CONTEXT.md)), page (what a tier 0 patch is served as, not what it is), app (a tier 2 patch is one; the word says nothing about the rest), document (the HTML a version holds)
 
 **Tier**:
@@ -13,8 +13,12 @@ Where a patch's code runs, and nothing else: tier 0 _static_ (no code runs anywh
 _Avoid_: runtime (the thing a tier names), level, plan (tiers are capability, not pricing)
 
 **Owner**:
-The one user in a company a patch belongs to, and the only one who changes it. Any machine token acting as that user can publish a version or delete the patch; changing the key never changes ownership.
+The one user in a company a patch belongs to, and the only one who changes it. Any machine token acting as that user can publish a version, change its sharing scope or delete the patch; changing the key never changes ownership.
 _Avoid_: creator (the first version's token; the owner can change), editor, author
+
+**Sharing scope**:
+Who may open a patch: `company` means signed-in colleagues in its company; `public` means anyone with the link, without signing in. A new patch is shared with the company by default, and only its owner can change the scope in either direction; republishing preserves it unless the owner explicitly chooses another scope.
+_Avoid_: visibility, token scope (a publishing key does not grant reading access)
 
 **Patch repo**:
 The folder a patch is built in — the file tree that is the patch, plus its id, declared tier and base config. Created by the CLI (`init`) or linked to an existing patch; one repo is the working copy of exactly one patch, and the first publish from a repo with no id creates the patch and writes it back. Today's single HTML file is a one-file tree without a repo.

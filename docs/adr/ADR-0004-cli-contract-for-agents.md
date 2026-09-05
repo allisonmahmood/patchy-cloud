@@ -22,7 +22,7 @@ onto `effect/unstable/cli` was the moment to write the contract down.
 | ---- | ------------- | ------------------------------------ | ----------------------------------------------------------------------------------- |
 | 0    | ok            |                                      |                                                                                     |
 | 1    | `local`       | fixable without touching the network | bad args, file missing, HTML fails validation, no token stored, malformed state dir |
-| 2    | `rejected`    | the instance answered and said no    | 401/403, 404 on an update or a delete, 409, 413, 429, a server-side 400             |
+| 2    | `rejected`    | the instance answered and said no    | 401/403, 404 on an update, share or delete, 409, 413, 429, a server-side 400        |
 | 3    | `unreachable` | no usable answer from the instance   | DNS/connect/timeout, 5xx, an unparseable body                                       |
 | 130  | interrupted   | SIGINT/SIGTERM → fiber interruption  |                                                                                     |
 
@@ -39,15 +39,28 @@ its code; no command exits on its own.
 
 ### `--json`: a global flag on every command
 
-- Success: stdout is exactly one JSON document. For `whoami`, `upload` and
+- Success: stdout is exactly one JSON document. For `whoami`, `upload`, `share` and
   `delete` it is the wire shape from `@patchy/api`; `validate` prints `{ ok, warnings }`,
   `auth set` `{ ok, instanceUrl }`, `status` its report (its only format).
-  Upload warnings ride in `warnings: []`, never on stderr.
+  Upload warnings ride in `warnings: []`, never on stderr. Upload and share report
+  `scope`; the field name `publicUrl` alone does not imply anonymous access.
 - Failure: stderr is `{ "ok": false, "error": "<the one-line message>", "kind": "local" | "rejected" | "unreachable" }`,
   stdout is empty, the exit code follows `kind`. The same shape as the
   server's 401 body, plus `kind`. No `code` field until an agent flow branches
   on one.
 - Stderr under `--json` carries failures only.
+
+### Publishing and sharing commands
+
+| command                                                                                  | behaviour                                                                                                                                                                                                                                                                                               | `--json`                                     |
+| ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| `patchy upload <file> [--share company\|public] …`                                       | A new patch defaults to `company`; an update preserves its scope without the flag, and an explicit flag sets it either way. Text output names the scope and who can open the link.                                                                                                                      | The upload wire response, including `scope`. |
+| `patchy share <file> <company\|public>` or `patchy share --patch <id> <company\|public>` | Changes sharing without publishing a version. Select the file's cached patch or an explicit id, exactly one, as `delete` does. Only the owner may change it; an unavailable or unowned patch answers 404. Text output names who can open the link. With no key, exit 1 `local`, like upload and delete. | `{ ok: true, patchId, scope, publicUrl }`.   |
+
+Company pages are read through the user's signed-in browser; only public pages
+fetch by URL. Both latest and version URLs cache a public response for at most
+60 seconds; changing to company makes origin responses `private, no-store`,
+but cannot recall an already downloaded copy or a still-fresh public cache entry.
 
 ### `--api-url`: a global flag feeding one `Instance` service
 

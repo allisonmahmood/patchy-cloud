@@ -25,6 +25,8 @@ import {
   PayloadTooLarge,
   RateLimited,
   RequestTargetTooLong,
+  Shared,
+  ShareRequest,
   Unauthorized,
   UploadCreated,
   UploadRequest,
@@ -94,7 +96,21 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "and answers 201; with one it adds a version to that user's patch and answers 200. " +
           "The HTML is checked against the safe-HTML policy first, and a 422 lists what failed. A create also debits " +
           "per-token create limit and counts against the user's live-patch quota; an update costs " +
-          "nothing against either."
+          "nothing against either. Optional `scope` is `company` or `public`: omitted on a create " +
+          "it defaults to `company`; omitted on an update it stays unchanged. An explicit scope sets it either way."
+      )
+    ),
+    HttpApiEndpoint.post("share", "/patches/:patchId/share", {
+      params: patchParams,
+      payload: ShareRequest,
+      success: Shared,
+      error: patchRouteErrors
+    }).annotateMerge(
+      describe(
+        "Change the sharing scope of a patch owned by the bearer token's user, without publishing a version. " +
+          "`company` requires a company member's browser session; `public` lets anyone with the link open it. " +
+          "A patch the caller does not own answers 404. Both latest and version URLs follow the scope: " +
+          "public responses may be cached for 60 seconds; company responses are private and never stored."
       )
     ),
     HttpApiEndpoint.delete("delete", "/patches/:patchId", {
