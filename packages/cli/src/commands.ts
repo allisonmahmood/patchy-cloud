@@ -2,8 +2,7 @@
  * The six commands. Each handler yields what it needs — the resolved
  * `Instance`, the `State` dir, the derived client — and fails only with a
  * `CliError`, so the contract in `Output` is the whole of what an agent sees.
- * User-facing copy calls a token a publishing key, except on the own-instance
- * path where operator vocabulary is right.
+ * User-facing copy calls a token a publishing key.
  */
 import * as Console from "effect/Console";
 import * as Context from "effect/Context";
@@ -30,7 +29,7 @@ import {
 } from "@patchy/api";
 import { sha256, validateHtml } from "@patchy/core";
 import * as Api from "./Api.js";
-import { type CliError, LocalError, RejectedError, UnreachableError } from "./CliError.js";
+import { type CliError, LocalError, RejectedError } from "./CliError.js";
 import * as Git from "./Git.js";
 import * as Instance from "./Instance.js";
 import * as Output from "./Output.js";
@@ -63,8 +62,7 @@ const PATCH_NOT_FOUND = "Patch not found.";
 
 /**
  * Appended to a 401/403 from the default instance only — the local server this
- * repo runs. Never claims the instance's minting posture: a rejected request
- * means the key that was sent is bad, whatever the policy on handing out new ones.
+ * repo runs. A rejected request means the key that was sent is bad.
  */
 const defaultHostHint = (apiUrl: string) =>
   apiUrl === Instance.DEFAULT_API_URL
@@ -81,26 +79,30 @@ const refused = (error: Api.ClientFailure, fallback: string) =>
     return yield* Api.classify(error, fallback);
   });
 
-/** A token that arrived with no provenance: `PATCHY_API_TOKEN`, or the one seeded beside a dev-env URL. */
-const environmentToken = Effect.gen(function* () {
+/** Credential precedence: environment, stored key, then the worktree's seed. */
+const configuredCredential = Effect.gen(function* () {
   const env = yield* Instance.optionalSecret("PATCHY_API_TOKEN");
+  if (Option.isSome(env)) return Option.some({ token: env.value, source: null });
   const instance = yield* Instance.Instance;
-  return Option.orElse(env, () => instance.token);
+  const state = yield* State.State;
+  const stored = yield* state.readCredential(instance.apiUrl);
+  if (Option.isSome(stored)) {
+    return Option.some({
+      token: Redacted.make(stored.value.token),
+      source: stored.value.source ?? null
+    });
+  }
+  return Option.map(instance.token, (token) => ({ token, source: null }));
 });
 
-/**
- * The credential chain: the environment's token, then the token stored for
- * this instance. `None` is not a licence to publish without one — it is the
- * signal that this instance has no key yet, which `upload` answers by minting.
- */
-const configuredToken = Effect.gen(function* () {
-  const env = yield* environmentToken;
-  if (Option.isSome(env)) return env;
+/** Protected commands fail locally before making a request without a key. */
+const requiredToken = Effect.gen(function* () {
+  const credential = yield* configuredCredential;
+  if (Option.isSome(credential)) return credential.value.token;
   const { apiUrl } = yield* Instance.Instance;
-  const state = yield* State.State;
-  return Option.map(yield* state.readCredential(apiUrl), (credential) =>
-    Redacted.make(credential.token)
-  );
+  return yield* new LocalError({
+    message: `No publishing key is stored for ${apiUrl}.\nRun: patchy auth set --api-url ${apiUrl}`
+  });
 });
 
 const readHtml = Effect.fn("readHtml")(function* (file: string) {
@@ -215,26 +217,16 @@ const auth = Command.make("auth").pipe(
 const whoami = Command.make("whoami", {}, () =>
   run(
     Effect.gen(function* () {
-      const { apiUrl } = yield* Instance.Instance;
-      const token = yield* configuredToken;
-      if (Option.isNone(token)) {
-        // Read-only, so it reports the absence rather than minting: `upload` is
-        // the only command that ever creates a token.
-        return yield* new LocalError({
-          message:
-            `No publishing token is stored for ${apiUrl}.\n` +
-            "One is minted automatically on your first upload, or save an existing one with: " +
-            `patchy auth set --api-url ${apiUrl}`
-        });
-      }
+      const token = yield* requiredToken;
       const client = yield* Api.client(token);
       const identity = yield* client
         .me()
         .pipe(Effect.catch((error) => refused(error, "Authentication failed.")));
       yield* Output.report(encodeIdentity(identity), [
-        `Account: ${identity.accountName} (${identity.accountId})`,
-        `API token: ${identity.apiTokenName} (${identity.apiTokenId})`,
-        `Scopes: ${identity.scopes.join(", ")}`
+        `User: ${identity.user.name} (${identity.user.email})`,
+        `Company: ${identity.company.name} (${identity.company.handle})`,
+        `Role: ${identity.role}`,
+        `Machine: ${identity.machine.name} (${identity.machine.id})`
       ]);
     })
   )
@@ -247,30 +239,25 @@ const whoami = Command.make("whoami", {}, () =>
  * network. The probe never fails on state it cannot read: failing closed on a
  * corrupt credentials file protects the commands that would spend a token,
  * and those keep doing it; reporting the same condition here as "no token we
- * can vouch for" neither loses a token nor mints one.
+ * can vouch for" leaves the stored credential untouched.
  */
 const status = Command.make("status", {}, () =>
   run(
     Effect.gen(function* () {
       const instance = yield* Instance.Instance;
       const state = yield* State.State;
-      const env = yield* environmentToken;
-      const stored = Option.isSome(env)
-        ? Option.none<State.HostCredential>()
-        : yield* state
-            .readCredential(instance.apiUrl)
-            .pipe(Effect.orElseSucceed(() => Option.none<State.HostCredential>()));
+      const credential = yield* configuredCredential.pipe(
+        Effect.orElseSucceed(() => Option.none())
+      );
       // JSON is the probe's only format, `--json` or not.
       yield* Console.log(
         Output.toJson({
           instanceUrl: instance.apiUrl,
           instanceSource: instance.source,
-          hasToken: Option.isSome(env) || Option.isSome(stored),
+          hasToken: Option.isSome(credential),
           // Only a stored credential carries provenance; an environment token
           // and an entry written before `source` existed both report null.
-          tokenSource: Option.getOrNull(
-            Option.flatMap(stored, (c) => Option.fromUndefinedOr(c.source))
-          ),
+          tokenSource: Option.getOrNull(Option.map(credential, (c) => c.source)),
           stateDir: state.dir,
           hasDefaultStyle: yield* state.hasDefaultStyle,
           cliVersion: VERSION
@@ -301,84 +288,6 @@ const validate = Command.make("validate", { file: fileArgument }, ({ file }) =>
 
 // --- upload -----------------------------------------------------------------
 
-/**
- * Mints a publishing token for the resolved instance, saves it, and announces
- * it. Only that instance is ever asked: a refusal here is the end of the
- * road, because a token minted anywhere else would control a different set
- * of pages. Saved before it is announced — a token that reached the instance
- * but not the disk would silently orphan every page it went on to create.
- */
-const mintPublishingToken = Effect.gen(function* () {
-  const { apiUrl } = yield* Instance.Instance;
-  const state = yield* State.State;
-  const client = yield* Api.client(Option.none());
-  const minted = yield* client.mint().pipe(Effect.catch((error) => mintFailure(error, apiUrl)));
-  const token = Redacted.make(minted.token);
-  yield* state.saveCredential(apiUrl, token, "mint");
-  yield* Output.announce(
-    `Minted a new publishing token for ${apiUrl}; saved to ${state.credentialsPath}. ` +
-      "That file is the only key to these pages — copy it to another machine to publish from " +
-      "there with the same editing rights. If you've published from another machine before, " +
-      "those pages belong to that machine's token — ask your agent to help copy it over instead " +
-      "of using this new one."
-  );
-  return token;
-});
-
-/** One plain-language failure per pinned mint response, cause then next action. */
-const mintFailure = (error: Api.ClientFailure, apiUrl: string) => {
-  const authSetAction = `patchy auth set --api-url ${apiUrl}`;
-  const prefix = "Could not get a publishing token";
-  if (Api.isRefusal(error)) {
-    switch (error.code) {
-      case "self_service_disabled":
-        return new RejectedError({
-          message:
-            `${prefix}: ${apiUrl} does not hand them out on request.\n` +
-            `Ask that instance's operator for a token and save it with: ${authSetAction}`
-        });
-      case "mint_quota_exceeded":
-        return new RejectedError({
-          // The server's window rolls: the next slot opens 24 hours after the
-          // oldest mint in the window, not at midnight.
-          message:
-            `${prefix}: ${apiUrl} has reached its limit of new tokens for your network over the last 24 hours.\n` +
-            `Copy an existing token from another machine and save it with: ${authSetAction}, ` +
-            "or try again once the oldest of those tokens is 24 hours old."
-        });
-      case "rate_limited": {
-        const wait =
-          error.retryAfterSeconds !== undefined && error.retryAfterSeconds > 0
-            ? `${Math.ceil(error.retryAfterSeconds)} seconds`
-            : "a moment";
-        return new RejectedError({
-          message:
-            `${prefix}: ${apiUrl} is handing out tokens faster than it allows right now.\n` +
-            `Wait ${wait} and run the same command again.`
-        });
-      }
-      default:
-        return new RejectedError({
-          message:
-            `${prefix} from ${apiUrl}: ${Api.refusalMessage(error, "the instance refused.")}\n` +
-            `If that instance does not hand out tokens, ask its operator for one and save it with: ${authSetAction}`
-        });
-    }
-  }
-  return Api.classify(error, "").pipe(
-    Effect.mapError((failure) =>
-      failure._tag === "UnreachableError"
-        ? new UnreachableError({ ...failure, message: `${prefix}: ${failure.message}` })
-        : failure._tag === "RejectedError"
-          ? new RejectedError({
-              ...failure,
-              message: `${prefix} from ${apiUrl}: ${failure.message}\nIf that instance does not hand out tokens, ask its operator for one and save it with: ${authSetAction}`
-            })
-          : failure
-    )
-  );
-};
-
 const upload = Command.make(
   "upload",
   {
@@ -390,10 +299,6 @@ const upload = Command.make(
     new: Flag.boolean("new").pipe(
       Flag.withDescription("Always create a new patch"),
       Flag.withDefault(false)
-    ),
-    anonymous: Flag.boolean("anonymous").pipe(
-      Flag.withDescription("Deprecated and ignored; uploads always use a token"),
-      Flag.withDefault(false)
     )
   },
   (options) =>
@@ -402,27 +307,17 @@ const upload = Command.make(
         if (Option.isSome(options.patch) && options.new) {
           return yield* new LocalError({ message: "--patch and --new cannot be used together." });
         }
-        // A no-op rather than an error: the flag's old invocations keep working
-        // through the transition, so it is announced and then ignored.
-        if (options.anonymous) {
-          yield* Output.warn(
-            "Warning: --anonymous is deprecated and ignored. Uploads always use a publishing token; " +
-              "one is minted automatically when none is stored for the instance."
-          );
-        }
         const path = yield* Path.Path;
         const { resolved, html } = yield* readHtml(options.file);
-        // Local validation gates the network, so an unpublishable file never costs
-        // a mint against the instance's per-network quota.
+        // Local validation gates the network.
         yield* validated(html);
 
         const instance = yield* Instance.Instance;
         const state = yield* State.State;
+        const apiToken = yield* requiredToken;
         yield* Output.notice(
           `Publishing to ${instance.apiUrl} (target came from ${Instance.describeSource(instance.source)}).`
         );
-        const configured = yield* configuredToken;
-        const apiToken = Option.isSome(configured) ? configured.value : yield* mintPublishingToken;
 
         const cached = yield* state.readCachedPatch(instance.apiUrl, resolved);
         const patchId = options.new
@@ -431,7 +326,7 @@ const upload = Command.make(
               Option.getOrNull(Option.map(cached, (c) => c.patchId))
             );
 
-        const client = yield* Api.client(Option.some(apiToken));
+        const client = yield* Api.client(apiToken);
         const upload = yield* client
           .upload({
             payload: new UploadRequest({
@@ -517,9 +412,8 @@ const deleteTarget = Effect.fn("deleteTarget")(function* (
 });
 
 /**
- * Never mints: a fresh key owns nothing, so with no key there is nothing this
- * machine can delete. The cache forgets the patch only once the instance has
- * said yes, so a refusal leaves the local picture as it was.
+ * The cache forgets the patch only once the instance has said yes, so a
+ * refusal leaves the local picture as it was.
  */
 const del = Command.make(
   "delete",
@@ -539,14 +433,7 @@ const del = Command.make(
         const patchId = yield* deleteTarget(options.file, options.patch);
         const instance = yield* Instance.Instance;
         const state = yield* State.State;
-        const token = yield* configuredToken;
-        if (Option.isNone(token)) {
-          return yield* new LocalError({
-            message:
-              `No publishing key is stored for ${instance.apiUrl}, so nothing there can be deleted from this machine.\n` +
-              `Save the one that published the patch with: patchy auth set --api-url ${instance.apiUrl}`
-          });
-        }
+        const token = yield* requiredToken;
         yield* Output.notice(
           `Deleting from ${instance.apiUrl} (target came from ${Instance.describeSource(instance.source)}).`
         );

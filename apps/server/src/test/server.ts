@@ -14,22 +14,16 @@ import * as Layer from "effect/Layer";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
-import { migrations as authMigrations } from "@patchy/auth";
-import { migrations as patchesMigrations } from "@patchy/patches";
 import * as Testing from "@patchy/sql/testing";
 import * as Server from "../Server.js";
-
-/** The bootstrap token every test server seeds. */
-export const DEV_TOKEN = "dev-token";
 
 export const server = (env: Record<string, string> = {}) =>
   Server.layer.pipe(
     Layer.provideMerge(NodeHttpServer.layerTest),
-    Layer.provideMerge(Testing.layer({ ...authMigrations, ...patchesMigrations })),
+    Layer.provideMerge(Testing.layer()),
     Layer.provide(
       ConfigProvider.layer(
         ConfigProvider.fromUnknown({
-          PATCHY_BOOTSTRAP_API_TOKEN: DEV_TOKEN,
           PATCHY_STORAGE_DIR: mkdtempSync(path.join(os.tmpdir(), "patchy-server-")),
           ...env
         })

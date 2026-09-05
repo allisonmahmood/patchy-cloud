@@ -18,7 +18,8 @@ import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import { Analytics } from "@patchy/analytics";
 import { PatchyApi } from "@patchy/api";
-import { AuthApi, Authorization, migrations as authMigrations, Tokens } from "@patchy/auth";
+import { AuthApi, Authorization, migrations as authMigrations, MachineTokens } from "@patchy/auth";
+import { migrations as companiesMigrations } from "@patchy/companies";
 import { AzureContentStore, BlobContainer, FilesystemContentStore } from "@patchy/content-store";
 import { Limits } from "@patchy/limits";
 import {
@@ -47,16 +48,17 @@ const contentStore = Layer.unwrap(
 );
 
 /** Every capability's migrations as one record, applied before anything reads the database. */
-const migrated = Layer.effectDiscard(migrate({ ...authMigrations, ...patchesMigrations }));
+const migrated = Layer.effectDiscard(
+  migrate({ ...companiesMigrations, ...authMigrations, ...patchesMigrations })
+);
 
 /**
  * The services, over the migrated database. Analytics reports nothing unless
- * a key is configured; the tokens layer seeds the bootstrap token from
- * `PATCHY_BOOTSTRAP_API_TOKEN`.
+ * a key is configured.
  */
 const services = Layer.mergeAll(Content.layer, ExpirySweep.layer).pipe(
   Layer.provideMerge(
-    Layer.mergeAll(Analytics.layer, Limits.layer, contentStore, Tokens.layer, Patches.layer)
+    Layer.mergeAll(Analytics.layer, Limits.layer, contentStore, MachineTokens.layer, Patches.layer)
   ),
   Layer.provide(migrated)
 );

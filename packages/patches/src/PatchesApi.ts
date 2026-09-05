@@ -1,7 +1,7 @@
 /**
  * The `patches` group of the Patchy API, implemented over `Content`,
  * `Patches`, `Limits` and `Analytics`: upload and owner-only delete. The
- * principal comes from the bearer middleware the group declares; this
+ * identity comes from the bearer middleware the group declares; this
  * package never authenticates anyone.
  * The hosting server mounts the group with the rest of the API.
  */
@@ -78,7 +78,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
     const createRateLimitPerMinute = yield* PatchesConfig.patchCreateRateLimitPerMinute;
     const uploadRateLimitPerMinute = yield* PatchesConfig.uploadRateLimitPerMinute;
     const maxUploadBodyBytes = yield* PatchesConfig.maxUploadBodyBytes;
-    const livePatchesPerToken = yield* PatchesConfig.livePatchesPerToken;
+    const livePatchesPerUser = yield* PatchesConfig.livePatchesPerUser;
 
     const publicUrl = (patchId: string) => `${publicBaseUrl.replace(/\/+$/, "")}/d/${patchId}`;
 
@@ -91,7 +91,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             const identity = yield* CurrentIdentity;
 
             const attempt = yield* limits.consume({
-              key: `authenticated-upload:${identity.apiTokenId}`,
+              key: `authenticated-upload:${identity.machine.id}`,
               limit: uploadRateLimitPerMinute,
               window: "1 minute"
             });
@@ -134,13 +134,13 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
 
             const patchId = payload.patchId ?? null;
             // Only creates are quota-bearing. An update rewrites a patch the
-            // token already holds, so it costs nothing against either ceiling.
+            // user already holds, so it costs nothing against either ceiling.
             if (patchId === null) {
               // The per-minute bucket is spent before the quota is counted, so a
               // client parked at the quota is throttled instead of being free to
               // re-count the database at the higher upload-limit rate.
               const attempt = yield* limits.consume({
-                key: `patch-create:${identity.apiTokenId}`,
+                key: `patch-create:${identity.machine.id}`,
                 limit: createRateLimitPerMinute,
                 window: "1 minute"
               });
@@ -150,16 +150,16 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
               // restart. Concurrent creates can overshoot it by at most the burst
               // the per-minute limiter above allows through.
               const live = yield* patches
-                .countLive(identity.apiTokenId)
+                .countLive(identity.user.id)
                 .pipe(Effect.catchTags({ SqlError: Effect.die }));
-              if (live >= livePatchesPerToken) {
+              if (live >= livePatchesPerUser) {
                 // "Patch quota", not "patch limit": the glossary reserves
                 // limit-shaped wording for the per-minute create limit.
                 return refuse(PatchQuotaExceeded, {
                   ok: false,
-                  error: `Patch quota reached: ${livePatchesPerToken} live patches per token. Delete or let a patch expire before creating another.`,
+                  error: `Patch quota reached: ${livePatchesPerUser} live patches per user. Delete or let a patch expire before creating another.`,
                   code: "live_patch_quota_exceeded",
-                  quota: livePatchesPerToken
+                  quota: livePatchesPerUser
                 });
               }
             }
@@ -170,8 +170,9 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             const uploaded = yield* content
               .upload({
                 patchId,
-                accountId: identity.accountId,
-                apiTokenId: identity.apiTokenId,
+                companyId: identity.company.id,
+                ownerUserId: identity.user.id,
+                machineTokenId: identity.machine.id,
                 title: validation.title || filename || "Untitled Patch",
                 html: payload.html,
                 filename,
@@ -201,10 +202,10 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             // patch that exists. The size is the stored bytes, not the content.
             yield* analytics.track({
               name: patchId === null ? "patch.created" : "patch.updated",
-              principalId: identity.accountId,
+              principalId: identity.user.id,
               properties: {
                 patchId: recorded.patchId,
-                apiTokenId: identity.apiTokenId,
+                machineTokenId: identity.machine.id,
                 versionNumber: recorded.versionNumber,
                 htmlBytes: new TextEncoder().encode(payload.html).length
               }
@@ -226,12 +227,12 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
           Effect.gen(function* () {
             const identity = yield* CurrentIdentity;
             const deleted = yield* patches
-              .delete(params.patchId, identity.accountId)
+              .delete(params.patchId, identity.user.id)
               .pipe(Effect.catchTags({ SqlError: Effect.die }));
             if (!deleted) return notFound();
             yield* analytics.track({
               name: "patch.deleted",
-              principalId: identity.accountId,
+              principalId: identity.user.id,
               properties: { patchId: params.patchId }
             });
             return new Ok({ ok: true });

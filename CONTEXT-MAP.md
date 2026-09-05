@@ -6,8 +6,8 @@ Patchy Cloud is one deployment: the hosting server on one side, the `patchy` CLI
 
 - [Patches](./packages/patches/CONTEXT.md) — `packages/patches`. The unit: patch, version, patch repo, declared tier, publish, owner, sharing scope and address, retire and delete, the primitives a patch declares. Today also the upload contract, the retention clock and its sweep, the patch quota, and the `patches` API group
 - [Serving](./packages/serving/CONTEXT.md) — `packages/serving`. A patch reaching its viewer, at every tier: the page, the doors in front of it (login, connect), the serving guarantees, the visit, the trusted-proxy schema, and the identity patch code acts as from tier 1 up. Today it serves tier 0; the tier 1 and tier 2 runtimes build on it
-- [Companies](./packages/companies/CONTEXT.md) — no code yet. The tenant and who is in it: company and handle, user, member and admin, group, invite, verified domain, SSO, deactivation, suspension, and the operator
-- [Auth](./packages/auth/CONTEXT.md) — `packages/auth`. Who a caller is: the browser session, device login, the machine token and _Your machines_, the principal behind a credential, bearer parsing. Today also self-service minting and its quota, which retire with login, and the `auth` API group
+- [Companies](./packages/companies/CONTEXT.md) — `packages/companies`. The tenant and who is in it: company and handle, users and roles, invites, deactivation and reactivation; groups, verified domains, SSO, suspension and the operator remain future work
+- [Auth](./packages/auth/CONTEXT.md) — `packages/auth`. Who a caller is: machine tokens, identity, revocation and bearer parsing, the `auth` API group and the shared dev seed; browser sessions and device login arrive next
 - [Integrations](./packages/integrations/CONTEXT.md) — no code yet. The company-scoped primitive that reaches outside systems: integration, connection and personal connection, connection handle, the typed client patch code is handed, the call log
 - [Publishing](./packages/cli/CONTEXT.md) — `packages/cli` and the bundled skill, the `patchy` CLI agents use to publish patches
 
@@ -28,14 +28,14 @@ Packages that hold no domain vocabulary of their own; each defines the few terms
 
 ## Relationships
 
-- **Publishing → `api`**: the CLI creates and updates patches through the derived client and never through hand-built requests; it authenticates with tokens Auth issues (self-service today, the machine token once login lands)
+- **Publishing → `api`**: the CLI creates and updates patches through the derived client and authenticates with a user-owned machine token
 - **Serving → Patches**: a page reads the record and its HTML through `Content` and records the visit through `Patches`; Serving never touches bytes and never imports Auth. Once login lands, the login door asks Auth who opened the page and Patches whether they may
 - **Patches → Content store**: the upload contract and the sweep put, get and delete a patch's bytes through `ContentStore`; nothing else touches them
-- **Auth, Patches → SQL, Analytics, Limits**: both query through the `SQL` client, report through `Analytics` and spend their per-minute limits through `Limits`. They share one database (`patch_versions` names the token that made a version) but Patches never imports Auth: every handler receives the principal from the bearer middleware
-- **Companies → Auth, Patches**: a user is a company's; Auth resolves a session or machine token to a user, Patches keys ownership and sharing scope on users and groups. Not yet in code
+- **Auth, Patches → SQL, Analytics**: both query through the `SQL` client and report business events with the user as principal. `patch_versions` references `machine_tokens`, but Patches never imports Auth: every handler receives the identity from bearer middleware. Patches spends its per-machine rate limits through `Limits`
+- **Auth → Companies**: Companies owns the users and companies that bearer authentication joins with `machine_tokens`; its services own membership, roles and deactivation
 - **Integrations → Companies, Serving**: a connection is a company's or a user's, and a patch reaches it only through the cloud, as the viewer Serving established. Not yet in code
 - **Hosting → everything**: mounts both API groups behind Auth's bearer middleware, the guard ahead of them, Serving's pages, and forks Patches' `ExpirySweep`; nothing here is a term of its own
 
 ## Decisions
 
-System-wide decisions are in [`docs/adr/`](./docs/adr/): ADR-0002 (the `api` contract package), ADR-0003 (Postgres only), ADR-0004 (the CLI contract for agents), ADR-0005 (one registrable domain for pages, API and Account Portal), ADR-0006 (Clerk holds the browser session; the shell keeps it fresh). Product decisions not yet built are recorded in `docs/product.md`, and the PR that builds one writes its ADR, unless the decision constrains the build itself, in which case the ADR lands ahead of it, as ADR-0005 and ADR-0006 did. A superseded ADR is deleted, not kept: its replacement names what it replaced and git holds the old text. No package has a `docs/adr/` of its own yet; the first context-scoped decision creates one beside that package's `CONTEXT.md`.
+System-wide decisions are in [`docs/adr/`](./docs/adr/): ADR-0002 (the `api` contract package), ADR-0003 (Postgres only), ADR-0004 (the CLI contract for agents), ADR-0005 (one registrable domain for pages, API and Account Portal), ADR-0006 (Clerk holds the browser session; the shell keeps it fresh), and [ADR-0007](./docs/adr/ADR-0007-patchy-holds-the-company.md) (Patchy holds the company; Clerk knows the user). Product decisions not yet built are recorded in `docs/product.md`, and the PR that builds one writes its ADR. A superseded ADR is deleted, not kept: its replacement names what it replaced and git holds the old text.

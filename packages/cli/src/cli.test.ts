@@ -12,6 +12,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { DEV_SEED } from "@patchy/auth/seed";
 
 const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const cliPath = path.join(packageDir, "dist/index.js");
@@ -87,11 +88,10 @@ const upload = (status: 200 | 201, patchId: string, versionNumber: number) => ({
 });
 
 const identity = {
-  accountId: "acct_1",
-  accountName: "Account One",
-  apiTokenId: "tok_1",
-  apiTokenName: "laptop",
-  scopes: ["upload"]
+  user: { id: DEV_SEED.userId, email: DEV_SEED.email, name: DEV_SEED.userName },
+  company: { id: DEV_SEED.companyId, handle: DEV_SEED.companyHandle, name: DEV_SEED.companyName },
+  role: DEV_SEED.role,
+  machine: { id: DEV_SEED.tokenId, name: DEV_SEED.tokenName }
 };
 
 /** Asynchronous on purpose: the stub instance answers from this same event loop. */
@@ -295,7 +295,7 @@ describe("patchy whoami", async () => {
     const text = await runCli(["whoami"], { stateDir: dir });
     expect(text).toMatchObject({
       status: 0,
-      stdout: "Account: Account One (acct_1)\nAPI token: laptop (tok_1)\nScopes: upload\n",
+      stdout: `User: ${DEV_SEED.userName} (${DEV_SEED.email})\nCompany: ${DEV_SEED.companyName} (${DEV_SEED.companyHandle})\nRole: ${DEV_SEED.role}\nMachine: ${DEV_SEED.tokenName} (${DEV_SEED.tokenId})\n`,
       stderr: ""
     });
     expect(instance.requests[0]).toMatchObject({
@@ -308,12 +308,33 @@ describe("patchy whoami", async () => {
     expect(json.stderr).toBe("");
     expect(JSON.parse(json.stdout)).toEqual(identity);
   });
+});
 
-  it("reports a missing token locally instead of minting one", async () => {
-    const result = await runCli(["whoami", "--api-url", "http://127.0.0.1:1"]);
-    expect(result.status).toBe(1);
-    expect(result.stderr).toMatch(/^No publishing token is stored for http:\/\/127\.0\.0\.1:1\./);
-  });
+describe("commands without a publishing key", () => {
+  it.each(["whoami", "upload", "delete"])(
+    "refuses %s locally without a request",
+    async (command) => {
+      const instance = await stubInstance((_, respond) => respond(200, identity));
+      const dir = tempDir();
+      const target =
+        command === "upload"
+          ? [htmlFile(dir, "page.html", validHtml)]
+          : command === "delete"
+            ? ["--patch", "abcdefghijkl"]
+            : [];
+      const result = await runCli([command, ...target, "--api-url", instance.url, "--json"], {
+        stateDir: dir
+      });
+      expect(result.status).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(JSON.parse(result.stderr)).toMatchObject({
+        ok: false,
+        kind: "local",
+        error: expect.stringContaining(`patchy auth set --api-url ${instance.url}`)
+      });
+      expect(instance.requests).toHaveLength(0);
+    }
+  );
 });
 
 describe("patchy validate", async () => {
@@ -334,10 +355,8 @@ describe("patchy validate", async () => {
 });
 
 describe("patchy upload", async () => {
-  it("mints on first upload, announces it, then republishes with the saved token", async () => {
+  it("publishes with a saved key, then republishes with the cached patch id", async () => {
     const instance = await stubInstance((request, respond) => {
-      if (request.url === "/api/tokens/self-service")
-        return respond(201, { ok: true, token: "pp_minted" });
       const body = request.body as { patchId?: string };
       return body.patchId
         ? respond(200, upload(200, body.patchId, 2))
@@ -345,28 +364,26 @@ describe("patchy upload", async () => {
     });
     const dir = tempDir();
     const file = htmlFile(dir, "page.html", validHtml);
+    await runCli(["auth", "set", "--token-stdin", "--api-url", instance.url], {
+      stateDir: dir,
+      input: `${DEV_SEED.token}\n`
+    });
 
     const first = await runCli(["upload", file, "--api-url", instance.url], { stateDir: dir });
     expect(first.status).toBe(0);
     expect(first.stdout).toMatch(
       new RegExp(
-        `^Publishing to ${instance.url} \\(target came from --api-url\\)\\.\nMinted a new publishing token for ${instance.url};.*\nUploaded patch\nURL: http://instance\\.test/d/abcdefghijkl\nPatch ID: abcdefghijkl\nVersion: 1\n$`
+        `^Publishing to ${instance.url} \\(target came from --api-url\\)\\.\nUploaded patch\nURL: http://instance\\.test/d/abcdefghijkl\nPatch ID: abcdefghijkl\nVersion: 1\n$`
       )
     );
     expect(first.stderr).toBe("Warning: No <title> found.\n");
-    expect(`${first.stdout}${first.stderr}`).not.toContain("pp_minted");
-    expect(instance.requests.map((r) => r.url)).toEqual([
-      "/api/tokens/self-service",
-      "/api/uploads"
-    ]);
-    expect(instance.requests[1]).toMatchObject({ authorization: "Bearer pp_minted" });
-    expect(instance.requests[1]?.body).toMatchObject({
+    expect(`${first.stdout}${first.stderr}`).not.toContain(DEV_SEED.token);
+    expect(instance.requests.map((r) => r.url)).toEqual(["/api/uploads"]);
+    expect(instance.requests[0]).toMatchObject({ authorization: `Bearer ${DEV_SEED.token}` });
+    expect(instance.requests[0]?.body).toMatchObject({
       html: validHtml,
       filename: "page.html",
       metadata: { cliVersion: "0.0.1" }
-    });
-    expect(readJson(path.join(dir, "credentials.json"))).toMatchObject({
-      hosts: { [instance.url]: { token: "pp_minted", source: "mint" } }
     });
 
     // The cache turns the second upload of the same file into an update, and
@@ -378,8 +395,8 @@ describe("patchy upload", async () => {
     expect(second.status).toBe(0);
     expect(second.stderr).toBe("");
     expect(JSON.parse(second.stdout)).toEqual(upload(200, "abcdefghijkl", 2));
-    expect(instance.requests[2]?.body).toMatchObject({ patchId: "abcdefghijkl" });
-    expect(instance.requests[2]).toMatchObject({ authorization: "Bearer pp_minted" });
+    expect(instance.requests[1]?.body).toMatchObject({ patchId: "abcdefghijkl" });
+    expect(instance.requests[1]).toMatchObject({ authorization: `Bearer ${DEV_SEED.token}` });
 
     // --new ignores the cache; the environment token beats the stored one.
     const fresh = await runCli(["upload", file, "--new"], {
@@ -387,29 +404,55 @@ describe("patchy upload", async () => {
       env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_env" }
     });
     expect(fresh.status).toBe(0);
-    expect(instance.requests[3]?.body).not.toHaveProperty("patchId");
-    expect(instance.requests[3]).toMatchObject({ authorization: "Bearer pp_env" });
+    expect(instance.requests[2]?.body).not.toHaveProperty("patchId");
+    expect(instance.requests[2]).toMatchObject({ authorization: "Bearer pp_env" });
   });
 
-  it("under --json, the mint announcement is the only thing on stderr", async () => {
-    const instance = await stubInstance((request, respond) =>
-      request.url === "/api/tokens/self-service"
-        ? respond(201, { ok: true, token: "pp_minted" })
-        : respond(201, upload(201, "abcdefghijkl", 1))
+  it("publishes with the worktree seed and leaves stderr empty under --json", async () => {
+    const instance = await stubInstance((_, respond) =>
+      respond(201, upload(201, "abcdefghijkl", 1))
     );
     const dir = tempDir();
     const file = htmlFile(dir, "page.html", validHtml);
+    mkdirSync(path.join(dir, ".local", "dev"), { recursive: true });
+    writeFileSync(
+      path.join(dir, ".local", "dev", "env"),
+      `PATCHY_API_URL=${instance.url}\nPATCHY_API_TOKEN=${DEV_SEED.token}\n`
+    );
     const result = await runCli(["upload", file, "--json"], {
-      stateDir: dir,
-      env: { PATCHY_API_URL: instance.url }
+      stateDir: dir
     });
     expect(result.status).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual(upload(201, "abcdefghijkl", 1));
-    expect(result.stderr.trim().split("\n")).toHaveLength(1);
-    expect(result.stderr).toContain("Minted a new publishing token");
+    expect(result.stderr).toBe("");
+    expect(instance.requests[0]).toMatchObject({ authorization: `Bearer ${DEV_SEED.token}` });
+
+    // A stored key outranks the seed, and an explicit environment key outranks both.
+    await runCli(["auth", "set", "--token-stdin"], {
+      stateDir: dir,
+      input: "pp_saved\n"
+    });
+    const saved = await runCli(["upload", file, "--new", "--json"], { stateDir: dir });
+    expect(saved.status).toBe(0);
+    expect(instance.requests[1]).toMatchObject({ authorization: "Bearer pp_saved" });
+    const savedStatus = await runCli(["status"], { stateDir: dir });
+    expect(JSON.parse(savedStatus.stdout)).toMatchObject({
+      hasToken: true,
+      tokenSource: "auth-set"
+    });
+
+    const env = { PATCHY_API_TOKEN: "pp_environment" };
+    const explicit = await runCli(["upload", file, "--new", "--json"], { stateDir: dir, env });
+    expect(explicit.status).toBe(0);
+    expect(instance.requests[2]).toMatchObject({ authorization: "Bearer pp_environment" });
+    const environmentStatus = await runCli(["status"], { stateDir: dir, env });
+    expect(JSON.parse(environmentStatus.stdout)).toMatchObject({
+      hasToken: true,
+      tokenSource: null
+    });
   });
 
-  it("never mints for an unpublishable file, and never re-mints after a rejected token", async () => {
+  it("rejects an unpublishable file locally and does not retry a refused key", async () => {
     const instance = await stubInstance((_, respond) =>
       respond(401, { ok: false, error: "Missing or invalid API token." })
     );
@@ -427,27 +470,6 @@ describe("patchy upload", async () => {
     expect(rejected.status).toBe(2);
     expect(rejected.stderr).toContain("Missing or invalid API token.");
     expect(instance.requests.map((r) => r.url)).toEqual(["/api/uploads"]);
-  });
-
-  it("explains each refusal to mint, with the exit code for a rejection", async () => {
-    const dir = tempDir();
-    const file = htmlFile(dir, "page.html", validHtml);
-    const cases: ReadonlyArray<[unknown, RegExp]> = [
-      [
-        { ok: false, error: "off", code: "self_service_disabled" },
-        /does not hand them out on request/
-      ],
-      [{ ok: false, error: "quota", code: "mint_quota_exceeded", quota: 5 }, /limit of new tokens/],
-      [{ ok: false, error: "slow", code: "rate_limited", retryAfterSeconds: 7 }, /Wait 7 seconds/]
-    ];
-    for (const [body, expected] of cases) {
-      const status = (body as { code: string }).code === "self_service_disabled" ? 403 : 429;
-      const instance = await stubInstance((_, respond) => respond(status, body));
-      const result = await runCli(["upload", file, "--api-url", instance.url], { stateDir: dir });
-      expect(result.status).toBe(2);
-      expect(result.stderr).toMatch(expected);
-      expect(result.stderr).toMatch(/^Could not get a publishing token/m);
-    }
   });
 
   it("reports an unavailable update target without retrying as a create", async () => {
@@ -616,10 +638,10 @@ describe("patchy delete", async () => {
       "Pass the file the patch was uploaded from, or --patch <patch-id>, not both.\n"
     );
 
-    // With no key there is nothing to delete with, and none is ever minted for it.
+    // With no key the deletion is refused locally.
     const keyless = await runCli(["delete", "--patch", "abcdefghijkl", "--api-url", instance.url]);
     expect(keyless.status).toBe(1);
-    expect(keyless.stderr).toMatch(/^No publishing key is stored for /);
+    expect(keyless.stderr).toContain(`patchy auth set --api-url ${instance.url}`);
     expect(instance.requests).toHaveLength(4);
   });
 });
@@ -645,7 +667,7 @@ describe("patchy status", async () => {
     mkdirSync(path.join(worktree, "deep", "er"), { recursive: true });
     writeFileSync(
       path.join(worktree, ".local", "dev", "env"),
-      "PATCHY_API_URL=http://127.0.0.1:45678\nPATCHY_API_TOKEN=pp_dev\n"
+      `PATCHY_API_URL=http://127.0.0.1:45678\nPATCHY_API_TOKEN=${DEV_SEED.token}\n`
     );
     writeFileSync(path.join(dir, "style.md"), "# style");
     const dev = JSON.parse(

@@ -25,7 +25,7 @@ const serverEntry = path.join(repoRoot, "apps/server/dist/start.js");
 // npm is a pinned root devDependency so this test can install the CLI tarball
 // hermetically; the CLI itself is private and is never published to a registry.
 const npmCliEntry = path.join(repoRoot, "node_modules/npm/bin/npm-cli.js");
-const bootstrapToken = "patchy-packed-e2e-bootstrap-token";
+let DEV_SEED;
 const packedCliTempRootBasePrefix = "patchy-packed-cli-e2e-";
 const probeOwnerEnvName = "PATCHY_PACKED_CLI_E2E_PROBE_OWNER_ID";
 const expectedViewerCsp = [
@@ -277,19 +277,21 @@ try {
   const auth = await runCli(cliPath, ["auth", "set", "--token-stdin", "--api-url", publicBaseUrl], {
     cwd: consumerDir,
     env: cliEnv,
-    input: `${bootstrapToken}\n`
+    input: `${DEV_SEED.token}\n`
   });
   assert.equal(auth.stdout, `Patchy Cloud credentials saved for ${publicBaseUrl}.\n`);
   assert.equal(auth.stderr, "");
-  assert.ok(!`${auth.stdout}${auth.stderr}`.includes(bootstrapToken), "token leaked in CLI output");
+  assert.ok(!`${auth.stdout}${auth.stderr}`.includes(DEV_SEED.token), "token leaked in CLI output");
 
   const whoami = await runCli(cliPath, ["whoami"], {
     cwd: consumerDir,
     env: cliEnv
   });
-  assert.match(whoami.stdout, /^Account: Bootstrap Account \(acct_bootstrap\)$/m);
-  assert.match(whoami.stdout, /^API token: Bootstrap API Token \(tok_bootstrap\)$/m);
-  assert.match(whoami.stdout, /^Scopes: admin, upload$/m);
+  assert.equal(
+    whoami.stdout,
+    `User: ${DEV_SEED.userName} (${DEV_SEED.email})\nCompany: ${DEV_SEED.companyName} (${DEV_SEED.companyHandle})\nRole: ${DEV_SEED.role}\nMachine: ${DEV_SEED.tokenName} (${DEV_SEED.tokenId})\n`
+  );
+  assert.equal(whoami.stderr, "");
 
   const fixturePath = path.join(consumerDir, "review artifact.html");
   const fixtureArgument = "./review artifact.html";
@@ -309,37 +311,48 @@ try {
   const hostileInheritedApiToken = "hostile-inherited-api-token";
   const hostileInheritedToken = "hostile-inherited-token";
   console.log("[packed-cli-e2e] exercising shipped commands under inherited POSIX sh xtrace");
+  const shellStateDir = path.join(tempRoot, "cli state shell credentials");
+  await checkedCall(() => mkdir(shellStateDir));
+  const shellEnv = { ...cliEnv, PATCHY_STATE_DIR: shellStateDir };
+  const shellAuth = await runPublicPosixSh(publicShellSequence, {
+    cwd: consumerDir,
+    env: {
+      ...shellEnv,
+      PATH: [path.dirname(cliPath), cliEnv.PATH].filter(Boolean).join(path.delimiter),
+      PATCHY_API_URL: "https://hostile.invalid",
+      PATCHY_API_TOKEN: hostileInheritedApiToken,
+      TOKEN: hostileInheritedToken,
+      PATCHY_SETUP_URL: publicBaseUrl,
+      PATCHY_SETUP_TOKEN: DEV_SEED.token
+    },
+    sensitiveValues: [DEV_SEED.token, hostileInheritedApiToken, hostileInheritedToken]
+  });
+  assert.equal(shellAuth.stdout, `Patchy Cloud credentials saved for ${publicBaseUrl}.\n`);
+  const shellWhoami = await runCli(cliPath, ["whoami"], {
+    cwd: consumerDir,
+    env: shellEnv
+  });
+  assert.equal(shellWhoami.stdout, whoami.stdout);
+  assert.equal(shellWhoami.stderr, "");
   const first = parseUpload(
-    await runPublicPosixSh(publicShellSequence, {
-      cwd: consumerDir,
-      env: {
-        ...cliEnv,
-        PATH: [path.dirname(cliPath), cliEnv.PATH].filter(Boolean).join(path.delimiter),
-        PATCHY_API_URL: "https://hostile.invalid",
-        PATCHY_API_TOKEN: hostileInheritedApiToken,
-        TOKEN: hostileInheritedToken,
-        PATCHY_SETUP_URL: publicBaseUrl,
-        PATCHY_SETUP_TOKEN: bootstrapToken
-      },
-      sensitiveValues: [bootstrapToken, hostileInheritedApiToken, hostileInheritedToken]
-    })
+    await runCli(cliPath, ["upload", fixtureArgument], { cwd: consumerDir, env: cliEnv })
   );
   assert.equal(first.label, "Uploaded patch");
   assert.equal(first.versionNumber, 1);
   assert.equal(first.publicUrl, `${publicBaseUrl}/d/${first.patchId}`);
   const fixtureCachePath = await checkedCall(() => realpath(fixturePath));
-  const shellPatchCache = JSON.parse(
+  const patchCache = JSON.parse(
     await checkedCall(() => readFile(path.join(cliStateDir, "patches.json"), "utf8"))
   );
   assert.deepEqual(
-    Object.keys(shellPatchCache.hosts ?? {}),
+    Object.keys(patchCache.hosts ?? {}),
     [publicBaseUrl],
     "the patch cache must be keyed by the instance the upload targeted"
   );
   assert.deepEqual(
-    Object.keys(shellPatchCache.hosts[publicBaseUrl].files ?? {}),
+    Object.keys(patchCache.hosts[publicBaseUrl].files ?? {}),
     [fixtureCachePath],
-    "quoted POSIX sh upload must cache the resolved spaced artifact path"
+    "upload must cache the resolved spaced artifact path"
   );
 
   await checkedCall(() => writeFile(fixturePath, secondHtml, "utf8"));
@@ -382,14 +395,16 @@ try {
   await assertStoredDraft(metadata, objectDir, {
     patchId: first.patchId,
     expectedHtmlByVersion: [firstHtml, secondHtml],
-    accountId: "acct_bootstrap",
-    apiTokenId: "tok_bootstrap"
+    companyId: DEV_SEED.companyId,
+    ownerUserId: DEV_SEED.userId,
+    machineTokenId: DEV_SEED.tokenId
   });
   await assertStoredDraft(metadata, objectDir, {
     patchId: fresh.patchId,
     expectedHtmlByVersion: [newHtml],
-    accountId: "acct_bootstrap",
-    apiTokenId: "tok_bootstrap"
+    companyId: DEV_SEED.companyId,
+    ownerUserId: DEV_SEED.userId,
+    machineTokenId: DEV_SEED.tokenId
   });
 
   console.log("[packed-cli-e2e] proving unsafe HTML and bad credentials cannot mutate state");
@@ -405,7 +420,8 @@ try {
     cwd: consumerDir,
     env: environment({
       PATCHY_STATE_DIR: unsafeValidationStateDir,
-      PATCHY_API_URL: publicBaseUrl
+      PATCHY_API_URL: publicBaseUrl,
+      PATCHY_API_TOKEN: DEV_SEED.token
     }),
     cliStateDir: unsafeValidationStateDir,
     objectDir,
@@ -447,15 +463,18 @@ try {
   const whoamiJson = await runCli(cliPath, ["whoami", "--json"], { cwd: consumerDir, env: cliEnv });
   assert.equal(whoamiJson.stderr, "", "--json success must leave stderr empty");
   assert.deepEqual(JSON.parse(whoamiJson.stdout), {
-    accountId: "acct_bootstrap",
-    accountName: "Bootstrap Account",
-    apiTokenId: "tok_bootstrap",
-    apiTokenName: "Bootstrap API Token",
-    scopes: ["admin", "upload"]
+    user: { id: DEV_SEED.userId, email: DEV_SEED.email, name: DEV_SEED.userName },
+    company: {
+      id: DEV_SEED.companyId,
+      handle: DEV_SEED.companyHandle,
+      name: DEV_SEED.companyName
+    },
+    role: DEV_SEED.role,
+    machine: { id: DEV_SEED.tokenId, name: DEV_SEED.tokenName }
   });
   const unreachable = await runCli(cliPath, ["whoami", "--api-url", "http://127.0.0.1:1"], {
     cwd: consumerDir,
-    env: { ...cliEnv, PATCHY_API_TOKEN: bootstrapToken },
+    env: { ...cliEnv, PATCHY_API_TOKEN: DEV_SEED.token },
     allowFailure: true
   });
   assert.equal(unreachable.code, 3, `expected exit 3\nstderr:\n${unreachable.stderr}`);
@@ -486,116 +505,33 @@ try {
     exitCode: 2
   });
 
-  // Auto-mint is the only credential-free path now, and this server implements
-  // the mint route, so a tokenless upload has to carry itself the whole way: get
-  // a token, save it, announce it without ever printing it, and publish — onto a
-  // fresh principal that is nobody else's.
-  console.log("[packed-cli-e2e] proving a tokenless upload auto-mints and publishes");
-  const mintStateDir = path.join(tempRoot, "cli state auto mint");
-  await checkedCall(() => mkdir(mintStateDir));
-  const mintEnv = environment({ PATCHY_STATE_DIR: mintStateDir }, [
-    "PATCHY_API_TOKEN",
-    "PATCHY_API_URL"
+  console.log("[packed-cli-e2e] proving publishing without a key fails locally without mutation");
+  const noKeyStateDir = path.join(tempRoot, "cli state no key");
+  await checkedCall(() => mkdir(noKeyStateDir));
+  const noKeyEnv = environment({ PATCHY_STATE_DIR: noKeyStateDir, PATCHY_API_URL: publicBaseUrl }, [
+    "PATCHY_API_TOKEN"
   ]);
-  const mintedHtml = validHtml("Auto minted", "auto-minted-self-service-principal");
-  await checkedCall(() => writeFile(fixturePath, mintedHtml, "utf8"));
-  const mintedResult = await runCli(
-    cliPath,
-    ["upload", fixtureArgument, "--api-url", publicBaseUrl],
-    { cwd: consumerDir, env: mintEnv }
-  );
-  const minted = parseUpload(mintedResult);
-  assert.equal(minted.label, "Uploaded patch");
-  assert.equal(minted.versionNumber, 1);
-  assert.ok(
-    mintedResult.stdout.includes(`Minted a new publishing token for ${publicBaseUrl};`),
-    `expected the mint announcement naming the instance:\n${mintedResult.stdout}`
-  );
-  // The key is on disk, host-keyed and marked as minted.
-  const mintedCredentials = JSON.parse(
-    await checkedCall(() => readFile(path.join(mintStateDir, "credentials.json"), "utf8"))
-  );
-  const mintedToken = mintedCredentials.hosts[publicBaseUrl].token;
-  assert.match(mintedToken, /^pp_[A-Za-z0-9_-]{43}$/, "expected a server-generated token");
-  assert.equal(mintedCredentials.hosts[publicBaseUrl].source, "mint");
-
-  // Returned exactly once: the plaintext reached the key file and nothing else.
-  // Neither stream may carry it, and neither may the instance's own state.
-  assert.ok(
-    !mintedResult.stdout.includes(mintedToken) && !mintedResult.stderr.includes(mintedToken),
-    "the minted token must never be printed"
-  );
-  const metadataAfterMint = await readMetadata();
-  assert.ok(
-    !JSON.stringify(metadataAfterMint).includes(mintedToken),
-    "the instance must keep only the minted token's hash"
-  );
-
-  // A fresh 1:1 principal, not the operator's: the draft it published is owned
-  // by an account that did not exist before this upload.
-  const mintedDraft = metadataAfterMint.drafts.find((draft) => draft.id === minted.patchId);
-  assert.ok(mintedDraft, "expected the auto-minted draft on the instance");
-  assert.notEqual(
-    mintedDraft.accountId,
-    "acct_bootstrap",
-    "an auto-minted draft must not land on the operator's account"
-  );
-  const mintedVersion = metadataAfterMint.draftVersions.find(
-    (version) => version.patchId === minted.patchId
-  );
-  assert.notEqual(
-    mintedVersion.createdByApiTokenId,
-    "tok_bootstrap",
-    "an auto-minted draft must not be published by the operator's token"
-  );
-  await assertStoredDraft(metadataAfterMint, objectDir, {
-    patchId: minted.patchId,
-    expectedHtmlByVersion: [mintedHtml],
-    accountId: mintedDraft.accountId,
-    apiTokenId: mintedVersion.createdByApiTokenId
-  });
-  const mintedViewer = await fetchViewer(minted.publicUrl);
-  assertViewer(mintedViewer, minted.patchId, 1, "auto-minted-self-service-principal");
-
-  console.log("[packed-cli-e2e] proving --anonymous is a deprecated no-op");
-  const deprecatedFlagHtml = validHtml(
-    "Deprecated anonymous",
-    "deprecated-anonymous-published-with-credential"
-  );
-  await checkedCall(() => writeFile(fixturePath, deprecatedFlagHtml, "utf8"));
-  const deprecatedFlagResult = await runCli(
-    cliPath,
-    ["upload", fixtureArgument, "--anonymous", "--new"],
-    { cwd: consumerDir, env: { ...cliEnv, PATCHY_API_TOKEN: bootstrapToken } }
-  );
-  assert.match(
-    deprecatedFlagResult.stderr,
-    /--anonymous is deprecated and ignored/,
-    "expected the deprecation notice on stderr"
-  );
-  const deprecatedFlag = parseUpload(deprecatedFlagResult);
-  assert.equal(deprecatedFlag.label, "Uploaded patch");
-  assert.equal(deprecatedFlag.versionNumber, 1);
-  assert.notEqual(deprecatedFlag.patchId, first.patchId);
-  assert.notEqual(deprecatedFlag.patchId, fresh.patchId);
-  // The upload is ordinary in every respect, including keeping the patch cache:
-  // the flag no longer excuses it from the per-instance update state.
-  const deprecatedFlagCache = JSON.parse(
-    await checkedCall(() => readFile(path.join(cliStateDir, "patches.json"), "utf8"))
-  );
-  assert.equal(
-    deprecatedFlagCache.hosts[publicBaseUrl].files[fixtureCachePath].patchId,
-    deprecatedFlag.patchId,
-    "the deprecated flag must still update the per-instance patch cache"
-  );
-  const metadataAfterDeprecatedFlag = await readMetadata();
-  // The credential the flag used to bypass is the one that published it.
-  await assertStoredDraft(metadataAfterDeprecatedFlag, objectDir, {
-    patchId: deprecatedFlag.patchId,
-    expectedHtmlByVersion: [deprecatedFlagHtml],
-    accountId: "acct_bootstrap",
-    apiTokenId: "tok_bootstrap"
-  });
+  for (const args of [
+    ["upload", fixtureArgument, "--json"],
+    ["delete", "--patch", fresh.patchId, "--json"]
+  ]) {
+    const failure = await assertCliFailureNoMutation({
+      cliPath,
+      args,
+      cwd: consumerDir,
+      env: noKeyEnv,
+      cliStateDir: noKeyStateDir,
+      objectDir,
+      expectAuthoritativeNonEmpty: true,
+      expectEmptyCliState: true,
+      stderr: /Run: patchy auth set --api-url http:\/\/127\.0\.0\.1:\d+/,
+      exitCode: 1
+    });
+    assert.equal(failure.stdout, "", "--json failure must leave stdout empty");
+    const document = JSON.parse(failure.stderr);
+    assert.equal(document.ok, false);
+    assert.equal(document.kind, "local");
+  }
 
   console.log("[packed-cli-e2e] proving environment credentials override stored credentials");
   const envPrecedenceHtml = validHtml(
@@ -606,40 +542,32 @@ try {
   const envPrecedence = parseUpload(
     await runCli(cliPath, ["upload", fixtureArgument], {
       cwd: consumerDir,
-      env: { ...invalidStoredEnv, PATCHY_API_TOKEN: bootstrapToken }
+      env: { ...invalidStoredEnv, PATCHY_API_TOKEN: DEV_SEED.token }
     })
   );
 
   const finalMetadata = await readMetadata();
-  // Every draft on the instance has a controlling token from birth: the
-  // tokenless upload path is gone, so nothing here is ownerless. Exactly one
-  // draft belongs to the auto-minted principal; the rest are the operator's.
-  assert.equal(finalMetadata.drafts.length, 5);
-  assert.equal(finalMetadata.draftVersions.length, 6);
-  const controllingAccounts = new Set(finalMetadata.drafts.map((draft) => draft.accountId));
+  assert.equal(finalMetadata.drafts.length, 3);
+  assert.equal(finalMetadata.draftVersions.length, 4);
+  for (const draft of finalMetadata.drafts) {
+    assert.equal(draft.companyId, DEV_SEED.companyId);
+    assert.equal(draft.ownerUserId, DEV_SEED.userId);
+    assert.equal(draft.scope, "company");
+  }
   assert.ok(
-    finalMetadata.drafts.every((draft) => typeof draft.accountId === "string" && draft.accountId),
-    "every draft must carry the controlling account that published it"
-  );
-  assert.deepEqual(
-    [...controllingAccounts].sort(),
-    ["acct_bootstrap", mintedDraft.accountId].sort(),
-    "only the operator and the one auto-minted principal may own drafts here"
-  );
-  assert.equal(
-    finalMetadata.drafts.filter((draft) => draft.accountId === mintedDraft.accountId).length,
-    1,
-    "the auto-minted principal must control exactly the draft it published"
+    !JSON.stringify(finalMetadata).includes(DEV_SEED.token),
+    "the instance must keep only the machine token's hash"
   );
   await assertStoredDraft(finalMetadata, objectDir, {
     patchId: envPrecedence.patchId,
     expectedHtmlByVersion: [envPrecedenceHtml],
-    accountId: "acct_bootstrap",
-    apiTokenId: "tok_bootstrap"
+    companyId: DEV_SEED.companyId,
+    ownerUserId: DEV_SEED.userId,
+    machineTokenId: DEV_SEED.tokenId
   });
-  assert.equal((await snapshotTree(objectDir)).length, 6);
+  assert.equal((await snapshotTree(objectDir)).length, 4);
 
-  console.log("[packed-cli-e2e] proving delete takes a patch down with the key that published it");
+  console.log("[packed-cli-e2e] proving delete takes a patch down as its owner user");
   // Its own upload on the authenticated state dir, so deleting by file resolves
   // to the patch this step created, whatever the script cached before it.
   const doomedHtml = validHtml("Packed contract doomed", "packed-contract-doomed");
@@ -2343,14 +2271,11 @@ async function startServerAttempt({ publicBaseUrl, objectDir, serverEntryPath })
     {
       PORT: new URL(publicBaseUrl).port,
       PATCHY_PUBLIC_BASE_URL: publicBaseUrl,
-      PATCHY_BOOTSTRAP_API_TOKEN: bootstrapToken,
-      PATCHY_ALLOW_SELF_SERVICE_TOKENS: "true",
       PATCHY_MAX_HTML_BYTES: String(512 * 1024),
       DATABASE_URL: await startPostgres(),
       PATCHY_STORAGE_DIR: objectDir,
       PATCHY_PROTECTED_API_RATE_LIMIT_PER_MINUTE: "10000",
-      PATCHY_AUTHENTICATED_UPLOAD_RATE_LIMIT_PER_MINUTE: "10000",
-      PATCHY_SELF_SERVICE_MINT_RATE_LIMIT_PER_MINUTE: "10000"
+      PATCHY_AUTHENTICATED_UPLOAD_RATE_LIMIT_PER_MINUTE: "10000"
     },
     [
       "PATCHY_TRUST_PROXY",
@@ -2417,6 +2342,9 @@ async function startServerAttempt({ publicBaseUrl, objectDir, serverEntryPath })
     throw error;
   }
   serverReadyStdoutObserved = true;
+  const seed = await import("../packages/auth/dist/seed.js");
+  DEV_SEED = seed.DEV_SEED;
+  await checkedCall(() => seed.applyDevSeed(postgres.databaseUrl));
   return { publicBaseUrl };
 }
 
@@ -2534,7 +2462,8 @@ function hasExactLine(output, expectedLine) {
 }
 
 function formatServerDiagnostics(stdout, stderr) {
-  return `\nserver stdout:\n${redactSensitive(stdout, [bootstrapToken]) || "<empty>"}\nserver stderr:\n${redactSensitive(stderr, [bootstrapToken]) || "<empty>"}`;
+  const sensitiveValues = [DEV_SEED?.token].filter(Boolean);
+  return `\nserver stdout:\n${redactSensitive(stdout, sensitiveValues) || "<empty>"}\nserver stderr:\n${redactSensitive(stderr, sensitiveValues) || "<empty>"}`;
 }
 
 function assertSpacedPath(label, candidatePath) {
@@ -2598,7 +2527,7 @@ async function runPublicPosixSh(commandText, options) {
 }
 
 async function runCli(cliPath, args, options) {
-  const sensitiveValues = [bootstrapToken, ...(options.sensitiveValues ?? [])].filter(Boolean);
+  const sensitiveValues = [DEV_SEED?.token, ...(options.sensitiveValues ?? [])].filter(Boolean);
   assert.ok(
     args.every((argument) =>
       sensitiveValues.every((sensitiveValue) => !argument.includes(sensitiveValue))
@@ -2656,6 +2585,7 @@ async function assertCliFailureNoMutation({
       ? "failed CLI invocation created CLI state"
       : "failed CLI invocation mutated CLI state"
   );
+  return result;
 }
 
 async function authoritativeSnapshot(objectDir) {
@@ -2803,26 +2733,30 @@ async function readMetadata() {
     const query = async (text) => (await client.query(text)).rows;
     return {
       drafts: (
-        await query("SELECT id, account_id, current_version_id FROM patches ORDER BY created_at")
+        await query(
+          "SELECT id, company_id, owner_user_id, scope, current_version_id FROM patches ORDER BY created_at"
+        )
       ).map((row) => ({
         id: row.id,
-        accountId: row.account_id,
+        companyId: row.company_id,
+        ownerUserId: row.owner_user_id,
+        scope: row.scope,
         currentVersionId: row.current_version_id
       })),
       draftVersions: (
         await query(
-          "SELECT id, patch_id, version_number, object_key, created_by_api_token_id FROM patch_versions ORDER BY created_at"
+          "SELECT id, patch_id, version_number, object_key, created_by_machine_token_id FROM patch_versions ORDER BY created_at"
         )
       ).map((row) => ({
         id: row.id,
         patchId: row.patch_id,
         versionNumber: row.version_number,
         objectKey: row.object_key,
-        createdByApiTokenId: row.created_by_api_token_id
+        createdByMachineTokenId: row.created_by_machine_token_id
       })),
-      apiTokens: (await query("SELECT id, account_id, token_hash FROM api_tokens ORDER BY id")).map(
-        (row) => ({ id: row.id, accountId: row.account_id, tokenHash: row.token_hash })
-      )
+      machineTokens: (
+        await query("SELECT id, user_id, token_hash FROM machine_tokens ORDER BY id")
+      ).map((row) => ({ id: row.id, userId: row.user_id, tokenHash: row.token_hash }))
     };
   } finally {
     await client.end();
@@ -2832,11 +2766,13 @@ async function readMetadata() {
 async function assertStoredDraft(
   metadata,
   objectDir,
-  { patchId, expectedHtmlByVersion, accountId, apiTokenId }
+  { patchId, expectedHtmlByVersion, companyId, ownerUserId, machineTokenId }
 ) {
   const draft = metadata.drafts.find((candidate) => candidate.id === patchId);
   assert.ok(draft, `metadata is missing draft ${patchId}`);
-  assert.equal(draft.accountId, accountId);
+  assert.equal(draft.companyId, companyId);
+  assert.equal(draft.ownerUserId, ownerUserId);
+  assert.equal(draft.scope, "company");
 
   const versions = metadata.draftVersions
     .filter((version) => version.patchId === patchId)
@@ -2847,7 +2783,7 @@ async function assertStoredDraft(
   for (let index = 0; index < versions.length; index += 1) {
     const version = versions[index];
     assert.equal(version.versionNumber, index + 1);
-    assert.equal(version.createdByApiTokenId, apiTokenId);
+    assert.equal(version.createdByMachineTokenId, machineTokenId);
     assert.equal(
       await readFile(path.join(objectDir, version.objectKey), "utf8"),
       expectedHtmlByVersion[index]

@@ -8,9 +8,9 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { migrations as authMigrations } from "@patchy/auth";
+import { DEV_SEED } from "@patchy/auth/seed";
 import { ContentStore } from "@patchy/content-store";
-import { Content, migrations as patchesMigrations, Patches } from "@patchy/patches";
+import { Content, Patches } from "@patchy/patches";
 import * as Testing from "@patchy/sql/testing";
 import * as Pages from "./Pages.js";
 import { servingHeaders } from "./serving-headers.js";
@@ -19,14 +19,6 @@ const DAY = 24 * 60 * 60 * 1000;
 const CSP =
   "default-src 'none'; style-src 'unsafe-inline'; img-src https: data:; " +
   "frame-src 'self' about:; base-uri 'none'; form-action 'none'";
-
-/** A principal and a token to hold patches; the pages never look at either. */
-const seed = Effect.gen(function* () {
-  const sql = yield* SqlClient.SqlClient;
-  yield* sql`INSERT INTO accounts (id, name) VALUES ('acct_pages', 'Pages')`;
-  yield* sql`INSERT INTO api_tokens (id, account_id, name, token_hash, scopes)
-    VALUES ('tok_pages', 'acct_pages', 'Pages token', 'hash:tok_pages', '["upload"]'::jsonb)`;
-});
 
 const memoryStore = Layer.sync(ContentStore.ContentStore, () => {
   const objects = new Map<string, string>();
@@ -51,8 +43,7 @@ const layer = HttpRouter.serve(
   Layer.provideMerge(NodeHttpServer.layerTest),
   Layer.provideMerge(Content.layer),
   Layer.provideMerge(Layer.mergeAll(Patches.layer, memoryStore)),
-  Layer.provideMerge(Layer.effectDiscard(seed)),
-  Layer.provideMerge(Testing.layer({ ...authMigrations, ...patchesMigrations })),
+  Layer.provideMerge(Testing.layer()),
   Layer.provide(
     ConfigProvider.layer(
       ConfigProvider.fromUnknown({ PATCHY_PUBLIC_BASE_URL: "https://patchy.example" })
@@ -69,8 +60,9 @@ const publish = (title: string) =>
   Effect.flatMap(Content.Content, (content) =>
     content.upload({
       patchId: null,
-      accountId: "acct_pages",
-      apiTokenId: "tok_pages",
+      companyId: DEV_SEED.companyId,
+      ownerUserId: DEV_SEED.userId,
+      machineTokenId: DEV_SEED.tokenId,
       title,
       html: `<!doctype html><html><head><title>${title}</title></head><body><h1>${title}</h1></body></html>`,
       filename: null,

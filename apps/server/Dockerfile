@@ -14,6 +14,7 @@ COPY packages/analytics/package.json packages/analytics/package.json
 COPY packages/api/package.json packages/api/package.json
 COPY packages/auth/package.json packages/auth/package.json
 COPY packages/cli/package.json packages/cli/package.json
+COPY packages/companies/package.json packages/companies/package.json
 COPY packages/content-store/package.json packages/content-store/package.json
 COPY packages/core/package.json packages/core/package.json
 COPY packages/limits/package.json packages/limits/package.json

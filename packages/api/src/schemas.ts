@@ -48,18 +48,7 @@ export const RateLimited = failure(429, {
   retryAfterSeconds: Schema.Int
 });
 
-/** The instance keeps its tokens to itself. Ask its operator for one. */
-export const SelfServiceDisabled = failure(403, {
-  code: Schema.Literal("self_service_disabled")
-});
-
-/** This address has minted `quota` tokens in the last 24 hours. */
-export const MintQuotaExceeded = failure(429, {
-  code: Schema.Literal("mint_quota_exceeded"),
-  quota: Schema.Int
-});
-
-/** The token already holds `quota` live patches. Delete one or let one expire. */
+/** The user already holds `quota` live patches. Delete one or let one expire. */
 export const PatchQuotaExceeded = failure(403, {
   code: Schema.Literal("live_patch_quota_exceeded"),
   quota: Schema.Int
@@ -76,21 +65,17 @@ export const InvalidHtml = Schema.Struct({
 
 /** `GET /api/me`: who the bearer token is. */
 export class Identity extends Schema.Class<Identity>("Identity")({
-  accountId: Schema.String,
-  accountName: Schema.String,
-  apiTokenId: Schema.String,
-  apiTokenName: Schema.String,
-  scopes: Schema.Array(Schema.String)
+  user: Schema.Struct({ id: Schema.String, email: Schema.String, name: Schema.String }),
+  company: Schema.Struct({ id: Schema.String, handle: Schema.String, name: Schema.String }),
+  role: Schema.Literals(["member", "admin"]),
+  machine: Schema.Struct({ id: Schema.String, name: Schema.String })
 }) {}
 
-/** The plaintext appears here exactly once; only its hash is stored. */
-export class MintedToken extends Schema.Class<MintedToken>("MintedToken")(
-  {
-    ok: Schema.Literal(true),
-    token: Schema.String
-  },
-  { httpApiStatus: 201 }
-) {}
+/** The bearer revoked itself; a racing logout may have revoked it first. */
+export class LoggedOut extends Schema.Class<LoggedOut>("LoggedOut")({
+  ok: Schema.Literal(true),
+  alreadyRevoked: Schema.Boolean
+}) {}
 
 // --- patches --------------------------------------------------------------
 

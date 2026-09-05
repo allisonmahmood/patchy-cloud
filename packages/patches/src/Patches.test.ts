@@ -19,9 +19,10 @@ const create = (identity = uploader, title = "Page") =>
     yield* (yield* patches).record({
       intent: "create",
       patchId: id,
-      accountId: identity.accountId,
+      companyId: identity.company.id,
+      ownerUserId: identity.user.id,
       versionId: `ver_${id}_1`,
-      apiTokenId: identity.apiTokenId,
+      machineTokenId: identity.machine.id,
       title,
       objectKey: `patches/${id}/versions/1.html`,
       contentHash: "sha256:x",
@@ -43,9 +44,10 @@ const update = (patchId: string, identity = uploader) =>
     service.record({
       intent: "update",
       patchId,
-      accountId: identity.accountId,
+      companyId: identity.company.id,
+      ownerUserId: identity.user.id,
       versionId: `ver_${patchId}_${++counter}`,
-      apiTokenId: identity.apiTokenId,
+      machineTokenId: identity.machine.id,
       title: "Updated",
       objectKey: `patches/${patchId}/versions/${counter}.html`,
       contentHash: "sha256:y",
@@ -84,34 +86,40 @@ it.layer(Patches.layer.pipe(Layer.provideMerge(Fixtures.database)))("Patches", (
       const sql = yield* SqlClient.SqlClient;
       yield* sql`UPDATE patches SET disabled_at = now(), disabled_reason = 'off' WHERE id = ${disabled}`;
       const deleted = yield* create();
-      yield* service.delete(deleted, uploader.accountId);
+      yield* service.delete(deleted, uploader.user.id);
 
       const versioned = yield* update(owned);
       assert.strictEqual(versioned.versionNumber, 2);
-      // The sibling token shares the principal, so it may write the patch too.
+      // A different machine acts as the same owner user.
       assert.strictEqual((yield* update(owned, sibling)).versionNumber, 3);
+      const latest = Option.getOrThrow(yield* service.find(owned));
+      assert.strictEqual(latest.version.createdByMachineTokenId, sibling.machine.id);
+      assert.strictEqual(
+        Option.getOrThrow(yield* service.find(owned, 1)).version.createdByMachineTokenId,
+        uploader.machine.id
+      );
       for (const patchId of ["nope", foreign, disabled, deleted]) {
         const refused = yield* update(patchId).pipe(Effect.flip);
         assert.strictEqual(refused._tag, "PatchUnavailable", patchId);
         assert.strictEqual(
           (yield* service
-            .checkTarget({ intent: "update", patchId, accountId: uploader.accountId })
+            .checkTarget({ intent: "update", patchId, ownerUserId: uploader.user.id })
             .pipe(Effect.flip))._tag,
           "PatchUnavailable"
         );
       }
       assert.strictEqual(
         (yield* service
-          .checkTarget({ intent: "create", patchId: owned, accountId: uploader.accountId })
+          .checkTarget({ intent: "create", patchId: owned, ownerUserId: uploader.user.id })
           .pipe(Effect.flip))._tag,
         "PatchConflict"
       );
-      assert.isFalse(yield* service.delete(foreign, uploader.accountId));
+      assert.isFalse(yield* service.delete(foreign, uploader.user.id));
       assert.isTrue(yield* isServed(foreign));
-      assert.isTrue(yield* service.delete(owned, sibling.accountId));
+      assert.isTrue(yield* service.delete(owned, sibling.user.id));
       assert.isFalse(yield* isServed(owned));
       assert.isFalse(yield* isServed(owned, 1));
-      assert.isFalse(yield* service.delete(owned, uploader.accountId));
+      assert.isFalse(yield* service.delete(owned, uploader.user.id));
     })
   );
 
@@ -125,24 +133,21 @@ it.layer(Patches.layer.pipe(Layer.provideMerge(Fixtures.database)))("Patches", (
     })
   );
 
-  it.effect(
-    "counts a token's live patches by who created them, releasing the taken-down ones",
-    () =>
-      Effect.gen(function* () {
-        const service = yield* patches;
-        const before = yield* service.countLive(uploader.apiTokenId);
-        const kept = yield* create();
-        const disabled = yield* create();
-        const deleted = yield* create();
-        // Updated by another token: still the creator's.
-        yield* update(kept, sibling);
-        assert.strictEqual(yield* service.countLive(uploader.apiTokenId), before + 3);
-        assert.strictEqual(yield* service.countLive(sibling.apiTokenId), 0);
-        const sql = yield* SqlClient.SqlClient;
-        yield* sql`UPDATE patches SET disabled_at = now(), disabled_reason = 'off' WHERE id = ${disabled}`;
-        yield* service.delete(deleted, uploader.accountId);
-        assert.strictEqual(yield* service.countLive(uploader.apiTokenId), before + 1);
-      })
+  it.effect("counts live patches per owner across machines, releasing the taken-down ones", () =>
+    Effect.gen(function* () {
+      const service = yield* patches;
+      const before = yield* service.countLive(uploader.user.id);
+      const kept = yield* create(sibling);
+      const disabled = yield* create();
+      const deleted = yield* create();
+      // Creating and updating on another machine cannot reset the owner's quota.
+      yield* update(kept);
+      assert.strictEqual(yield* service.countLive(uploader.user.id), before + 3);
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE patches SET disabled_at = now(), disabled_reason = 'off' WHERE id = ${disabled}`;
+      yield* service.delete(deleted, uploader.user.id);
+      assert.strictEqual(yield* service.countLive(uploader.user.id), before + 1);
+    })
   );
 
   it.effect(
@@ -187,15 +192,17 @@ it.layer(Patches.layer.pipe(Layer.provideMerge(Fixtures.database)))("Patches", (
       })
   );
 
-  it.effect("freezes visit top-ups once the creating token is revoked", () =>
+  it.effect("tops up visits even after the creating machine token is revoked", () =>
     Effect.gen(function* () {
       const service = yield* patches;
       yield* TestClock.setTime(Date.UTC(2027, 0, 1));
       const patchId = yield* create(Fixtures.identities.reader);
-      yield* Fixtures.revoke(Fixtures.identities.reader.apiTokenId);
+      yield* Fixtures.revoke(Fixtures.identities.reader.machine.id);
       yield* TestClock.adjust(85 * DAY);
       yield* service.recordVisit(patchId);
       yield* TestClock.adjust(5 * DAY + 1);
+      assert.isTrue(yield* isServed(patchId));
+      yield* TestClock.adjust(25 * DAY);
       assert.isFalse(yield* isServed(patchId));
     })
   );
