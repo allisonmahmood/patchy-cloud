@@ -1,19 +1,19 @@
 # Auth
 
-Who a caller is. `packages/auth` owns the credentials a request carries and the principal behind each: today the token, self-service minting with its quota and mint records, revocation, bearer parsing, the `accounts` / `api_tokens` / `token_mints` migrations (ids 1 and 2), and the `auth` group of the wire contract — `/api/tokens/self-service`, `/api/me`, `/api/tokens`, `/api/tokens/:id/revoke`; once login lands, the browser session, device login and the machine token that replaces self-service minting. It emits `token.minted` through Analytics and spends the per-minute mint limit through Limits. Nothing here knows what a patch is (`patches` receives the principal from the bearer middleware and never imports this package), and nothing here knows what a company is: the tenant, its users, roles and groups are [Companies](../companies/CONTEXT.md)'.
+Who a caller is. `packages/auth` owns the credentials a request carries and the principal behind each: today the token, self-service minting with its quota and mint records, revocation, bearer parsing, the `accounts` / `api_tokens` / `token_mints` migrations (ids 1 and 2), and the `auth` group of the wire contract — `/api/tokens/self-service` and `/api/me`; once login lands, the browser session, device login and the machine token that replaces self-service minting. It emits `token.minted` through Analytics and spends the per-minute mint limit through Limits. Nothing here knows what a patch is (`patches` receives the principal from the bearer middleware and never imports this package), and nothing here knows what a company is: the tenant, its users, roles and groups are [Companies](../companies/CONTEXT.md)'.
 
 ## Language
 
 **Token**:
-The bearer credential every API request but the mint carries. Only its hash is stored, so the plaintext appears exactly once — in the response that issued it — and no later response, and no operator, can produce it again. A token holds scopes; `admin` satisfies every scope.
+The bearer credential every API request but the mint carries. Only its hash is stored, so the plaintext appears exactly once — in the response that issued it — and no later response, and no operator, can produce it again. Legacy scopes remain on the token record but grant no permissions: a bearer acts only on its principal's patches.
 _Avoid_: API key, session
 
 **Principal**:
-The internal ownership row behind a token, one per self-service mint. Plumbing, never surfaced to users: the wire calls it `accountId`, and the moderation surface `principalId`.
+The internal ownership row behind a token, one per self-service mint. Plumbing, never surfaced to users: the wire calls it `accountId`.
 _Avoid_: account (in product language), user
 
 **Bootstrap principal**:
-The operator's own principal and admin token, seeded from `PATCHY_BOOTSTRAP_API_TOKEN` when the tokens layer builds. The only principal with a fixed id; every other one is a mint found by lookup. Re-seeding is idempotent and restores a rotated or revoked bootstrap token.
+The fixed principal and token seeded from `PATCHY_BOOTSTRAP_API_TOKEN` when the tokens layer builds. It has the same owner-only reach as every bearer; its legacy scopes grant no platform powers. Every other principal is a mint found by lookup. Re-seeding is idempotent and restores a rotated or revoked bootstrap token.
 _Avoid_: root account, superuser
 
 **Self-service token**:
@@ -33,7 +33,7 @@ The ceiling on self-service mints one source address may be handed, counted from
 _Avoid_: mint limit (that is the per-minute one), signup limit
 
 **Revocation**:
-An operator's — or, once login lands, the token's own user's — act of permanently disabling a token. Revoked is a state the row enters, never a deletion — the mint provenance survives, and patch versions still reference the token that created them. Idempotent: the first `revokedAt` stands, because it is when the token's patches stopped getting retention top-ups. There is no un-revoke; a replacement is a fresh mint.
+Permanently disabling a token. There is no bearer route for revocation today; once login lands, it is the token's own user's act. Revoked is a state the row enters, never a deletion — the mint provenance survives, and patch versions still reference the token that created them. Idempotent: the first `revokedAt` stands, because it is when the token's patches stopped getting retention top-ups. There is no un-revoke; a replacement is a fresh mint.
 _Avoid_: ban, token deletion
 
 **Bearer parsing**:

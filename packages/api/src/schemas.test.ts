@@ -2,23 +2,15 @@ import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vitest";
 import * as OpenApi from "effect/unstable/httpapi/OpenApi";
 import {
-  CreatedToken,
-  CreateTokenRequest,
-  DisableRequest,
   Identity,
   InvalidHtml,
   MintedToken,
   MintQuotaExceeded,
-  ModeratedPatch,
   Ok,
   PatchId,
   PatchQuotaExceeded,
-  PatchView,
   PatchyApi,
-  Pinned,
-  PrincipalPatches,
   RateLimited,
-  RevokedToken,
   SelfServiceDisabled,
   Unauthorized,
   UploadCreated,
@@ -92,60 +84,16 @@ describe("wire schemas", () => {
   });
 
   it("round-trips every other wire shape", () => {
-    const apiToken = { id: "tok_1", name: "CLI API Token" };
-    const patch = moderatedPatch();
     const cases: ReadonlyArray<[Schema.Codec<unknown, unknown>, unknown]> = [
       [MintedToken, { ok: true, token: "pp_x" }],
-      [CreateTokenRequest, { name: "Deploy", scopes: ["upload", "admin"] }],
-      [CreateTokenRequest, {}],
-      [CreatedToken, { ok: true, apiToken, token: "pp_x" }],
-      [
-        RevokedToken,
-        {
-          ok: true,
-          alreadyRevoked: true,
-          apiToken: { ...apiToken, principalId: "acct_1", revokedAt: "2026-08-29T00:00:00.000Z" }
-        }
-      ],
-      [DisableRequest, { reason: "Spam." }],
       [Ok, { ok: true }],
-      [Pinned, { ok: true, pinned: false }],
-      [PatchView, { ok: true, patch }],
-      [PrincipalPatches, { ok: true, principalId: "acct_1", patches: [patch], truncated: true }],
       [Unauthorized, { ok: false, error: "Missing or invalid API token." }],
       [SelfServiceDisabled, { ok: false, error: "No.", code: "self_service_disabled" }],
       [MintQuotaExceeded, { ok: false, error: "Full.", code: "mint_quota_exceeded", quota: 5 }]
     ];
     for (const [schema, wire] of cases) expect(roundTrip(schema, wire)).toEqual(wire);
   });
-
-  it("pins the 401 sentence, so no other wording can go out at that status", () => {
-    expect(
-      Schema.decodeUnknownExit(Unauthorized)({ ok: false, error: "Invalid token." })._tag
-    ).toBe("Failure");
-  });
-
-  it("keeps timestamps as the ISO strings the database hands out", () => {
-    const patch = moderatedPatch();
-    expect(roundTrip(ModeratedPatch, patch)).toEqual(patch);
-  });
 });
-
-function moderatedPatch() {
-  return {
-    id: "abcdefghijkl",
-    principalId: "acct_1",
-    createdByApiTokenId: null,
-    title: "Plan",
-    createdAt: "2026-08-29T00:00:00.000Z",
-    updatedAt: "2026-08-29T00:00:00.000Z",
-    expiresAt: "2026-11-27T00:00:00.000Z",
-    pinnedAt: null,
-    deletedAt: null,
-    disabledAt: "2026-08-30T00:00:00.000Z",
-    disabledReason: "Disabled."
-  };
-}
 
 describe("PatchyApi", () => {
   it("puts every route under /api with patch naming and no draft on the wire", () => {
@@ -153,14 +101,8 @@ describe("PatchyApi", () => {
     expect(paths).toEqual([
       "/api/tokens/self-service",
       "/api/me",
-      "/api/tokens",
-      "/api/tokens/{apiTokenId}/revoke",
       "/api/uploads",
-      "/api/patches/{patchId}",
-      "/api/principals/{principalId}/patches",
-      "/api/patches/{patchId}/disable",
-      "/api/patches/{patchId}/pin",
-      "/api/patches/{patchId}/unpin"
+      "/api/patches/{patchId}"
     ]);
     expect(JSON.stringify(OpenApi.fromApi(PatchyApi))).not.toMatch(/draft/i);
   });

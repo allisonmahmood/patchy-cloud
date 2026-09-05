@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { TestClock } from "effect/testing";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as Patches from "./Patches.js";
 import * as Fixtures from "./test/fixtures.js";
 
@@ -73,17 +74,17 @@ const isServed = (patchId: string, versionNumber?: number) =>
   );
 
 it.layer(Patches.layer.pipe(Layer.provideMerge(Fixtures.database)))("Patches", (it) => {
-  it.effect("refuses the update targets a caller cannot write, all the same way", () =>
+  it.effect("allows only owner writes and refuses unavailable update targets uniformly", () =>
     Effect.gen(function* () {
       const service = yield* patches;
       const owned = yield* create();
       const foreign = yield* create(admin);
       const disabled = yield* create();
-      yield* service.disable(disabled, uploader.accountId, "off", {
-        canModerateAnyPrincipal: false
-      });
+      // Operators can still take a patch out of service directly in SQL.
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE patches SET disabled_at = now(), disabled_reason = 'off' WHERE id = ${disabled}`;
       const deleted = yield* create();
-      yield* service.delete(deleted, uploader.accountId, { canModerateAnyPrincipal: false });
+      yield* service.delete(deleted, uploader.accountId);
 
       const versioned = yield* update(owned);
       assert.strictEqual(versioned.versionNumber, 2);
@@ -105,6 +106,12 @@ it.layer(Patches.layer.pipe(Layer.provideMerge(Fixtures.database)))("Patches", (
           .pipe(Effect.flip))._tag,
         "PatchConflict"
       );
+      assert.isFalse(yield* service.delete(foreign, uploader.accountId));
+      assert.isTrue(yield* isServed(foreign));
+      assert.isTrue(yield* service.delete(owned, sibling.accountId));
+      assert.isFalse(yield* isServed(owned));
+      assert.isFalse(yield* isServed(owned, 1));
+      assert.isFalse(yield* service.delete(owned, uploader.accountId));
     })
   );
 
@@ -131,10 +138,9 @@ it.layer(Patches.layer.pipe(Layer.provideMerge(Fixtures.database)))("Patches", (
         yield* update(kept, sibling);
         assert.strictEqual(yield* service.countLive(uploader.apiTokenId), before + 3);
         assert.strictEqual(yield* service.countLive(sibling.apiTokenId), 0);
-        yield* service.disable(disabled, uploader.accountId, "off", {
-          canModerateAnyPrincipal: false
-        });
-        yield* service.delete(deleted, uploader.accountId, { canModerateAnyPrincipal: false });
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`UPDATE patches SET disabled_at = now(), disabled_reason = 'off' WHERE id = ${disabled}`;
+        yield* service.delete(deleted, uploader.accountId);
         assert.strictEqual(yield* service.countLive(uploader.apiTokenId), before + 1);
       })
   );
@@ -195,36 +201,6 @@ it.layer(Patches.layer.pipe(Layer.provideMerge(Fixtures.database)))("Patches", (
   );
 
   it.effect(
-    "holds a pinned patch out of expiry, pins only one in service, and ends the pin on takedown",
-    () =>
-      Effect.gen(function* () {
-        const service = yield* patches;
-        yield* TestClock.setTime(Date.UTC(2028, 0, 1));
-        const pinned = yield* create();
-        assert.isTrue(yield* service.setPinned(pinned, true));
-        yield* TestClock.adjust(400 * DAY);
-        yield* drain;
-        assert.isTrue(yield* isServed(pinned));
-        assert.deepStrictEqual(yield* service.listExpired(10), []);
-        // Unpinning hands it back to the clock, which has long run out.
-        assert.isTrue(yield* service.setPinned(pinned, false));
-        assert.isFalse(yield* isServed(pinned));
-        assert.deepStrictEqual(yield* service.listExpired(10), [pinned]);
-        yield* drain;
-
-        const taken = yield* create();
-        yield* service.setPinned(taken, true);
-        yield* service.disable(taken, uploader.accountId, "off", {
-          canModerateAnyPrincipal: false
-        });
-        assert.isNull(Option.getOrThrow(yield* service.findForModeration(taken)).pinnedAt);
-        assert.isFalse(yield* service.setPinned(taken, true));
-        assert.isTrue(yield* service.setPinned(taken, false));
-        assert.isFalse(yield* service.setPinned("nope", true));
-      })
-  );
-
-  it.effect(
     "hard-deletes an expired patch with its versions, longest-expired first, and never a live one",
     () =>
       Effect.gen(function* () {
@@ -249,45 +225,8 @@ it.layer(Patches.layer.pipe(Layer.provideMerge(Fixtures.database)))("Patches", (
         );
         assert.isTrue(Option.isNone(yield* service.deleteExpired(older)));
         assert.isTrue(Option.isNone(yield* service.deleteExpired(live)));
-        assert.isTrue(Option.isNone(yield* service.findForModeration(older)));
-        assert.isTrue(Option.isSome(yield* service.findForModeration(newer)));
-      })
-  );
-
-  it.effect(
-    "answers moderation reads for patches that are off, and lists a principal's without the deleted",
-    () =>
-      Effect.gen(function* () {
-        const service = yield* patches;
-        const first = yield* create(admin, "First");
-        const second = yield* create(admin, "Second");
-        const deleted = yield* create(admin, "Deleted");
-        yield* update(second, sibling).pipe(Effect.ignore);
-        yield* service.disable(first, admin.accountId, "policy", { canModerateAnyPrincipal: true });
-        yield* service.delete(deleted, admin.accountId, { canModerateAnyPrincipal: false });
-
-        const moderated = Option.getOrThrow(yield* service.findForModeration(first));
-        assert.strictEqual(moderated.createdByApiTokenId, admin.apiTokenId);
-        assert.strictEqual(moderated.disabledReason, "policy");
-        assert.isTrue(Option.isSome(yield* service.findForModeration(deleted)));
-        assert.isTrue(Option.isNone(yield* service.find(first)));
-
-        const listing = yield* service.listByPrincipal(admin.accountId, 1);
-        assert.strictEqual(listing.truncated, true);
-        assert.deepStrictEqual(
-          listing.patches.map((patch) => patch.id),
-          [second]
-        );
-        const whole = yield* service.listByPrincipal(admin.accountId, 10);
-        assert.isFalse(whole.patches.some((patch) => patch.id === deleted));
-
-        // Only an admin reaches another principal's patch.
-        assert.isFalse(
-          yield* service.delete(second, uploader.accountId, { canModerateAnyPrincipal: false })
-        );
-        assert.isTrue(
-          yield* service.delete(second, uploader.accountId, { canModerateAnyPrincipal: true })
-        );
+        assert.deepStrictEqual(yield* service.listExpired(10), [newer]);
+        assert.isTrue(yield* isServed(live));
       })
   );
 });

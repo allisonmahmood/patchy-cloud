@@ -44,24 +44,23 @@ describe("classify", () => {
       status: 400
     });
     for (const [method, target] of [
-      ["POST", `/api/patches/${long}/disable`],
-      ["POST", `/api/patches/${"x".repeat(60)}%2F${"x".repeat(60)}/pin`],
-      ["POST", `/api/patches/${long}/unpin`],
-      ["GET", `/api/patches/${long}`],
+      ["DELETE", `/api/patches/${"x".repeat(60)}%2F${"x".repeat(60)}`],
       ["DELETE", `/api/patches/${long}`]
     ] as const) {
       assert.deepStrictEqual(classify(method, target), { kind: "refused", status: 414 }, target);
     }
     for (const [method, target] of [
       ["POST", `/api/patches/${long}`],
-      ["DELETE", `/api/patches/${long}/disable`],
-      ["PUT", `/api/patches/${long}/disable`]
+      ["GET", `/api/patches/${long}`],
+      ["PUT", `/api/patches/${long}`]
     ] as const) {
       assert.deepStrictEqual(classify(method, target), { kind: "refused", status: 404 }, target);
     }
     // A parameter the routes take is the router's to answer, as is anything
     // long outside the patch routes: the catch-all 404s it once it has a token.
-    assert.deepStrictEqual(classify("GET", `/api/patches/${"x".repeat(100)}`), { kind: "route" });
+    assert.deepStrictEqual(classify("DELETE", `/api/patches/${"x".repeat(100)}`), {
+      kind: "route"
+    });
     assert.deepStrictEqual(classify("POST", `/api/unmatched/${long}`), { kind: "route" });
   });
 });
@@ -98,11 +97,11 @@ it.layer(server({ PATCHY_PROTECTED_API_RATE_LIMIT_PER_MINUTE: "3" }))(
           status: 400,
           body: { ok: false, error: "Malformed request target." }
         });
-        assert.deepStrictEqual(yield* answer(yield* as("post", `/api/patches/${long}/disable`)), {
+        assert.deepStrictEqual(yield* answer(yield* as("delete", `/api/patches/${long}`)), {
           status: 414,
           body: { ok: false, error: "Request target is too long." }
         });
-        assert.deepStrictEqual(yield* answer(yield* as("delete", `/api/patches/${long}/disable`)), {
+        assert.deepStrictEqual(yield* answer(yield* as("post", `/api/patches/${long}`)), {
           status: 404,
           body: NOT_FOUND
         });
@@ -167,7 +166,7 @@ it.layer(
     PATCHY_AUTHENTICATED_UPLOAD_RATE_LIMIT_PER_MINUTE: "2",
     PATCHY_MAX_HTML_BYTES: String(512 * 1024)
   })
-)("the upload route: scope, then the per-token limit, then the body", (it) => {
+)("the upload route: the per-token limit before the body", (it) => {
   it.effect("spends the token's upload attempts before the body is read", () =>
     Effect.gen(function* () {
       assert.deepStrictEqual(yield* answer(yield* upload(DEV_TOKEN, {})), {
@@ -187,7 +186,7 @@ it.layer(
   it.effect("routes the spellings the router normalises, and answers the ones it cannot", () =>
     Effect.gen(function* () {
       yield* TestClock.adjust("61 seconds");
-      // A trailing or doubled slash is the real route: scope and limit apply,
+      // A trailing or doubled slash is the real route: the limit applies,
       // and the body decides the answer.
       for (const target of ["/api/uploads/", "/api//uploads"]) {
         assert.deepStrictEqual(
@@ -214,44 +213,6 @@ it.layer(
           )
         ),
         { status: 404, body: NOT_FOUND }
-      );
-    })
-  );
-
-  it.effect("answers a malformed or absent body on every payload route in the wire's words", () =>
-    Effect.gen(function* () {
-      yield* TestClock.adjust("61 seconds");
-      const malformed = (target: string) =>
-        send(
-          HttpClientRequest.post(target).pipe(
-            HttpClientRequest.bearerToken(DEV_TOKEN),
-            HttpClientRequest.setHeader("content-type", "application/json"),
-            HttpClientRequest.bodyText("{oops")
-          )
-        );
-      for (const target of ["/api/tokens", "/api/patches/abcdefghijkl/disable"]) {
-        assert.deepStrictEqual(
-          yield* answer(yield* malformed(target)),
-          { status: 400, body: { ok: false, error: "Malformed request body." } },
-          target
-        );
-      }
-      // No body at all is `{}`: a token with the defaults, a disable with no reason.
-      const issued = yield* send(
-        HttpClientRequest.post("/api/tokens").pipe(HttpClientRequest.bearerToken(DEV_TOKEN))
-      );
-      assert.strictEqual(issued.status, 201);
-      const created = yield* upload(DEV_TOKEN, { html: html("To disable") });
-      const { patchId } = (yield* created.json) as { patchId: string };
-      assert.deepStrictEqual(
-        yield* answer(
-          yield* send(
-            HttpClientRequest.post(`/api/patches/${patchId}/disable`).pipe(
-              HttpClientRequest.bearerToken(DEV_TOKEN)
-            )
-          )
-        ),
-        { status: 200, body: { ok: true } }
       );
     })
   );

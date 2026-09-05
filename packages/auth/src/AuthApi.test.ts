@@ -8,7 +8,7 @@ import * as HttpServer from "effect/unstable/http/HttpServer";
 import * as HttpApiMiddleware from "effect/unstable/httpapi/HttpApiMiddleware";
 import * as HttpApiTest from "effect/unstable/httpapi/HttpApiTest";
 import { Analytics } from "@patchy/analytics";
-import { Authorization as AuthorizationTag, CreateTokenRequest, PatchyApi } from "@patchy/api";
+import { Authorization as AuthorizationTag, PatchyApi } from "@patchy/api";
 import { Limits } from "@patchy/limits";
 import * as Testing from "@patchy/sql/testing";
 import * as AuthApi from "./AuthApi.js";
@@ -74,63 +74,7 @@ it.layer(layer({}))("auth group: tokens and me", (it) => {
     }).pipe(Effect.provide(bearer("nope")))
   );
 
-  it.effect("issues, scopes, and revokes tokens for an admin, and for nobody else", () =>
-    Effect.gen(function* () {
-      const admin = yield* client.pipe(Effect.provide(bearer("dev-token")));
-      const issued = yield* admin.createToken({
-        payload: new CreateTokenRequest({ name: "  Uploader  ", scopes: ["upload"] })
-      });
-      assert.strictEqual(issued.apiToken.name, "Uploader");
-      assert.match(issued.token, /^pp_[A-Za-z0-9_-]{43}$/);
-      const defaults = yield* admin.createToken({ payload: new CreateTokenRequest({}) });
-      assert.strictEqual(defaults.apiToken.name, "CLI API Token");
-
-      const asUploader = yield* client.pipe(Effect.provide(bearer(issued.token)));
-      assert.deepStrictEqual((yield* asUploader.me()).scopes, ["upload"]);
-      const forbidden = yield* asUploader
-        .createToken({ payload: new CreateTokenRequest({}) })
-        .pipe(Effect.flip);
-      assert.deepStrictEqual(forbidden, {
-        ok: false,
-        error: "API token does not have the required scope."
-      });
-      assert.deepStrictEqual(
-        yield* asUploader
-          .revokeToken({ params: { apiTokenId: issued.apiToken.id } })
-          .pipe(Effect.flip),
-        { ok: false, error: "API token does not have the required scope." }
-      );
-
-      const revoked = yield* admin.revokeToken({ params: { apiTokenId: issued.apiToken.id } });
-      assert.deepStrictEqual(
-        { ...revoked, apiToken: { ...revoked.apiToken, revokedAt: "stamped" } },
-        {
-          ok: true,
-          alreadyRevoked: false,
-          apiToken: {
-            id: issued.apiToken.id,
-            name: "Uploader",
-            principalId: Tokens.BOOTSTRAP_PRINCIPAL_ID,
-            revokedAt: "stamped"
-          }
-        }
-      );
-      const again = yield* admin.revokeToken({ params: { apiTokenId: issued.apiToken.id } });
-      assert.strictEqual(again.alreadyRevoked, true);
-      assert.strictEqual(again.apiToken.revokedAt, revoked.apiToken.revokedAt);
-      // Indistinguishable from a bad token from then on.
-      assert.deepStrictEqual(yield* asUploader.me().pipe(Effect.flip), {
-        ok: false,
-        error: "Missing or invalid API token."
-      });
-      assert.deepStrictEqual(
-        yield* admin.revokeToken({ params: { apiTokenId: "tok_never" } }).pipe(Effect.flip),
-        { ok: false, error: "API token not found." }
-      );
-    })
-  );
-
-  it.effect("refuses to mint while the instance keeps its admin-only posture", () =>
+  it.effect("refuses to mint while self-service is disabled", () =>
     Effect.gen(function* () {
       const refused = yield* (yield* client).mint().pipe(Effect.flip);
       assert.deepStrictEqual(refused, {

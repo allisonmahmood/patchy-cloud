@@ -5,7 +5,7 @@ The service every business moment the instance reports goes through. `packages/a
 ## Language
 
 **Analytics event**:
-One business moment the instance reports to itself: a token minted, a patch created, updated, disabled, deleted, or expired. Server-side and nothing else — a served patch carries no analytics JavaScript, so a **visit is never one**, and no event carries a reader's address, page content, a filename, or a URL; what ships is ids, sizes, counts and states. Reporting never fails a request: `track` swallows a backend failure into a log line. An instance with no key configured reports nothing, and that is the default: reporting is something an operator switches on, never something an instance starts doing on its own.
+One business moment the instance reports to itself: a token minted, a patch created, updated, deleted, or expired. Server-side and nothing else — a served patch carries no analytics JavaScript, so a **visit is never one**, and no event carries a reader's address, page content, a filename, or a URL; what ships is ids, sizes, counts and states. Reporting never fails a request: `track` swallows a backend failure into a log line. An instance with no key configured reports nothing, and that is the default: reporting is something an operator switches on, never something an instance starts doing on its own.
 _Avoid_: telemetry, tracking, pageview, metric (an analytics event names what happened in the domain, not what the process measured)
 
 **Principal of an event**:

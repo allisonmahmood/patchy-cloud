@@ -4,7 +4,7 @@ Patchy Cloud is one deployment: the hosting server on one side, the `patchy` CLI
 
 ## Contexts
 
-- [Patches](./packages/patches/CONTEXT.md) — `packages/patches`. The unit: patch, version, patch repo, declared tier, publish, owner, sharing scope and address, retire and delete, the primitives a patch declares. Today also the upload contract, the retention clock and its sweep, pins, moderation, the patch quota, and the `patches` API group
+- [Patches](./packages/patches/CONTEXT.md) — `packages/patches`. The unit: patch, version, patch repo, declared tier, publish, owner, sharing scope and address, retire and delete, the primitives a patch declares. Today also the upload contract, the retention clock and its sweep, the patch quota, and the `patches` API group
 - [Serving](./packages/serving/CONTEXT.md) — `packages/serving`. A patch reaching its viewer, at every tier: the page, the doors in front of it (login, connect), the serving guarantees, the visit, the trusted-proxy schema, and the identity patch code acts as from tier 1 up. Today it serves tier 0; the tier 1 and tier 2 runtimes build on it
 - [Companies](./packages/companies/CONTEXT.md) — no code yet. The tenant and who is in it: company and handle, user, member and admin, group, invite, verified domain, SSO, deactivation, suspension, and the operator
 - [Auth](./packages/auth/CONTEXT.md) — `packages/auth`. Who a caller is: the browser session, device login, the machine token and _Your machines_, the principal behind a credential, bearer parsing. Today also self-service minting and its quota, which retire with login, and the `auth` API group
