@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Device codes require cryptographic randomness; Effect Random is not a CSPRNG.
-import { createHmac, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
+import { randomInt } from "node:crypto";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -77,23 +77,12 @@ const LoginRow = Schema.Struct({
 });
 
 export const PendingLogin = Schema.Struct({
-  state: Schema.Literal("pending"),
   userCode: Schema.String,
   machineNameHint: Schema.String,
   oldMachineName: Schema.NullOr(Schema.String),
   expiresAt: Schema.String
 });
 export type PendingLogin = typeof PendingLogin.Type;
-
-const AnswerReceipt = Schema.Struct({
-  userCode: Schema.String,
-  userId: Schema.String,
-  state: Schema.Literals(["confirmed", "denied"]),
-  expiresAt: Schema.Int,
-  signature: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/))
-});
-const decodeReceipt = Schema.decodeUnknownOption(Schema.fromJsonString(AnswerReceipt));
-const encodeReceipt = Schema.encodeSync(Schema.fromJsonString(AnswerReceipt));
 
 const PollError = Schema.Union([DeviceLoginExpired, DeviceLoginDenied, DeviceLoginUnknown]);
 type PollError = typeof PollError.Type;
@@ -125,27 +114,20 @@ export class DeviceLogins extends Context.Service<
     >;
     readonly lookup: (
       userCode: string,
-      userId: string,
-      receipt?: string
-    ) => Effect.Effect<
-      PendingLogin | { readonly state: "confirmed" | "denied"; readonly userCode: string },
-      AnswerError | DeviceLoginLookupLimited | SqlError
-    >;
+      userId: string
+    ) => Effect.Effect<PendingLogin, AnswerError | DeviceLoginLookupLimited | SqlError>;
     readonly confirm: (input: {
       readonly userCode: string;
       readonly userId: string;
       readonly machineName: string;
     }) => Effect.Effect<
-      { readonly receipt: string },
+      void,
       AnswerError | DeviceLoginLookupLimited | MachineTokens.InvalidMachineName | SqlError
     >;
     readonly deny: (
       userCode: string,
       userId: string
-    ) => Effect.Effect<
-      { readonly receipt: string },
-      AnswerError | DeviceLoginLookupLimited | SqlError
-    >;
+    ) => Effect.Effect<void, AnswerError | DeviceLoginLookupLimited | SqlError>;
     readonly poll: (deviceCode: string) => Effect.Effect<PollResult, SqlError | PollError>;
   }
 >()("@patchy/auth/DeviceLogins") {}
@@ -155,23 +137,6 @@ export const make = Effect.gen(function* () {
   const tokens = yield* MachineTokens.MachineTokens;
   const limits = yield* Limits.Limits;
   const analytics = yield* Analytics.Analytics;
-  // Informational browser receipts survive row consumption, not service restarts.
-  // They never authorize a confirmation, denial, or token mint.
-  const receiptSecret = randomBytes(32);
-  const signReceipt = (receipt: Omit<typeof AnswerReceipt.Type, "signature">) =>
-    createHmac("sha256", receiptSecret)
-      .update(JSON.stringify([receipt.userCode, receipt.userId, receipt.state, receipt.expiresAt]))
-      .digest();
-  const issueReceipt = (
-    row: typeof LoginRow.Type,
-    userId: string,
-    state: "confirmed" | "denied"
-  ) => {
-    const receipt = { userCode: row.userCode, userId, state, expiresAt: row.expiresAt.getTime() };
-    return {
-      receipt: encodeReceipt({ ...receipt, signature: signReceipt(receipt).toString("hex") })
-    };
-  };
   const columns = sql`user_code AS "userCode", state, machine_name_hint AS "machineNameHint",
     old_token_id AS "oldTokenId", user_id AS "userId", machine_name AS "machineName",
     expires_at AS "expiresAt"`;
@@ -195,17 +160,13 @@ export const make = Effect.gen(function* () {
   });
 
   // Page visits leave expired rows for the terminal to consume as expired.
-  const readLogin = Effect.fn("DeviceLogins.readLogin")(function* (userCode: string) {
+  const readPending = Effect.fn("DeviceLogins.readPending")(function* (userCode: string) {
     const found = yield* byUserCode(userCode).pipe(Effect.catchTags({ SchemaError: Effect.die }));
     if (Option.isNone(found)) return yield* new DeviceLoginUnknown({});
     const row = found.value;
     if (row.expiresAt.getTime() <= (yield* Clock.currentTimeMillis)) {
       return yield* new DeviceLoginExpired({});
     }
-    return row;
-  });
-  const readPending = Effect.fn("DeviceLogins.readPending")(function* (userCode: string) {
-    const row = yield* readLogin(userCode);
     if (row.state !== "pending") return yield* new DeviceLoginAnswered({});
     return row;
   });
@@ -255,38 +216,15 @@ export const make = Effect.gen(function* () {
     }
   });
 
-  const lookup = Effect.fn("DeviceLogins.lookup")(function* (
-    userCode: string,
-    userId: string,
-    receipt?: string
-  ) {
+  const lookup = Effect.fn("DeviceLogins.lookup")(function* (userCode: string, userId: string) {
     yield* consumeLookup(userId);
-    if (receipt !== undefined) {
-      const decoded = decodeReceipt(receipt);
-      if (Option.isSome(decoded)) {
-        const proof = decoded.value;
-        if (
-          proof.userCode === userCode &&
-          proof.userId === userId &&
-          proof.expiresAt > (yield* Clock.currentTimeMillis) &&
-          timingSafeEqual(Buffer.from(proof.signature, "hex"), signReceipt(proof))
-        ) {
-          return { state: proof.state, userCode };
-        }
-      }
-    }
     return yield* sql.withTransaction(
       Effect.gen(function* () {
-        const row = yield* readLogin(userCode);
-        if (row.state !== "pending") {
-          if (row.userId !== userId) return yield* new DeviceLoginAnswered({});
-          return { state: row.state, userCode: row.userCode };
-        }
+        const row = yield* readPending(userCode);
         const old = yield* oldMachine({ id: row.oldTokenId, userId }).pipe(
           Effect.catchTags({ SchemaError: Effect.die })
         );
         return {
-          state: "pending" as const,
           userCode: row.userCode,
           machineNameHint: row.machineNameHint,
           oldMachineName: Option.isSome(old) ? old.value.name : null,
@@ -302,30 +240,25 @@ export const make = Effect.gen(function* () {
     readonly machineName: string;
   }) {
     yield* consumeLookup(input.userId);
-    const row = yield* sql.withTransaction(
+    yield* sql.withTransaction(
       Effect.gen(function* () {
-        const row = yield* readPending(input.userCode);
+        yield* readPending(input.userCode);
         yield* MachineTokens.validateMachineName(input.machineName);
         yield* sql`
           UPDATE device_logins SET state = 'confirmed', user_id = ${input.userId},
             machine_name = ${input.machineName} WHERE user_code = ${input.userCode}`;
-        return row;
       })
     );
-    return issueReceipt(row, input.userId, "confirmed");
   });
 
   const deny = Effect.fn("DeviceLogins.deny")(function* (userCode: string, userId: string) {
     yield* consumeLookup(userId);
-    const row = yield* sql.withTransaction(
+    yield* sql.withTransaction(
       Effect.gen(function* () {
-        const row = yield* readPending(userCode);
-        yield* sql`UPDATE device_logins SET state = 'denied', user_id = ${userId}
-          WHERE user_code = ${userCode}`;
-        return row;
+        yield* readPending(userCode);
+        yield* sql`UPDATE device_logins SET state = 'denied' WHERE user_code = ${userCode}`;
       })
     );
-    return issueReceipt(row, userId, "denied");
   });
 
   const poll = Effect.fn("DeviceLogins.poll")(function* (deviceCode: string) {

@@ -62,7 +62,6 @@ it.layer(layer)("DeviceLogins", (it) => {
         ]
       );
       assert.deepStrictEqual(yield* logins.lookup(login.userCode, userId), {
-        state: "pending",
         userCode: login.userCode,
         machineNameHint: "hostname",
         oldMachineName: null,
@@ -242,7 +241,6 @@ it.layer(layer)("DeviceLogins", (it) => {
           []
         );
         assert.deepStrictEqual(yield* logins.lookup(fresh.userCode, DEV_SEED.userId), {
-          state: "pending",
           userCode: fresh.userCode,
           machineNameHint: "fresh",
           oldMachineName: null,
@@ -286,10 +284,10 @@ it.layer(layer)("DeviceLogins", (it) => {
         (yield* logins.deny(login.userCode, userId).pipe(Effect.flip))._tag,
         "DeviceLoginAnswered"
       );
-      assert.deepStrictEqual(yield* logins.lookup(login.userCode, userId), {
-        state: "confirmed",
-        userCode: login.userCode
-      });
+      assert.strictEqual(
+        (yield* logins.lookup(login.userCode, userId).pipe(Effect.flip))._tag,
+        "DeviceLoginAnswered"
+      );
       const result = yield* logins.poll(login.deviceCode);
       if (result.status !== "complete") assert.fail("Valid code-point boundary name should mint");
       else assert.strictEqual(result.machine.name, machineName);
@@ -332,8 +330,7 @@ it.layer(layer)("DeviceLogins", (it) => {
           previousMachineTokenId: old.id
         });
         const pending = yield* logins.lookup(login.userCode, userId);
-        assert.strictEqual(pending.state, "pending");
-        if (pending.state === "pending") assert.strictEqual(pending.oldMachineName, expectedName);
+        assert.strictEqual(pending.oldMachineName, expectedName);
         yield* logins.confirm({ userCode: login.userCode, userId, machineName: "Replacement" });
         assert.strictEqual((yield* tokens.authenticate(old.token))?.machine.id, old.id);
         const result = yield* logins.poll(login.deviceCode);
@@ -373,10 +370,8 @@ it.layer(layer)("DeviceLogins", (it) => {
         });
         const owned = yield* logins.lookup(login.userCode, userId);
         const foreign = yield* logins.lookup(login.userCode, DEV_SEED.userId);
-        assert.strictEqual(owned.state, "pending");
-        assert.strictEqual(foreign.state, "pending");
-        if (owned.state === "pending") assert.strictEqual(owned.oldMachineName, old.name);
-        if (foreign.state === "pending") assert.isNull(foreign.oldMachineName);
+        assert.strictEqual(owned.oldMachineName, old.name);
+        assert.isNull(foreign.oldMachineName);
         yield* logins.confirm({ userCode: login.userCode, userId, machineName: old.name });
         const result = yield* logins.poll(login.deviceCode);
         if (result.status !== "complete")
@@ -570,155 +565,6 @@ it.layer(layer)("DeviceLogins", (it) => {
     }).pipe(withDeviceLogins)
   );
 
-  it.effect(
-    "shows only the deciding user's real answer and preserves receipts after consumption",
-    () =>
-      Effect.gen(function* () {
-        yield* TestClock.setTime(NOW);
-        const logins = yield* DeviceLogins.DeviceLogins;
-        for (const state of ["confirmed", "denied"] as const) {
-          const userId = yield* addUser(`receipt_${state}`);
-          const login = yield* logins.start({ machineNameHint: state });
-          const { receipt } =
-            state === "confirmed"
-              ? yield* logins.confirm({ userCode: login.userCode, userId, machineName: "Receipt" })
-              : yield* logins.deny(login.userCode, userId);
-          assert.deepStrictEqual(yield* logins.lookup(login.userCode, userId), {
-            state,
-            userCode: login.userCode
-          });
-          assert.strictEqual(
-            (yield* logins.lookup(login.userCode, DEV_SEED.userId).pipe(Effect.flip))._tag,
-            "DeviceLoginAnswered"
-          );
-          assert.strictEqual(
-            (yield* logins
-              .confirm({
-                userCode: login.userCode,
-                userId,
-                machineName: "Repeat"
-              })
-              .pipe(Effect.flip))._tag,
-            "DeviceLoginAnswered"
-          );
-          assert.strictEqual(
-            (yield* logins.deny(login.userCode, userId).pipe(Effect.flip))._tag,
-            "DeviceLoginAnswered"
-          );
-          if (state === "confirmed") {
-            assert.strictEqual((yield* logins.poll(login.deviceCode)).status, "complete");
-          } else {
-            assert.strictEqual(
-              (yield* logins.poll(login.deviceCode).pipe(Effect.flip))._tag,
-              "DeviceLoginDenied"
-            );
-          }
-          assert.strictEqual(
-            (yield* logins.lookup(login.userCode, userId).pipe(Effect.flip))._tag,
-            "DeviceLoginUnknown"
-          );
-          assert.deepStrictEqual(yield* logins.lookup(login.userCode, userId, receipt), {
-            state,
-            userCode: login.userCode
-          });
-          assert.strictEqual(
-            (yield* logins
-              .confirm({
-                userCode: login.userCode,
-                userId,
-                machineName: "Consumed"
-              })
-              .pipe(Effect.flip))._tag,
-            "DeviceLoginUnknown"
-          );
-          assert.strictEqual(
-            (yield* logins.deny(login.userCode, userId).pipe(Effect.flip))._tag,
-            "DeviceLoginUnknown"
-          );
-          // The receipt carries the login's original deadline, not a new lifetime.
-          yield* TestClock.adjust(10 * MINUTE);
-          assert.strictEqual(
-            (yield* logins.lookup(login.userCode, userId, receipt).pipe(Effect.flip))._tag,
-            "DeviceLoginUnknown"
-          );
-        }
-      }).pipe(withDeviceLogins)
-  );
-
-  it.effect(
-    "rejects forged, tampered, cross-user and cross-code receipts without granting answers",
-    () =>
-      Effect.gen(function* () {
-        yield* TestClock.setTime(NOW);
-        const logins = yield* DeviceLogins.DeviceLogins;
-        const userId = yield* addUser("receipt_integrity");
-        const login = yield* logins.start({ machineNameHint: "integrity" });
-        const other = yield* logins.start({ machineNameHint: "unanswered" });
-        const { receipt } = yield* logins.deny(login.userCode, userId);
-        assert.strictEqual(
-          (yield* logins.poll(login.deviceCode).pipe(Effect.flip))._tag,
-          "DeviceLoginDenied"
-        );
-        for (const invalid of [
-          "not-json",
-          JSON.stringify({ state: "denied" }),
-          JSON.stringify({
-            userCode: login.userCode,
-            userId,
-            state: "denied",
-            expiresAt: NOW + 10 * MINUTE,
-            signature: "0".repeat(64)
-          }),
-          receipt.replace('"denied"', '"confirmed"'),
-          receipt.replace(userId, DEV_SEED.userId),
-          receipt.replace(login.userCode, other.userCode),
-          receipt.replace(`${NOW + 10 * MINUTE}`, `${NOW + 20 * MINUTE}`)
-        ]) {
-          assert.strictEqual(
-            (yield* logins.lookup(login.userCode, userId, invalid).pipe(Effect.flip))._tag,
-            "DeviceLoginUnknown"
-          );
-        }
-        assert.strictEqual(
-          (yield* logins.lookup(login.userCode, DEV_SEED.userId, receipt).pipe(Effect.flip))._tag,
-          "DeviceLoginUnknown"
-        );
-        assert.strictEqual(
-          (yield* logins
-            .lookup(login.userCode, DEV_SEED.userId, receipt.replace(userId, DEV_SEED.userId))
-            .pipe(Effect.flip))._tag,
-          "DeviceLoginUnknown"
-        );
-        // A wrong-code proof falls through to the actual pending row, not its claimed answer.
-        assert.deepStrictEqual(yield* logins.lookup(other.userCode, userId, receipt), {
-          state: "pending",
-          userCode: other.userCode,
-          machineNameHint: "unanswered",
-          oldMachineName: null,
-          expiresAt: other.expiresAt
-        });
-        assert.deepStrictEqual(yield* logins.lookup(login.userCode, userId, receipt), {
-          state: "denied",
-          userCode: login.userCode
-        });
-        yield* TestClock.adjust(MINUTE);
-        assert.deepStrictEqual(
-          yield* logins.lookup(
-            other.userCode,
-            userId,
-            receipt.replace(login.userCode, other.userCode)
-          ),
-          {
-            state: "pending",
-            userCode: other.userCode,
-            machineNameHint: "unanswered",
-            oldMachineName: null,
-            expiresAt: other.expiresAt
-          }
-        );
-      }).pipe(withDeviceLogins)
-  );
-
   it.effect("charges lookup, confirm and deny once each against the same per-user allowance", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(NOW);
@@ -758,22 +604,28 @@ it.layer(layer)("DeviceLogins", (it) => {
         );
       }
       yield* logins.confirm({ userCode: confirmed.userCode, userId, machineName: "Eighth" });
-      const { receipt } = yield* logins.deny(denied.userCode, userId);
-      assert.deepStrictEqual(yield* logins.lookup(denied.userCode, userId, receipt), {
-        state: "denied",
-        userCode: denied.userCode
-      });
+      yield* logins.deny(denied.userCode, userId);
+      assert.strictEqual(
+        (yield* logins.lookup(denied.userCode, userId).pipe(Effect.flip))._tag,
+        "DeviceLoginAnswered"
+      );
       for (const operation of [
-        logins.lookup(denied.userCode, userId, receipt),
+        logins.lookup(denied.userCode, userId),
         logins.confirm({ userCode: invalid.userCode, userId, machineName: "Blocked" }),
         logins.deny(invalid.userCode, userId)
       ]) {
         assert.strictEqual((yield* operation.pipe(Effect.flip))._tag, "DeviceLoginLookupLimited");
       }
       yield* TestClock.adjust(MINUTE);
-      assert.strictEqual((yield* logins.lookup(invalid.userCode, userId)).state, "pending");
+      assert.strictEqual(
+        (yield* logins.lookup(invalid.userCode, userId)).userCode,
+        invalid.userCode
+      );
       yield* logins.confirm({ userCode: invalid.userCode, userId, machineName: "After reset" });
-      assert.strictEqual((yield* logins.lookup(invalid.userCode, userId)).state, "confirmed");
+      assert.strictEqual(
+        (yield* logins.lookup(invalid.userCode, userId).pipe(Effect.flip))._tag,
+        "DeviceLoginAnswered"
+      );
     }).pipe(withDeviceLogins)
   );
 
