@@ -128,9 +128,10 @@ Without one, `/join` and `/login`'s sign-in link lead to `/company`.
 
 ### Reading a published patch
 
-Uploads are company-scoped, including the seeded admin's patches. The upload's
-`publicUrl` is a view URL, not a promise of anonymous access. A cookie-free
-`curl -i <publicUrl>` answers **401** with the same HTML door as `/login`, one
+New uploads default to company scope, including the seeded admin's patches;
+reuploads without `--share` preserve their scope. The response includes `scope`;
+`publicUrl` is a view URL, not a promise of anonymous access. For a company patch,
+a cookie-free `curl -i <publicUrl>` answers **401** with the same HTML door as `/login`, one
 **Sign in** link, `x-patchy-sign-in-url`, and `Cache-Control: private, no-store`;
 it has neither `Location` nor `WWW-Authenticate`. A machine token does not open
 the page. The latest and `/v/<n>` URL shapes follow the same access and cache rules.
@@ -142,10 +143,28 @@ another sign-in. A person without a company is sent to `/join?return=…` first;
 a deactivated user gets 403. A signed-in user of a different company and a
 missing patch get identical private, uncached 404 responses.
 
-To exercise the public path on this disposable instance, set that patch row's
-`scope` to `public` in `patches` by hand; sharing has no CLI command yet. Both
-URL shapes then answer **200** with `Cache-Control: public, max-age=60` and the
-unchanged script-free public CSP. Restore `scope = 'company'` afterward.
+Exercise sharing through the CLI, not by editing rows:
+
+```sh
+pnpm patchy upload examples/plan.html --share public --json
+# Fetch the returned publicUrl, and publicUrl/v/<versionNumber>, with cookie-free curl -i.
+pnpm patchy share examples/plan.html company --json
+# Fetch both URLs again: 401, Cache-Control: private, no-store.
+pnpm patchy share examples/plan.html public --json
+# Both URLs serve publicly again.
+pnpm patchy share --patch <patchId> company --json
+# The id form takes the same patch back inside without uploading another version.
+```
+
+The file form uses its cached patch; `--patch` selects an id instead, exactly one
+target. Only the owner may change sharing. Upload and share JSON report `scope`,
+and text output announces who can open the link. While public, both latest and
+version URLs answer **200** with `Cache-Control: public, max-age=60`, no
+`Set-Cookie`, and the unchanged script-free public CSP. After the company transition,
+both answer cookie-free requests with **401** and `Cache-Control: private, no-store`.
+A public copy may remain fresh in a cache for up to 60 seconds; downloaded copies
+cannot be recalled. Only public patches fetch directly by URL; use the user's
+signed-in browser for company pages.
 The company shell permits only the configured Clerk Frontend API host and
 Patchy's external session initializer; the uploaded document's sandbox is unchanged.
 
@@ -171,9 +190,10 @@ top. SQL's migrator tests alone use its empty-database layer.
 Session tests use `@patchy/auth/testing`: fake Clerk keys under `.invalid`, an
 RSA fixture and a loopback-only fetch guard. The packed CLI e2e starts its
 server with the same fake keys and PEM, never a real Clerk account. Its viewer
-checks expect every cookie-free published patch to answer 401 with
-`Cache-Control: private, no-store`; public viewer assertions return with the
-sharing work. The dev runner imports only the separate seed entry, so it never
+checks cover the default company's cookie-free 401 with `private, no-store`,
+an explicit `--share public` upload's 200 with `public, max-age=60`, no
+`Set-Cookie` and the locked CSP, and `share … company` returning it to the 401 door.
+The dev runner imports only the separate seed entry, so it never
 installs that guard. The production-domain Clerk handshake is a separate live
 verification, not part of these offline checks.
 

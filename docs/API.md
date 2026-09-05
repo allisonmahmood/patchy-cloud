@@ -35,7 +35,7 @@ Responses:
 
 ### `POST /api/uploads`
 
-Publish a document for the bearer token's user. With no `patchId` it creates a patch and answers 201; with one it adds a version to that user's patch and answers 200. The HTML is checked against the safe-HTML policy first, and a 422 lists what failed. A create also debits per-token create limit and counts against the user's live-patch quota; an update costs nothing against either.
+Publish a document for the bearer token's user. With no `patchId` it creates a patch and answers 201; with one it adds a version to that user's patch and answers 200. The HTML is checked against the safe-HTML policy first, and a 422 lists what failed. A create also debits per-token create limit and counts against the user's live-patch quota; an update costs nothing against either. Optional `scope` is `company` or `public`: omitted on a create it defaults to `company`; omitted on an update it stays unchanged. An explicit scope sets it either way.
 
 Request body: [UploadRequest](#uploadrequest)
 
@@ -50,6 +50,22 @@ Responses:
 - `409` { ok: false, error: string }
 - `413` { ok: false, error: string }
 - `422` { ok: false, errors: string[], warnings: string[] }
+- `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
+
+### `POST /api/patches/:patchId/share`
+
+Change the sharing scope of a patch owned by the bearer token's user, without publishing a version. `company` requires a company member's browser session; `public` lets anyone with the link open it. A patch the caller does not own answers 404. Both latest and version URLs follow the scope: public responses may be cached for 60 seconds; company responses are private and never stored. The JSON body is bounded by the upload body limit: 2 MiB by default, or three times `PATCHY_MAX_HTML_BYTES` when that is larger. An oversized declared body answers 413; streaming bodies are cut off at the cap. Rejected requests leave the scope unchanged.
+
+Request body: [ShareRequest](#sharerequest)
+
+Responses:
+
+- `200` [Shared](#shared)
+- `400` { ok: false, error: string }
+- `401` { ok: false, error: "Missing or invalid API token." }
+- `404` { ok: false, error: string }
+- `413` { ok: false, error: string }
+- `414` { ok: false, error: string }
 - `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
 
 ### `DELETE /api/patches/:patchId`
@@ -118,6 +134,7 @@ Responses:
   html: string,
   filename?: string | null,
   patchId?: string | null,
+  scope?: "company" | "public",
   metadata?: UploadMetadata
 }
 ```
@@ -132,6 +149,7 @@ Responses:
   versionNumber: integer,
   title: string,
   publicUrl: string,
+  scope: "company" | "public",
   warnings: string[]
 }
 ```
@@ -146,7 +164,27 @@ Responses:
   versionNumber: integer,
   title: string,
   publicUrl: string,
+  scope: "company" | "public",
   warnings: string[]
+}
+```
+
+### ShareRequest
+
+```
+{
+  scope: "company" | "public"
+}
+```
+
+### Shared
+
+```
+{
+  ok: true,
+  patchId: string,
+  scope: "company" | "public",
+  publicUrl: string
 }
 ```
 

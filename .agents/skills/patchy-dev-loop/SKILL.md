@@ -44,7 +44,7 @@ pnpm patchy upload examples/plan.html --json
 
 `pnpm patchy` runs the CLI from source; there is no build step. Run it from inside the worktree and it finds `.local/dev/env` on its own (it says `target came from .local/dev/env`). Passing `--api-url` switches that discovery off and the CLI then wants a stored token, so leave the flag out locally.
 
-The upload's `publicUrl` is the company page, not an anonymous public link. Uploading the same file again bumps the version of the same patch at the same URL; if the CLI answers `Cached patch is unavailable for update`, the patch it remembers is gone from this instance (a `reset` does that) and `--new` creates a fresh one.
+The upload's `scope` determines who can open `publicUrl`; the field name does not promise anonymous access. New patches default to company scope. Uploading the same file again bumps the version of the same patch at the same URL and preserves scope unless `--share company` or `--share public` is given; if the CLI answers `Cached patch is unavailable for update`, the patch it remembers is gone from this instance (a `reset` does that) and `--new` creates a fresh one.
 
 For `curl` against the API with the token, or for `DATABASE_URL`, export the env file: `set -a; . .local/dev/env; set +a`.
 
@@ -56,22 +56,39 @@ Fetch the page and read what the server actually sent:
 curl -i <publicUrl>
 ```
 
-With no cookies, a newly published patch must answer **401** with the HTML
+With no cookies, a company-scoped patch must answer **401** with the HTML
 **Sign in** door, `x-patchy-sign-in-url`, and `Cache-Control: private, no-store`,
 without `Location` or `WWW-Authenticate`. A machine token will not open it.
 Open it through the user's browser; bind the seeded admin to their Clerk user
 as above so they are in the patch's company. One sign-in returns to the patch;
 reload after 70 seconds to exercise the shell's session refresh.
 
-For sharing-path verification, use the disposable database to set that patch's
-`scope = 'public'` in `patches`: both latest and version URLs must answer 200
-with `Cache-Control: public, max-age=60` and the unchanged script-free CSP.
-Restore `scope = 'company'` afterward. A signed-in foreign-company reader and
-a missing patch must get the same private, uncached 404; unenrolled readers go
-to `/join` with the patch as `return`, and deactivated readers get 403.
-The packed CLI e2e checks the cookie-free 401 case; its public viewer assertions
-wait for the sharing command. Production-domain Clerk handshake verification
-remains a separate live check.
+Exercise both sharing transitions through the CLI:
+
+```sh
+pnpm patchy upload examples/plan.html --share public --json
+# Fetch publicUrl and publicUrl/v/<versionNumber> without cookies.
+pnpm patchy share examples/plan.html company --json
+# Fetch both again: 401, Cache-Control: private, no-store.
+pnpm patchy share examples/plan.html public --json
+# Fetch both again: 200, Cache-Control: public, max-age=60.
+pnpm patchy share --patch <patchId> company --json
+```
+
+Use the returned id for `<patchId>`; select either the cached file or the id,
+never both. Only the owner may change sharing. Upload and share report `scope`
+in JSON; text output names who can open the link. While public, both URL shapes
+must answer 200 with `Cache-Control: public, max-age=60`, no `Set-Cookie` and the
+unchanged script-free CSP. The company transition must restore cookie-free 401
+with `private, no-store` at both shapes. Public caches can keep their copy for
+up to 60 seconds; downloaded copies cannot be recalled. Only public patches fetch
+by URL; company pages are read through the user's signed-in browser.
+
+A signed-in foreign-company reader and a missing patch must get the same private,
+uncached 404; unenrolled readers go to `/join` with the patch as `return`, and
+deactivated readers get 403. The packed CLI e2e covers the default-company 401,
+the explicit public upload's viewer guarantees, and the return to company.
+Production-domain Clerk handshake verification remains a separate live check.
 
 The server logs nothing per request, so `pnpm dev logs` will not show a 401 or a 500; it answers "did it start, on which port". Filter it with `grep -E '\[(server|dev)\]'`, since most of the file is Postgres chatter, and expect one benign `relation "schema_migrations" does not exist` line on first run. Request-level evidence comes from the response itself.
 

@@ -10,6 +10,8 @@ import {
   PatchQuotaExceeded,
   PatchyApi,
   RateLimited,
+  Shared,
+  ShareRequest,
   Unauthorized,
   UploadCreated,
   UploadRequest
@@ -25,6 +27,7 @@ describe("wire schemas", () => {
       html: "<!doctype html><html></html>",
       filename: "plan.html",
       patchId: "abcdefghijkl",
+      scope: "public" as const,
       metadata: { repoOrg: "patchy", repoName: null, cliVersion: "0.0.1" }
     };
     expect(roundTrip(UploadRequest, full)).toEqual(full);
@@ -48,6 +51,7 @@ describe("wire schemas", () => {
       versionNumber: 2,
       title: "Plan",
       publicUrl: "https://pages.example.com/d/abcdefghijkl",
+      scope: "company" as const,
       warnings: ["Missing <title>."]
     };
     expect(roundTrip(UploadCreated, upload)).toEqual(upload);
@@ -82,6 +86,16 @@ describe("wire schemas", () => {
 
   it("round-trips every other wire shape", () => {
     const cases: ReadonlyArray<[Schema.Codec<unknown, unknown>, unknown]> = [
+      [ShareRequest, { scope: "public" }],
+      [
+        Shared,
+        {
+          ok: true,
+          patchId: "abcdefghijkl",
+          scope: "company",
+          publicUrl: "https://pages.example.com/d/abcdefghijkl"
+        }
+      ],
       [LoggedOut, { ok: true, alreadyRevoked: false }],
       [Ok, { ok: true }],
       [Unauthorized, { ok: false, error: "Missing or invalid API token." }]
@@ -93,7 +107,13 @@ describe("wire schemas", () => {
 describe("PatchyApi", () => {
   it("puts every route under /api with patch naming and no draft on the wire", () => {
     const paths = Object.keys(OpenApi.fromApi(PatchyApi).paths);
-    expect(paths).toEqual(["/api/me", "/api/logout", "/api/uploads", "/api/patches/{patchId}"]);
+    expect(paths).toEqual([
+      "/api/me",
+      "/api/logout",
+      "/api/uploads",
+      "/api/patches/{patchId}/share",
+      "/api/patches/{patchId}"
+    ]);
     expect(JSON.stringify(OpenApi.fromApi(PatchyApi))).not.toMatch(/draft/i);
   });
 });

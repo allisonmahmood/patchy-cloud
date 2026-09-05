@@ -1,6 +1,6 @@
 /**
  * The `patches` group of the Patchy API, implemented over `Content`,
- * `Patches`, `Limits` and `Analytics`: upload and owner-only delete. The
+ * `Patches`, `Limits` and `Analytics`: upload, owner-only sharing and delete. The
  * identity comes from the bearer middleware the group declares; this
  * package never authenticates anyone.
  * The hosting server mounts the group with the rest of the API.
@@ -26,6 +26,8 @@ import {
   rateLimited,
   readBody,
   refuse,
+  Shared,
+  ShareRequest,
   UploadCreated,
   UploadMetadata,
   UploadRequest,
@@ -40,6 +42,7 @@ import * as PatchesConfig from "./PatchesConfig.js";
 const notFound = () => refuse(NotFound, { ok: false, error: "Patch not found." });
 
 const decodeUpload = decodeBody(UploadRequest);
+const decodeShare = decodeBody(ShareRequest);
 
 /**
  * Which field failed decides the answer, as it always has: no usable document
@@ -173,6 +176,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
                 companyId: identity.company.id,
                 ownerUserId: identity.user.id,
                 machineTokenId: identity.machine.id,
+                scope: payload.scope,
                 title: validation.title || filename || "Untitled Patch",
                 html: payload.html,
                 filename,
@@ -207,6 +211,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
                 patchId: recorded.patchId,
                 machineTokenId: identity.machine.id,
                 versionNumber: recorded.versionNumber,
+                scope: recorded.scope,
                 htmlBytes: new TextEncoder().encode(payload.html).length
               }
             });
@@ -217,10 +222,45 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
               versionId: recorded.versionId,
               versionNumber: recorded.versionNumber,
               title: recorded.title,
+              scope: recorded.scope,
               publicUrl: publicUrl(recorded.patchId),
               warnings: validation.warnings
             };
             return patchId === null ? new UploadCreated(body) : new UploadUpdated(body);
+          })
+        )
+        .handleRaw("share", ({ params }) =>
+          Effect.gen(function* () {
+            const identity = yield* CurrentIdentity;
+            const payload = yield* readBody(maxUploadBodyBytes).pipe(
+              Effect.flatMap(decodeShare),
+              Effect.catchTags({
+                MalformedBody: () =>
+                  Effect.succeed(
+                    refuse(BadRequest, { ok: false, error: "Malformed request body." })
+                  ),
+                BodyTooLarge: () =>
+                  Effect.succeed(
+                    refuse(PayloadTooLarge, { ok: false, error: "Request body is too large." })
+                  )
+              })
+            );
+            if (HttpServerResponse.isHttpServerResponse(payload)) return payload;
+            const scope = yield* patches
+              .setScope(params.patchId, identity.user.id, payload.scope)
+              .pipe(
+                Effect.catchTags({
+                  PatchUnavailable: () => Effect.succeed(notFound()),
+                  SqlError: Effect.die
+                })
+              );
+            if (HttpServerResponse.isHttpServerResponse(scope)) return scope;
+            return new Shared({
+              ok: true,
+              patchId: params.patchId,
+              scope,
+              publicUrl: publicUrl(params.patchId)
+            });
           })
         )
         .handle("delete", ({ params }) =>

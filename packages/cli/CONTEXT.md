@@ -4,6 +4,10 @@ The `@patchy/cli` package and its bundled skill — the tool agents use to put p
 
 ## Language
 
+**Publishing**:
+The flow from a local file to a live patch and a link announced with its [sharing scope](../patches/CONTEXT.md): signed-in colleagues for `company`, anyone with the link for `public`. A new patch defaults to the company; publishing an update preserves its scope unless the owner explicitly changes it.
+_Avoid_: deployment, posting
+
 **Instance**:
 The Patchy Cloud server patches are published to, identified by its API URL: the deployment, or the `pnpm dev` instance of a checkout. The CLI bakes in no address for the deployment; the URL is always supplied by whoever is publishing — a flag, the dev env, the environment, or saved config, in that order — and the built-in fallback is only a server running locally from this repo. A token and a cached patch each belong to exactly one instance. Resolved once per command by the `Instance` service, which also remembers its **source**.
 _Avoid_: the server (ambiguous with the hosting codebase), host, backend, your own instance (there is one deployment; the rest are dev instances)
@@ -49,7 +53,7 @@ The user-facing name for the machine token: the credential saved on this machine
 _Avoid_: token (in user-facing copy), password, account
 
 **Patch cache**:
-The per-instance record linking a local file to the patch it produced, so republishing the same file updates that patch instead of creating a new one, and deleting by file finds the patch to take down. A deleted patch is forgotten.
+The per-instance record linking a local file to the patch it produced, so republishing the same file updates that patch instead of creating a new one, and sharing or deleting by file finds that patch. A deleted patch is forgotten.
 _Avoid_: draft cache
 _Avoid_: upload history, manifest
 

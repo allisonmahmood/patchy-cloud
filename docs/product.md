@@ -26,7 +26,7 @@ Ownership: a patch belongs to a **user** in a company. The user holds a machine 
 
 ### Sharing and finding
 
-A published patch is visible to **everyone in the company** by default. Its owner can tighten that (to the owner plus named users, or to one group) or widen it to anyone with the link. No patch is public without a login unless someone chose that; who may open, and who may change, a patch is spelled out under [Identity and access](#access-to-a-patch).
+A published patch is shared with **everyone in the company** by default, or made **public** on purpose: anyone with the link, without a login. Today its owner chooses either scope with `patchy upload <file> --share company|public` or changes an existing patch with `patchy share <file> company|public` (or `patchy share --patch <id> company|public`); an upload without `--share` preserves an existing patch's scope. Only the owner changes sharing. Narrower scopes — the owner plus named users, or one group — remain future work; who may open, and who may change, a patch is spelled out under [Identity and access](#access-to-a-patch).
 
 Finding a patch is a portal of everything you have access to. A patch's identity is its **id**, so two sales dashboards made by two salespeople never collide; its human-readable address follows its sharing scope (see [Addresses](#addresses)).
 
@@ -150,7 +150,7 @@ Who may **open** a patch is its sharing scope: the owner plus named users, one g
 
 Across the company line there is nothing but **public**: a patch is inside the company or it is anyone-with-the-link. Guests — a named outsider with a login — are not a thing Patchy does yet.
 
-Today every published patch is company-scoped; changing sharing from the CLI arrives with the sharing work. A public patch opens without a session, but a company patch has three outcomes: an active colleague gets the page; a signed-out reader gets the login door with one **Sign in** link, then returns to the patch; a signed-in reader from another company gets the same "no such patch" as a missing link, confirming nothing. A signed-in person without a company goes through create-or-join with the patch as the return destination; a deactivated user sees the deactivated page instead of a sign-in loop. When owner-only sharing returns, a colleague outside that narrower scope will see "you don't have access to this patch", who owns it, and **request access**; that state is not offered today.
+Today a published patch is either company-scoped or explicitly public. A public patch opens without a session, but a company patch has three outcomes: an active colleague gets the page; a signed-out reader gets the login door with one **Sign in** link, then returns to the patch; a signed-in reader from another company gets the same "no such patch" as a missing link, confirming nothing. A signed-in person without a company goes through create-or-join with the patch as the return destination; a deactivated user sees the deactivated page instead of a sign-in loop. When owner-only sharing returns, a colleague outside that narrower scope will see "you don't have access to this patch", who owns it, and **request access**; that state is not offered today.
 
 ### Machines and tokens
 
