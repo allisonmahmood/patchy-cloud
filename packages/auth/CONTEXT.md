@@ -1,6 +1,6 @@
 # Auth
 
-Who a caller is. Auth owns machine tokens, revocation and bearer parsing, and the `auth` routes `/api/me` and `/api/logout`; browser sessions and device login arrive next. Auth depends on [Companies](../companies/CONTEXT.md) for the users and companies behind credentials; [Patches](../patches/CONTEXT.md) receives the identity from bearer middleware without importing Auth.
+Who a caller is. Auth owns browser sessions, viewers, machine tokens, revocation and bearer parsing, the sign-in and sign-out pages, and the `auth` API routes; device login arrives next. Auth depends on [Companies](../companies/CONTEXT.md) for the users and companies behind credentials; [Patches](../patches/CONTEXT.md) receives the identity from bearer middleware without importing Auth.
 
 ## Language
 
@@ -21,8 +21,12 @@ How the hosting server reads `Authorization`: the scheme is case-insensitive, on
 _Avoid_: header validation
 
 **Session**:
-What signing in produces: one login, good across every Patchy Cloud page and patch, held by Clerk on the browser. A link opened without one shows the login door and lands back on the patch. Deactivation ends every session of the user at once, including patches they have open.
+The browser's sign-in held by Clerk, verified locally by Patchy and refreshed while a person reads a first-party page. A session can exist before a company is chosen or after deactivation; sign-out is available in both states, while deactivation refuses access on the next page load.
 _Avoid_: token (a machine's credential, not a browser's), cookie (how, not what)
+
+**Viewer**:
+The signed-in user, their company and role on a first-party page, without a machine credential. A viewer exists only after create-or-join and while the user is active; their email and name follow their current sign-in.
+_Avoid_: bearer, machine, principal
 
 **Device login**:
 How a machine comes to act as a user: `patchy login` prints a URL and a short code, the person opens the URL in a browser already signed in, confirms the code on screen is the one on their terminal, names the machine on a first login, and the CLI receives a machine token. The confirmation is what defeats a relayed code. The only login route for now.

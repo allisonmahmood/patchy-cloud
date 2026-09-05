@@ -14,6 +14,7 @@ import * as Layer from "effect/Layer";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import { clerkEnv } from "@patchy/auth/testing";
 import * as Testing from "@patchy/sql/testing";
 import * as Server from "../Server.js";
 
@@ -24,6 +25,7 @@ export const server = (env: Record<string, string | undefined> = {}) =>
     Layer.provide(
       ConfigProvider.layer(
         ConfigProvider.fromUnknown({
+          ...clerkEnv(),
           PATCHY_STORAGE_DIR: mkdtempSync(path.join(os.tmpdir(), "patchy-server-")),
           PATCHY_PUBLIC_BASE_URL: "https://patchy.example",
           ...env
