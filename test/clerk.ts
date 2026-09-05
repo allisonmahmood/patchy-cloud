@@ -1,4 +1,5 @@
 import type { TestProject } from "vitest/node";
+import * as Effect from "effect/Effect";
 import { liveSettings, sweep, type LiveSettings } from "../packages/auth/live/fixtures.js";
 
 declare module "vitest" {
@@ -12,7 +13,7 @@ export default function setup(project: TestProject) {
   project.provide("clerk", settings);
   console.log(`Clerk live run: ${settings.runId}`);
   return async () => {
-    await sweep(settings);
+    await Effect.runPromise(sweep(settings));
     console.log(`Clerk sweep ${settings.runId}: zero users remain.`);
   };
 }

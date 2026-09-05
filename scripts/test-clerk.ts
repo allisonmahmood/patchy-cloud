@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import { developerEnvFile, readDeveloperEnv } from "./dev/src/developerEnv.js";
 import { liveSettings, sweep } from "../packages/auth/live/fixtures.js";
@@ -26,7 +27,9 @@ const cleanup = process.argv[2] === "--cleanup";
 if (!cleanup) process.env.CLERK_TEST_RUN_ID ??= randomUUID();
 const settings = liveSettings(process.env);
 if (cleanup) {
-  await sweep(settings);
+  await Effect.runPromise(
+    sweep(settings).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv())))
+  );
   console.log(`Clerk sweep ${settings.runId}: zero users remain.`);
 } else {
   const result = spawnSync(
