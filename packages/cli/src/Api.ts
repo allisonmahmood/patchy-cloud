@@ -4,29 +4,18 @@
  * turned into a `CliError` whose kind says who has to act.
  */
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import type * as Redacted from "effect/Redacted";
 import type { SchemaError } from "effect/Schema";
 import type * as HttpClientError from "effect/unstable/http/HttpClientError";
-import * as HttpApiMiddleware from "effect/unstable/httpapi/HttpApiMiddleware";
-import { Authorization, authorizationClient, makeClient } from "@patchy/api";
+import { authorizationClient, makeClient } from "@patchy/api";
 import { LocalError, RejectedError, UnreachableError } from "./CliError.js";
 import * as Instance from "./Instance.js";
 
-/** The routes that admit a request with no credential: only the self-service mint. */
-const anonymousClient = HttpApiMiddleware.layerClient(Authorization, ({ next, request }) =>
-  next(request)
-);
-
 /** A client for the resolved instance; the token rides on every protected route. */
-export const client = (token: Option.Option<Redacted.Redacted>) =>
+export const client = (token: Redacted.Redacted) =>
   Effect.gen(function* () {
     const instance = yield* Instance.Instance;
-    return yield* makeClient(instance.apiUrl).pipe(
-      Effect.provide(
-        Option.match(token, { onNone: () => anonymousClient, onSome: authorizationClient })
-      )
-    );
+    return yield* makeClient(instance.apiUrl).pipe(Effect.provide(authorizationClient(token)));
   });
 
 /** What any refusal on the wire looks like: `{ ok: false, error }`, or the 422's `errors`. */
@@ -34,8 +23,6 @@ export interface Refusal {
   readonly ok: false;
   readonly error?: string;
   readonly errors?: ReadonlyArray<string>;
-  readonly code?: string;
-  readonly retryAfterSeconds?: number;
 }
 
 export type ClientFailure = Refusal | HttpClientError.HttpClientError | SchemaError;

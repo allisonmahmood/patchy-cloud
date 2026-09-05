@@ -7,7 +7,8 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { answer, DEV_TOKEN, html, send, server, upload } from "./test/server.js";
+import { DEV_SEED } from "@patchy/auth/seed";
+import { answer, html, send, server, upload } from "./test/server.js";
 
 it.layer(
   server({ PATCHY_PUBLIC_BASE_URL: "https://patchy.example", PATCHY_TRUST_PROXY: "127.0.0.1" })
@@ -20,9 +21,21 @@ it.layer(
       assert.strictEqual(health.headers["x-content-type-options"], "nosniff");
 
       const me = yield* send(
-        HttpClientRequest.get("/api/me").pipe(HttpClientRequest.bearerToken(DEV_TOKEN))
+        HttpClientRequest.get("/api/me").pipe(HttpClientRequest.bearerToken(DEV_SEED.token))
       );
-      assert.strictEqual(me.status, 200);
+      assert.deepStrictEqual(yield* answer(me), {
+        status: 200,
+        body: {
+          user: { id: DEV_SEED.userId, email: DEV_SEED.email, name: DEV_SEED.userName },
+          company: {
+            id: DEV_SEED.companyId,
+            handle: DEV_SEED.companyHandle,
+            name: DEV_SEED.companyName
+          },
+          role: DEV_SEED.role,
+          machine: { id: DEV_SEED.tokenId, name: DEV_SEED.tokenName }
+        }
+      });
       assert.strictEqual(me.headers["cache-control"], "no-store");
       assert.deepStrictEqual(yield* answer(yield* send(HttpClientRequest.get("/api/me"))), {
         status: 401,
@@ -35,7 +48,7 @@ it.layer(
     Effect.gen(function* () {
       const created = yield* send(
         HttpClientRequest.post("/api/uploads").pipe(
-          HttpClientRequest.bearerToken(DEV_TOKEN),
+          HttpClientRequest.bearerToken(DEV_SEED.token),
           HttpClientRequest.setHeader("x-forwarded-for", "203.0.113.9, 198.51.100.7"),
           HttpClientRequest.bodyJsonUnsafe({ html: html("Booted") })
         )
@@ -57,7 +70,7 @@ it.layer(
       assert.deepStrictEqual(rows, [{ source_ip: "198.51.100.7" }]);
 
       // A direct request records the socket's own address, whatever it claims.
-      const direct = yield* upload(DEV_TOKEN, { html: html("Direct") });
+      const direct = yield* upload(DEV_SEED.token, { html: html("Direct") });
       assert.strictEqual(direct.status, 201);
       const [, second] = yield* sql<{ source_ip: string }>`
           SELECT source_ip FROM patch_versions ORDER BY created_at`;

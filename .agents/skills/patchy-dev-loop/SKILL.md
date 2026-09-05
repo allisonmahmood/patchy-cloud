@@ -7,7 +7,11 @@ metadata:
 
 # The dev loop
 
-`pnpm dev` runs one complete Patchy Cloud per git worktree: embedded Postgres, migrations, a seeded company with an admin token, and the server. Every command below is scoped to the worktree you run it in, so nothing here can touch another worktree's instance. Reference for the runner itself: `docs/DEVELOPMENT.md`.
+`pnpm dev` runs one complete Patchy Cloud per git worktree: embedded Postgres, migrations, and the shared `@patchy/auth/seed` — company Patchy Dev (`patchy-dev`), admin `dev@patchy.local` (Clerk id `user_dev`), and machine Dev Machine with token `patchy-dev-token` — then the server. Every command below is scoped to its worktree. Reference: `docs/DEVELOPMENT.md`.
+
+To bind the seeded admin to your own Clerk development user, set
+`PATCHY_DEV_CLERK_USER_ID=user_...` in the developer `dev.env` described below,
+then restart the instance. Without it, the seed keeps `user_dev`.
 
 ## 1. Start
 

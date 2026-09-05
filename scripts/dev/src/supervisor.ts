@@ -19,12 +19,14 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { migrations as authMigrations } from "@patchy/auth";
+import { applyDevSeed } from "@patchy/auth/seed";
+import { migrations as companiesMigrations } from "@patchy/companies";
 import { migrations as patchesMigrations } from "@patchy/patches";
 import { layerFromUrl, migrate } from "@patchy/sql";
-import { developerEnvFile, readClerkKeys } from "./developerEnv.js";
+import { developerEnvFile, readDeveloperEnv } from "./developerEnv.js";
 import { DATABASE_NAME, Plan } from "./plan.js";
 import { alive } from "./process.js";
-import { PG_FLAGS, PG_PASSWORD, PG_USER, applyDevSeed } from "./seed.js";
+import { PG_FLAGS, PG_PASSWORD, PG_USER } from "./postgres.js";
 import { layout, writeEnv, writePlan } from "./state.js";
 
 export class PostgresError extends Schema.TaggedError<PostgresError>()("PostgresError", {
@@ -142,11 +144,17 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
 
   // The server migrates on its own way up too; running it here first means
   // the seed below always lands on the current schema.
-  yield* migrate({ ...authMigrations, ...patchesMigrations }).pipe(
+  yield* migrate({ ...companiesMigrations, ...authMigrations, ...patchesMigrations }).pipe(
     Effect.provide(layerFromUrl(Redacted.make(plan.databaseUrl)))
   );
+  const inherited = yield* Config.all({
+    PATH: Config.string("PATH"),
+    HOME: Config.string("HOME").pipe(Config.withDefault(plan.stateDir))
+  });
+  const devEnvFile = yield* developerEnvFile(inherited.HOME);
+  const { PATCHY_DEV_CLERK_USER_ID, ...clerk } = yield* readDeveloperEnv(devEnvFile);
   yield* Effect.tryPromise({
-    try: () => applyDevSeed(plan.databaseUrl),
+    try: () => applyDevSeed(plan.databaseUrl, PATCHY_DEV_CLERK_USER_ID || undefined),
     catch: (cause) => new DatabaseSetupError({ cause })
   });
   yield* say("database migrated and seeded");
@@ -155,13 +163,7 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
   // one signals reach. Its env is closed: the plan, what a process needs to
   // run at all, and the two Clerk keys from the developer's `dev.env`, so
   // nothing exported in the agent's shell (another DATABASE_URL, a storage
-  // driver, a bootstrap token) leaks in.
-  const inherited = yield* Config.all({
-    PATH: Config.string("PATH"),
-    HOME: Config.string("HOME").pipe(Config.withDefault(plan.stateDir))
-  });
-  const devEnvFile = yield* developerEnvFile(inherited.HOME);
-  const clerk = yield* readClerkKeys(devEnvFile);
+  // driver, an API token) leaks in.
   yield* say(`clerk keys: ${Object.keys(clerk).join(", ") || "none"} (${devEnvFile})`);
   const server = yield* spawner.spawn(
     ChildProcess.make(

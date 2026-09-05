@@ -33,8 +33,9 @@ const upload = (title: string) =>
   Effect.flatMap(Content.Content, (content) =>
     content.upload({
       patchId: null,
-      accountId: uploader.accountId,
-      apiTokenId: uploader.apiTokenId,
+      companyId: uploader.company.id,
+      ownerUserId: uploader.user.id,
+      machineTokenId: uploader.machine.id,
       title,
       html: `<p>${title}</p>`,
       filename: null,
@@ -103,7 +104,7 @@ it.layer(
         )
       );
       assert.isTrue(yield* isServed(fresh.patchId));
-      assert.strictEqual(yield* patches.countLive(uploader.apiTokenId), 1);
+      assert.strictEqual(yield* patches.countLive(uploader.user.id), 1);
       assert.deepStrictEqual(
         events.filter((event) => event.name === "patch.expired"),
         [
@@ -146,7 +147,7 @@ it.layer(
         )
       );
       assert.deepStrictEqual(result, { deleted: 1, skipped: 0, failed: 0, orphanedObjects: 1 });
-      assert.strictEqual(yield* patches.countLive(uploader.apiTokenId), 0);
+      assert.strictEqual(yield* patches.countLive(uploader.user.id), 0);
       // The record went, so no later run finds it: storage to reclaim by hand.
       assert.deepStrictEqual(yield* sweep, {
         deleted: 0,

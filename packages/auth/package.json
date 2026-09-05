@@ -4,12 +4,17 @@
   "private": true,
   "license": "UNLICENSED",
   "type": "module",
-  "description": "The auth capability: tokens and principals, self-service minting with its quota, revocation, bearer parsing, the accounts/api_tokens/token_mints migrations, and the auth HttpApi group.",
+  "description": "User-owned machine tokens, bearer authentication, auth migrations, the development seed, and the auth HttpApi group.",
   "exports": {
     ".": {
       "development": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./seed": {
+      "development": "./src/seed.ts",
+      "types": "./dist/seed.d.ts",
+      "import": "./dist/seed.js"
     }
   },
   "files": [
@@ -21,10 +26,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@patchy/analytics": "workspace:*",
     "@patchy/api": "workspace:*",
     "@patchy/core": "workspace:*",
-    "@patchy/limits": "workspace:*",
     "@patchy/sql": "workspace:*",
     "effect": "catalog:"
   },

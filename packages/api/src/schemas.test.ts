@@ -4,14 +4,12 @@ import * as OpenApi from "effect/unstable/httpapi/OpenApi";
 import {
   Identity,
   InvalidHtml,
-  MintedToken,
-  MintQuotaExceeded,
+  LoggedOut,
   Ok,
   PatchId,
   PatchQuotaExceeded,
   PatchyApi,
   RateLimited,
-  SelfServiceDisabled,
   Unauthorized,
   UploadCreated,
   UploadRequest
@@ -55,11 +53,10 @@ describe("wire schemas", () => {
     expect(roundTrip(UploadCreated, upload)).toEqual(upload);
 
     const identity = {
-      accountId: "acct_1",
-      accountName: "Dev",
-      apiTokenId: "tok_1",
-      apiTokenName: "CLI API Token",
-      scopes: ["upload"]
+      user: { id: "usr_1", email: "dev@example.com", name: "Dev" },
+      company: { id: "cmp_1", handle: "example", name: "Example" },
+      role: "member" as const,
+      machine: { id: "tok_1", name: "CLI Machine" }
     };
     expect(roundTrip(Identity, identity)).toEqual(identity);
 
@@ -85,11 +82,9 @@ describe("wire schemas", () => {
 
   it("round-trips every other wire shape", () => {
     const cases: ReadonlyArray<[Schema.Codec<unknown, unknown>, unknown]> = [
-      [MintedToken, { ok: true, token: "pp_x" }],
+      [LoggedOut, { ok: true, alreadyRevoked: false }],
       [Ok, { ok: true }],
-      [Unauthorized, { ok: false, error: "Missing or invalid API token." }],
-      [SelfServiceDisabled, { ok: false, error: "No.", code: "self_service_disabled" }],
-      [MintQuotaExceeded, { ok: false, error: "Full.", code: "mint_quota_exceeded", quota: 5 }]
+      [Unauthorized, { ok: false, error: "Missing or invalid API token." }]
     ];
     for (const [schema, wire] of cases) expect(roundTrip(schema, wire)).toEqual(wire);
   });
@@ -98,12 +93,7 @@ describe("wire schemas", () => {
 describe("PatchyApi", () => {
   it("puts every route under /api with patch naming and no draft on the wire", () => {
     const paths = Object.keys(OpenApi.fromApi(PatchyApi).paths);
-    expect(paths).toEqual([
-      "/api/tokens/self-service",
-      "/api/me",
-      "/api/uploads",
-      "/api/patches/{patchId}"
-    ]);
+    expect(paths).toEqual(["/api/me", "/api/logout", "/api/uploads", "/api/patches/{patchId}"]);
     expect(JSON.stringify(OpenApi.fromApi(PatchyApi))).not.toMatch(/draft/i);
   });
 });

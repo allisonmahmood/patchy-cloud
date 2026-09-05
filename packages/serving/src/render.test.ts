@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
+import { DEV_SEED } from "@patchy/auth/seed";
 import type { Patches } from "@patchy/patches";
 import { escapeHtml, renderPatchWrapper, renderHome } from "./render.js";
 
@@ -61,7 +62,9 @@ describe("renderHome", () => {
 describe("renderPatchWrapper", () => {
   const patch: Patches.Patch = {
     id: "patch12345ab",
-    accountId: "acct_1",
+    companyId: DEV_SEED.companyId,
+    ownerUserId: DEV_SEED.userId,
+    scope: "company",
     title: "",
     currentVersionId: "ver_1",
     repoOrg: null,
@@ -80,7 +83,7 @@ describe("renderPatchWrapper", () => {
     objectKey: "patches/patch12345ab/2.html",
     contentHash: "hash",
     fileSize: 12,
-    createdByApiTokenId: "tok_1",
+    createdByMachineTokenId: DEV_SEED.tokenId,
     sourceIp: null,
     userAgent: null,
     cliVersion: null,

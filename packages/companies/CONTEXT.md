@@ -1,6 +1,6 @@
 # Companies
 
-The tenant and who is in it. A company is what everything on Patchy Cloud hangs off and the unit that pays; this context owns the company, its users and their two roles, its groups, how a person gets in (invite, verified domain, SSO) and out (deactivation, deletion), what the operator may do to a whole company, and nothing about what a user builds. Not yet in code: the package arrives with auth, and this glossary was written first so it lands where the map says. Who a caller _is_ — session, login, machine token — is [Auth](../auth/CONTEXT.md)'s; what a user owns is [Patches](../patches/CONTEXT.md)'.
+The tenant and who is in it. `packages/companies` owns companies, users, roles and invites, including deactivation and reactivation; groups, verified domains, SSO and operator surfaces remain future work. Who a caller _is_ — session, login, machine token — is [Auth](../auth/CONTEXT.md)'s; what a user owns is [Patches](../patches/CONTEXT.md)'.
 
 ## Language
 
@@ -9,19 +9,19 @@ The tenant everything on Patchy Cloud hangs off, and the unit that pays: every p
 _Avoid_: organization, workspace, team, tenant (this document's word for the concept, never the product's)
 
 **Handle**:
-A company's globally unique short name, the first segment of every address in it (`acme/sales/pipeline`). Users and groups draw their own handles from one per-company namespace, so the middle segment of an address never collides. First-come, never reserved; released only after the company's recovery window.
+A company's globally unique short name, fixed once created: 3–32 lowercase letters, digits or hyphens, with no leading or trailing hyphen and a reserved set of platform names. Users and groups will draw their own handles from one per-company namespace; company handles are released only after the company's recovery window.
 _Avoid_: slug, subdomain, namespace (what the handle opens, not the handle)
 
 **User**:
 One individual with one account, in exactly one company. Signs in (through Clerk: Google, Microsoft or an emailed code, never a password) and holds one machine token per machine they build from. Has one of two roles, member or admin; every member builds. Deactivated (an admin's act: sign-in and tokens end, personal connection credentials are wiped, data kept, owner-only patches go dark) is distinct from deleted (a later act, where the admin is prompted to reassign the user's patches and what is not reassigned goes with the account).
-_Avoid_: account (the wire's word for a principal), person (a user is the account, not the human), builder (every user is one)
+_Avoid_: account, person (a user is the account, not the human), builder (every user is one)
 
 **Member**:
 The role every user has who is not an admin. A member builds — publishes patches with no gate — and reaches whatever is shared with them; the role exists only so admin has something to be more than.
 _Avoid_: viewer (the person with a patch open, whatever their role), builder (a description, not a role), guest
 
 **Admin**:
-A user with the role that runs the company: invites users, creates groups, verifies the domain and turns on SSO, connects company integrations, sees every patch in the company (owner-only ones included), and — alone — reassigns a patch's owner. A company always has at least one, and the last admin cannot demote themself.
+A user with the role that runs the company: invites users and manages roles and deactivation; groups, SSO, integrations and reassignment are future powers. A company always has at least one active admin, and the last one can neither be demoted nor deactivated.
 _Avoid_: owner (patches have owners; companies have admins), operator (Patchy, never a company role), superadmin
 
 **Group**:
@@ -29,7 +29,7 @@ A named set of users an admin creates; a user can be in many. Purely a grant sur
 _Avoid_: team, department (labels, not concepts), role (what an admin has; a group is who), space
 
 **Invite**:
-An admin's act of admitting one email address to the company; the person signs in and is in. The default way in, and always available — verifying a domain never replaces it. Refused for someone already in another company: a user is in exactly one, and must leave first.
+An invitation for one email address to join a company with a role, live until revoked or consumed and matched case-insensitively at sign-in. Several companies may invite the same address, but each has at most one live invitation for it; joining creates one user in exactly one company, and an existing user cannot join another.
 _Avoid_: add user, share the company
 
 **Verified domain**:
@@ -41,8 +41,12 @@ A company signing its users in through its own identity provider (SAML or OIDC) 
 _Avoid_: enterprise connection (Clerk's word), SAML (one of the two shapes)
 
 **Deactivation**:
-An admin's act on a user: sign-in and every machine token end at once, personal connection credentials are wiped, all data is kept, and the user's owner-only patches enter the same kept-but-off state as retire. Patches shared to a group or company-wide stay up. Distinct from deleting the user, which comes later and prompts the admin to reassign what the user owned.
+An admin ending a user's access while keeping their data: sign-in and every machine token stop, and the last active admin cannot be deactivated. Reactivation reverses the user's state, not the revocation of old keys; personal connections and patch retirement follow in their own efforts.
 _Avoid_: ban, suspend (the operator's act on a company), delete (the later act)
+
+**Reactivation**:
+An admin restoring a deactivated user's access to the same company and data. The user needs fresh machine tokens; keys revoked by deactivation stay revoked.
+_Avoid_: un-revoke, restore token
 
 **Suspension**:
 The operator's act on a whole company: nothing serves, nothing publishes, data kept. Also where a company lands when it runs out of credits and cannot top up.

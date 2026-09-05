@@ -27,12 +27,12 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { LocalError } from "./CliError.js";
 
-export type CredentialSource = "mint" | "auth-set";
+export type CredentialSource = "auth-set";
 
 export class HostCredential extends Schema.Class<HostCredential>("HostCredential")({
   token: Schema.NonEmptyString,
   updatedAt: Schema.optionalKey(Schema.String),
-  source: Schema.optionalKey(Schema.Literals(["mint", "auth-set"]))
+  source: Schema.optionalKey(Schema.Literal("auth-set"))
 }) {}
 
 /** One entry of `patches.json`, keyed per instance then per absolute file path. */
@@ -96,12 +96,10 @@ export class State extends Context.Service<
       apiUrl: string
     ) => Effect.Effect<Option.Option<HostCredential>, LocalError>;
     /**
-     * The single writer for a token. The operator pasting it and the instance
-     * minting it record the same shape, so the two sources cannot drift in
-     * what they persist or how tightly the file is locked. A file with no
-     * salvageable host map is overwritten — `auth set` is the documented way
-     * to replace credentials that cannot be read — but a retired flat file
-     * still fails closed, and every other instance's entry is kept verbatim.
+     * Saves a key supplied through `auth set`. A file with no salvageable host
+     * map is overwritten — `auth set` is the documented way to replace
+     * credentials that cannot be read — but a retired flat file still fails
+     * closed, and every other instance's entry is kept verbatim.
      */
     readonly saveCredential: (
       apiUrl: string,
