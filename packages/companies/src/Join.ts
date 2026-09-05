@@ -27,6 +27,23 @@ export interface JoinPage {
   readonly redirect?: string;
 }
 
+export const styles = `
+    .auth-card label { display: block; margin: 18px 0 6px; font-size: .9rem; font-weight: 750; }
+    .auth-card input {
+      width: 100%;
+      min-height: 48px;
+      padding: 10px 12px;
+      border: 1.5px solid var(--ink);
+      border-radius: 6px;
+      background: white;
+      color: var(--ink);
+      font: inherit;
+    }
+    .auth-hint { margin: 8px 0 20px; color: var(--muted); font-size: .8rem; }
+    .auth-invite { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 0; border-bottom: 1px solid var(--line-strong); }
+    .auth-invite p { margin: 0; overflow-wrap: anywhere; }
+`;
+
 /** Server-side suggestion: plain forms need no client code to create a company. */
 const suggestedHandle = (name: string) =>
   name
@@ -37,8 +54,6 @@ const suggestedHandle = (name: string) =>
     .replace(/^-+|-+$/g, "")
     .slice(0, 32)
     .replace(/-+$/, "");
-
-const signOut = `<form class="auth-signout" method="post" action="/logout">Not you? <button type="submit">Sign out</button></form>`;
 
 const render = Effect.fn("Join.render")(function* (
   claims: Claims,
@@ -63,7 +78,7 @@ const render = Effect.fn("Join.render")(function* (
     );
     return {
       title: "Join your company",
-      body: `<p>Invitations for <span class="auth-email">${escapeHtml(claims.email)}</span>.</p>${notice}${rows.join("")}${signOut}`,
+      body: `<p>Invitations for <span class="auth-email">${escapeHtml(claims.email)}</span>.</p>${notice}${rows.join("")}`,
       status: refusal?.status
     };
   }
@@ -71,7 +86,7 @@ const render = Effect.fn("Join.render")(function* (
   const handle = fields?.handle ?? suggestedHandle(name);
   return {
     title: "Create your company",
-    body: `<p>There is no invite for <span class="auth-email">${escapeHtml(claims.email)}</span>.</p>${notice}<form method="post" action="${escapeAttribute(action)}"><input type="hidden" name="action" value="create"><label for="company-name">Company name</label><input id="company-name" name="name" value="${escapeAttribute(name)}" required maxlength="200" autocomplete="organization"><label for="company-handle">Company handle</label><input id="company-handle" name="handle" value="${escapeAttribute(handle)}" required minlength="3" maxlength="32" pattern="[a-z0-9][a-z0-9\\-]{1,30}[a-z0-9]" aria-describedby="handle-hint" autocapitalize="none" spellcheck="false"><p id="handle-hint" class="auth-hint">Pre-filled from the company name and editable. 3–32 lowercase letters, digits or hyphens; no hyphen at either end. Fixed once created.</p><button class="auth-action" type="submit">Create company</button></form>${signOut}`,
+    body: `<p>There is no invite for <span class="auth-email">${escapeHtml(claims.email)}</span>.</p>${notice}<form method="post" action="${escapeAttribute(action)}"><input type="hidden" name="action" value="create"><label for="company-name">Company name</label><input id="company-name" name="name" value="${escapeAttribute(name)}" required maxlength="200" autocomplete="organization"><label for="company-handle">Company handle</label><input id="company-handle" name="handle" value="${escapeAttribute(handle)}" required minlength="3" maxlength="32" pattern="[a-z0-9][a-z0-9\\-]{1,30}[a-z0-9]" aria-describedby="handle-hint" autocapitalize="none" spellcheck="false"><p id="handle-hint" class="auth-hint">Pre-filled from the company name and editable. 3–32 lowercase letters, digits or hyphens; no hyphen at either end. Fixed once created.</p><button class="auth-action" type="submit">Create company</button></form>`,
     status: refusal?.status
   };
 });
@@ -86,7 +101,7 @@ export const handle = Effect.fn("Join.handle")(function* (
   if (membership) {
     return {
       title: `You are in ${membership.company.name}`,
-      body: `${request.method === "POST" ? '<div class="note note-warn" role="alert">Already in a company.</div>' : ""}<p>Signed in as <span class="auth-email">${escapeHtml(claims.email)}</span>.</p>${signOut}`,
+      body: `${request.method === "POST" ? '<div class="note note-warn" role="alert">Already in a company.</div>' : ""}<p>Signed in as <span class="auth-email">${escapeHtml(claims.email)}</span>.</p>`,
       status: request.method === "POST" ? 409 : 200,
       ...(request.method !== "POST" && returnTo ? { redirect: returnTo } : {})
     } satisfies JoinPage;
@@ -100,6 +115,12 @@ export const handle = Effect.fn("Join.handle")(function* (
     if (form.action === "join") {
       yield* companies.consumeInvite({ ...claims, inviteId: form.inviteId });
     } else {
+      if ((yield* companies.findInvitesByEmail(claims.email)).length > 0) {
+        return yield* render(claims, returnTo, entered, {
+          message: "You have an invitation. Choose a company to join below.",
+          status: 409
+        });
+      }
       yield* companies.create({
         clerkUserId: claims.clerkUserId,
         email: claims.email,

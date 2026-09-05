@@ -14,7 +14,7 @@ import * as Schema from "effect/Schema";
 export class SessionError extends Schema.TaggedError<SessionError>()("SessionError", {
   operation: Schema.Literals(["configuration", "authenticate", "revoke"]),
   setting: Schema.optional(Schema.String),
-  cause: Schema.optional(Schema.Defect())
+  cause: Schema.Defect()
 }) {
   override get message() {
     return this.setting === undefined
@@ -70,6 +70,15 @@ const Origin = Schema.URLFromString.check(
 const SafeReason = Schema.String.check(Schema.isPattern(/^[a-z0-9][a-z0-9_-]{0,127}$/));
 const isSafeReason = Schema.is(SafeReason);
 
+/** Auth owns these settings; the entrypoint checks them before acquiring Postgres. */
+export const config = Config.all({
+  publicUrl: Config.schema(Origin, "PATCHY_PUBLIC_BASE_URL"),
+  publishableKey: Config.schema(PublishableKey, "CLERK_PUBLISHABLE_KEY"),
+  secretKey: Config.redacted("CLERK_SECRET_KEY"),
+  jwtKey: Config.option(Config.string("CLERK_JWT_KEY")),
+  authorizedParty: Config.option(Config.schema(Origin, "CLERK_AUTHORIZED_PARTIES"))
+});
+
 export class Session extends Context.Service<
   Session,
   {
@@ -83,13 +92,7 @@ export class Session extends Context.Service<
 >()("@patchy/auth/Session") {}
 
 export const make = Effect.gen(function* () {
-  const settings = yield* Config.all({
-    publicUrl: Config.schema(Origin, "PATCHY_PUBLIC_BASE_URL"),
-    publishableKey: Config.schema(PublishableKey, "CLERK_PUBLISHABLE_KEY"),
-    secretKey: Config.redacted("CLERK_SECRET_KEY"),
-    jwtKey: Config.option(Config.string("CLERK_JWT_KEY")),
-    authorizedParty: Config.option(Config.schema(Origin, "CLERK_AUTHORIZED_PARTIES"))
-  });
+  const settings = yield* config;
   const { publishableKey, publicUrl } = settings;
   const frontendApiHost = yield* Effect.try({
     try: () => {

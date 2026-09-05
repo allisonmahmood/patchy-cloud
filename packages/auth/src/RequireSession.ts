@@ -25,6 +25,10 @@ export class SignedIn extends Context.Service<
     readonly sid: string;
   }
 >()("@patchy/auth/RequireSession/SignedIn") {}
+/** Only the create-or-join adapter consumes this optional membership. */
+export class Enrollment extends Context.Service<Enrollment, Viewer["Service"] | null>()(
+  "@patchy/auth/RequireSession/Enrollment"
+) {}
 
 /** Account Portal has a different hostname in development and on a custom Clerk domain. */
 export function signInUrl(session: Session.Session["Service"], path: string): string {
@@ -164,8 +168,3 @@ export const forEnrollment = <E, R>(
       return yield* Effect.provideService(app, Enrollment, viewer);
     })
   );
-
-/** Only the create-or-join adapter consumes this optional membership. */
-export class Enrollment extends Context.Service<Enrollment, Viewer["Service"] | null>()(
-  "@patchy/auth/RequireSession/Enrollment"
-) {}

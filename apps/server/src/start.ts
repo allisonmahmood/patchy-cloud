@@ -16,6 +16,7 @@ import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as HttpServer from "effect/unstable/http/HttpServer";
+import { Session } from "@patchy/auth";
 import * as Sql from "@patchy/sql";
 import * as Server from "./Server.js";
 
@@ -38,12 +39,7 @@ const server = Layer.effectDiscard(announce).pipe(
 // cannot hide a missing Clerk key or public origin behind a connection error.
 NodeRuntime.runMain(
   Effect.gen(function* () {
-    yield* Config.all([
-      Config.redacted("DATABASE_URL"),
-      Config.string("PATCHY_PUBLIC_BASE_URL"),
-      Config.string("CLERK_PUBLISHABLE_KEY"),
-      Config.redacted("CLERK_SECRET_KEY")
-    ]);
+    yield* Config.all([Config.redacted("DATABASE_URL"), Session.config]);
     return yield* Layer.launch(server);
   })
 );

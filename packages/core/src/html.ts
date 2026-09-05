@@ -1,5 +1,10 @@
 /** First-party HTML shell. Served patch documents remain separate in Serving. */
-export function htmlPage(options: { title: string; body: string; head?: string }): string {
+export function htmlPage(options: {
+  title: string;
+  body: string;
+  head?: string;
+  styles?: string;
+}): string {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -365,17 +370,6 @@ export function htmlPage(options: { title: string; body: string; head?: string }
 
     .auth-card .brand { margin-bottom: 32px; }
     .auth-card h1 { max-width: none; font-size: 2rem; line-height: 1.12; }
-    .auth-card label { display: block; margin: 18px 0 6px; font-size: .9rem; font-weight: 750; }
-    .auth-card input {
-      width: 100%;
-      min-height: 48px;
-      padding: 10px 12px;
-      border: 1.5px solid var(--ink);
-      border-radius: 6px;
-      background: white;
-      color: var(--ink);
-      font: inherit;
-    }
     .auth-action {
       display: inline-flex;
       align-items: center;
@@ -392,7 +386,6 @@ export function htmlPage(options: { title: string; body: string; head?: string }
       cursor: pointer;
     }
     .auth-action:disabled { opacity: .6; cursor: not-allowed; }
-    .auth-hint { margin: 8px 0 20px; color: var(--muted); font-size: .8rem; }
     .auth-email { font-weight: 750; overflow-wrap: anywhere; }
     .auth-signout { margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--line-strong); }
     .auth-signout button {
@@ -406,8 +399,6 @@ export function htmlPage(options: { title: string; body: string; head?: string }
       text-decoration: underline;
       cursor: pointer;
     }
-    .auth-invite { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 0; border-bottom: 1px solid var(--line-strong); }
-    .auth-invite p { margin: 0; overflow-wrap: anywhere; }
 
 
     @media (max-width: 760px) {
@@ -436,6 +427,7 @@ export function htmlPage(options: { title: string; body: string; head?: string }
         scroll-behavior: auto;
       }
     }
+    ${options.styles ?? ""}
   </style>
 </head>
 <body>${options.body}</body>
