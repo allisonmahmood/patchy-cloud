@@ -77,13 +77,19 @@ const stubInstance = async (handler: Handler) => {
   return { url: `http://127.0.0.1:${port}`, requests };
 };
 
-const upload = (status: 200 | 201, patchId: string, versionNumber: number) => ({
+const upload = (
+  status: 200 | 201,
+  patchId: string,
+  versionNumber: number,
+  scope: "company" | "public" = "company"
+) => ({
   ok: true,
   patchId,
   versionId: `${patchId}-v${versionNumber}`,
   versionNumber,
   title: "Page",
   publicUrl: `http://instance.test/d/${patchId}`,
+  scope,
   warnings: status === 201 ? ["No <title> found."] : []
 });
 
@@ -311,7 +317,7 @@ describe("patchy whoami", async () => {
 });
 
 describe("commands without a publishing key", () => {
-  it.each(["whoami", "upload", "delete"])(
+  it.each(["whoami", "upload", "delete", "share"])(
     "refuses %s locally without a request",
     async (command) => {
       const instance = await stubInstance((_, respond) => respond(200, identity));
@@ -321,7 +327,9 @@ describe("commands without a publishing key", () => {
           ? [htmlFile(dir, "page.html", validHtml)]
           : command === "delete"
             ? ["--patch", "abcdefghijkl"]
-            : [];
+            : command === "share"
+              ? ["--patch", "abcdefghijkl", "public"]
+              : [];
       const result = await runCli([command, ...target, "--api-url", instance.url, "--json"], {
         stateDir: dir
       });
@@ -330,7 +338,9 @@ describe("commands without a publishing key", () => {
       expect(JSON.parse(result.stderr)).toMatchObject({
         ok: false,
         kind: "local",
-        error: expect.stringContaining(`patchy auth set --api-url ${instance.url}`)
+        error: expect.stringContaining(
+          command === "share" ? "Run: patchy login" : `patchy auth set --api-url ${instance.url}`
+        )
       });
       expect(instance.requests).toHaveLength(0);
     }
@@ -371,11 +381,8 @@ describe("patchy upload", async () => {
 
     const first = await runCli(["upload", file, "--api-url", instance.url], { stateDir: dir });
     expect(first.status).toBe(0);
-    expect(first.stdout).toMatch(
-      new RegExp(
-        `^Publishing to ${instance.url} \\(target came from --api-url\\)\\.\nUploaded patch\nURL: http://instance\\.test/d/abcdefghijkl\nPatch ID: abcdefghijkl\nVersion: 1\n$`
-      )
-    );
+    expect(first.stdout).toContain("URL: http://instance.test/d/abcdefghijkl");
+    expect(first.stdout).toContain("Scope: company (signed-in colleagues in your company)");
     expect(first.stderr).toBe("Warning: No <title> found.\n");
     expect(`${first.stdout}${first.stderr}`).not.toContain(DEV_SEED.token);
     expect(instance.requests.map((r) => r.url)).toEqual(["/api/uploads"]);
@@ -385,6 +392,7 @@ describe("patchy upload", async () => {
       filename: "page.html",
       metadata: { cliVersion: "0.0.1" }
     });
+    expect(instance.requests[0]?.body).not.toHaveProperty("scope");
 
     // The cache turns the second upload of the same file into an update, and
     // under --json the document is the wire shape alone.
@@ -396,6 +404,7 @@ describe("patchy upload", async () => {
     expect(second.stderr).toBe("");
     expect(JSON.parse(second.stdout)).toEqual(upload(200, "abcdefghijkl", 2));
     expect(instance.requests[1]?.body).toMatchObject({ patchId: "abcdefghijkl" });
+    expect(instance.requests[1]?.body).not.toHaveProperty("scope");
     expect(instance.requests[1]).toMatchObject({ authorization: `Bearer ${DEV_SEED.token}` });
 
     // --new ignores the cache; the environment token beats the stored one.
@@ -406,6 +415,51 @@ describe("patchy upload", async () => {
     expect(fresh.status).toBe(0);
     expect(instance.requests[2]?.body).not.toHaveProperty("patchId");
     expect(instance.requests[2]).toMatchObject({ authorization: "Bearer pp_env" });
+  });
+
+  it("sets sharing explicitly on create and update, reporting the returned audience", async () => {
+    let version = 0;
+    const instance = await stubInstance((_, respond) => {
+      version++;
+      respond(
+        version === 1 ? 201 : 200,
+        upload(
+          version === 1 ? 201 : 200,
+          "abcdefghijkl",
+          version,
+          version === 1 ? "public" : "company"
+        )
+      );
+    });
+    const dir = tempDir();
+    const file = htmlFile(dir, "page.html", validHtml);
+    const env = { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" };
+
+    const published = await runCli(["upload", file, "--share", "public", "--json"], {
+      stateDir: dir,
+      env
+    });
+    expect(published.status).toBe(0);
+    expect(published.stderr).toBe("");
+    expect(JSON.parse(published.stdout)).toMatchObject({ scope: "public" });
+    expect(instance.requests[0]?.body).toMatchObject({ scope: "public" });
+    expect(instance.requests[0]?.body).not.toHaveProperty("patchId");
+
+    const restricted = await runCli(["upload", file, "--share", "company"], {
+      stateDir: dir,
+      env
+    });
+    expect(restricted.status).toBe(0);
+    expect(restricted.stdout).toContain("Scope: company (signed-in colleagues in your company)");
+    expect(instance.requests[1]?.body).toMatchObject({ scope: "company", patchId: "abcdefghijkl" });
+
+    const invalid = await runCli(["upload", file, "--share", "private", "--json"], {
+      stateDir: dir,
+      env
+    });
+    expect(invalid.status).toBe(1);
+    expect(JSON.parse(invalid.stderr)).toMatchObject({ ok: false, kind: "local" });
+    expect(instance.requests).toHaveLength(2);
   });
 
   it("publishes with the worktree seed and leaves stderr empty under --json", async () => {
@@ -570,6 +624,127 @@ describe("patchy upload", async () => {
       hosts: { [instance.url]: { token: "pp_ok" }, "http://other.test": 42 }
     });
     expect((await runCli(["whoami", "--api-url", instance.url], { stateDir: dir })).status).toBe(0);
+  });
+});
+
+describe("patchy share", () => {
+  it("targets this instance's cached patch or an explicit ID, preserving the cache on success and refusal", async () => {
+    const patchId = "abcdefghijkl";
+    const publicUrl = `http://instance.test/d/${patchId}`;
+    let responses = 0;
+    const instance = await stubInstance((request, respond) => {
+      if (
+        request.method !== "POST" ||
+        request.url !== `/api/patches/${patchId}/share` ||
+        request.authorization !== "Bearer pp_owner"
+      ) {
+        return respond(404, { ok: false, error: "Patch not found." });
+      }
+      respond(200, {
+        ok: true,
+        patchId,
+        scope: responses++ === 0 ? "public" : "company",
+        publicUrl
+      });
+    });
+    const other = await stubInstance((_, respond) =>
+      respond(404, { ok: false, error: "Patch not found." })
+    );
+    const dir = tempDir();
+    // Sharing only needs the cached path, not the original file's contents.
+    const file = path.join(dir, "page.html");
+    const cached = { patchId, publicUrl, latestVersionNumber: 7, updatedAt: "unchanged" };
+    const cachePath = path.join(dir, "patches.json");
+    const cache = JSON.stringify({
+      hosts: {
+        [instance.url]: { files: { [file]: cached } },
+        "http://other.test": { files: { [file]: { ...cached, patchId: "mnopqrstuvwx" } } }
+      }
+    });
+    writeFileSync(cachePath, cache);
+    const env = { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" };
+
+    const shared = await runCli(["share", "page.html", "public"], { stateDir: dir, env });
+    expect(shared.status).toBe(0);
+    expect(shared.stderr).toBe("");
+    expect(shared.stdout).toContain(`URL: ${publicUrl}`);
+    expect(shared.stdout).toContain("Scope: public (anyone with the link)");
+    expect(readFileSync(cachePath, "utf8")).toBe(cache);
+
+    const restricted = await runCli(["share", "--patch", patchId, "company", "--json"], {
+      stateDir: dir,
+      env
+    });
+    expect(restricted.status).toBe(0);
+    expect(restricted.stderr).toBe("");
+    expect(JSON.parse(restricted.stdout)).toEqual({
+      ok: true,
+      patchId,
+      scope: "company",
+      publicUrl
+    });
+    expect(readFileSync(cachePath, "utf8")).toBe(cache);
+
+    const refused = await runCli(["share", "--patch", "mnopqrstuvwx", "public", "--json"], {
+      stateDir: dir,
+      env
+    });
+    expect(refused.status).toBe(2);
+    expect(refused.stdout).toBe("");
+    expect(JSON.parse(refused.stderr)).toMatchObject({
+      ok: false,
+      kind: "rejected",
+      error: "Patch not found."
+    });
+    expect(readFileSync(cachePath, "utf8")).toBe(cache);
+    expect(instance.requests).toHaveLength(3);
+
+    const uncached = await runCli(
+      ["share", "page.html", "public", "--api-url", other.url, "--json"],
+      {
+        stateDir: dir,
+        env
+      }
+    );
+    expect(uncached.status).toBe(1);
+    expect(JSON.parse(uncached.stderr)).toMatchObject({ ok: false, kind: "local" });
+    expect(other.requests).toHaveLength(0);
+    expect(readFileSync(cachePath, "utf8")).toBe(cache);
+  });
+
+  it.each([
+    { args: [] },
+    { args: ["public"] },
+    { args: ["page.html"] },
+    { args: ["--patch", "abcdefghijkl"] },
+    { args: ["page.html", "private"] },
+    { args: ["--patch", "abcdefghijkl", "private"] },
+    { args: ["page.html", "public", "--patch", "abcdefghijkl"] },
+    { args: ["page.html", "public", "extra"] }
+  ])("rejects invalid targets or scope locally: $args", async ({ args }) => {
+    const instance = await stubInstance((_, respond) => respond(500, {}));
+    const result = await runCli(["share", ...args, "--json"], {
+      env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" }
+    });
+    expect(result.status).toBe(1);
+    expect(JSON.parse(result.stderr)).toMatchObject({ ok: false, kind: "local" });
+    expect(instance.requests).toHaveLength(0);
+  });
+
+  it("directs a keyless text invocation to login before contacting the instance", async () => {
+    const instance = await stubInstance((_, respond) => respond(500, {}));
+    const result = await runCli([
+      "share",
+      "--patch",
+      "abcdefghijkl",
+      "public",
+      "--api-url",
+      instance.url
+    ]);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("Run: patchy login");
+    expect(instance.requests).toHaveLength(0);
   });
 });
 

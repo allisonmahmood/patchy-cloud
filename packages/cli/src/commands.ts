@@ -1,5 +1,5 @@
 /**
- * The six commands. Each handler yields what it needs — the resolved
+ * Each command handler yields what it needs — the resolved
  * `Instance`, the `State` dir, the derived client — and fails only with a
  * `CliError`, so the contract in `Output` is the whole of what an agent sees.
  * User-facing copy calls a token a publishing key.
@@ -22,6 +22,9 @@ import * as Prompt from "effect/unstable/cli/Prompt";
 import {
   Identity,
   Ok,
+  Shared,
+  ShareRequest,
+  SharingScope,
   UploadCreated,
   UploadMetadata,
   UploadRequest,
@@ -54,6 +57,12 @@ const encodeIdentity = Schema.encodeSync(Identity);
 // A create is 201, an update 200; the wire names them separately.
 const encodeUpload = Schema.encodeSync(Schema.Union([UploadCreated, UploadUpdated]));
 const encodeOk = Schema.encodeSync(Ok);
+const encodeShared = Schema.encodeSync(Shared);
+const decodeSharingScope = Schema.decodeUnknownEffect(SharingScope);
+const scopeLines = {
+  company: "Scope: company (signed-in colleagues in your company)",
+  public: "Scope: public (anyone with the link)"
+} satisfies Record<typeof SharingScope.Type, string>;
 
 /** Wire literal of the 401 (`Unauthorized` in `@patchy/api`); the hint below keys on it. */
 const UNAUTHORIZED = "Missing or invalid API token.";
@@ -96,12 +105,12 @@ const configuredCredential = Effect.gen(function* () {
 });
 
 /** Protected commands fail locally before making a request without a key. */
-const requiredToken = Effect.gen(function* () {
+const requiredToken = Effect.fn("requiredToken")(function* (nextCommand = "auth set") {
   const credential = yield* configuredCredential;
   if (Option.isSome(credential)) return credential.value.token;
   const { apiUrl } = yield* Instance.Instance;
   return yield* new LocalError({
-    message: `No publishing key is stored for ${apiUrl}.\nRun: patchy auth set --api-url ${apiUrl}`
+    message: `No publishing key is stored for ${apiUrl}.\nRun: patchy ${nextCommand} --api-url ${apiUrl}`
   });
 });
 
@@ -217,7 +226,7 @@ const auth = Command.make("auth").pipe(
 const whoami = Command.make("whoami", {}, () =>
   run(
     Effect.gen(function* () {
-      const token = yield* requiredToken;
+      const token = yield* requiredToken();
       const client = yield* Api.client(token);
       const identity = yield* client
         .me()
@@ -296,6 +305,10 @@ const upload = Command.make(
       Flag.withDescription("Update an existing patch only; never creates a patch"),
       Flag.optional
     ),
+    share: Flag.choice("share", SharingScope.literals).pipe(
+      Flag.withDescription("Who can open the patch: your company or anyone with the link"),
+      Flag.optional
+    ),
     new: Flag.boolean("new").pipe(
       Flag.withDescription("Always create a new patch"),
       Flag.withDefault(false)
@@ -314,7 +327,7 @@ const upload = Command.make(
 
         const instance = yield* Instance.Instance;
         const state = yield* State.State;
-        const apiToken = yield* requiredToken;
+        const apiToken = yield* requiredToken();
         yield* Output.notice(
           `Publishing to ${instance.apiUrl} (target came from ${Instance.describeSource(instance.source)}).`
         );
@@ -333,6 +346,7 @@ const upload = Command.make(
               html,
               filename: path.basename(resolved),
               ...(patchId !== null ? { patchId } : {}),
+              ...(Option.isSome(options.share) ? { scope: options.share.value } : {}),
               metadata: new UploadMetadata({
                 ...(yield* Git.metadata(path.dirname(resolved))),
                 cliVersion: VERSION,
@@ -366,6 +380,7 @@ const upload = Command.make(
         yield* Output.report(encodeUpload(upload), [
           patchId !== null ? "Updated patch" : "Uploaded patch",
           `URL: ${upload.publicUrl}`,
+          scopeLines[upload.scope],
           `Patch ID: ${upload.patchId}`,
           `Version: ${upload.versionNumber}`
         ]);
@@ -374,14 +389,13 @@ const upload = Command.make(
     )
 ).pipe(Command.withDescription("Upload or update an HTML patch."));
 
-// --- delete -----------------------------------------------------------------
+// --- patch targets ----------------------------------------------------------
 
 /**
- * The patch to delete: the one cached for the file, or the id given outright.
- * Exactly one of the two, because a file and an id that disagree would leave
- * the cache pointing at whichever was not deleted.
+ * The patch to change: the one cached for the file, or the id given outright.
+ * Exactly one of the two, so disagreeing targets never choose a patch silently.
  */
-const deleteTarget = Effect.fn("deleteTarget")(function* (
+const patchTarget = Effect.fn("patchTarget")(function* (
   file: Option.Option<string>,
   patch: Option.Option<string>
 ) {
@@ -405,11 +419,65 @@ const deleteTarget = Effect.fn("deleteTarget")(function* (
     return yield* new LocalError({
       message:
         `No patch on ${apiUrl} was uploaded from ${resolved}.\n` +
-        "Pass --patch <patch-id> to delete by ID."
+        "Pass --patch <patch-id> to use a patch ID."
     });
   }
   return cached.value.patchId;
 });
+
+// --- share ------------------------------------------------------------------
+
+const share = Command.make(
+  "share",
+  {
+    fileOrScope: Argument.string("file-or-scope").pipe(
+      Argument.withDescription("The uploaded HTML file, or company|public when using --patch"),
+      Argument.optional
+    ),
+    scope: Argument.choice("scope", SharingScope.literals).pipe(Argument.optional),
+    patch: Flag.string("patch").pipe(
+      Flag.withDescription("Change sharing for this patch by ID instead of by file"),
+      Flag.optional
+    )
+  },
+  (options) =>
+    run(
+      Effect.gen(function* () {
+        // The last positional is always the scope. With --patch it is also the
+        // first, so an optional file argument must not swallow it as a path.
+        const file = Option.isSome(options.scope) ? options.fileOrScope : Option.none<string>();
+        const scope = yield* decodeSharingScope(
+          Option.getOrUndefined(Option.orElse(options.scope, () => options.fileOrScope))
+        ).pipe(
+          Effect.mapError(
+            (cause) =>
+              new LocalError({
+                message: "Pass a sharing scope: company or public.",
+                cause
+              })
+          )
+        );
+        const patchId = yield* patchTarget(file, options.patch);
+        const token = yield* requiredToken("login");
+        const client = yield* Api.client(token);
+        const shared = yield* client
+          .share({ params: { patchId }, payload: new ShareRequest({ scope }) })
+          .pipe(Effect.catch((error) => refused(error, "Sharing failed.")));
+        yield* Output.report(encodeShared(shared), [
+          "Changed patch sharing",
+          `URL: ${shared.publicUrl}`,
+          scopeLines[shared.scope],
+          `Patch ID: ${shared.patchId}`
+        ]);
+      })
+    )
+).pipe(
+  Command.withDescription(
+    "Change who can open a patch: share <file> company|public or share --patch <id> company|public."
+  )
+);
+
+// --- delete -----------------------------------------------------------------
 
 /**
  * The cache forgets the patch only once the instance has said yes, so a
@@ -430,10 +498,10 @@ const del = Command.make(
   (options) =>
     run(
       Effect.gen(function* () {
-        const patchId = yield* deleteTarget(options.file, options.patch);
+        const patchId = yield* patchTarget(options.file, options.patch);
         const instance = yield* Instance.Instance;
         const state = yield* State.State;
-        const token = yield* requiredToken;
+        const token = yield* requiredToken();
         yield* Output.notice(
           `Deleting from ${instance.apiUrl} (target came from ${Instance.describeSource(instance.source)}).`
         );
@@ -462,6 +530,6 @@ const del = Command.make(
 
 export const root = Command.make("patchy").pipe(
   Command.withDescription("Upload static HTML patches to a Patchy Cloud instance."),
-  Command.withSubcommands([auth, whoami, status, validate, upload, del]),
+  Command.withSubcommands([auth, whoami, status, validate, upload, share, del]),
   Command.withGlobalFlags([Output.JsonFlag, Instance.ApiUrlFlag])
 );

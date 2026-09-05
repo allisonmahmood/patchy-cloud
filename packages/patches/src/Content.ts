@@ -25,6 +25,7 @@ export interface UploadInput {
   readonly companyId: string;
   readonly ownerUserId: string;
   readonly machineTokenId: string;
+  readonly scope?: Patches.Patch["scope"] | undefined;
   readonly title: string;
   readonly html: string;
   readonly filename: string | null;
@@ -95,6 +96,7 @@ export const make = Effect.gen(function* () {
         versionId,
         companyId: input.companyId,
         machineTokenId: input.machineTokenId,
+        scope: input.scope,
         title: input.title,
         objectKey: key,
         contentHash: contentHash(input.html),
