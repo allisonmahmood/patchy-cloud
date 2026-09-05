@@ -385,7 +385,6 @@ export function htmlPage(options: {
       text-decoration: none;
       cursor: pointer;
     }
-    .auth-action:disabled { opacity: .6; cursor: not-allowed; }
     .auth-email { font-weight: 750; overflow-wrap: anywhere; }
     .auth-signout { margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--line-strong); }
     .auth-signout button {

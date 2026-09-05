@@ -25,7 +25,10 @@ export function returnPath(value: string | null, publicBaseUrl: string): string 
     return null;
   const base = new URL(publicBaseUrl);
   const url = new URL(value, base);
-  return url.origin === base.origin ? `${url.pathname}${url.search}${url.hash}` : null;
+  // Dot-segment normalization can turn a local path into a new authority reference.
+  return url.origin === base.origin && !url.pathname.startsWith("//")
+    ? `${url.pathname}${url.search}${url.hash}`
+    : null;
 }
 
 export const signOutForm = (notYou = false) =>

@@ -14,7 +14,7 @@ import * as Schema from "effect/Schema";
 export class SessionError extends Schema.TaggedError<SessionError>()("SessionError", {
   operation: Schema.Literals(["configuration", "authenticate", "revoke"]),
   setting: Schema.optional(Schema.String),
-  cause: Schema.Defect()
+  cause: Schema.optional(Schema.Defect())
 }) {
   override get message() {
     return this.setting === undefined
@@ -94,48 +94,49 @@ export class Session extends Context.Service<
 export const make = Effect.gen(function* () {
   const settings = yield* config;
   const { publishableKey, publicUrl } = settings;
+  // Clerk keys encode exactly `<frontend-api-host>$`, with optional base64 padding.
+  const decoded = yield* Effect.try({
+    try: () => atob(publishableKey.slice(8)),
+    catch: (cause) =>
+      new SessionError({ operation: "configuration", setting: "CLERK_PUBLISHABLE_KEY", cause })
+  });
+  if (!decoded.endsWith("$"))
+    return yield* new SessionError({
+      operation: "configuration",
+      setting: "CLERK_PUBLISHABLE_KEY"
+    });
   const frontendApiHost = yield* Effect.try({
-    try: () => {
-      // Clerk keys encode exactly `<frontend-api-host>$`, with optional base64 padding.
-      const decoded = atob(publishableKey.slice(8));
-      if (!decoded.endsWith("$")) throw new Error("Missing publishable key terminator");
-      return decodeFrontendHost(decoded.slice(0, -1));
-    },
+    try: () => decodeFrontendHost(decoded.slice(0, -1)),
     catch: (cause) =>
       new SessionError({ operation: "configuration", setting: "CLERK_PUBLISHABLE_KEY", cause })
   });
   const secretKey = yield* Effect.try({
-    try: () => {
-      const key = decodeSecretKey(Redacted.value(settings.secretKey));
-      if (key.slice(3, 7) !== publishableKey.slice(3, 7))
-        throw new Error("Clerk key environments differ");
-      return key;
-    },
+    try: () => decodeSecretKey(Redacted.value(settings.secretKey)),
     catch: (cause) =>
       new SessionError({ operation: "configuration", setting: "CLERK_SECRET_KEY", cause })
   });
-  const jwtKey = yield* Option.match(settings.jwtKey, {
-    onNone: () => Effect.succeed(undefined),
-    onSome: (pem) =>
-      Effect.try({
-        try: () => {
-          if (!/^-----BEGIN (RSA )?PUBLIC KEY-----/.test(pem.trim()))
-            throw new Error("Expected a public PEM");
-          const key = createPublicKey(pem);
-          // backend@3.17.0 strips a fixed RSA-2048/SPKI prefix and assumes e=65537.
-          // Normalize PKCS#1 too, and reject other valid-but-unsupported keys at boot.
-          if (
-            key.asymmetricKeyType !== "rsa" ||
-            key.asymmetricKeyDetails?.modulusLength !== 2048 ||
-            key.asymmetricKeyDetails.publicExponent !== 65537n
-          )
-            throw new Error("Unsupported Clerk RSA key");
-          return key.export({ type: "spki", format: "pem" }).toString();
-        },
-        catch: (cause) =>
-          new SessionError({ operation: "configuration", setting: "CLERK_JWT_KEY", cause })
-      })
-  });
+  if (secretKey.slice(3, 7) !== publishableKey.slice(3, 7))
+    return yield* new SessionError({ operation: "configuration", setting: "CLERK_SECRET_KEY" });
+  let jwtKey: string | undefined;
+  if (Option.isSome(settings.jwtKey)) {
+    const pem = settings.jwtKey.value;
+    if (!/^-----BEGIN (RSA )?PUBLIC KEY-----/.test(pem.trim()))
+      return yield* new SessionError({ operation: "configuration", setting: "CLERK_JWT_KEY" });
+    const key = yield* Effect.try({
+      try: () => createPublicKey(pem),
+      catch: (cause) =>
+        new SessionError({ operation: "configuration", setting: "CLERK_JWT_KEY", cause })
+    });
+    // backend@3.17.0 strips a fixed RSA-2048/SPKI prefix and assumes e=65537.
+    // Normalize PKCS#1 too, and reject other valid-but-unsupported keys at boot.
+    if (
+      key.asymmetricKeyType !== "rsa" ||
+      key.asymmetricKeyDetails?.modulusLength !== 2048 ||
+      key.asymmetricKeyDetails.publicExponent !== 65537n
+    )
+      return yield* new SessionError({ operation: "configuration", setting: "CLERK_JWT_KEY" });
+    jwtKey = key.export({ type: "spki", format: "pem" }).toString();
+  }
   const authorizedParties = Option.match(settings.authorizedParty, {
     onNone: () => undefined,
     onSome: (url) => [url.origin]
