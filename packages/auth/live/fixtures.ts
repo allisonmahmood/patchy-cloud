@@ -1,8 +1,9 @@
 import { createClerkClient } from "@clerk/backend";
+import * as Config from "effect/Config";
+import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
 
 export interface LiveSettings {
-  secretKey: string;
-  publishableKey: string;
   runId: string;
   email: string;
   inviteEmail: string;
@@ -20,8 +21,6 @@ export function liveSettings(env: NodeJS.ProcessEnv): LiveSettings {
   if (!runId || !/^[a-z0-9-]{1,40}$/.test(runId))
     throw new Error("CLERK_TEST_RUN_ID must be 1–40 lowercase letters, digits or hyphens.");
   return {
-    secretKey,
-    publishableKey,
     runId,
     email: `ci-${runId}+clerk_test@example.com`,
     inviteEmail: `ci-${runId}-invite+clerk_test@example.com`,
@@ -31,31 +30,39 @@ export function liveSettings(env: NodeJS.ProcessEnv): LiveSettings {
   };
 }
 
-export function liveClient(settings: LiveSettings) {
+export const liveClient = Effect.gen(function* () {
+  const secretKey = yield* Config.redacted("CLERK_SECRET_KEY");
+  const publishableKey = yield* Config.string("CLERK_PUBLISHABLE_KEY");
   return createClerkClient({
-    secretKey: settings.secretKey,
-    publishableKey: settings.publishableKey,
+    secretKey: Redacted.value(secretKey),
+    publishableKey,
     telemetry: { disabled: true }
   });
-}
+});
 
 /** Exact email matching keeps teardown confined to this run, including after a lost create response. */
-export async function sweep(settings: LiveSettings) {
-  const client = liveClient(settings);
-  const users = await client.users.getUserList({ emailAddress: [settings.email], limit: 100 });
+export const sweep = Effect.fn("ClerkLive.sweep")(function* (settings: LiveSettings) {
+  const client = yield* liveClient;
+  const users = yield* Effect.promise(() =>
+    client.users.getUserList({ emailAddress: [settings.email], limit: 100 })
+  );
   for (const user of users.data) {
     if (user.emailAddresses.some((email) => email.emailAddress === settings.email))
-      await client.users.deleteUser(user.id);
+      yield* Effect.promise(() => client.users.deleteUser(user.id));
   }
-  const remaining = await client.users.getUserList({ emailAddress: [settings.email], limit: 1 });
+  const remaining = yield* Effect.promise(() =>
+    client.users.getUserList({ emailAddress: [settings.email], limit: 1 })
+  );
   if (remaining.totalCount !== 0) throw new Error(`Clerk users remain for run ${settings.runId}.`);
-  const invitations = await client.invitations.getInvitationList({
-    query: settings.inviteEmail,
-    status: "pending",
-    limit: 100
-  });
+  const invitations = yield* Effect.promise(() =>
+    client.invitations.getInvitationList({
+      query: settings.inviteEmail,
+      status: "pending",
+      limit: 100
+    })
+  );
   for (const invitation of invitations.data) {
     if (invitation.emailAddress === settings.inviteEmail)
-      await client.invitations.revokeInvitation(invitation.id);
+      yield* Effect.promise(() => client.invitations.revokeInvitation(invitation.id));
   }
-}
+});

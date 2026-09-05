@@ -19,14 +19,17 @@ import * as Session from "../src/Session.js";
 import { liveClient } from "./fixtures.js";
 
 const settings = inject("clerk");
-const client = liveClient(settings);
 // Closed configuration: even an ambient CLERK_JWT_KEY cannot bypass JWKS.
-const env = {
-  CLERK_SECRET_KEY: settings.secretKey,
-  CLERK_PUBLISHABLE_KEY: settings.publishableKey,
+const environment = ConfigProvider.fromEnv();
+const local = ConfigProvider.fromUnknown({
   PATCHY_PUBLIC_BASE_URL: settings.publicBaseUrl,
   CLERK_AUTHORIZED_PARTIES: settings.authorizedParty
-};
+});
+const config = ConfigProvider.make((path) =>
+  path.length === 1 && (path[0] === "CLERK_SECRET_KEY" || path[0] === "CLERK_PUBLISHABLE_KEY")
+    ? environment.load(path)
+    : local.load(path)
+);
 const services = Layer.mergeAll(
   HttpServer.layerServices,
   Session.layer,
@@ -38,7 +41,7 @@ const services = Layer.mergeAll(
   Layer.provideMerge(MachineTokens.layer),
   Layer.provideMerge(Layer.mergeAll(Limits.layer, Analytics.layerNoop)),
   Layer.provideMerge(Testing.layer()),
-  Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env)))
+  Layer.provide(ConfigProvider.layer(config))
 );
 const decodeClaims = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Struct({ azp: Schema.optional(Schema.Null), iat: Schema.Number }))
@@ -49,6 +52,7 @@ it.layer(services, { timeout: "60 seconds" })("live Clerk", (it) => {
     "admits a Clerk-signed session to /company using JWKS without an authorized party",
     () =>
       Effect.gen(function* () {
+        const client = yield* liveClient;
         const user = yield* Effect.promise(() =>
           client.users.createUser({
             emailAddress: [settings.email],
@@ -95,6 +99,7 @@ it.layer(services, { timeout: "60 seconds" })("live Clerk", (it) => {
 
   it.effect("creates, lists, revokes and re-invites through live InviteMail", () =>
     Effect.gen(function* () {
+      const client = yield* liveClient;
       const mail = yield* InviteMail.InviteMail;
       const first = yield* mail.create(settings.inviteEmail);
       const created = yield* Effect.promise(() =>
