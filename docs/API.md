@@ -54,7 +54,7 @@ Responses:
 
 ### `POST /api/patches/:patchId/share`
 
-Change the sharing scope of a patch owned by the bearer token's user, without publishing a version. `company` requires a company member's browser session; `public` lets anyone with the link open it. A patch the caller does not own answers 404. Both latest and version URLs follow the scope: public responses may be cached for 60 seconds; company responses are private and never stored.
+Change the sharing scope of a patch owned by the bearer token's user, without publishing a version. `company` requires a company member's browser session; `public` lets anyone with the link open it. A patch the caller does not own answers 404. Both latest and version URLs follow the scope: public responses may be cached for 60 seconds; company responses are private and never stored. The JSON body is bounded by the upload body limit: 2 MiB by default, or three times `PATCHY_MAX_HTML_BYTES` when that is larger. An oversized declared body answers 413; streaming bodies are cut off at the cap. Rejected requests leave the scope unchanged.
 
 Request body: [ShareRequest](#sharerequest)
 
@@ -64,6 +64,7 @@ Responses:
 - `400` { ok: false, error: string }
 - `401` { ok: false, error: "Missing or invalid API token." }
 - `404` { ok: false, error: string }
+- `413` { ok: false, error: string }
 - `414` { ok: false, error: string }
 - `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
 

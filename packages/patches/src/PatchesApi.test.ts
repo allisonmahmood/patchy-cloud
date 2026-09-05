@@ -176,7 +176,9 @@ it.layer(layer)("patches group", (it) => {
           next(
             request.pipe(
               HttpClientRequest.bearerToken(uploader.machine.id),
-              HttpClientRequest.bodyJsonUnsafe({ html: html("Invalid scope"), scope })
+              HttpClientRequest.bodyJsonUnsafe(
+                request.url.endsWith("/share") ? { scope } : { html: html("Invalid scope"), scope }
+              )
             )
           )
         );

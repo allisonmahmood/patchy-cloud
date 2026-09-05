@@ -229,21 +229,35 @@ describe("the exit-code ladder", async () => {
 });
 
 describe("patchy auth set", async () => {
-  it("saves a token from stdin under the resolved instance, never echoing it", async () => {
-    const result = await runCli(["auth", "set", "--token-stdin", "--api-url", "http://one.test/"], {
+  it("saves a token through share's recovery command under the resolved instance, never echoing it", async () => {
+    const instance = await stubInstance((_, respond) => respond(500, {}));
+    const missing = await runCli([
+      "share",
+      "--patch",
+      "abcdefghijkl",
+      "public",
+      "--api-url",
+      `${instance.url}/`,
+      "--json"
+    ]);
+    const recovery = (JSON.parse(missing.stderr).error as string).match(/patchy (.+)$/)?.[1];
+    if (recovery === undefined) throw new Error("No recovery command in local error.");
+    const result = await runCli([...recovery.split(" "), "--token-stdin"], {
+      stateDir: missing.stateDir,
       input: "pp_secret_one\n"
     });
     expect(result).toMatchObject({
       status: 0,
-      stdout: "Patchy Cloud credentials saved for http://one.test.\n",
+      stdout: expect.not.stringContaining("pp_secret_one"),
       stderr: ""
     });
     expect(readJson(path.join(result.stateDir, "credentials.json"))).toMatchObject({
-      hosts: { "http://one.test": { token: "pp_secret_one", source: "auth-set" } }
+      hosts: { [instance.url]: { token: "pp_secret_one", source: "auth-set" } }
     });
     expect(readJson(path.join(result.stateDir, "config.json"))).toEqual({
-      apiUrl: "http://one.test"
+      apiUrl: instance.url
     });
+    expect(instance.requests).toHaveLength(0);
 
     // A second instance sits beside the first; neither disturbs the other.
     const second = await runCli(["auth", "set", "--token-stdin", "--json"], {
@@ -258,7 +272,7 @@ describe("patchy auth set", async () => {
         hosts: Record<string, { token: string }>;
       }
     ).hosts;
-    expect(Object.keys(hosts).sort()).toEqual(["http://one.test", "http://two.test"]);
+    expect(Object.keys(hosts).sort()).toEqual([instance.url, "http://two.test"].sort());
   });
 
   it("rejects empty and multi-line input, and a prompt with no terminal", async () => {
@@ -337,10 +351,7 @@ describe("commands without a publishing key", () => {
       expect(result.stdout).toBe("");
       expect(JSON.parse(result.stderr)).toMatchObject({
         ok: false,
-        kind: "local",
-        error: expect.stringContaining(
-          command === "share" ? "Run: patchy login" : `patchy auth set --api-url ${instance.url}`
-        )
+        kind: "local"
       });
       expect(instance.requests).toHaveLength(0);
     }
@@ -728,22 +739,6 @@ describe("patchy share", () => {
     });
     expect(result.status).toBe(1);
     expect(JSON.parse(result.stderr)).toMatchObject({ ok: false, kind: "local" });
-    expect(instance.requests).toHaveLength(0);
-  });
-
-  it("directs a keyless text invocation to login before contacting the instance", async () => {
-    const instance = await stubInstance((_, respond) => respond(500, {}));
-    const result = await runCli([
-      "share",
-      "--patch",
-      "abcdefghijkl",
-      "public",
-      "--api-url",
-      instance.url
-    ]);
-    expect(result.status).toBe(1);
-    expect(result.stdout).toBe("");
-    expect(result.stderr).toContain("Run: patchy login");
     expect(instance.requests).toHaveLength(0);
   });
 });

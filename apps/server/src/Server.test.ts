@@ -3,10 +3,11 @@
  * the API and comes out as a served page, with the headers a socket sees.
  * What each route does is its package's test; this proves the wiring.
  */
-import { assert, it } from "@effect/vitest";
+import { assert, expect, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
 import * as Cookies from "effect/unstable/http/Cookies";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
@@ -123,6 +124,53 @@ it.layer(
           SELECT source_ip FROM patch_versions WHERE patch_id = ${directBody.patchId}`;
       // Dual-stack in the test; the address family is the socket's business.
       assert.match(second?.source_ip ?? "", /(^|:)127\.0\.0\.1$/);
+    })
+  );
+
+  it.effect("bounds sharing bodies before changing a company patch's scope", () =>
+    Effect.gen(function* () {
+      const created = yield* upload(DEV_SEED.token, { html: html("Bounded sharing secret") });
+      const { patchId } = (yield* created.json) as { patchId: string };
+      const share = HttpClientRequest.post(`/api/patches/${patchId}/share`).pipe(
+        HttpClientRequest.bearerToken(DEV_SEED.token)
+      );
+      const padded = JSON.stringify({ scope: "public", padding: "x".repeat(2 * 1024 * 1024) });
+
+      for (const [request, status] of [
+        [share.pipe(HttpClientRequest.bodyText(padded, "application/json")), 413],
+        [
+          share.pipe(
+            HttpClientRequest.bodyStream(Stream.succeed(new TextEncoder().encode(padded)), {
+              contentType: "application/json"
+            })
+          ),
+          "disconnected"
+        ]
+      ] as const) {
+        if (status === "disconnected") {
+          // Node destroys the request stream when an undeclared body crosses the cap.
+          const failure = yield* send(request).pipe(Effect.flip);
+          assert.strictEqual(failure.reason._tag, "TransportError");
+        } else {
+          const response = yield* send(request);
+          assert.strictEqual(response.status, status);
+          expect(yield* response.json).toEqual({ ok: false, error: expect.any(String) });
+        }
+        for (const path of [`/d/${patchId}`, `/d/${patchId}/v/1`]) {
+          const page = yield* send(HttpClientRequest.get(path));
+          assert.strictEqual(page.status, 401);
+          assert.notInclude(yield* page.text, "Bounded sharing secret");
+        }
+      }
+
+      const shared = yield* send(share.pipe(HttpClientRequest.bodyJsonUnsafe({ scope: "public" })));
+      assert.deepStrictEqual(yield* answer(shared), {
+        status: 200,
+        body: { ok: true, patchId, scope: "public", publicUrl: `${publicBaseUrl}/d/${patchId}` }
+      });
+      const page = yield* send(HttpClientRequest.get(`/d/${patchId}`));
+      assert.strictEqual(page.status, 200);
+      assert.include(yield* page.text, "Bounded sharing secret");
     })
   );
 

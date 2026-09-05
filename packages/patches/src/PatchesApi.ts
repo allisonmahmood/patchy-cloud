@@ -42,11 +42,7 @@ import * as PatchesConfig from "./PatchesConfig.js";
 const notFound = () => refuse(NotFound, { ok: false, error: "Patch not found." });
 
 const decodeUpload = decodeBody(UploadRequest);
-const readShare = HttpServerRequest.schemaBodyJson(ShareRequest).pipe(
-  Effect.catch(() =>
-    Effect.succeed(refuse(BadRequest, { ok: false, error: "Malformed request body." }))
-  )
-);
+const decodeShare = decodeBody(ShareRequest);
 
 /**
  * Which field failed decides the answer, as it always has: no usable document
@@ -236,7 +232,19 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
         .handleRaw("share", ({ params }) =>
           Effect.gen(function* () {
             const identity = yield* CurrentIdentity;
-            const payload = yield* readShare;
+            const payload = yield* readBody(maxUploadBodyBytes).pipe(
+              Effect.flatMap(decodeShare),
+              Effect.catchTags({
+                MalformedBody: () =>
+                  Effect.succeed(
+                    refuse(BadRequest, { ok: false, error: "Malformed request body." })
+                  ),
+                BodyTooLarge: () =>
+                  Effect.succeed(
+                    refuse(PayloadTooLarge, { ok: false, error: "Request body is too large." })
+                  )
+              })
+            );
             if (HttpServerResponse.isHttpServerResponse(payload)) return payload;
             const scope = yield* patches
               .setScope(params.patchId, identity.user.id, payload.scope)

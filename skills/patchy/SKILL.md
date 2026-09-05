@@ -54,9 +54,9 @@ Behavior:
   `http://localhost:3000`, which only works if a server is running locally. Settle the
   instance before uploading — `status --json` says which one is resolved and where that
   came from, and `upload` prints it before publishing.
-- Every upload carries a publishing key. With no key, run
-  `patchy auth set --api-url <url>` to save one the user already holds;
-  upload exits `1` (`local`) until a key is configured. Keep the key out of chat.
+- Upload, share, delete and whoami require a publishing key. With no key, they exit
+  `1` (`local`); run `patchy auth set --api-url <url>` to save one the user already
+  holds. Keep the key out of chat.
 - A rejected stored or environment key is a hard error. Save a working key for
   the same user to keep editing that user's pages.
 - Call the credential the user's **publishing key**; local validation runs before upload.
@@ -68,8 +68,7 @@ Behavior:
   `patchy share './plan.html' public` or `patchy share './plan.html' company`;
   `patchy share --patch <id> public` (or `company`) selects an id instead of the cached
   file, exactly one target. Only the owner user may change sharing, through any of
-  their machine tokens; another user's patch answers 404. With no key, `share`
-  exits `1` (`local`) with `Run: patchy login`.
+  their machine tokens; another user's patch answers 404.
 - Announce the returned `scope`, not an assumed default: `company` means signed-in
   colleagues in the user's company can open the link; `public` means anyone with
   the link can open it without signing in. Text output names both scope and readership.

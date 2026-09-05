@@ -8,6 +8,8 @@ import {
   PatchId,
   PatchQuotaExceeded,
   RateLimited,
+  Shared,
+  ShareRequest,
   Unauthorized,
   UploadCreated,
   UploadRequest
@@ -82,6 +84,16 @@ describe("wire schemas", () => {
 
   it("round-trips every other wire shape", () => {
     const cases: ReadonlyArray<[Schema.Codec<unknown, unknown>, unknown]> = [
+      [ShareRequest, { scope: "public" }],
+      [
+        Shared,
+        {
+          ok: true,
+          patchId: "abcdefghijkl",
+          scope: "company",
+          publicUrl: "https://pages.example.com/d/abcdefghijkl"
+        }
+      ],
       [LoggedOut, { ok: true, alreadyRevoked: false }],
       [Ok, { ok: true }],
       [Unauthorized, { ok: false, error: "Missing or invalid API token." }]

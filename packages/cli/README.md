@@ -129,7 +129,7 @@ patchy share --patch k7f2m9x1a3b8 company --json
 # {"ok":true,"patchId":"k7f2m9x1a3b8","scope":"company","publicUrl":"https://pages.example.com/d/k7f2m9x1a3b8"}
 ```
 
-Share uses the same credential chain as upload. With no key it exits 1 (`local`) with `Run: patchy login`; a missing cached file target is also `local`. An unavailable or unowned patch answers 404 (`rejected`, exit 2), including under `--json`.
+Share uses the same credential chain as upload. With no key it exits 1 (`local`) naming `patchy auth set --api-url <url>`; a missing cached file target is also `local`. An unavailable or unowned patch answers 404 (`rejected`, exit 2), including under `--json`.
 
 Read company patches through the user's signed-in browser; only public patches fetch directly by URL. Public responses have `Cache-Control: public, max-age=60` at both the latest and `/v/<n>` URL shapes. After changing to company, origin responses are `private, no-store` and a cookie-free fetch answers 401. A previously cached public copy may remain reachable for up to 60 seconds; already downloaded copies cannot be recalled.
 
