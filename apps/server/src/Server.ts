@@ -1,7 +1,7 @@
 /**
  * The server as one layer: the capability services over a migrated
- * database, the `/api/*` contract with both groups' handlers behind the
- * bearer middleware, the pages, the middleware every request passes through,
+ * database, the `/api/*` contract with bearer middleware on protected
+ * endpoints, the pages, the middleware every request passes through,
  * and the expiry sweep forked in the same scope. Wiring only — every rule
  * lives in the package that owns it.
  *
@@ -22,6 +22,7 @@ import {
   AuthApi,
   AuthPages,
   Authorization,
+  DeviceLogins,
   migrations as authMigrations,
   MachineTokens,
   Session
@@ -63,7 +64,7 @@ const migrated = Layer.effectDiscard(
  * The services, over the migrated database. Analytics reports nothing unless
  * a key is configured.
  */
-const services = Layer.mergeAll(Content.layer, ExpirySweep.layer).pipe(
+const services = Layer.mergeAll(Content.layer, ExpirySweep.layer, DeviceLogins.layer).pipe(
   Layer.provideMerge(
     Layer.mergeAll(
       Analytics.layer,
@@ -94,7 +95,7 @@ const sweeper = Layer.effectDiscard(
   )
 );
 
-/** `/api/*`: both groups' handlers behind the bearer middleware, and the guard's catch-all. */
+/** `/api/*`: the groups' handlers, bearer middleware on protected endpoints, and catch-all. */
 const api = Layer.mergeAll(HttpApiBuilder.layer(PatchyApi), ApiGuard.notFound).pipe(
   Layer.provide([AuthApi.layer, PatchesApi.layer]),
   Layer.provide(Authorization.layer)

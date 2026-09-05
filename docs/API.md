@@ -3,7 +3,7 @@
 Rendered from `PatchyApi` in `packages/api` by `pnpm --filter @patchy/api render-docs`. Do not
 edit by hand: a test fails when this file and the schemas disagree.
 
-Every route lives under `/api` and speaks JSON. Every route needs `Authorization: Bearer <token>`; a missing or invalid token is a 401 with `{ ok: false, error }`. A refusal is always `{ ok: false, error }`, plus a `code` and the number a client needs on the ones it branches on. A 429 also carries a `Retry-After` header with the same seconds as `retryAfterSeconds`.
+Every route lives under `/api` and speaks JSON. Only `POST /api/login/device` and `POST /api/login/device/token` are unauthenticated. Every other route needs `Authorization: Bearer <token>`; a missing or invalid token is a 401 with `{ ok: false, error }`. A refusal is always `{ ok: false, error }`, plus a `code` and the number a client needs on the ones it branches on. A 429 also carries a `Retry-After` header with the same seconds as `retryAfterSeconds`.
 
 ## auth
 
@@ -30,6 +30,30 @@ Responses:
 - `401` { ok: false, error: "Missing or invalid API token." }
 - `404` { ok: false, error: string }
 - `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
+
+### `POST /api/login/device`
+
+Begin a device login without a bearer token. Relay `verificationUrl` and `userCode` to the person, who confirms the code in their signed-in browser; the code is never typed. The login expires after ten minutes. Starts are limited per source address (`PATCHY_DEVICE_LOGIN_RATE_LIMIT_PER_MINUTE`, default 5). On a re-login, send the stored machine token's id as `previousMachineTokenId`; the old key stays live until the completing poll replaces it, and only when it belongs to the confirming user.
+
+Request body: [StartDeviceLoginRequest](#startdeviceloginrequest)
+
+Responses:
+
+- `201` [DeviceLoginStarted](#deviceloginstarted)
+- `400` { ok: false, error: string }
+- `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
+
+### `POST /api/login/device/token`
+
+Poll without a bearer token, at the returned interval. A poll made too soon answers `slow_down`; add five seconds to the interval. After browser confirmation, one poll mints the machine token and returns `complete`. The key expires in 90 days or after 30 idle days. Complete, expired and denied logins are deleted, so a subsequent poll answers 410 `unknown`. Plaintext tokens are never stored.
+
+Request body: [PollDeviceLoginRequest](#polldeviceloginrequest)
+
+Responses:
+
+- `200` { ok: true, status: "pending" | "slow_down" } | { ok: true, status: "complete", token: string, machine: { id: string, name: string }, expiresAt: string }
+- `400` { ok: false, error: string }
+- `410` { ok: false, error: string, code: "expired" | "denied" | "unknown" }
 
 ## patches
 
@@ -111,6 +135,37 @@ Responses:
 {
   ok: true,
   alreadyRevoked: boolean
+}
+```
+
+### StartDeviceLoginRequest
+
+```
+{
+  machineNameHint: string,
+  previousMachineTokenId?: string
+}
+```
+
+### DeviceLoginStarted
+
+```
+{
+  ok: true,
+  deviceCode: string,
+  userCode: string,
+  verificationUrl: string,
+  verificationUrlBare: string,
+  interval: 5,
+  expiresAt: string
+}
+```
+
+### PollDeviceLoginRequest
+
+```
+{
+  deviceCode: string
 }
 ```
 

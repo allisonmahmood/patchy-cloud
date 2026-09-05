@@ -166,6 +166,169 @@ it.layer(server({ PATCHY_PROTECTED_API_RATE_LIMIT_PER_MINUTE: "3" }))(
   }
 );
 
+it.layer(server())("the guard: only the device-login POST routes are anonymous", (it) => {
+  it.effect("admits a start and poll without a credential, even with an invalid bearer", () =>
+    Effect.gen(function* () {
+      for (const authorization of [undefined, "Bearer invalid-machine-token"]) {
+        const headers = authorization === undefined ? {} : { authorization };
+        const started = yield* send(
+          HttpClientRequest.post("/api/login/device").pipe(
+            HttpClientRequest.setHeaders(headers),
+            HttpClientRequest.bodyJsonUnsafe({ machineNameHint: "Laptop" })
+          )
+        );
+        assert.strictEqual(started.status, 201);
+        const poll = yield* send(
+          HttpClientRequest.post("/api/login/device/token").pipe(
+            HttpClientRequest.setHeaders(headers),
+            HttpClientRequest.bodyJsonUnsafe({ deviceCode: "unknown-device" })
+          )
+        );
+        assert.strictEqual(poll.status, 410);
+        assert.propertyVal(yield* poll.json, "code", "unknown");
+      }
+    })
+  );
+
+  it.effect("requires a bearer on other methods, adjacent paths and malformed targets", () =>
+    Effect.gen(function* () {
+      for (const request of [
+        HttpClientRequest.get("/api/login/device"),
+        HttpClientRequest.put("/api/login/device"),
+        HttpClientRequest.delete("/api/login/device/token"),
+        HttpClientRequest.post("/api/login/device/extra"),
+        HttpClientRequest.post("/api/login/device/token/extra"),
+        HttpClientRequest.post("/api/login/device-other"),
+        HttpClientRequest.post("/api/login/device/%"),
+        HttpClientRequest.post("/api%2Flogin/device"),
+        HttpClientRequest.post("/api/tokens/self-service"),
+        HttpClientRequest.get("/api/me"),
+        HttpClientRequest.post("/api/logout"),
+        HttpClientRequest.post("/api/uploads")
+      ]) {
+        assert.deepStrictEqual(
+          yield* answer(yield* send(request)),
+          {
+            status: 401,
+            body: UNAUTHORIZED
+          },
+          `${request.method} ${request.url}`
+        );
+      }
+      for (const path of ["/api/login/device", "/api/login/device/token"]) {
+        assert.strictEqual((yield* send(HttpClientRequest.head(path))).status, 401);
+      }
+    })
+  );
+
+  it.effect("applies the default five-start limit to all spellings the router matches", () =>
+    Effect.gen(function* () {
+      yield* TestClock.adjust("61 seconds");
+      for (const path of [
+        "/api/login/device",
+        "/api/login/device?ignored=true",
+        "/api//login/device",
+        "/api/login/device/",
+        "/%61pi/login/device"
+      ]) {
+        assert.strictEqual(
+          (yield* send(
+            HttpClientRequest.post(path).pipe(
+              HttpClientRequest.bodyJsonUnsafe({ machineNameHint: "Laptop" })
+            )
+          )).status,
+          201,
+          path
+        );
+      }
+      const limited = yield* send(
+        HttpClientRequest.post("/api/login/device").pipe(
+          HttpClientRequest.bodyJsonUnsafe({ machineNameHint: "Laptop" })
+        )
+      );
+      assert.strictEqual(limited.headers["retry-after"], "60");
+      assert.deepStrictEqual(yield* answer(limited), { status: 429, body: LIMITED });
+      const poll = yield* send(
+        HttpClientRequest.post("/api/login/device//token/").pipe(
+          HttpClientRequest.bodyJsonUnsafe({ deviceCode: "unknown-device" })
+        )
+      );
+      assert.strictEqual(poll.status, 410);
+      assert.propertyVal(yield* poll.json, "code", "unknown");
+    })
+  );
+});
+
+it.layer(
+  server({
+    PATCHY_DEVICE_LOGIN_RATE_LIMIT_PER_MINUTE: "2",
+    PATCHY_PROTECTED_API_RATE_LIMIT_PER_MINUTE: "1",
+    PATCHY_TRUST_PROXY: "127.0.0.1"
+  })
+)("the guard: device starts have their own per-address bucket", (it) => {
+  it.effect(
+    "limits starts before reading the body, independently of bearers, polls and other addresses",
+    () =>
+      Effect.gen(function* () {
+        const from = (address: string) => HttpClientRequest.setHeader("x-forwarded-for", address);
+        const start = (address: string) =>
+          send(
+            HttpClientRequest.post("/api/login/device").pipe(
+              from(address),
+              HttpClientRequest.bodyJsonUnsafe({ machineNameHint: "Laptop" })
+            )
+          );
+        const protectedRequest = HttpClientRequest.get("/api/me").pipe(from("203.0.113.1"));
+        assert.strictEqual((yield* send(protectedRequest)).status, 401);
+        assert.strictEqual((yield* send(protectedRequest)).status, 429);
+        const malformed = yield* send(
+          HttpClientRequest.post("/api/login/device").pipe(
+            from("203.0.113.1"),
+            HttpClientRequest.setHeader("content-type", "application/json"),
+            HttpClientRequest.bodyText("{not-json")
+          )
+        );
+        assert.deepStrictEqual(yield* answer(malformed), {
+          status: 400,
+          body: { ok: false, error: "Malformed request body." }
+        });
+        assert.strictEqual((yield* start("203.0.113.1")).status, 201);
+        const limited = yield* send(
+          HttpClientRequest.post("/api/login/device").pipe(
+            from("203.0.113.1"),
+            HttpClientRequest.bearerToken(DEV_SEED.token),
+            HttpClientRequest.setHeader("content-type", "application/json"),
+            HttpClientRequest.bodyText("{still-not-json")
+          )
+        );
+        assert.strictEqual(limited.headers["retry-after"], "60");
+        assert.deepStrictEqual(yield* answer(limited), { status: 429, body: LIMITED });
+        assert.strictEqual((yield* start("203.0.113.2")).status, 201);
+        const malformedPoll = yield* send(
+          HttpClientRequest.post("/api/login/device/token").pipe(
+            from("203.0.113.1"),
+            HttpClientRequest.bodyJsonUnsafe({})
+          )
+        );
+        assert.deepStrictEqual(yield* answer(malformedPoll), {
+          status: 400,
+          body: { ok: false, error: "Malformed request body." }
+        });
+        const poll = yield* send(
+          HttpClientRequest.post("/api/login/device/token").pipe(
+            from("203.0.113.1"),
+            HttpClientRequest.bodyJsonUnsafe({ deviceCode: "unknown-device" })
+          )
+        );
+        assert.strictEqual(poll.status, 410);
+        assert.propertyVal(yield* poll.json, "code", "unknown");
+        yield* TestClock.adjust("61 seconds");
+        assert.strictEqual((yield* start("203.0.113.1")).status, 201);
+        assert.strictEqual((yield* send(protectedRequest)).status, 401);
+      })
+  );
+});
+
 it.layer(
   server({
     PATCHY_AUTHENTICATED_UPLOAD_RATE_LIMIT_PER_MINUTE: "2",
