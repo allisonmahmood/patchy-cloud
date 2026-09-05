@@ -6,12 +6,15 @@ import {
   BadRequest,
   CurrentIdentity,
   decodeBody,
+  DeviceLoginComplete,
   DeviceLoginGone,
   DeviceLoginStarted,
+  DeviceLoginWaiting,
   LoggedOut,
-  MalformedBody,
   PatchyApi,
+  PayloadTooLarge,
   PollDeviceLoginRequest,
+  readBody,
   refuse,
   StartDeviceLoginRequest
 } from "@patchy/api";
@@ -28,12 +31,9 @@ export const layer = HttpApiBuilder.group(PatchyApi, "auth", (handlers) =>
     const publicBaseUrl = yield* Config.string("PATCHY_PUBLIC_BASE_URL");
     const verificationUrlBare = `${publicBaseUrl.replace(/\/+$/, "")}/login/device`;
     return handlers
-      .handleRaw("startDeviceLogin", ({ request }) =>
+      .handleRaw("startDeviceLogin", () =>
         Effect.gen(function* () {
-          const payload = yield* request.json.pipe(
-            Effect.mapError((cause) => new MalformedBody({ cause })),
-            Effect.flatMap(decodeStart)
-          );
+          const payload = yield* readBody(4096).pipe(Effect.flatMap(decodeStart));
           const started = yield* logins
             .start(payload)
             .pipe(Effect.catchTags({ SqlError: Effect.die }));
@@ -46,24 +46,43 @@ export const layer = HttpApiBuilder.group(PatchyApi, "auth", (handlers) =>
         }).pipe(
           Effect.catchTags({
             MalformedBody: () =>
-              Effect.succeed(refuse(BadRequest, { ok: false, error: "Malformed request body." }))
+              Effect.succeed(refuse(BadRequest, { ok: false, error: "Malformed request body." })),
+            BodyTooLarge: () =>
+              Effect.succeed(
+                refuse(PayloadTooLarge, { ok: false, error: "Request body is too large." })
+              )
           })
         )
       )
-      .handleRaw("pollDeviceLogin", ({ request }) =>
+      .handleRaw("pollDeviceLogin", () =>
         Effect.gen(function* () {
-          const payload = yield* request.json.pipe(
-            Effect.mapError((cause) => new MalformedBody({ cause })),
-            Effect.flatMap(decodePoll)
-          );
+          const payload = yield* readBody(4096).pipe(Effect.flatMap(decodePoll));
           const result = yield* logins
             .poll(payload.deviceCode)
             .pipe(Effect.catchTags({ SqlError: Effect.die }));
-          return result.ok ? result : refuse(DeviceLoginGone, result);
+          return result.status === "complete"
+            ? new DeviceLoginComplete({ ok: true, ...result })
+            : new DeviceLoginWaiting({ ok: true, status: result.status });
         }).pipe(
           Effect.catchTags({
             MalformedBody: () =>
-              Effect.succeed(refuse(BadRequest, { ok: false, error: "Malformed request body." }))
+              Effect.succeed(refuse(BadRequest, { ok: false, error: "Malformed request body." })),
+            BodyTooLarge: () =>
+              Effect.succeed(
+                refuse(PayloadTooLarge, { ok: false, error: "Request body is too large." })
+              ),
+            DeviceLoginExpired: (error) =>
+              Effect.succeed(
+                refuse(DeviceLoginGone, { ok: false, code: "expired", error: error.message })
+              ),
+            DeviceLoginDenied: (error) =>
+              Effect.succeed(
+                refuse(DeviceLoginGone, { ok: false, code: "denied", error: error.message })
+              ),
+            DeviceLoginUnknown: (error) =>
+              Effect.succeed(
+                refuse(DeviceLoginGone, { ok: false, code: "unknown", error: error.message })
+              )
           })
         )
       )

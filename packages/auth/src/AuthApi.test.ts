@@ -170,13 +170,15 @@ it.layer(layer)("auth group: anonymous device login", (it) => {
           responseMode: "decoded-and-response"
         });
         assert.strictEqual(pendingResponse.status, 200);
-        assert.deepStrictEqual(pending, { ok: true, status: "pending" });
+        assert.deepStrictEqual(yield* pendingResponse.json, { ok: true, status: "pending" });
+        assert.strictEqual(pending.status, "pending");
         const [slow, slowResponse] = yield* api.pollDeviceLogin({
           payload,
           responseMode: "decoded-and-response"
         });
         assert.strictEqual(slowResponse.status, 200);
-        assert.deepStrictEqual(slow, { ok: true, status: "slow_down" });
+        assert.deepStrictEqual(yield* slowResponse.json, { ok: true, status: "slow_down" });
+        assert.strictEqual(slow.status, "slow_down");
       }).pipe(Effect.provide(anonymous))
   );
 
@@ -209,6 +211,13 @@ it.layer(layer)("auth group: anonymous device login", (it) => {
         if (complete.status !== "complete") throw new Error("Expected a completed device login");
         assert.strictEqual(complete.machine.name, "Renamed laptop");
         assert.strictEqual(complete.expiresAt, "2026-04-01T00:00:00.000Z");
+        assert.deepStrictEqual(yield* response.json, {
+          ok: true,
+          status: "complete",
+          token: complete.token,
+          machine: complete.machine,
+          expiresAt: "2026-04-01T00:00:00.000Z"
+        });
         const signedIn = yield* client.pipe(Effect.provide(bearer(complete.token)));
         assert.deepStrictEqual((yield* signedIn.me()).machine, complete.machine);
         const replaced = yield* client.pipe(Effect.provide(bearer(previous.token)));
@@ -233,7 +242,7 @@ it.layer(layer)("auth group: anonymous device login", (it) => {
           payload: new StartDeviceLoginRequest({ machineNameHint: "Laptop" })
         });
         if (code === "denied") {
-          yield* (yield* DeviceLogins.DeviceLogins).deny(started.userCode);
+          yield* (yield* DeviceLogins.DeviceLogins).deny(started.userCode, DEV_SEED.userId);
         } else {
           yield* TestClock.adjust("10 minutes");
         }
@@ -247,6 +256,12 @@ it.layer(layer)("auth group: anonymous device login", (it) => {
         assert.propertyVal(body, "ok", false);
         assert.propertyVal(body, "code", code);
         assert.property(body, "error");
+        const consumed = yield* api
+          .pollDeviceLogin({
+            payload: new PollDeviceLoginRequest({ deviceCode: started.deviceCode })
+          })
+          .pipe(Effect.flip);
+        assert.propertyVal(consumed, "code", "unknown");
       }
     }).pipe(Effect.provide(anonymous))
   );
