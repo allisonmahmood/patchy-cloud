@@ -17,7 +17,7 @@ import type * as HttpClientResponse from "effect/unstable/http/HttpClientRespons
 import * as Testing from "@patchy/sql/testing";
 import * as Server from "../Server.js";
 
-export const server = (env: Record<string, string> = {}) =>
+export const server = (env: Record<string, string | undefined> = {}) =>
   Server.layer.pipe(
     Layer.provideMerge(NodeHttpServer.layerTest),
     Layer.provideMerge(Testing.layer()),
@@ -25,6 +25,7 @@ export const server = (env: Record<string, string> = {}) =>
       ConfigProvider.layer(
         ConfigProvider.fromUnknown({
           PATCHY_STORAGE_DIR: mkdtempSync(path.join(os.tmpdir(), "patchy-server-")),
+          PATCHY_PUBLIC_BASE_URL: "https://patchy.example",
           ...env
         })
       )
