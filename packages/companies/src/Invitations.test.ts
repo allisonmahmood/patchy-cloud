@@ -180,6 +180,57 @@ it.layer(Companies.layer.pipe(Layer.provideMerge(Testing.layer())))("Invitations
       }).pipe(Effect.provide(InviteMail.layerRecording))
   );
 
+  it.effect("recovers resend when Clerk revoked the old link but its response was lost", () =>
+    Effect.gen(function* () {
+      const companies = yield* Companies.Companies;
+      const recording = yield* InviteMail.Recording;
+      const mail = yield* InviteMail.InviteMail;
+      const { company, user } = yield* companies.create(companyInput("mail-lost-response"));
+      const created = yield* Invitations.create({
+        companyId: company.id,
+        invitedBy: user.id,
+        email: "lost-response@example.com"
+      });
+      const reference = { companyId: company.id, inviteId: created.invite.id };
+      const lostResponse = Layer.succeed(
+        InviteMail.InviteMail,
+        InviteMail.InviteMail.of({
+          create: mail.create,
+          revoke: (id) =>
+            mail
+              .revoke(id)
+              .pipe(
+                Effect.andThen(
+                  Effect.fail(
+                    new InviteMail.InviteMailError({ operation: "revoke", invitationId: id })
+                  )
+                )
+              )
+        })
+      );
+      assert.isTrue(
+        (yield* Invitations.resend(reference).pipe(Effect.provide(lostResponse))).mailFailed
+      );
+      const alreadyRevoked = Layer.succeed(
+        InviteMail.InviteMail,
+        InviteMail.InviteMail.of({
+          create: mail.create,
+          revoke: (id) => Effect.fail(new InviteMail.InvitationAlreadyRevoked({ invitationId: id }))
+        })
+      );
+      const recovered = yield* Invitations.resend(reference).pipe(Effect.provide(alreadyRevoked));
+      assert.isFalse(recovered.mailFailed);
+      assert.strictEqual(recovered.invite.id, created.invite.id);
+      assert.notStrictEqual(recovered.invite.clerkInvitationId, created.invite.clerkInvitationId);
+      assert.deepStrictEqual(yield* companies.listInvites(company.id), [recovered.invite]);
+      const events = yield* recording.events;
+      assert.strictEqual(events.filter((event) => event.operation === "create").length, 2);
+      const revoked = yield* Invitations.revoke(reference).pipe(Effect.provide(alreadyRevoked));
+      assert.isFalse(revoked.mailFailed);
+      assert.deepStrictEqual(yield* companies.listInvites(company.id), []);
+    }).pipe(Effect.provide(InviteMail.layerRecording))
+  );
+
   it.effect("ends local admission even when Clerk refuses to revoke the delivered email", () =>
     Effect.gen(function* () {
       const companies = yield* Companies.Companies;

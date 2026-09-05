@@ -128,12 +128,14 @@ Without one, `/join` and `/login`'s sign-in link lead to `/company`.
 
 The company page lists users, roles, active/deactivated state and pending
 invites. Admins invite, revoke, resend, change roles, deactivate and reactivate;
-members read the same page without management actions. The last active admin
-cannot be demoted or deactivated.
+members read the same page without management actions. Both roles can **Sign out**
+there. The last active admin cannot be demoted or deactivated.
 
 **Inviting on a dev instance sends real email through your Clerk development
 application.** Patchy keeps the invitation even if Clerk cannot send it; the
-page reports the failure and offers resend. Tests use recording and failing
+page reports the failure and offers resend. Resend also recovers when the previous
+Clerk invitation was already revoked, including after a lost revoke response.
+Tests use recording and failing
 `InviteMail` layers instead and stay offline. Deactivation revokes all the
 user's machine tokens; reactivation restores browser access, not old keys.
 

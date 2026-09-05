@@ -47,7 +47,10 @@ const company = Effect.fn("AuthPages.company")(function* (action: CompanyPage.Ac
         status: 303,
         headers: { "cache-control": "private, no-store" }
       })
-    : pageResponse({ ...page, styles: CompanyPage.styles }, session);
+    : pageResponse(
+        { ...page, styles: CompanyPage.styles, body: `${page.body}${signOutForm()}` },
+        session
+      );
 });
 
 const logout = Effect.gen(function* () {
@@ -96,7 +99,7 @@ const errors = <E, R>(app: Effect.Effect<HttpServerResponse.HttpServerResponse, 
             pageResponse(
               {
                 title: "Invalid form",
-                body: `<p>Return to <a href="/join">create-or-join</a> and submit the form again.</p>${signOutForm()}`,
+                body: `<p>Return to <a href="/company">your company</a> and submit the form again.</p>${signOutForm()}`,
                 status: 400
               },
               session
