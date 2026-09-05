@@ -30,7 +30,7 @@ Nothing else. A defect (a bug, an unmodelled error) is one `Unexpected error:
 <message>` line on stderr and exit 1, with the stack only at
 `--log-level debug`. HTTP status maps to kind as 4xx → `rejected`, everything
 that is not an answer — 5xx, connect, timeout, a body the wire schemas cannot
-read — → `unreachable`: "retry later, or tell the operator" is one action.
+read — → `unreachable`: retry later, or contact Patchy support about the deployment.
 
 A command whose local act succeeded reports a failed courtesy call as a warning,
 never as an exit code. `logout` forgets the credential and pending login first;
@@ -181,8 +181,8 @@ narrowed to one-line errors and the bare version.
 ## Consequences
 
 **An agent branches on the exit code, not on prose.** 1 means fix the call or
-the file, 2 means the instance's policy stands, 3 means try later or tell the
-operator. The messages stay for humans and for the JSON `error` field.
+the file, 2 means the instance's policy stands, 3 means try later or contact
+Patchy support. The messages stay for humans and for the JSON `error` field.
 
 **Contract and mechanism separate in the packed-CLI e2e.** The e2e asserts
 the ladder, one-line stderr, the bare `--version`, the token never in argv or

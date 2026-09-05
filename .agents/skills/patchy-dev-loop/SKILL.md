@@ -7,7 +7,9 @@ metadata:
 
 # The dev loop
 
-`pnpm dev` runs one complete Patchy Cloud per git worktree: embedded Postgres, migrations, and the shared `@patchy/auth/seed` — company Patchy Dev (`patchy-dev`), admin `dev@patchy.local` (Clerk id `user_dev`), and machine Dev Machine with token `patchy-dev-token` — then the server. Every command below is scoped to its worktree. Reference: `docs/DEVELOPMENT.md`.
+`pnpm dev` runs one complete Patchy Cloud per git worktree: embedded Postgres,
+migrations, a seeded **Patchy Dev** company and **Dev Machine** publishing key,
+then the server. Every command below is scoped to its worktree.
 
 When the change needs live Clerk integration checks, read
 `docs/DEVELOPMENT.md`'s **Test tiers** first: `pnpm test:clerk` runs the
@@ -18,30 +20,16 @@ does not include the live tiers.
 
 ## 1. Start
 
-Use the Node and pnpm prerequisites in `docs/DEVELOPMENT.md` and run `pnpm install`
-on a new checkout. Before startup, configure the required `CLERK_PUBLISHABLE_KEY`
-and `CLERK_SECRET_KEY` in the developer-owned file
-`$XDG_CONFIG_HOME/patchy-cloud/dev.env` (`~/.config/patchy-cloud/dev.env` by default).
-An authenticated Clerk CLI can pull the development application's keys there:
+On a new checkout, follow the prerequisites and `pnpm install` in
+[`docs/DEVELOPMENT.md`](../../../docs/DEVELOPMENT.md#the-local-instance-pnpm-dev).
+Before startup, follow its [Clerk keys](../../../docs/DEVELOPMENT.md#clerk-keys)
+recipe for the required developer-owned configuration; that section also owns
+optional JWT verification and local authorized-party settings.
 
-```sh
-clerk env pull --app app_3ImZuFeZJb8038U0oFds84rupA2 --file "${XDG_CONFIG_HOME:-$HOME/.config}/patchy-cloud/dev.env"
-```
-
-Dashboard key entry into the same private file also works. Keep secrets out of
-terminal output, chat and git. The server's application environment is closed:
-exported Clerk keys and other product settings do not reach it. The runner
-supplies `DATABASE_URL` and `PATCHY_PUBLIC_BASE_URL` from its plan and logs only
-the loaded Clerk setting names. Optional `CLERK_JWT_KEY` accepts a quoted
-multiline RSA-2048 PEM for local token verification; browser sign-in still
-needs Clerk. Leave `CLERK_AUTHORIZED_PARTIES` unset locally so per-port origins
-do not evict sibling worktrees' sessions.
-
-To use the person's existing Clerk development user as **Patchy Dev**'s admin,
-set `PATCHY_DEV_CLERK_USER_ID` to that user's id in `dev.env` before the first
-sign-in. It affects only the seed. Apply a changed value with
-`pnpm dev stop && pnpm dev`, not a healthy instance's idempotent start.
-See **Seed** in `docs/DEVELOPMENT.md` if that user already joined another company.
+To bind the seeded **Patchy Dev** admin to the person's Clerk development user,
+follow [Seed](../../../docs/DEVELOPMENT.md#seed) before their first sign-in.
+Read it again before changing that binding on an existing instance: a healthy
+idempotent start does not reseed or move an enrolled user between companies.
 
 ```sh
 pnpm dev
@@ -72,40 +60,28 @@ A saved login therefore overrides **Dev Machine**.
 upward from the working directory. Leave `--api-url` out locally: that flag
 bypasses discovery and its seed.
 
-For a fresh publish as the person, have them open the printed API URL's `/join`
-page in their browser and click **Sign in**. With the seed bound to their Clerk
-user they reach **Patchy Dev** as admin; otherwise they create or join a company.
-Then hand off the machine login:
+For a fresh publish as the person, follow DEVELOPMENT's
+[first-publish browser setup](../../../docs/DEVELOPMENT.md#the-local-instance-pnpm-dev),
+then [Device login through the CLI](../../../docs/DEVELOPMENT.md#device-login-through-the-cli)
+for the agent's JSON handoff, confirmation and completion commands.
+Complete login even when the seed already makes `status` report `hasToken: true`.
+Proceed only after `pnpm patchy whoami` names the person's chosen machine, user
+and company; **Dev Machine** is the seed, not evidence of a personal login.
 
 ```sh
-pnpm patchy login --json
-# Relay verificationUrl and userCode to the person; do not open their browser.
-# They check the code, company and email, name the machine, and confirm.
-pnpm patchy login --complete <userCode>
-pnpm patchy whoami
 pnpm patchy upload examples/plan.html --json
 ```
 
-Use the returned `next` command through `pnpm patchy`, with the returned code.
-Confirmation records approval; the poll mints and saves the user-owned machine
-token without printing it. It lasts 90 days or 30 idle days unless revoked.
-Completion names the person's company and `whoami` names their chosen machine.
 Open the uploaded URL in that same signed-in browser.
-
-`pnpm patchy login --complete --wait 0` polls once; an unanswered confirmation
-reports `pending` at exit 0. Run `next` again after the person confirms. An agent
-rerun of `login` resumes the pending code, rather than creating another handoff.
-At a real human terminal without agent variables or `--json`,
-`pnpm patchy login` waits in one command.
 
 A seed-only CLI check can skip login: `pnpm patchy whoami` names **Dev Machine**
 and uploads belong to the seeded admin. Its company pages can only be read by
 a browser user in **Patchy Dev**; a different signed-in company gets 404.
 
-The upload's `scope` determines who can open `publicUrl`; the field name does not promise anonymous access. New patches default to company scope. Uploading the same file again bumps the version of the same patch at the same URL and preserves scope unless `--share company` or `--share public` is given; if the CLI answers `Cached patch is unavailable for update`, the patch it remembers is gone from this instance (a `reset` does that) and `--new` creates a fresh one.
-If the remembered patch belongs to a different user after switching from the
-seed to a login, `--new` creates a patch owned by the current user; a login does
-not transfer ownership of the earlier patch.
+New patches default to company scope; use the returned `scope` to interpret
+`publicUrl`. Before reusing a cached upload after a reset or identity switch,
+read [Reading a published patch](../../../docs/DEVELOPMENT.md#reading-a-published-patch)
+for when `--new` is needed. Login does not transfer ownership of a seed's patch.
 
 For `curl` against the API with the token, or for `DATABASE_URL`, export the env file in a separate shell: `set -a; . .local/dev/env; set +a`. Exporting the seed as `PATCHY_API_TOKEN` overrides a stored login; keep it unset for the login check. Logout cannot remove or revoke an environment key and warns about it.
 
@@ -124,52 +100,25 @@ Read it through the user's browser, signed in to the same company as the
 publishing identity. One sign-in returns to the patch; reload after 70 seconds
 to exercise the shell's session refresh.
 
-Exercise both sharing transitions through the CLI:
-
-```sh
-pnpm patchy upload examples/plan.html --share public --json
-# Fetch publicUrl and publicUrl/v/<versionNumber> without cookies.
-pnpm patchy share examples/plan.html company --json
-# Fetch both again: 401, Cache-Control: private, no-store.
-pnpm patchy share examples/plan.html public --json
-# Fetch both again: 200, Cache-Control: public, max-age=60.
-pnpm patchy share --patch <patchId> company --json
-```
-
-Use the returned id for `<patchId>`; select either the cached file or the id,
-never both. Only the owner may change sharing. Upload and share report `scope`
-in JSON; text output names who can open the link. While public, both URL shapes
-must answer 200 with `Cache-Control: public, max-age=60`, no `Set-Cookie` and the
-unchanged script-free CSP. The company transition must restore cookie-free 401
-with `private, no-store` at both shapes. Public caches can keep their copy for
-up to 60 seconds; downloaded copies cannot be recalled. Only public patches fetch
-by URL; company pages are read through the user's signed-in browser.
-
-A signed-in foreign-company reader and a missing patch must get the same private,
-uncached 404; unenrolled readers go to `/join` with the patch as `return`, and
-deactivated readers get 403. The packed CLI e2e covers the default-company 401,
-the explicit public upload's viewer guarantees, and the return to company.
+For serving, access-control or sharing changes, follow
+[Reading a published patch](../../../docs/DEVELOPMENT.md#reading-a-published-patch):
+exercise both CLI sharing transitions at the latest and version URLs, checking
+status, cache headers, cookies and CSP; also check foreign-company, unenrolled
+and deactivated readers. Use that section's expected responses, including the
+public-cache delay, rather than treating a successful upload as proof.
 Production-domain Clerk handshake verification remains a separate live check.
 
-For a login change, verify the reverse after publishing and reading:
+For a login change, follow the logout check in
+[Device login through the CLI](../../../docs/DEVELOPMENT.md#device-login-through-the-cli)
+after publishing and reading. Confirm the stored login is gone and `whoami`
+returns to **Dev Machine**; revoke the test machine on `/machines` if courtesy
+revocation failed. Browser sign-out is a separate check from machine logout.
 
-```sh
-pnpm patchy logout
-pnpm patchy whoami
-```
-
-Logout deletes the stored key and pending login before courtesy revocation,
-says _This worktree's dev instance still publishes with its seeded key_, and
-the final `whoami` names **Dev Machine** again. A courtesy-call failure is a
-warning at exit 0; revoke the test key on **Your machines** if needed.
-`/machines` also offers revoke-one, revoke-all and browser **Sign out**.
-Browser sign-out ends the Clerk session, not the machine token.
-
-When checking company management, `/join` offers **Not you? Sign out**, and
-the deactivated page offers **Sign out** without a loop. `/company` sends real
-invitation mail; use a `+clerk_test` address and revoke test invitations afterward.
-Deactivation revokes machine tokens; reactivation restores browser access,
-not the old keys.
+For company-management changes, read
+[Company management](../../../docs/DEVELOPMENT.md#company-management) and
+[Seed](../../../docs/DEVELOPMENT.md#seed) for the management and sign-out checks.
+Invitations send real mail: use a `+clerk_test` address and revoke test
+invitations afterward.
 
 The server has no per-request access log. Read `pnpm dev logs` for startup
 failures and Clerk handshake diagnostics, without exposing credentials;

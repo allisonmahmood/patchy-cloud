@@ -38,7 +38,7 @@ _Avoid_: plugin, module
 
 **Retire**:
 The future kept-but-off state of a patch, restorable by its owner. Its lifecycle is recorded in [the product](../../docs/product.md#updating-retiring-deleting).
-_Avoid_: unpublish, archive, disable
+_Avoid_: unpublish, archive, disable (the operator's take-down)
 
 **Delete**:
 The owner's removal of a patch from service, with no restore action. Stored content remains until its retention clock expires and the sweep removes it; the future recovery-window model lives in [the product](../../docs/product.md#updating-retiring-deleting).
@@ -69,7 +69,7 @@ One successful serving of a patch from the instance, at its latest or a version 
 _Avoid_: view, hit, page load (a visit is a serving that succeeded, not a request that arrived)
 
 **Live patch**:
-A patch still counting against its owner's quota: neither deleted nor disabled. It leaves the tally the moment it is deleted or disabled, and for good when the sweep takes it — an expired patch still counts until then, because its row and bytes are still there.
+A patch still counting against its owner's quota: neither deleted by its owner nor disabled through the operator's manual take-down. It leaves the tally the moment it is deleted or disabled, and for good when the sweep takes it — an expired patch still counts until then, because its row and bytes are still there.
 _Avoid_: active patch, published patch (every patch is published)
 
 **Patch quota**:

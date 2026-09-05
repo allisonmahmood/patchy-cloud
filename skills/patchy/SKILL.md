@@ -51,19 +51,25 @@ patchy status --json
 Use the reported instance if it matches the user's intended destination. If
 `instanceSource` is `default`, no choice is saved: use the address the user gave
 or ask where to publish; the localhost fallback needs a running server.
-Carry a chosen `--api-url <url>` on subsequent commands. With no key, run
-`patchy login --json` for that instance and follow the handoff.
+Carry a chosen `--api-url <url>` on subsequent commands. `hasToken` means a key
+is available, not that it acts as the person: run `patchy whoami --json` when a
+key is present and check the user and company against the intended publisher.
+A dev seed such as **Dev Machine** is a development identity, not proof of the
+person's company membership. For publishing as the person, finish `patchy login`
+even when the seed works, unless `whoami` already identifies the intended user
+and company. Use the seed directly only for an intentional seed-owned dev check.
+With no key or a different publishing identity, run `patchy login --json` for
+the chosen instance and follow the handoff. Resolve an overriding
+`PATCHY_API_TOKEN` first; saving a login cannot override it.
 
 ### Login handoff
 
-1. On `status: "awaiting_confirmation"`, show the person **both** `verificationUrl`
-   and `userCode`. Ask them to open the URL in their own browser, sign in if needed,
-   check the code, company and email, name the machine, and confirm. A first
-   sign-in may reach create-or-join: they join an invited company or create one
-   with a name and handle if no invitation exists, then return to confirmation.
-   A wrong email calls for **Not you? Sign out**; an unwanted login calls for
-   **Deny**. **Never open a browser for a login handoff.** The user-facing words
-   are in onboarding step 3.
+1. On `status: "awaiting_confirmation"`, relay **both** `verificationUrl` and
+   `userCode`, using the handoff wording in
+   [onboarding step 3](references/onboarding.md#3-log-in-then-publish-the-welcome-patch),
+   including its first-sign-in and wrong-account guidance. Read that wording
+   when login is needed without starting the optional style/onboarding flow.
+   **Never open a browser for a login handoff.**
 2. After relaying the handoff, run the returned `next` command **with `--json`
    appended** (`patchy login --complete <userCode> --json`, retaining any returned
    `--api-url`). `next` does not include `--json` itself. Completion waits up to
@@ -86,9 +92,10 @@ Carry a chosen `--api-url <url>` on subsequent commands. With no key, run
 patchy validate './plan.html' && patchy upload './plan.html' --json
 ```
 
-With a working key already configured, skip login, check `whoami`, then validate
-and upload. A person running `patchy login` at a real terminal with no agent variables and no `--json`
-gets the same handoff but waits in one command; an agent always uses the two-step flow.
+Skip login only when `whoami` already identifies the intended publisher, then
+validate and upload. A person running `patchy login` at a real terminal with no
+agent variables and no `--json` gets the handoff but waits in one command;
+an agent always uses the two-step flow.
 `--api-url <url>` on login saves the instance choice and stays in `next`.
 Keep that flag on subsequent publishing commands when overriding a worktree
 or environment-selected instance; both outrank saved config.
@@ -158,8 +165,8 @@ browser sign-out is a separate control on **Your machines**.
 - The exit code says who has to act, so branch on it before reading the message: `1` is
   yours to fix without the network (arguments, the file, validation, local state), `2`
   means the instance answered and said no (a rejected key, a missing update, share or delete
-  target, a quota), `3` means there was no usable answer (network, a 5xx) — try later or tell the
-  operator. `130` is an interruption.
+  target, a quota), `3` means there was no usable answer (network, a 5xx) — try later
+  or contact Patchy about the unavailable instance. `130` is an interruption.
 - Every command takes `--json`: one JSON document on stdout on success, `{ "ok": false,
 "error", "kind" }` on stderr on failure, where `kind` is `local`, `rejected` or
   `unreachable` and matches the exit code. `upload --json` prints the instance's response

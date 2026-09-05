@@ -35,10 +35,6 @@ The wire contract is its own package, `@patchy/api`, beside neither context.
    needs to branch. They are plain structs, never `Schema.TaggedError`:
    a `_tag` would add an internal field to the wire. The CLI maps HTTP status
    to its exit-code ladder and interprets domain codes where a command needs them.
-4. **The wire uses the domain's vocabulary.** Patch routes use `/api/patches/*`
-   and `patchId`; identity names the user, company, role and machine.
-   Publishing and sharing report the patch's `scope`; `publicUrl` is the link,
-   not a promise of anonymous access.
 
 ## Consequences
 
