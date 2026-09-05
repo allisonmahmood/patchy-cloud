@@ -1,6 +1,6 @@
 /**
  * Tokens and principals: the one place a plaintext token is turned into an
- * identity, a token is issued, a self-service mint creates a principal, and a
+ * identity, a self-service mint creates a principal and its token, and a
  * token is revoked. Rows are decoded through `SqlSchema` here and nowhere
  * else in the capability, so a client type change lands in one module.
  *
@@ -23,9 +23,9 @@ import { newInternalId, sha256 } from "@patchy/core";
 import * as AuthConfig from "./AuthConfig.js";
 
 /**
- * The two principals named by a fixed id rather than a generated one: the
- * operator's own, seeded from `PATCHY_BOOTSTRAP_API_TOKEN`. Every other
- * principal is a self-service mint found by lookup.
+ * The principal and token named by fixed ids rather than generated ones,
+ * seeded from `PATCHY_BOOTSTRAP_API_TOKEN`. Their legacy scopes grant no
+ * platform powers. Every other principal is a self-service mint found by lookup.
  */
 export const BOOTSTRAP_PRINCIPAL_ID = "acct_bootstrap";
 export const BOOTSTRAP_API_TOKEN_ID = "tok_bootstrap";
@@ -50,14 +50,6 @@ export class MintQuotaExceeded extends Schema.TaggedError<MintQuotaExceeded>()(
   override get message() {
     return `Mint quota reached: ${this.quota} self-service tokens per address per 24 hours.`;
   }
-}
-
-export interface CreateInput {
-  readonly accountId: string;
-  readonly name: string;
-  readonly scopes: ReadonlyArray<string>;
-  /** The plaintext; only `sha256(token)` is stored. */
-  readonly token: string;
 }
 
 export interface MintInput {
@@ -94,8 +86,6 @@ export class Tokens extends Context.Service<
   {
     /** The identity a plaintext token resolves to; `None` for an unknown or revoked one. */
     readonly authenticate: (token: string) => Effect.Effect<Option.Option<Identity>, SqlError>;
-    /** Issues a token for an existing principal. */
-    readonly create: (input: CreateInput) => Effect.Effect<{ id: string; name: string }, SqlError>;
     /**
      * A self-service mint: a fresh principal, the one token that controls it,
      * and the mint record, together or not at all — a principal with no token
@@ -118,9 +108,6 @@ class RevocationRow extends Schema.Class<RevocationRow>("RevocationRow")({
   revokedAt: Schema.Date,
   alreadyRevoked: Schema.Boolean
 }) {}
-
-/** Scopes are stored as a JSON array. */
-const encodeScopes = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
 
 /** A `SchemaError` on a row is a bug in the query or the schema, never a caller's fault. */
 const dieOnSchemaError = { SchemaError: Effect.die } as const;
@@ -177,14 +164,6 @@ export const make = Effect.gen(function* () {
     findIdentity(sha256(token)).pipe(Effect.catchTags(dieOnSchemaError))
   );
 
-  const create = Effect.fn("Tokens.create")(function* (input: CreateInput) {
-    const id = newInternalId("tok");
-    yield* sql`
-      INSERT INTO api_tokens (id, account_id, name, token_hash, scopes)
-      VALUES (${id}, ${input.accountId}, ${input.name}, ${sha256(input.token)}, ${encodeScopes(input.scopes)}::jsonb)`;
-    return { id, name: input.name };
-  });
-
   const mint = Effect.fn("Tokens.mint")((input: MintInput) =>
     sql.withTransaction(
       Effect.gen(function* () {
@@ -228,7 +207,7 @@ export const make = Effect.gen(function* () {
     )
   );
 
-  return Tokens.of({ authenticate, create, mint, revoke });
+  return Tokens.of({ authenticate, mint, revoke });
 });
 
 /** Idempotent: re-running restores the bootstrap token if it was rotated or revoked. */

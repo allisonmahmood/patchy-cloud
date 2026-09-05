@@ -73,7 +73,7 @@ it.layer(server({ PATCHY_PROTECTED_API_RATE_LIMIT_PER_MINUTE: "3" }))(
         const long = "x".repeat(101);
         // Three tokenless attempts on shapes the router cannot route: all 401,
         // and each spends the address's protected-API attempt.
-        for (const target of ["/api/%", `/api/patches/${long}/disable`, "/api/does-not-exist"]) {
+        for (const target of ["/api/%", `/api/patches/${long}`, "/api/does-not-exist"]) {
           assert.deepStrictEqual(yield* answer(yield* send(HttpClientRequest.post(target))), {
             status: 401,
             body: UNAUTHORIZED
