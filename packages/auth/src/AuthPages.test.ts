@@ -64,6 +64,7 @@ it.layer(services)("first-party pages in memory", (it) => {
       for (const target of [
         "https://foreign.invalid/",
         "//foreign.invalid/",
+        "/.//foreign.invalid/",
         "//[",
         "/\\foreign.invalid/",
         "/\n/foreign.invalid/"
@@ -122,6 +123,16 @@ it.layer(services)("first-party pages in memory", (it) => {
       assert.deepInclude(identity, { role: "admin" });
       const joined = yield* send("/join", { headers: { cookie: sessionCookie } });
       assert.include(yield* Effect.promise(() => joined.text()), "You are in Acme &lt;Studio&gt;");
+      const unsafeReturn = yield* send(
+        `/join?return=${encodeURIComponent("/safe/..//foreign.invalid/")}`,
+        { headers: { cookie: sessionCookie } }
+      );
+      assert.strictEqual(unsafeReturn.status, 200);
+      assert.strictEqual(unsafeReturn.headers.get("location"), null);
+      assert.include(
+        yield* Effect.promise(() => unsafeReturn.text()),
+        "You are in Acme &lt;Studio&gt;"
+      );
       const refused = yield* send(
         "/join",
         post({ action: "create", name: "Other", handle: "other-enroll" }, sessionCookie)
