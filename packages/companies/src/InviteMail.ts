@@ -67,6 +67,7 @@ export const make = Effect.gen(function* () {
         client.invitations.createInvitation({
           emailAddress: email,
           ignoreExisting: true,
+          notify: true,
           redirectUrl
         }),
       catch: (cause) => new InviteMailError({ operation: "create", cause })

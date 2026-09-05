@@ -35,6 +35,32 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
 
+  clerk-live:
+    if: github.event_name == 'push' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
+      CLERK_PUBLISHABLE_KEY: ${{ secrets.CLERK_PUBLISHABLE_KEY }}
+      CLERK_TEST_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+      PATCHY_PUBLIC_BASE_URL: http://127.0.0.1:3000
+      CLERK_AUTHORIZED_PARTIES: http://127.0.0.1:3000
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Verify live sessions and invitations
+        run: pnpm exec vitest run --config vitest.clerk.config.ts
+      - name: Sweep this run's Clerk fixtures
+        if: always()
+        run: pnpm test:clerk --cleanup
+
   lint:
     runs-on: ubuntu-latest
     timeout-minutes: 10

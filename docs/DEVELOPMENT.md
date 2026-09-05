@@ -254,11 +254,12 @@ there. The last active admin cannot be demoted or deactivated.
 application.** Patchy keeps the invitation even if Clerk cannot send it; the
 page reports the failure and offers resend. Resend also recovers when the previous
 Clerk invitation was already revoked, including after a lost revoke response.
-Tests use recording and failing
-`InviteMail` layers instead and stay offline. Deactivation revokes all the
+Offline tests use recording and failing `InviteMail` layers instead. Deactivation revokes all the
 user's machine tokens; reactivation restores browser access, not old keys.
 
-The runner, the vitest template and the packed CLI e2e apply these same rows.
+### Test tiers
+
+The runner, the vitest template and the packed CLI e2e apply the shared dev seed.
 `Testing.layer()` clones the seeded template; package fixtures add rows on
 top. SQL's migrator tests alone use its empty-database layer.
 
@@ -271,6 +272,61 @@ an explicit `--share public` upload's 200 with `public, max-age=60`, no
 The dev runner imports only the separate seed entry, so it never
 installs that guard. The production-domain Clerk handshake is a separate live
 verification, not part of these offline checks.
+The pinned `async-exit-hook` patch preserves failure exit codes when embedded
+Postgres shuts down; without it, a failed Vitest suite can exit successfully.
+
+#### Live Clerk: `pnpm test:clerk`
+
+```sh
+pnpm test:clerk
+```
+
+Runs `vitest.clerk.config.ts` against your **patchy-cloud** development
+application, not your running dev server. It reuses the isolated, migrated
+Postgres template and does not touch `.local/dev/` or your seeded admin.
+When neither Clerk key is in the environment, the command reads both from
+the [developer `dev.env`](#clerk-keys), using the same loader as `pnpm dev`.
+An explicit or partial pair never falls back to that file; both keys must be
+nonempty. GitHub Actions never reads the developer file. Running the live
+config directly requires both environment keys and fails before setup if
+either is absent.
+
+Each run prints its `CLERK_TEST_RUN_ID` (a UUID locally, run id plus attempt
+in CI). It creates `ci-<run id>+clerk_test@example.com` through Clerk's
+Backend API, creates a session and JWT, and sends the session cookie through
+the real `RequireSession` on `/company`. No `CLERK_JWT_KEY` is provided to
+the layer, even if set in your shell: verification uses Clerk's JWKS.
+`CLERK_AUTHORIZED_PARTIES` defaults to the test server's own origin,
+`http://127.0.0.1:3000`; a Backend-API token's absent/null `azp` is accepted.
+
+The invitation test creates, lists, revokes and re-invites
+`ci-<run id>-invite+clerk_test@example.com` through live `InviteMail`.
+**These requests send real invitation mail** (`notify: true`); the
+`example.com` bounce is expected, not a delivery assertion. Calls are serial
+and few (under 25 per normal run, below Clerk's 100-per-10-seconds budget).
+The Account Portal and browser/device-login specs belong to #144; this
+command currently runs only the live vitest tier.
+
+Vitest teardown runs after success or failure, deletes this run's exact user
+email (ending its sessions), checks zero users remain, and revokes any
+pending invitations for the exact invitation email. Revoked invitation
+records remain in Clerk. CI repeats the idempotent sweep in an `always()`
+step, including when the test step fails or is cancelled. No sweep touches
+another run's addresses. If a local process is forcibly killed before
+teardown, repeat the printed run id:
+
+```sh
+CLERK_TEST_RUN_ID=<printed-run-id> pnpm test:clerk --cleanup
+```
+
+The dedicated CI application is **patchy-cloud-ci**, Frontend API
+`super-whale-1225.clerk.accounts.dev`. Its keys live only in repository
+secrets `CLERK_SECRET_KEY` and `CLERK_PUBLISHABLE_KEY`, never in `dev.env`
+or the repository. The `clerk-live` job runs on pushes to `main` and
+same-repository PRs except Dependabot; forks and Dependabot skip it and run
+the offline tier. An eligible run with a missing secret fails, never skips.
+Marking `clerk-live` required in branch protection is a maintainer step;
+a skipped job satisfies a required check.
 
 ### How it works
 
