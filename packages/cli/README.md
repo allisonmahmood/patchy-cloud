@@ -1,6 +1,6 @@
 # @patchy/cli
 
-Command-line uploader for [Patchy Cloud](https://github.com/allisonmahmood/patchy-cloud). It sends static HTML patches to a Patchy Cloud instance, which serves them behind unlisted, link-viewable URLs, and takes them down again. Every upload carries a bearer API token; patch viewer URLs are public and unlisted, so anyone with the link can view the rendered page.
+Command-line uploader for [Patchy Cloud](https://github.com/allisonmahmood/patchy-cloud). It sends static HTML patches to a Patchy Cloud instance and takes them down again. Every upload carries a machine token; new patches are company-scoped and open through a colleague's signed-in browser. A machine token never opens a patch's view URL, and changing sharing from the CLI is not available yet.
 
 An agent is the primary operator, so the CLI promises a contract an agent can branch on without reading prose: an [exit code that says who has to act](#exit-codes), `--json` on every command, and one resolution of which instance is being targeted. The contract is [ADR-0004](../../docs/adr/ADR-0004-cli-contract-for-agents.md).
 
@@ -90,7 +90,7 @@ patchy validate ./plan.html
 
 ### `patchy upload <file> [--patch <patch-id>] [--new] [--api-url <url>]`
 
-Validate the file, then upload it. On success it prints the public URL, the patch ID, and the version number, after a line naming the instance and where that choice came from.
+Validate the file, then upload it. On success it prints the view URL, the patch ID, and the version number, after a line naming the instance and where that choice came from. The JSON field remains `publicUrl`; the patch's sharing scope, not that field name, controls who may read it.
 
 ```sh
 patchy upload ./plan.html

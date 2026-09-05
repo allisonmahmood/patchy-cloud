@@ -10,6 +10,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import * as SchemaGetter from "effect/SchemaGetter";
 
 export class SessionError extends Schema.TaggedError<SessionError>()("SessionError", {
   operation: Schema.Literals(["configuration", "authenticate", "revoke"]),
@@ -26,7 +27,13 @@ export class SessionError extends Schema.TaggedError<SessionError>()("SessionErr
 export const SessionClaims = Schema.Struct({
   sub: Schema.NonEmptyString,
   email: Schema.NonEmptyString,
-  name: Schema.String,
+  // Email-only Clerk accounts have no display name; identity is still sub/email.
+  name: Schema.NullOr(Schema.String).pipe(
+    Schema.decodeTo(Schema.String, {
+      decode: SchemaGetter.transform((name) => name ?? ""),
+      encode: SchemaGetter.passthrough()
+    })
+  ),
   sid: Schema.NonEmptyString
 });
 
@@ -42,7 +49,12 @@ export type SessionResult =
       readonly handshakeFailed: boolean;
       readonly cookies: ReadonlyArray<string>;
     }
-  | { readonly status: "handshake"; readonly response: Response };
+  | {
+      readonly status: "handshake";
+      readonly response: Response;
+      /** A verified return must set its cookies even when the destination is public. */
+      readonly completed: boolean;
+    };
 
 const decodeClaims = Schema.decodeUnknownOption(SessionClaims);
 const FrontendHost = Schema.String.check(
@@ -265,7 +277,8 @@ export const make = Effect.gen(function* () {
       for (const cookie of cookies) responseHeaders.append("set-cookie", cookie);
       return {
         status: "handshake",
-        response: new Response(null, { status: 307, headers: responseHeaders })
+        response: new Response(null, { status: 307, headers: responseHeaders }),
+        completed: state.status === "signed-in"
       };
     }
     if (state.status === "signed-out") {

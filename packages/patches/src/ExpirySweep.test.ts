@@ -51,7 +51,7 @@ const upload = (title: string) =>
 
 const isServed = (patchId: string) =>
   Effect.map(
-    Effect.flatMap(Content.Content, (content) => content.read(patchId)),
+    Effect.flatMap(Patches.Patches, (patches) => patches.find(patchId)),
     Option.isSome
   );
 
