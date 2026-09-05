@@ -60,16 +60,24 @@ export default tseslint.config(
     }
   },
   {
-    files: ["apps/server/src/start.ts", "test/postgres.ts"],
+    files: [
+      "apps/server/src/start.ts",
+      "test/postgres.ts",
+      "test/clerk.ts",
+      "scripts/test-clerk.ts"
+    ],
     rules: {
       "no-console": "off"
     }
   },
   {
     files: [
-      // These test entrypoints clone the host environment before launching child processes.
+      // Test entrypoints configure the environment for workers and child processes.
       "packages/serving/src/render.test.ts",
-      "packages/cli/src/cli.test.ts"
+      "packages/cli/src/cli.test.ts",
+      "vitest.clerk.config.ts",
+      "test/clerk.ts",
+      "scripts/test-clerk.ts"
     ],
     rules: {
       "no-restricted-properties": "off"

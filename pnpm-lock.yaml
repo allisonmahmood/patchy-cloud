@@ -17,6 +17,9 @@ overrides:
   '@effect/vitest': 4.0.0-rc.112
   '@effect/language-service': 0.87.2
 
+patchedDependencies:
+  async-exit-hook@2.0.1: 0e924a268bde91ae6eab699901a3c4fdd0365ca42542db16dc86d41cb0cf9712
+
 importers:
 
   .:
@@ -2715,7 +2718,7 @@ snapshots:
 
   assertion-error@2.0.1: {}
 
-  async-exit-hook@2.0.1: {}
+  async-exit-hook@2.0.1(patch_hash=0e924a268bde91ae6eab699901a3c4fdd0365ca42542db16dc86d41cb0cf9712): {}
 
   balanced-match@4.0.4: {}
 
@@ -2772,7 +2775,7 @@ snapshots:
 
   embedded-postgres@18.4.0-beta.17:
     dependencies:
-      async-exit-hook: 2.0.1
+      async-exit-hook: 2.0.1(patch_hash=0e924a268bde91ae6eab699901a3c4fdd0365ca42542db16dc86d41cb0cf9712)
       pg: 8.23.0
     optionalDependencies:
       '@embedded-postgres/darwin-arm64': 18.4.0-beta.17
