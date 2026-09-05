@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Device codes require cryptographic randomness; Effect Random is not a CSPRNG.
-import { randomInt } from "node:crypto";
+import { createHmac, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -24,6 +24,15 @@ export class DeviceLoginExpired extends Schema.TaggedError<DeviceLoginExpired>()
 ) {
   override get message() {
     return "This device login has expired. Run patchy login again.";
+  }
+}
+
+export class DeviceLoginDenied extends Schema.TaggedError<DeviceLoginDenied>()(
+  "DeviceLoginDenied",
+  {}
+) {
+  override get message() {
+    return "This device login was denied.";
   }
 }
 
@@ -56,7 +65,6 @@ export class DeviceLoginLookupLimited extends Schema.TaggedError<DeviceLoginLook
 
 const AnswerError = Schema.Union([DeviceLoginExpired, DeviceLoginAnswered, DeviceLoginUnknown]);
 type AnswerError = typeof AnswerError.Type;
-const isAnswerError = Schema.is(AnswerError);
 
 const LoginRow = Schema.Struct({
   userCode: Schema.String,
@@ -68,16 +76,37 @@ const LoginRow = Schema.Struct({
   expiresAt: Schema.Date
 });
 
+export const PendingLogin = Schema.Struct({
+  state: Schema.Literal("pending"),
+  userCode: Schema.String,
+  machineNameHint: Schema.String,
+  oldMachineName: Schema.NullOr(Schema.String),
+  expiresAt: Schema.String
+});
+export type PendingLogin = typeof PendingLogin.Type;
+
+const AnswerReceipt = Schema.Struct({
+  userCode: Schema.String,
+  userId: Schema.String,
+  state: Schema.Literals(["confirmed", "denied"]),
+  expiresAt: Schema.Int,
+  signature: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/))
+});
+const decodeReceipt = Schema.decodeUnknownOption(Schema.fromJsonString(AnswerReceipt));
+const encodeReceipt = Schema.encodeSync(Schema.fromJsonString(AnswerReceipt));
+
+const PollError = Schema.Union([DeviceLoginExpired, DeviceLoginDenied, DeviceLoginUnknown]);
+type PollError = typeof PollError.Type;
+const isPollError = Schema.is(PollError);
+
 export type PollResult =
-  | { readonly ok: true; readonly status: "pending" | "slow_down" }
+  | { readonly status: "pending" | "slow_down" }
   | {
-      readonly ok: true;
       readonly status: "complete";
       readonly token: string;
       readonly machine: { readonly id: string; readonly name: string };
       readonly expiresAt: string;
-    }
-  | { readonly ok: false; readonly error: string; readonly code: "expired" | "denied" | "unknown" };
+    };
 
 export class DeviceLogins extends Context.Service<
   DeviceLogins,
@@ -96,23 +125,28 @@ export class DeviceLogins extends Context.Service<
     >;
     readonly lookup: (
       userCode: string,
-      userId: string
+      userId: string,
+      receipt?: string
     ) => Effect.Effect<
-      {
-        readonly userCode: string;
-        readonly machineNameHint: string;
-        readonly oldMachineName: string | null;
-        readonly expiresAt: string;
-      },
+      PendingLogin | { readonly state: "confirmed" | "denied"; readonly userCode: string },
       AnswerError | DeviceLoginLookupLimited | SqlError
     >;
     readonly confirm: (input: {
       readonly userCode: string;
       readonly userId: string;
       readonly machineName: string;
-    }) => Effect.Effect<void, AnswerError | MachineTokens.InvalidMachineName | SqlError>;
-    readonly deny: (userCode: string) => Effect.Effect<void, AnswerError | SqlError>;
-    readonly poll: (deviceCode: string) => Effect.Effect<PollResult, SqlError>;
+    }) => Effect.Effect<
+      { readonly receipt: string },
+      AnswerError | DeviceLoginLookupLimited | MachineTokens.InvalidMachineName | SqlError
+    >;
+    readonly deny: (
+      userCode: string,
+      userId: string
+    ) => Effect.Effect<
+      { readonly receipt: string },
+      AnswerError | DeviceLoginLookupLimited | SqlError
+    >;
+    readonly poll: (deviceCode: string) => Effect.Effect<PollResult, SqlError | PollError>;
   }
 >()("@patchy/auth/DeviceLogins") {}
 
@@ -121,6 +155,23 @@ export const make = Effect.gen(function* () {
   const tokens = yield* MachineTokens.MachineTokens;
   const limits = yield* Limits.Limits;
   const analytics = yield* Analytics.Analytics;
+  // Informational browser receipts survive row consumption, not service restarts.
+  // They never authorize a confirmation, denial, or token mint.
+  const receiptSecret = randomBytes(32);
+  const signReceipt = (receipt: Omit<typeof AnswerReceipt.Type, "signature">) =>
+    createHmac("sha256", receiptSecret)
+      .update(JSON.stringify([receipt.userCode, receipt.userId, receipt.state, receipt.expiresAt]))
+      .digest();
+  const issueReceipt = (
+    row: typeof LoginRow.Type,
+    userId: string,
+    state: "confirmed" | "denied"
+  ) => {
+    const receipt = { userCode: row.userCode, userId, state, expiresAt: row.expiresAt.getTime() };
+    return {
+      receipt: encodeReceipt({ ...receipt, signature: signReceipt(receipt).toString("hex") })
+    };
+  };
   const columns = sql`user_code AS "userCode", state, machine_name_hint AS "machineNameHint",
     old_token_id AS "oldTokenId", user_id AS "userId", machine_name AS "machineName",
     expires_at AS "expiresAt"`;
@@ -144,14 +195,18 @@ export const make = Effect.gen(function* () {
   });
 
   // Page visits leave expired rows for the terminal to consume as expired.
-  const readPending = Effect.fn("DeviceLogins.readPending")(function* (userCode: string) {
+  const readLogin = Effect.fn("DeviceLogins.readLogin")(function* (userCode: string) {
     const found = yield* byUserCode(userCode).pipe(Effect.catchTags({ SchemaError: Effect.die }));
-    if (Option.isNone(found)) return new DeviceLoginUnknown({});
+    if (Option.isNone(found)) return yield* new DeviceLoginUnknown({});
     const row = found.value;
     if (row.expiresAt.getTime() <= (yield* Clock.currentTimeMillis)) {
-      return new DeviceLoginExpired({});
+      return yield* new DeviceLoginExpired({});
     }
-    if (row.state !== "pending") return new DeviceLoginAnswered({});
+    return row;
+  });
+  const readPending = Effect.fn("DeviceLogins.readPending")(function* (userCode: string) {
+    const row = yield* readLogin(userCode);
+    if (row.state !== "pending") return yield* new DeviceLoginAnswered({});
     return row;
   });
 
@@ -189,7 +244,7 @@ export const make = Effect.gen(function* () {
       )
   );
 
-  const lookup = Effect.fn("DeviceLogins.lookup")(function* (userCode: string, userId: string) {
+  const consumeLookup = Effect.fn("DeviceLogins.consumeLookup")(function* (userId: string) {
     const limit = yield* limits.consume({
       key: `device-login-lookup:${userId}`,
       limit: 10,
@@ -198,14 +253,40 @@ export const make = Effect.gen(function* () {
     if (!limit.allowed) {
       return yield* new DeviceLoginLookupLimited({ retryAfterSeconds: limit.retryAfterSeconds });
     }
-    const result = yield* sql.withTransaction(
+  });
+
+  const lookup = Effect.fn("DeviceLogins.lookup")(function* (
+    userCode: string,
+    userId: string,
+    receipt?: string
+  ) {
+    yield* consumeLookup(userId);
+    if (receipt !== undefined) {
+      const decoded = decodeReceipt(receipt);
+      if (Option.isSome(decoded)) {
+        const proof = decoded.value;
+        if (
+          proof.userCode === userCode &&
+          proof.userId === userId &&
+          proof.expiresAt > (yield* Clock.currentTimeMillis) &&
+          timingSafeEqual(Buffer.from(proof.signature, "hex"), signReceipt(proof))
+        ) {
+          return { state: proof.state, userCode };
+        }
+      }
+    }
+    return yield* sql.withTransaction(
       Effect.gen(function* () {
-        const row = yield* readPending(userCode);
-        if (isAnswerError(row)) return row;
+        const row = yield* readLogin(userCode);
+        if (row.state !== "pending") {
+          if (row.userId !== userId) return yield* new DeviceLoginAnswered({});
+          return { state: row.state, userCode: row.userCode };
+        }
         const old = yield* oldMachine({ id: row.oldTokenId, userId }).pipe(
           Effect.catchTags({ SchemaError: Effect.die })
         );
         return {
+          state: "pending" as const,
           userCode: row.userCode,
           machineNameHint: row.machineNameHint,
           oldMachineName: Option.isSome(old) ? old.value.name : null,
@@ -213,8 +294,6 @@ export const make = Effect.gen(function* () {
         };
       })
     );
-    if (isAnswerError(result)) return yield* result;
-    return result;
   });
 
   const confirm = Effect.fn("DeviceLogins.confirm")(function* (input: {
@@ -222,64 +301,63 @@ export const make = Effect.gen(function* () {
     readonly userId: string;
     readonly machineName: string;
   }) {
-    const result = yield* sql.withTransaction(
+    yield* consumeLookup(input.userId);
+    const row = yield* sql.withTransaction(
       Effect.gen(function* () {
         const row = yield* readPending(input.userCode);
-        if (isAnswerError(row)) return row;
         yield* MachineTokens.validateMachineName(input.machineName);
         yield* sql`
           UPDATE device_logins SET state = 'confirmed', user_id = ${input.userId},
             machine_name = ${input.machineName} WHERE user_code = ${input.userCode}`;
+        return row;
       })
     );
-    if (isAnswerError(result)) return yield* result;
+    return issueReceipt(row, input.userId, "confirmed");
   });
 
-  const deny = Effect.fn("DeviceLogins.deny")(function* (userCode: string) {
-    const result = yield* sql.withTransaction(
+  const deny = Effect.fn("DeviceLogins.deny")(function* (userCode: string, userId: string) {
+    yield* consumeLookup(userId);
+    const row = yield* sql.withTransaction(
       Effect.gen(function* () {
         const row = yield* readPending(userCode);
-        if (isAnswerError(row)) return row;
-        yield* sql`UPDATE device_logins SET state = 'denied' WHERE user_code = ${userCode}`;
+        yield* sql`UPDATE device_logins SET state = 'denied', user_id = ${userId}
+          WHERE user_code = ${userCode}`;
+        return row;
       })
     );
-    if (isAnswerError(result)) return yield* result;
+    return issueReceipt(row, userId, "denied");
   });
 
   const poll = Effect.fn("DeviceLogins.poll")(function* (deviceCode: string) {
     const hash = sha256(deviceCode);
     const result = yield* sql.withTransaction(
       Effect.gen(function* (): Effect.fn.Return<
-        { readonly reply: PollResult; readonly event?: Analytics.AnalyticsEvent },
+        { readonly reply: PollResult | PollError; readonly event?: Analytics.AnalyticsEvent },
         SqlError
       > {
         // Lock before limiting: the poll that loses a completed row answers unknown,
         // not slow_down, even when both requests arrived in the same interval.
         const found = yield* byDeviceCode(hash).pipe(Effect.catchTags({ SchemaError: Effect.die }));
         if (Option.isNone(found)) {
-          return {
-            reply: { ok: false, code: "unknown", error: new DeviceLoginUnknown({}).message }
-          };
+          return { reply: new DeviceLoginUnknown({}) };
         }
         const row = found.value;
         const remove = sql`DELETE FROM device_logins WHERE user_code = ${row.userCode}`;
         if (row.expiresAt.getTime() <= (yield* Clock.currentTimeMillis)) {
           yield* remove;
-          return {
-            reply: { ok: false, code: "expired", error: new DeviceLoginExpired({}).message }
-          };
+          return { reply: new DeviceLoginExpired({}) };
         }
         if (row.state === "denied") {
           yield* remove;
-          return { reply: { ok: false, code: "denied", error: "This device login was denied." } };
+          return { reply: new DeviceLoginDenied({}) };
         }
         const limit = yield* limits.consume({
           key: `device-login-poll:${hash}`,
           limit: 1,
           window: "5 seconds"
         });
-        if (!limit.allowed) return { reply: { ok: true, status: "slow_down" } };
-        if (row.state === "pending") return { reply: { ok: true, status: "pending" } };
+        if (!limit.allowed) return { reply: { status: "slow_down" } };
+        if (row.state === "pending") return { reply: { status: "pending" } };
         if (row.userId === null || row.machineName === null) {
           return yield* Effect.die(new Error("Confirmed device login has no user or machine name"));
         }
@@ -293,21 +371,20 @@ export const make = Effect.gen(function* () {
         );
         if (minted === null) {
           yield* remove;
-          return {
-            reply: { ok: false, code: "unknown", error: new DeviceLoginUnknown({}).message }
-          };
+          return { reply: new DeviceLoginUnknown({}) };
         }
         let replaced = false;
         if (row.oldTokenId !== null) {
           const old = yield* tokens
             .revokeOwned({ id: row.oldTokenId, userId: row.userId })
             .pipe(Effect.catchTags({ MachineTokenNotFound: () => Effect.succeed(null) }));
+          // Replacement records re-login succession, not newly performed revocations:
+          // an owned expired or already-revoked predecessor still counts.
           replaced = old !== null;
         }
         yield* remove;
         return {
           reply: {
-            ok: true,
             status: "complete",
             token: minted.token,
             machine: { id: minted.id, name: minted.name },
@@ -321,6 +398,8 @@ export const make = Effect.gen(function* () {
         };
       })
     );
+    // Terminal failures are values until the transaction commits their deletion.
+    if (isPollError(result.reply)) return yield* result.reply;
     if (result.event) yield* analytics.track(result.event);
     return result.reply;
   });

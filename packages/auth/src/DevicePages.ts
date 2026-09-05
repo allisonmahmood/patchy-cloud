@@ -1,6 +1,7 @@
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import type * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
@@ -8,6 +9,7 @@ import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import type * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { Companies, Users } from "@patchy/companies";
+import { BodyTooLarge } from "@patchy/api";
 import { escapeAttribute, escapeHtml } from "@patchy/core";
 import * as DeviceLogins from "./DeviceLogins.js";
 import * as MachineTokens from "./MachineTokens.js";
@@ -31,6 +33,8 @@ const styles = `
     .machines-all { margin-top: 24px; }
 `;
 
+const MAX_FORM_BYTES = 4_096;
+
 const refreshNotice =
   "Your sign-in was refreshed before that went through. Check the code and press Confirm again.";
 const decodeForm = Schema.decodeUnknownEffect(
@@ -49,13 +53,12 @@ const message = (title: string, body: string, status = 200): Page => ({
 });
 
 const renderConfirm = Effect.fn("DevicePages.renderConfirm")(function* (
-  code: string,
+  login: DeviceLogins.PendingLogin,
   fields?: { readonly machineName: string; readonly invalid: boolean }
 ) {
   const viewer = yield* RequireSession.Viewer;
   const session = yield* Session.Session;
   const request = yield* HttpServerRequest.HttpServerRequest;
-  const login = yield* (yield* DeviceLogins.DeviceLogins).lookup(code, viewer.user.id);
   const now = yield* Clock.currentTimeMillis;
   const minutes = Math.max(
     1,
@@ -79,42 +82,47 @@ const renderConfirm = Effect.fn("DevicePages.renderConfirm")(function* (
 const getDevice = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;
   const session = yield* Session.Session;
+  const viewer = yield* RequireSession.Viewer;
   const query = new URL(request.url, session.publicBaseUrl).searchParams;
   const code = query.get("code");
-  // Receipt URLs are informational, not authorization. They remain readable
-  // after the terminal consumes the login, and reload never repeats a POST.
-  if (code !== null && query.get("result") === "confirmed") {
+  if (code === null) {
     return pageResponse(
       message(
-        "Confirmed.",
-        "<p>Your terminal finishes logging in on its own within a few seconds. You can close this tab.</p>"
+        "Device login",
+        "<p>Open the link your terminal printed. <code>patchy login</code> prints a link that carries its own code, so there is nothing to type here. If someone sent you here to type a code, don't: that is the trick the link is designed to avoid.</p>"
       ),
       session
     );
   }
-  if (code !== null && query.get("result") === "denied") {
-    return pageResponse(
-      message(
-        "Nothing was logged in.",
-        `<p>The code ${escapeHtml(code)} is dead and no key was made. If you didn't run <code>patchy login</code>, there is nothing else to do.</p>`
-      ),
-      session
-    );
-  }
-  return code === null
-    ? pageResponse(
-        message(
-          "Device login",
-          "<p>Open the link your terminal printed. <code>patchy login</code> prints a link that carries its own code, so there is nothing to type here. If someone sent you here to type a code, don't: that is the trick the link is designed to avoid.</p>"
+  const login = yield* (yield* DeviceLogins.DeviceLogins).lookup(
+    code,
+    viewer.user.id,
+    query.get("receipt") ?? undefined
+  );
+  if (login.state === "pending") return yield* renderConfirm(login);
+  return pageResponse(
+    login.state === "confirmed"
+      ? message(
+          "Confirmed.",
+          "<p>Your terminal finishes logging in on its own within a few seconds. You can close this tab.</p>"
+        )
+      : message(
+          "Nothing was logged in.",
+          `<p>The code ${escapeHtml(login.userCode)} is dead and no key was made. If you didn't run <code>patchy login</code>, there is nothing else to do.</p>`
         ),
-        session
-      )
-    : yield* renderConfirm(code);
+    session
+  );
 });
 
 const postDevice = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;
-  const form = yield* decodeForm(Object.fromEntries(yield* request.urlParamsBody));
+  if (Number(request.headers["content-length"]) > MAX_FORM_BYTES) {
+    return yield* new BodyTooLarge({ maxBytes: MAX_FORM_BYTES });
+  }
+  const params = yield* request.urlParamsBody.pipe(
+    Effect.provideService(HttpServerRequest.MaxBodySize, FileSystem.Size(MAX_FORM_BYTES))
+  );
+  const form = yield* decodeForm(Object.fromEntries(params));
   // Only the code survives authentication/enrollment. Neither the action nor
   // the entered machine name is replayed after a session refresh.
   const returnTo = `/login/device?${new URLSearchParams({ code: form.code, refreshed: "1" })}`;
@@ -122,29 +130,25 @@ const postDevice = Effect.gen(function* () {
     Effect.gen(function* () {
       const viewer = yield* RequireSession.Viewer;
       const logins = yield* DeviceLogins.DeviceLogins;
-      yield* logins.lookup(form.code, viewer.user.id);
-      const answered =
+      const machineName = form.machineName ?? "";
+      if (form.action === "confirm") {
+        const valid = yield* MachineTokens.validateMachineName(machineName).pipe(
+          Effect.as(true),
+          Effect.catchTags({ InvalidMachineName: () => Effect.succeed(false) })
+        );
+        if (!valid) {
+          const login = yield* logins.lookup(form.code, viewer.user.id);
+          if (login.state !== "pending") return yield* new DeviceLogins.DeviceLoginAnswered({});
+          return yield* renderConfirm(login, { machineName, invalid: true });
+        }
+      }
+      const answer =
         form.action === "deny"
-          ? logins.deny(form.code)
-          : logins.confirm({
-              userCode: form.code,
-              userId: viewer.user.id,
-              machineName: form.machineName ?? ""
-            });
-      return yield* answered.pipe(
-        Effect.map(() =>
-          HttpServerResponse.redirect(
-            `/login/device?${new URLSearchParams({
-              code: form.code,
-              result: form.action === "confirm" ? "confirmed" : "denied"
-            })}`,
-            { status: 303, headers: { "cache-control": "private, no-store" } }
-          )
-        ),
-        Effect.catchTags({
-          InvalidMachineName: () =>
-            renderConfirm(form.code, { machineName: form.machineName ?? "", invalid: true })
-        })
+          ? yield* logins.deny(form.code, viewer.user.id)
+          : yield* logins.confirm({ userCode: form.code, userId: viewer.user.id, machineName });
+      return HttpServerResponse.redirect(
+        `/login/device?${new URLSearchParams({ code: form.code, receipt: answer.receipt })}`,
+        { status: 303, headers: { "cache-control": "private, no-store" } }
       );
     }),
     returnTo
@@ -228,6 +232,12 @@ const errors = <R>(app: Effect.Effect<HttpServerResponse.HttpServerResponse, Pag
               '<p>This machine is not on <a href="/machines">Your machines</a>.</p>',
               404
             )
+          ),
+        BodyTooLarge: () =>
+          reply(message("Invalid form", "<p>The submitted form is too large.</p>", 413)),
+        InvalidMachineName: () =>
+          reply(
+            message("Invalid form", "<p>Give the machine a name, up to 64 characters.</p>", 422)
           ),
         SchemaError: () =>
           reply(

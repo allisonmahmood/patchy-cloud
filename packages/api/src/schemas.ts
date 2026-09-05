@@ -104,20 +104,21 @@ export class PollDeviceLoginRequest extends Schema.Class<PollDeviceLoginRequest>
   deviceCode: Schema.String
 }) {}
 
+export class DeviceLoginWaiting extends Schema.Class<DeviceLoginWaiting>("DeviceLoginWaiting")({
+  ok: Schema.Literal(true),
+  status: Schema.Literals(["pending", "slow_down"])
+}) {}
+
 /** The terminal receives the plaintext token only on the one completing poll. */
-export const DeviceLoginPoll = Schema.Union([
-  Schema.Struct({
-    ok: Schema.Literal(true),
-    status: Schema.Literals(["pending", "slow_down"])
-  }),
-  Schema.Struct({
-    ok: Schema.Literal(true),
-    status: Schema.Literal("complete"),
-    token: Schema.String,
-    machine: Schema.Struct({ id: Schema.String, name: Schema.String }),
-    expiresAt: Schema.String
-  })
-]);
+export class DeviceLoginComplete extends Schema.Class<DeviceLoginComplete>("DeviceLoginComplete")({
+  ok: Schema.Literal(true),
+  status: Schema.Literal("complete"),
+  token: Schema.String,
+  machine: Schema.Struct({ id: Schema.String, name: Schema.String }),
+  expiresAt: Schema.String
+}) {}
+
+export const DeviceLoginPoll = Schema.Union([DeviceLoginWaiting, DeviceLoginComplete]);
 
 export const DeviceLoginGone = failure(410, {
   code: Schema.Literals(["expired", "denied", "unknown"])
