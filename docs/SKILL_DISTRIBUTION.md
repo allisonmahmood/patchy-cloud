@@ -10,6 +10,4 @@ The checked-in root `skills-lock.json` uses the `skills` CLI's lockfile format f
 
 Internal skills stay under `.agents/skills/`, outside the copied `skills/` tree, and carry `metadata.internal`: the local-instance loop `patchy-dev-loop`, and the `/code-review` review specs `effect-service-conventions` and `ui-consistency`.
 
-The bundled recipe covers device-login handoff and completion, company-default publishing and explicit public sharing, machine logout and revocation, and reading company patches through the user's signed-in browser. Only public patches fetch directly by URL; the publishing key is never a browser credential. Keep the skill and onboarding reference aligned with `packages/cli/README.md` and ADR-0004, and announce the sharing scope returned by upload or share.
-
 The CLI package is private and not published to a registry. Bundling a skill and wiring it into this checkout do not publish it to a skill directory or start onboarding; onboarding runs only when the user asks.

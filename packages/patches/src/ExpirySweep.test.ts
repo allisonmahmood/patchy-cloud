@@ -73,6 +73,9 @@ it.layer(
       yield* TestClock.adjust(80 * DAY);
       const fresh = yield* upload("Fresh");
 
+      // Start at the retention anchor: expiry is strictly after it.
+      yield* TestClock.adjust(10 * DAY);
+
       // What the server forks: one run on the way up, then one an hour. Each
       // run reports into the queue, which is how the test waits for one to end.
       const runs = yield* Queue.unbounded<ExpirySweep.SweepResult>();
@@ -85,11 +88,9 @@ it.layer(
       assert.strictEqual((yield* Queue.take(runs)).deleted, 0, "nothing has expired yet");
       assert.isTrue(yield* isServed(abandoned.patchId));
 
-      // Winding the clock past the anchor wakes the run due at the first hour
-      // mark, which reads that hour's time and finds nothing; the run an hour
-      // later is the one that sees the expiry.
-      yield* TestClock.adjust(11 * DAY);
-      yield* Queue.take(runs);
+      // Cross expiry before the next hourly tick. A multi-hour jump can queue
+      // several runs if SQL completes before TestClock advances again.
+      yield* TestClock.adjust(1);
       assert.isFalse(yield* isServed(abandoned.patchId), "expired the moment its clock ran out");
       yield* TestClock.adjust("1 hour");
       assert.deepStrictEqual(yield* Queue.take(runs), {

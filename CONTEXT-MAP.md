@@ -24,19 +24,19 @@ Supporting packages rather than product contexts; their glossaries define only t
 - [Content store](./packages/content-store/CONTEXT.md) — `packages/content-store`, the object store a patch's bytes go into; a filesystem layer and an Azure Blob layer
 - [Analytics](./packages/analytics/CONTEXT.md) — `packages/analytics`, the event service Patches and Auth report business moments through
 - [Limits](./packages/limits/CONTEXT.md) — `packages/limits`, the fixed-window rate limiter behind every per-minute limit
-- [Hosting](./apps/server/CONTEXT.md) — `apps/server`, the process: composes every package into one Effect layer, guards `/api/*`, forks the sweep, listens. Its `CONTEXT.md` holds only wiring terms
+- [Hosting](./apps/server/CONTEXT.md) — `apps/server`, the process that assembles and runs the hosting server. Its `CONTEXT.md` holds only wiring terms
 
 ## Relationships
 
-- **Publishing → `api`**: the CLI creates and updates patches through the derived client and authenticates with a user-owned machine token
-- **Serving → Patches, Auth**: the page handler reads metadata through `Patches`, checks sharing against the admission supplied by Auth's session helpers, then reads HTML through `Content` and records an admitted visit through `Patches`. Serving never accesses the content store directly; its login middleware is scoped to the two patch routes
-- **Patches → Content store**: the upload contract and the sweep put, get and delete a patch's bytes through `ContentStore`; nothing else touches them
-- **Companies, Auth, Patches → SQL**: all query the shared Postgres client and own separate migration records. `patch_versions` references `machine_tokens`, but Patches imports neither Auth nor Companies: its handlers receive identity from bearer middleware. Companies revokes a deactivated user's machine tokens in the same transaction as deactivation, without importing Auth
-- **Auth, Patches → Analytics**: reports business events with the user as principal, or no user for expiry. Auth reports a machine token minted by the device-login poll and whether it replaced an old key
-- **Auth → Companies**: Companies owns the users and companies that bearer authentication joins with `machine_tokens`; its services own membership, roles and deactivation. Auth mounts Companies' create-or-join and company page behind its session boundary
-- **Hosting, Auth, Patches → Limits**: Hosting limits device-login starts and protected API attempts by address; Auth limits polls by device code and confirm-page lookups by user; Patches limits uploads and creates by machine token
+- **Publishing → `api`**: publishes through the shared wire contract using a user-owned machine token
+- **Serving → Patches, Auth**: relies on Patches for content, sharing and visits, and on Auth for viewer identity and session admission
+- **Patches → Content store**: owns the lifecycle of stored patch content, from publication through expiry
+- **Companies, Auth, Patches → SQL**: persist their own domain data in the shared Postgres database
+- **Auth, Patches → Analytics**: report business events
+- **Auth → Companies**: relies on company membership, roles and deactivation to authenticate users and machines
+- **Hosting, Auth, Patches → Limits**: rely on shared rate limiting for API access, device login and publishing
 - **Integrations → Companies, Serving**: a future connection belongs to a company or user, and a patch will reach it through the cloud within the authenticated viewer's permissions. The integration and higher-runtime boundaries are not implemented yet
-- **Hosting → runtime packages**: runs Companies', Auth's and Patches' migrations, mounts both API groups with Auth's bearer middleware on protected endpoints and the guard ahead of the router, mounts Auth's pages (including Companies' pages) and Serving's pages, and forks Patches' `ExpirySweep` in the server's scope
+- **Hosting → runtime packages**: coordinates their lifetime, including database setup, API protection, page serving and retention sweeping
 
 ## Decisions
 

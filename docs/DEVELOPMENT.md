@@ -41,7 +41,9 @@ For the first publish as yourself:
    it waits while you open its URL in that signed-in browser, check the code,
    company and email, name the machine and confirm. An agent uses the
    [nonblocking JSON handoff](#device-login-through-the-cli) instead.
-3. After login succeeds, publish:
+3. After login succeeds, verify that `whoami` names your chosen machine, user
+   and company before publishing. **Dev Machine** identifies the seed, not a
+   completed personal login:
 
    ```sh
    pnpm patchy whoami
@@ -132,12 +134,12 @@ Both Clerk keys are required at server startup. The runner supplies the other
 two required variables, `DATABASE_URL` and `PATCHY_PUBLIC_BASE_URL`, from its
 worktree plan; values for either in `dev.env` are ignored.
 
-`CLERK_JWT_KEY` is optional: an RSA-2048 PEM public key with exponent 65537
-avoids the JWKS fetch during session-token verification. The server validates
-it at boot and accepts SPKI or PKCS#1 public-key PEMs. In `dev.env`, enclose the
-complete multiline PEM in double quotes; its line breaks are preserved.
-This does not make Account Portal sign-in, invitations or browser sign-out
-offline. Normal local sign-in uses the development keys without this override.
+`CLERK_JWT_KEY` optionally supplies Clerk's PEM public key to avoid the JWKS
+fetch during session-token verification. In `dev.env`, enclose the complete
+multiline PEM in double quotes. Normal local sign-in needs no override; it
+does not make browser sign-in, invitations or sign-out offline. For supported
+key formats and boot-time validation, see
+[`packages/auth/src/Session.ts`](../packages/auth/src/Session.ts).
 
 `CLERK_AUTHORIZED_PARTIES` optionally restricts tokens to one origin. Leave it
 unset locally: a port-specific origin makes worktrees evict each other's

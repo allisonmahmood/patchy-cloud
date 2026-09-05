@@ -102,8 +102,11 @@ seed is available only with `instanceSource: "dev-env"`, not through an explicit
 
 If step 2 chose a different instance, run `patchy status --api-url <url> --json`
 for that choice first; a key found for the old instance says nothing about it.
-With no key, run `patchy login --json` for the chosen instance, retaining any
-`--api-url`. On `status: "awaiting_confirmation"`, say:
+Follow the main skill's [publishing identity check](../SKILL.md#publishing)
+before deciding to reuse a key or log in. In particular, a working dev seed
+does not establish that the person belongs to its company. When login is needed,
+follow [Login handoff](../SKILL.md#login-handoff) for commands, completion and
+failure handling. On `status: "awaiting_confirmation"`, say:
 
 > To publish as you, this machine needs to be logged in. Open `<verificationUrl>`
 > in your own browser and check that it shows `<userCode>`. Sign in if needed
@@ -115,17 +118,9 @@ With no key, run `patchy login --json` for the chosen instance, retaining any
 Show both the returned URL and code. **Never open a browser for the person.**
 If the email is wrong, direct them to **Not you? Sign out** before they create
 a company. **Deny** ends a login they did not request or no longer want.
-After relaying the handoff, run the returned `next` command **with `--json`
-appended**, retaining its `--api-url` if present. `next` does not include `--json`
-itself. It waits up to a minute; `status: "pending"` is exit 0, not a failure.
-Say **"Still waiting for your confirmation; the same link and code work until
-`<expiresAt>`."** Run that same completion command again when they are ready.
-A rerun of `login --json` resumes by polling once, rather than giving another
-handoff; retain the original URL and code. Denied, expired or unknown is exit 2:
-relay the refusal, and start again only if they want to.
-An unanswered request at the wait deadline is exit 3 (`unreachable`), not
-confirmation still pending. The local login record is retained: retry the same
-completion command rather than starting another code.
+The main skill owns completion, resume and error handling. When it reports
+`pending`, say **"Still waiting for your confirmation; the same link and code
+work until `<expiresAt>`."**
 
 The poll mints the key after confirmation; only `status: "logged_in"` means
 it was saved. Say:
@@ -135,15 +130,10 @@ it was saved. Say:
 > 30 idle days, whichever comes first; you can revoke it on Your machines
 > at `/machines`.
 
-If a key was already available, skip login. In either path, run
-`patchy whoami --json` for the chosen instance before publishing and name
-the returned user, company, role and machine. A login receipt names the saved
-key, while `whoami` checks the credential chain upload actually uses:
-`PATCHY_API_TOKEN` can still override that login. Resolve an unintended identity
-before publishing. Describe an existing key as saved on this machine only for
-`tokenSource: "login"` or `"auth-set"`; environment and dev-env keys do not imply
-a saved credential file. A rejected key needs a fresh login, not repeated
-uploads; an environment override must be resolved separately.
+After the main skill's identity check confirms the intended publisher, name
+the user, company, role and machine before publishing. Describe the key as
+saved on this machine only for `tokenSource: "login"` or `"auth-set"`;
+environment and dev-env keys do not imply a saved credential file.
 
 Write `welcome.html` from `welcome-patch.html` in this directory, restyled to the chosen
 look — the structure and copy are the deliverable, the styling is theirs — then:
