@@ -20,14 +20,14 @@ Those are the skill's onboarding triggers; nothing else starts this conversation
 own. Installing or wiring up the skill runs nothing.
 
 **On request.** "Redo my Patchy setup" re-runs the conversation. It overwrites
-`style.md` with the new answers and leaves the publishing key untouched.
+`style.md` with the new answers and reuses a working publishing key.
 
 Those are the only triggers. There is no per-session first-run check: if neither fires,
 onboarding never happens, and that is the correct outcome.
 
 ## Probe before asking
 
-Run the onboarding probe once, at the start:
+Run the onboarding probe at the start; repeat it only if the instance choice changes:
 
 ```bash
 patchy status --json
@@ -43,13 +43,16 @@ settles:
 | `hasToken`        | boolean                                               | `true` means a key is available; verify who it acts as with `whoami`. If false, step 3 logs this machine in before publishing.                                                                                                                                                                                                               |
 | `tokenSource`     | `login` \| `auth-set` \| `null`                       | `login` is a saved device-login key; `auth-set` is a saved existing key. `null` with a key means environment, dev env or an older entry without provenance.                                                                                                                                                                                  |
 | `stateDir`        | absolute path                                         | Locate `style.md` — it goes in this directory.                                                                                                                                                                                                                                                                                               |
-| `hasDefaultStyle` | boolean                                               | `true` → onboarding already ran. Say what the current default look is and ask keep-or-redo instead of asking cold.                                                                                                                                                                                                                           |
+| `hasDefaultStyle` | boolean                                               | `true` means `style.md` exists. Read it, say what the current default look is and ask keep-or-redo instead of asking cold.                                                                                                                                                                                                                   |
 | `cliVersion`      | version string                                        | Only worth mentioning if something later misbehaves.                                                                                                                                                                                                                                                                                         |
 
 `hasToken` and `tokenSource` follow the publishing credential chain:
 `PATCHY_API_TOKEN`, then the stored key for this instance, then the dev env's
 seeded key. A saved login outranks the seed, but an environment key overrides
 both. The probe never proves a key is still accepted by the instance.
+If a credential file is unreadable or malformed, the probe can also answer
+`hasToken: false`. Follow a later command's local-state repair instruction;
+repeated login attempts do not repair a state file login cannot read.
 
 ## The conversation
 
@@ -57,7 +60,7 @@ One question at a time. Call the machine token the user's **publishing key**.
 Say **sign in** for the person's browser session and **log this machine in**
 for the step that lets it publish as them.
 
-### 1. Style — the only question
+### 1. Style
 
 Offer exactly two options:
 
@@ -74,9 +77,9 @@ re-asking. A project's own house style still overrides it.
 
 ### 2. Where pages live — settled from the probe, asked only if it must be
 
-Pages go to Patchy Cloud, or to the dev instance of a checkout; the CLI bakes in no
-address, so one has to be chosen. The probe already answered this in most cases, so read
-it before opening your mouth:
+Pages go to the selected Patchy Cloud instance, or to the dev instance of a checkout.
+The CLI's fallback is localhost, not a deployed destination. The probe already
+answered the choice in most cases:
 
 - `instanceSource` is `config` — a saved choice. Confirm it in passing ("your pages go to
   `pages.example.com` — each gets its own shareable link") and move on.
@@ -89,44 +92,58 @@ it before opening your mouth:
   and, before publishing, a completed login or an available publishing key.
 
 Use the actual URL, never a placeholder. Carry an explicit `--api-url` choice
-on `whoami` and upload. Login saves that choice and retains the flag in `next`;
-keep using the flag when overriding a worktree or environment-selected instance,
-since either outranks saved config.
+on login, completion, `whoami`, upload, share and logout. Login saves that choice
+and retains the flag in `next`; keep using the flag when overriding a worktree
+or environment-selected instance, since either outranks saved config. The dev
+seed is available only with `instanceSource: "dev-env"`, not through an explicit
+`--api-url` flag, even when the URL is the same.
 
 ### 3. Log in, then publish the welcome patch
 
-If the probe found no key, or step 2 chose a different instance than the probe
-reported, run `patchy login --json` (with `--api-url <url>` for that choice).
-A key found for the old instance says nothing about the new one. On the handoff, say:
+If step 2 chose a different instance, run `patchy status --api-url <url> --json`
+for that choice first; a key found for the old instance says nothing about it.
+With no key, run `patchy login --json` for the chosen instance, retaining any
+`--api-url`. On `status: "awaiting_confirmation"`, say:
 
 > To publish as you, this machine needs to be logged in. Open `<verificationUrl>`
 > in your own browser and check that it shows `<userCode>`. Sign in if needed
-> with Google, Microsoft or an emailed code. Check the company and email,
+> with Google, Microsoft or an emailed code. If you reach create-or-join, check
+> the email: join an invited company or create one with a name and handle if
+> there is no invitation, then return here. Check the code, company and email,
 > name this machine, then confirm. I'll finish logging it in here.
 
 Show both the returned URL and code. **Never open a browser for the person.**
-After relaying them, run the returned `next` command. It waits up to a minute;
-`status: "pending"` is exit 0, not a failure. Say **"Still waiting for your
-confirmation; the same link and code work until `<expiresAt>`."** Run `next`
-again when they are ready, rather than starting another code. Denied, expired
-or unknown is exit 2: relay the refusal, and start again only if they want to.
+If the email is wrong, direct them to **Not you? Sign out** before they create
+a company. **Deny** ends a login they did not request or no longer want.
+After relaying the handoff, run the returned `next` command **with `--json`
+appended**, retaining its `--api-url` if present. `next` does not include `--json`
+itself. It waits up to a minute; `status: "pending"` is exit 0, not a failure.
+Say **"Still waiting for your confirmation; the same link and code work until
+`<expiresAt>`."** Run that same completion command again when they are ready.
+A rerun of `login --json` resumes by polling once, rather than giving another
+handoff; retain the original URL and code. Denied, expired or unknown is exit 2:
+relay the refusal, and start again only if they want to.
 An unanswered request at the wait deadline is exit 3 (`unreachable`), not
 confirmation still pending. The local login record is retained: retry the same
 completion command rather than starting another code.
 
-Only `status: "logged_in"` means the key is saved. Say:
+The poll mints the key after confirmation; only `status: "logged_in"` means
+it was saved. Say:
 
 > This machine is logged in to `<company.name>` as `<user.email>`, named
-> "`<machine.name>`". Its publishing key is saved here. I'll publish your
-> welcome page now.
+> "`<machine.name>`". Its publishing key is saved here. It lasts 90 days or
+> 30 idle days, whichever comes first; you can revoke it on Your machines
+> at `/machines`.
 
-If the probe already found a key for this instance, skip login and run
-`patchy whoami` to name
-the user, company, role and machine before publishing. Describe the key as
-saved on this machine only for `tokenSource: "login"` or `"auth-set"`;
-environment and dev-env keys do not imply a saved credential file. A rejected
-key needs a fresh login, not repeated uploads; an environment key overrides
-a saved login and must be resolved separately.
+If a key was already available, skip login. In either path, run
+`patchy whoami --json` for the chosen instance before publishing and name
+the returned user, company, role and machine. A login receipt names the saved
+key, while `whoami` checks the credential chain upload actually uses:
+`PATCHY_API_TOKEN` can still override that login. Resolve an unintended identity
+before publishing. Describe an existing key as saved on this machine only for
+`tokenSource: "login"` or `"auth-set"`; environment and dev-env keys do not imply
+a saved credential file. A rejected key needs a fresh login, not repeated
+uploads; an environment override must be resolved separately.
 
 Write `welcome.html` from `welcome-patch.html` in this directory, restyled to the chosen
 look — the structure and copy are the deliverable, the styling is theirs — then:
@@ -179,7 +196,7 @@ you; never invent one, and never carry these into a real session.
 
 ### Fast path — an instance and working key are already available
 
-> **Agent**: Skill installed. One quick question and I'll publish your first page. Looks:
+> **Agent**: One quick question and I'll publish your welcome page. Looks:
 > pages can use the Patchy look — warm paper, bold ink, friendly — or I can match your own
 > website's style. Which would you like?
 >

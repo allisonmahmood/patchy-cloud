@@ -46,7 +46,7 @@ One line each; only the things you would not find by reading the tree.
 
 - `docs/product.md` — the product's shape: patches, tiers, companies, identity, integrations. Read it before designing anything user-facing.
 - `CONTEXT-MAP.md` and each package's `CONTEXT.md` — the vocabulary. Use their words; see `docs/agents/domain.md`.
-- `docs/DEVELOPMENT.md` — `pnpm dev` runs a full local instance per worktree (embedded Postgres, seeded company and token). Start there, not with the server by hand.
+- `docs/DEVELOPMENT.md` — required Clerk keys, `pnpm dev`, browser sign-in and CLI login, the seeded company/user/machine token, and offline/live test tiers. Read before starting a local instance or checking auth.
 - `packages/sql/README.md` — how migrations and row decoding work.
 - `docs/adr/ADR-0004-cli-contract-for-agents.md` — the CLI's exit codes and `--json` contract; keep it when touching `packages/cli`.
 
@@ -76,7 +76,7 @@ The most common defect here is a change that lands on the path you tested and is
 - **Vocabulary and product shape.** A new or renamed concept follows through to the owning `CONTEXT.md` glossary, `CONTEXT-MAP.md` when a context gains or loses a package, and `docs/product.md` when the product's shape moved. An ADR the change contradicts is updated or deleted, never left standing.
 - **Migrations.** A package that gains its first migration record is spread into three places: the server's migrator run, the dev runner's, and the vitest template's. Miss one and that place silently does not migrate.
 - **Served pages.** What a reader receives runs through the `ui-consistency` spec; what HTML is accepted or rejected lands as fixtures under `packages/core/fixtures`, which the policy tests and `pnpm seed:dev` both read.
-- **Reverse states.** If you add a way in, add the way out and the way to see it. Pin needs unpin, a minted token needs revoke. A one-way door is a bug.
+- **Reverse states.** If you add a way in, add the way out and the way to see it. An invite needs revoke, deactivation needs reactivation, a machine token needs revoke. A one-way door is a bug.
 - **The repo layout.** Adding, renaming or removing a package follows through to the README's layout list, and to Where to look above if it is a doc an agent needs.
 
 ### Review specs
@@ -105,7 +105,7 @@ Before writing Effect code, read `node_modules/effect/AGENTS.md` — how Effect 
 
 ### Tests
 
-`pnpm test` is offline (including the fetch guard); `pnpm test:clerk` runs the live Clerk tier with real development keys and run-scoped cleanup, as described in `docs/DEVELOPMENT.md`.
+`pnpm test` is offline (including the fetch guard); `pnpm test:clerk` runs the live Backend-API and Playwright tiers with real development keys and run-scoped cleanup. Read `docs/DEVELOPMENT.md` before running them: they create Clerk users and send invitation mail.
 
 `@effect/vitest`: `it.layer` shares one migrated Postgres per block, `it.effect` for each case, `HttpApiTest.groups` for API routes, `NodeHttpServer.layerTest` when the test needs what a real socket sees, `TestClock` for the clock, `Scope` for anything that must be closed. Inject faults with an alternate layer, not a mock. Copy an existing suite in the package you are in; `packages/patches` and `packages/serving` show the `it.layer` shape over a migrated database.
 

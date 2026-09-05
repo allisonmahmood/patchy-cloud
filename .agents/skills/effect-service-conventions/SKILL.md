@@ -8,9 +8,9 @@ metadata:
 
 # Effect service review
 
-Review changed TypeScript and directly affected call sites for the conventions below. Apply them when a change creates, moves, refactors, or consumes an Effect service in `apps/server` or the capability packages (`packages/api`, `auth`, `patches`, `serving`, `content-store`, `sql`, `cli`, `core`). Do not demand unrelated repository-wide cleanup. Treat these conventions as authoritative when older code differs.
+Review changed TypeScript and directly affected call sites for the conventions below. Apply them when a change creates, moves, refactors, or consumes an Effect service in `apps/server` or the capability packages (`packages/api`, `auth`, `companies`, `patches`, `serving`, `content-store`, `sql`, `cli`, `core`). Do not demand unrelated repository-wide cleanup. Treat these conventions as authoritative when older code differs.
 
-Effect is not yet imported in source: the Effect v4 port lands package by package (issue #54), so these rules bind each package as it moves. Pre-port code the diff leaves untouched is out of scope; a package that has moved is held to every rule. Skip anything the linter or `@effect/language-service` already enforces.
+The server, packages and CLI run on Effect 4. These rules bind their services and consumers. Skip anything the linter or `@effect/language-service` already enforces.
 
 ## Imports and module namespaces
 
@@ -35,7 +35,7 @@ Effect is not yet imported in source: the Effect v4 port lands package by packag
 
 - Production service construction must acquire Effect service dependencies from the environment with `yield* Foo.Foo`, and its `make`/`layer` types must expose those requirements. Flag factories or constructors that accept `Foo["Service"]` (or a plain object whose methods return `Effect`) when that value is an implementation dependency owned by the service. Passing service instances explicitly is acceptable in tests and integration harnesses; passing pure configuration, immutable domain values, or deliberate callback strategies is not service injection.
 - Do not hide dependencies in module globals, closures over singleton services, or `Layer.succeed` implementations that call runtime-backed or imperative APIs. Trace helpers used by a supposedly synchronous layer far enough to verify that asynchronous services are represented in the Effect environment.
-- `ManagedRuntime.make`, `runPromise`, and `runPromiseExit` belong at explicit application/framework boundaries: the server entrypoint, the CLI entrypoint, and the thin adapters the port keeps at the seam between a ported package and one not yet moved. Flag their use in domain services, repositories, persistence implementations, and service constructors. A clearly named imperative adapter may bridge an Effect service into a Promise API, but it must not become a dependency of another Effect service.
+- `ManagedRuntime.make`, `runPromise`, and `runPromiseExit` belong at explicit application/framework boundaries: the server and CLI entrypoints and development/test runners. Flag their use in domain services, repositories, persistence implementations, and service constructors.
 - Do not create per-feature managed runtimes to smuggle the same owned resource into multiple consumers. Compose the resource once in an application-owned layer/runtime and provide its context to integration runtimes.
 - When acquisition can fail but a caller must retain fallback behavior, keep the failure typed in Effect rather than bypassing the layer through an imperative runtime. Model unavailability in service operations or with an explicit optional-service layer so downstream recovery remains visible and testable.
 - During review, search touched code and affected call sites for service-instance parameters, `Layer.succeed`, `ManagedRuntime.make`, and `.runPromise`/`.runPromiseExit`. Verify that each occurrence is a legitimate test seam, pure value injection, or application boundary, not fake dependency injection or a hidden runtime.
@@ -70,7 +70,7 @@ Effect is not yet imported in source: the Effect v4 port lands package by packag
 
 These are decided; a diff that improvises a different shape is a finding.
 
-- `/api/*` is one `HttpApi` defined in `packages/api` (wire schemas, the API, the derived client) and consumed by the CLI. Pages (`/`, `/d/*`, `/healthz`) are plain `HttpRouter` routes owned by `serving`. Map domain errors onto declared `HttpApiError` responses at the handler; do not let an untyped failure decide a status code.
+- `/api/*` is one `HttpApi` defined in `packages/api` (wire schemas, the API, the derived client) and consumed by the CLI. Serving owns `/`, `/d/*` and `/healthz`; Auth mounts session pages and Companies' page renderers through plain `HttpRouter` routes. Map domain errors onto declared `HttpApiError` responses at the handler; do not let an untyped failure decide a status code.
 - Persistence is `@effect/sql-pg` with `SqlSchema` and `sql.withTransaction`, Postgres only, row decoding through Schema in one module. Schema changes go through Effect's `Migrator`.
 - Tests use `@effect/vitest` (`it.effect`, `it.layer`), `HttpApiTest` for API routes, `NodeHttpServer.layerTest` for raw-socket cases, `TestClock` for the clock, and `Scope` for manual close pairs. Inject faults with an alternate layer.
 - Read configuration through Effect `Config` per capability, with `Redacted` for secrets.

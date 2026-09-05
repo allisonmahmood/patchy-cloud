@@ -15,7 +15,7 @@ If any of these files don't exist, **proceed silently**. Don't flag their absenc
 
 This is a **multi-context** repo — a pnpm workspace whose two sides are the service that hosts patches and the CLI agents run to publish them, with the hosting side cut into capability packages. `CONTEXT-MAP.md` names the product's contexts (Patches, Serving, Companies, Auth, Integrations, Publishing), the shared kernel (`core`), the infrastructure packages (`api`, `sql`, `content-store`, `analytics`, `limits`, and `apps/server` as wiring) and the relationships between them. Every context and infrastructure package but `core` and `api` has a `CONTEXT.md` at its package's path.
 
-A context can exist before its code: its `CONTEXT.md` sits alone at the path the package will take (`packages/companies/CONTEXT.md`), so the words are settled before the build and the package is born beside them. A folder with no `package.json` is invisible to pnpm and turbo.
+A context can exist before its code: its `CONTEXT.md` sits alone at the path the package will take (`packages/integrations/CONTEXT.md`), so the words are settled before the build and the package is born beside them. A folder with no `package.json` is invisible to pnpm and turbo.
 
 ```
 /
@@ -45,4 +45,4 @@ Where a term appears in both contexts with different meanings, say which context
 
 If your output contradicts an existing ADR, surface it explicitly rather than silently overriding:
 
-> _Contradicts ADR-0007 (event-sourced orders) — but worth reopening because…_
+> _Contradicts ADR-0007 (Patchy holds the company; Clerk knows the user) — but worth reopening because…_

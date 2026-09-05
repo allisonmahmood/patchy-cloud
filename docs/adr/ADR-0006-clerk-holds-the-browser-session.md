@@ -29,27 +29,29 @@ revocation owned outright, at the price of a second session concept and a
 token.** There is no Patchy session cookie and no session table.
 
 The no-script guarantee is the **patch's**, inside its sandboxed frame; the
-shell around it is Patchy's own document. So a doored patch's shell loads
-Clerk's headless frontend script from the instance's Frontend API host, which
-refreshes the token and sets the cookies exactly as in any Clerk app. The server
-does what a Clerk backend normally does: `authenticateRequest` on every doored
-load, verified locally against the instance's public key, with the handshake
-for a browser that comes back cold. No server-side refresh, no cookie
-workaround, no SDK pin.
+shell around it is Patchy's own document. A doored patch's shell loads
+Clerk's headless frontend script from the instance's Frontend API host and
+Patchy's same-origin external initializer. The same pair keeps first-party
+pages fresh. The server calls `authenticateRequest` and verifies the session
+locally against Clerk's public key, using the handshake for a browser that
+returns cold. `CLERK_JWT_KEY` supplies that public key without a JWKS fetch;
+without it, the SDK retrieves Clerk's signing keys. A failed returning handshake
+shows a sign-in failure rather than starting a loop.
 
 ## Consequences
 
 **Two content-security policies.** A public patch keeps the fully locked CSP
-and loads nothing. A doored patch's shell allows script and connect sources for
-the Frontend API host, no inline script; the frame's sandbox is unchanged. The
-serving guarantee reads: the patch runs no script; the shell runs only Patchy's
-own session script, never analytics.
+and loads no session scripts. A doored patch's shell allows the external
+initializer from its own origin and Clerk script/connect sources from the
+Frontend API host, never inline script; the frame's sandbox is unchanged.
+The serving guarantee reads: the patch runs no script; the shell runs only
+Patchy's own session script, never analytics.
 
 **Revocation reach is asymmetric, and honest.** Anything Patchy decides — a user
-removed, a scope changed, a patch gone — lands on the next load, through the
-user read the door already does. Anything Clerk decides — a session revoked in
-the dashboard, a sign-out elsewhere — lands within 65 seconds plus the next
-load.
+deactivated, sharing changed, a patch gone — is checked on the next origin load.
+A still-fresh public response can outlive a sharing change for its one-minute
+cache window. Anything Clerk decides — a session revoked in the dashboard,
+a sign-out elsewhere — reaches verification within 65 seconds plus the next load.
 
 **Reading a doored patch needs Clerk once a minute, in the browser, not on the
 server.** The server verifies with a public key; the browser's refresh goes to
@@ -58,10 +60,16 @@ so it is `private, no-store`. Caching is keyed to sharing: public patches use
 `public, max-age=60` at both latest and version URLs, so a scope change can
 take a page back inside within a minute without a CDN purge.
 
-**Clerk's keys are required configuration.** The server refuses to start
-without them; there is no half-up state. Sign-out is a
-Patchy `POST` that revokes the Clerk session through the Backend API and clears
-every Clerk cookie with the `Domain` and `Path` its setter used.
+**Sign-out is a browser operation, not a machine logout.** `POST /logout` needs
+only a Clerk session, so it works before create-or-join and after deactivation.
+It revokes that session through the Backend API, clears Clerk cookies with
+their setting domain and path, and returns to `/login`. First-party POSTs
+require the public origin or same-origin fetch metadata, including sign-out.
+
+**Required configuration fails at startup.** Clerk's publishable and secret
+keys, `PATCHY_PUBLIC_BASE_URL` and `DATABASE_URL` are required. The optional
+public JWT key is validated at startup too; there is no partially configured
+server mode.
 
 ## Alternatives considered
 
