@@ -1,5 +1,6 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vitest";
+import * as OpenApi from "effect/unstable/httpapi/OpenApi";
 import {
   Identity,
   InvalidHtml,
@@ -7,6 +8,7 @@ import {
   Ok,
   PatchId,
   PatchQuotaExceeded,
+  PatchyApi,
   RateLimited,
   Shared,
   ShareRequest,
@@ -99,5 +101,19 @@ describe("wire schemas", () => {
       [Unauthorized, { ok: false, error: "Missing or invalid API token." }]
     ];
     for (const [schema, wire] of cases) expect(roundTrip(schema, wire)).toEqual(wire);
+  });
+});
+
+describe("PatchyApi", () => {
+  it("puts every route under /api with patch naming and no draft on the wire", () => {
+    const paths = Object.keys(OpenApi.fromApi(PatchyApi).paths);
+    expect(paths).toEqual([
+      "/api/me",
+      "/api/logout",
+      "/api/uploads",
+      "/api/patches/{patchId}/share",
+      "/api/patches/{patchId}"
+    ]);
+    expect(JSON.stringify(OpenApi.fromApi(PatchyApi))).not.toMatch(/draft/i);
   });
 });
