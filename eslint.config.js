@@ -77,7 +77,10 @@ export default tseslint.config(
       "packages/cli/src/cli.test.ts",
       "vitest.clerk.config.ts",
       "test/clerk.ts",
-      "scripts/test-clerk.ts"
+      "scripts/test-clerk.ts",
+      "playwright.clerk.config.ts",
+      "test/browser/fixtures.ts",
+      "test/browser/instance.ts"
     ],
     rules: {
       "no-restricted-properties": "off"

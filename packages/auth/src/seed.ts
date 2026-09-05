@@ -19,7 +19,7 @@ export const DEV_SEED = {
   token: "patchy-dev-token"
 } as const;
 
-/** Seeds an already-migrated dev database atomically; only the runner overrides the Clerk user id. */
+/** Seeds a migrated dev database atomically; the runner and live browser tier can bind a Clerk user. */
 export async function applyDevSeed(
   connectionString: string,
   clerkUserId: string = DEV_SEED.clerkUserId

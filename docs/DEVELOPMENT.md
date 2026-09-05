@@ -120,8 +120,9 @@ state and the machine's 90-day lifetime and last-use timestamp.
 
 Set `PATCHY_DEV_CLERK_USER_ID=user_...` in the same developer `dev.env` to bind
 the seeded admin to your Clerk development user. Restart `pnpm dev` to apply
-it; unset or empty keeps `user_dev`. Tests and packed e2e always use the
-default. The override changes only the seed, not the server's environment.
+it; unset or empty keeps `user_dev`. Offline tests and packed CLI e2e use
+the default; the live browser tier binds its isolated seed to its own
+run-namespaced Clerk user. The override changes only the seed, not the server's environment.
 
 Open `/join` at the instance's API URL to sign in:
 
@@ -281,39 +282,79 @@ Postgres shuts down; without it, a failed Vitest suite can exit successfully.
 pnpm test:clerk
 ```
 
-Runs `vitest.clerk.config.ts` against your **patchy-cloud** development
-application, not your running dev server. It reuses the isolated, migrated
-Postgres template and does not touch `.local/dev/` or your seeded admin.
+Runs the Backend-API tier (`vitest.clerk.config.ts`), then the browser tier
+(`playwright.clerk.config.ts`), serially against your **patchy-cloud**
+development application, not your running dev server. Vitest reuses the
+isolated, migrated Postgres template. Playwright starts a separate migrated
+Postgres and checkout server, binds the dev seed's admin to this run's browser
+Clerk user, and publishes a company patch with the seeded machine token.
+Neither tier touches `.local/dev/` or your development seed.
 When neither Clerk key is in the environment, the command reads both from
 the [developer `dev.env`](#clerk-keys), using the same loader as `pnpm dev`.
 An explicit or partial pair never falls back to that file; both keys must be
-nonempty. GitHub Actions never reads the developer file. Running the live
-config directly requires both environment keys and fails before setup if
-either is absent.
+nonempty. GitHub Actions never reads the developer file. Running either
+live config directly requires both environment keys and fails before setup
+if either is absent.
 
 Each run prints its `CLERK_TEST_RUN_ID` (a UUID locally, run id plus attempt
 in CI). It creates `ci-<run id>+clerk_test@example.com` through Clerk's
 Backend API, creates a session and JWT, and sends the session cookie through
 the real `RequireSession` on `/company`. No `CLERK_JWT_KEY` is provided to
 the layer, even if set in your shell: verification uses Clerk's JWKS.
-`CLERK_AUTHORIZED_PARTIES` defaults to the test server's own origin,
-`http://127.0.0.1:3000`; a Backend-API token's absent/null `azp` is accepted.
+The in-memory Vitest tier defaults `CLERK_AUTHORIZED_PARTIES` to its request
+origin, `http://127.0.0.1:3000`; a Backend-API token's absent/null `azp` is accepted.
 
 The invitation test creates, lists, revokes and re-invites
 `ci-<run id>-invite+clerk_test@example.com` through live `InviteMail`.
 **These requests send real invitation mail** (`notify: true`); the
-`example.com` bounce is expected, not a delivery assertion. Calls are serial
-and few (under 25 per normal run, below Clerk's 100-per-10-seconds budget).
-The Account Portal and browser/device-login specs belong to #144; this
-command currently runs only the live vitest tier.
+`example.com` bounce is expected, not a delivery assertion.
 
-Vitest teardown runs after success or failure, deletes this run's exact user
-email (ending its sessions), checks zero users remain, and revokes any
-pending invitations for the exact invitation email. Revoked invitation
-records remain in Clerk. CI repeats the idempotent sweep in an `always()`
-step, including when the test step fails or is cancelled. No sweep touches
-another run's addresses. If a local process is forcibly killed before
-teardown, repeat the printed run id:
+The browser specs use Chromium, real Account Portal sign-in behind a Clerk
+Testing Token, and the `424242` test email code:
+
+- **`login-door`** opens the company patch signed out and checks its 401 door.
+  The seeded browser user signs in through the Account Portal and returns
+  through Clerk's handshake to the rendered patch and company shell. Reloading
+  after the session token expires keeps the user signed in. The workflow adds
+  the actual token-expiry wait to its timeout rather than assuming a fixed
+  token lifetime (CI's overall job timeout still applies). A second user,
+  in a separate browser context, signs in, creates a company through
+  create-or-join, and gets the same 404 for the seeded company's patch as for
+  a missing patch.
+- **`patchy-login`** reuses the seeded user's signed-in browser to confirm the
+  packed CLI's `patchy login --json` handoff with a machine name. Completion
+  reports `logged_in`, `whoami` names the machine, and revoking that machine
+  on `/machines` makes the next `whoami` return 401.
+
+Playwright uses one worker, no retries, and a shared worker sign-in for the
+seeded user: only two serial sign-ins for a full run, including the outsider.
+The browser users are `ci-<run id>-browser+clerk_test@example.com` and
+`ci-<run id>-outsider+clerk_test@example.com`. Browser requests go through
+the page rather than `context.request`, which withholds Secure cookies on
+the loopback HTTP origin. The isolated browser server always reserves its
+own ephemeral loopback port, holding it until spawn instead of using an
+ambient `PATCHY_PUBLIC_BASE_URL`. It restricts `CLERK_AUTHORIZED_PARTIES` to
+that origin and uses live Clerk verification, not an ambient `CLERK_JWT_KEY`.
+
+Install the browser locally once, then select a workflow with a visible browser:
+
+```sh
+pnpm exec playwright install --with-deps chromium
+pnpm test:clerk --browser login-door --headed
+pnpm test:clerk --browser patchy-login --headed
+```
+
+`--browser` skips Vitest and forwards the remaining arguments to Playwright.
+Without it, both tiers run serially and the first nonzero exit status is retained.
+Vitest teardown and the runner's final cleanup delete all three exact
+run-namespaced user addresses (ending their sessions), check zero users remain,
+and revoke pending invitations for the exact invitation email. The runner
+also sweeps on normal test failure and after SIGINT/SIGTERM. Revoked invitation
+records remain in Clerk. CI installs Chromium and its system dependencies,
+runs both tiers, and repeats the idempotent sweep in an `always()` step,
+including when the test step fails or is cancelled. No sweep touches another
+run's addresses. If a local process is forcibly killed before teardown,
+repeat the printed run id:
 
 ```sh
 CLERK_TEST_RUN_ID=<printed-run-id> pnpm test:clerk --cleanup
@@ -325,6 +366,8 @@ secrets `CLERK_SECRET_KEY` and `CLERK_PUBLISHABLE_KEY`, never in `dev.env`
 or the repository. The `clerk-live` job runs on pushes to `main` and
 same-repository PRs except Dependabot; forks and Dependabot skip it and run
 the offline tier. An eligible run with a missing secret fails, never skips.
+Both configs and the cleanup runner reject CI publishable keys unless they
+identify exactly `super-whale-1225.clerk.accounts.dev`, before any Clerk request.
 Marking `clerk-live` required in branch protection is a maintainer step;
 a skipped job satisfies a required check.
 
