@@ -33,7 +33,7 @@ Responses:
 
 ### `POST /api/login/device`
 
-Begin a device login without a bearer token. Relay `verificationUrl` and `userCode` to the person, who confirms the code in their signed-in browser; the code is never typed. The login expires after ten minutes. Starts are limited per source address (`PATCHY_DEVICE_LOGIN_RATE_LIMIT_PER_MINUTE`, default 5). On a re-login, send the stored machine token's id as `previousMachineTokenId`; the old key stays live until the completing poll replaces it, and only when it belongs to the confirming user.
+Begin a device login without a bearer token. Relay `verificationUrl` and `userCode` to the person, who confirms the code in their signed-in browser; the code is never typed. The login expires after ten minutes. Starts are limited per source address (`PATCHY_DEVICE_LOGIN_RATE_LIMIT_PER_MINUTE`, default 5). On a re-login, send the stored machine token's id as `previousMachineTokenId`; the old key stays live until the completing poll replaces it, and only when it belongs to the confirming user. The JSON body is limited to 4096 bytes: a declared overflow answers 413; overflow while streaming aborts the connection before parsing.
 
 Request body: [StartDeviceLoginRequest](#startdeviceloginrequest)
 
@@ -41,19 +41,21 @@ Responses:
 
 - `201` [DeviceLoginStarted](#deviceloginstarted)
 - `400` { ok: false, error: string }
+- `413` { ok: false, error: string }
 - `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
 
 ### `POST /api/login/device/token`
 
-Poll without a bearer token, at the returned interval. A poll made too soon answers `slow_down`; add five seconds to the interval. After browser confirmation, one poll mints the machine token and returns `complete`. The key expires in 90 days or after 30 idle days. Complete, expired and denied logins are deleted, so a subsequent poll answers 410 `unknown`. Plaintext tokens are never stored.
+Poll without a bearer token, at the returned interval. A poll made too soon answers `slow_down`; add five seconds to the interval. After browser confirmation, one poll mints the machine token and returns `complete`. The key expires in 90 days or after 30 idle days. Complete, expired and denied logins are deleted, so a subsequent poll answers 410 `unknown`. Plaintext tokens are never stored. The JSON body is limited to 4096 bytes: a declared overflow answers 413; overflow while streaming aborts the connection before parsing.
 
 Request body: [PollDeviceLoginRequest](#polldeviceloginrequest)
 
 Responses:
 
-- `200` { ok: true, status: "pending" | "slow_down" } | { ok: true, status: "complete", token: string, machine: { id: string, name: string }, expiresAt: string }
+- `200` [DeviceLoginWaiting](#deviceloginwaiting) | [DeviceLoginComplete](#devicelogincomplete)
 - `400` { ok: false, error: string }
 - `410` { ok: false, error: string, code: "expired" | "denied" | "unknown" }
+- `413` { ok: false, error: string }
 
 ## patches
 
@@ -166,6 +168,30 @@ Responses:
 ```
 {
   deviceCode: string
+}
+```
+
+### DeviceLoginWaiting
+
+```
+{
+  ok: true,
+  status: "pending" | "slow_down"
+}
+```
+
+### DeviceLoginComplete
+
+```
+{
+  ok: true,
+  status: "complete",
+  token: string,
+  machine: {
+    id: string,
+    name: string
+  },
+  expiresAt: string
 }
 ```
 

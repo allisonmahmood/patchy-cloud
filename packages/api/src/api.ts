@@ -94,7 +94,7 @@ export class AuthGroup extends HttpApiGroup.make("auth", { topLevel: true })
     HttpApiEndpoint.post("startDeviceLogin", "/login/device", {
       payload: StartDeviceLoginRequest,
       success: DeviceLoginStarted,
-      error: [BadRequest, RateLimited]
+      error: [BadRequest, RateLimited, PayloadTooLarge]
     }).annotateMerge(
       describe(
         "Begin a device login without a bearer token. Relay `verificationUrl` and `userCode` to " +
@@ -102,20 +102,24 @@ export class AuthGroup extends HttpApiGroup.make("auth", { topLevel: true })
           "The login expires after ten minutes. Starts are limited per source address " +
           "(`PATCHY_DEVICE_LOGIN_RATE_LIMIT_PER_MINUTE`, default 5). On a re-login, send the " +
           "stored machine token's id as `previousMachineTokenId`; the old key stays live until " +
-          "the completing poll replaces it, and only when it belongs to the confirming user."
+          "the completing poll replaces it, and only when it belongs to the confirming user. " +
+          "The JSON body is limited to 4096 bytes: a declared overflow answers 413; " +
+          "overflow while streaming aborts the connection before parsing."
       )
     ),
     HttpApiEndpoint.post("pollDeviceLogin", "/login/device/token", {
       payload: PollDeviceLoginRequest,
       success: DeviceLoginPoll,
-      error: [BadRequest, DeviceLoginGone]
+      error: [BadRequest, DeviceLoginGone, PayloadTooLarge]
     }).annotateMerge(
       describe(
         "Poll without a bearer token, at the returned interval. A poll made too soon answers " +
           "`slow_down`; add five seconds to the interval. After browser confirmation, one poll " +
           "mints the machine token and returns `complete`. The key expires in 90 days or after " +
           "30 idle days. Complete, expired and denied logins are deleted, so a subsequent poll " +
-          "answers 410 `unknown`. Plaintext tokens are never stored."
+          "answers 410 `unknown`. Plaintext tokens are never stored. The JSON body is limited " +
+          "to 4096 bytes: a declared overflow answers 413; overflow while streaming aborts " +
+          "the connection before parsing."
       )
     )
   )
