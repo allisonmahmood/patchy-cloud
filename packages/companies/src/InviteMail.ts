@@ -1,4 +1,5 @@
 import { createClerkClient } from "@clerk/backend";
+import { isClerkAPIResponseError } from "@clerk/backend/errors";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -18,6 +19,15 @@ export class InviteMailError extends Schema.TaggedError<InviteMailError>()("Invi
   }
 }
 
+export class InvitationAlreadyRevoked extends Schema.TaggedError<InvitationAlreadyRevoked>()(
+  "InvitationAlreadyRevoked",
+  { invitationId: Schema.String, cause: Schema.optional(Schema.Defect()) }
+) {
+  override get message() {
+    return "The emailed invitation is already revoked.";
+  }
+}
+
 const Origin = Schema.URLFromString.check(
   Schema.makeFilter(
     (url) =>
@@ -34,7 +44,9 @@ export class InviteMail extends Context.Service<
   InviteMail,
   {
     readonly create: (email: string) => Effect.Effect<string, InviteMailError>;
-    readonly revoke: (id: string) => Effect.Effect<void, InviteMailError>;
+    readonly revoke: (
+      id: string
+    ) => Effect.Effect<void, InviteMailError | InvitationAlreadyRevoked>;
   }
 >()("@patchy/companies/InviteMail") {}
 
@@ -64,7 +76,13 @@ export const make = Effect.gen(function* () {
   const revoke = Effect.fn("InviteMail.revoke")((id: string) =>
     Effect.tryPromise({
       try: () => client.invitations.revokeInvitation(id),
-      catch: (cause) => new InviteMailError({ operation: "revoke", invitationId: id, cause })
+      catch: (cause) =>
+        isClerkAPIResponseError(cause) &&
+        cause.status === 400 &&
+        cause.errors.length > 0 &&
+        cause.errors.every((error) => error.code === "invitation_already_revoked")
+          ? new InvitationAlreadyRevoked({ invitationId: id, cause })
+          : new InviteMailError({ operation: "revoke", invitationId: id, cause })
     }).pipe(Effect.asVoid)
   );
   return InviteMail.of({ create, revoke });

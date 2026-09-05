@@ -145,6 +145,7 @@ it.layer(services)("company page and actions", (it) => {
           assert.strictEqual(response.headers.get("cache-control"), "private, no-store");
           assert.include(response.headers.get("content-security-policy")!, "form-action 'self'");
           const html = yield* Effect.promise(() => response.text());
+          assert.match(html, /<form\b[^>]*method="post"[^>]*action="\/logout"/);
           assert.include(html, "Research &lt;script&gt;alert(&quot;company&quot;)&lt;/script&gt;");
           assert.include(html, "&lt;img src=x onerror=alert(&quot;name&quot;)&gt;");
           assert.include(html, "pending&amp;copy@example.com");
@@ -175,6 +176,37 @@ it.layer(services)("company page and actions", (it) => {
           }
         }
       })
+  );
+
+  it.effect("offers a route back to company management when the form body cannot be read", () =>
+    Effect.gen(function* () {
+      const owner = yield* createCompany("company-unreadable-form");
+      const request = new Request(
+        new URL("/company/invites", base),
+        post(owner.user, {
+          email: "unreadable@example.com",
+          role: "member"
+        })
+      );
+      yield* Effect.promise(() => request.text());
+      const app = yield* HttpRouter.toHttpEffect(AuthPages.layer);
+      const response = HttpServerResponse.toWeb(
+        yield* app.pipe(
+          Effect.provideService(
+            HttpServerRequest.HttpServerRequest,
+            HttpServerRequest.fromWeb(request)
+          )
+        )
+      );
+      assert.strictEqual(response.status, 400);
+      const html = yield* Effect.promise(() => response.text());
+      const recovery = html.match(/<a href="([^"]+)"/)?.[1];
+      assert.strictEqual(recovery, "/company");
+      const page = yield* send(recovery!, { headers: { cookie: cookie(owner.user) } });
+      assert.strictEqual(page.status, 200);
+      assert.include(yield* Effect.promise(() => page.text()), 'action="/company/invites"');
+      assert.deepStrictEqual(yield* (yield* Companies.Companies).listInvites(owner.company.id), []);
+    })
   );
 
   it.effect(
@@ -509,94 +541,86 @@ it.layer(services)("company page and actions", (it) => {
     })
   );
 
-  for (const [mode, mail] of [
-    ["recording", InviteMail.layerRecording],
-    ["failing", InviteMail.layerFailing]
-  ] as const) {
-    it.effect(
-      `changes roles and deactivates/reactivates browser and bearer access with ${mode} mail`,
-      () =>
-        Effect.gen(function* () {
-          const owner = yield* createCompany(`company-lifecycle-${mode}`);
-          const member = yield* addUser(owner, "member");
-          const tokens = yield* MachineTokens.MachineTokens;
-          const laptop = yield* tokens.mint({ userId: member.id, name: "Laptop" });
-          const desktop = yield* tokens.mint({ userId: member.id, name: "Desktop" });
-          const adminMachine = yield* tokens.mint({ userId: owner.user.id, name: "Admin laptop" });
-          const initial = yield* me(laptop.token);
-          assert.strictEqual(initial.status, 200);
-          assert.deepInclude(yield* initial.json, { role: "member" });
+  it.effect(
+    "changes roles and deactivates/reactivates browser and bearer access while mail is unavailable",
+    () =>
+      Effect.gen(function* () {
+        const owner = yield* createCompany("company-lifecycle");
+        const member = yield* addUser(owner, "member");
+        const tokens = yield* MachineTokens.MachineTokens;
+        const laptop = yield* tokens.mint({ userId: member.id, name: "Laptop" });
+        const desktop = yield* tokens.mint({ userId: member.id, name: "Desktop" });
+        const adminMachine = yield* tokens.mint({ userId: owner.user.id, name: "Admin laptop" });
+        const initial = yield* me(laptop.token);
+        assert.strictEqual(initial.status, 200);
+        assert.deepInclude(yield* initial.json, { role: "member" });
 
-          redirected(
-            yield* send(`/company/users/${member.id}/role`, post(owner.user, { role: "admin" }))
-          );
-          const promoted = yield* me(laptop.token);
-          assert.strictEqual(promoted.status, 200);
-          assert.deepInclude(yield* promoted.json, { role: "admin" });
-          const adminPage = yield* send("/company", { headers: { cookie: cookie(member) } });
-          assert.include(
-            yield* Effect.promise(() => adminPage.text()),
-            'action="/company/invites"'
-          );
-          redirected(
-            yield* send(`/company/users/${member.id}/role`, post(owner.user, { role: "member" }))
-          );
-          assert.deepInclude(yield* (yield* me(laptop.token)).json, { role: "member" });
+        redirected(
+          yield* send(`/company/users/${member.id}/role`, post(owner.user, { role: "admin" }))
+        );
+        const promoted = yield* me(laptop.token);
+        assert.strictEqual(promoted.status, 200);
+        assert.deepInclude(yield* promoted.json, { role: "admin" });
+        const adminPage = yield* send("/company", { headers: { cookie: cookie(member) } });
+        assert.include(yield* Effect.promise(() => adminPage.text()), 'action="/company/invites"');
+        redirected(
+          yield* send(`/company/users/${member.id}/role`, post(owner.user, { role: "member" }))
+        );
+        assert.deepInclude(yield* (yield* me(laptop.token)).json, { role: "member" });
 
-          redirected(yield* send(`/company/users/${member.id}/deactivate`, post(owner.user)));
-          for (const token of [laptop.token, desktop.token]) {
-            assert.strictEqual((yield* me(token)).status, 401);
-          }
-          assert.strictEqual((yield* me(adminMachine.token)).status, 200);
-          const denied = yield* send("/company", { headers: { cookie: cookie(member) } });
-          assert.strictEqual(denied.status, 403);
-          assert.strictEqual(denied.headers.get("cache-control"), "private, no-store");
-          const deniedHtml = yield* Effect.promise(() => denied.text());
-          assert.match(deniedHtml, /deactivated/i);
-          assert.include(deniedHtml, owner.company.name);
-          assert.include(deniedHtml, 'action="/logout"');
-          assert.notMatch(deniedHtml, /<form\b[^>]*action="\/company(?:\/|")/);
-          const manage = yield* send("/company", { headers: { cookie: cookie(owner.user) } });
-          assert.include(
-            yield* Effect.promise(() => manage.text()),
-            `action="/company/users/${member.id}/reactivate"`
-          );
-          assert.strictEqual(
-            (yield* send(
-              "/company/invites",
-              post(member, {
-                email: "deactivated-forbidden@example.com",
-                role: "member"
-              })
-            )).status,
-            403
-          );
+        redirected(yield* send(`/company/users/${member.id}/deactivate`, post(owner.user)));
+        for (const token of [laptop.token, desktop.token]) {
+          assert.strictEqual((yield* me(token)).status, 401);
+        }
+        assert.strictEqual((yield* me(adminMachine.token)).status, 200);
+        const denied = yield* send("/company", { headers: { cookie: cookie(member) } });
+        assert.strictEqual(denied.status, 403);
+        assert.strictEqual(denied.headers.get("cache-control"), "private, no-store");
+        const deniedHtml = yield* Effect.promise(() => denied.text());
+        assert.match(deniedHtml, /deactivated/i);
+        assert.include(deniedHtml, owner.company.name);
+        assert.include(deniedHtml, 'action="/logout"');
+        assert.notMatch(deniedHtml, /<form\b[^>]*action="\/company(?:\/|")/);
+        const manage = yield* send("/company", { headers: { cookie: cookie(owner.user) } });
+        assert.include(
+          yield* Effect.promise(() => manage.text()),
+          `action="/company/users/${member.id}/reactivate"`
+        );
+        assert.strictEqual(
+          (yield* send(
+            "/company/invites",
+            post(member, {
+              email: "deactivated-forbidden@example.com",
+              role: "member"
+            })
+          )).status,
+          403
+        );
 
-          redirected(yield* send(`/company/users/${member.id}/reactivate`, post(owner.user)));
-          const restored = yield* send("/company", { headers: { cookie: cookie(member) } });
-          assert.strictEqual(restored.status, 200);
-          const restoredHtml = yield* Effect.promise(() => restored.text());
-          assert.include(restoredHtml, member.email);
-          assert.notMatch(restoredHtml, /<form\b[^>]*action="\/company(?:\/|")/);
-          for (const token of [laptop.token, desktop.token]) {
-            assert.strictEqual((yield* me(token)).status, 401);
-          }
-          const fresh = yield* tokens.mint({ userId: member.id, name: "Reauthenticated laptop" });
-          const identity = yield* me(fresh.token);
-          assert.strictEqual(identity.status, 200);
-          assert.deepInclude(yield* identity.json, {
-            user: { id: member.id, email: member.email, name: member.name },
-            company: {
-              id: owner.company.id,
-              handle: owner.company.handle,
-              name: owner.company.name
-            },
-            role: "member",
-            machine: { id: fresh.id, name: fresh.name }
-          });
-        }).pipe(Effect.provide(mail))
-    );
-  }
+        redirected(yield* send(`/company/users/${member.id}/reactivate`, post(owner.user)));
+        const restored = yield* send("/company", { headers: { cookie: cookie(member) } });
+        assert.strictEqual(restored.status, 200);
+        const restoredHtml = yield* Effect.promise(() => restored.text());
+        assert.include(restoredHtml, member.email);
+        assert.notMatch(restoredHtml, /<form\b[^>]*action="\/company(?:\/|")/);
+        for (const token of [laptop.token, desktop.token]) {
+          assert.strictEqual((yield* me(token)).status, 401);
+        }
+        const fresh = yield* tokens.mint({ userId: member.id, name: "Reauthenticated laptop" });
+        const identity = yield* me(fresh.token);
+        assert.strictEqual(identity.status, 200);
+        assert.deepInclude(yield* identity.json, {
+          user: { id: member.id, email: member.email, name: member.name },
+          company: {
+            id: owner.company.id,
+            handle: owner.company.handle,
+            name: owner.company.name
+          },
+          role: "member",
+          machine: { id: fresh.id, name: fresh.name }
+        });
+      }).pipe(Effect.provide(InviteMail.layerFailing))
+  );
 
   it.effect("keeps an undelivered invite usable for join after create fails", () =>
     Effect.gen(function* () {

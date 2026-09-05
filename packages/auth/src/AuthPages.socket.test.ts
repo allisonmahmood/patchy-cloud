@@ -98,8 +98,13 @@ it.layer(layer)("auth pages on a socket", (it) => {
         assert.strictEqual(created.headers.get("location"), "/company");
         const membership = yield* request(created.headers.get("location")!);
         assert.strictEqual(membership.status, 200);
-        assert.include(yield* Effect.promise(() => membership.text()), 'action="/company/invites"');
-        const logout = yield* request("/logout", {
+        const membershipHtml = yield* Effect.promise(() => membership.text());
+        assert.include(membershipHtml, 'action="/company/invites"');
+        const logoutAction = membershipHtml.match(
+          /<form\b[^>]*method="post"[^>]*action="(\/logout)"/
+        )?.[1];
+        assert.isDefined(logoutAction, "the enrolled home offers a sign-out form");
+        const logout = yield* request(logoutAction!, {
           method: "POST",
           headers: { origin: PUBLIC_BASE_URL }
         });

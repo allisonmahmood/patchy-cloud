@@ -87,12 +87,13 @@ export const revoke = Effect.fn("Invitations.revoke")(function* (
       const mailFailed =
         invite.clerkInvitationId === null
           ? false
-          : yield* mail
-              .revoke(invite.clerkInvitationId)
-              .pipe(
-                Effect.as(false),
-                Effect.catchTags({ InviteMailError: () => Effect.succeed(true) })
-              );
+          : yield* mail.revoke(invite.clerkInvitationId).pipe(
+              Effect.as(false),
+              Effect.catchTags({
+                InvitationAlreadyRevoked: () => Effect.succeed(false),
+                InviteMailError: () => Effect.succeed(true)
+              })
+            );
       return { invite, mailFailed };
     })
   );
@@ -111,12 +112,14 @@ export const resend = Effect.fn("Invitations.resend")(function* (
     Effect.gen(function* () {
       let invite = yield* lockPending(input);
       if (invite.clerkInvitationId !== null) {
-        const revokeFailed = yield* mail
-          .revoke(invite.clerkInvitationId)
-          .pipe(
-            Effect.as(false),
-            Effect.catchTags({ InviteMailError: () => Effect.succeed(true) })
-          );
+        const revokeFailed = yield* mail.revoke(invite.clerkInvitationId).pipe(
+          Effect.as(false),
+          // Clerk can commit a revoke whose response never reaches us.
+          Effect.catchTags({
+            InvitationAlreadyRevoked: () => Effect.succeed(false),
+            InviteMailError: () => Effect.succeed(true)
+          })
+        );
         if (revokeFailed) return { invite, mailFailed: true };
         yield* sql`UPDATE invites SET clerk_invitation_id = NULL WHERE id = ${invite.id}`;
         invite = new Companies.Invite({ ...invite, clerkInvitationId: null });
