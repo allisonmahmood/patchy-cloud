@@ -88,6 +88,12 @@ A **user** is one individual with one account, in exactly one company. They sign
 
 An **admin** is a user with the role that runs the company: invites users, creates groups, sets permissions, connects company integrations, and — alone — reassigns a patch's owner. A company always has at least one admin, and the last admin cannot demote themself.
 
+Today `/company` lists users, roles, active/deactivated state and pending invites.
+Admins manage invitations, roles, deactivation and reactivation there; members
+read the same page without actions. The last active admin cannot be demoted or
+deactivated. Reactivation restores sign-in to the same company and data, but
+machine tokens revoked by deactivation remain revoked.
+
 A **group** is a named set of users an admin creates; a user can be in many. "Team", "department", "north-american-sales" are names companies give their groups, not concepts of their own. A group is purely a grant surface — access to patches and connections — never a container that owns anything.
 
 ### Ownership and deactivation
@@ -123,6 +129,12 @@ A company that wants its own identity provider turns on **SSO**: Patchy flips th
 There is no person without a company. A sign-in with no company behind it lands on **create or join**: either the person's work-email domain has been verified by an existing company and they join it, or they create a company of their own — which is the full onboarding, card included, because a company is the unit that pays.
 
 **Invite** is the default way in: an admin invites an email address, the person signs in, they are in. An admin may also verify the company's **domain** — proven by email, never a consumer domain like `gmail.com`, and one domain belongs to one company — after which anyone signing in with an `@acme.com` work identity joins Acme automatically. Verifying a domain never stops inviting: a contractor on another domain is invited like anyone else.
+
+Today Clerk sends the invitation email and Patchy owns the invitation, which
+does not expire. The person signs in and chooses **Join** on create-or-join;
+several companies may invite one address, with at most one pending invite per
+company. Admins can revoke or resend; failed email delivery keeps the invitation
+and tells the admin to resend.
 
 A user is in **exactly one company**, and the rule is hard. Inviting someone who is already in another company is refused; they must leave that company first. Someone who created a company of one and is then invited (or whose domain a real company verifies) must either delete that company or add someone else and leave it — its patches do not come along. Merging a company of one into a company is not designed. Agencies and consultants who need several companies were deliberately deferred with the company decision.
 

@@ -26,7 +26,7 @@ import {
   MachineTokens,
   Session
 } from "@patchy/auth";
-import { Companies, Users, migrations as companiesMigrations } from "@patchy/companies";
+import { Companies, InviteMail, Users, migrations as companiesMigrations } from "@patchy/companies";
 import { AzureContentStore, BlobContainer, FilesystemContentStore } from "@patchy/content-store";
 import { Limits } from "@patchy/limits";
 import {
@@ -72,6 +72,7 @@ const services = Layer.mergeAll(Content.layer, ExpirySweep.layer).pipe(
       MachineTokens.layer,
       Patches.layer,
       Companies.layer,
+      InviteMail.layer,
       Users.layer,
       Session.layer
     )

@@ -6,9 +6,6 @@ settings:
 
 catalogs:
   default:
-    '@effect/platform-node':
-      specifier: 4.0.0-rc.112
-      version: 4.0.0-rc.112
     parse5:
       specifier: ^7.3.0
       version: 7.3.0
@@ -219,6 +216,9 @@ importers:
 
   packages/companies:
     dependencies:
+      '@clerk/backend':
+        specifier: 3.17.0
+        version: 3.17.0
       '@patchy/core':
         specifier: workspace:*
         version: link:../core
