@@ -46,6 +46,14 @@ const AuthenticationRow = Schema.Struct({
 });
 const RevocationRow = Schema.Struct({ alreadyRevoked: Schema.Boolean });
 
+const MachineRow = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  createdAt: Schema.Date,
+  lastUsedAt: Schema.Date,
+  expiresAt: Schema.Date
+});
+
 export class MachineTokens extends Context.Service<
   MachineTokens,
   {
@@ -62,8 +70,35 @@ export class MachineTokens extends Context.Service<
     readonly revoke: (
       id: string
     ) => Effect.Effect<{ readonly alreadyRevoked: boolean }, MachineTokenNotFound | SqlError>;
+    readonly list: (userId: string) => Effect.Effect<
+      ReadonlyArray<{
+        readonly id: string;
+        readonly name: string;
+        readonly createdAt: string;
+        readonly lastUsedAt: string;
+        readonly expiresAt: string;
+      }>,
+      SqlError
+    >;
+    readonly revokeOwned: (input: {
+      readonly id: string;
+      readonly userId: string;
+    }) => Effect.Effect<{ readonly alreadyRevoked: boolean }, MachineTokenNotFound | SqlError>;
+    readonly revokeAll: (userId: string) => Effect.Effect<void, SqlError>;
   }
 >()("@patchy/auth/MachineTokens") {}
+
+export const validateMachineName = Effect.fn("MachineTokens.validateMachineName")(function* (
+  name: string
+) {
+  let length = 0;
+  for (let index = 0; index < name.length; length++) {
+    index += name.codePointAt(index)! > 0xffff ? 2 : 1;
+  }
+  if (length < 1 || length > 64 || name.trim().length === 0) {
+    return yield* new InvalidMachineName({ length });
+  }
+});
 
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -89,17 +124,35 @@ export const make = Effect.gen(function* () {
   });
 
   const revokeRow = SqlSchema.findOneOption({
-    Request: Schema.Struct({ id: Schema.String, now: Schema.Number }),
+    Request: Schema.Struct({
+      id: Schema.String,
+      userId: Schema.NullOr(Schema.String),
+      now: Schema.Number
+    }),
     Result: RevocationRow,
-    execute: ({ id, now }) => sql`
+    execute: ({ id, userId, now }) => sql`
       WITH prior AS (
-        SELECT id, revoked_at FROM machine_tokens WHERE id = ${id} FOR UPDATE
+        SELECT id, revoked_at FROM machine_tokens
+        WHERE id = ${id} AND (${userId}::text IS NULL OR user_id = ${userId}) FOR UPDATE
       ), revoked AS (
         UPDATE machine_tokens SET revoked_at = to_timestamp(${now / 1_000}) FROM prior
         WHERE machine_tokens.id = prior.id AND prior.revoked_at IS NULL
         RETURNING machine_tokens.id
       )
       SELECT prior.revoked_at IS NOT NULL AS "alreadyRevoked" FROM prior`
+  });
+
+  const liveMachines = SqlSchema.findAll({
+    Request: Schema.Struct({ userId: Schema.String, now: Schema.Number }),
+    Result: MachineRow,
+    execute: ({ userId, now }) => sql`
+      SELECT t.id, t.name, t.created_at AS "createdAt", t.last_used_at AS "lastUsedAt",
+        t.expires_at AS "expiresAt" FROM machine_tokens t
+      JOIN users u ON u.id = t.user_id
+      WHERE t.user_id = ${userId} AND t.revoked_at IS NULL AND u.deactivated_at IS NULL
+        AND t.expires_at >= to_timestamp(${now / 1_000})
+        AND t.last_used_at >= to_timestamp(${(now - 30 * DAY_MS) / 1_000})
+      ORDER BY t.created_at DESC, t.id`
   });
 
   const authenticate = Effect.fn("MachineTokens.authenticate")(function* (token: string) {
@@ -124,13 +177,7 @@ export const make = Effect.gen(function* () {
     readonly userId: string;
     readonly name: string;
   }) {
-    let length = 0;
-    for (let index = 0; index < input.name.length; length++) {
-      index += input.name.codePointAt(index)! > 0xffff ? 2 : 1;
-    }
-    if (length < 1 || length > 64 || input.name.trim().length === 0) {
-      return yield* new InvalidMachineName({ length });
-    }
+    yield* validateMachineName(input.name);
     const now = yield* Clock.currentTimeMillis;
     const expires = now + 90 * DAY_MS;
     const id = newInternalId("tok");
@@ -156,14 +203,50 @@ export const make = Effect.gen(function* () {
   });
 
   const revoke = Effect.fn("MachineTokens.revoke")(function* (id: string) {
-    const result = yield* revokeRow({ id, now: yield* Clock.currentTimeMillis }).pipe(
+    const result = yield* revokeRow({ id, userId: null, now: yield* Clock.currentTimeMillis }).pipe(
       Effect.catchTags({ SchemaError: Effect.die })
     );
     if (Option.isNone(result)) return yield* new MachineTokenNotFound({ id });
     return result.value;
   });
 
-  return MachineTokens.of({ authenticate, mint, revoke });
+  const list = Effect.fn("MachineTokens.list")(function* (userId: string) {
+    const rows = yield* liveMachines({ userId, now: yield* Clock.currentTimeMillis }).pipe(
+      Effect.catchTags({ SchemaError: Effect.die })
+    );
+    return rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      createdAt: DateTime.formatIso(DateTime.makeUnsafe(row.createdAt)),
+      lastUsedAt: DateTime.formatIso(DateTime.makeUnsafe(row.lastUsedAt)),
+      expiresAt: DateTime.formatIso(DateTime.makeUnsafe(row.expiresAt))
+    }));
+  });
+
+  const revokeOwned = Effect.fn("MachineTokens.revokeOwned")(function* (input: {
+    readonly id: string;
+    readonly userId: string;
+  }) {
+    const result = yield* revokeRow({ ...input, now: yield* Clock.currentTimeMillis }).pipe(
+      Effect.catchTags({ SchemaError: Effect.die })
+    );
+    if (Option.isNone(result)) return yield* new MachineTokenNotFound({ id: input.id });
+    return result.value;
+  });
+
+  const revokeAll = Effect.fn("MachineTokens.revokeAll")((userId: string) =>
+    sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`SELECT id FROM users WHERE id = ${userId} FOR UPDATE`;
+        const now = yield* Clock.currentTimeMillis;
+        yield* sql`
+          UPDATE machine_tokens SET revoked_at = to_timestamp(${now / 1_000})
+          WHERE user_id = ${userId} AND revoked_at IS NULL`;
+      })
+    )
+  );
+
+  return MachineTokens.of({ authenticate, mint, revoke, list, revokeOwned, revokeAll });
 });
 
 export const layer = Layer.effect(MachineTokens, make);

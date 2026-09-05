@@ -99,12 +99,18 @@ export const admission = Effect.gen(function* () {
 
 /** Session-only admission also serves logout, which must work before a user row exists. */
 export const withSession = <E, R>(
-  app: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>
+  app: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>,
+  returnTo?: string
 ) =>
   Effect.gen(function* () {
     const { result, cookies } = yield* admission;
     const response = HttpServerResponse.isHttpServerResponse(result)
-      ? result
+      ? returnTo === undefined
+        ? result
+        : HttpServerResponse.redirect(returnTo, {
+            status: 303,
+            headers: { "cache-control": "private, no-store" }
+          })
       : yield* Effect.provideService(app, SignedIn, result);
     return withCookies(response, cookies);
   });
@@ -116,7 +122,9 @@ export const sameOrigin = <E, R>(app: Effect.Effect<HttpServerResponse.HttpServe
     const session = yield* Session.Session;
     if (
       request.method === "POST" &&
-      request.headers.origin !== new URL(session.publicBaseUrl).origin
+      (request.headers.origin === undefined
+        ? request.headers["sec-fetch-site"] !== "same-origin"
+        : request.headers.origin !== new URL(session.publicBaseUrl).origin)
     ) {
       return pageResponse({
         title: "Request refused",
@@ -158,7 +166,10 @@ export const resolveViewer = Effect.gen(function* () {
   });
 });
 
-export const withViewer = <E, R>(app: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>) =>
+export const withViewer = <E, R>(
+  app: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>,
+  returnTo?: string
+) =>
   withSession(
     Effect.gen(function* () {
       const viewer = yield* resolveViewer;
@@ -166,13 +177,15 @@ export const withViewer = <E, R>(app: Effect.Effect<HttpServerResponse.HttpServe
       if (!viewer) {
         const session = yield* Session.Session;
         const request = yield* HttpServerRequest.HttpServerRequest;
-        const path = returnPath(request.url, session.publicBaseUrl) ?? "/join";
+        const path = returnTo ?? returnPath(request.url, session.publicBaseUrl) ?? "/join";
         return HttpServerResponse.redirect(`/join?return=${encodeURIComponent(path)}`, {
-          status: 303
+          status: 303,
+          headers: { "cache-control": "private, no-store" }
         });
       }
       return yield* Effect.provideService(app, Viewer, viewer);
-    })
+    }),
+    returnTo
   );
 
 export const forEnrollment = <E, R>(

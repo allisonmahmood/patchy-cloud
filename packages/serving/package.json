@@ -30,7 +30,9 @@
   "devDependencies": {
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
+    "@patchy/analytics": "workspace:*",
     "@patchy/content-store": "workspace:*",
+    "@patchy/limits": "workspace:*",
     "@patchy/sql": "workspace:*",
     "vitest": "^4.1.11"
   }

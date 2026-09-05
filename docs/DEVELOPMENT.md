@@ -124,7 +124,53 @@ Open `/join` at the instance's API URL to sign in:
   user sees a 403 page with **Sign out**, not a sign-in loop.
 
 A validated `return` path sends a person who has a company back to that page.
-Without one, `/join` and `/login`'s sign-in link lead to `/company`.
+Without one, `/join` leads to `/company`; `/login`'s sign-in link leads to `/machines`.
+
+### Device login before the CLI command lands
+
+The server flow works with HTTP and a signed-in browser. With the URL from the
+runner (shown below as `$PATCHY_API_URL`), start a login:
+
+```sh
+curl -sS -X POST "$PATCHY_API_URL/api/login/device" \
+  -H 'Content-Type: application/json' \
+  -d '{"machineNameHint":"Work laptop"}'
+```
+
+Open the returned `verificationUrl` in your browser. Check the displayed code
+against `userCode`, check the company and person, then name the machine and
+**Confirm**, or **Deny** if you did not start the login. Confirmation alone
+creates no key. Poll with the returned `deviceCode`, at most every five seconds:
+
+```sh
+curl -sS -X POST "$PATCHY_API_URL/api/login/device/token" \
+  -H 'Content-Type: application/json' \
+  -d '{"deviceCode":"<deviceCode from start>"}'
+```
+
+A confirmed login returns `status: "complete"` and the token exactly once.
+A second poll returns 410 `unknown`. Keep the token out of logs and project
+files; pass it through `PATCHY_API_TOKEN` when checking `pnpm patchy whoami`.
+`/machines` lists the new key with its lifetime and last use. Revoke it there
+and the bearer immediately becomes a 401. **Sign out** revokes only the browser
+session, clears Clerk cookies and returns to `/login`; `/company` then shows
+the sign-in door.
+
+An unconfirmed login returns `pending`; polling too quickly returns `slow_down`.
+Codes last ten minutes. Expired and denied answers are 410 and consume the
+login, as does a successful poll. Starting is limited to five requests per
+source address per minute by default
+(`PATCHY_DEVICE_LOGIN_RATE_LIMIT_PER_MINUTE` on the server); confirm-page
+lookups have a separate per-user limit.
+
+Device-login JSON and confirmation forms are limited to 4096 bytes. A declared
+oversized body returns 413; exceeding the limit while streaming closes the
+connection before parsing or changing a login.
+
+Confirm and Deny return their informational outcome page directly with HTTP 200
+and `Cache-Control: private, no-store`. A later GET reads the current code:
+pending shows the form, an answered code returns 410 already used, and a code
+consumed by the terminal's poll returns 404 unknown.
 
 ### Reading a published patch
 

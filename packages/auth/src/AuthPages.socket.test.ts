@@ -7,6 +7,10 @@ import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServer from "effect/unstable/http/HttpServer";
 import { CookieJar } from "tough-cookie";
 import { Companies, InviteMail, Users } from "@patchy/companies";
+import { Analytics } from "@patchy/analytics";
+import { Limits } from "@patchy/limits";
+import * as DeviceLogins from "./DeviceLogins.js";
+import * as MachineTokens from "./MachineTokens.js";
 import * as Testing from "@patchy/sql/testing";
 import * as AuthPages from "./AuthPages.js";
 import * as Session from "./Session.js";
@@ -33,11 +37,61 @@ const layer = HttpRouter.serve(AuthPages.layer, {
   Layer.provideMerge(
     Layer.mergeAll(localRevocation, Companies.layer, Users.layer, InviteMail.layerRecording)
   ),
+  Layer.provideMerge(DeviceLogins.layer),
+  Layer.provideMerge(MachineTokens.layer),
+  Layer.provide(Analytics.layerNoop),
+  Layer.provide(Limits.layer),
   Layer.provide(Testing.layer()),
   Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(clerkEnv())))
 );
 
 it.layer(layer)("auth pages on a socket", (it) => {
+  it.effect("bounds device forms before session admission, including chunked bodies", () =>
+    Effect.gen(function* () {
+      const server = yield* HttpServer.HttpServer;
+      if (server.address._tag !== "TcpAddress") return assert.fail("Expected a TCP listener");
+      const url = `http://127.0.0.1:${server.address.port}/login/device`;
+      const body = new TextEncoder().encode(
+        new URLSearchParams({
+          code: "UNUSED",
+          action: "confirm",
+          machineName: "x".repeat(4_096)
+        }).toString()
+      );
+      for (const streamed of [false, true]) {
+        const options: RequestInit & { duplex?: "half" } = {
+          method: "POST",
+          headers: {
+            origin: PUBLIC_BASE_URL,
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          body: streamed
+            ? new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.enqueue(body);
+                  controller.close();
+                }
+              })
+            : body,
+          redirect: "manual",
+          ...(streamed ? { duplex: "half" as const } : {})
+        };
+        const request = Effect.tryPromise(() => fetch(url, options));
+        if (streamed) {
+          const failure = yield* request.pipe(Effect.flip);
+          assert.instanceOf(failure.cause, TypeError);
+          if (!(failure.cause instanceof TypeError)) return assert.fail("Expected fetch failure");
+          assert.propertyVal(failure.cause.cause, "code", "UND_ERR_SOCKET");
+        } else {
+          const response = yield* request;
+          assert.strictEqual(response.status, 413);
+          assert.strictEqual(response.headers.get("location"), null);
+          assert.include(yield* Effect.promise(() => response.text()), "Invalid form");
+        }
+      }
+    })
+  );
+
   it.effect(
     "drives handshake, create, membership and logout hops by hand with a browser cookie jar",
     () =>

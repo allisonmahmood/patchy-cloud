@@ -1,11 +1,11 @@
 /**
  * The guard on `/api/*`, ahead of the router.
  *
- * The API's own bearer middleware authenticates every route the router
- * matches, before a body is read. What it cannot cover is everything that
- * never reaches a handler, and the contract there is the same one: every
- * `/api/*` request spends one attempt of the per-address protected-API limit,
- * then needs a token. A request the router
+ * The API's own bearer middleware authenticates every protected route the
+ * router matches, before a body is read. Only the two POST device-login routes
+ * are anonymous: start spends its own per-address limit and poll is limited
+ * by device code in Auth. Every other `/api/*` request spends one attempt of
+ * the per-address protected-API limit, then needs a token. A request the router
  * would refuse for its shape — a malformed target, an overlong patch id — or
  * not find at all learns that only once it has authenticated, so a caller
  * with no token cannot map the API by its status codes, and a flood of them
@@ -38,8 +38,10 @@ export const protectedApiRateLimitPerMinute = Config.int(
   "PATCHY_PROTECTED_API_RATE_LIMIT_PER_MINUTE"
 ).pipe(Config.withDefault(60));
 
-/** No API paths admit unauthenticated callers until device login lands. */
-const UNAUTHENTICATED_PATHS: Readonly<Record<string, true>> = {};
+/** Device-login starts admitted per source address per minute, in memory. */
+export const deviceLoginRateLimitPerMinute = Config.int(
+  "PATCHY_DEVICE_LOGIN_RATE_LIMIT_PER_MINUTE"
+).pipe(Config.withDefault(5));
 
 /**
  * The longest path parameter a patch route takes. Longer is a too-long target
@@ -69,6 +71,7 @@ const PATCH_ROUTES = new Set(
 export type Target =
   | { readonly kind: "public" }
   | { readonly kind: "route" }
+  | { readonly kind: "device-login"; readonly action: "start" | "poll" }
   | { readonly kind: "refused"; readonly status: 400 | 404 | 414 };
 
 export function classify(method: string, requestTarget: string): Target {
@@ -78,7 +81,10 @@ export function classify(method: string, requestTarget: string): Target {
       ? { kind: "refused", status: 400 }
       : { kind: "public" };
   }
-  if (Object.hasOwn(UNAUTHENTICATED_PATHS, pathname)) return { kind: "public" };
+  if (method === "POST") {
+    if (pathname === "/api/login/device") return { kind: "device-login", action: "start" };
+    if (pathname === "/api/login/device/token") return { kind: "device-login", action: "poll" };
+  }
   if (!isApiPath(pathname)) {
     // An encoded slash is one segment to the router, so `/api%2Fuploads` can
     // never route; it still reads as a probe of the API, and answers as one.
@@ -119,23 +125,25 @@ export const make = Effect.gen(function* () {
   const limits = yield* Limits.Limits;
   const tokens = yield* MachineTokens.MachineTokens;
   const limit = yield* protectedApiRateLimitPerMinute;
+  const deviceLimit = yield* deviceLoginRateLimitPerMinute;
 
   return HttpMiddleware.make((app) =>
     Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest;
       const target = classify(request.method, request.url);
       if (target.kind === "public") return yield* app;
+      if (target.kind === "device-login" && target.action === "poll") return yield* app;
 
       // Keyed by source address — after the trusted-proxy walk, so a proxy in
       // front of the instance does not share one bucket with everyone behind it.
       const attempt = yield* limits.consume({
-        key: `protected-api:${Option.getOrElse(request.remoteAddress, () => "")}`,
-        limit,
+        key: `${target.kind === "device-login" ? "device-login" : "protected-api"}:${Option.getOrElse(request.remoteAddress, () => "")}`,
+        limit: target.kind === "device-login" ? deviceLimit : limit,
         window: "1 minute"
       });
       if (!attempt.allowed) return rateLimited(attempt);
 
-      if (target.kind === "route") return yield* app;
+      if (target.kind === "route" || target.kind === "device-login") return yield* app;
       return yield* authenticated(Effect.succeed(refusal(target.status))).pipe(
         Effect.provideService(MachineTokens.MachineTokens, tokens)
       );

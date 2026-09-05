@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { TestClock } from "effect/testing";
@@ -7,10 +8,18 @@ import * as HttpServer from "effect/unstable/http/HttpServer";
 import * as HttpApiMiddleware from "effect/unstable/httpapi/HttpApiMiddleware";
 import * as HttpApiTest from "effect/unstable/httpapi/HttpApiTest";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { Authorization as AuthorizationTag, PatchyApi } from "@patchy/api";
+import { Analytics } from "@patchy/analytics";
+import {
+  Authorization as AuthorizationTag,
+  PatchyApi,
+  PollDeviceLoginRequest,
+  StartDeviceLoginRequest
+} from "@patchy/api";
+import { Limits } from "@patchy/limits";
 import * as Testing from "@patchy/sql/testing";
 import * as AuthApi from "./AuthApi.js";
 import * as Authorization from "./Authorization.js";
+import * as DeviceLogins from "./DeviceLogins.js";
 import * as MachineTokens from "./MachineTokens.js";
 import { DEV_SEED } from "./seed.js";
 
@@ -24,11 +33,22 @@ const rawAuthorization = (value: string) =>
     next(HttpClientRequest.setHeader(request, "authorization", value))
   );
 
+const anonymous = HttpApiMiddleware.layerClient(AuthorizationTag, ({ next, request }) =>
+  next(request)
+);
+
 const client = HttpApiTest.groups(PatchyApi, ["auth"]);
 const layer = Layer.mergeAll(AuthApi.layer, HttpServer.layerServices).pipe(
   Layer.provideMerge(Authorization.layer),
+  Layer.provideMerge(DeviceLogins.layer),
+  Layer.provideMerge(Layer.mergeAll(Analytics.layerNoop, Limits.layer)),
   Layer.provideMerge(MachineTokens.layer),
-  Layer.provideMerge(Testing.layer())
+  Layer.provideMerge(Testing.layer()),
+  Layer.provide(
+    ConfigProvider.layer(
+      ConfigProvider.fromUnknown({ PATCHY_PUBLIC_BASE_URL: "https://patchy.example/" })
+    )
+  )
 );
 
 it.layer(layer)("auth group: machine identity and logout", (it) => {
@@ -120,5 +140,129 @@ it.layer(layer)("auth group: machine identity and logout", (it) => {
       const stillLive = yield* client.pipe(Effect.provide(bearer(other.token)));
       assert.strictEqual((yield* stillLive.me()).machine.id, other.id);
     })
+  );
+});
+
+it.layer(layer)("auth group: anonymous device login", (it) => {
+  it.effect(
+    "starts on the configured origin with 201, then polls pending and slow_down with 200",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.UTC(2026, 0, 1));
+        const api = yield* client;
+        const [started, response] = yield* api.startDeviceLogin({
+          payload: new StartDeviceLoginRequest({ machineNameHint: "Laptop" }),
+          responseMode: "decoded-and-response"
+        });
+        assert.strictEqual(response.status, 201);
+        assert.strictEqual(started.ok, true);
+        assert.match(started.userCode, /^[BCDFGHJKLMNPQRSTVWXZ]{4}-[BCDFGHJKLMNPQRSTVWXZ]{4}$/);
+        assert.strictEqual(started.verificationUrlBare, "https://patchy.example/login/device");
+        assert.strictEqual(
+          started.verificationUrl,
+          `https://patchy.example/login/device?code=${started.userCode}`
+        );
+        assert.strictEqual(started.interval, 5);
+        assert.strictEqual(started.expiresAt, "2026-01-01T00:10:00.000Z");
+        const payload = new PollDeviceLoginRequest({ deviceCode: started.deviceCode });
+        const [pending, pendingResponse] = yield* api.pollDeviceLogin({
+          payload,
+          responseMode: "decoded-and-response"
+        });
+        assert.strictEqual(pendingResponse.status, 200);
+        assert.deepStrictEqual(yield* pendingResponse.json, { ok: true, status: "pending" });
+        assert.strictEqual(pending.status, "pending");
+        const [slow, slowResponse] = yield* api.pollDeviceLogin({
+          payload,
+          responseMode: "decoded-and-response"
+        });
+        assert.strictEqual(slowResponse.status, 200);
+        assert.deepStrictEqual(yield* slowResponse.json, { ok: true, status: "slow_down" });
+        assert.strictEqual(slow.status, "slow_down");
+      }).pipe(Effect.provide(anonymous))
+  );
+
+  it.effect(
+    "returns a confirmed machine's usable replacement token once, then typed 410 unknown",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.UTC(2026, 0, 1));
+        const api = yield* client;
+        const tokens = yield* MachineTokens.MachineTokens;
+        const previous = yield* tokens.mint({ userId: DEV_SEED.userId, name: "Old laptop" });
+        const started = yield* api.startDeviceLogin({
+          payload: new StartDeviceLoginRequest({
+            machineNameHint: "Laptop",
+            previousMachineTokenId: previous.id
+          })
+        });
+        yield* (yield* DeviceLogins.DeviceLogins).confirm({
+          userCode: started.userCode,
+          userId: DEV_SEED.userId,
+          machineName: "Renamed laptop"
+        });
+        const payload = new PollDeviceLoginRequest({ deviceCode: started.deviceCode });
+        const [complete, response] = yield* api.pollDeviceLogin({
+          payload,
+          responseMode: "decoded-and-response"
+        });
+        assert.strictEqual(response.status, 200);
+        assert.strictEqual(complete.status, "complete");
+        if (complete.status !== "complete") throw new Error("Expected a completed device login");
+        assert.strictEqual(complete.machine.name, "Renamed laptop");
+        assert.strictEqual(complete.expiresAt, "2026-04-01T00:00:00.000Z");
+        assert.deepStrictEqual(yield* response.json, {
+          ok: true,
+          status: "complete",
+          token: complete.token,
+          machine: complete.machine,
+          expiresAt: "2026-04-01T00:00:00.000Z"
+        });
+        const signedIn = yield* client.pipe(Effect.provide(bearer(complete.token)));
+        assert.deepStrictEqual((yield* signedIn.me()).machine, complete.machine);
+        const replaced = yield* client.pipe(Effect.provide(bearer(previous.token)));
+        assert.deepStrictEqual(yield* replaced.me().pipe(Effect.flip), {
+          ok: false,
+          error: "Missing or invalid API token."
+        });
+        const gone = yield* api.pollDeviceLogin({ payload, responseMode: "response-only" });
+        assert.strictEqual(gone.status, 410);
+        const typed = yield* api.pollDeviceLogin({ payload }).pipe(Effect.flip);
+        assert.deepStrictEqual(yield* gone.json, typed);
+        assert.strictEqual("code" in typed && typed.code, "unknown");
+      }).pipe(Effect.provide(anonymous))
+  );
+
+  it.effect("uses 410 bodies for denied and expired logins, not authentication failures", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.UTC(2026, 0, 1));
+      const api = yield* client;
+      for (const code of ["denied", "expired"] as const) {
+        const started = yield* api.startDeviceLogin({
+          payload: new StartDeviceLoginRequest({ machineNameHint: "Laptop" })
+        });
+        if (code === "denied") {
+          yield* (yield* DeviceLogins.DeviceLogins).deny(started.userCode, DEV_SEED.userId);
+        } else {
+          yield* TestClock.adjust("10 minutes");
+        }
+        const gone = yield* api.pollDeviceLogin({
+          payload: new PollDeviceLoginRequest({ deviceCode: started.deviceCode }),
+          responseMode: "response-only"
+        });
+        assert.strictEqual(gone.status, 410);
+        const body = yield* gone.json;
+        assert.isObject(body);
+        assert.propertyVal(body, "ok", false);
+        assert.propertyVal(body, "code", code);
+        assert.property(body, "error");
+        const consumed = yield* api
+          .pollDeviceLogin({
+            payload: new PollDeviceLoginRequest({ deviceCode: started.deviceCode })
+          })
+          .pipe(Effect.flip);
+        assert.propertyVal(consumed, "code", "unknown");
+      }
+    }).pipe(Effect.provide(anonymous))
   );
 });

@@ -16,6 +16,9 @@ import * as OpenApi from "effect/unstable/httpapi/OpenApi";
 import {
   BadRequest,
   Conflict,
+  DeviceLoginGone,
+  DeviceLoginPoll,
+  DeviceLoginStarted,
   Identity,
   InvalidHtml,
   LoggedOut,
@@ -23,10 +26,12 @@ import {
   Ok,
   PatchQuotaExceeded,
   PayloadTooLarge,
+  PollDeviceLoginRequest,
   RateLimited,
   RequestTargetTooLong,
   Shared,
   ShareRequest,
+  StartDeviceLoginRequest,
   Unauthorized,
   UploadCreated,
   UploadRequest,
@@ -73,15 +78,51 @@ export class AuthGroup extends HttpApiGroup.make("auth", { topLevel: true })
     HttpApiEndpoint.get("me", "/me", {
       success: Identity,
       error: protectedErrors
-    }).annotateMerge(describe("Who the bearer acts as: the user, company, role and machine.")),
+    })
+      .middleware(Authorization)
+      .annotateMerge(describe("Who the bearer acts as: the user, company, role and machine.")),
     HttpApiEndpoint.post("logout", "/logout", {
       success: LoggedOut,
       error: protectedErrors
+    })
+      .middleware(Authorization)
+      .annotateMerge(
+        describe(
+          "Revoke the bearer itself. A concurrent revocation is reported as `alreadyRevoked`."
+        )
+      ),
+    HttpApiEndpoint.post("startDeviceLogin", "/login/device", {
+      payload: StartDeviceLoginRequest,
+      success: DeviceLoginStarted,
+      error: [BadRequest, RateLimited, PayloadTooLarge]
     }).annotateMerge(
-      describe("Revoke the bearer itself. A concurrent revocation is reported as `alreadyRevoked`.")
+      describe(
+        "Begin a device login without a bearer token. Relay `verificationUrl` and `userCode` to " +
+          "the person, who confirms the code in their signed-in browser; the code is never typed. " +
+          "The login expires after ten minutes. Starts are limited per source address " +
+          "(`PATCHY_DEVICE_LOGIN_RATE_LIMIT_PER_MINUTE`, default 5). On a re-login, send the " +
+          "stored machine token's id as `previousMachineTokenId`; the old key stays live until " +
+          "the completing poll replaces it, and only when it belongs to the confirming user. " +
+          "The JSON body is limited to 4096 bytes: a declared overflow answers 413; " +
+          "overflow while streaming aborts the connection before parsing."
+      )
+    ),
+    HttpApiEndpoint.post("pollDeviceLogin", "/login/device/token", {
+      payload: PollDeviceLoginRequest,
+      success: DeviceLoginPoll,
+      error: [BadRequest, DeviceLoginGone, PayloadTooLarge]
+    }).annotateMerge(
+      describe(
+        "Poll without a bearer token, at the returned interval. A poll made too soon answers " +
+          "`slow_down`; add five seconds to the interval. After browser confirmation, one poll " +
+          "mints the machine token and returns `complete`. The key expires in 90 days or after " +
+          "30 idle days. Complete, expired and denied logins are deleted, so a subsequent poll " +
+          "answers 410 `unknown`. Plaintext tokens are never stored. The JSON body is limited " +
+          "to 4096 bytes: a declared overflow answers 413; overflow while streaming aborts " +
+          "the connection before parsing."
+      )
     )
   )
-  .middleware(Authorization)
   .prefix("/api") {}
 
 export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true })
@@ -136,8 +177,9 @@ export class PatchyApi extends HttpApi.make("patchy")
     OpenApi.annotations({
       title: "Patchy Cloud API",
       description:
-        "Every route lives under `/api` and speaks JSON. Every route " +
-        "needs `Authorization: Bearer <token>`; a missing or invalid token is a 401 with " +
+        "Every route lives under `/api` and speaks JSON. Only `POST /api/login/device` and " +
+        "`POST /api/login/device/token` are unauthenticated. Every other route needs " +
+        "`Authorization: Bearer <token>`; a missing or invalid token is a 401 with " +
         "`{ ok: false, error }`. A refusal is always `{ ok: false, error }`, plus a `code` and " +
         "the number a client needs on the ones it branches on. A 429 also carries a " +
         "`Retry-After` header with the same seconds as `retryAfterSeconds`."

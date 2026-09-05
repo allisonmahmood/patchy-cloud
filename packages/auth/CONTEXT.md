@@ -1,6 +1,6 @@
 # Auth
 
-Who a caller is. Auth owns browser sessions, viewers, machine tokens, revocation and bearer parsing, the sign-in and sign-out pages, and the `auth` API routes; device login arrives next. Auth depends on [Companies](../companies/CONTEXT.md) for the users and companies behind credentials; [Patches](../patches/CONTEXT.md) receives the identity from bearer middleware without importing Auth.
+Who a caller is. Auth owns browser sessions, viewers, machine tokens, device login, revocation and bearer parsing, the sign-in and sign-out pages, Your machines, and the `auth` API routes. Auth depends on [Companies](../companies/CONTEXT.md) for the users and companies behind credentials; [Patches](../patches/CONTEXT.md) receives the identity from bearer middleware without importing Auth.
 
 ## Language
 
@@ -17,7 +17,7 @@ Permanently disabling a machine token, including when its user is deactivated; a
 _Avoid_: ban, token deletion
 
 **Bearer parsing**:
-How the hosting server reads `Authorization`: the scheme is case-insensitive, one or more spaces or tabs separate it from the credential, trailing whitespace is tolerated, anything else on the line is invalid. Missing and invalid are told apart here only; on the wire both are one 401, `{ ok: false, error: "Missing or invalid API token." }`, so no configuration ever admits a tokenless request.
+How the hosting server reads `Authorization`: the scheme is case-insensitive, one or more spaces or tabs separate it from the credential, trailing whitespace is tolerated, anything else on the line is invalid. Missing and invalid are told apart here only; protected routes answer both with one 401, `{ ok: false, error: "Missing or invalid API token." }`. Only starting and polling a device login need no bearer.
 _Avoid_: header validation
 
 **Session**:
@@ -29,9 +29,9 @@ The signed-in user, their company and role on a first-party page or at a company
 _Avoid_: bearer, machine, principal
 
 **Device login**:
-How a machine comes to act as a user: `patchy login` prints a URL and a short code, the person opens the URL in a browser already signed in, confirms the code on screen is the one on their terminal, names the machine on a first login, and the CLI receives a machine token. The confirmation is what defeats a relayed code. The only login route for now.
+How a machine comes to act as a user: the terminal prints a URL carrying a short code, the person opens it in their signed-in browser, confirms the displayed code matches their terminal, and names the machine. The code is confirmed, never typed. Confirmation authorizes the login; the terminal's poll mints and receives the machine token exactly once. An abandoned confirmation creates no credential. The only machine login route for now.
 _Avoid_: device flow (the protocol), OAuth, paste your token
 
 **Your machines**:
-The user's list of their machine tokens — name, last use — with revoke-one and revoke-all. The user's control over which machines may act for them.
+The user's list of live machine tokens — name, creation, last use and expiry — with revoke-one and revoke-all. The user's control over which machines may act for them; browser sign-out lives here too.
 _Avoid_: sessions (a browser's), API keys

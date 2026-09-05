@@ -29,7 +29,7 @@ The user-level style preference captured during onboarding and kept in the state
 _Avoid_: house style (a project's own style, which overrides it), theme, template
 
 **Login handoff**:
-Once device login lands, the URL and code the CLI prints for the agent to relay to the person confirming the machine. The one moment in publishing that needs a human; the agent never opens a browser on someone's desktop.
+The URL and code returned when a device login starts, for the agent to relay to the person confirming the machine. The server handoff is available over HTTP; the forthcoming `patchy login` command will print it. The one moment in publishing that needs a human; the agent never opens a browser on someone's desktop.
 _Avoid_: prompt, browser login
 
 **Driver**:
