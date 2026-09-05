@@ -6,6 +6,7 @@ export interface Page {
   readonly title: string;
   readonly body: string;
   readonly status?: number;
+  readonly styles?: string;
 }
 
 export interface SessionShell {
@@ -13,9 +14,15 @@ export interface SessionShell {
   readonly publishableKey: string;
 }
 
-/** Only local absolute paths survive; URL parsing also catches slash/backslash escapes. */
+/** Only local absolute paths survive; reject authorities and slash/backslash escapes. */
 export function returnPath(value: string | null, publicBaseUrl: string): string | null {
-  if (!value || !value.startsWith("/") || /[\\\u0000-\u0020\u007f]/.test(value)) return null;
+  if (
+    !value ||
+    !value.startsWith("/") ||
+    value.startsWith("//") ||
+    /[\\\u0000-\u0020\u007f]/.test(value)
+  )
+    return null;
   const base = new URL(publicBaseUrl);
   const url = new URL(value, base);
   return url.origin === base.origin ? `${url.pathname}${url.search}${url.hash}` : null;
@@ -29,6 +36,7 @@ export function withCookies(
   response: HttpServerResponse.HttpServerResponse,
   values: ReadonlyArray<string>
 ): HttpServerResponse.HttpServerResponse {
+  if (values.length === 0) return response;
   const all = [...values, ...Cookies.toSetCookieHeaders(response.cookies)];
   const cookies = Object.fromEntries(
     all.flatMap((value, index) =>
@@ -49,6 +57,7 @@ export function pageResponse(
     htmlPage({
       title: page.title,
       head,
+      styles: page.styles,
       body: `<main class="auth-card"><div class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</div><h1>${escapeHtml(page.title)}</h1>${page.body}</main>`
     }),
     {

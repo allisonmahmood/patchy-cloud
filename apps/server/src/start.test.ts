@@ -11,7 +11,6 @@ for (const missing of [
 ]) {
   it(`names missing ${missing} before trying to connect to Postgres`, () => {
     const env: NodeJS.ProcessEnv = {
-      ...process.env,
       ...clerkEnv(),
       DATABASE_URL: "postgresql://postgres:postgres@127.0.0.1:1/patchy"
     };

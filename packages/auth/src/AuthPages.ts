@@ -31,7 +31,10 @@ const join = Effect.gen(function* () {
   );
   return page.redirect
     ? HttpServerResponse.redirect(page.redirect, { status: 303 })
-    : pageResponse(page, session);
+    : pageResponse(
+        { ...page, styles: Join.styles, body: `${page.body}${signOutForm(true)}` },
+        session
+      );
 });
 
 const logout = Effect.gen(function* () {
