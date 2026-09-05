@@ -47,7 +47,7 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
 ) {
   const content = yield* Content.Content;
   const patches = yield* Patches.Patches;
-  const { result: admission, cookies } = yield* Door.Admission;
+  const { result: admission, cookies, completedHandshake } = yield* Door.Admission;
   const session = yield* Session.Session;
 
   const served =
@@ -57,7 +57,9 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
           .find(patchId, versionNumber)
           .pipe(Effect.catchTags({ SqlError: Effect.die }));
   const isPublic = Option.isSome(served) && served.value.patch.scope === "public";
-  if (!isPublic) {
+  // Finish a verified sign-in before serving a public document, but never require
+  // a public reader to start a handshake or pass company admission.
+  if (!isPublic || completedHandshake) {
     if (HttpServerResponse.isHttpServerResponse(admission)) {
       return withCookies(
         HttpServerResponse.setHeaders(admission, {
@@ -114,9 +116,12 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
   return isPublic ? response : withCookies(response, cookies);
 });
 
-/** A version number as the URL spells it: a positive integer, or nothing. */
-const versionNumberOf = (segment: string | undefined) =>
-  segment !== undefined && /^[1-9]\d*$/.test(segment) ? Number(segment) : undefined;
+/** Match the positive PostgreSQL INTEGER range before a version reaches the lookup. */
+const versionNumberOf = (segment: string | undefined) => {
+  if (segment === undefined || !/^[1-9]\d*$/.test(segment)) return undefined;
+  const version = Number(segment);
+  return version <= 2_147_483_647 ? version : undefined;
+};
 
 /**
  * Only the two patch registrations receive viewer admission. The home, health

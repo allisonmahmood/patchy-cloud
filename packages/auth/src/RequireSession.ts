@@ -79,7 +79,8 @@ export const admission = Effect.gen(function* () {
           "cache-control": "private, no-store"
         }
       }),
-      cookies: result.response.headers.getSetCookie()
+      cookies: result.response.headers.getSetCookie(),
+      completedHandshake: result.completed
     };
   }
   if (result.status === "signed-out") {
@@ -87,9 +88,13 @@ export const admission = Effect.gen(function* () {
       yield* Effect.logWarning("Clerk sign-in could not complete").pipe(
         Effect.annotateLogs({ reason: result.reason })
       );
-    return { result: door(session, path, result.handshakeFailed), cookies: result.cookies };
+    return {
+      result: door(session, path, result.handshakeFailed),
+      cookies: result.cookies,
+      completedHandshake: false
+    };
   }
-  return { result: result.claims, cookies: result.cookies };
+  return { result: result.claims, cookies: result.cookies, completedHandshake: false };
 });
 
 /** Session-only admission also serves logout, which must work before a user row exists. */

@@ -12,18 +12,21 @@ export class Admission extends Context.Service<
   {
     readonly result: RequireSession.Viewer["Service"] | HttpServerResponse.HttpServerResponse;
     readonly cookies: ReadonlyArray<string>;
+    readonly completedHandshake: boolean;
   }
 >()("@patchy/serving/Door/Admission") {}
 
 const admission = Effect.gen(function* () {
   const session = yield* Session.Session;
   const request = yield* HttpServerRequest.HttpServerRequest;
-  const { result, cookies } = yield* RequireSession.admission;
-  if (HttpServerResponse.isHttpServerResponse(result)) return { result, cookies };
+  const decision = yield* RequireSession.admission;
+  const { result } = decision;
+  if (HttpServerResponse.isHttpServerResponse(result)) return decision;
   const viewer = yield* RequireSession.resolveViewer.pipe(
     Effect.provideService(RequireSession.SignedIn, result)
   );
   return {
+    ...decision,
     result:
       viewer ??
       HttpServerResponse.redirect(
@@ -31,8 +34,7 @@ const admission = Effect.gen(function* () {
         {
           status: 303
         }
-      ),
-    cookies
+      )
   };
 }).pipe(
   Effect.catchTags({
@@ -43,7 +45,8 @@ const admission = Effect.gen(function* () {
           body: "<p>Please try again.</p>",
           status: 502
         }),
-        cookies: []
+        cookies: [],
+        completedHandshake: false
       }),
     SqlError: () =>
       Effect.succeed({
@@ -52,7 +55,8 @@ const admission = Effect.gen(function* () {
           body: "<p>Please try again.</p>",
           status: 503
         }),
-        cookies: []
+        cookies: [],
+        completedHandshake: false
       })
   })
 );

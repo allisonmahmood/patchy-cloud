@@ -23,7 +23,7 @@ export const PATCH_ROBOTS_TAG = "noindex";
  * Document-wide on every served patch. The patch's own frame is already
  * `referrerpolicy="no-referrer"`, and this says the same thing one level up:
  * navigating away from a served page must not hand anyone the patch URL the
- * reader was on. An unlisted page's URL is the only thing keeping it unlisted.
+ * reader was on. Sharing scope controls access; this prevents URL disclosure.
  */
 export const NO_REFERRER_POLICY = "no-referrer";
 
