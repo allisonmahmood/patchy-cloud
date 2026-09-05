@@ -84,10 +84,6 @@ it.layer(server({ PATCHY_PROTECTED_API_RATE_LIMIT_PER_MINUTE: "3" }))(
         assert.deepStrictEqual(yield* answer(limited), { status: 429, body: LIMITED });
         // The limit is the API's alone: pages answer on.
         assert.strictEqual((yield* send(HttpClientRequest.get("/healthz"))).status, 200);
-        assert.strictEqual(
-          (yield* send(HttpClientRequest.post("/api/tokens/self-service"))).status,
-          429
-        );
         assert.strictEqual((yield* send(HttpClientRequest.get("/apix"))).status, 404);
 
         yield* TestClock.adjust("61 seconds");
@@ -122,8 +118,7 @@ it.layer(server({ PATCHY_PROTECTED_API_RATE_LIMIT_PER_MINUTE: "3" }))(
           for (const request of [
             HttpClientRequest.put("/api/uploads"),
             HttpClientRequest.get("/api/does-not-exist"),
-            HttpClientRequest.get("/api"),
-            HttpClientRequest.post("/api/tokens/self-service")
+            HttpClientRequest.get("/api")
           ]) {
             yield* TestClock.adjust("61 seconds");
             assert.deepStrictEqual(
@@ -201,7 +196,7 @@ it.layer(server())("the guard: only the device-login POST routes are anonymous",
         HttpClientRequest.post("/api/login/device-other"),
         HttpClientRequest.post("/api/login/device/%"),
         HttpClientRequest.post("/api%2Flogin/device"),
-        HttpClientRequest.post("/api/tokens/self-service"),
+        HttpClientRequest.post("/api/does-not-exist"),
         HttpClientRequest.get("/api/me"),
         HttpClientRequest.post("/api/logout"),
         HttpClientRequest.post("/api/uploads")

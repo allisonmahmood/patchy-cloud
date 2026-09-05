@@ -1,62 +1,61 @@
 # Companies
 
-The tenant and who is in it. `packages/companies` owns companies, users, roles and invites, including deactivation and reactivation; groups, verified domains, SSO and operator surfaces remain future work. Who a caller _is_ — session, login, machine token — is [Auth](../auth/CONTEXT.md)'s; what a user owns is [Patches](../patches/CONTEXT.md)'.
+The tenant and who is in it: companies, users, roles, invitations, deactivation and reactivation. The future language of groups, verified domains, SSO and the operator is defined here; its product decisions live in [the product](../../docs/product.md#companies), while caller identity belongs to [Auth](../auth/CONTEXT.md) and patch ownership to [Patches](../patches/CONTEXT.md).
 
 ## Language
 
 **Company**:
-The tenant everything on Patchy Cloud hangs off, and the unit that pays: every patch, connection, group and user lives in exactly one, usage is counted against it, and nothing inside crosses its line except a patch made public. Flat — groups are access, not structure — with a globally unique handle. Created at signup by its first admin; suspended by the operator (including running out of credits), deleted by its admin with a recovery window.
+The tenant every user and patch belongs to: exactly one company each, with nothing crossing that line except a patch made public. A company has a display name, a globally unique handle and at least one active admin.
 _Avoid_: organization, workspace, team, tenant (this document's word for the concept, never the product's)
 
 **Handle**:
-A company's globally unique short name, fixed once created: 3–32 lowercase letters, digits or hyphens, with no leading or trailing hyphen and a reserved set of platform names. Users and groups will draw their own handles from one per-company namespace; company handles are released only after the company's recovery window.
+A company's globally unique short name, fixed once created. It uses 3–32 lowercase letters, digits or hyphens, with no leading or trailing hyphen and a reserved set of platform names.
 _Avoid_: slug, subdomain, namespace (what the handle opens, not the handle)
 
 **User**:
-One individual with one account, in exactly one company. Signs in (through Clerk: Google, Microsoft or an emailed code, never a password) and holds one machine token per machine they build from. Has one of two roles, member or admin; every member builds. Deactivated (an admin's act: sign-in and tokens end, personal connection credentials are wiped, data kept, owner-only patches go dark) is distinct from deleted (a later act, where the admin is prompted to reassign the user's patches and what is not reassigned goes with the account).
+One individual's Patchy account in exactly one company, carrying the member or admin role. Every active user can build; their machines act for them through [machine tokens](../auth/CONTEXT.md).
 _Avoid_: account, person (a user is the account, not the human), builder (every user is one)
 
 **Member**:
 The role every user has who is not an admin. A member builds — publishes patches with no gate — and reads the company's users, roles, states and pending invites without management actions.
-_Avoid_: viewer (the person with a patch open, whatever their role), builder (a description, not a role), guest
+_Avoid_: viewer (the [Auth](../auth/CONTEXT.md) identity, whatever the user's role), builder (a description, not a role), guest
 
 **Admin**:
-A user with the role that runs the company: invites, revokes and resends invitations, promotes and demotes users, and deactivates and reactivates them from the company page; groups, SSO, integrations and reassignment are future powers. A company always has at least one active admin, and the last one can neither be demoted nor deactivated.
+A user with the role that manages the company's invitations, roles, deactivation and reactivation. A company always has at least one active admin, and the last one can neither be demoted nor deactivated.
 _Avoid_: owner (patches have owners; companies have admins), operator (Patchy, never a company role), superadmin
 
 **Group**:
-A named set of users an admin creates; a user can be in many. Purely a grant surface — access to patches and connections — never a container that owns anything. "Team" and "department" are names companies give their groups.
+A named set of users used to grant access, never a container that owns patches or connections. Its future access model is recorded in [the product](../../docs/product.md#users-admins-groups).
 _Avoid_: team, department (labels, not concepts), role (what an admin has; a group is who), space
 
 **Invite**:
-An invitation for one email address to join a company with a role: Clerk sends the email, Patchy owns the invitation, with no expiry, until revoked or consumed; resend replaces the emailed invitation, not the company invitation. Several companies may invite the same address, each at most once while live, matched case-insensitively at sign-in; an email already belonging to a user is refused as already in a company.
+An invitation for one email address to join a company with a role, live until revoked or consumed rather than expiring. Several companies may invite the same address, each at most once while live; an email already belonging to a user cannot be invited.
 _Avoid_: add user, share the company
 
 **Create-or-join**:
-The choice a signed-in person without a company makes: accept one of the live invitations for their email, or, without an invitation, name a company and choose its handle as its first admin. This choice creates their user and company membership together; the page names the email checked and offers sign-out for a wrong account.
+The choice a signed-in person without a company makes: accept a live invitation for their email or, without an invitation, name a company and choose its handle as its first admin. The person becomes a user in the chosen company at that moment.
 _Avoid_: onboarding wizard, organization picker
 
 **Verified domain**:
-A company's email domain, proven by an admin, after which anyone signing in with a work identity on it joins the company automatically. Never a consumer domain; one domain belongs to one company, first-come. Also where SSO is enforced.
+A company's proven work-email domain, reserved for domain-based joining and SSO. The future verification and access rules live in [the product](../../docs/product.md#getting-into-a-company).
 _Avoid_: allowed domain, auto-join (the effect, not the thing)
 
 **SSO**:
-A company signing its users in through its own identity provider (SAML or OIDC) instead of Google, Microsoft or an emailed code. Patchy flips the flag for the company, the admin sets the connection up themself, and it is enforced on the verified domain — everyone at that domain uses it and nothing else. Paid.
+Company sign-in through its own identity provider instead of the ordinary sign-in choices. Its future domain enforcement and setup are recorded in [the product](../../docs/product.md#signing-in).
 _Avoid_: enterprise connection (Clerk's word), SAML (one of the two shapes)
 
 **Deactivation**:
-An admin ending a user's access while keeping their data: sign-in and every machine token stop, and the last active admin cannot be deactivated. Reactivation reverses the user's state, not the revocation of old keys; personal connections and patch retirement follow in their own efforts.
+An admin ending a user's company access and revoking every machine token while keeping their data. It is reversible through reactivation, but the last active admin cannot be deactivated.
 _Avoid_: ban, suspend (the operator's act on a company), delete (the later act)
 
 **Reactivation**:
-An admin restoring a deactivated user's access to the same company and data from the company page. Sign-in works again, but the user needs fresh machine tokens; keys revoked by deactivation stay revoked.
+An admin restoring a deactivated user's access to the same company and data. The user needs fresh machine tokens because keys revoked by deactivation stay revoked.
 _Avoid_: un-revoke, restore token
 
 **Suspension**:
-The operator's act on a whole company: nothing serves, nothing publishes, data kept. Also where a company lands when it runs out of credits and cannot top up.
+The operator's future act of stopping a whole company's serving and publishing while keeping its data. The product's company-level lifecycle is recorded in [the product](../../docs/product.md#the-operator).
 _Avoid_: freeze, lock, deactivate (an admin's act on a user)
 
 **Operator**:
-Patchy, running the platform. Platform powers only — create, suspend or delete a company, quotas, moderation — never a role inside a company, and never the word for whoever drives the CLI (that is the agent, see [Publishing](../cli/CONTEXT.md)).
-Its surfaces are a separate login and separate dashboards, never a company in the product and never in the `patchy` CLI.
+Patchy, running the platform, rather than a role inside a company or the driver of the CLI. Its future surfaces are its own login and dashboards, outside the company product and the `patchy` CLI.
 _Avoid_: admin (a company role), superuser, staff, the CLI's user

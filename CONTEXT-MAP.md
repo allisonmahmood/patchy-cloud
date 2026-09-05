@@ -4,38 +4,39 @@ Patchy Cloud is one deployment: the hosting server on one side, the `patchy` CLI
 
 ## Contexts
 
-- [Patches](./packages/patches/CONTEXT.md) — `packages/patches`. The unit: patch, version, patch repo, declared tier, publish, owner, sharing scope and address, retire and delete, the primitives a patch declares. Today also the upload contract, the retention clock and its sweep, the patch quota, and the `patches` API group
-- [Serving](./packages/serving/CONTEXT.md) — `packages/serving`. A patch reaching its viewer, at every tier: the page, the doors in front of it (login, connect), the serving guarantees, the visit, the trusted-proxy schema, and the identity patch code acts as from tier 1 up. Today it serves tier 0; the tier 1 and tier 2 runtimes build on it
-- [Companies](./packages/companies/CONTEXT.md) — `packages/companies`. The tenant and who is in it: company and handle, users and roles, invites, deactivation and reactivation; groups, verified domains, SSO, suspension and the operator remain future work
-- [Auth](./packages/auth/CONTEXT.md) — `packages/auth`. Who a caller is: browser sessions and viewers, machine tokens, device login, identity, revocation and bearer parsing, the sign-in and sign-out pages, Your machines, the `auth` API group and the shared dev seed
+- [Patches](./packages/patches/CONTEXT.md) — `packages/patches`. Patches and immutable versions, user ownership, company/public sharing, the upload contract, owner deletion, retention and its sweep, the owner quota, and the `patches` API group. Patch repos, declared tiers, primitives, human-readable addresses and retirement remain future work
+- [Serving](./packages/serving/CONTEXT.md) — `packages/serving`. Tier 0 pages, the login door, serving guarantees, admitted visits and trusted-proxy attribution. Higher runtimes, the connect door and patch identity remain future work
+- [Companies](./packages/companies/CONTEXT.md) — `packages/companies`. Companies and handles, users and roles, create-or-join, invitations, the company page, deactivation and reactivation. Groups, verified domains, SSO, billing, suspension and the operator's surfaces remain future work
+- [Auth](./packages/auth/CONTEXT.md) — `packages/auth`. Clerk session verification and viewers, user-owned machine tokens, device login, identity, revocation and bearer parsing, the sign-in and sign-out pages, Your machines, the `auth` API group and the shared dev seed
 - [Integrations](./packages/integrations/CONTEXT.md) — no code yet. The company-scoped primitive that reaches outside systems: integration, connection and personal connection, connection handle, the typed client patch code is handed, the call log
 - [Publishing](./packages/cli/CONTEXT.md) — `packages/cli` and the bundled skill, the `patchy` CLI agents use to publish patches
 
 ## Shared kernel
 
-- `packages/core` — the safe-HTML policy, first-party HTML shell and escape helpers, and the ID/crypto primitives every context depends on. No `CONTEXT.md`: a term it defines belongs to the context that introduced it, and a decision touching it goes in the root `docs/adr/`.
+- `packages/core` — the safe-HTML policy, first-party HTML shell and escape helpers, and shared ID/crypto primitives. No `CONTEXT.md`: a term it defines belongs to the context that introduced it, and a decision touching it goes in the root `docs/adr/`.
 
 ## Infrastructure
 
-Packages that hold no domain vocabulary of their own; each defines the few terms its consumers need in its `CONTEXT.md`.
+Supporting packages rather than product contexts; their glossaries define only the terms their consumers need.
 
 - `packages/api` — the wire schemas and the `HttpApi` both sides speak: the server implements it, the CLI's client is derived from it, `docs/API.md` is rendered from it. Belongs to neither side; see [ADR-0002](./docs/adr/ADR-0002-api-is-the-contract-package.md). No `CONTEXT.md`: its terms are the contexts' own
 - [SQL](./packages/sql/CONTEXT.md) — `packages/sql`, the Postgres client and Effect's Migrator every capability migrates through; owns no tables ([ADR-0003](./docs/adr/ADR-0003-postgres-only.md))
 - [Content store](./packages/content-store/CONTEXT.md) — `packages/content-store`, the object store a patch's bytes go into; a filesystem layer and an Azure Blob layer
 - [Analytics](./packages/analytics/CONTEXT.md) — `packages/analytics`, the event service Patches and Auth report business moments through
 - [Limits](./packages/limits/CONTEXT.md) — `packages/limits`, the fixed-window rate limiter behind every per-minute limit
-- [Hosting](./apps/server/CONTEXT.md) — `apps/server`, the process: composes every package into one Effect layer, guards `/api/*`, forks the sweep, listens. Its `CONTEXT.md` holds only wiring terms
+- [Hosting](./apps/server/CONTEXT.md) — `apps/server`, the process that assembles and runs the hosting server. Its `CONTEXT.md` holds only wiring terms
 
 ## Relationships
 
-- **Publishing → `api`**: the CLI creates and updates patches through the derived client and authenticates with a user-owned machine token
-- **Serving → Patches, Auth**: a page reads the record and its HTML through `Content` and records an admitted visit through `Patches`; Serving never touches bytes. Serving imports Auth for the route-scoped login door, which establishes the optional viewer; the page handler checks the patch's sharing scope
-- **Patches → Content store**: the upload contract and the sweep put, get and delete a patch's bytes through `ContentStore`; nothing else touches them
-- **Auth, Patches → SQL**: both query through the `SQL` client. `patch_versions` references `machine_tokens`, but Patches never imports Auth: every handler receives the identity from bearer middleware. Patches spends its per-machine rate limits through `Limits`
-- **Auth, Patches → Analytics**: reports business events with the user as principal, or no user for expiry. Auth reports a machine token minted by the device-login poll and whether it replaced an old key
-- **Auth → Companies**: Companies owns the users and companies that bearer authentication joins with `machine_tokens`; its services own membership, roles and deactivation
-- **Integrations → Companies, Serving**: a connection is a company's or a user's, and a patch reaches it only through the cloud, as the viewer Serving established. Not yet in code
-- **Hosting → everything**: mounts the API groups with Auth's bearer middleware on protected endpoints and the guard ahead of them, Auth's and Serving's pages, and forks Patches' `ExpirySweep`; nothing here is a term of its own
+- **Publishing → `api`**: publishes through the shared wire contract using a user-owned machine token
+- **Serving → Patches, Auth**: relies on Patches for content, sharing and visits, and on Auth for viewer identity and session admission
+- **Patches → Content store**: owns the lifecycle of stored patch content, from publication through expiry
+- **Companies, Auth, Patches → SQL**: persist their own domain data in the shared Postgres database
+- **Auth, Patches → Analytics**: report business events
+- **Auth → Companies**: relies on company membership, roles and deactivation to authenticate users and machines
+- **Hosting, Auth, Patches → Limits**: rely on shared rate limiting for API access, device login and publishing
+- **Integrations → Companies, Serving**: a future connection belongs to a company or user, and a patch will reach it through the cloud within the authenticated viewer's permissions. The integration and higher-runtime boundaries are not implemented yet
+- **Hosting → runtime packages**: coordinates their lifetime, including database setup, API protection, page serving and retention sweeping
 
 ## Decisions
 

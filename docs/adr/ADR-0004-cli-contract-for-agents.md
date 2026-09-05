@@ -30,7 +30,7 @@ Nothing else. A defect (a bug, an unmodelled error) is one `Unexpected error:
 <message>` line on stderr and exit 1, with the stack only at
 `--log-level debug`. HTTP status maps to kind as 4xx → `rejected`, everything
 that is not an answer — 5xx, connect, timeout, a body the wire schemas cannot
-read — → `unreachable`: "retry later, or tell the operator" is one action.
+read — → `unreachable`: retry later, or contact Patchy support about the deployment.
 
 A command whose local act succeeded reports a failed courtesy call as a warning,
 never as an exit code. `logout` forgets the credential and pending login first;
@@ -58,7 +58,9 @@ its code; no command exits on its own.
 ### Login, logout and identity
 
 `patchy login [--complete [code]] [--wait <seconds>]` starts a device login with
-`os.hostname()` as the machine-name hint and the stored key's id on re-login.
+`os.hostname()` as the machine-name hint. Re-login supplies the stored machine id
+only for a credential saved by login; an `auth set`, environment or seeded key
+has no saved login metadata to replace.
 It blocks only when stdin is a terminal, `--json` is absent, and none of
 `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, `CURSOR_AGENT`, `CODEX_SANDBOX`,
 `CODEX_SANDBOX_NETWORK_DISABLED`, `GEMINI_CLI`, `OPENCODE`, `CLINE_ACTIVE`,
@@ -68,8 +70,10 @@ may have a PTY while its tool buffers output until exit.
 The human path prints the handoff and waits until the person answers or the
 code expires. On a new login, every other path returns the URL, code, next
 command and reason for not waiting, then exits 0. The agent relays the URL and
-code, never opens a browser, and runs `next`. A non-blocking rerun with a pending
-login polls once, as chosen in [#131](https://github.com/allisonmahmood/patchy-cloud/issues/131#issuecomment-5533101635):
+code, never opens a browser, and runs `next`, adding `--json` when it needs a
+structured result: `next` retains an explicit instance override, not the output
+flag. A non-blocking rerun with a pending login polls once, as chosen in
+[#131](https://github.com/allisonmahmood/patchy-cloud/issues/131#issuecomment-5533101635):
 it reports `pending`, `logged_in`, or a terminal refusal rather than another
 handoff. The original URL/code remains valid until answered or expired.
 An explicitly supplied `--api-url` is saved so later commands outside a worktree
@@ -121,13 +125,15 @@ reporting whether the deleted key was successfully revoked or already invalid.
 
 ### One credential chain
 
-Every command resolves credentials in this order: `PATCHY_API_TOKEN`, the
-credential stored for the resolved instance (`login` or `auth-set`), then the
-seeded token beside a dev-env URL. A login therefore outranks the dev seed;
-logout exposes the seed again, unless an environment token already overrides
-both. `status` uses that same chain for `hasToken` and `tokenSource`:
-`login`, `auth-set`, or `null` for an environment/dev-env key, an older stored
-entry without provenance, or no key.
+Protected API commands and `status` resolve credentials in this order:
+`PATCHY_API_TOKEN`, the credential stored for the resolved instance (`login` or
+`auth-set`), then the seeded token when the instance came from the dev env.
+A saved login therefore outranks the dev seed; logout exposes the seed again,
+unless an environment token already overrides both. `status` uses that same
+chain for `hasToken` and `tokenSource`: `login`, `auth-set`, or `null` for an
+environment/dev-env key, an older stored entry without provenance, or no key.
+Login reads the pending login and stored machine metadata instead; logout
+revokes only the stored key it deleted, and `auth set` saves a supplied key.
 
 State is per instance. `credentials.json` keeps the key and its provenance,
 plus the machine for `source: "login"`. Owner-only `device-login.json` holds
@@ -175,8 +181,8 @@ narrowed to one-line errors and the bare version.
 ## Consequences
 
 **An agent branches on the exit code, not on prose.** 1 means fix the call or
-the file, 2 means the instance's policy stands, 3 means try later or tell the
-operator. The messages stay for humans and for the JSON `error` field.
+the file, 2 means the instance's policy stands, 3 means try later or contact
+Patchy support. The messages stay for humans and for the JSON `error` field.
 
 **Contract and mechanism separate in the packed-CLI e2e.** The e2e asserts
 the ladder, one-line stderr, the bare `--version`, the token never in argv or

@@ -164,8 +164,8 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
       error: patchRouteErrors
     }).annotateMerge(
       describe(
-        "Delete a patch owned by the bearer token's user. The patch stops serving at once " +
-          "and its content goes with the next expiry sweep."
+        "Delete a patch owned by the bearer token's user. The origin stops serving it at once; " +
+          "the expiry sweep removes its content after its retention clock expires."
       )
     )
   )

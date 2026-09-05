@@ -23,12 +23,12 @@ Account Portal are served under **one registrable domain**. The production
 Clerk instance is created for that domain, and the deployment chooses it before
 the instance exists.
 
-Within that domain the layout is free. Clerk shares a session across subdomains
-by default: each host completes the handshake once for its own `__session`, so a
-per-company subdomain later needs nothing from Clerk beyond an
-`authorizedParties` entry per host. Local development is unaffected: a
-development instance signs `localhost` in, and `pnpm dev` runs one server per
-worktree on its own port.
+Within that domain Clerk shares a session across subdomains by default: each
+host completes the handshake once for its own `__session`. A future per-company
+host layout must still account for routing and authorized parties; the current
+server has one public origin and accepts one `CLERK_AUTHORIZED_PARTIES` origin.
+Local development leaves that setting unset, so worktrees on different ports
+can share a Clerk development sign-in without evicting one another.
 
 ## Consequences
 
@@ -43,8 +43,8 @@ a pricing question before it is a build.
 
 **The door trusts no proxy for its own origin.** Because the handshake's return
 URL is derived from the request's host headers, the door builds the request it
-hands Clerk from `PATCHY_PUBLIC_BASE_URL`, which loses its `localhost` default:
-a server that cannot name its own origin does not start.
+hands Clerk from the required `PATCHY_PUBLIC_BASE_URL`, replacing the host and
+forwarded origin headers: a server that cannot name its own origin does not start.
 
 ## Alternatives considered
 

@@ -28,24 +28,16 @@ export function renderHome(options: { publicBaseUrl: string }): string {
           <div>
             <h2>Publish a patch</h2>
             <p>Requires the <code>patchy</code> CLI on Node.js 22 or newer.</p>
-            <p>Provide <code>PATCHY_SETUP_TOKEN</code> through a secret environment. This scoped workflow pins this endpoint, clears inherited credential overrides, and verifies the stored token before validation or upload.</p>
+            <p>First log this machine in. Open the returned URL in your own browser, sign in and join or create a company if needed, then check the code, company and email before confirming. Agents relay the URL and code; they never open the browser for you.</p>
           </div>
-          <pre><code data-patchy-quick-start>(
-  set +x
-  set -eu
-  PATCHY_API_URL=${shellPublicBaseUrl}
-  export PATCHY_API_URL
-  unset PATCHY_API_TOKEN
-  unset TOKEN
-  : "\${PATCHY_SETUP_TOKEN:?Set PATCHY_SETUP_TOKEN to a Patchy Cloud API token}"
-  ARTIFACT_PATH='./plan.html'
-
-  printf '%s' "$PATCHY_SETUP_TOKEN" | patchy auth set --token-stdin --api-url "$PATCHY_API_URL"
-  unset PATCHY_SETUP_TOKEN
-  patchy whoami &amp;&amp;
-    patchy validate "$ARTIFACT_PATH" &amp;&amp;
-    patchy upload "$ARTIFACT_PATH"
-)</code></pre>
+          <pre><code>unset PATCHY_API_TOKEN
+patchy login --api-url ${shellPublicBaseUrl} --json</code></pre>
+          <p>After confirmation, replace <code>&lt;userCode&gt;</code> below with the returned code. Continue only when completion reports <code>logged_in</code>, then check that <code>whoami</code> names the user and company you intend to publish as.</p>
+          <pre><code>patchy login --complete &lt;userCode&gt; --api-url ${shellPublicBaseUrl} --json
+patchy whoami --api-url ${shellPublicBaseUrl} --json
+patchy validate './plan.html' &amp;&amp;
+  patchy upload './plan.html' --api-url ${shellPublicBaseUrl} --json</code></pre>
+          <p>Open the upload's URL in that same signed-in browser. Company sharing is the default; choose <code>--share public</code> only when anyone with the link should be able to read it.</p>
         </section>
 
         <section class="grid">

@@ -2,6 +2,8 @@
 
 The product, written down where agents read it. Each section is the resolution of one decision on the [foundation map](https://github.com/allisonmahmood/patchy-cloud/issues/5); the glossaries in each `CONTEXT.md` carry the words, this file carries the shape.
 
+**Built today:** tier 0 HTML patches; user ownership and company/public sharing; Clerk sign-in; create-or-join and company administration; machine login, logout and revocation. Higher runtimes, patch repos, the portal, narrower sharing, addresses, integrations, billing and company lifecycle remain the intended product shape below, not available features.
+
 ## Patches
 
 A **patch** is the unit of what people build and deploy on Patchy Cloud — anything from a static page to a full CRM. A tier 0 page and a CRM are both patches for the same reason: each is one built thing in a company's cloud, stored as one, permissioned as one, provisioned as one, at one address, at one runtime tier. What differs between them is the tier they need — a CRM is a CRUD app, so it needs tier 2 — never what kind of thing they are.
@@ -22,17 +24,19 @@ Ownership: a patch belongs to a **user** in a company. The user holds a machine 
 
 ### Versions and publishing
 
-**Publish** is the act; every publish is a new immutable **version**, and the patch serves the version its pointer names. Rollback moves the pointer. There is no working copy in the cloud and no unpublished patch — the working copy is the local repo, and the act that creates a patch is the act that makes it live.
+**Publish** is the act; every publish is a new immutable **version**, and the patch serves the version its pointer names. There is no working copy in the cloud and no unpublished patch — the working copy is local, and the act that creates a patch is the act that makes it live. Today another upload advances the pointer; moving it back through rollback is future work.
 
 ### Sharing and finding
 
 A published patch is shared with **everyone in the company** by default, or made **public** on purpose: anyone with the link, without a login. Today its owner chooses either scope with `patchy upload <file> --share company|public` or changes an existing patch with `patchy share <file> company|public` (or `patchy share --patch <id> company|public`); an upload without `--share` preserves an existing patch's scope. Only the owner changes sharing. Narrower scopes — the owner plus named users, or one group — remain future work; who may open, and who may change, a patch is spelled out under [Identity and access](#access-to-a-patch).
 
-Finding a patch is a portal of everything you have access to. A patch's identity is its **id**, so two sales dashboards made by two salespeople never collide; its human-readable address follows its sharing scope (see [Addresses](#addresses)).
+The future way to find a patch is a portal of everything you have access to; today a person shares its link. A patch's identity is its **id**, so two sales dashboards made by two salespeople never collide; the planned human-readable address follows its sharing scope (see [Addresses](#addresses)).
 
 ### Updating, retiring, deleting
 
-Updating is publishing again. A patch never expires on its own in the intended company model: expiry and the retention clock are inherited from public hosting and leave in the expiry-removal effort; pins are already gone. Two exits remain: **retire** takes a patch off its address and keeps it, restorable by its owner; **delete** removes it for good after a recovery window.
+Updating is publishing again. Today each upload gives the patch 90 days of retention; a visit in its final 30 days moves expiry to 30 days out, never shorter and never reviving an expired patch. Revoking or replacing a machine token does not stop those top-ups. Expiry stops serving and updates, then the sweep removes the patch and its content. Today's owner **delete** stops serving immediately, with no restore action; its stored content remains until expiry and the sweep.
+
+The intended company model removes automatic expiry in [the expiry-removal effort](https://github.com/allisonmahmood/patchy-cloud/issues/93). Its two exits will be **retire**, which takes a patch off its address and keeps it restorable by its owner, and **delete**, which removes it for good after a recovery window. Retirement and the recovery window are not built yet.
 
 ### Patches and other patches
 
@@ -58,7 +62,7 @@ The uploaded document runs no script, so the patch cannot watch the reader or re
 
 ### Tier 1 — browser
 
-Code runs in the viewer's browser and acts **as the viewer**. It never holds a credential: not the Patchy session, not an integration token, not another patch's storage. It learns who the viewer is as claims, and it reaches everything else — the patch's primitives (its tables, its files) and the company's integrations — through Patchy, which performs the call as the viewer within the viewer's own permissions. A tier 1 patch can therefore never do more than the person using it could do themselves. Nothing leaves the browser except through Patchy: there is no direct outbound to third-party APIs, credentialed or not — reaching outside systems is what integrations are for.
+Code runs in the viewer's browser and acts **as the viewer**. It never holds a credential: not the Clerk session, not an integration token, not another patch's storage. It learns who the viewer is as claims, and it reaches everything else — the patch's primitives (its tables, its files) and the company's integrations — through Patchy, which performs the call as the viewer within the viewer's own permissions. A tier 1 patch can therefore never do more than the person using it could do themselves. Nothing leaves the browser except through Patchy: there is no direct outbound to third-party APIs, credentialed or not — reaching outside systems is what integrations are for.
 
 What tier 1 cannot do is anything the viewer's browser is not there to do: no pre-processing before the data reaches the page, no work on behalf of one viewer visible to another. Save a photo to file storage and it is saved; that is the whole story.
 
@@ -78,15 +82,15 @@ The tier is an explicit field in the patch repo, written by `init`, and the clou
 
 ## Companies
 
-A **company** is the tenant everything on Patchy Cloud hangs off, and the unit that pays. Every patch, connection, group and user lives in exactly one company; usage is counted against the company; nothing inside crosses the company line except a patch someone chose to make public. A company is flat — no sub-tenants; groups are access, not structure — and carries a globally unique **handle** alongside its display name.
+A **company** is the tenant everything on Patchy Cloud hangs off. Every patch and user lives in exactly one company, and nothing inside crosses the company line except a patch someone chose to make public. A company is flat — no sub-tenants — and carries a globally unique **handle** alongside its display name. In the intended product it is also the unit that pays, owns connections and groups, and has usage counted against it; billing, connections and groups are not built yet.
 
-A company comes to exist at signup: the person signing up names it and becomes its first admin. Self-serve billing — put in a card, set when it tops up, invite others — is the intended path. There is no person without a company: a solo builder is a company of one.
+A company comes to exist on **create-or-join**, after sign-in: a person without an invitation names a company, chooses its handle and becomes its first admin. The company and user are created together; a solo builder is a company of one. The handle is fixed once created, 3–32 lowercase letters, digits or hyphens, with no leading or trailing hyphen and reserved platform names refused. Self-serve billing — put in a card, set when it tops up — is the intended later path, not a step in today's signup.
 
 ### Users, admins, groups
 
 A **user** is one individual with one account, in exactly one company. They sign in, and they hold expiring, rotatable tokens on the machines they build patches from — see [Identity and access](#identity-and-access).
 
-An **admin** is a user with the role that runs the company: invites users, creates groups, sets permissions, connects company integrations, and — alone — reassigns a patch's owner. A company always has at least one admin, and the last admin cannot demote themself.
+An **admin** is a user with the role that runs the company. Today that means invitations, roles, deactivation and reactivation; creating groups, setting their permissions, connecting company integrations and reassigning a patch's owner are future powers.
 
 Today `/company` lists users, roles, active/deactivated state and pending invites.
 Admins manage invitations, roles, deactivation and reactivation there; members
@@ -94,11 +98,13 @@ read the same page without actions. The last active admin cannot be demoted or
 deactivated. Reactivation restores sign-in to the same company and data, but
 machine tokens revoked by deactivation remain revoked.
 
-A **group** is a named set of users an admin creates; a user can be in many. "Team", "department", "north-american-sales" are names companies give their groups, not concepts of their own. A group is purely a grant surface — access to patches and connections — never a container that owns anything.
+A **group** will be a named set of users an admin creates; a user can be in many. "Team", "department", "north-american-sales" are names companies give their groups, not concepts of their own. A group is purely a grant surface — access to patches and connections — never a container that owns anything.
 
 ### Ownership and deactivation
 
-A patch belongs to a user, and everything ultimately belongs to the company, because the company is what pays. The two sentences meet at **deactivation**: an admin deactivating a user ends their sign-in and tokens and wipes the credentials of their personal connections, keeps all data, and takes down the patches only they could reach — a deactivated user's owner-only patches, and those patches' provisioned primitives, enter the same kept-but-off state as retire, so a thousand departed builders never leave a thousand dead patches running. Patches shared to a group or company-wide stay up; managing those is what admins are for. Deleting a user is a separate, later act: the deletion flow prompts the admin to reassign any of the user's patches, and what is not reassigned goes with the account.
+A patch belongs to a user. Today **deactivation** ends that user's company access on the next request and revokes every machine token while keeping all data; a browser with a Clerk session sees the deactivated page and can still sign out. Reactivation restores access to the same company, but fresh machine tokens are required. Deactivation does not currently change a patch's sharing or serving state.
+
+In the intended company lifecycle, deactivation will also wipe personal-connection credentials and take down patches only that user could reach: owner-only patches and their provisioned primitives enter the same kept-but-off state as retire. Patches shared to a group or company-wide stay up; managing those is what admins are for. That patch-lifecycle work belongs with [expiry removal](https://github.com/allisonmahmood/patchy-cloud/issues/93), narrower sharing and the primitives themselves. Deleting a user is a separate, later act: its flow will prompt the admin to reassign the user's patches, and what is not reassigned will go with the user.
 
 ### Integrations and connections
 
@@ -106,13 +112,15 @@ Patchy ships the **integration** — Salesforce-the-capability, the same for eve
 
 ### Addresses
 
-A patch's sharing scope is single-select — the owner (plus named users), exactly one group, or the whole company — and its human-readable address follows that scope: `company/user/patch`, `company/group/patch`, `company/patch`. Users and groups draw their handles from one per-company namespace, so the two middle shapes never collide. Names are first-come and never reserved: widening a patch to company-wide prompts for a name free at `company/`, the old address keeps redirecting, and a new patch later taking that name simply wins the address. The patch's identity stays its id throughout — addresses are pointers, and a move never touches the patch.
+Human-readable addresses are future work; today the link is `/d/<id>`, or `/d/<id>/v/<n>` for a version, for either sharing scope.
+
+The intended internal sharing choice is single-select — the owner (plus named users), exactly one group, or the whole company — and its human-readable address will follow that choice: `company/user/patch`, `company/group/patch`, `company/patch`. Users and groups will draw their handles from one per-company namespace, so the two middle shapes never collide. Patch names are first-come and never reserved: widening a patch to company-wide will prompt for a name free at `company/`, the old address will keep redirecting, and a new patch later taking that name will simply win the address. The patch's identity stays its id throughout — addresses are pointers, and a move never touches the patch.
 
 ### The operator
 
-The **operator** — Patchy, running the platform — is not a company role and holds no company powers. Its powers are platform-shaped: create, suspend or delete a company, quotas, and moderation — taking a patch off its address, never acting inside the company. The operator's surfaces are not built yet; taking a patch down is a SQL statement by hand until that effort is designed. Support means being invited like anyone else; a customer-support role is not designed. **Suspension** is the operator's act on a whole company — nothing serves, nothing publishes, data kept — and is also where a company lands when it runs out of credits and cannot top up. Deleting a company is its admin's act, with a recovery window; the handle is released only after it.
+The **operator** — Patchy, running the platform — is not a company role and holds no company powers. Its future powers are platform-shaped: company lifecycle, quotas, and moderation — taking a patch off its address, never acting inside the company. None of those surfaces is built; disabling a patch is a SQL statement by hand until that effort is designed. Support means being invited like anyone else; a customer-support role is not designed. **Suspension** will stop a whole company's serving and publishing while keeping its data, including when it runs out of credits and cannot top up. Company deletion by its admin, its recovery window and the eventual release of the handle are future work too.
 
-Its surfaces are a separate login and separate dashboards, never a company in the product and never in the `patchy` CLI.
+The operator will use its own login and dashboards, never a company in the product and never the `patchy` CLI.
 
 ## Identity and access
 
@@ -120,15 +128,15 @@ Log in once, and every patch you have access to opens when someone sends you its
 
 ### Signing in
 
-A person signs in with **Google**, **Microsoft**, or a **code sent to their email**. There are no passwords — every other route gives Patchy nothing to protect and no reset flow to run. Signing in produces one session that is good across all of Patchy Cloud: a patch at `acme/sales/pipeline` and the portal that lists it are the same login. A link to a patch opened without a session shows the login door, and the door lands you back on the patch (the tier decision already placed the door in front of the page at every tier).
+A person signs in with **Google**, **Microsoft**, or a **code sent to their email**, through Clerk's Account Portal. There are no passwords — every other route gives Patchy nothing to protect and no reset flow to run. One Clerk session opens the company's patches and first-party pages: a company link opened without a session shows the login door, whose Sign in link returns the person to that patch. A public patch needs no sign-in. The future portal and higher-runtime patches use the same door.
 
-A company that wants its own identity provider turns on **SSO**: Patchy flips the flag for the company, and the company's admin sets up SAML or OIDC against their IdP themselves — Patchy never handles the IdP credentials. SSO is enforced on the company's verified domain, so once it is on, everyone at `acme.com` signs in through Acme's IdP and nothing else. SSO is a paid feature; the price is a pricing question, not a design one.
+Company **SSO** is future work: Patchy will enable it for a company, and its admin will set up SAML or OIDC against their IdP themselves — Patchy never handles the IdP credentials. SSO will be enforced on the company's verified domain, so everyone at `acme.com` signs in through Acme's IdP and nothing else. SSO is intended as a paid feature; the price is a pricing question, not a design one.
 
 ### Getting into a company
 
-There is no person without a company. A sign-in with no company behind it lands on **create or join**: either the person's work-email domain has been verified by an existing company and they join it, or they create a company of their own — which is the full onboarding, card included, because a company is the unit that pays.
+There is no Patchy user without a company, but a Clerk session may exist before that membership does. A sign-in with no company behind it lands on **create-or-join**, which names the email it checked: choose **Join** on one of the live invitations for that email, or, without any invitations, create a company with a name and handle. A person on the wrong account can use **Not you? Sign out** rather than accidentally create a company for it.
 
-**Invite** is the default way in: an admin invites an email address, the person signs in, they are in. An admin may also verify the company's **domain** — proven by email, never a consumer domain like `gmail.com`, and one domain belongs to one company — after which anyone signing in with an `@acme.com` work identity joins Acme automatically. Verifying a domain never stops inviting: a contractor on another domain is invited like anyone else.
+**Invite** is the default way in: an admin invites an email address with a role, the person signs in, checks the company and chooses **Join**. Joining consumes that invitation and creates the user together, so a user always belongs to exactly one company.
 
 Today Clerk sends the invitation email and Patchy owns the invitation, which
 does not expire. The person signs in and chooses **Join** on create-or-join;
@@ -136,31 +144,33 @@ several companies may invite one address, with at most one pending invite per
 company. Admins can revoke or resend; failed email delivery keeps the invitation
 and tells the admin to resend.
 
-A user is in **exactly one company**, and the rule is hard. Inviting someone who is already in another company is refused; they must leave that company first. Someone who created a company of one and is then invited (or whose domain a real company verifies) must either delete that company or add someone else and leave it — its patches do not come along. Merging a company of one into a company is not designed. Agencies and consultants who need several companies were deliberately deferred with the company decision.
+A user is in **exactly one company**, and the rule is hard. An invitation to an email already belonging to any user is refused, and a person who joins one company cannot then consume another company's invitation. Leaving or deleting a company is not offered today.
+
+Later, an admin may verify the company's **domain** — proven by email, never a consumer domain like `gmail.com`, and one domain belonging to one company — after which a work identity on that domain will join it automatically. Invitations will still admit contractors from other domains. Someone with a company of one will need to delete it or add someone else and leave before joining another; its patches will not move with them. Those exits, domain verification and full billing onboarding remain future work. Company merging and multiple memberships for agencies or consultants are not designed.
 
 ### Roles
 
-Two: **member** and **admin**. **Everyone in a company builds** — a member publishes patches with no gate and no permission to ask, because that is the point of the product. Admin adds running the company: invites, groups, domain and SSO, company connections, and reassigning a patch's owner. A company always has at least one admin and the last cannot demote themself. There is no builder role and no viewer role; if a company ever wants "can't publish", that is a setting to add, not a third role.
+Two: **member** and **admin**. **Everyone in a company builds** — a member publishes patches with no gate and no permission to ask, because that is the point of the product. Today admin adds invitations, role changes, deactivation and reactivation; groups, domain and SSO, company connections and patch reassignment will come with those features. A company always has at least one active admin, who can neither be demoted nor deactivated. There is no builder role and no viewer role; if a company ever wants "can't publish", that is a setting to add, not a third role.
 
 ### Access to a patch
 
-Who may **open** a patch is its sharing scope: the owner plus named users, one group, the whole company, or — by explicit choice — anyone with the link. Who may **change** a patch is its **owner** alone: publish a version, roll back, change the scope, retire, delete. There are no editors. When two people want to work on one patch, the repo is where they collaborate, and the owner publishes; when the owner is away, an admin reassigns ownership.
+Who may **open** a patch is its sharing scope: today the whole company or, by explicit choice, anyone with the link. Who may **change** it is its **owner** alone: publish a version, change sharing or delete. There are no editors, and admin status grants no extra patch-write permission. Owner-plus-named-users and group sharing, rollback, retirement and admin reassignment remain future work; when two people work on one patch, the owner publishes their shared local work.
 
-**Admins see everything.** An admin has every patch in the company in view, owner-only ones included, and can act on any of them. The company owns what is built in it; "owner-only" is a sharing default, not a secret from the company. Making that more nuanced is a later decision.
+**Admins will see everything.** The intended admin view includes every patch in the company, owner-only ones included, with the ability to manage it or reassign its owner. That view and reassignment are not offered today. The company owns what is built in it; future owner-only sharing is not a secret from the company. Making that more nuanced is a later decision.
 
 Across the company line there is nothing but **public**: a patch is inside the company or it is anyone-with-the-link. Guests — a named outsider with a login — are not a thing Patchy does yet.
 
-Today a published patch is either company-scoped or explicitly public. A public patch opens without a session, but a company patch has three outcomes: an active colleague gets the page; a signed-out reader gets the login door with one **Sign in** link, then returns to the patch; a signed-in reader from another company gets the same "no such patch" as a missing link, confirming nothing. A signed-in person without a company goes through create-or-join with the patch as the return destination; a deactivated user sees the deactivated page instead of a sign-in loop. When owner-only sharing returns, a colleague outside that narrower scope will see "you don't have access to this patch", who owns it, and **request access**; that state is not offered today.
+Today a published patch is either company-scoped or explicitly public. A public patch opens without a session, but a company patch has three outcomes: an active colleague gets the page; a signed-out reader gets a 401 login door with one **Sign in** link rather than a redirect; a signed-in reader from another company gets the same 404 as a missing link, confirming nothing. A signed-in person without a company goes through create-or-join with the patch as the return destination; a deactivated user sees a 403 deactivated page instead of a sign-in loop. The door admits browser sessions, never machine tokens. When owner-only sharing is built, a colleague outside that narrower scope will see "you don't have access to this patch", who owns it, and **request access**; that state is not offered today.
 
 ### Machines and tokens
 
-A person's agent works on a machine — their laptop, a server, later a sandbox Patchy runs — and that machine needs to act as them. `patchy login` does it: the CLI prints a URL and a short code (as JSON under `--json`, so the agent relays both and waits), the person opens the URL in a browser they are already signed into, **sees the same code and confirms it is the one on their terminal**, and names the machine on a first login — "allison's macbook". The CLI receives a **machine token** and saves it on the machine, outside any project tree. The confirmation step, not the code entry, is what defeats the phishing that hit device logins elsewhere: someone who never ran `patchy login` has no code to match. The device flow is the one login route for now; a browser-on-the-same-machine fast path can come later.
+A person's agent works on a machine — their laptop, a server, later a sandbox Patchy runs — and that machine needs to act as them. `patchy login` prints a URL and a short code for the agent to relay; it does not open a browser. The person opens the URL in their own signed-in browser, **checks that the displayed code is the one on their terminal**, and chooses a machine name — "allison's macbook" — before confirming, or denies a login they did not start. The code lasts ten minutes and is confirmed, never typed into a page. Confirmation authorizes the login; the terminal's poll mints the **machine token** once and saves it in the CLI's state dir, outside the project tree by default. An abandoned confirmation mints nothing. Device login is the only machine-login route today; a same-machine browser shortcut may come later.
 
-A machine token is **the user's**, one per machine, shared by every agent on that machine — Claude Code now and Codex an hour later use the same one, under the same name. Re-authenticating keeps the name. The token is Patchy's own, not the identity provider's: publishing never waits on a third party, and the token dies in the same act as everything else the user holds. It expires **90 days** after login and **30 days** after its last use, whichever comes first; a busy builder signs in once a quarter, a laptop left in a drawer stops being a credential on its own. Every version records the token that published it, so "which machine — which agent — did this" is always answerable without an agent ever being a principal.
+A machine token is **the user's**, shared by every agent using that machine's saved login — Claude Code now and Codex an hour later use the same credential and name. Re-authenticating offers the old name and replaces the previous key only when the completing poll mints for the same user; until then the old key keeps working. The token is Patchy's own, so publishing does not call Clerk. It expires **90 days** after minting or after **30 idle days**, whichever comes first. Every version records its creating machine token, so the responsible machine remains traceable after revocation; agents sharing that token are not separate identities.
 
 **Your machines** is the page that lists a user's live tokens by name, creation, last use and expiry, revokes one or all, and signs the browser out. Deactivating a user revokes every token and ends their access on the next request; ending access in open tier 1 and tier 2 patches comes with those runtimes. CI will hold a user-owned token set through `PATCHY_API_TOKEN` when that flow is built; Your machines offers no create or rename action today. There is no company-owned or non-human token kind, so everything published has a human owner. Company-owned tokens for CI that is nobody's come back when someone needs them.
 
-**First publish is login, then upload.** `patchy login --json` returns the URL, code and next command for the agent to relay; the agent never opens a browser and finishes with `patchy login --complete`. A person at a real terminal runs the same login command and waits. Confirmation records the person's answer; the terminal's poll creates the machine token exactly once and saves the publishing key locally. `patchy logout` forgets it before courtesy revocation, while browser sign-out is separate. The dev loop's seeded key works without login, but a saved login outranks it; `PATCHY_API_TOKEN` overrides both.
+**First publish is login, then upload.** Machine logout forgets its saved login even if revocation cannot complete; it does not sign the browser out. Browser sign-out remains available before company membership and after deactivation. Commands, credential precedence and output are defined in [the CLI contract](./adr/ADR-0004-cli-contract-for-agents.md).
 
 ### Who's who
 
@@ -169,10 +179,12 @@ A machine token is **the user's**, one per machine, shared by every agent on tha
 - **Agent** — software acting for a user, with that user's machine token. Never a who, always a how; it is indistinguishable from its user except by the token's machine name.
 - **Member**, **admin** — the two roles a user has in the company.
 - **Owner** — the one user a patch belongs to; the only one who changes it.
-- **Viewer** — the person who has a patch open; from tier 1 up, the identity patch code acts as. A tier 0 page has a **reader** instead, because a page that runs nothing cannot act for anyone.
+- **Viewer** — the active signed-in user, company and role that Auth establishes for a first-party page or a company patch's door, without a machine credential. From tier 1 up, patch code will act within that viewer's permissions; an anonymous public reader has no such identity.
 - **Operator** — Patchy, running the platform. Platform powers only, never a role inside a company, and never the word for whoever drives the CLI — that is the agent, the CLI's primary **driver**.
 
 ## Integrations
+
+This layer is not built yet. The rest of this section records its intended shape.
 
 An **integration** is a capability Patchy ships — Salesforce, Gmail, Postgres — built and maintained by Patchy, the same for every company. What a company holds is a **connection**: the live, credentialed instance of one. That distinction was drawn with [Companies](#integrations-and-connections); this section is the layer itself — how a connection comes to exist, how a patch declares and uses one, and what patch code is actually handed.
 

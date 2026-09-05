@@ -1,27 +1,27 @@
 # Publishing
 
-The `@patchy/cli` package and its bundled skill — the tool agents use to put pages up. An agent is the primary driver and the CLI's output is its interface, so every message is written to be read by an agent first and what an agent sees is a written contract ([ADR-0004](../../docs/adr/ADR-0004-cli-contract-for-agents.md)). Humans are not excluded: developers touching the cloud directly do drive it, so the human conveniences (completions, the wizard) stay, as long as they never change what an agent sees. The CLI's word for the thing it publishes is _patch_, same as the wire and the [Patches](../patches/CONTEXT.md) glossary; _draft_ is retired.
+The path agents use to publish and manage patches for a user, through the `patchy` CLI and its bundled skill. An agent is the primary driver, with the same command contract available to a person at a terminal; the product's built unit is defined in [Patches](../patches/CONTEXT.md).
 
 ## Language
 
 **Publishing**:
-The flow from a local file to a live patch and a link announced with its [sharing scope](../patches/CONTEXT.md): signed-in colleagues for `company`, anyone with the link for `public`. A new patch defaults to the company; publishing an update preserves its scope unless the owner explicitly changes it.
+The flow from a local file to a live patch and a link announced with its [sharing scope](../patches/CONTEXT.md). It includes choosing the instance and establishing which user's publishing key the machine holds.
 _Avoid_: deployment, posting
 
 **Instance**:
-The Patchy Cloud server patches are published to, identified by its API URL: the deployment, or the `pnpm dev` instance of a checkout. The CLI bakes in no address for the deployment; the URL is always supplied by whoever is publishing — a flag, the dev env, the environment, or saved config, in that order — and the built-in fallback is only a server running locally from this repo. A token and a cached patch each belong to exactly one instance. Resolved once per command by the `Instance` service, which also remembers its **source**.
+The Patchy Cloud deployment or local development server a command targets, identified by its API URL. Credentials and cached patches belong to exactly one instance; target selection follows [ADR-0004](../../docs/adr/ADR-0004-cli-contract-for-agents.md).
 _Avoid_: the server (ambiguous with the hosting codebase), host, backend, your own instance (there is one deployment; the rest are dev instances)
 
 **Dev env**:
-The `.local/dev/env` a `pnpm dev` writes in a worktree — the instance URL and the seeded token. Found by walking up from the working directory and ranked above `PATCHY_API_URL`, so a checkout with a running dev instance publishes to it with nothing set and can never publish somewhere remote by accident.
+The local instance information a running dev loop makes available to the CLI: its URL and seeded publishing key. It makes a worktree target its own instance unless the driver explicitly chooses another.
 _Avoid_: dotenv, the env file
 
 **Exit-code ladder**:
-The contract an agent branches on: 0 ok, 1 `local` (fixable without the network), 2 `rejected` (the instance answered and said no), 3 `unreachable` (no usable answer), 130 interrupted, nothing else. Every failure is a `CliError` whose **kind** names its rung; the kind also rides in the `--json` failure document.
+The contract an agent branches on: 0 success, 1 locally fixable, 2 refused by the instance, 3 no usable answer, 130 interrupted. The complete output and failure contract lives in [ADR-0004](../../docs/adr/ADR-0004-cli-contract-for-agents.md).
 _Avoid_: error code (ambiguous with the wire's `code`), status (ambiguous with HTTP and with the probe)
 
 **State dir**:
-The per-user directory where the CLI keeps everything it remembers between runs: instance choice, credentials, pending device logins in `device-login.json`, the patch cache, and the default style.
+The home for the CLI's remembered instance choice, credentials, pending login, patch cache and default style. Shared per user by default, it can be isolated for a development check.
 _Avoid_: config directory, dotfiles
 
 **Default style**:
@@ -29,11 +29,11 @@ The user-level style preference captured during onboarding and kept in the state
 _Avoid_: house style (a project's own style, which overrides it), theme, template
 
 **Login handoff**:
-The URL, code and next command that `patchy login` returns for an agent to relay to the person confirming the machine in their own browser. The agent never opens that browser; it resumes with `patchy login --complete`, while a person running the command at a real terminal waits in one command.
+The URL, code and next command that `patchy login` returns for an agent to relay to the person confirming the machine in their own browser. The agent never opens that browser; it completes the pending login after the person's answer.
 _Avoid_: prompt, browser login
 
 **Sign-in**:
-The person's browser session, opened with Google, Microsoft or an emailed code, which lets them read company patches and confirm a login handoff. Signing the browser out ends that session; logging the machine out forgets its publishing key, not the browser's sign-in.
+The person's act of entering a browser [session](../auth/CONTEXT.md) with Google, Microsoft or an emailed code. It enables company-page reading and device-login confirmation, independently of whether the machine holds a publishing key.
 _Avoid_: authentication (in user-facing copy), publishing key (a machine's credential, not a browser session)
 
 **Driver**:
@@ -49,16 +49,15 @@ The optional, user-requested first-time setup conversation — establish where t
 _Avoid_: signup, registration, setup wizard
 
 **Setup prompt**:
-The copy-paste block in the README that a user hands their agent to get started: install the skill, run onboarding through to the welcome patch, and establish the "publish this with patchy" habit. Its onboarding sentence is the sole primary trigger — installing the skill runs nothing by itself. Written to be readable by the human pasting it, so it doubles as a plain description of what they are authorizing.
+The copy-paste request a person gives their agent to install the skill, complete onboarding and publish the welcome patch. It authorizes that first-time setup explicitly; installing the skill alone runs nothing.
 _Avoid_: install snippet (older internal name), install command (only one of its parts)
 
 **Publishing key**:
-The user-facing name for the user-owned machine token that lets this machine publish and manage its user's patches; a login saves it on this machine. Replacing or revoking a key never changes patch ownership.
+The user-facing name for the [machine token](../auth/CONTEXT.md), not a second kind of credential. Copy addressed to the person says publishing key; the domain and wire use machine token.
 _Avoid_: token (in user-facing copy), password, account
 
 **Patch cache**:
 The per-instance record linking a local file to the patch it produced, so republishing the same file updates that patch instead of creating a new one, and sharing or deleting by file finds that patch. A deleted patch is forgotten.
-_Avoid_: draft cache
 _Avoid_: upload history, manifest
 
 **Onboarding probe**:
