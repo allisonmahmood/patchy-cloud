@@ -228,22 +228,260 @@ describe("the exit-code ladder", async () => {
   });
 });
 
-describe("patchy auth set", async () => {
-  it("saves a token through share's recovery command under the resolved instance, never echoing it", async () => {
+const pendingLogin = {
+  deviceCode: "private-device-secret",
+  userCode: "BCDF-GHJK",
+  verificationUrl: "http://instance.test/login/device?code=BCDF-GHJK",
+  verificationUrlBare: "http://instance.test/login/device",
+  interval: 5,
+  expiresAt: "2099-01-01T00:00:00.000Z"
+};
+
+describe("patchy login", () => {
+  it("hands off without exposing the device secret and resumes the same login", async () => {
+    const instance = await stubInstance((request, respond) => {
+      if (request.url === "/api/login/device") {
+        return respond(201, {
+          ok: true,
+          deviceCode: "private-device-secret",
+          userCode: "BCDF-GHJK",
+          verificationUrl: "http://instance.test/login/device?code=BCDF-GHJK",
+          verificationUrlBare: "http://instance.test/login/device",
+          interval: 5,
+          expiresAt: "2099-01-01T00:00:00.000Z"
+        });
+      }
+      respond(200, { ok: true, status: "pending" });
+    });
+    const options = { stateDir: tempDir(), env: { PATCHY_API_URL: instance.url } };
+    const first = await runCli(["login", "--json"], options);
+    expect(first.status).toBe(0);
+    expect(first.stderr).toBe("");
+    expect(JSON.parse(first.stdout)).toMatchObject({
+      status: "awaiting_confirmation",
+      userCode: "BCDF-GHJK",
+      next: "patchy login --complete BCDF-GHJK",
+      notWaitingBecause: "--json"
+    });
+    expect(first.stdout).not.toContain("private-device-secret");
+    const resumed = await runCli(["login", "--json"], options);
+    expect(resumed.status).toBe(0);
+    expect(JSON.parse(resumed.stdout)).toMatchObject({ userCode: "BCDF-GHJK" });
+    expect(instance.requests.filter((r) => r.url === "/api/login/device")).toHaveLength(1);
+    const pending = await runCli(["login", "--complete", "--wait", "0", "--json"], options);
+    expect(pending.status).toBe(0);
+    expect(JSON.parse(pending.stdout)).toMatchObject({
+      status: "pending",
+      next: "patchy login --complete BCDF-GHJK"
+    });
+  });
+
+  it("keeps an explicit instance in next even when a worktree selects another instance", async () => {
+    const instance = await stubInstance((request, respond) =>
+      request.url === "/api/login/device"
+        ? respond(201, { ok: true, ...pendingLogin })
+        : respond(200, { ok: true, status: "pending" })
+    );
+    const worktree = tempDir();
+    mkdirSync(path.join(worktree, ".local", "dev"), { recursive: true });
+    writeFileSync(
+      path.join(worktree, ".local", "dev", "env"),
+      "PATCHY_API_URL=http://127.0.0.1:1\nPATCHY_API_TOKEN=seed\n"
+    );
+    const options = { stateDir: tempDir(), cwd: worktree };
+    const first = await runCli(["login", "--api-url", instance.url, "--json"], options);
+    expect(first.status).toBe(0);
+    const next = JSON.parse(first.stdout).next as string;
+    const resumed = await runCli(
+      next.slice("patchy ".length).replaceAll("'", "").split(" ").concat("--wait", "0", "--json"),
+      options
+    );
+    expect(resumed.status).toBe(0);
+    expect(JSON.parse(resumed.stdout)).toMatchObject({
+      status: "pending",
+      userCode: pendingLogin.userCode
+    });
+    expect(instance.requests.at(-1)?.url).toBe("/api/login/device/token");
+    const logout = await runCli(["logout", "--api-url", instance.url, "--json"], options);
+    expect(logout.status).toBe(0);
+    expect(JSON.parse(logout.stdout)).toMatchObject({
+      warnings: ["This worktree's dev instance still publishes with its seeded key"]
+    });
+  });
+
+  it("refuses a foreign code without polling or losing the live handoff", async () => {
     const instance = await stubInstance((_, respond) => respond(500, {}));
-    const missing = await runCli([
-      "share",
-      "--patch",
-      "abcdefghijkl",
-      "public",
-      "--api-url",
-      `${instance.url}/`,
-      "--json"
-    ]);
-    const recovery = (JSON.parse(missing.stderr).error as string).match(/patchy (.+)$/)?.[1];
-    if (recovery === undefined) throw new Error("No recovery command in local error.");
-    const result = await runCli([...recovery.split(" "), "--token-stdin"], {
-      stateDir: missing.stateDir,
+    const dir = tempDir();
+    const saved = { hosts: { [instance.url]: pendingLogin } };
+    writeFileSync(path.join(dir, "device-login.json"), JSON.stringify(saved));
+    const result = await runCli(["login", "--complete", "XXXX-XXXX", "--json"], {
+      stateDir: dir,
+      env: { PATCHY_API_URL: instance.url }
+    });
+    expect(result.status).toBe(1);
+    expect(JSON.parse(result.stderr)).toMatchObject({
+      kind: "local",
+      error: expect.stringContaining(`has code ${pendingLogin.userCode}, not XXXX-XXXX`)
+    });
+    expect(instance.requests).toHaveLength(0);
+    expect(readJson(path.join(dir, "device-login.json"))).toEqual(saved);
+  });
+
+  it.each([
+    ["denied", "The login was denied in the browser. Nothing was saved. Run: patchy login"],
+    [
+      "expired",
+      "The login expired before it was confirmed (codes last ten minutes). Run: patchy login"
+    ],
+    ["unknown", null]
+  ])(
+    "reports the instance's %s answer even after local expiry, preserving the old key",
+    async (code, copy) => {
+      const instance = await stubInstance((_, respond) =>
+        respond(410, { ok: false, error: "Gone", code })
+      );
+      const dir = tempDir();
+      writeFileSync(
+        path.join(dir, "device-login.json"),
+        JSON.stringify({
+          hosts: { [instance.url]: { ...pendingLogin, expiresAt: "2000-01-01T00:00:00.000Z" } }
+        })
+      );
+      const credential = {
+        hosts: { [instance.url]: { token: "previous-key", source: "auth-set" } }
+      };
+      writeFileSync(path.join(dir, "credentials.json"), JSON.stringify(credential));
+      const result = await runCli(["login", "--complete", "--json"], {
+        stateDir: dir,
+        env: { PATCHY_API_URL: instance.url }
+      });
+      expect(result.status).toBe(2);
+      expect(JSON.parse(result.stderr)).toEqual({
+        ok: false,
+        kind: "rejected",
+        error:
+          copy ??
+          `No login is pending for code ${pendingLogin.userCode} on ${instance.url}; it may already have been reported. Run: patchy login`
+      });
+      expect(instance.requests).toHaveLength(1);
+      expect(readJson(path.join(dir, "device-login.json"))).toEqual({ hosts: {} });
+      expect(readJson(path.join(dir, "credentials.json"))).toEqual(credential);
+    }
+  );
+
+  it("keeps a completed key when the subsequent identity request is unreachable", async () => {
+    const instance = await stubInstance((request, respond) =>
+      request.url === "/api/login/device/token"
+        ? respond(200, {
+            ok: true,
+            status: "complete",
+            token: "one-time-key",
+            machine: identity.machine,
+            expiresAt: "2099-01-01T00:00:00.000Z"
+          })
+        : respond(503, {})
+    );
+    const dir = tempDir();
+    writeFileSync(
+      path.join(dir, "device-login.json"),
+      JSON.stringify({ hosts: { [instance.url]: pendingLogin } })
+    );
+    const options = { stateDir: dir };
+    const result = await runCli(
+      ["login", "--complete", "--api-url", instance.url, "--json"],
+      options
+    );
+    expect(result.status).toBe(3);
+    expect(result.stdout + result.stderr).not.toContain("one-time-key");
+    expect(JSON.parse((await runCli(["status"], options)).stdout)).toMatchObject({
+      instanceUrl: instance.url,
+      hasToken: true,
+      tokenSource: "login"
+    });
+    expect(readJson(path.join(dir, "device-login.json"))).toEqual({ hosts: {} });
+  });
+});
+
+describe("patchy logout", () => {
+  it("forgets local state before a courtesy refusal and leaves environment and other instances alone", async () => {
+    const dir = tempDir();
+    const other = { token: "other-key", source: "auth-set" };
+    const instance = await stubInstance((request, respond) => {
+      expect(request.authorization).toBe("Bearer stored-key");
+      expect(readJson(path.join(dir, "credentials.json"))).toEqual({
+        hosts: { "http://other.test": other }
+      });
+      expect(readJson(path.join(dir, "device-login.json"))).toEqual({ hosts: {} });
+      respond(401, { ok: false, error: "Missing or invalid API token." });
+    });
+    writeFileSync(
+      path.join(dir, "credentials.json"),
+      JSON.stringify({
+        hosts: {
+          [instance.url]: { token: "stored-key", source: "auth-set" },
+          "http://other.test": other
+        }
+      })
+    );
+    writeFileSync(
+      path.join(dir, "device-login.json"),
+      JSON.stringify({ hosts: { [instance.url]: pendingLogin } })
+    );
+    const options = {
+      stateDir: dir,
+      env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "env-key" }
+    };
+    const result = await runCli(["logout", "--json"], options);
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: true,
+      revoked: true,
+      warnings: [expect.stringContaining("PATCHY_API_TOKEN")]
+    });
+    expect(result.stdout).not.toContain("stored-key");
+    expect(JSON.parse((await runCli(["status"], options)).stdout)).toMatchObject({
+      hasToken: true,
+      tokenSource: null
+    });
+  });
+
+  it("succeeds locally when revocation is unreachable, and whoami then requires login", async () => {
+    const dir = tempDir();
+    const url = "http://127.0.0.1:1";
+    writeFileSync(
+      path.join(dir, "credentials.json"),
+      JSON.stringify({ hosts: { [url]: { token: "stored-key" } } })
+    );
+    writeFileSync(
+      path.join(dir, "device-login.json"),
+      JSON.stringify({ hosts: { [url]: pendingLogin } })
+    );
+    const options = { stateDir: dir, env: { PATCHY_API_URL: url } };
+    const result = await runCli(["logout", "--json"], options);
+    expect(result).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(result.stdout)).toEqual({
+      ok: true,
+      instanceUrl: url,
+      revoked: false,
+      warnings: [
+        "Logged out on this machine. The key could not be revoked; it expires on its own after 30 idle days, or revoke it now on Your machines."
+      ]
+    });
+    const whoami = await runCli(["whoami", "--json"], options);
+    expect(whoami.status).toBe(1);
+    expect(JSON.parse(whoami.stderr)).toMatchObject({
+      kind: "local",
+      error: expect.stringContaining("Run: patchy login")
+    });
+    expect(readJson(path.join(dir, "device-login.json"))).toEqual({ hosts: {} });
+  });
+});
+
+describe("patchy auth set", async () => {
+  it("saves keys per resolved instance without echoing them", async () => {
+    const instance = await stubInstance((_, respond) => respond(500, {}));
+    const result = await runCli(["auth", "set", "--api-url", instance.url, "--token-stdin"], {
       input: "pp_secret_one\n"
     });
     expect(result).toMatchObject({
@@ -811,7 +1049,7 @@ describe("patchy delete", async () => {
     // With no key the deletion is refused locally.
     const keyless = await runCli(["delete", "--patch", "abcdefghijkl", "--api-url", instance.url]);
     expect(keyless.status).toBe(1);
-    expect(keyless.stderr).toContain(`patchy auth set --api-url ${instance.url}`);
+    expect(keyless.stderr).toContain("Run: patchy login");
     expect(instance.requests).toHaveLength(4);
   });
 });
