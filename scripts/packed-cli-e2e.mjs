@@ -18,6 +18,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
+import { tsImport } from "tsx/esm/api";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const cliPackageDir = path.join(repoRoot, "packages/cli");
@@ -2267,8 +2268,11 @@ async function startServerAttempt({ publicBaseUrl, objectDir, serverEntryPath })
   await maybeStartServerBindCollisionProbe(publicBaseUrl);
   throwIfSignalLatched();
 
+  const { clerkEnv } = await tsImport("../packages/auth/src/testing.ts", import.meta.url);
+
   const serverEnv = environment(
     {
+      ...clerkEnv(),
       PORT: new URL(publicBaseUrl).port,
       PATCHY_PUBLIC_BASE_URL: publicBaseUrl,
       PATCHY_MAX_HTML_BYTES: String(512 * 1024),
@@ -2278,6 +2282,7 @@ async function startServerAttempt({ publicBaseUrl, objectDir, serverEntryPath })
       PATCHY_AUTHENTICATED_UPLOAD_RATE_LIMIT_PER_MINUTE: "10000"
     },
     [
+      "CLERK_AUTHORIZED_PARTIES",
       "PATCHY_TRUST_PROXY",
       "AZURE_STORAGE_ACCOUNT",
       "AZURE_STORAGE_CONTAINER",

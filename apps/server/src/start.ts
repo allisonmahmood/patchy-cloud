@@ -11,6 +11,7 @@
 import { createServer } from "node:http";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
+import * as Config from "effect/Config";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -33,4 +34,16 @@ const server = Layer.effectDiscard(announce).pipe(
   Layer.provide(httpServer)
 );
 
-NodeRuntime.runMain(Layer.launch(server));
+// Check required settings before acquiring Postgres, so an unreachable database
+// cannot hide a missing Clerk key or public origin behind a connection error.
+NodeRuntime.runMain(
+  Effect.gen(function* () {
+    yield* Config.all([
+      Config.redacted("DATABASE_URL"),
+      Config.string("PATCHY_PUBLIC_BASE_URL"),
+      Config.string("CLERK_PUBLISHABLE_KEY"),
+      Config.redacted("CLERK_SECRET_KEY")
+    ]);
+    return yield* Layer.launch(server);
+  })
+);

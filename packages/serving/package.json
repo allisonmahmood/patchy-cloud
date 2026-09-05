@@ -21,6 +21,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@patchy/core": "workspace:*",
     "@patchy/patches": "workspace:*",
     "effect": "catalog:"
   },
