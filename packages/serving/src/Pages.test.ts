@@ -10,7 +10,9 @@ import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { AuthPages, Session } from "@patchy/auth";
+import { AuthPages, DeviceLogins, MachineTokens, Session } from "@patchy/auth";
+import { Analytics } from "@patchy/analytics";
+import { Limits } from "@patchy/limits";
 import {
   clerkEnv,
   signedInCookies,
@@ -52,7 +54,7 @@ const routes = Layer.mergeAll(
   AuthPages.layer,
   HttpRouter.middleware(servingHeaders, { global: true })
 );
-const services = Content.layer.pipe(
+const services = Layer.mergeAll(Content.layer, DeviceLogins.layer).pipe(
   Layer.provideMerge(
     Layer.mergeAll(
       Patches.layer,
@@ -60,6 +62,9 @@ const services = Content.layer.pipe(
       Session.layer,
       Companies.layer,
       Users.layer,
+      MachineTokens.layer,
+      Analytics.layerNoop,
+      Limits.layer,
       InviteMail.layerRecording
     )
   ),

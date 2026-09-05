@@ -7,6 +7,7 @@ export interface Page {
   readonly body: string;
   readonly status?: number;
   readonly styles?: string;
+  readonly heading?: string;
 }
 
 export interface SessionShell {
@@ -64,7 +65,7 @@ export function pageResponse(
       title: page.title,
       head,
       styles: page.styles,
-      body: `<main class="auth-card"><div class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</div><h1>${escapeHtml(page.title)}</h1>${page.body}</main>`
+      body: `<main class="auth-card"><div class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</div>${page.heading ?? `<h1>${escapeHtml(page.title)}</h1>`}${page.body}</main>`
     }),
     {
       contentType: "text/html",

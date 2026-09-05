@@ -1,11 +1,11 @@
 # Analytics
 
-The service every business moment the instance reports goes through. `packages/analytics` owns the event vocabulary, the PostHog layer and the no-op layer; Patches currently decides what is reported, and Auth's mint reporting returns with device login.
+The service every business moment the instance reports goes through. `packages/analytics` owns the event vocabulary, the PostHog layer and the no-op layer; Patches and Auth decide which moments are reported.
 
 ## Language
 
 **Analytics event**:
-One business moment the instance reports to itself: a patch created, updated, deleted, or expired; a machine token minted joins these when device login lands. Server-side and nothing else — a served patch carries no analytics JavaScript, so a **visit is never one**, and no event carries a reader's address, page content, a filename, or a URL; what ships is ids, sizes, counts and states. Reporting never fails a request: `track` swallows a backend failure into a log line. An instance with no key configured reports nothing, and that is the default: reporting is something an operator switches on, never something an instance starts doing on its own.
+One business moment the instance reports to itself: a patch created, updated, deleted or expired, or a machine token minted. Server-side and nothing else — a served patch carries no analytics JavaScript, so a **visit is never one**, and no event carries a reader's address, page content, a filename, or a URL; what ships is ids, sizes, counts and states. Reporting never fails a request: `track` swallows a backend failure into a log line. An instance with no key configured reports nothing, and that is the default: reporting is something an operator switches on, never something an instance starts doing on its own.
 _Avoid_: telemetry, tracking, pageview, metric (an analytics event names what happened in the domain, not what the process measured)
 
 **Principal of an event**:

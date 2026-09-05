@@ -77,6 +77,52 @@ export class LoggedOut extends Schema.Class<LoggedOut>("LoggedOut")({
   alreadyRevoked: Schema.Boolean
 }) {}
 
+/** Begin a browser-confirmed login for this machine; no bearer is required. */
+export class StartDeviceLoginRequest extends Schema.Class<StartDeviceLoginRequest>(
+  "StartDeviceLoginRequest"
+)({
+  machineNameHint: Schema.String,
+  previousMachineTokenId: Schema.optionalKey(Schema.String)
+}) {}
+
+export class DeviceLoginStarted extends Schema.Class<DeviceLoginStarted>("DeviceLoginStarted")(
+  {
+    ok: Schema.Literal(true),
+    deviceCode: Schema.String,
+    userCode: Schema.String,
+    verificationUrl: Schema.String,
+    verificationUrlBare: Schema.String,
+    interval: Schema.Literal(5),
+    expiresAt: Schema.String
+  },
+  { httpApiStatus: 201 }
+) {}
+
+export class PollDeviceLoginRequest extends Schema.Class<PollDeviceLoginRequest>(
+  "PollDeviceLoginRequest"
+)({
+  deviceCode: Schema.String
+}) {}
+
+/** The terminal receives the plaintext token only on the one completing poll. */
+export const DeviceLoginPoll = Schema.Union([
+  Schema.Struct({
+    ok: Schema.Literal(true),
+    status: Schema.Literals(["pending", "slow_down"])
+  }),
+  Schema.Struct({
+    ok: Schema.Literal(true),
+    status: Schema.Literal("complete"),
+    token: Schema.String,
+    machine: Schema.Struct({ id: Schema.String, name: Schema.String }),
+    expiresAt: Schema.String
+  })
+]);
+
+export const DeviceLoginGone = failure(410, {
+  code: Schema.Literals(["expired", "denied", "unknown"])
+});
+
 // --- patches --------------------------------------------------------------
 
 /** Who may open a patch: signed-in company members, or anyone with the link. */

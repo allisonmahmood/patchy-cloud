@@ -7,6 +7,10 @@ import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServer from "effect/unstable/http/HttpServer";
 import { CookieJar } from "tough-cookie";
 import { Companies, InviteMail, Users } from "@patchy/companies";
+import { Analytics } from "@patchy/analytics";
+import { Limits } from "@patchy/limits";
+import * as DeviceLogins from "./DeviceLogins.js";
+import * as MachineTokens from "./MachineTokens.js";
 import * as Testing from "@patchy/sql/testing";
 import * as AuthPages from "./AuthPages.js";
 import * as Session from "./Session.js";
@@ -33,6 +37,10 @@ const layer = HttpRouter.serve(AuthPages.layer, {
   Layer.provideMerge(
     Layer.mergeAll(localRevocation, Companies.layer, Users.layer, InviteMail.layerRecording)
   ),
+  Layer.provideMerge(DeviceLogins.layer),
+  Layer.provideMerge(MachineTokens.layer),
+  Layer.provide(Analytics.layerNoop),
+  Layer.provide(Limits.layer),
   Layer.provide(Testing.layer()),
   Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(clerkEnv())))
 );

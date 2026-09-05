@@ -302,50 +302,6 @@ it.effect("enforces the configured authorized origin but accepts absent azp", ()
   }).pipe(Effect.provide(configured({ ...clerkEnv(), CLERK_AUTHORIZED_PARTIES: PUBLIC_BASE_URL })))
 );
 
-it.effect(
-  "expires every SDK cookie family at the setter's scopes, including parent-domain handshakes",
-  () =>
-    Effect.gen(function* () {
-      const session = yield* Session.Session;
-      const cleared = session.signOutCookies();
-      // Model browser identity: equal names at different Domain/Path do not replace each other.
-      const identity = (directive: string) => {
-        const [pair, ...attributes] = directive.split(";").map((part) => part.trim());
-        const domain = attributes.find((part) => part.startsWith("Domain=")) ?? "host-only";
-        const path = attributes.find((part) => part.startsWith("Path=")) ?? "Path=/";
-        return `${pair!.split("=")[0]}|${domain}|${path}`;
-      };
-      const jar = new Map<string, string>();
-      const suffix = cleared
-        .find((cookie) => cookie.startsWith(`${constants.Cookies.Session}_`))!
-        .split("=")[0]!
-        .slice(`${constants.Cookies.Session}_`.length);
-      for (const base of Object.values(constants.Cookies)) {
-        for (const name of [base, `${base}_${suffix}`]) {
-          const cookie = `${name}=present; Path=/`;
-          jar.set(identity(cookie), cookie);
-          if (
-            base === constants.Cookies.ClientUat ||
-            base === constants.Cookies.Handshake ||
-            base === constants.Cookies.HandshakeNonce
-          ) {
-            const scoped = `${name}=present; Domain=example.co.uk; Path=/`;
-            jar.set(identity(scoped), scoped);
-          }
-        }
-      }
-      for (const directive of cleared) {
-        assert.include(directive, "Max-Age=0");
-        jar.delete(identity(directive));
-      }
-      assert.deepStrictEqual([...jar.values()], []);
-    }).pipe(
-      Effect.provide(
-        configured({ ...clerkEnv(), PATCHY_PUBLIC_BASE_URL: "https://app.example.co.uk" })
-      )
-    )
-);
-
 for (const missing of ["CLERK_PUBLISHABLE_KEY", "CLERK_SECRET_KEY", "PATCHY_PUBLIC_BASE_URL"]) {
   it.effect(`refuses to construct without ${missing}`, () =>
     Effect.gen(function* () {

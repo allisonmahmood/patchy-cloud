@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Clerk's development cookie suffix is a SHA-1 of the public key.
+import { createHash } from "node:crypto";
+import { constants } from "@clerk/backend/internal";
 import { assert, it } from "@effect/vitest";
 import { CookieJar } from "tough-cookie";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -7,6 +10,10 @@ import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import { Companies, InviteMail, Users } from "@patchy/companies";
+import { Analytics } from "@patchy/analytics";
+import { Limits } from "@patchy/limits";
+import * as DeviceLogins from "./DeviceLogins.js";
+import * as MachineTokens from "./MachineTokens.js";
 import * as Testing from "@patchy/sql/testing";
 import { DEV_SEED } from "./seed.js";
 import * as AuthPages from "./AuthPages.js";
@@ -54,6 +61,10 @@ const services = Layer.mergeAll(
   Users.layer,
   InviteMail.layerRecording
 ).pipe(
+  Layer.provideMerge(DeviceLogins.layer),
+  Layer.provideMerge(MachineTokens.layer),
+  Layer.provide(Analytics.layerNoop),
+  Layer.provide(Limits.layer),
   Layer.provideMerge(Testing.layer()),
   Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env)))
 );
@@ -69,7 +80,7 @@ it.layer(services)("first-party pages in memory", (it) => {
       const defaultLogin = yield* send("/login");
       assert.include(
         yield* Effect.promise(() => defaultLogin.text()),
-        encodeURIComponent(`${origin}/company`)
+        encodeURIComponent(`${origin}/machines`)
       );
       for (const target of [
         "https://foreign.invalid/",
@@ -83,7 +94,7 @@ it.layer(services)("first-party pages in memory", (it) => {
         assert.strictEqual(response.status, 200);
         assert.include(
           yield* Effect.promise(() => response.text()),
-          encodeURIComponent(`${origin}/company`)
+          encodeURIComponent(`${origin}/machines`)
         );
       }
     })
@@ -233,18 +244,42 @@ it.layer(services)("first-party pages in memory", (it) => {
     })
   );
 
-  it.effect("refuses foreign and missing Origin even when Fetch Metadata claims same-origin", () =>
-    Effect.gen(function* () {
-      for (const route of ["/join", "/logout"]) {
-        for (const headers of [
-          { origin: "https://foreign.invalid" },
-          { "sec-fetch-site": "same-origin" }
-        ]) {
-          const response = yield* send(route, { method: "POST", headers });
-          assert.strictEqual(response.status, 403);
-          assert.strictEqual(response.headers.get("location"), null);
+  it.effect(
+    "refuses missing provenance and never lets Fetch Metadata override a foreign Origin",
+    () =>
+      Effect.gen(function* () {
+        for (const route of ["/join", "/logout"]) {
+          for (const headers of [
+            { origin: "https://foreign.invalid", "sec-fetch-site": "same-origin" },
+            {}
+          ]) {
+            const response = yield* send(route, { method: "POST", headers });
+            assert.strictEqual(response.status, 403);
+            assert.strictEqual(response.headers.get("location"), null);
+          }
         }
-      }
+      })
+  );
+
+  it.effect("accepts same-origin Fetch Metadata when a browser omits Origin", () =>
+    Effect.gen(function* () {
+      const response = yield* send("/join", {
+        method: "POST",
+        headers: {
+          cookie: cookie("user_fetch_metadata"),
+          "sec-fetch-site": "same-origin"
+        },
+        body: new URLSearchParams({
+          action: "create",
+          name: "Fetch Metadata",
+          handle: "fetch-metadata"
+        })
+      });
+      assert.strictEqual(response.status, 303);
+      assert.strictEqual(
+        (yield* (yield* Users.Users).findByClerkId("user_fetch_metadata"))?.name,
+        "Alex"
+      );
     })
   );
 
@@ -320,6 +355,10 @@ const localRevocation = Layer.effect(
 );
 it.layer(
   Layer.mergeAll(localRevocation, Companies.layer, Users.layer, InviteMail.layerRecording).pipe(
+    Layer.provideMerge(DeviceLogins.layer),
+    Layer.provideMerge(MachineTokens.layer),
+    Layer.provide(Analytics.layerNoop),
+    Layer.provide(Limits.layer),
     Layer.provideMerge(Testing.layer()),
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env)))
   )
@@ -338,6 +377,78 @@ it.layer(
       const login = yield* send(response.headers.get("location")!);
       assert.strictEqual(login.status, 200);
       const next = yield* send("/join");
+      assert.strictEqual(next.status, 401);
+    })
+  );
+
+  it.effect("applies logout response deletions to every Clerk setter scope in a browser jar", () =>
+    Effect.gen(function* () {
+      const publicUrl = "https://app.example.co.uk";
+      const sessionLayer = Layer.fresh(localRevocation).pipe(
+        Layer.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromUnknown({
+              ...env,
+              PATCHY_PUBLIC_BASE_URL: publicUrl
+            })
+          )
+        )
+      );
+      const suffix = createHash("sha1")
+        .update(env.CLERK_PUBLISHABLE_KEY!)
+        .digest("base64url")
+        .slice(0, 8);
+      const jar = new CookieJar();
+      const pairs = Object.fromEntries(
+        cookie("user_cookie_scopes")
+          .split("; ")
+          .map((pair) => {
+            const separator = pair.indexOf("=");
+            return [pair.slice(0, separator), pair.slice(separator + 1)];
+          })
+      );
+      for (const name of Object.values(constants.Cookies)) {
+        // Handshake cookies are populated after authentication: they are real
+        // pending handshakes, not credentials the verifier should accept here.
+        if (name === constants.Cookies.Handshake || name === constants.Cookies.HandshakeNonce)
+          continue;
+        for (const variant of [name, `${name}_${suffix}`]) {
+          jar.setCookieSync(`${variant}=${pairs[name] ?? "present"}; Path=/; Secure`, publicUrl);
+        }
+      }
+      jar.setCookieSync("clerk_active_context=sess_offline; Path=/; Secure", publicUrl);
+      const sessionCookie = jar.getCookieStringSync(`${publicUrl}/logout`);
+      for (const name of [
+        constants.Cookies.ClientUat,
+        constants.Cookies.Handshake,
+        constants.Cookies.HandshakeNonce
+      ]) {
+        for (const variant of [name, `${name}_${suffix}`]) {
+          for (const domain of ["", "; Domain=example.co.uk"]) {
+            jar.setCookieSync(
+              `${variant}=${pairs[name] ?? "present"}; Path=/${domain}; Secure`,
+              publicUrl
+            );
+          }
+        }
+      }
+      // The backend setter omits Path. A /login/device response defaults to /login.
+      jar.setCookieSync(
+        `${constants.Cookies.RedirectCount}=1; HttpOnly; Max-Age=2`,
+        `${publicUrl}/login/device`
+      );
+      jar.setCookieSync("preference=keep; Path=/", publicUrl);
+      const response = yield* send("/logout", post({}, sessionCookie, { origin: publicUrl })).pipe(
+        Effect.provide(sessionLayer)
+      );
+      assert.strictEqual(response.status, 303);
+      for (const directive of response.headers.getSetCookie())
+        jar.setCookieSync(directive, `${publicUrl}/logout`, { ignoreError: true });
+      for (const path of ["/", "/login/device", "/machines", "/company"])
+        assert.strictEqual(jar.getCookieStringSync(`${publicUrl}${path}`), "preference=keep");
+      const next = yield* send("/company", {
+        headers: { cookie: jar.getCookieStringSync(`${publicUrl}/company`) }
+      }).pipe(Effect.provide(sessionLayer));
       assert.strictEqual(next.status, 401);
     })
   );
