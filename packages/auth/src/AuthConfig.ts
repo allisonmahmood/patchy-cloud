@@ -26,3 +26,7 @@ export const mintRateLimitPerMinute = Config.int(
 export const mintsPerIpPerDay = Config.int("PATCHY_SELF_SERVICE_MINTS_PER_IP_PER_DAY").pipe(
   Config.withDefault(5)
 );
+
+
+/** Whether Clerk browser-session auth is enabled. On by default when CLERK_SECRET_KEY is set. */
+export const clerkEnabled = Config.boolean("PATCHY_CLERK_ENABLED").pipe(Config.withDefault(true));

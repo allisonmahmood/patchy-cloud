@@ -26,7 +26,8 @@
     "@patchy/core": "workspace:*",
     "@patchy/limits": "workspace:*",
     "@patchy/sql": "workspace:*",
-    "effect": "catalog:"
+    "effect": "catalog:",
+    "@clerk/backend": "^0.42.0"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
