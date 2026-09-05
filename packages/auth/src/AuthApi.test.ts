@@ -183,13 +183,19 @@ it.layer(layer)("auth group: anonymous device login", (it) => {
   );
 
   it.effect(
-    "returns a confirmed machine's usable replacement token once, then typed 410 unknown",
+    "returns the confirming user's company receipt and usable replacement token once, then typed 410 unknown",
     () =>
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.UTC(2026, 0, 1));
         const api = yield* client;
         const tokens = yield* MachineTokens.MachineTokens;
-        const previous = yield* tokens.mint({ userId: DEV_SEED.userId, name: "Old laptop" });
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`INSERT INTO companies (id, handle, name)
+          VALUES ('cmp_api_receipt', 'receipt-company', 'Receipt Company')`;
+        yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
+          VALUES ('usr_api_receipt', 'user_api_receipt', 'cmp_api_receipt',
+            'confirming@receipt.test', 'Confirming Person', 'member')`;
+        const previous = yield* tokens.mint({ userId: "usr_api_receipt", name: "Old laptop" });
         const started = yield* api.startDeviceLogin({
           payload: new StartDeviceLoginRequest({
             machineNameHint: "Laptop",
@@ -198,7 +204,7 @@ it.layer(layer)("auth group: anonymous device login", (it) => {
         });
         yield* (yield* DeviceLogins.DeviceLogins).confirm({
           userCode: started.userCode,
-          userId: DEV_SEED.userId,
+          userId: "usr_api_receipt",
           machineName: "Renamed laptop"
         });
         const payload = new PollDeviceLoginRequest({ deviceCode: started.deviceCode });
@@ -216,10 +222,20 @@ it.layer(layer)("auth group: anonymous device login", (it) => {
           status: "complete",
           token: complete.token,
           machine: complete.machine,
+          company: { handle: "receipt-company", name: "Receipt Company" },
+          user: { email: "confirming@receipt.test" },
           expiresAt: "2026-04-01T00:00:00.000Z"
         });
         const signedIn = yield* client.pipe(Effect.provide(bearer(complete.token)));
-        assert.deepStrictEqual((yield* signedIn.me()).machine, complete.machine);
+        const identity = yield* signedIn.me();
+        assert.strictEqual(identity.user.id, "usr_api_receipt");
+        assert.strictEqual(identity.company.id, "cmp_api_receipt");
+        assert.deepStrictEqual(complete.company, {
+          handle: identity.company.handle,
+          name: identity.company.name
+        });
+        assert.deepStrictEqual(complete.user, { email: identity.user.email });
+        assert.deepStrictEqual(identity.machine, complete.machine);
         const replaced = yield* client.pipe(Effect.provide(bearer(previous.token)));
         assert.deepStrictEqual(yield* replaced.me().pipe(Effect.flip), {
           ok: false,

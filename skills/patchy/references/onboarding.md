@@ -110,6 +110,9 @@ After relaying them, run the returned `next` command. It waits up to a minute;
 confirmation; the same link and code work until `<expiresAt>`."** Run `next`
 again when they are ready, rather than starting another code. Denied, expired
 or unknown is exit 2: relay the refusal, and start again only if they want to.
+An unanswered request at the wait deadline is exit 3 (`unreachable`), not
+confirmation still pending. The local login record is retained: retry the same
+completion command rather than starting another code.
 
 Only `status: "logged_in"` means the key is saved. Say:
 

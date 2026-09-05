@@ -79,6 +79,11 @@ it.layer(layer)("DeviceLogins", (it) => {
       if (result.status !== "complete") return;
       assert.strictEqual(result.machine.name, "Work laptop");
       assert.strictEqual(result.expiresAt, new Date(NOW + 5_000 + 90 * DAY).toISOString());
+      assert.deepStrictEqual(result.company, {
+        handle: DEV_SEED.companyHandle,
+        name: DEV_SEED.companyName
+      });
+      assert.deepStrictEqual(result.user, { email: "complete@device.test" });
       assert.strictEqual((yield* tokens.authenticate(result.token))?.user.id, userId);
       assert.deepStrictEqual(
         yield* sql`SELECT user_code FROM device_logins WHERE user_code = ${login.userCode}`,

@@ -369,7 +369,7 @@ describe("patchy login", () => {
     }
   );
 
-  it("keeps a completed key when the subsequent identity request is unreachable", async () => {
+  it("reports a saved login successfully without a follow-up identity request", async () => {
     const instance = await stubInstance((request, respond) =>
       request.url === "/api/login/device/token"
         ? respond(200, {
@@ -377,6 +377,8 @@ describe("patchy login", () => {
             status: "complete",
             token: "one-time-key",
             machine: identity.machine,
+            company: { handle: identity.company.handle, name: identity.company.name },
+            user: { email: identity.user.email },
             expiresAt: "2099-01-01T00:00:00.000Z"
           })
         : respond(503, {})
@@ -391,7 +393,17 @@ describe("patchy login", () => {
       ["login", "--complete", "--api-url", instance.url, "--json"],
       options
     );
-    expect(result.status).toBe(3);
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(result.stdout)).toEqual({
+      ok: true,
+      status: "logged_in",
+      instanceUrl: instance.url,
+      company: { handle: identity.company.handle, name: identity.company.name },
+      user: { email: identity.user.email },
+      machine: identity.machine,
+      credentialsPath: path.join(dir, "credentials.json")
+    });
     expect(result.stdout + result.stderr).not.toContain("one-time-key");
     expect(JSON.parse((await runCli(["status"], options)).stdout)).toMatchObject({
       instanceUrl: instance.url,

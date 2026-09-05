@@ -94,6 +94,8 @@ export type PollResult =
       readonly status: "complete";
       readonly token: string;
       readonly machine: { readonly id: string; readonly name: string };
+      readonly company: { readonly handle: string; readonly name: string };
+      readonly user: { readonly email: string };
       readonly expiresAt: string;
     };
 
@@ -157,6 +159,17 @@ export const make = Effect.gen(function* () {
     Result: Schema.Struct({ name: Schema.String }),
     execute: ({ id, userId }) => sql`
       SELECT name FROM machine_tokens WHERE id = ${id} AND user_id = ${userId}`
+  });
+  const confirmingIdentity = SqlSchema.findOne({
+    Request: Schema.String,
+    Result: Schema.Struct({
+      companyHandle: Schema.String,
+      companyName: Schema.String,
+      email: Schema.String
+    }),
+    execute: (userId) => sql`
+      SELECT c.handle AS "companyHandle", c.name AS "companyName", u.email
+      FROM users u JOIN companies c ON c.id = u.company_id WHERE u.id = ${userId}`
   });
 
   // Page visits leave expired rows for the terminal to consume as expired.
@@ -306,6 +319,10 @@ export const make = Effect.gen(function* () {
           yield* remove;
           return { reply: new DeviceLoginUnknown({}) };
         }
+        // mint's user lock remains held until this receipt and the token commit together.
+        const identity = yield* confirmingIdentity(row.userId).pipe(
+          Effect.catchTags({ SchemaError: Effect.die, NoSuchElementError: Effect.die })
+        );
         let replaced = false;
         if (row.oldTokenId !== null) {
           const old = yield* tokens
@@ -321,6 +338,8 @@ export const make = Effect.gen(function* () {
             status: "complete",
             token: minted.token,
             machine: { id: minted.id, name: minted.name },
+            company: { handle: identity.companyHandle, name: identity.companyName },
+            user: { email: identity.email },
             expiresAt: minted.expiresAt
           },
           event: {

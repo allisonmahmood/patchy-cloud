@@ -115,7 +115,8 @@ export class AuthGroup extends HttpApiGroup.make("auth", { topLevel: true })
       describe(
         "Poll without a bearer token, at the returned interval. A poll made too soon answers " +
           "`slow_down`; add five seconds to the interval. After browser confirmation, one poll " +
-          "mints the machine token and returns `complete`. The key expires in 90 days or after " +
+          "mints the machine token and returns `complete`, including the confirming user's email " +
+          "and company handle and name in the same response. The key expires in 90 days or after " +
           "30 idle days. Complete, expired and denied logins are deleted, so a subsequent poll " +
           "answers 410 `unknown`. Plaintext tokens are never stored. The JSON body is limited " +
           "to 4096 bytes: a declared overflow answers 413; overflow while streaming aborts " +

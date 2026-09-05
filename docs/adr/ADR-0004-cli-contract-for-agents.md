@@ -66,31 +66,44 @@ It blocks only when stdin is a terminal, `--json` is absent, and none of
 may have a PTY while its tool buffers output until exit.
 
 The human path prints the handoff and waits until the person answers or the
-code expires. Every other path returns the URL, code, next command and reason
-for not waiting, then exits 0. The agent relays the URL and code, never opens a
-browser, and runs `next`. A rerun resumes a live pending login rather than
-orphaning the code the person is about to confirm.
-An explicitly supplied `--api-url` stays shell-quoted in `next` and the text
-`Then run` command. Saving config alone cannot preserve that override across
-the handoff: the dev env and `PATCHY_API_URL` outrank config.
+code expires. On a new login, every other path returns the URL, code, next
+command and reason for not waiting, then exits 0. The agent relays the URL and
+code, never opens a browser, and runs `next`. A non-blocking rerun with a pending
+login polls once, as chosen in [#131](https://github.com/allisonmahmood/patchy-cloud/issues/131#issuecomment-5533101635):
+it reports `pending`, `logged_in`, or a terminal refusal rather than another
+handoff. The original URL/code remains valid until answered or expired.
+An explicitly supplied `--api-url` is saved so later commands outside a worktree
+can use the newly logged-in instance, matching `auth set`. It also stays
+shell-quoted in `next` and the text `Then run` command: the dev env and
+`PATCHY_API_URL` outrank saved config, so saving alone cannot preserve an override.
 
-`--complete [code]` uses the pending login for the resolved instance; a foreign
-code is `local` and names the live code. It polls at the instance's interval,
-adding five seconds after `slow_down`. The default wait is 60 seconds;
-`--wait 0` polls once. A still-pending answer is success, not a timeout failure.
-Denied, expired and unknown are instance refusals (exit 2), even when the local
-record already says expired: the poll lets the instance report and consume it.
+`--complete [code]` uses the pending login for the resolved instance; the code is
+a separate argument (`--complete XXXX-XXXX`, not `--complete=XXXX-XXXX`).
+A foreign code is `local` and names the live code. Polling follows the instance's
+interval, adding five seconds after `slow_down`. The default wait is 60 seconds,
+including in-flight responses and body decoding. An unanswered request at the
+deadline is `unreachable` (exit 3): its outcome is unknown, and the local login
+record is retained for the same completion command. A real pending answer
+followed by exhaustion of the wait budget is success, not a timeout failure.
+`--wait 0` is the explicit one-poll mode, waiting for that answer rather than
+cancelling it immediately. Denied, expired and unknown are instance refusals
+(exit 2), even when the local record already says expired: the poll lets the
+instance report and consume it.
 Completion saves the publishing key with `source: "login"` and
 `machine: { id, name }`, forgets the pending login, and prints
 `Logged in to <instance> as <company>. This machine is "<name>".`
+The successful mint response carries the company/user receipt from the same
+transaction; there is no fallible follow-up `/api/me` call after saving the
+one-time key. Receipt and credential persistence finish even if local I/O runs
+past the polling deadline.
 
-| command/result                    | `--json` success document                                                                                                                               |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `login`, handoff                  | `{ ok, status: "awaiting_confirmation", verificationUrl, verificationUrlBare, userCode, expiresAt, interval, next, agentNextSteps, notWaitingBecause }` |
-| `login --complete`, still waiting | `{ ok, status: "pending", userCode, expiresAt, next, agentNextSteps }`                                                                                  |
-| `login`, complete                 | `{ ok, status: "logged_in", instanceUrl, company: { handle, name }, user: { email }, machine: { id, name }, credentialsPath }`                          |
-| `logout`                          | `{ ok, instanceUrl, revoked, warnings }`                                                                                                                |
-| `whoami`                          | `{ user: { id, email, name }, company: { id, handle, name }, role, machine: { id, name } }` (`Identity`, no `ok` wrapper)                               |
+| command/result                             | `--json` success document                                                                                                                               |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `login`, handoff                           | `{ ok, status: "awaiting_confirmation", verificationUrl, verificationUrlBare, userCode, expiresAt, interval, next, agentNextSteps, notWaitingBecause }` |
+| `login --complete` or rerun, still waiting | `{ ok, status: "pending", userCode, expiresAt, next, agentNextSteps }`                                                                                  |
+| `login`, complete                          | `{ ok, status: "logged_in", instanceUrl, company: { handle, name }, user: { email }, machine: { id, name }, credentialsPath }`                          |
+| `logout`                                   | `{ ok, instanceUrl, revoked, warnings }`                                                                                                                |
+| `whoami`                                   | `{ user: { id, email, name }, company: { id, handle, name }, role, machine: { id, name } }` (`Identity`, no `ok` wrapper)                               |
 
 `patchy logout` deletes the stored credential and pending login before
 `POST /api/logout` with only the token it just deleted. A 401 counts as

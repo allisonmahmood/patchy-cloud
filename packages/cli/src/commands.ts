@@ -232,7 +232,7 @@ const login = Command.make(
   (options) => run(Login.login(options))
 ).pipe(
   Command.withDescription(
-    "Sign in this machine; relay the URL and code, then use --complete [code]."
+    "Log this machine in; relay the URL and code, then use --complete [code]."
   )
 );
 
