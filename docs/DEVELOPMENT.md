@@ -114,17 +114,30 @@ Open `/join` at the instance's API URL to sign in:
 
 - Signed out, it answers 401 with a **Sign in** link to Clerk's Account Portal.
 - With your `PATCHY_DEV_CLERK_USER_ID` bound to the seed, signing in lands on
-  **You are in Patchy Dev** as its admin.
+  `/company` for **Patchy Dev** as its admin.
 - Without the override, your real Clerk user lands on create-or-join. The page
   names your email and offers every live invitation for it, or a form to
   create a company with an editable handle. Creating makes you the admin;
-  the next `/join` names your company.
+  joining or creating lands on `/company`.
 - **Not you? Sign out** on `/join` revokes the session, clears Clerk's cookies
   and returns to `/login`; the next `/join` is the signed-out door. A deactivated
   user sees a 403 page with **Sign out**, not a sign-in loop.
 
 A validated `return` path sends a person who has a company back to that page.
-Without one, `/join` names the company until the company page exists.
+Without one, `/join` and `/login`'s sign-in link lead to `/company`.
+
+The company page lists users, roles, active/deactivated state and pending
+invites. Admins invite, revoke, resend, change roles, deactivate and reactivate;
+members read the same page without management actions. Both roles can **Sign out**
+there. The last active admin cannot be demoted or deactivated.
+
+**Inviting on a dev instance sends real email through your Clerk development
+application.** Patchy keeps the invitation even if Clerk cannot send it; the
+page reports the failure and offers resend. Resend also recovers when the previous
+Clerk invitation was already revoked, including after a lost revoke response.
+Tests use recording and failing
+`InviteMail` layers instead and stay offline. Deactivation revokes all the
+user's machine tokens; reactivation restores browser access, not old keys.
 
 The runner, the vitest template and the packed CLI e2e apply these same rows.
 `Testing.layer()` clones the seeded template; package fixtures add rows on

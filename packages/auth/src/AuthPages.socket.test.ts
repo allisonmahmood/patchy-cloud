@@ -6,7 +6,7 @@ import * as Layer from "effect/Layer";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServer from "effect/unstable/http/HttpServer";
 import { CookieJar } from "tough-cookie";
-import { Companies, Users } from "@patchy/companies";
+import { Companies, InviteMail, Users } from "@patchy/companies";
 import * as Testing from "@patchy/sql/testing";
 import * as AuthPages from "./AuthPages.js";
 import * as Session from "./Session.js";
@@ -30,7 +30,9 @@ const layer = HttpRouter.serve(AuthPages.layer, {
   disableListenLog: true
 }).pipe(
   Layer.provideMerge(NodeHttpServer.layerTest),
-  Layer.provideMerge(Layer.mergeAll(localRevocation, Companies.layer, Users.layer)),
+  Layer.provideMerge(
+    Layer.mergeAll(localRevocation, Companies.layer, Users.layer, InviteMail.layerRecording)
+  ),
   Layer.provide(Testing.layer()),
   Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(clerkEnv())))
 );
@@ -93,9 +95,16 @@ it.layer(layer)("auth pages on a socket", (it) => {
           })
         });
         assert.strictEqual(created.status, 303);
+        assert.strictEqual(created.headers.get("location"), "/company");
         const membership = yield* request(created.headers.get("location")!);
-        assert.include(yield* Effect.promise(() => membership.text()), "You are in Socket Company");
-        const logout = yield* request("/logout", {
+        assert.strictEqual(membership.status, 200);
+        const membershipHtml = yield* Effect.promise(() => membership.text());
+        assert.include(membershipHtml, 'action="/company/invites"');
+        const logoutAction = membershipHtml.match(
+          /<form\b[^>]*method="post"[^>]*action="(\/logout)"/
+        )?.[1];
+        assert.isDefined(logoutAction, "the enrolled home offers a sign-out form");
+        const logout = yield* request(logoutAction!, {
           method: "POST",
           headers: { origin: PUBLIC_BASE_URL }
         });

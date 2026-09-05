@@ -28,18 +28,6 @@ export interface JoinPage {
 }
 
 export const styles = `
-    .auth-card label { display: block; margin: 18px 0 6px; font-size: .9rem; font-weight: 750; }
-    .auth-card input {
-      width: 100%;
-      min-height: 48px;
-      padding: 10px 12px;
-      border: 1.5px solid var(--ink);
-      border-radius: 6px;
-      background: white;
-      color: var(--ink);
-      font: inherit;
-    }
-    .auth-hint { margin: 8px 0 20px; color: var(--muted); font-size: .8rem; }
     .auth-invite { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 0; border-bottom: 1px solid var(--line-strong); }
     .auth-invite p { margin: 0; overflow-wrap: anywhere; }
 `;
@@ -103,7 +91,7 @@ export const handle = Effect.fn("Join.handle")(function* (
       title: `You are in ${membership.company.name}`,
       body: `${request.method === "POST" ? '<div class="note note-warn" role="alert">Already in a company.</div>' : ""}<p>Signed in as <span class="auth-email">${escapeHtml(claims.email)}</span>.</p>`,
       status: request.method === "POST" ? 409 : 200,
-      ...(request.method !== "POST" && returnTo ? { redirect: returnTo } : {})
+      ...(request.method !== "POST" ? { redirect: returnTo ?? "/company" } : {})
     } satisfies JoinPage;
   }
   if (request.method !== "POST") return yield* render(claims, returnTo);
@@ -129,7 +117,11 @@ export const handle = Effect.fn("Join.handle")(function* (
         handle: form.handle
       });
     }
-    return { title: "Company joined", body: "", redirect: returnTo ?? "/join" } satisfies JoinPage;
+    return {
+      title: "Company joined",
+      body: "",
+      redirect: returnTo ?? "/company"
+    } satisfies JoinPage;
   }).pipe(
     Effect.catchTags({
       SchemaError: () =>

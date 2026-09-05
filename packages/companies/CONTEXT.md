@@ -17,11 +17,11 @@ One individual with one account, in exactly one company. Signs in (through Clerk
 _Avoid_: account, person (a user is the account, not the human), builder (every user is one)
 
 **Member**:
-The role every user has who is not an admin. A member builds — publishes patches with no gate — and reaches whatever is shared with them; the role exists only so admin has something to be more than.
+The role every user has who is not an admin. A member builds — publishes patches with no gate — and reads the company's users, roles, states and pending invites without management actions.
 _Avoid_: viewer (the person with a patch open, whatever their role), builder (a description, not a role), guest
 
 **Admin**:
-A user with the role that runs the company: invites users and manages roles and deactivation; groups, SSO, integrations and reassignment are future powers. A company always has at least one active admin, and the last one can neither be demoted nor deactivated.
+A user with the role that runs the company: invites, revokes and resends invitations, promotes and demotes users, and deactivates and reactivates them from the company page; groups, SSO, integrations and reassignment are future powers. A company always has at least one active admin, and the last one can neither be demoted nor deactivated.
 _Avoid_: owner (patches have owners; companies have admins), operator (Patchy, never a company role), superadmin
 
 **Group**:
@@ -29,7 +29,7 @@ A named set of users an admin creates; a user can be in many. Purely a grant sur
 _Avoid_: team, department (labels, not concepts), role (what an admin has; a group is who), space
 
 **Invite**:
-An invitation for one email address to join a company with a role, live until revoked or consumed and matched case-insensitively at sign-in. Several companies may invite the same address, but each has at most one live invitation for it; joining creates one user in exactly one company, and an existing user cannot join another.
+An invitation for one email address to join a company with a role: Clerk sends the email, Patchy owns the invitation, with no expiry, until revoked or consumed; resend replaces the emailed invitation, not the company invitation. Several companies may invite the same address, each at most once while live, matched case-insensitively at sign-in; an email already belonging to a user is refused as already in a company.
 _Avoid_: add user, share the company
 
 **Create-or-join**:
@@ -49,7 +49,7 @@ An admin ending a user's access while keeping their data: sign-in and every mach
 _Avoid_: ban, suspend (the operator's act on a company), delete (the later act)
 
 **Reactivation**:
-An admin restoring a deactivated user's access to the same company and data. The user needs fresh machine tokens; keys revoked by deactivation stay revoked.
+An admin restoring a deactivated user's access to the same company and data from the company page. Sign-in works again, but the user needs fresh machine tokens; keys revoked by deactivation stay revoked.
 _Avoid_: un-revoke, restore token
 
 **Suspension**:

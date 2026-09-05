@@ -6,7 +6,7 @@ import * as Layer from "effect/Layer";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
-import { Companies, Users } from "@patchy/companies";
+import { Companies, InviteMail, Users } from "@patchy/companies";
 import * as Testing from "@patchy/sql/testing";
 import { DEV_SEED } from "./seed.js";
 import * as AuthPages from "./AuthPages.js";
@@ -48,7 +48,12 @@ const post = (
   body: new URLSearchParams(body),
   headers: { cookie: sessionCookie, origin, ...extra }
 });
-const services = Layer.mergeAll(Session.layer, Companies.layer, Users.layer).pipe(
+const services = Layer.mergeAll(
+  Session.layer,
+  Companies.layer,
+  Users.layer,
+  InviteMail.layerRecording
+).pipe(
   Layer.provideMerge(Testing.layer()),
   Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env)))
 );
@@ -61,6 +66,11 @@ it.layer(services)("first-party pages in memory", (it) => {
       const body = yield* Effect.promise(() => login.text());
       assert.strictEqual((body.match(/<a /g) ?? []).length, 1);
       assert.include(body, encodeURIComponent(`${origin}/private?view=mine`));
+      const defaultLogin = yield* send("/login");
+      assert.include(
+        yield* Effect.promise(() => defaultLogin.text()),
+        encodeURIComponent(`${origin}/company`)
+      );
       for (const target of [
         "https://foreign.invalid/",
         "//foreign.invalid/",
@@ -73,7 +83,7 @@ it.layer(services)("first-party pages in memory", (it) => {
         assert.strictEqual(response.status, 200);
         assert.include(
           yield* Effect.promise(() => response.text()),
-          encodeURIComponent(`${origin}/join`)
+          encodeURIComponent(`${origin}/company`)
         );
       }
     })
@@ -122,23 +132,24 @@ it.layer(services)("first-party pages in memory", (it) => {
       const identity = yield* Effect.promise(() => viewer.json());
       assert.deepInclude(identity, { role: "admin" });
       const joined = yield* send("/join", { headers: { cookie: sessionCookie } });
-      assert.include(yield* Effect.promise(() => joined.text()), "You are in Acme &lt;Studio&gt;");
+      assert.strictEqual(joined.status, 303);
+      assert.strictEqual(joined.headers.get("location"), "/company");
+      const returning = yield* send("/join?return=%2Fprivate%3Fview%3Dmine", {
+        headers: { cookie: sessionCookie }
+      });
+      assert.strictEqual(returning.status, 303);
+      assert.strictEqual(returning.headers.get("location"), "/private?view=mine");
       const unsafeReturn = yield* send(
         `/join?return=${encodeURIComponent("/safe/..//foreign.invalid/")}`,
         { headers: { cookie: sessionCookie } }
       );
-      assert.strictEqual(unsafeReturn.status, 200);
-      assert.strictEqual(unsafeReturn.headers.get("location"), null);
-      assert.include(
-        yield* Effect.promise(() => unsafeReturn.text()),
-        "You are in Acme &lt;Studio&gt;"
-      );
+      assert.strictEqual(unsafeReturn.status, 303);
+      assert.strictEqual(unsafeReturn.headers.get("location"), "/company");
       const refused = yield* send(
         "/join",
         post({ action: "create", name: "Other", handle: "other-enroll" }, sessionCookie)
       );
       assert.strictEqual(refused.status, 409);
-      assert.include(yield* Effect.promise(() => refused.text()), "Already in a company");
     })
   );
 
@@ -183,6 +194,7 @@ it.layer(services)("first-party pages in memory", (it) => {
         post({ action: "join", inviteId: second.id }, sessionCookie)
       );
       assert.strictEqual(joined.status, 303);
+      assert.strictEqual(joined.headers.get("location"), "/company");
       const user = yield* (yield* Users.Users).findByClerkId("user_invitee");
       assert.strictEqual(user?.companyId, other.company.id);
       assert.strictEqual(user?.role, "admin");
@@ -307,7 +319,7 @@ const localRevocation = Layer.effect(
   }))
 );
 it.layer(
-  Layer.mergeAll(localRevocation, Companies.layer, Users.layer).pipe(
+  Layer.mergeAll(localRevocation, Companies.layer, Users.layer, InviteMail.layerRecording).pipe(
     Layer.provideMerge(Testing.layer()),
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env)))
   )

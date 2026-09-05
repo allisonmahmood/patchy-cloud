@@ -3,7 +3,8 @@ import type * as Layer from "effect/Layer";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
-import { Join, type Companies, type Users } from "@patchy/companies";
+import type * as SqlClient from "effect/unstable/sql/SqlClient";
+import { CompanyPage, Join, type Companies, type InviteMail, type Users } from "@patchy/companies";
 import * as RequireSession from "./RequireSession.js";
 import * as Session from "./Session.js";
 import { pageResponse, returnPath, signOutForm, withCookies } from "./page.js";
@@ -33,6 +34,21 @@ const join = Effect.gen(function* () {
     ? HttpServerResponse.redirect(page.redirect, { status: 303 })
     : pageResponse(
         { ...page, styles: Join.styles, body: `${page.body}${signOutForm(true)}` },
+        session
+      );
+});
+
+const company = Effect.fn("AuthPages.company")(function* (action: CompanyPage.Action) {
+  const viewer = yield* RequireSession.Viewer;
+  const session = yield* Session.Session;
+  const page: CompanyPage.Page = yield* CompanyPage.handle(viewer, action);
+  return page.redirect
+    ? HttpServerResponse.redirect(page.redirect, {
+        status: 303,
+        headers: { "cache-control": "private, no-store" }
+      })
+    : pageResponse(
+        { ...page, styles: CompanyPage.styles, body: `${page.body}${signOutForm()}` },
         session
       );
 });
@@ -83,7 +99,7 @@ const errors = <E, R>(app: Effect.Effect<HttpServerResponse.HttpServerResponse, 
             pageResponse(
               {
                 title: "Invalid form",
-                body: `<p>Return to <a href="/join">create-or-join</a> and submit the form again.</p>${signOutForm()}`,
+                body: `<p>Return to <a href="/company">your company</a> and submit the form again.</p>${signOutForm()}`,
                 status: 400
               },
               session
@@ -97,7 +113,14 @@ export const layer: Layer.Layer<
   never,
   never,
   | HttpRouter.HttpRouter
-  | HttpRouter.Request.From<"Requires", Session.Session | Companies.Companies | Users.Users>
+  | HttpRouter.Request.From<
+      "Requires",
+      | Session.Session
+      | Companies.Companies
+      | Users.Users
+      | InviteMail.InviteMail
+      | SqlClient.SqlClient
+    >
 > = HttpRouter.use((router) =>
   Effect.gen(function* () {
     yield* router.add(
@@ -107,7 +130,8 @@ export const layer: Layer.Layer<
         const session = yield* Session.Session;
         const request = yield* HttpServerRequest.HttpServerRequest;
         const url = new URL(request.url, session.publicBaseUrl);
-        const path = returnPath(url.searchParams.get("return"), session.publicBaseUrl) ?? "/join";
+        const path =
+          returnPath(url.searchParams.get("return"), session.publicBaseUrl) ?? "/company";
         return RequireSession.door(session, path, false, 200);
       })
     );
@@ -128,6 +152,35 @@ export const layer: Layer.Layer<
       "/join",
       errors(RequireSession.sameOrigin(RequireSession.forEnrollment(join)))
     );
+    yield* router.add(
+      "GET",
+      "/company",
+      errors(RequireSession.withViewer(company({ kind: "view" })))
+    );
+    yield* router.add(
+      "POST",
+      "/company/invites",
+      errors(RequireSession.sameOrigin(RequireSession.withViewer(company({ kind: "invite" }))))
+    );
+    for (const [path, kind] of [
+      ["/company/invites/:id/revoke", "revoke"],
+      ["/company/invites/:id/resend", "resend"],
+      ["/company/users/:id/role", "role"],
+      ["/company/users/:id/deactivate", "deactivate"],
+      ["/company/users/:id/reactivate", "reactivate"]
+    ] as const) {
+      yield* router.add(
+        "POST",
+        path,
+        errors(
+          RequireSession.sameOrigin(
+            RequireSession.withViewer(
+              Effect.flatMap(HttpRouter.params, (params) => company({ kind, id: params.id ?? "" }))
+            )
+          )
+        )
+      );
+    }
     yield* router.add(
       "POST",
       "/logout",
