@@ -167,11 +167,10 @@ Device-login JSON and confirmation forms are limited to 4096 bytes. A declared
 oversized body returns 413; exceeding the limit while streaming closes the
 connection before parsing or changing a login.
 
-Confirm and Deny redirect to a server-signed, user-bound receipt, so a reload
-can show the real outcome even after the terminal consumes the login. The receipt
-expires with the original code and invalidates on a server restart; it never
-authorizes a login or mints a key. Without a valid receipt, the page reads the
-current login state rather than trusting a result in the URL.
+Confirm and Deny return their informational outcome page directly with HTTP 200
+and `Cache-Control: private, no-store`. A later GET reads the current code:
+pending shows the form, an answered code returns 410 already used, and a code
+consumed by the terminal's poll returns 404 unknown.
 
 ### Reading a published patch
 

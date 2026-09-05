@@ -100,11 +100,10 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
             machineName: "Publishing laptop"
           })
         );
-        assert.strictEqual(confirmed.status, 303);
-        const receiptUrl = confirmed.headers.get("location")!;
-        const receipt = yield* send(receiptUrl, { headers: { cookie: owner.cookie } });
-        assert.strictEqual(receipt.status, 200);
-        const confirmedHtml = yield* Effect.promise(() => receipt.text());
+        assert.strictEqual(confirmed.status, 200);
+        assert.strictEqual(confirmed.headers.get("cache-control"), "private, no-store");
+        assert.strictEqual(confirmed.headers.get("location"), null);
+        const confirmedHtml = yield* Effect.promise(() => confirmed.text());
         assert.include(confirmedHtml, "Confirmed.");
         assert.include(
           confirmedHtml,
@@ -116,9 +115,6 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
         if (complete.status !== "complete") return;
         assert.notInclude(confirmedHtml, complete.token);
         assert.strictEqual(complete.machine.name, "Publishing laptop");
-        const reloaded = yield* send(receiptUrl, { headers: { cookie: owner.cookie } });
-        assert.strictEqual(reloaded.status, 200);
-        assert.strictEqual(yield* Effect.promise(() => reloaded.text()), confirmedHtml);
         assert.strictEqual(
           (yield* send(pathFor(login.userCode), { headers: { cookie: owner.cookie } })).status,
           404
@@ -154,23 +150,21 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
         "/login/device",
         post(owner.cookie, { action: "deny", code: login.userCode })
       );
-      assert.strictEqual(response.status, 303);
-      const receiptUrl = response.headers.get("location")!;
-      const receipt = yield* send(receiptUrl, { headers: { cookie: owner.cookie } });
-      assert.strictEqual(receipt.status, 200);
-      const html = yield* Effect.promise(() => receipt.text());
+      assert.strictEqual(response.status, 200);
+      assert.strictEqual(response.headers.get("cache-control"), "private, no-store");
+      assert.strictEqual(response.headers.get("location"), null);
+      const html = yield* Effect.promise(() => response.text());
       assert.include(html, "Nothing was logged in.");
       assert.include(html, `The code ${login.userCode} is dead and no key was made.`);
       assert.include(html, "there is nothing else to do.");
       const actual = yield* send(pathFor(login.userCode), { headers: { cookie: owner.cookie } });
-      assert.strictEqual(actual.status, 200);
-      assert.include(yield* Effect.promise(() => actual.text()), "Nothing was logged in.");
+      assert.strictEqual(actual.status, 410);
+      assert.include(yield* Effect.promise(() => actual.text()), "This code was already used.");
       assert.deepStrictEqual(yield* (yield* MachineTokens.MachineTokens).list(owner.user.id), []);
       const result = yield* logins.poll(login.deviceCode).pipe(Effect.flip);
       assert.strictEqual(result._tag, "DeviceLoginDenied");
-      const reloaded = yield* send(receiptUrl, { headers: { cookie: owner.cookie } });
-      assert.strictEqual(reloaded.status, 200);
-      assert.strictEqual(yield* Effect.promise(() => reloaded.text()), html);
+      const afterPoll = yield* send(pathFor(login.userCode), { headers: { cookie: owner.cookie } });
+      assert.strictEqual(afterPoll.status, 404);
     })
   );
 
@@ -212,8 +206,11 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
         const confirmed = yield* send(pathFor(answered.userCode), {
           headers: { cookie: owner.cookie }
         });
-        assert.strictEqual(confirmed.status, 200);
-        assert.include(yield* Effect.promise(() => confirmed.text()), "Confirmed.");
+        assert.strictEqual(confirmed.status, 410);
+        assert.include(
+          yield* Effect.promise(() => confirmed.text()),
+          "This code was already used."
+        );
         for (const action of ["get", "confirm", "deny"]) {
           const response = yield* send(
             action === "get" ? pathFor("UNKNOWN") : "/login/device",
@@ -241,47 +238,6 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
       })
   );
 
-  it.effect("ignores claimed query outcomes and requires a real answer or a bound receipt", () =>
-    Effect.gen(function* () {
-      const owner = yield* account("receipt");
-      const other = yield* account("receipt-other");
-      const logins = yield* DeviceLogins.DeviceLogins;
-      const login = yield* logins.start({ machineNameHint: "Still waiting" });
-      for (const query of ["result=confirmed", "result=denied", "receipt=invalid"]) {
-        const response = yield* send(`${pathFor(login.userCode)}&${query}`, {
-          headers: { cookie: owner.cookie }
-        });
-        assert.strictEqual(response.status, 200);
-        assert.include(
-          yield* Effect.promise(() => response.text()),
-          "Is this the code on your terminal?"
-        );
-      }
-      const confirmed = yield* send(
-        "/login/device",
-        post(owner.cookie, {
-          action: "confirm",
-          code: login.userCode,
-          machineName: "Receipt laptop"
-        })
-      );
-      assert.strictEqual(confirmed.status, 303);
-      const receiptUrl = confirmed.headers.get("location")!;
-      yield* logins.poll(login.deviceCode);
-      const own = yield* send(receiptUrl, { headers: { cookie: owner.cookie } });
-      assert.strictEqual(own.status, 200);
-      assert.include(yield* Effect.promise(() => own.text()), "Confirmed.");
-      const foreign = yield* send(receiptUrl, { headers: { cookie: other.cookie } });
-      assert.strictEqual(foreign.status, 404);
-      const tampered = new URL(receiptUrl, base);
-      tampered.searchParams.set("receipt", `${tampered.searchParams.get("receipt")}tampered`);
-      const refused = yield* send(`${tampered.pathname}${tampered.search}`, {
-        headers: { cookie: owner.cookie }
-      });
-      assert.strictEqual(refused.status, 404);
-    })
-  );
-
   it.effect("counts invalid form submissions once in the shared per-user lookup allowance", () =>
     Effect.gen(function* () {
       const owner = yield* account("invalid-limit");
@@ -306,7 +262,7 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
         "/login/device",
         post(owner.cookie, { action: "confirm", code: login.userCode, machineName: "Valid" })
       );
-      assert.strictEqual(accepted.status, 303);
+      assert.strictEqual(accepted.status, 200);
     })
   );
 
@@ -344,7 +300,7 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
             machineName: "x".repeat(64)
           })
         );
-        assert.strictEqual(accepted.status, 303);
+        assert.strictEqual(accepted.status, 200);
       })
   );
 

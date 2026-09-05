@@ -94,24 +94,8 @@ const getDevice = Effect.gen(function* () {
       session
     );
   }
-  const login = yield* (yield* DeviceLogins.DeviceLogins).lookup(
-    code,
-    viewer.user.id,
-    query.get("receipt") ?? undefined
-  );
-  if (login.state === "pending") return yield* renderConfirm(login);
-  return pageResponse(
-    login.state === "confirmed"
-      ? message(
-          "Confirmed.",
-          "<p>Your terminal finishes logging in on its own within a few seconds. You can close this tab.</p>"
-        )
-      : message(
-          "Nothing was logged in.",
-          `<p>The code ${escapeHtml(login.userCode)} is dead and no key was made. If you didn't run <code>patchy login</code>, there is nothing else to do.</p>`
-        ),
-    session
-  );
+  const login = yield* (yield* DeviceLogins.DeviceLogins).lookup(code, viewer.user.id);
+  return yield* renderConfirm(login);
 });
 
 const postDevice = Effect.gen(function* () {
@@ -129,6 +113,7 @@ const postDevice = Effect.gen(function* () {
   return yield* RequireSession.withViewer(
     Effect.gen(function* () {
       const viewer = yield* RequireSession.Viewer;
+      const session = yield* Session.Session;
       const logins = yield* DeviceLogins.DeviceLogins;
       const machineName = form.machineName ?? "";
       if (form.action === "confirm") {
@@ -138,17 +123,22 @@ const postDevice = Effect.gen(function* () {
         );
         if (!valid) {
           const login = yield* logins.lookup(form.code, viewer.user.id);
-          if (login.state !== "pending") return yield* new DeviceLogins.DeviceLoginAnswered({});
           return yield* renderConfirm(login, { machineName, invalid: true });
         }
       }
-      const answer =
-        form.action === "deny"
-          ? yield* logins.deny(form.code, viewer.user.id)
-          : yield* logins.confirm({ userCode: form.code, userId: viewer.user.id, machineName });
-      return HttpServerResponse.redirect(
-        `/login/device?${new URLSearchParams({ code: form.code, receipt: answer.receipt })}`,
-        { status: 303, headers: { "cache-control": "private, no-store" } }
+      if (form.action === "deny") yield* logins.deny(form.code, viewer.user.id);
+      else yield* logins.confirm({ userCode: form.code, userId: viewer.user.id, machineName });
+      return pageResponse(
+        form.action === "confirm"
+          ? message(
+              "Confirmed.",
+              "<p>Your terminal finishes logging in on its own within a few seconds. You can close this tab.</p>"
+            )
+          : message(
+              "Nothing was logged in.",
+              `<p>The code ${escapeHtml(form.code)} is dead and no key was made. If you didn't run <code>patchy login</code>, there is nothing else to do.</p>`
+            ),
+        session
       );
     }),
     returnTo
