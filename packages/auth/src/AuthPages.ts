@@ -111,10 +111,13 @@ export const layer: Layer.Layer<
     yield* router.add(
       "GET",
       "/auth/session.js",
-      HttpServerResponse.text("void window.Clerk.load({ standardBrowser: true });\n", {
-        contentType: "text/javascript",
-        headers: { "cache-control": "no-store", "x-content-type-options": "nosniff" }
-      })
+      HttpServerResponse.text(
+        "void window.Clerk.load({ standardBrowser: true, telemetry: { disabled: true } });\n",
+        {
+          contentType: "text/javascript",
+          headers: { "cache-control": "no-store", "x-content-type-options": "nosniff" }
+        }
+      )
     );
     yield* router.add("GET", "/join", errors(RequireSession.forEnrollment(join)));
     yield* router.add(
