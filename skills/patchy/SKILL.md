@@ -30,12 +30,13 @@ the user, which are the source of truth for user-facing copy anywhere in this sk
 
 Keep secrets, private URLs, local filesystem paths, production documentation of record, interactive
 apps, forms, and JavaScript off any published page. Publish only material the intended
-audience may read: today that audience is the user's whole company.
+audience may read: the user's company by default, anyone with the link only by explicit choice.
 
 ## Publishing
 
 The `patchy` CLI uploads one safe static HTML document and returns its view URL.
-New patches are company-scoped; the CLI cannot change sharing yet.
+New patches default to company scope; use `--share public` only when the user wants
+anyone with the link to read the page.
 
 Requires Node.js 22 or newer, and the `patchy` CLI on `PATH` — built from the
 patchy-cloud repo with `pnpm --filter @patchy/cli build`.
@@ -59,10 +60,23 @@ Behavior:
 - A rejected stored or environment key is a hard error. Save a working key for
   the same user to keep editing that user's pages.
 - Call the credential the user's **publishing key**; local validation runs before upload.
-- Re-uploading the same local file updates the patch it already created on that instance.
+- Re-uploading the same local file updates the patch it already created on that instance
+  and preserves its sharing scope unless `--share company` or `--share public` is supplied.
   Pass `--new` to force a fresh patch, or `--patch` to update a known patch only.
-- A company patch opens for signed-in colleagues, not everyone holding its link.
+- Set sharing during upload with `patchy upload './plan.html' --share public` or
+  `--share company`. Change it without publishing a version with
+  `patchy share './plan.html' public` or `patchy share './plan.html' company`;
+  `patchy share --patch <id> public` (or `company`) selects an id instead of the cached
+  file, exactly one target. Only the owner user may change sharing, through any of
+  their machine tokens; another user's patch answers 404. With no key, `share`
+  exits `1` (`local`) with `Run: patchy login`.
+- Announce the returned `scope`, not an assumed default: `company` means signed-in
+  colleagues in the user's company can open the link; `public` means anyone with
+  the link can open it without signing in. Text output names both scope and readership.
   The response field is still named `publicUrl`; that name does not make the page public.
+- Taking a public patch back to company changes origin responses to `private, no-store`.
+  Public copies may remain cached for up to 60 seconds at both latest and version URLs;
+  already downloaded copies cannot be recalled.
 - "Take that page down" is `patchy delete './plan.html'` — the file it was published
   from — or `patchy delete --patch <id>`. It is irreversible and only the owner
   user can do it, through any of their machine tokens; confirm before running it.
@@ -71,13 +85,14 @@ Behavior:
   and their values are tabled in `references/onboarding.md`.
 - The exit code says who has to act, so branch on it before reading the message: `1` is
   yours to fix without the network (arguments, the file, validation, local state), `2`
-  means the instance answered and said no (a rejected key, a missing update or delete
+  means the instance answered and said no (a rejected key, a missing update, share or delete
   target, a quota), `3` means there was no usable answer (network, a 5xx) — try later or tell the
   operator. `130` is an interruption.
 - Every command takes `--json`: one JSON document on stdout on success, `{ "ok": false,
 "error", "kind" }` on stderr on failure, where `kind` is `local`, `rejected` or
   `unreachable` and matches the exit code. `upload --json` prints the instance's response
-  as it is on the wire (`patchId`, `publicUrl`, `versionNumber`, `warnings`, …).
+  as it is on the wire (`patchId`, `publicUrl`, `scope`, `versionNumber`, `warnings`, …).
+  `share --json` prints `{ "ok": true, "patchId", "scope", "publicUrl" }`.
   Stderr carries failures only.
   `delete --json` prints `{ "ok": true }`. Prefer it when the URL or the patch id is going
   into a script rather than to the user.
@@ -159,8 +174,9 @@ Blocked or unsafe:
    restrained technical report, that means clear sections, tables, and diagrams where
    they clarify the work.
 3. Run `validate` until it passes.
-4. Upload; with no key, run `patchy auth set --api-url <url>` before retrying.
-5. Return the URL, and say that signed-in colleagues in the user's company can open it.
+4. Upload with `--json` so the response gives the actual scope; set `--share` only for
+   an explicit sharing choice. With no key, run `patchy auth set --api-url <url>` before retrying.
+5. Return `publicUrl` and announce who can open it from the returned `scope`, as above.
 
 ## Pitfalls
 
@@ -169,6 +185,6 @@ Blocked or unsafe:
 - Keep tokens out of positional arguments. Use the hidden prompt for a person, explicit
   `--token-stdin` for automation.
 - A publishing key acts as its user. Losing or revoking a key does not change
-  ownership; another machine token for that user can still update or delete their pages.
+  ownership; another machine token for that user can still update, share or delete their pages.
 - Patchy Cloud is not a social scheduler. This flow hosts static HTML pages.
 - Hand over a link or a local file rather than pasting giant HTML into chat.

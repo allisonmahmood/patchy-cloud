@@ -73,8 +73,8 @@ it before opening your mouth:
 
 - `instanceSource` is `config` — a saved choice. Confirm it in passing ("your pages go to
   `pages.example.com` — each gets its own shareable link") and move on.
-- `instanceSource` is `dev-env` — the local dev instance of this checkout. Its pages are
-  for the developer's own eyes; say so and move on.
+- `instanceSource` is `dev-env` — the local dev instance of this checkout, not a deployed
+  company instance; say so and move on. The upload's scope still determines readership.
 - `instanceSource` is `env` or `flag` — chosen for this session only. Say so, and offer to
   save it with `--api-url` so it sticks.
 - `instanceSource` is `default` — nothing has been chosen. Ask, once: which address should
@@ -92,15 +92,35 @@ Write `welcome.html` from `welcome-patch.html` in this directory, restyled to th
 look — the structure and copy are the deliverable, the styling is theirs — then:
 
 ```bash
-patchy validate './welcome.html' && patchy upload './welcome.html'
+patchy validate './welcome.html' && patchy upload './welcome.html' --json
 ```
 
 The upload uses the configured publishing key; it never creates one.
 Describe a key as saved on this machine only when the probe reported `auth-set`.
 Environment and dev-env keys do not imply a saved credential file.
 
-Then hand over the URL with the one fact that matters: **signed-in colleagues in your
-company can open it; people outside the company cannot.**
+A new welcome patch defaults to `company`. Redoing onboarding updates the cached patch
+and preserves its current scope; pass `--share company` or `--share public` only when
+the user explicitly chooses that audience. The welcome page's copy explains the
+company default and the owner's public option, rather than assuming its current scope.
+
+Hand over `publicUrl` and announce the **returned `scope`**:
+
+- `company`: **"Signed-in colleagues in your company can open it; people outside the
+  company cannot."** Read it through the user's signed-in browser.
+- `public`: **"Anyone with the link can open it, without signing in."** Only public
+  patches can be fetched directly by URL.
+
+The field name `publicUrl` is not proof of anonymous access. If browser access is
+unavailable for a company patch, ask the user to open the link or supply its content;
+a publishing key does not open the page.
+
+To change the audience afterward, the owner can run `patchy share './welcome.html' public`
+or `patchy share './welcome.html' company`; `patchy share --patch <id> public` (or
+`company`) selects an id instead of the cached file. Announce the scope that command
+returns too. Taking it back to company makes origin responses `private, no-store`,
+but a public copy may remain cached for 60 seconds at either latest or version URL,
+and downloaded copies cannot be recalled.
 
 ### 4. Sign-off
 

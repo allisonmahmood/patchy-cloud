@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import {
   access,
   appendFile,
@@ -328,11 +328,15 @@ try {
   assert.equal(shellWhoami.stdout, whoami.stdout);
   assert.equal(shellWhoami.stderr, "");
   const first = parseUpload(
-    await runCli(cliPath, ["upload", fixtureArgument], { cwd: consumerDir, env: cliEnv })
+    await runCli(cliPath, ["upload", fixtureArgument, "--share", "public"], {
+      cwd: consumerDir,
+      env: cliEnv
+    })
   );
   assert.equal(first.label, "Uploaded patch");
   assert.equal(first.versionNumber, 1);
   assert.equal(first.publicUrl, `${publicBaseUrl}/d/${first.patchId}`);
+  assert.equal(first.scope, "public");
   const fixtureCachePath = await checkedCall(() => realpath(fixturePath));
   const patchCache = JSON.parse(
     await checkedCall(() => readFile(path.join(cliStateDir, "patches.json"), "utf8"))
@@ -355,27 +359,99 @@ try {
   assert.equal(second.label, "Updated patch");
   assert.equal(second.patchId, first.patchId);
   assert.equal(second.versionNumber, 2);
+  assert.equal(second.scope, "public", "an update without --share must preserve sharing");
 
-  await checkedCall(() => writeFile(fixturePath, newHtml, "utf8"));
-  const fresh = parseUpload(
-    await runCli(cliPath, ["upload", fixtureArgument, "--new"], {
+  const publicVersions = [
+    { url: first.publicUrl, html: secondHtml, versionNumber: 2 },
+    { url: `${first.publicUrl}/v/1`, html: firstHtml, versionNumber: 1 },
+    { url: `${first.publicUrl}/v/2`, html: secondHtml, versionNumber: 2 }
+  ];
+  console.log("[packed-cli-e2e] validating public pages on current and explicit versions");
+  for (const version of publicVersions) {
+    assertPublicViewer(await fetchViewer(version.url), { ...version, patchId: first.patchId });
+  }
+
+  console.log("[packed-cli-e2e] refusing sharing changes by another user in the same company");
+  const foreignToken = await checkedCall(() => seedOtherUserToken());
+  const foreignResponse = await fetch(`${publicBaseUrl}/api/patches/${first.patchId}/share`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${foreignToken}`,
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({ scope: "company" }),
+    redirect: "error",
+    signal: AbortSignal.timeout(5_000)
+  });
+  assert.equal(foreignResponse.status, 404, "company membership must not grant ownership");
+  await foreignResponse.arrayBuffer();
+  const foreignShare = await runCli(
+    cliPath,
+    ["share", "--patch", first.patchId, "company", "--json"],
+    {
+      cwd: consumerDir,
+      env: { ...cliEnv, PATCHY_API_TOKEN: foreignToken },
+      allowFailure: true,
+      sensitiveValues: [foreignToken]
+    }
+  );
+  assert.equal(foreignShare.code, 2);
+  assert.equal(foreignShare.stdout, "", "--json failure must leave stdout empty");
+  const foreignFailure = JSON.parse(foreignShare.stderr);
+  assert.equal(foreignFailure.ok, false);
+  assert.equal(foreignFailure.kind, "rejected");
+  for (const version of publicVersions) {
+    assertPublicViewer(await fetchViewer(version.url), { ...version, patchId: first.patchId });
+  }
+
+  console.log("[packed-cli-e2e] taking the cached-file patch back inside the company");
+  const companyShare = await runCli(cliPath, ["share", fixtureArgument, "company"], {
+    cwd: consumerDir,
+    env: cliEnv
+  });
+  assert.equal(companyShare.stderr, "");
+  assert.match(companyShare.stdout, /^Scope: company\b/m);
+  for (const { url } of publicVersions) {
+    assertViewerDoor(await fetchViewer(url));
+  }
+
+  console.log("[packed-cli-e2e] sharing by explicit id in both directions under --json");
+  for (const scope of ["public", "company"]) {
+    const shared = await runCli(cliPath, ["share", "--patch", first.patchId, scope, "--json"], {
       cwd: consumerDir,
       env: cliEnv
-    })
-  );
-  assert.equal(fresh.label, "Uploaded patch");
+    });
+    assert.equal(shared.stderr, "", "--json success must leave stderr empty");
+    assert.deepEqual(JSON.parse(shared.stdout), {
+      ok: true,
+      patchId: first.patchId,
+      scope,
+      publicUrl: first.publicUrl
+    });
+    for (const version of publicVersions) {
+      const viewer = await fetchViewer(version.url);
+      if (scope === "public") {
+        assertPublicViewer(viewer, { ...version, patchId: first.patchId });
+      } else {
+        assertViewerDoor(viewer);
+      }
+    }
+  }
+
+  await checkedCall(() => writeFile(fixturePath, newHtml, "utf8"));
+  const freshUpload = await runCli(cliPath, ["upload", fixtureArgument, "--new", "--json"], {
+    cwd: consumerDir,
+    env: cliEnv
+  });
+  assert.equal(freshUpload.stderr, "", "--json success must leave stderr empty");
+  const fresh = JSON.parse(freshUpload.stdout);
+  assert.equal(fresh.ok, true);
+  assert.equal(fresh.scope, "company", "a new upload without --share defaults to company");
   assert.equal(fresh.versionNumber, 1);
   assert.notEqual(fresh.patchId, first.patchId);
 
-  console.log("[packed-cli-e2e] validating the login door on current and explicit versions");
-  // Public viewer coverage returns here when the CLI can change sharing scope.
-  for (const url of [
-    first.publicUrl,
-    `${first.publicUrl}/v/1`,
-    `${first.publicUrl}/v/2`,
-    fresh.publicUrl,
-    `${fresh.publicUrl}/v/1`
-  ]) {
+  console.log("[packed-cli-e2e] validating the default-company upload's login door");
+  for (const url of [fresh.publicUrl, `${fresh.publicUrl}/v/1`]) {
     assertViewerDoor(await fetchViewer(url));
   }
 
@@ -503,7 +579,8 @@ try {
   ]);
   for (const args of [
     ["upload", fixtureArgument, "--json"],
-    ["delete", "--patch", fresh.patchId, "--json"]
+    ["delete", "--patch", fresh.patchId, "--json"],
+    ["share", "--patch", fresh.patchId, "public", "--json"]
   ]) {
     const failure = await assertCliFailureNoMutation({
       cliPath,
@@ -514,7 +591,10 @@ try {
       objectDir,
       expectAuthoritativeNonEmpty: true,
       expectEmptyCliState: true,
-      stderr: /Run: patchy auth set --api-url http:\/\/127\.0\.0\.1:\d+/,
+      stderr:
+        args[0] === "share"
+          ? /Run: patchy login --api-url http:\/\/127\.0\.0\.1:\d+/
+          : /Run: patchy auth set --api-url http:\/\/127\.0\.0\.1:\d+/,
       exitCode: 1
     });
     assert.equal(failure.stdout, "", "--json failure must leave stdout empty");
@@ -2638,17 +2718,50 @@ function parseUpload(result) {
   const label = result.stdout.match(/^(Uploaded patch|Updated patch)$/m)?.[1];
   const publicUrl = result.stdout.match(/^URL: (.+)$/m)?.[1];
   const patchId = result.stdout.match(/^Patch ID: ([a-z0-9]{12})$/m)?.[1];
+  const scope = result.stdout.match(/^Scope: (company|public)\b/m)?.[1];
   const versionNumber = Number(result.stdout.match(/^Version: (\d+)$/m)?.[1]);
   assert.ok(label, `missing upload label in CLI output:\n${result.stdout}`);
   assert.ok(publicUrl, `missing public URL in CLI output:\n${result.stdout}`);
   assert.ok(patchId, `missing patch ID in CLI output:\n${result.stdout}`);
   assert.ok(Number.isInteger(versionNumber), `missing version in CLI output:\n${result.stdout}`);
-  return { label, publicUrl, patchId, versionNumber };
+  assert.ok(scope, `missing sharing scope in CLI output:\n${result.stdout}`);
+  return { label, publicUrl, patchId, versionNumber, scope };
 }
 
 async function fetchViewer(url) {
   const response = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(5_000) });
   return { response, body: await response.text() };
+}
+
+function assertPublicViewer(viewer, { patchId, versionNumber, html }) {
+  assert.equal(viewer.response.status, 200);
+  assert.equal(viewer.response.headers.get("cache-control"), "public, max-age=60");
+  assert.equal(viewer.response.headers.get("set-cookie"), null);
+  assert.equal(
+    viewer.response.headers.get("content-security-policy"),
+    "default-src 'none'; style-src 'unsafe-inline'; img-src https: data:; " +
+      "frame-src 'self' about:; base-uri 'none'; form-action 'none'"
+  );
+  assert.equal(viewer.response.headers.get("referrer-policy"), "no-referrer");
+  assert.equal(viewer.response.headers.get("x-content-type-options"), "nosniff");
+  assert.equal(viewer.response.headers.get("x-robots-tag"), "noindex");
+  assert.equal(viewer.response.headers.get("content-type"), "text/html");
+  assert.equal(viewer.response.headers.get("www-authenticate"), null);
+  assert.equal(viewer.response.headers.get("x-patchy-sign-in-url"), null);
+  assert.ok(viewer.body.includes('sandbox=""'), "the patch must remain sandboxed");
+  assert.ok(viewer.body.includes('referrerpolicy="no-referrer"'));
+  const escapedHtml = html
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+  assert.ok(
+    viewer.body.includes(`srcdoc="${escapedHtml}"`),
+    "the frame must contain the complete uploaded version, attribute-escaped"
+  );
+  assert.ok(!viewer.body.includes(html), "uploaded HTML must never enter the outer shell");
+  assert.doesNotMatch(viewer.body, /<(?:script|footer|a|form)\b/i);
+  assert.ok(viewer.body.includes(`<!-- patch:${patchId} version:${versionNumber} -->`));
 }
 
 function assertViewerDoor(viewer) {
@@ -2718,6 +2831,30 @@ async function startPostgres() {
     databaseUrl: `postgresql://postgres:postgres@127.0.0.1:${reservation.port}/patchy`
   };
   return postgres.databaseUrl;
+}
+
+async function seedOtherUserToken() {
+  const token = randomBytes(32).toString("hex");
+  const client = new pg.Client({ connectionString: postgres.databaseUrl });
+  await client.connect();
+  try {
+    await client.query(
+      `INSERT INTO users (id, clerk_user_id, company_id, email, name, role, created_at)
+       VALUES ('usr_packed_other', 'user_packed_other', $1,
+         'packed-other@patchy.local', 'Other Publisher', 'member', now())`,
+      [DEV_SEED.companyId]
+    );
+    await client.query(
+      `INSERT INTO machine_tokens
+         (id, user_id, name, token_hash, created_at, expires_at, last_used_at)
+       VALUES ('tok_packed_other', 'usr_packed_other', 'Other Machine', $1,
+         now(), now() + interval '90 days', now())`,
+      [createHash("sha256").update(token).digest("hex")]
+    );
+    return token;
+  } finally {
+    await client.end();
+  }
 }
 
 async function readMetadata() {

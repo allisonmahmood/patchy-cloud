@@ -77,7 +77,7 @@ const get = (url: string, headers: Record<string, string> = { cookie: signedInCo
     client.execute(HttpClientRequest.get(url).pipe(HttpClientRequest.setHeaders(headers)))
   );
 
-const publish = (title: string) =>
+const publish = (title: string, scope?: Patches.Patch["scope"]) =>
   Effect.flatMap(Content.Content, (content) =>
     content.upload({
       patchId: null,
@@ -85,6 +85,7 @@ const publish = (title: string) =>
       ownerUserId: DEV_SEED.userId,
       machineTokenId: DEV_SEED.tokenId,
       title,
+      ...(scope === undefined ? {} : { scope }),
       html: `<!doctype html><html><head><title>${title}</title></head><body><h1>${title}</h1></body></html>`,
       filename: null,
       repoOrg: null,
@@ -115,9 +116,7 @@ it.layer(layer)("pages", (it) => {
 
   it.effect("serves a public patch script-free with at most a minute of caching on both URLs", () =>
     Effect.gen(function* () {
-      const { patchId } = yield* publish("Serving Guarantees");
-      const sql = yield* SqlClient.SqlClient;
-      yield* sql`UPDATE patches SET scope = 'public' WHERE id = ${patchId}`;
+      const { patchId } = yield* publish("Serving Guarantees", "public");
       for (const [url, cacheControl] of [
         [`/d/${patchId}`, "public, max-age=60"],
         [`/d/${patchId}/v/1`, "public, max-age=60"]
@@ -396,9 +395,9 @@ it.layer(services)("pages in memory", (it) => {
     () =>
       Effect.gen(function* () {
         const { patchId } = yield* publish("Sharing boundary");
-        const sql = yield* SqlClient.SqlClient;
-        for (const scope of ["company", "public", "company"]) {
-          yield* sql`UPDATE patches SET scope = ${scope} WHERE id = ${patchId}`;
+        const patches = yield* Patches.Patches;
+        for (const scope of ["company", "public", "company"] as const) {
+          yield* patches.setScope(patchId, DEV_SEED.userId, scope);
           for (const path of [`/d/${patchId}`, `/d/${patchId}/v/1`]) {
             const response = yield* send(path, { headers: { cookie: signedInCookies() } });
             assert.strictEqual(response.status, 200);
