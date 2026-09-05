@@ -165,9 +165,12 @@ the CLI's successful poll saves it without printing it. Completion prints
 
 `pnpm patchy login --complete --wait 0` polls once and answers `pending` at
 exit 0 if confirmation has not happened. Completion normally waits up to a
-minute; reuse `next` after a pending answer. A rerun of `login` resumes a live
-pending code. At a real terminal, with the agent variables unset and no
-`--json`, `pnpm patchy login` prints the handoff and waits in one command.
+minute, including in-flight responses; an unanswered request at the deadline
+is exit 3, with the local login record kept for the same completion command.
+Reuse `next` after a pending answer. An agent rerun of `login` polls a pending
+code once and reports its status rather than another handoff. At a real terminal,
+with the agent variables unset and no `--json`, `pnpm patchy login` prints the
+handoff and waits in one command.
 
 ```sh
 pnpm patchy logout
