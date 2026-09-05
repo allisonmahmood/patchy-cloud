@@ -228,6 +228,99 @@ it.layer(
     })
   );
 
+  it.effect("conceals company patches at PostgreSQL version boundaries", () =>
+    Effect.gen(function* () {
+      const created = yield* upload(DEV_SEED.token, { html: html("Version boundary secret") });
+      const { patchId } = (yield* created.json) as { patchId: string };
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO companies (id, handle, name)
+        VALUES ('cmp_version_foreign', 'version-foreign', 'Foreign')`;
+      yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
+        VALUES ('usr_version_foreign', 'user_version_foreign', 'cmp_version_foreign',
+          'version-foreign@example.com', 'Foreign', 'member')`;
+      yield* sql`UPDATE patch_versions SET version_number = 2147483647 WHERE patch_id = ${patchId}`;
+      const foreignCookie = sessionCookie("user_version_foreign", "version-foreign@example.com");
+      for (const version of ["2147483647", "2147483648", "9007199254740993"]) {
+        const path = `/d/${patchId}/v/${version}`;
+        const missingPath = `/d/missing12345/v/${version}`;
+        const door = yield* send(HttpClientRequest.get(path));
+        const missingDoor = yield* send(HttpClientRequest.get(missingPath));
+        assert.strictEqual(door.status, 401);
+        assert.strictEqual(missingDoor.status, 401);
+        assert.strictEqual(door.headers["cache-control"], "private, no-store");
+        assert.strictEqual(missingDoor.headers["cache-control"], "private, no-store");
+        assert.strictEqual(
+          (yield* door.text).replaceAll(encodeURIComponent(path), "PATCH"),
+          (yield* missingDoor.text).replaceAll(encodeURIComponent(missingPath), "PATCH")
+        );
+        const foreign = yield* send(signedRequest(path, foreignCookie));
+        const missing = yield* send(signedRequest(missingPath, foreignCookie));
+        assert.strictEqual(foreign.status, 404);
+        assert.strictEqual(missing.status, 404);
+        assert.strictEqual(foreign.headers["cache-control"], "private, no-store");
+        assert.strictEqual(yield* foreign.text, yield* missing.text);
+        assert.deepStrictEqual(
+          Object.fromEntries(Object.entries(foreign.headers).filter(([name]) => name !== "date")),
+          Object.fromEntries(Object.entries(missing.headers).filter(([name]) => name !== "date"))
+        );
+      }
+      const lastValid = yield* send(signedRequest(`/d/${patchId}/v/2147483647`));
+      assert.strictEqual(lastValid.status, 200);
+      assert.include(yield* lastValid.text, "Version boundary secret");
+      assert.strictEqual((yield* send(signedRequest(`/d/${patchId}/v/2147483648`))).status, 404);
+    })
+  );
+
+  it.effect("completes a public patch handshake before serving its cacheable document", () =>
+    Effect.gen(function* () {
+      const created = yield* upload(DEV_SEED.token, { html: html("Public handshake") });
+      const { patchId } = (yield* created.json) as { patchId: string };
+      const privateUpload = yield* upload(DEV_SEED.token, { html: html("Signed-in destination") });
+      const privatePatch = (yield* privateUpload.json) as { patchId: string };
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE patches SET scope = 'public' WHERE id = ${patchId}`;
+      for (const path of [`/d/${patchId}`, `/d/${patchId}/v/1`]) {
+        const target = `${path}?view=chart`;
+        const directives = sessionCookie()
+          .split("; ")
+          .map((value) => `${value}; Path=/; SameSite=Lax`);
+        const response = yield* send(
+          HttpClientRequest.get(
+            `${target}&__clerk_handshake=${encodeURIComponent(signHandshake(directives))}`
+          )
+        );
+        assert.strictEqual(response.status, 307);
+        assert.strictEqual(response.headers["cache-control"], "private, no-store");
+        assert.strictEqual(response.headers.location, `${publicBaseUrl}${target}`);
+        const cookie = Cookies.toCookieHeader(response.cookies);
+        const page = yield* send(signedRequest(target, cookie));
+        assert.strictEqual(page.status, 200);
+        assert.strictEqual(page.headers["cache-control"], "public, max-age=60");
+        assert.deepStrictEqual(Cookies.toSetCookieHeaders(page.cookies), []);
+        assert.notInclude(yield* page.text, "<script");
+        const companyPage = yield* send(signedRequest(`/d/${privatePatch.patchId}`, cookie));
+        assert.strictEqual(
+          companyPage.status,
+          200,
+          "the completed handshake must establish the session"
+        );
+        assert.include(yield* companyPage.text, "Signed-in destination");
+
+        // A cold browser may initiate a handshake, but public access must not require it.
+        const cold = yield* send(
+          signedRequest(
+            path,
+            signedInCookies(signSession({ azp: publicBaseUrl, iat: 1, nbf: 1, exp: 2 }))
+          ).pipe(HttpClientRequest.setHeader("accept", "text/html"))
+        );
+        assert.strictEqual(cold.status, 200);
+        assert.strictEqual(cold.headers["cache-control"], "public, max-age=60");
+        assert.isUndefined(cold.headers.location);
+        assert.deepStrictEqual(Cookies.toSetCookieHeaders(cold.cookies), []);
+      }
+    })
+  );
+
   it.effect(
     "conceals foreign patches and drives enrollment and deactivation responses by hand",
     () =>

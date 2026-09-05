@@ -49,7 +49,12 @@ export type SessionResult =
       readonly handshakeFailed: boolean;
       readonly cookies: ReadonlyArray<string>;
     }
-  | { readonly status: "handshake"; readonly response: Response };
+  | {
+      readonly status: "handshake";
+      readonly response: Response;
+      /** A verified return must set its cookies even when the destination is public. */
+      readonly completed: boolean;
+    };
 
 const decodeClaims = Schema.decodeUnknownOption(SessionClaims);
 const FrontendHost = Schema.String.check(
@@ -272,7 +277,8 @@ export const make = Effect.gen(function* () {
       for (const cookie of cookies) responseHeaders.append("set-cookie", cookie);
       return {
         status: "handshake",
-        response: new Response(null, { status: 307, headers: responseHeaders })
+        response: new Response(null, { status: 307, headers: responseHeaders }),
+        completed: state.status === "signed-in"
       };
     }
     if (state.status === "signed-out") {
