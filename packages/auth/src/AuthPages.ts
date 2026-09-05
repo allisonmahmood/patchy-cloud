@@ -1,10 +1,13 @@
 import * as Effect from "effect/Effect";
-import type * as Layer from "effect/Layer";
+import * as Layer from "effect/Layer";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import type * as SqlClient from "effect/unstable/sql/SqlClient";
 import { CompanyPage, Join, type Companies, type InviteMail, type Users } from "@patchy/companies";
+import * as DevicePages from "./DevicePages.js";
+import type * as DeviceLogins from "./DeviceLogins.js";
+import type * as MachineTokens from "./MachineTokens.js";
 import * as RequireSession from "./RequireSession.js";
 import * as Session from "./Session.js";
 import { pageResponse, returnPath, signOutForm, withCookies } from "./page.js";
@@ -120,71 +123,78 @@ export const layer: Layer.Layer<
       | Users.Users
       | InviteMail.InviteMail
       | SqlClient.SqlClient
+      | DeviceLogins.DeviceLogins
+      | MachineTokens.MachineTokens
     >
-> = HttpRouter.use((router) =>
-  Effect.gen(function* () {
-    yield* router.add(
-      "GET",
-      "/login",
-      Effect.gen(function* () {
-        const session = yield* Session.Session;
-        const request = yield* HttpServerRequest.HttpServerRequest;
-        const url = new URL(request.url, session.publicBaseUrl);
-        const path =
-          returnPath(url.searchParams.get("return"), session.publicBaseUrl) ?? "/company";
-        return RequireSession.door(session, path, false, 200);
-      })
-    );
-    yield* router.add(
-      "GET",
-      "/auth/session.js",
-      HttpServerResponse.text(
-        "void window.Clerk.load({ standardBrowser: true, telemetry: { disabled: true } });\n",
-        {
-          contentType: "text/javascript",
-          headers: { "cache-control": "no-store", "x-content-type-options": "nosniff" }
-        }
-      )
-    );
-    yield* router.add("GET", "/join", errors(RequireSession.forEnrollment(join)));
-    yield* router.add(
-      "POST",
-      "/join",
-      errors(RequireSession.sameOrigin(RequireSession.forEnrollment(join)))
-    );
-    yield* router.add(
-      "GET",
-      "/company",
-      errors(RequireSession.withViewer(company({ kind: "view" })))
-    );
-    yield* router.add(
-      "POST",
-      "/company/invites",
-      errors(RequireSession.sameOrigin(RequireSession.withViewer(company({ kind: "invite" }))))
-    );
-    for (const [path, kind] of [
-      ["/company/invites/:id/revoke", "revoke"],
-      ["/company/invites/:id/resend", "resend"],
-      ["/company/users/:id/role", "role"],
-      ["/company/users/:id/deactivate", "deactivate"],
-      ["/company/users/:id/reactivate", "reactivate"]
-    ] as const) {
+> = Layer.merge(
+  DevicePages.layer,
+  HttpRouter.use((router) =>
+    Effect.gen(function* () {
       yield* router.add(
-        "POST",
-        path,
-        errors(
-          RequireSession.sameOrigin(
-            RequireSession.withViewer(
-              Effect.flatMap(HttpRouter.params, (params) => company({ kind, id: params.id ?? "" }))
-            )
-          )
+        "GET",
+        "/login",
+        Effect.gen(function* () {
+          const session = yield* Session.Session;
+          const request = yield* HttpServerRequest.HttpServerRequest;
+          const url = new URL(request.url, session.publicBaseUrl);
+          const path =
+            returnPath(url.searchParams.get("return"), session.publicBaseUrl) ?? "/machines";
+          return RequireSession.door(session, path, false, 200);
+        })
+      );
+      yield* router.add(
+        "GET",
+        "/auth/session.js",
+        HttpServerResponse.text(
+          "void window.Clerk.load({ standardBrowser: true, telemetry: { disabled: true } });\n",
+          {
+            contentType: "text/javascript",
+            headers: { "cache-control": "no-store", "x-content-type-options": "nosniff" }
+          }
         )
       );
-    }
-    yield* router.add(
-      "POST",
-      "/logout",
-      errors(RequireSession.sameOrigin(RequireSession.withSession(logout)))
-    );
-  })
+      yield* router.add("GET", "/join", errors(RequireSession.forEnrollment(join)));
+      yield* router.add(
+        "POST",
+        "/join",
+        errors(RequireSession.sameOrigin(RequireSession.forEnrollment(join)))
+      );
+      yield* router.add(
+        "GET",
+        "/company",
+        errors(RequireSession.withViewer(company({ kind: "view" })))
+      );
+      yield* router.add(
+        "POST",
+        "/company/invites",
+        errors(RequireSession.sameOrigin(RequireSession.withViewer(company({ kind: "invite" }))))
+      );
+      for (const [path, kind] of [
+        ["/company/invites/:id/revoke", "revoke"],
+        ["/company/invites/:id/resend", "resend"],
+        ["/company/users/:id/role", "role"],
+        ["/company/users/:id/deactivate", "deactivate"],
+        ["/company/users/:id/reactivate", "reactivate"]
+      ] as const) {
+        yield* router.add(
+          "POST",
+          path,
+          errors(
+            RequireSession.sameOrigin(
+              RequireSession.withViewer(
+                Effect.flatMap(HttpRouter.params, (params) =>
+                  company({ kind, id: params.id ?? "" })
+                )
+              )
+            )
+          )
+        );
+      }
+      yield* router.add(
+        "POST",
+        "/logout",
+        errors(RequireSession.sameOrigin(RequireSession.withSession(logout)))
+      );
+    })
+  )
 );

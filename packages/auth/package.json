@@ -32,9 +32,11 @@
   },
   "dependencies": {
     "@clerk/backend": "3.17.0",
+    "@patchy/analytics": "workspace:*",
     "@patchy/api": "workspace:*",
     "@patchy/companies": "workspace:*",
     "@patchy/core": "workspace:*",
+    "@patchy/limits": "workspace:*",
     "@patchy/sql": "workspace:*",
     "effect": "catalog:"
   },

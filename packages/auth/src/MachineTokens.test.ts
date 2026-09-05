@@ -162,4 +162,98 @@ it.layer(MachineTokens.layer.pipe(Layer.provideMerge(Testing.layer())))("Machine
       }
     })
   );
+
+  it.effect("lists only the user's live machines with their lifecycle timestamps", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW);
+      const tokens = yield* MachineTokens.MachineTokens;
+      const sql = yield* SqlClient.SqlClient;
+      const userId = "usr_machine_list";
+      yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
+        VALUES (${userId}, 'user_machine_list', ${DEV_SEED.companyId}, 'list@auth.test', 'List', 'member')`;
+      const live = yield* tokens.mint({ userId, name: "Live laptop" });
+      const revoked = yield* tokens.mint({ userId, name: "Revoked laptop" });
+      const expired = yield* tokens.mint({ userId, name: "Expired laptop" });
+      const idle = yield* tokens.mint({ userId, name: "Idle laptop" });
+      yield* tokens.revoke(revoked.id);
+      yield* sql`UPDATE machine_tokens SET expires_at = to_timestamp(${(NOW - 1) / 1_000})
+        WHERE id = ${expired.id}`;
+      yield* sql`UPDATE machine_tokens SET last_used_at = to_timestamp(${(NOW - 30 * DAY - 1) / 1_000})
+        WHERE id = ${idle.id}`;
+      yield* tokens.mint({ userId: DEV_SEED.userId, name: "Someone else's laptop" });
+      assert.deepStrictEqual(yield* tokens.list(userId), [
+        {
+          id: live.id,
+          name: "Live laptop",
+          createdAt: new Date(NOW).toISOString(),
+          lastUsedAt: new Date(NOW).toISOString(),
+          expiresAt: live.expiresAt
+        }
+      ]);
+      yield* TestClock.adjust(HOUR);
+      yield* tokens.authenticate(live.token);
+      assert.strictEqual(
+        (yield* tokens.list(userId))[0]?.lastUsedAt,
+        new Date(NOW + HOUR).toISOString()
+      );
+      yield* sql`UPDATE users SET deactivated_at = to_timestamp(${NOW / 1_000}) WHERE id = ${userId}`;
+      assert.deepStrictEqual(yield* tokens.list(userId), []);
+    })
+  );
+
+  it.effect("owned revocation hides foreign ids and only the owner can revoke", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW);
+      const tokens = yield* MachineTokens.MachineTokens;
+      const minted = yield* tokens.mint({ userId: DEV_SEED.userId, name: "Owned" });
+      for (const input of [
+        { id: minted.id, userId: "usr_foreign" },
+        { id: "tok_missing_owned", userId: DEV_SEED.userId }
+      ]) {
+        assert.strictEqual(
+          (yield* tokens.revokeOwned(input).pipe(Effect.flip))._tag,
+          "MachineTokenNotFound"
+        );
+      }
+      assert.strictEqual((yield* tokens.authenticate(minted.token))?.machine.id, minted.id);
+      const input = { id: minted.id, userId: DEV_SEED.userId };
+      const results = yield* Effect.all([tokens.revokeOwned(input), tokens.revokeOwned(input)], {
+        concurrency: "unbounded"
+      });
+      assert.deepStrictEqual(results.map((result) => result.alreadyRevoked).sort(), [false, true]);
+      assert.isNull(yield* tokens.authenticate(minted.token));
+    })
+  );
+
+  it.effect("revoke all preserves old stamps and rows without touching another user's key", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW);
+      const tokens = yield* MachineTokens.MachineTokens;
+      const sql = yield* SqlClient.SqlClient;
+      const userId = "usr_machine_all";
+      yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
+        VALUES (${userId}, 'user_machine_all', ${DEV_SEED.companyId}, 'all@auth.test', 'All', 'member')`;
+      const laptop = yield* tokens.mint({ userId, name: "Laptop" });
+      const desktop = yield* tokens.mint({ userId, name: "Desktop" });
+      const earlier = yield* tokens.mint({ userId, name: "Earlier" });
+      const foreign = yield* tokens.mint({ userId: DEV_SEED.userId, name: "Unaffected" });
+      yield* tokens.revoke(earlier.id);
+      yield* TestClock.adjust(HOUR);
+      yield* tokens.revokeAll(userId);
+      yield* TestClock.adjust(HOUR);
+      yield* tokens.revokeAll(userId);
+      assert.deepStrictEqual(yield* tokens.list(userId), []);
+      for (const token of [laptop.token, desktop.token, earlier.token]) {
+        assert.isNull(yield* tokens.authenticate(token));
+      }
+      assert.strictEqual((yield* tokens.authenticate(foreign.token))?.machine.id, foreign.id);
+      const rows = yield* sql<{ name: string; revokedAt: Date }>`
+        SELECT name, revoked_at AS "revokedAt" FROM machine_tokens WHERE user_id = ${userId} ORDER BY name`;
+      assert.deepStrictEqual(rows, [
+        { name: "Desktop", revokedAt: new Date(NOW + HOUR) },
+        { name: "Earlier", revokedAt: new Date(NOW) },
+        { name: "Laptop", revokedAt: new Date(NOW + HOUR) }
+      ]);
+    })
+  );
 });

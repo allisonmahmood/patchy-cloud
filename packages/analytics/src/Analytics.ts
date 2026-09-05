@@ -24,8 +24,8 @@ import * as Option from "effect/Option";
 import * as PostHogClient from "./PostHogClient.js";
 
 /**
- * Business-shaped events, named for what happened. `token.minted` is retained
- * for the device-login poll (auth spec §9); it has no emitter until that lands.
+ * Business-shaped events, named for what happened. `token.minted` reports the
+ * device-login poll's one-time mint with its user and replacement state.
  * The list is closed on purpose — serving a patch is not on it.
  */
 export type AnalyticsEventName =

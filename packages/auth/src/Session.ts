@@ -161,23 +161,25 @@ export const make = Effect.gen(function* () {
   });
   const suffix = createHash("sha1").update(publishableKey).digest("base64url").slice(0, 8);
   const clearedCookies: Array<string> = [];
-  const expire = (name: string, domain?: string) => {
+  const expire = (name: string, domain?: string, path = "/") => {
     clearedCookies.push(
-      `${name}=; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT${domain === undefined ? "" : `; Domain=${domain}`}; SameSite=Lax${publicUrl.protocol === "https:" ? "; Secure" : ""}`
+      `${name}=; Path=${path}; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT${domain === undefined ? "" : `; Domain=${domain}`}; SameSite=Lax${publicUrl.protocol === "https:" ? "; Secure" : ""}`
     );
   };
   for (const name of Object.values(constants.Cookies)) {
     expire(name);
     expire(`${name}_${suffix}`);
   }
+  // clerk-js@5's core/auth/cookies/activeContext.ts: host-only, shared cookie handler Path=/.
+  expire("clerk_active_context");
+  // Backend's RedirectCount omits Path: /login/device therefore sets it at /login.
+  expire(constants.Cookies.RedirectCount, undefined, "/login");
   // Session/dev-browser/refresh directives are host-only, Path=/; ClientUat
   // and production Handshake/HandshakeNonce are eTLD+1-scoped (SDK request.ts,
   // clerk-js getCookieDomain, and #119's raw-header evidence), also Path=/.
   // getCookieDomain probes these suffixes (not simply the last two labels).
   // Expire each candidate: the browser rejects public suffixes, and the real
   // eTLD+1 is covered without guessing a public-suffix list on the server.
-  // RedirectCount's backend setter omits Path: today's /login and /join
-  // document routes both give it the browser default Path=/.
   const hostname = publicUrl.hostname;
   const labels = hostname.split(".");
   const domains =

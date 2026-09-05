@@ -11,11 +11,14 @@ import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import * as HttpApiMiddleware from "effect/unstable/httpapi/HttpApiMiddleware";
 import * as HttpApiTest from "effect/unstable/httpapi/HttpApiTest";
 import { Authorization as AuthorizationTag, PatchyApi } from "@patchy/api";
+import { Analytics } from "@patchy/analytics";
+import { Limits } from "@patchy/limits";
 import { Companies, InviteMail, Users } from "@patchy/companies";
 import * as Testing from "@patchy/sql/testing";
 import * as AuthApi from "./AuthApi.js";
 import * as AuthPages from "./AuthPages.js";
 import * as Authorization from "./Authorization.js";
+import * as DeviceLogins from "./DeviceLogins.js";
 import * as MachineTokens from "./MachineTokens.js";
 import * as Session from "./Session.js";
 import { clerkEnv, signedInCookies, signSession } from "./testing.js";
@@ -103,7 +106,9 @@ const services = Layer.mergeAll(
   InviteMail.layerRecording
 ).pipe(
   Layer.provideMerge(Authorization.layer),
+  Layer.provideMerge(DeviceLogins.layer),
   Layer.provideMerge(MachineTokens.layer),
+  Layer.provideMerge(Layer.mergeAll(Limits.layer, Analytics.layerNoop)),
   Layer.provideMerge(Testing.layer()),
   Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env)))
 );
@@ -458,7 +463,7 @@ it.layer(services)("company page and actions", (it) => {
       for (const [path, body] of actions) {
         for (const headers of [
           { origin: "https://foreign.invalid", "sec-fetch-site": "same-origin" },
-          { "sec-fetch-site": "same-origin" }
+          { "sec-fetch-site": "cross-site" }
         ]) {
           const response = yield* send(path, {
             method: "POST",
