@@ -7,7 +7,6 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type EmbeddedPostgres from "embedded-postgres";
-import type { LiveSettings } from "../../packages/auth/live/fixtures.js";
 import { PG_FLAGS, PG_PASSWORD, PG_USER } from "../../scripts/dev/src/postgres.js";
 
 export interface CliResult {
@@ -30,14 +29,16 @@ interface Child {
   stdout: string;
 }
 
+interface PortReservation {
+  port: number;
+  release(): Promise<void>;
+}
+
 const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
 const terminationSignals = ["SIGHUP", "SIGINT", "SIGTERM", "SIGBREAK"] as const;
 
 /** Real server and installed CLI, with no checkout or developer authentication state. */
-export async function startInstance(
-  settings: LiveSettings,
-  clerkUserId: string
-): Promise<BrowserInstance> {
+export async function startInstance(clerkUserId: string): Promise<BrowserInstance> {
   const secretKey = process.env.CLERK_SECRET_KEY;
   const publishableKey = process.env.CLERK_PUBLISHABLE_KEY;
   if (!secretKey?.trim() || !publishableKey?.trim()) {
@@ -50,6 +51,8 @@ export async function startInstance(
   const children = new Set<Child>();
   let postgres: EmbeddedPostgres | undefined;
   let postgresStarted = false;
+  let serverPort: PortReservation | undefined;
+  let databasePort: PortReservation | undefined;
   let closePromise: Promise<void> | undefined;
 
   // Keep tools usable, but never forward ambient product, Clerk, storage or Node overrides.
@@ -162,7 +165,11 @@ export async function startInstance(
 
   function close(): Promise<void> {
     closePromise ??= (async () => {
-      const failures = await Promise.allSettled([...children].map(terminate));
+      const failures = await Promise.allSettled([
+        ...Array.from(children, terminate),
+        serverPort?.release(),
+        databasePort?.release()
+      ]);
       try {
         if (postgresStarted) await postgres!.stop();
       } catch {
@@ -186,6 +193,8 @@ export async function startInstance(
   let stage = "preparing temporary state";
   try {
     await Promise.all([mkdir(consumerDir), mkdir(packDir), mkdir(home)]);
+    stage = "reserving server port";
+    serverPort = await reserveLoopbackPort();
     stage = "building server";
     // Keep the tool manager's home/cache; the server and installed CLI never receive it.
     const buildEnv = { ...baseEnv, HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
@@ -268,10 +277,10 @@ export async function startInstance(
         if (!listeners.has(listener)) process.removeListener(signal, listener);
       }
     }
-    const databasePort = await availablePort();
+    databasePort = await reserveLoopbackPort();
     postgres = new Postgres({
       databaseDir: path.join(tempRoot, "postgres"),
-      port: databasePort,
+      port: databasePort.port,
       user: PG_USER,
       password: PG_PASSWORD,
       persistent: false,
@@ -280,18 +289,17 @@ export async function startInstance(
       onError() {}
     });
     await postgres.initialise();
+    await databasePort.release();
     await postgres.start();
     postgresStarted = true;
     await postgres.createDatabase("patchy");
-    const databaseUrl = `postgresql://${PG_USER}:${PG_PASSWORD}@127.0.0.1:${databasePort}/patchy`;
+    const databaseUrl = `postgresql://${PG_USER}:${PG_PASSWORD}@127.0.0.1:${databasePort.port}/patchy`;
 
     stage = "starting server";
-    const origin =
-      process.env.PATCHY_PUBLIC_BASE_URL !== undefined
-        ? new URL(settings.publicBaseUrl).origin
-        : `http://127.0.0.1:${await availablePort()}`;
-    const publicUrl = new URL(origin);
-    const port = publicUrl.port || (publicUrl.protocol === "https:" ? "443" : "80");
+    const port = String(serverPort.port);
+    const origin = `http://127.0.0.1:${port}`;
+    // Ignore the in-memory Vitest tier's URL; release our own reservation only at spawn.
+    await serverPort.release();
     const server = launch(
       process.execPath,
       [path.join(repoRoot, "apps/server/dist/start.js")],
@@ -366,8 +374,15 @@ export async function startInstance(
   }
 }
 
-async function availablePort(): Promise<number> {
+async function reserveLoopbackPort(): Promise<PortReservation> {
   const server = createServer();
+  const release = async () => {
+    if (server.listening) {
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      server.close((error) => (error ? reject(error) : resolve()));
+      await promise;
+    }
+  };
   try {
     const { promise, resolve, reject } = Promise.withResolvers<void>();
     server.once("error", reject);
@@ -376,13 +391,10 @@ async function availablePort(): Promise<number> {
     const address = server.address();
     if (!address || typeof address === "string")
       throw new Error("Could not reserve a loopback port.");
-    return address.port;
-  } finally {
-    if (server.listening) {
-      const { promise, resolve, reject } = Promise.withResolvers<void>();
-      server.close((error) => (error ? reject(error) : resolve()));
-      await promise;
-    }
+    return { port: address.port, release };
+  } catch (error) {
+    await release();
+    throw error;
   }
 }
 

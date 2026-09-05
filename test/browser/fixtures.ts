@@ -51,7 +51,7 @@ export const test = base.extend<object, { live: Live }>({
         skipPasswordRequirement: true,
         skipLegalChecks: true
       });
-      const instance = await startInstance(settings, user.id);
+      const instance = await startInstance(user.id);
       const contexts: BrowserContext[] = [];
       try {
         // The instance builds workspace packages before this seed entry exists on a clean checkout.
@@ -129,6 +129,8 @@ export async function openSeededPatch(live: Live) {
     const door = await page.goto(live.patchUrl);
     expect(door?.status()).toBe(401);
     expect(door?.headers()["cache-control"]).toBe("private, no-store");
+    expect(await door!.text()).not.toContain("Company-only browser fixture");
+    await expect(page.locator("iframe")).toHaveCount(0);
     let handshake = false;
     const observe = (url: string) => {
       if (new URL(url).searchParams.has("__clerk_handshake")) handshake = true;

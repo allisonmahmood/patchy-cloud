@@ -6,7 +6,9 @@ const decodeExpiry = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Struct({ exp: Schema.Number }))
 );
 
-test("login-door: portal handshake, session renewal and company isolation", async ({ live }) => {
+test("login-door: portal handshake, session renewal and company isolation", async ({
+  live
+}, testInfo) => {
   const page = await openSeededPatch(live);
   // URL-filtered cookie inspection excludes Secure cookies on HTTP loopback too.
   const cookies = await page.context().cookies();
@@ -18,9 +20,9 @@ test("login-door: portal handshake, session renewal and company isolation", asyn
   );
   expect(session, "the portal handshake established a browser session").toBeDefined();
   const claims = decodeExpiry(Buffer.from(session!.value.split(".")[1]!, "base64url").toString());
-  const wait = claims.exp * 1000 + 6_000 - Date.now();
-  expect(wait).toBeGreaterThan(0);
-  expect(wait).toBeLessThan(90_000);
+  const wait = Math.max(0, claims.exp * 1000 + 6_000 - Date.now());
+  // Clerk owns the token lifetime; extend the workflow's budget by the actual expiry wait.
+  testInfo.setTimeout(testInfo.timeout + wait);
   // Wait past this token's actual expiry plus Clerk's clock skew, with the shell running.
   await delay(wait);
   const navigations: string[] = [];

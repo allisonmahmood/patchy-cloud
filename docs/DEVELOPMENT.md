@@ -301,8 +301,8 @@ in CI). It creates `ci-<run id>+clerk_test@example.com` through Clerk's
 Backend API, creates a session and JWT, and sends the session cookie through
 the real `RequireSession` on `/company`. No `CLERK_JWT_KEY` is provided to
 the layer, even if set in your shell: verification uses Clerk's JWKS.
-`CLERK_AUTHORIZED_PARTIES` defaults to the test server's own origin,
-`http://127.0.0.1:3000`; a Backend-API token's absent/null `azp` is accepted.
+The in-memory Vitest tier defaults `CLERK_AUTHORIZED_PARTIES` to its request
+origin, `http://127.0.0.1:3000`; a Backend-API token's absent/null `azp` is accepted.
 
 The invitation test creates, lists, revokes and re-invites
 `ci-<run id>-invite+clerk_test@example.com` through live `InviteMail`.
@@ -315,7 +315,9 @@ Testing Token, and the `424242` test email code:
 - **`login-door`** opens the company patch signed out and checks its 401 door.
   The seeded browser user signs in through the Account Portal and returns
   through Clerk's handshake to the rendered patch and company shell. Reloading
-  after the session token expires keeps the user signed in. A second user,
+  after the session token expires keeps the user signed in. The workflow adds
+  the actual token-expiry wait to its timeout rather than assuming a fixed
+  token lifetime (CI's overall job timeout still applies). A second user,
   in a separate browser context, signs in, creates a company through
   create-or-join, and gets the same 404 for the seeded company's patch as for
   a missing patch.
@@ -329,9 +331,10 @@ seeded user: only two serial sign-ins for a full run, including the outsider.
 The browser users are `ci-<run id>-browser+clerk_test@example.com` and
 `ci-<run id>-outsider+clerk_test@example.com`. Browser requests go through
 the page rather than `context.request`, which withholds Secure cookies on
-the loopback HTTP origin. The isolated server restricts
-`CLERK_AUTHORIZED_PARTIES` to its own origin and uses live Clerk verification,
-not an ambient `CLERK_JWT_KEY`.
+the loopback HTTP origin. The isolated browser server always reserves its
+own ephemeral loopback port, holding it until spawn instead of using an
+ambient `PATCHY_PUBLIC_BASE_URL`. It restricts `CLERK_AUTHORIZED_PARTIES` to
+that origin and uses live Clerk verification, not an ambient `CLERK_JWT_KEY`.
 
 Install the browser locally once, then select a workflow with a visible browser:
 
