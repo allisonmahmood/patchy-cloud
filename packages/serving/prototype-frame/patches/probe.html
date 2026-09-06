@@ -1,0 +1,16 @@
+<style>body{font:15px system-ui;margin:1.5rem} .out{white-space:pre-wrap;background:#f4f4f4;padding:.5rem}</style>
+<h1>Probe: patch code reaching the API directly (loose CSP)</h1>
+<div class="out" id="out" data-testid="out"></div>
+<script>
+const out = (line) => { document.getElementById("out").textContent += line + "\n"; };
+(async () => {
+  out(`origin: ${window.origin}`);
+  for (const credentials of ["include", "same-origin"]) {
+    const r = await fetch("/api/acme/probe/tables/items/rows", { credentials }).catch((e) => ({ status: e.name }));
+    out(`GET credentials=${credentials} -> ${r.status}`);
+  }
+  const p = await fetch("/api/acme/probe/tables/items/rows", { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: "{}" }).catch((e) => ({ status: e.name }));
+  out(`POST credentials=include -> ${p.status}`);
+  out("done");
+})();
+</script>

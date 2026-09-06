@@ -1,0 +1,74 @@
+<style>body{font:15px system-ui;margin:1.5rem} nav a{margin-right:1rem} .out{white-space:pre-wrap;background:#f4f4f4;padding:.5rem;margin-top:1rem}</style>
+<nav><a href="#" data-route="/">Items</a> <a href="#" data-route="/items/1">Item 1</a> <a href="#" data-route="/items/2">Item 2</a> <a href="#" data-route="/items/3">Item 3</a></nav>
+<h1 id="title">…</h1>
+<p><img id="logo" alt="logo from own files" width="32" height="32"></p>
+<div id="view"></div>
+<p>
+  <button id="add">Add item (mutation via broker)</button>
+  <button id="dl-shell">Download report.csv (shell-owned)</button>
+  <button id="dl-frame">Download report.csv (in-frame anchor)</button>
+  <button id="print-frame">window.print() in frame</button>
+  <button id="print-shell">Print via shell</button>
+  <button id="unknown">Unknown op</button>
+  <button id="escape">Try to escape</button>
+</p>
+<div class="out" id="out" data-testid="out"></div>
+<script>
+const { tables, files, route, print, raw } = PatchySDK;
+const out = (line) => { document.getElementById("out").textContent += line + "\n"; };
+const view = document.getElementById("view");
+const title = document.getElementById("title");
+let items = [];
+
+async function render(path) {
+  const m = /^\/items\/(\d+)$/.exec(path);
+  if (m) {
+    const item = items.find((i) => i.id === Number(m[1]));
+    title.textContent = item ? `Item ${item.id}: ${item.name}` : `No item ${m[1]}`;
+    view.innerHTML = item ? `<p>qty ${item.qty}</p>` : "";
+  } else {
+    title.textContent = "Items";
+    view.innerHTML = "<ul>" + items.map((i) => `<li><a href="#" data-route="/items/${i.id}">${i.name}</a></li>`).join("") + "</ul>";
+  }
+}
+
+document.addEventListener("click", (e) => {
+  const a = e.target.closest("[data-route]");
+  if (!a) return;
+  e.preventDefault();
+  route.set(a.dataset.route).then(() => render(a.dataset.route));
+});
+
+// Where am I: the shell says, on load and on back/forward.
+route.onChange(async (path) => {
+  if (items.length === 0) {
+    try { items = await tables.read("items"); out(`rows.read items -> ${items.length} rows`); }
+    catch (e) { out(`rows.read failed: ${e.code} ${e.message}`); }
+  }
+  render(path);
+});
+
+files.url("logo.png").then((url) => { document.getElementById("logo").src = url; out(`files.url -> ${url.slice(0, 20)}…`); })
+  .catch((e) => out(`files.url failed: ${e.message}`));
+
+document.getElementById("add").onclick = async () => {
+  try { const row = await tables.insert("items", { name: "Drill", qty: 2 }); items.push(row); out(`rows.insert -> id ${row.id}`); render("/"); }
+  catch (e) { out(`rows.insert failed: ${e.code} ${e.message}`); }
+};
+document.getElementById("dl-shell").onclick = () => files.download("report.csv").then(() => out("download (shell) ok"), (e) => out(`download failed: ${e.message}`));
+document.getElementById("dl-frame").onclick = () => {
+  const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(new Blob(["a,b\n1,2\n"], { type: "text/csv" })), download: "in-frame.csv" });
+  document.body.append(a); a.click(); a.remove(); out("in-frame anchor clicked");
+};
+document.getElementById("print-frame").onclick = () => { try { window.print(); out("window.print() returned"); } catch (e) { out(`window.print() threw: ${e.message}`); } };
+document.getElementById("print-shell").onclick = () => print().then(() => out("print (shell) ok"));
+document.getElementById("unknown").onclick = () => raw("rows.dropTable", { table: "items" }).then(() => out("unknown op: answered?!"), (e) => out(`unknown op refused: ${e.code}`));
+document.getElementById("escape").onclick = () => {
+  try { void window.top.document; out("top.document: readable?!"); } catch (e) { out(`top.document: ${e.name}`); }
+  try { document.cookie; out(`document.cookie: ${JSON.stringify(document.cookie)}`); } catch (e) { out(`document.cookie: ${e.name}`); }
+  try { localStorage.getItem("x"); out("localStorage: readable?!"); } catch (e) { out(`localStorage: ${e.name}`); }
+  out(`origin: ${window.origin}`);
+  fetch("/api/acme/inventory/tables/items/rows", { credentials: "include" }).then((r) => out(`direct fetch: ${r.status}`), (e) => out(`direct fetch blocked: ${e.name}`));
+  try { window.top.location.href = "https://example.com/"; out("top navigation: attempted"); } catch (e) { out(`top navigation: ${e.name}`); }
+};
+</script>

@@ -22,7 +22,9 @@
     "lint": "eslint \"**/*.{ts,mts,cts,tsx}\"",
     "typecheck": "effect-language-service patch && turbo run typecheck",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "proto:frame": "node packages/serving/prototype-frame/server.mjs",
+    "proto:frame:click": "node packages/serving/prototype-frame/clickthrough.mjs"
   },
   "devDependencies": {
     "@effect/language-service": "catalog:",

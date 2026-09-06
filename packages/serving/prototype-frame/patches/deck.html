@@ -1,0 +1,13 @@
+<style>body{font:15px system-ui;margin:1.5rem} .out{white-space:pre-wrap;background:#f4f4f4;padding:.5rem}</style>
+<h1 id="title">Q3 deck (public patch)</h1>
+<p>Static content everyone sees.</p>
+<div class="out" id="out" data-testid="out"></div>
+<script>
+const { tables, route } = PatchySDK;
+const out = (line) => { document.getElementById("out").textContent += line + "\n"; };
+route.onChange(async (path) => {
+  out(`route ${path}`);
+  try { const rows = await tables.read("slides"); out(`rows.read slides -> ${rows.length} rows`); }
+  catch (e) { out(`rows.read failed: ${e.code} ${e.message}`); }
+});
+</script>
