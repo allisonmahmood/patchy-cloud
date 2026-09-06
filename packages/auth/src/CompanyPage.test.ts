@@ -2,6 +2,7 @@ import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServer from "effect/unstable/http/HttpServer";
@@ -176,6 +177,28 @@ it.layer(services)("company page and actions", (it) => {
           }
         }
       })
+  );
+
+  it.effect("marks expired invitations while keeping their resend and revoke controls", () =>
+    Effect.gen(function* () {
+      const companies = yield* Companies.Companies;
+      const owner = yield* createCompany("company-expired");
+      const invite = yield* companies.createInvite({
+        companyId: owner.company.id,
+        invitedBy: owner.user.id,
+        email: "expired-page@example.com"
+      });
+      const before = yield* send("/company", { headers: { cookie: cookie(owner.user) } });
+      assert.notInclude(yield* Effect.promise(() => before.text()), "Expired");
+      yield* TestClock.adjust("30 days");
+      const response = yield* send("/company", { headers: { cookie: cookie(owner.user) } });
+      assert.strictEqual(response.status, 200);
+      const html = yield* Effect.promise(() => response.text());
+      assert.include(html, invite.email);
+      assert.include(html, "Member · Expired");
+      assert.include(html, `action="/company/invites/${invite.id}/resend"`);
+      assert.include(html, `action="/company/invites/${invite.id}/revoke"`);
+    })
   );
 
   it.effect("offers a route back to company management when the form body cannot be read", () =>

@@ -1,3 +1,5 @@
+import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -25,7 +27,7 @@ const lockPendingRow = SqlSchema.findOneOption({
     const sql = yield* SqlClient.SqlClient;
     return yield* sql`
       SELECT id, company_id AS "companyId", email, role, invited_by AS "invitedBy",
-        clerk_invitation_id AS "clerkInvitationId", created_at AS "createdAt",
+        clerk_invitation_id AS "clerkInvitationId", created_at AS "createdAt", expires_at AS "expiresAt",
         revoked_at AS "revokedAt", consumed_at AS "consumedAt"
       FROM invites WHERE id = ${inviteId} AND company_id = ${companyId}
         AND revoked_at IS NULL AND consumed_at IS NULL FOR UPDATE`;
@@ -39,15 +41,23 @@ const lockPending = Effect.fn("Invitations.lockPending")(function* (input: Invit
   return row.value;
 });
 
-const deliver = Effect.fn("Invitations.deliver")(function* (invite: Companies.Invite) {
+const deliver = Effect.fn("Invitations.deliver")(function* (
+  invite: Companies.Invite,
+  expiresAt: Date
+) {
   const sql = yield* SqlClient.SqlClient;
   const mail = yield* InviteMail.InviteMail;
   const id = yield* mail
     .create(invite.email)
     .pipe(Effect.catchTags({ InviteMailError: () => Effect.succeed(null) }));
   if (id === null) return { invite, mailFailed: true };
-  yield* sql`UPDATE invites SET clerk_invitation_id = ${id} WHERE id = ${invite.id}`;
-  return { invite: new Companies.Invite({ ...invite, clerkInvitationId: id }), mailFailed: false };
+  yield* sql`
+    UPDATE invites SET clerk_invitation_id = ${id},
+      expires_at = to_timestamp(${expiresAt.getTime() / 1_000}) WHERE id = ${invite.id}`;
+  return {
+    invite: new Companies.Invite({ ...invite, clerkInvitationId: id, expiresAt }),
+    mailFailed: false
+  };
 });
 
 // Hold the invite's row lock through delivery and commit. Consumption, revoke and
@@ -65,7 +75,7 @@ export const create = Effect.fn("Invitations.create")(function* (
   return yield* sql.withTransaction(
     Effect.gen(function* () {
       const invite = yield* companies.createInvite(input);
-      return yield* deliver(invite);
+      return yield* deliver(invite, invite.expiresAt);
     })
   );
 }, Effect.uninterruptible);
@@ -124,7 +134,11 @@ export const resend = Effect.fn("Invitations.resend")(function* (
         yield* sql`UPDATE invites SET clerk_invitation_id = NULL WHERE id = ${invite.id}`;
         invite = new Companies.Invite({ ...invite, clerkInvitationId: null });
       }
-      return yield* deliver(invite);
+      const now = yield* Clock.currentTimeMillis;
+      return yield* deliver(
+        invite,
+        DateTime.toDateUtc(DateTime.makeUnsafe(now + Companies.INVITATION_LIFETIME_MS))
+      );
     })
   );
 }, Effect.uninterruptible);

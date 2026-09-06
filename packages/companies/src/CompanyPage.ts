@@ -1,3 +1,4 @@
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
@@ -56,6 +57,7 @@ const render = Effect.fn("CompanyPage.render")(function* (
 ): Effect.fn.Return<Page, SqlError, Users.Users | Companies.Companies> {
   const users = yield* (yield* Users.Users).list(viewer.company.id);
   const invites = yield* (yield* Companies.Companies).listInvites(viewer.company.id);
+  const now = yield* Clock.currentTimeMillis;
   const admin = viewer.role === "admin";
   const userRows = users.map((user) => {
     const path = `/company/users/${encodeURIComponent(user.id)}`;
@@ -67,7 +69,7 @@ const render = Effect.fn("CompanyPage.render")(function* (
   });
   const inviteRows = invites.map((invite) => {
     const path = `/company/invites/${encodeURIComponent(invite.id)}`;
-    return `<li class="company-row"><p><span class="auth-email">${escapeHtml(invite.email)}</span><br>${invite.role === "admin" ? "Admin" : "Member"} · Pending</p>${invite.clerkInvitationId === null ? '<p class="auth-hint">Invitation saved, but the email did not go out. An admin can resend it.</p>' : ""}${admin ? `<div class="company-actions">${actionForm(`${path}/resend`, "Resend invite")}${actionForm(`${path}/revoke`, "Revoke invite")}</div>` : ""}</li>`;
+    return `<li class="company-row"><p><span class="auth-email">${escapeHtml(invite.email)}</span><br>${invite.role === "admin" ? "Admin" : "Member"} · ${invite.expiresAt.getTime() <= now ? "Expired" : "Pending"}</p>${invite.clerkInvitationId === null ? '<p class="auth-hint">Invitation saved, but the email did not go out. An admin can resend it.</p>' : ""}${admin ? `<div class="company-actions">${actionForm(`${path}/resend`, "Resend invite")}${actionForm(`${path}/revoke`, "Revoke invite")}</div>` : ""}</li>`;
   });
   const notice = refusal
     ? `<div class="note note-warn" role="alert">${escapeHtml(refusal.message)}</div>`
