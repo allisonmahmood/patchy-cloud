@@ -117,6 +117,9 @@ const poll = Effect.fn("Login.poll")(function* (
       // The mint response includes the receipt, so saving the key needs no further HTTP request.
       yield* state.saveCredential(apiUrl, token, { source: "login", machine: result.machine });
       yield* state.forgetPendingLogin(apiUrl);
+      const warnings = Option.isSome(yield* Instance.optionalSecret("PATCHY_API_TOKEN"))
+        ? ["Login saved. PATCHY_API_TOKEN is still set and takes precedence over this login."]
+        : [];
       yield* Output.report(
         {
           ok: true,
@@ -125,10 +128,12 @@ const poll = Effect.fn("Login.poll")(function* (
           company: result.company,
           user: result.user,
           machine: result.machine,
-          credentialsPath: state.credentialsPath
+          credentialsPath: state.credentialsPath,
+          warnings
         },
         [
-          `Logged in to ${apiUrl} as ${result.company.name}. This machine is "${result.machine.name}".`
+          `Logged in to ${apiUrl} as ${result.company.name}. This machine is "${result.machine.name}".`,
+          ...warnings
         ]
       );
       return;

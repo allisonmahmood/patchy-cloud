@@ -257,7 +257,8 @@ it.effect(
         company: receipt.company,
         user: receipt.user,
         machine: receipt.machine,
-        credentialsPath: "/state/credentials.json"
+        credentialsPath: "/state/credentials.json",
+        warnings: []
       });
     }).pipe(Effect.provide(TestConsole.layer), Effect.scoped)
 );

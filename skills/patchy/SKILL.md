@@ -85,7 +85,8 @@ the chosen instance and follow the handoff. Resolve an overriding
    and confirms the publishing key was saved. Run `patchy whoami --json` for the
    same instance before publishing, including when a key was already available.
    Name the user, company and machine it reports. A successful login does not
-   override `PATCHY_API_TOKEN`; resolve an unintended identity before uploading.
+   override `PATCHY_API_TOKEN`; completion reports that override in `warnings`.
+   Relay any warning and resolve an unintended identity before uploading.
    Then publish:
 
 ```bash

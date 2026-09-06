@@ -770,10 +770,12 @@ try {
     "company",
     "user",
     "machine",
-    "credentialsPath"
+    "credentialsPath",
+    "warnings"
   ]);
   assert.equal(loggedIn.ok, true);
   assert.equal(loggedIn.status, "logged_in");
+  assert.deepEqual(loggedIn.warnings, []);
   assert.equal(loggedIn.instanceUrl, publicBaseUrl);
   assert.deepEqual(loggedIn.company, {
     handle: DEV_SEED.companyHandle,
