@@ -63,31 +63,40 @@ Open it through the user's browser; bind the seeded admin to their Clerk user
 as above so they are in the patch's company. One sign-in returns to the patch;
 reload after 70 seconds to exercise the shell's session refresh.
 
-Exercise both sharing transitions through the CLI:
+Exercise both sharing transitions and the current-version boundary through the CLI:
 
 ```sh
 pnpm patchy upload examples/plan.html --share public --json
-# Fetch publicUrl and publicUrl/v/<versionNumber> without cookies.
+# Fetch publicUrl and publicUrl/v/<versionNumber> without cookies: 200.
+# Keep this version URL for the history check.
+pnpm patchy upload examples/plan.html --json
+# Scope stays public. Latest and the NEW version URL: 200, public, max-age=60.
+# The previous version URL: 401, private, no-store.
 pnpm patchy share examples/plan.html company --json
-# Fetch both again: 401, Cache-Control: private, no-store.
+# Latest, current-version and previous-version URLs: 401, private, no-store.
 pnpm patchy share examples/plan.html public --json
-# Fetch both again: 200, Cache-Control: public, max-age=60.
+# Latest and current-version URLs: 200, public, max-age=60; previous version: 401.
 pnpm patchy share --patch <patchId> company --json
 ```
 
 Use the returned id for `<patchId>`; select either the cached file or the id,
 never both. Only the owner may change sharing. Upload and share report `scope`
-in JSON; text output names who can open the link. While public, both URL shapes
-must answer 200 with `Cache-Control: public, max-age=60`, no `Set-Cookie` and the
-unchanged script-free CSP. The company transition must restore cookie-free 401
-with `private, no-store` at both shapes. Public caches can keep their copy for
-up to 60 seconds; downloaded copies cannot be recalled. Only public patches fetch
-by URL; company pages are read through the user's signed-in browser.
+in JSON; text output names who can open the link. Only the current version of a
+public patch is public; older versions stay behind the company door. The current
+version must answer 200 at both `/d/<id>` and `/d/<id>/v/<current n>` with
+`Cache-Control: public, max-age=60`, no `Set-Cookie` and the unchanged script-free CSP.
+Older version URLs must answer cookie-free requests with 401 and `private, no-store`,
+including after sharing public again. The company transition must restore that
+door at the latest and current-version URLs too. Previously public caches can keep
+their copy for up to 60 seconds after a scope or current-version change; downloaded
+copies cannot be recalled. Fetch only the current public version directly by URL;
+company pages and older versions require the user's signed-in browser.
 
 A signed-in foreign-company reader and a missing patch must get the same private,
 uncached 404; unenrolled readers go to `/join` with the patch as `return`, and
 deactivated readers get 403. The packed CLI e2e covers the default-company 401,
-the explicit public upload's viewer guarantees, and the return to company.
+the current public version's viewer guarantees, the historical version's company
+door after a new upload, and both sharing transitions.
 Production-domain Clerk handshake verification remains a separate live check.
 
 The server logs nothing per request, so `pnpm dev logs` will not show a 401 or a 500; it answers "did it start, on which port". Filter it with `grep -E '\[(server|dev)\]'`, since most of the file is Postgres chatter, and expect one benign `relation "schema_migrations" does not exist` line on first run. Request-level evidence comes from the response itself.

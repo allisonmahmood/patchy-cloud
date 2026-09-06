@@ -108,19 +108,21 @@ Hand over `publicUrl` and announce the **returned `scope`**:
 
 - `company`: **"Signed-in colleagues in your company can open it; people outside the
   company cannot."** Read it through the user's signed-in browser.
-- `public`: **"Anyone with the link can open it, without signing in."** Only public
-  patches can be fetched directly by URL.
+- `public`: **"Anyone with the link can open it, without signing in."** Only the
+  current version can be fetched directly at `/d/<id>` or `/d/<id>/v/<current n>`.
 
-The field name `publicUrl` is not proof of anonymous access. If browser access is
-unavailable for a company patch, ask the user to open the link or supply its content;
-a publishing key does not open the page.
+Only the current version of a public patch is public; older versions stay behind
+the company door. The field name `publicUrl` is not proof of anonymous access.
+If browser access is unavailable for a company page or an older version, ask the
+user to open the link or supply its content; a publishing key does not open the page.
 
 To change the audience afterward, the owner can run `patchy share './welcome.html' public`
 or `patchy share './welcome.html' company`; `patchy share --patch <id> public` (or
 `company`) selects an id instead of the cached file. Announce the scope that command
-returns too. Taking it back to company makes origin responses `private, no-store`,
-but a public copy may remain cached for 60 seconds at either latest or version URL,
-and downloaded copies cannot be recalled.
+returns too. Older versions, and all versions after taking the patch back to company,
+have origin responses of `private, no-store` and answer 401 without a session.
+A previously public copy may remain cached for up to 60 seconds after a scope or
+current-version change; downloaded copies cannot be recalled.
 
 ### 4. Sign-off
 
