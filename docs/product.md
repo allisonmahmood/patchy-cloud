@@ -131,10 +131,12 @@ There is no person without a company. A sign-in with no company behind it lands 
 **Invite** is the default way in: an admin invites an email address, the person signs in, they are in. An admin may also verify the company's **domain** — proven by email, never a consumer domain like `gmail.com`, and one domain belongs to one company — after which anyone signing in with an `@acme.com` work identity joins Acme automatically. Verifying a domain never stops inviting: a contractor on another domain is invited like anyone else.
 
 Today Clerk sends the invitation email and Patchy owns the invitation, which
-does not expire. The person signs in and chooses **Join** on create-or-join;
-several companies may invite one address, with at most one pending invite per
-company. Admins can revoke or resend; failed email delivery keeps the invitation
-and tells the admin to resend.
+expires after Clerk's default 30 days. The person signs in and chooses **Join**
+on create-or-join while the invitation is unexpired; several companies may invite
+one address, with at most one pending invite per company, including expired ones.
+Expired invitations stay visible on `/company` for admins to revoke or resend;
+resend replaces the emailed invitation and renews the 30-day expiry. Failed email
+delivery keeps the invitation and tells the admin to resend.
 
 A user is in **exactly one company**, and the rule is hard. Inviting someone who is already in another company is refused; they must leave that company first. Someone who created a company of one and is then invited (or whose domain a real company verifies) must either delete that company or add someone else and leave it — its patches do not come along. Merging a company of one into a company is not designed. Agencies and consultants who need several companies were deliberately deferred with the company decision.
 

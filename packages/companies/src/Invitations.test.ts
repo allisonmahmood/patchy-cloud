@@ -30,7 +30,7 @@ it.layer(Companies.layer.pipe(Layer.provideMerge(Testing.layer())))("Invitations
       const [pending] = yield* companies.findInvitesByEmail("no-mail@example.com");
       assert.strictEqual(pending!.id, result.invite.id);
       assert.isNull(pending!.clerkInvitationId);
-      yield* TestClock.adjust("31 days");
+      yield* TestClock.adjust("29 days");
       const joined = yield* companies.consumeInvite({
         inviteId: pending!.id,
         clerkUserId: "clerk_no_mail",
@@ -40,6 +40,37 @@ it.layer(Companies.layer.pipe(Layer.provideMerge(Testing.layer())))("Invitations
       assert.strictEqual(joined.companyId, company.id);
       assert.strictEqual(joined.role, "admin");
     })
+  );
+
+  it.effect("renews an expired invitation for another Clerk-default lifetime on resend", () =>
+    Effect.gen(function* () {
+      const companies = yield* Companies.Companies;
+      yield* TestClock.setTime(0);
+      const { company, user } = yield* companies.create(companyInput("mail-expiry"));
+      const created = yield* Invitations.create({
+        companyId: company.id,
+        invitedBy: user.id,
+        email: "renew@example.com"
+      });
+      yield* TestClock.adjust("30 days");
+      const resent = yield* Invitations.resend({
+        companyId: company.id,
+        inviteId: created.invite.id
+      });
+      assert.isFalse(resent.mailFailed);
+      assert.strictEqual(resent.invite.expiresAt.toISOString(), "1970-03-02T00:00:00.000Z");
+      yield* TestClock.adjust("29 days");
+      assert.deepStrictEqual(yield* companies.findInvitesByEmail(created.invite.email), [
+        resent.invite
+      ]);
+      const joined = yield* companies.consumeInvite({
+        inviteId: created.invite.id,
+        clerkUserId: "clerk_renew",
+        email: created.invite.email,
+        name: "Renewed"
+      });
+      assert.strictEqual(joined.companyId, company.id);
+    }).pipe(Effect.provide(InviteMail.layerRecording))
   );
 
   it.effect(

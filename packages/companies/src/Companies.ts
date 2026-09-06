@@ -46,6 +46,9 @@ export class Company extends Schema.Class<Company>("Company")({
   createdAt: Schema.Date
 }) {}
 
+// Clerk's application invitation default: https://clerk.com/docs/reference/backend/invitations/create-invitation
+export const INVITATION_LIFETIME_MS = 30 * 24 * 60 * 60 * 1_000;
+
 export class Invite extends Schema.Class<Invite>("Invite")({
   id: Schema.String,
   companyId: Schema.String,
@@ -54,6 +57,7 @@ export class Invite extends Schema.Class<Invite>("Invite")({
   invitedBy: Schema.String,
   clerkInvitationId: Schema.NullOr(Schema.String),
   createdAt: Schema.Date,
+  expiresAt: Schema.Date,
   revokedAt: Schema.NullOr(Schema.Date),
   consumedAt: Schema.NullOr(Schema.Date)
 }) {}
@@ -100,7 +104,7 @@ export class InviteUnavailable extends Schema.TaggedError<InviteUnavailable>()(
   }
 ) {
   override get message() {
-    return "Invitation not found, revoked or already consumed.";
+    return "Invitation not found, expired, revoked or already consumed.";
   }
 }
 
@@ -151,7 +155,7 @@ export const make = Effect.gen(function* () {
   const userColumns = sql`id, clerk_user_id AS "clerkUserId", company_id AS "companyId",
     email, name, role, created_at AS "createdAt", deactivated_at AS "deactivatedAt"`;
   const inviteColumns = sql`id, company_id AS "companyId", email, role, invited_by AS "invitedBy",
-    clerk_invitation_id AS "clerkInvitationId", created_at AS "createdAt",
+    clerk_invitation_id AS "clerkInvitationId", created_at AS "createdAt", expires_at AS "expiresAt",
     revoked_at AS "revokedAt", consumed_at AS "consumedAt"`;
   const companyById = SqlSchema.findOneOption({
     Request: Schema.String,
@@ -205,8 +209,9 @@ export const make = Effect.gen(function* () {
     }),
     Result: Invite,
     execute: ({ id, companyId, email, role, invitedBy, now }) => sql`
-      INSERT INTO invites (id, company_id, email, role, invited_by, created_at)
-      VALUES (${id}, ${companyId}, ${email}, ${role}, ${invitedBy}, to_timestamp(${now / 1_000}))
+      INSERT INTO invites (id, company_id, email, role, invited_by, created_at, expires_at)
+      VALUES (${id}, ${companyId}, ${email}, ${role}, ${invitedBy}, to_timestamp(${now / 1_000}),
+        to_timestamp(${(now + INVITATION_LIFETIME_MS) / 1_000}))
       ON CONFLICT (company_id, email) WHERE revoked_at IS NULL AND consumed_at IS NULL
       DO NOTHING RETURNING ${inviteColumns}`
   });
@@ -218,11 +223,12 @@ export const make = Effect.gen(function* () {
         AND revoked_at IS NULL AND consumed_at IS NULL ORDER BY created_at, id`
   });
   const emailInvites = SqlSchema.findAll({
-    Request: Schema.String,
+    Request: Schema.Struct({ email: Schema.String, now: Schema.Number }),
     Result: Invite,
-    execute: (email) => sql`
+    execute: ({ email, now }) => sql`
       SELECT ${inviteColumns} FROM invites WHERE email = ${email}
-        AND revoked_at IS NULL AND consumed_at IS NULL ORDER BY created_at, id`
+        AND revoked_at IS NULL AND consumed_at IS NULL
+        AND expires_at > to_timestamp(${now / 1_000}) ORDER BY created_at, id`
   });
   const revokeRow = SqlSchema.findOneOption({
     Request: Schema.Struct({
@@ -303,9 +309,12 @@ export const make = Effect.gen(function* () {
   const listInvites = Effect.fn("Companies.listInvites")((companyId: string) =>
     companyInvites(companyId).pipe(Effect.catchTags(dieOnSchemaError))
   );
-  const findInvitesByEmail = Effect.fn("Companies.findInvitesByEmail")((email: string) =>
-    emailInvites(email.toLowerCase()).pipe(Effect.catchTags(dieOnSchemaError))
-  );
+  const findInvitesByEmail = Effect.fn("Companies.findInvitesByEmail")(function* (email: string) {
+    const now = yield* Clock.currentTimeMillis;
+    return yield* emailInvites({ email: email.toLowerCase(), now }).pipe(
+      Effect.catchTags(dieOnSchemaError)
+    );
+  });
   const revokeInvite = Effect.fn("Companies.revokeInvite")(function* (input: {
     readonly companyId: string;
     readonly inviteId: string;
@@ -324,9 +333,9 @@ export const make = Effect.gen(function* () {
           if (Option.isSome(existing))
             return yield* new AlreadyInCompany({ clerkUserId: input.clerkUserId });
           const invite = yield* lockInvite({ inviteId: input.inviteId, email });
-          if (Option.isNone(invite))
-            return yield* new InviteUnavailable({ inviteId: input.inviteId });
           const now = yield* Clock.currentTimeMillis;
+          if (Option.isNone(invite) || invite.value.expiresAt.getTime() <= now)
+            return yield* new InviteUnavailable({ inviteId: input.inviteId });
           const user = yield* insertUser({
             id: newInternalId("usr"),
             companyId: invite.value.companyId,

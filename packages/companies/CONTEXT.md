@@ -29,7 +29,7 @@ A named set of users an admin creates; a user can be in many. Purely a grant sur
 _Avoid_: team, department (labels, not concepts), role (what an admin has; a group is who), space
 
 **Invite**:
-An invitation for one email address to join a company with a role: Clerk sends the email, Patchy owns the invitation, with no expiry, until revoked or consumed; resend replaces the emailed invitation, not the company invitation. Several companies may invite the same address, each at most once while live, matched case-insensitively at sign-in; an email already belonging to a user is refused as already in a company.
+An invitation for one email address to join a company with a role: Clerk sends the email and Patchy owns the invitation, which expires after Clerk's default 30 days unless revoked or consumed sooner; resend replaces the emailed invitation and renews its expiry, while expired invitations remain visible for admins to resend or revoke. Several companies may invite the same address, each at most once while pending (including expired invitations), matched case-insensitively at sign-in; an email already belonging to a user is refused as already in a company.
 _Avoid_: add user, share the company
 
 **Create-or-join**:

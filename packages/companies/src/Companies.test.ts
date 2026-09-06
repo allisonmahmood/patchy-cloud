@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as Testing from "@patchy/sql/testing";
 import * as Companies from "./Companies.js";
@@ -177,6 +178,32 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(Te
             "InviteUnavailable"
           );
         })
+    );
+
+    it.effect("hides expired invitations from join and refuses to consume them", () =>
+      Effect.gen(function* () {
+        const companies = yield* Companies.Companies;
+        const { company, user } = yield* companies.create(companyInput("invite-expiry"));
+        const invite = yield* companies.createInvite({
+          companyId: company.id,
+          invitedBy: user.id,
+          email: "expiry@example.com"
+        });
+        yield* TestClock.adjust("30 days");
+        assert.deepStrictEqual(yield* companies.findInvitesByEmail("EXPIRY@example.com"), []);
+        assert.strictEqual(
+          (yield* companies
+            .consumeInvite({
+              inviteId: invite.id,
+              clerkUserId: "clerk_expiry",
+              email: invite.email,
+              name: "Expired"
+            })
+            .pipe(Effect.flip))._tag,
+          "InviteUnavailable"
+        );
+        assert.deepStrictEqual(yield* companies.listInvites(company.id), [invite]);
+      })
     );
 
     it.effect(
