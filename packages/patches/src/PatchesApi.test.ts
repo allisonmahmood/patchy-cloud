@@ -19,6 +19,7 @@ import {
 } from "@patchy/api";
 import { ContentStore } from "@patchy/content-store";
 import { Limits } from "@patchy/limits";
+import { Tables } from "@patchy/primitives";
 import * as Content from "./Content.js";
 import * as Patches from "./Patches.js";
 import * as PatchesApi from "./PatchesApi.js";
@@ -60,7 +61,7 @@ const recordingAnalytics = Layer.succeed(
 const layer = Layer.mergeAll(PatchesApi.layer, HttpServer.layerServices).pipe(
   Layer.provideMerge(Fixtures.authorization),
   Layer.provideMerge(Layer.mergeAll(Content.layer, Limits.layer, recordingAnalytics)),
-  Layer.provideMerge(Layer.mergeAll(Patches.layer, memoryStore)),
+  Layer.provideMerge(Layer.mergeAll(Patches.layer, Tables.layer, memoryStore)),
   Layer.provideMerge(Fixtures.database),
   Layer.provide(
     ConfigProvider.layer(

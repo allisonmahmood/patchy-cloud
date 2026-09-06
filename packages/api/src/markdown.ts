@@ -15,6 +15,7 @@ interface JsonSchema {
   enum?: ReadonlyArray<unknown>;
   anyOf?: ReadonlyArray<JsonSchema>;
   properties?: Record<string, JsonSchema>;
+  additionalProperties?: JsonSchema | boolean;
   required?: ReadonlyArray<string>;
   items?: JsonSchema;
 }
@@ -94,6 +95,11 @@ export function renderApiMarkdown(): string {
     }
     if (schema.enum) return schema.enum.map((value) => JSON.stringify(value)).join(" | ");
     if (schema.type === "array") return `${renderType(schema.items ?? {}, linked)}[]`;
+    // A record (`Schema.Record`) has no fixed properties, only a value shape.
+    if (schema.type === "object" && !schema.properties) {
+      const value = schema.additionalProperties;
+      return `Record<string, ${typeof value === "object" ? renderType(value, linked) : "unknown"}>`;
+    }
     if (schema.type === "object") return renderShape(schema, 0, linked).replace(/\s+/g, " ");
     if (schema.title === "Timestamp") return "string (ISO-8601)";
     return schema.type ?? "unknown";

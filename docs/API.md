@@ -78,6 +78,25 @@ Responses:
 - `422` { ok: false, errors: string[], warnings: string[] }
 - `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
 
+### `POST /api/publish`
+
+PROTOTYPE. Publish a patch repo: the manifest compiled from `patchy.config.ts` and the single-file bundle. The server checks the declared tier against the bundle (script in a tier 0 bundle is refused), diffs the manifest against the served version's and refuses anything but additions, provisions the new tables, columns and file stores in the company database, and only then records the version. Nothing is stored on a refusal.
+
+Request body: [PublishRequest](#publishrequest)
+
+Responses:
+
+- `200` [PublishUpdated](#publishupdated)
+- `201` [PublishCreated](#publishcreated)
+- `400` { ok: false, error: string }
+- `401` { ok: false, error: "Missing or invalid API token." }
+- `403` { ok: false, error: string, code: "live_patch_quota_exceeded", quota: integer }
+- `404` { ok: false, error: string }
+- `409` { ok: false, error: string }
+- `413` { ok: false, error: string }
+- `422` { ok: false, code: "tier_mismatch" | "schema_not_additive" | "invalid_manifest", error: string, errors: string[] }
+- `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
+
 ### `POST /api/patches/:patchId/share`
 
 Change the sharing scope of a patch owned by the bearer token's user, without publishing a version. `company` requires a company member's browser session; `public` lets anyone with the link open the current version. Only the current version of a public patch is public; older versions stay behind the company door. A patch the caller does not own answers 404. The current public version may be cached for 60 seconds at both `/d/<id>` and `/d/<id>/v/<current n>`; older versions and company patches are `private, no-store` and answer 401 without a session. The JSON body is bounded by the upload body limit: 2 MiB by default, or three times `PATCHY_MAX_HTML_BYTES` when that is larger. An oversized declared body answers 413; streaming bodies are cut off at the cap. Rejected requests leave the scope unchanged.
@@ -254,6 +273,71 @@ Responses:
   publicUrl: string,
   scope: "company" | "public",
   warnings: string[]
+}
+```
+
+### Manifest
+
+```
+{
+  manifestVersion: 1,
+  tier: 0 | 1,
+  tables: Record<string, { shared: boolean, columns: Record<string, { kind: "text" | "integer" | "boolean" | "timestamp" | "json", optional: boolean, default?: string | number | boolean }> }>,
+  files: Record<string, Record<string, unknown> | unknown[]>
+}
+```
+
+### PublishRequest
+
+```
+{
+  manifest: Manifest,
+  html: string,
+  patchId?: string | null,
+  scope?: "company" | "public",
+  metadata?: UploadMetadata
+}
+```
+
+### PublishCreated
+
+```
+{
+  ok: true,
+  patchId: string,
+  versionId: string,
+  versionNumber: integer,
+  title: string,
+  publicUrl: string,
+  scope: "company" | "public",
+  warnings: string[],
+  tier: 0 | 1,
+  provisioned: {
+    tables: string[],
+    columns: string[],
+    files: string[]
+  }
+}
+```
+
+### PublishUpdated
+
+```
+{
+  ok: true,
+  patchId: string,
+  versionId: string,
+  versionNumber: integer,
+  title: string,
+  publicUrl: string,
+  scope: "company" | "public",
+  warnings: string[],
+  tier: 0 | 1,
+  provisioned: {
+    tables: string[],
+    columns: string[],
+    files: string[]
+  }
 }
 ```
 
