@@ -5,7 +5,7 @@ How a published patch reaches its reader. `packages/serving` owns the serving gu
 ## Language
 
 **Serving guarantee**:
-A fixed promise about how a published patch reaches its reader: pages are **share-a-link-never-be-found** (kept out of search results, with no other measure against discovery); readers are **unwatched by the patch** (the patch runs no script; a company page's shell runs only Patchy's own session script, never analytics); patch URLs are **open to machines** that may open them, never bot-blocked or challenged; and caching is **keyed to sharing**, a minute at most for a public page and never for a doored one, at both latest and version URLs. Access checks belong to the host, not the patch, and public cache windows expire without relying on a CDN purge.
+A fixed promise about how a published patch reaches its reader: pages are **share-a-link-never-be-found** (kept out of search results, with no other measure against discovery); readers are **unwatched by the patch** (the patch runs no script; a company page's shell runs only Patchy's own session script, never analytics); patch URLs are **open to machines** that may open them, never bot-blocked or challenged; and caching is **keyed to sharing**, a minute at most for the current public version at its latest and version URLs, and never for a doored page. Only the current version of a public patch is public; older versions stay behind the company door. Access checks belong to the host, not the patch, and public cache windows expire without relying on a CDN purge.
 _Avoid_: bot protection (authorized agents may open pages), unlisted as a synonym for private (sharing scope controls access)
 
 **Page**:

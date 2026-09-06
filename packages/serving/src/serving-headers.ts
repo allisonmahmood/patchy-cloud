@@ -8,9 +8,10 @@
  * The patch runs no script. A company shell runs only the session scripts,
  * never analytics; a public shell loads no scripts or session cookies.
  *
- * Caching follows sharing, not URL shape: public pages cache for at most a
- * minute, including version URLs, so making a patch company-only takes effect
- * within a minute without a CDN purge. Doored responses are private, no-store.
+ * Only a public patch's current version is public, at its latest and version
+ * URLs; older versions stay behind the company door. Public pages cache for at
+ * most a minute, so a scope or current-version change takes effect within a
+ * minute without a CDN purge. Doored responses are private, no-store.
  */
 import * as Effect from "effect/Effect";
 import * as HttpMiddleware from "effect/unstable/http/HttpMiddleware";

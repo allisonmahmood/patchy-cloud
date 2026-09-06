@@ -72,7 +72,7 @@ export function renderHome(options: { publicBaseUrl: string }): string {
 
 /**
  * The uploaded document stays script-free in its sandboxed frame. Only a
- * company patch's outer shell loads the session scripts; public pages load none.
+ * company page's outer shell loads the session scripts; public pages load none.
  */
 export function renderPatchWrapper(
   options: {

@@ -73,9 +73,11 @@ Behavior:
   colleagues in the user's company can open the link; `public` means anyone with
   the link can open it without signing in. Text output names both scope and readership.
   The response field is still named `publicUrl`; that name does not make the page public.
-- Taking a public patch back to company changes origin responses to `private, no-store`.
-  Public copies may remain cached for up to 60 seconds at both latest and version URLs;
-  already downloaded copies cannot be recalled.
+- Only the current version of a public patch is public; older versions stay behind the company door.
+  The current version is public at both `/d/<id>` and `/d/<id>/v/<current n>`.
+  Older versions, and all versions after taking a patch back to company, have origin responses
+  of `private, no-store` and answer 401 without a session. Previously public copies may remain
+  cached for up to 60 seconds; already downloaded copies cannot be recalled.
 - "Take that page down" is `patchy delete './plan.html'` — the file it was published
   from — or `patchy delete --patch <id>`. It is irreversible and only the owner
   user can do it, through any of their machine tokens; confirm before running it.
@@ -98,9 +100,10 @@ Behavior:
 
 ## Reading a patch
 
-Read a company patch through the user's signed-in browser. Only public patches can be
-fetched directly by URL; a publishing key never opens a `/d/*` page. If browser access
-is unavailable, say so and ask the user to open the link or supply the content.
+Read company pages and older versions of public patches through the user's signed-in browser.
+Only the current version of a public patch can be fetched directly by URL; a publishing key
+never opens a `/d/*` page. If browser access is unavailable, say so and ask the user to open
+the link or supply the content.
 
 When a page refuses access, report the refusal rather than treating its HTML as the patch:
 

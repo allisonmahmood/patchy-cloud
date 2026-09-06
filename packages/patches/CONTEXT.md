@@ -17,7 +17,7 @@ The one user in a company a patch belongs to, and the only one who changes it. A
 _Avoid_: creator (the first version's token; the owner can change), editor, author
 
 **Sharing scope**:
-Who may open a patch: `company` means signed-in colleagues in its company; `public` means anyone with the link, without signing in. A new patch is shared with the company by default, and only its owner can change the scope in either direction; republishing preserves it unless the owner explicitly chooses another scope.
+Who may open a patch: `company` means signed-in colleagues in its company; `public` means anyone with the link to its current version, without signing in. Only the current version of a public patch is public; older versions stay behind the company door. A new patch is shared with the company by default, and only its owner can change the scope in either direction; republishing preserves it unless the owner explicitly chooses another scope.
 _Avoid_: visibility, token scope (a publishing key does not grant reading access)
 
 **Patch repo**:

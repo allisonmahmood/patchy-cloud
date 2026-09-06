@@ -39,8 +39,8 @@ workaround, no SDK pin.
 
 ## Consequences
 
-**Two content-security policies.** A public patch keeps the fully locked CSP
-and loads nothing. A doored patch's shell allows script and connect sources for
+**Two content-security policies.** A public page keeps the fully locked CSP
+and loads nothing. A doored page's shell allows script and connect sources for
 the Frontend API host, no inline script; the frame's sandbox is unchanged. The
 serving guarantee reads: the patch runs no script; the shell runs only Patchy's
 own session script, never analytics.
@@ -54,9 +54,10 @@ load.
 **Reading a doored patch needs Clerk once a minute, in the browser, not on the
 server.** The server verifies with a public key; the browser's refresh goes to
 the Frontend API. A doored response is per-viewer and may carry `Set-Cookie`,
-so it is `private, no-store`. Caching is keyed to sharing: public patches use
-`public, max-age=60` at both latest and version URLs, so a scope change can
-take a page back inside within a minute without a CDN purge.
+so it is `private, no-store`. Only the current version of a public patch is public;
+older versions stay behind the company door. The current public version uses
+`public, max-age=60` at both its latest and version URLs, so a scope or
+current-version change takes a page back inside within a minute without a CDN purge.
 
 **Clerk's keys are required configuration.** The server refuses to start
 without them; there is no half-up state. Sign-out is a

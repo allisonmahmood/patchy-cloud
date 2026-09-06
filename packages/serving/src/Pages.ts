@@ -56,7 +56,10 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
       : yield* patches
           .find(patchId, versionNumber)
           .pipe(Effect.catchTags({ SqlError: Effect.die }));
-  const isPublic = Option.isSome(served) && served.value.patch.scope === "public";
+  const isPublic =
+    Option.isSome(served) &&
+    served.value.patch.scope === "public" &&
+    served.value.version.id === served.value.patch.currentVersionId;
   // Finish a verified sign-in before serving a public document, but never require
   // a public reader to start a handshake or pass company admission.
   if (!isPublic || completedHandshake) {
