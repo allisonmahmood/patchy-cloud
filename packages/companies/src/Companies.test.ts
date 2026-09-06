@@ -203,6 +203,16 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(Te
           "InviteUnavailable"
         );
         assert.deepStrictEqual(yield* companies.listInvites(company.id), [invite]);
+        assert.strictEqual(
+          (yield* companies
+            .createInvite({
+              companyId: company.id,
+              invitedBy: user.id,
+              email: invite.email
+            })
+            .pipe(Effect.flip))._tag,
+          "AlreadyInvited"
+        );
       })
     );
 

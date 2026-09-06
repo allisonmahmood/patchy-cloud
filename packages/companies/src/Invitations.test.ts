@@ -152,6 +152,7 @@ it.layer(Companies.layer.pipe(Layer.provideMerge(Testing.layer())))("Invitations
         assert.isFalse(resent.mailFailed);
         assert.strictEqual(resent.invite.id, created.invite.id);
         assert.isNotNull(resent.invite.clerkInvitationId);
+        yield* TestClock.adjust("1 day");
         const failed = yield* Invitations.resend(reference).pipe(Effect.provide(revokeFails));
         assert.isTrue(failed.mailFailed);
         assert.deepStrictEqual(yield* companies.listInvites(company.id), [resent.invite]);
@@ -183,15 +184,21 @@ it.layer(Companies.layer.pipe(Layer.provideMerge(Testing.layer())))("Invitations
           email: "replace-failure@example.com"
         });
         const reference = { companyId: company.id, inviteId: created.invite.id };
+        yield* TestClock.adjust("30 days");
         const failed = yield* Invitations.resend(reference).pipe(Effect.provide(createFails));
         assert.isTrue(failed.mailFailed);
         const [pending] = yield* companies.listInvites(company.id);
         assert.strictEqual(pending!.id, created.invite.id);
         assert.isNull(pending!.clerkInvitationId);
         assert.isNull(failed.invite.clerkInvitationId);
+        assert.deepStrictEqual(pending!.expiresAt, created.invite.expiresAt);
+        assert.deepStrictEqual(yield* companies.findInvitesByEmail(created.invite.email), []);
         const recovered = yield* Invitations.resend(reference);
         assert.isFalse(recovered.mailFailed);
         assert.strictEqual(recovered.invite.id, created.invite.id);
+        assert.deepStrictEqual(yield* companies.findInvitesByEmail(created.invite.email), [
+          recovered.invite
+        ]);
         const revoked = yield* Invitations.revoke(reference);
         assert.isFalse(revoked.mailFailed);
         assert.deepStrictEqual(yield* recording.events, [
