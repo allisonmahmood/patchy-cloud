@@ -17,6 +17,10 @@ Before joining, `/join` has **Not you? Sign out**, returning to `/login`.
 Invites from `/company` send real mail through the developer's Clerk application;
 use a `+clerk_test` address for live verification and revoke test invites afterward.
 
+For automated Clerk integration checks, `pnpm test:clerk` reads the same developer
+keys and uses a disposable database, not the running dev instance; see
+`docs/DEVELOPMENT.md`'s live tier for the real mail it sends and run-scoped cleanup.
+
 ## 1. Start
 
 ```sh

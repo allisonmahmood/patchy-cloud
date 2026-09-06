@@ -1,0 +1,21 @@
+diff --git a/index.js b/index.js
+--- a/index.js
++++ b/index.js
+@@ -106,7 +106,7 @@ function add(hook) {
+ 
+ // New signal / event to hook
+ add.hookEvent = function (event, code, filter) {
+-	events[event] = function () {
++	events[event] = function (eventCode) {
+ 		const eventFilters = filters[event];
+ 		for (let i = 0; i < eventFilters.length; i++) {
+ 			if (eventFilters[i].apply(this, arguments)) {
+@@ -113,7 +113,7 @@ add.hookEvent = function (event, code, filter) {
+ 				return;
+ 			}
+ 		}
+-		exit(code !== undefined && code !== null, code);
++		exit(code !== undefined && code !== null, event === 'beforeExit' ? eventCode : code);
+ 	};
+ 
+ 	if (!filters[event]) {
