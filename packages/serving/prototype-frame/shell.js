@@ -26,7 +26,11 @@
   };
   const tableName = (t) => ident(t, /^[a-z][a-z0-9_]{0,62}$/);
   const fileName = (n) => ident(n, /^[\w-]+(\.[\w-]+)*$/);
-  const routePath = (p) => ident(p, /^\/(?:[\w.-]+(?:\/[\w.-]+)*)?$/);
+  const routePath = (p) => {
+    ident(p, /^\/(?:[\w.-]+(?:\/[\w.-]+)*)?$/);
+    if (p.split("/").some((seg) => seg === "." || seg === "..")) throw Object.assign(new Error(`bad route ${p}`), { code: "bad_request" });
+    return p;
+  };
 
   // The operations the shell exposes. Specific SDK operations, never a URL.
   // The server still checks declarations and permissions per call; this list is
@@ -107,7 +111,7 @@
   frame.addEventListener("load", () => {
     if (issued) {
       // The frame loaded a second document: it navigated itself or was redirected. It gets no broker.
-      port.close();
+      port?.close();
       port = null;
       window.__brokerRevoked = (window.__brokerRevoked ?? 0) + 1;
       note("frame navigated: broker revoked");
