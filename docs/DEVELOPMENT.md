@@ -134,7 +134,8 @@ reuploads without `--share` preserve their scope. The response includes `scope`;
 a cookie-free `curl -i <publicUrl>` answers **401** with the same HTML door as `/login`, one
 **Sign in** link, `x-patchy-sign-in-url`, and `Cache-Control: private, no-store`;
 it has neither `Location` nor `WWW-Authenticate`. A machine token does not open
-the page. The latest and `/v/<n>` URL shapes follow the same access and cache rules.
+the page. Only the current version of a public patch is public; older versions
+stay behind the company door, with **401** and `private, no-store` without a session.
 
 With the seed bound to your Clerk user, open the patch in your browser, click
 **Sign in**, and return to the patch. Reload after 70 seconds: the company
@@ -143,28 +144,35 @@ another sign-in. A person without a company is sent to `/join?return=…` first;
 a deactivated user gets 403. A signed-in user of a different company and a
 missing patch get identical private, uncached 404 responses.
 
-Exercise sharing through the CLI, not by editing rows:
+Exercise sharing and the current-version boundary through the CLI, not by editing rows:
 
 ```sh
 pnpm patchy upload examples/plan.html --share public --json
-# Fetch the returned publicUrl, and publicUrl/v/<versionNumber>, with cookie-free curl -i.
+# Fetch the returned publicUrl and publicUrl/v/<versionNumber> with cookie-free curl -i: 200.
+# Keep this version URL for the history check.
+pnpm patchy upload examples/plan.html --json
+# Scope stays public. Fetch publicUrl and the NEW publicUrl/v/<versionNumber>: 200.
+# Fetch the previous version URL: 401, Cache-Control: private, no-store.
 pnpm patchy share examples/plan.html company --json
-# Fetch both URLs again: 401, Cache-Control: private, no-store.
+# Fetch latest, current-version and previous-version URLs: 401, private, no-store.
 pnpm patchy share examples/plan.html public --json
-# Both URLs serve publicly again.
+# Latest and current-version URLs serve publicly again; the previous version still answers 401.
 pnpm patchy share --patch <patchId> company --json
 # The id form takes the same patch back inside without uploading another version.
 ```
 
 The file form uses its cached patch; `--patch` selects an id instead, exactly one
 target. Only the owner may change sharing. Upload and share JSON report `scope`,
-and text output announces who can open the link. While public, both latest and
-version URLs answer **200** with `Cache-Control: public, max-age=60`, no
-`Set-Cookie`, and the unchanged script-free public CSP. After the company transition,
-both answer cookie-free requests with **401** and `Cache-Control: private, no-store`.
-A public copy may remain fresh in a cache for up to 60 seconds; downloaded copies
-cannot be recalled. Only public patches fetch directly by URL; use the user's
-signed-in browser for company pages.
+and text output announces who can open the link. While public, only the current
+version answers **200** at both `/d/<id>` and `/d/<id>/v/<current n>` with
+`Cache-Control: public, max-age=60`, no `Set-Cookie`, and the unchanged script-free
+public CSP. Older versions stay behind the company door even after sharing public
+again. After the company transition, all version URLs and the latest URL answer
+cookie-free requests with **401** and `Cache-Control: private, no-store`.
+A previously public copy may remain fresh in a cache for up to 60 seconds after
+a scope or current-version change; downloaded copies cannot be recalled. Fetch
+only the current version of a public patch directly by URL; use the user's
+signed-in browser for company pages and older versions of public patches.
 The company shell permits only the configured Clerk Frontend API host and
 Patchy's external session initializer; the uploaded document's sandbox is unchanged.
 
