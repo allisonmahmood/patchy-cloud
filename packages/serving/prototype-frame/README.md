@@ -22,13 +22,18 @@ Open <http://localhost:4175>, pick who you are, then open a patch.
 | Path | What |
 | --- | --- |
 | `/login?as=ada` / `?as=bob` / `/logout` | ada is in acme, bob is in globex; a `session` cookie, `SameSite=Lax`, `HttpOnly` |
-| `/acme/inventory[/route]` | the shell for a company-scoped tier 1 patch: door, `<iframe sandbox="allow-scripts">`, broker |
+| `/acme/inventory[/route]` | the shell for a company-scoped tier 1 patch: door, `<iframe sandbox="allow-scripts allow-modals">`, broker |
 | `/acme/deck[/route]` | the shell for a public tier 1 patch |
 | `/acme/probe` | same as inventory but the content CSP allows `connect-src`, so patch code can try to reach the API directly |
-| `/<company>/<patch>/~content` | the content response: patch HTML plus the SDK, `Content-Security-Policy: sandbox allow-scripts; ...` |
+| `/<company>/<patch>/~content` | the content response: patch HTML plus the SDK, `Content-Security-Policy: sandbox allow-scripts allow-modals; connect-src 'none'; ...` |
 | `/api/<company>/<patch>/tables/<t>/rows` | GET reads, POST inserts; POST requires the exact shell `Origin` |
 | `/api/<company>/<patch>/files/<name>` | GET bytes |
 | `/_log` | what the API saw per request: origin, cookie, `Sec-Fetch-Site` |
+
+## Decided on the ticket
+
+- **Printing is the frame's own.** The sandbox grants `allow-modals` (attribute and content CSP alike), so `window.print()` prints the patch's document with native pagination. The shell-grown-frame alternative was measured (1 page clipped → 5 pages) and rejected.
+- **`connect-src 'none'` on tier 1 content.** Patch code cannot reach the network; every data call goes through the broker. Fonts and images ride the files primitive. A declared per-patch egress permission is a possible later door, not a default.
 
 ## The envelope
 

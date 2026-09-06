@@ -70,19 +70,6 @@
       a.remove();
       setTimeout(() => URL.revokeObjectURL(href), 10_000);
       return { value: null };
-    },
-    // Shell-owned printing: prints the shell, frame included. The frame is a
-    // fixed box, so the shell grows it to the content's height first, else
-    // everything past the first screen is clipped.
-    print: ({ height }) => {
-      const restore = { height: frame.style.height, flex: frame.style.flex };
-      if (height) {
-        frame.style.flex = "none";
-        frame.style.height = `${height}px`;
-        window.addEventListener("afterprint", () => Object.assign(frame.style, restore), { once: true });
-      }
-      window.print();
-      return { value: null };
     }
   };
 

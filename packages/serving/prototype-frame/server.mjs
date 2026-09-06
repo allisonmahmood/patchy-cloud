@@ -123,7 +123,10 @@ const renderDoor = (status, reason) => `<!doctype html><meta charset="utf-8"><ti
 <body style="font:16px system-ui;max-width:40rem;margin:3rem auto"><h1 data-door="${status}">${status}: ${reason}</h1>
 <p><a href="/login?as=ada">sign in as ada</a> · <a href="/">home</a></p></body>`;
 
-const SANDBOX_EXTRAS = new Set(["allow-modals", "allow-downloads"]);
+// Decided on #175: the frame gets allow-modals so patch code prints its own
+// document; downloads stay shell-owned (allow-downloads is a click-through variant only).
+const SANDBOX = "allow-scripts allow-modals";
+const SANDBOX_EXTRAS = new Set(["allow-downloads"]);
 
 const renderShell = ({ company, name, patch, user, route, extras, long }) => `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -134,13 +137,12 @@ html,body{height:100%;margin:0;background:#fff}
 body{display:flex;flex-direction:column}
 .bar{font:13px system-ui;padding:6px 10px;border-bottom:1px solid #ddd;display:flex;gap:1rem;align-items:center}
 .patch-frame{flex:1;width:100%;border:0}
-@media print { .bar{display:none} .patch-frame{height:auto;min-height:100vh} }
 </style></head>
 <body>
 <div class="bar"><b>Patchy shell</b> <span>${company}/${name}</span> <span>viewer: ${user ?? "anonymous"}</span>
 <span id="broker-log" data-testid="broker-log"></span></div>
 <iframe class="patch-frame" id="patch" title="${company}/${name}"
-  sandbox="allow-scripts${extras.map((t) => " " + t).join("")}" referrerpolicy="no-referrer"
+  sandbox="${SANDBOX}${extras.map((t) => " " + t).join("")}" referrerpolicy="no-referrer"
   src="/${company}/${name}/~content?${new URLSearchParams({ ...(long ? { long: "1" } : {}), sandbox: extras.join(" ") })}"></iframe>
 <script>
 window.__patchy = ${JSON.stringify({ company, name, base: `/${company}/${name}`, route, origin: ORIGIN })};
@@ -152,9 +154,9 @@ window.__patchy = ${JSON.stringify({ company, name, base: `/${company}/${name}`,
 // restrictive wins, so any token the shell grants must be listed here as well.
 const contentCsp = (mode, extras) =>
   mode === "loose"
-    ? `sandbox allow-scripts${extras.map((t) => " " + t).join("")}`
+    ? `sandbox ${SANDBOX}${extras.map((t) => " " + t).join("")}`
     : [
-        `sandbox allow-scripts${extras.map((t) => " " + t).join("")}`,
+        `sandbox ${SANDBOX}${extras.map((t) => " " + t).join("")}`,
         "default-src 'none'",
         "script-src 'unsafe-inline'",
         "style-src 'unsafe-inline'",

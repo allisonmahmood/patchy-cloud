@@ -87,20 +87,8 @@ async function run(browserName) {
   const dlFrameName = await dlFrame;
   say(browserName, "download, in-frame anchor", dlFrameName ? `download event: ${dlFrameName} (sandbox did NOT block)` : `no download event; console: ${consoleLines.find((l) => /download|sandbox/i.test(l)) ?? "(silent)"}`);
 
-  // window.print() inside the frame
-  consoleLines.length = 0;
-  await page.frameLocator("#patch").locator("#print-frame").click();
-  await waitFor(out(page), "window.print()");
-  await page.waitForTimeout(300);
-  say(browserName, "window.print() in frame", `${(await out(page).textContent()).match(/window\.print\(\).*/)[0]}; console: ${consoleLines.find((l) => /print|sandbox|modal/i.test(l)) ?? "(silent)"}`);
-
-  // shell-owned print: Chromium can render the print media to PDF headlessly
-  if (browserName === "chromium") {
-    const pdf = await page.pdf({ format: "A4" });
-    say(browserName, "print via shell (page.pdf of the shell)", `${pageCount(pdf)} page(s), ${pdf.length} bytes; frame content is inline in the shell's print`);
-  } else {
-    say(browserName, "print via shell", "not observable headless; check by hand");
-  }
+  // window.print() inside the frame opens a real dialog that blocks the whole
+  // browser, so it runs last, in a browser of its own (see modalPrintCheck).
 
   // unknown op
   await page.frameLocator("#patch").locator("#unknown").click();
@@ -163,21 +151,8 @@ async function run(browserName) {
   say(browserName, "content URL opened directly", `origin ${direct.origin}, document.cookie ${direct.cookie}, fetch ${direct.fetch}`);
 
   // ---- variants -------------------------------------------------------------
-  // Long content: the shell's own print clips the frame unless the shell grows it first.
-  await page.goto(`${ORIGIN}/acme/inventory?long=1`);
-  await waitFor(out(page), "rows.read");
-  if (browserName === "chromium") {
-    const before = pageCount(await page.pdf({ format: "A4" }));
-    // Headless print fires afterprint at once, which restores the frame before
-    // page.pdf can look, so grow the frame the way the broker's print op does.
-    const height = await page.frameLocator("#patch").locator("body").evaluate(() => document.documentElement.scrollHeight);
-    await page.evaluate((h) => Object.assign(document.getElementById("patch").style, { flex: "none", height: `${h}px` }), height);
-    const after = pageCount(await page.pdf({ format: "A4" }));
-    say(browserName, "print via shell, long content", `${before} page(s) as-is (clipped); ${after} page(s) once the shell grows the frame to the content height`);
-  }
-
-  // allow-modals and allow-downloads on the sandbox: does the frame get to print and download itself?
-  await page.goto(`${ORIGIN}/acme/inventory?sandbox=allow-modals%20allow-downloads`);
+  // allow-downloads on the sandbox: could the frame download by itself if we let it?
+  await page.goto(`${ORIGIN}/acme/inventory?sandbox=allow-downloads`);
   await waitFor(out(page), "rows.read");
   const dlFrame2 = page.waitForEvent("download", { timeout: 3000 }).then((d) => d.suggestedFilename(), () => null);
   await page.frameLocator("#patch").locator("#dl-frame").click();
@@ -209,8 +184,8 @@ async function run(browserName) {
   await browser.close();
 }
 
-// window.print() with allow-modals opens a real dialog that blocks the whole
-// browser, so it gets a browser of its own that is abandoned if it hangs.
+// window.print() in the frame (allow-modals is granted) opens a real dialog that
+// blocks the whole browser, so it gets a browser of its own, abandoned if it hangs.
 async function modalPrintCheck(browserName) {
   let browser;
   try {
@@ -223,7 +198,7 @@ async function modalPrintCheck(browserName) {
   const page = await ctx.newPage();
   const lines = [];
   page.on("console", (m) => lines.push(m.text()));
-  await page.goto(`${ORIGIN}/acme/inventory?sandbox=allow-modals`);
+  await page.goto(`${ORIGIN}/acme/inventory`);
   await waitFor(out(page), "rows.read");
   const timeout = new Promise((r) => setTimeout(() => r("blocked for 3s: a print dialog opened"), 3000));
   const returned = page
@@ -234,7 +209,7 @@ async function modalPrintCheck(browserName) {
     .then(() => out(page).textContent())
     .then((t) => t.match(/window\.print\(\).*/)[0], (e) => `no signal (${e.message.split("\n")[0]})`);
   const verdict = await Promise.race([returned, timeout]);
-  say(browserName, "window.print() in frame + allow-modals", `${verdict}; console: ${lines.find((l) => /print|sandbox|modal/i.test(l)) ?? "(silent)"}`);
+  say(browserName, "window.print() in frame (allow-modals granted)", `${verdict}; console: ${lines.find((l) => /print|sandbox|modal/i.test(l)) ?? "(silent)"}`);
   await Promise.race([browser.close(), new Promise((r) => setTimeout(r, 3000))]);
 }
 

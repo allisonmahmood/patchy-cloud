@@ -84,8 +84,8 @@ export const route = {
   }
 };
 
-/** Shell-owned printing; the frame reports its height so the shell can unclip it. */
-export const print = () => call<null>("print", { height: document.documentElement.scrollHeight });
+/** Printing is the frame's own: the sandbox grants allow-modals (decided on #175), so this is plain window.print(). */
+export const print = () => window.print();
 
 /** Anything the broker does not expose; used by the click-through to prove the refusal. */
 export const raw = (op: string, args: unknown = {}) => call<unknown>(op, args);

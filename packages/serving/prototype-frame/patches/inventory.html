@@ -7,8 +7,7 @@
   <button id="add">Add item (mutation via broker)</button>
   <button id="dl-shell">Download report.csv (shell-owned)</button>
   <button id="dl-frame">Download report.csv (in-frame anchor)</button>
-  <button id="print-frame">window.print() in frame</button>
-  <button id="print-shell">Print via shell</button>
+  <button id="print-frame">Print (window.print() in the frame)</button>
   <button id="unknown">Unknown op</button>
   <button id="escape">Try to escape</button>
 </p>
@@ -61,7 +60,6 @@ document.getElementById("dl-frame").onclick = () => {
   document.body.append(a); a.click(); a.remove(); out("in-frame anchor clicked");
 };
 document.getElementById("print-frame").onclick = () => { try { window.print(); out("window.print() returned"); } catch (e) { out(`window.print() threw: ${e.message}`); } };
-document.getElementById("print-shell").onclick = () => print().then(() => out("print (shell) ok"));
 document.getElementById("unknown").onclick = () => raw("rows.dropTable", { table: "items" }).then(() => out("unknown op: answered?!"), (e) => out(`unknown op refused: ${e.code}`));
 document.getElementById("escape").onclick = () => {
   try { void window.top.document; out("top.document: readable?!"); } catch (e) { out(`top.document: ${e.name}`); }
