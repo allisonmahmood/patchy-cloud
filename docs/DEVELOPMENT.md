@@ -448,7 +448,8 @@ detached supervisor under `node --import tsx`; the supervisor owns one Effect
 scope holding Postgres and the server, so either exiting — or `stop`'s
 SIGTERM — tears the other down. Migrations run through Effect's Migrator in
 `packages/sql`: Companies owns `0001_companies_baseline`, Auth owns
-`0002_auth_baseline`, and Patches owns `0003_patches_baseline`. The three
+`0002_auth_baseline`, and Patches owns `0003_patches_baseline`. Companies also
+owns `0004_invites_expiry`, which adds and backfills invitation expiry. The three
 migrator spreads are `apps/server/src/Server.ts`,
 `scripts/dev/src/supervisor.ts` and `test/postgres.ts`; server tests clone the
 template without passing migrations. Packed and live browser servers migrate
