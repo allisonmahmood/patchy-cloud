@@ -101,11 +101,13 @@ transaction; there is no fallible follow-up `/api/me` call after saving the
 one-time key. Receipt and credential persistence finish even if local I/O runs
 past the polling deadline.
 
+When `PATCHY_API_TOKEN` is non-empty, successful login also prints “Login saved. PATCHY_API_TOKEN is still set and takes precedence over this login.” The JSON completion result includes this notice in `warnings` (an empty array without an override).
+
 | command/result                             | `--json` success document                                                                                                                               |
 | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `login`, handoff                           | `{ ok, status: "awaiting_confirmation", verificationUrl, verificationUrlBare, userCode, expiresAt, interval, next, agentNextSteps, notWaitingBecause }` |
 | `login --complete` or rerun, still waiting | `{ ok, status: "pending", userCode, expiresAt, next, agentNextSteps }`                                                                                  |
-| `login`, complete                          | `{ ok, status: "logged_in", instanceUrl, company: { handle, name }, user: { email }, machine: { id, name }, credentialsPath }`                          |
+| `login`, complete                          | `{ ok, status: "logged_in", instanceUrl, company: { handle, name }, user: { email }, machine: { id, name }, credentialsPath, warnings }`                |
 | `logout`                                   | `{ ok, instanceUrl, revoked, warnings }`                                                                                                                |
 | `whoami`                                   | `{ user: { id, email, name }, company: { id, handle, name }, role, machine: { id, name } }` (`Identity`, no `ok` wrapper)                               |
 

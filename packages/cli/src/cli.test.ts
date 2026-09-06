@@ -369,49 +369,73 @@ describe("patchy login", () => {
     }
   );
 
-  it("reports a saved login successfully without a follow-up identity request", async () => {
-    const instance = await stubInstance((request, respond) =>
-      request.url === "/api/login/device/token"
-        ? respond(200, {
-            ok: true,
-            status: "complete",
-            token: "one-time-key",
-            machine: identity.machine,
-            company: { handle: identity.company.handle, name: identity.company.name },
-            user: { email: identity.user.email },
-            expiresAt: "2099-01-01T00:00:00.000Z"
-          })
-        : respond(503, {})
-    );
-    const dir = tempDir();
-    writeFileSync(
-      path.join(dir, "device-login.json"),
-      JSON.stringify({ hosts: { [instance.url]: pendingLogin } })
-    );
-    const options = { stateDir: dir };
-    const result = await runCli(
-      ["login", "--complete", "--api-url", instance.url, "--json"],
-      options
-    );
-    expect(result.status).toBe(0);
-    expect(result.stderr).toBe("");
-    expect(JSON.parse(result.stdout)).toEqual({
-      ok: true,
-      status: "logged_in",
-      instanceUrl: instance.url,
-      company: { handle: identity.company.handle, name: identity.company.name },
-      user: { email: identity.user.email },
-      machine: identity.machine,
-      credentialsPath: path.join(dir, "credentials.json")
-    });
-    expect(result.stdout + result.stderr).not.toContain("one-time-key");
-    expect(JSON.parse((await runCli(["status"], options)).stdout)).toMatchObject({
-      instanceUrl: instance.url,
-      hasToken: true,
-      tokenSource: "login"
-    });
-    expect(readJson(path.join(dir, "device-login.json"))).toEqual({ hosts: {} });
-  });
+  it.each([
+    { token: undefined, json: true },
+    { token: "", json: true },
+    { token: "environment-key", json: true },
+    { token: "environment-key", json: false }
+  ])(
+    "reports a saved login and any environment override ($token, json=$json)",
+    async ({ token, json }) => {
+      const instance = await stubInstance((request, respond) =>
+        request.url === "/api/login/device/token"
+          ? respond(200, {
+              ok: true,
+              status: "complete",
+              token: "one-time-key",
+              machine: identity.machine,
+              company: { handle: identity.company.handle, name: identity.company.name },
+              user: { email: identity.user.email },
+              expiresAt: "2099-01-01T00:00:00.000Z"
+            })
+          : respond(200, identity)
+      );
+      const dir = tempDir();
+      writeFileSync(
+        path.join(dir, "device-login.json"),
+        JSON.stringify({ hosts: { [instance.url]: pendingLogin } })
+      );
+      const options = {
+        stateDir: dir,
+        env: token === undefined ? {} : { PATCHY_API_TOKEN: token }
+      };
+      const warnings = token
+        ? ["Login saved. PATCHY_API_TOKEN is still set and takes precedence over this login."]
+        : [];
+      const result = await runCli(
+        ["login", "--complete", "--api-url", instance.url, ...(json ? ["--json"] : [])],
+        options
+      );
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      if (json)
+        expect(JSON.parse(result.stdout)).toEqual({
+          ok: true,
+          status: "logged_in",
+          instanceUrl: instance.url,
+          company: { handle: identity.company.handle, name: identity.company.name },
+          user: { email: identity.user.email },
+          machine: identity.machine,
+          credentialsPath: path.join(dir, "credentials.json"),
+          warnings
+        });
+      else expect(result.stdout).toContain(warnings[0]);
+      expect(instance.requests.map((r) => r.url)).toEqual(["/api/login/device/token"]);
+      expect(readJson(path.join(dir, "credentials.json"))).toMatchObject({
+        hosts: { [instance.url]: { token: "one-time-key", source: "login" } }
+      });
+      expect(result.stdout + result.stderr).not.toContain("environment-key");
+      expect(result.stdout + result.stderr).not.toContain("one-time-key");
+      expect(JSON.parse((await runCli(["status"], options)).stdout)).toMatchObject({
+        instanceUrl: instance.url,
+        hasToken: true,
+        tokenSource: token ? null : "login"
+      });
+      expect((await runCli(["whoami", "--json"], options)).status).toBe(0);
+      expect(instance.requests.at(-1)?.authorization).toBe(`Bearer ${token || "one-time-key"}`);
+      expect(readJson(path.join(dir, "device-login.json"))).toEqual({ hosts: {} });
+    }
+  );
 });
 
 describe("patchy logout", () => {

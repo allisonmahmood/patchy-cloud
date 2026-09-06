@@ -89,13 +89,15 @@ clears the pending login, and prints the user/company receipt returned with the
 key. No further identity request is needed. Once a complete response arrives,
 the CLI finishes saving it even if local persistence runs past the wait deadline.
 
+When `PATCHY_API_TOKEN` is non-empty, successful login also prints “Login saved. PATCHY_API_TOKEN is still set and takes precedence over this login.” The JSON completion result includes this notice in `warnings` (an empty array without an override).
+
 Under `--json`, exactly one success document is written:
 
 | result        | document                                                                                                                                                |
 | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Handoff       | `{ ok, status: "awaiting_confirmation", verificationUrl, verificationUrlBare, userCode, expiresAt, interval, next, agentNextSteps, notWaitingBecause }` |
 | Still waiting | `{ ok, status: "pending", userCode, expiresAt, next, agentNextSteps }`                                                                                  |
-| Complete      | `{ ok, status: "logged_in", instanceUrl, company: { handle, name }, user: { email }, machine: { id, name }, credentialsPath }`                          |
+| Complete      | `{ ok, status: "logged_in", instanceUrl, company: { handle, name }, user: { email }, machine: { id, name }, credentialsPath, warnings }`                |
 
 `next` is `patchy login --complete <userCode>`, retaining a shell-quoted
 `--api-url` when the instance was selected by flag. It does not include `--json`;
