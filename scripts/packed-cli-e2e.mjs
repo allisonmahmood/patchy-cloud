@@ -363,13 +363,13 @@ try {
 
   const publicVersions = [
     { url: first.publicUrl, html: secondHtml, versionNumber: 2 },
-    { url: `${first.publicUrl}/v/1`, html: firstHtml, versionNumber: 1 },
     { url: `${first.publicUrl}/v/2`, html: secondHtml, versionNumber: 2 }
   ];
-  console.log("[packed-cli-e2e] validating public pages on current and explicit versions");
+  console.log("[packed-cli-e2e] validating the public current version at both URL shapes");
   for (const version of publicVersions) {
     assertPublicViewer(await fetchViewer(version.url), { ...version, patchId: first.patchId });
   }
+  assertViewerDoor(await fetchViewer(`${first.publicUrl}/v/1`));
 
   console.log("[packed-cli-e2e] refusing sharing changes by another user in the same company");
   const foreignToken = await checkedCall(() => seedOtherUserToken());
@@ -403,6 +403,7 @@ try {
   for (const version of publicVersions) {
     assertPublicViewer(await fetchViewer(version.url), { ...version, patchId: first.patchId });
   }
+  assertViewerDoor(await fetchViewer(`${first.publicUrl}/v/1`));
 
   console.log("[packed-cli-e2e] taking the cached-file patch back inside the company");
   const companyShare = await runCli(cliPath, ["share", fixtureArgument, "company"], {
@@ -414,6 +415,7 @@ try {
   for (const { url } of publicVersions) {
     assertViewerDoor(await fetchViewer(url));
   }
+  assertViewerDoor(await fetchViewer(`${first.publicUrl}/v/1`));
 
   console.log("[packed-cli-e2e] sharing by explicit id in both directions under --json");
   for (const scope of ["public", "company"]) {
@@ -436,6 +438,7 @@ try {
         assertViewerDoor(viewer);
       }
     }
+    assertViewerDoor(await fetchViewer(`${first.publicUrl}/v/1`));
   }
 
   await checkedCall(() => writeFile(fixturePath, newHtml, "utf8"));

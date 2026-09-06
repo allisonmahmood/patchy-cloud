@@ -108,9 +108,11 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
     }).annotateMerge(
       describe(
         "Change the sharing scope of a patch owned by the bearer token's user, without publishing a version. " +
-          "`company` requires a company member's browser session; `public` lets anyone with the link open it. " +
-          "A patch the caller does not own answers 404. Both latest and version URLs follow the scope: " +
-          "public responses may be cached for 60 seconds; company responses are private and never stored. " +
+          "`company` requires a company member's browser session; `public` lets anyone with the link open the current version. " +
+          "Only the current version of a public patch is public; older versions stay behind the company door. " +
+          "A patch the caller does not own answers 404. The current public version may be cached for 60 seconds " +
+          "at both `/d/<id>` and `/d/<id>/v/<current n>`; older versions and company patches are " +
+          "`private, no-store` and answer 401 without a session. " +
           "The JSON body is bounded by the upload body limit: 2 MiB by default, or three times " +
           "`PATCHY_MAX_HTML_BYTES` when that is larger. An oversized declared body answers 413; " +
           "streaming bodies are cut off at the cap. Rejected requests leave the scope unchanged."

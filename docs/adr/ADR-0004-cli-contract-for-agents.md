@@ -57,10 +57,12 @@ its code; no command exits on its own.
 | `patchy upload <file> [--share company\|public] …`                                       | A new patch defaults to `company`; an update preserves its scope without the flag, and an explicit flag sets it either way. Text output names the scope and who can open the link.                                                                                                                      | The upload wire response, including `scope`. |
 | `patchy share <file> <company\|public>` or `patchy share --patch <id> <company\|public>` | Changes sharing without publishing a version. Select the file's cached patch or an explicit id, exactly one, as `delete` does. Only the owner may change it; an unavailable or unowned patch answers 404. Text output names who can open the link. With no key, exit 1 `local`, like upload and delete. | `{ ok: true, patchId, scope, publicUrl }`.   |
 
-Company pages are read through the user's signed-in browser; only public pages
-fetch by URL. Both latest and version URLs cache a public response for at most
-60 seconds; changing to company makes origin responses `private, no-store`,
-but cannot recall an already downloaded copy or a still-fresh public cache entry.
+Only the current version of a public patch is public; older versions stay behind
+the company door and are read through the user's signed-in browser. The current
+public version caches for at most 60 seconds at both its latest and version URLs.
+Older versions, and all versions after changing to company, have origin responses
+of `private, no-store`; already downloaded copies and still-fresh public cache
+entries cannot be recalled.
 
 ### `--api-url`: a global flag feeding one `Instance` service
 

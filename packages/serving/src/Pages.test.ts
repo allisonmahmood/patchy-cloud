@@ -77,10 +77,10 @@ const get = (url: string, headers: Record<string, string> = { cookie: signedInCo
     client.execute(HttpClientRequest.get(url).pipe(HttpClientRequest.setHeaders(headers)))
   );
 
-const publish = (title: string, scope?: Patches.Patch["scope"]) =>
+const publish = (title: string, scope?: Patches.Patch["scope"], patchId: string | null = null) =>
   Effect.flatMap(Content.Content, (content) =>
     content.upload({
-      patchId: null,
+      patchId,
       companyId: DEV_SEED.companyId,
       ownerUserId: DEV_SEED.userId,
       machineTokenId: DEV_SEED.tokenId,
@@ -114,12 +114,14 @@ it.layer(layer)("pages", (it) => {
     })
   );
 
-  it.effect("serves a public patch script-free with at most a minute of caching on both URLs", () =>
+  it.effect("serves only a public patch's current version publicly at both URLs", () =>
     Effect.gen(function* () {
-      const { patchId } = yield* publish("Serving Guarantees", "public");
+      const { patchId } = yield* publish("Company-only history");
+      yield* publish("Serving Guarantees", undefined, patchId);
+      yield* (yield* Patches.Patches).setScope(patchId, DEV_SEED.userId, "public");
       for (const [url, cacheControl] of [
         [`/d/${patchId}`, "public, max-age=60"],
-        [`/d/${patchId}/v/1`, "public, max-age=60"]
+        [`/d/${patchId}/v/2`, "public, max-age=60"]
       ]) {
         // Invalid credentials never turn a public page into a challenge.
         const response = yield* get(url as string, {
@@ -141,6 +143,20 @@ it.layer(layer)("pages", (it) => {
         assert.notInclude(body, "<script");
         assert.notInclude(body, "<form");
       }
+
+      const older = yield* get(`/d/${patchId}/v/1`, {});
+      assert.strictEqual(older.status, 401);
+      assert.strictEqual(older.headers["cache-control"], "private, no-store");
+      const door = yield* older.text;
+      assert.include(door, ">Sign in</a>");
+      assert.notInclude(door, "Company-only history");
+
+      const colleague = yield* get(`/d/${patchId}/v/1`);
+      assert.strictEqual(colleague.status, 200);
+      assert.strictEqual(colleague.headers["cache-control"], "private, no-store");
+      const history = yield* colleague.text;
+      assert.include(history, "&lt;h1&gt;Company-only history&lt;/h1&gt;");
+      assert.include(history, 'src="/auth/session.js"');
     })
   );
 
