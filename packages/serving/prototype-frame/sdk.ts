@@ -21,11 +21,10 @@ const { shellOrigin } = (window as unknown as { __patchyContent: { shellOrigin: 
 
 const pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
 const routeListeners = new Set<(path: string) => void>();
+const queued: Array<[Request, Transferable[]]> = [];
+let port: MessagePort | null = null;
 
-window.addEventListener("message", (event: MessageEvent<Reply>) => {
-  // Only the shell may answer, and only from the origin the content was served for.
-  if (event.source !== window.parent || event.origin !== shellOrigin) return;
-  const m = event.data;
+const onReply = (m: Reply) => {
   if (!m || m.v !== 1) return;
   if (m.kind === "event") {
     if (m.event === "route") routeListeners.forEach((l) => l(m.data.path));
@@ -36,6 +35,17 @@ window.addEventListener("message", (event: MessageEvent<Reply>) => {
   pending.delete(m.id);
   if (m.kind === "result") p.resolve(m.value);
   else p.reject(Object.assign(new Error(m.error.message), { code: m.error.code }));
+};
+
+// Bootstrap: the shell hands this document its port, once. Only the parent, only
+// from the shell's origin, only the first time. Everything after rides the port.
+window.addEventListener("message", (event: MessageEvent<{ v: 1; kind: "bootstrap"; route: string }>) => {
+  if (event.source !== window.parent || event.origin !== shellOrigin || port) return;
+  if (event.data?.kind !== "bootstrap" || !event.ports[0]) return;
+  port = event.ports[0];
+  port.onmessage = (e: MessageEvent<Reply>) => onReply(e.data);
+  for (const [request, transfer] of queued.splice(0)) port.postMessage(request, transfer);
+  routeListeners.forEach((l) => l(event.data.route));
 });
 
 function call<T>(op: string, args: unknown = {}): Promise<T> {
@@ -43,7 +53,8 @@ function call<T>(op: string, args: unknown = {}): Promise<T> {
   const request: Request = { v: 1, id, op, args };
   return new Promise<T>((resolve, reject) => {
     pending.set(id, { resolve: resolve as (v: unknown) => void, reject });
-    window.parent.postMessage(request, shellOrigin);
+    if (port) port.postMessage(request);
+    else queued.push([request, []]);
   });
 }
 
@@ -78,5 +89,3 @@ export const print = () => call<null>("print", { height: document.documentElemen
 
 /** Anything the broker does not expose; used by the click-through to prove the refusal. */
 export const raw = (op: string, args: unknown = {}) => call<unknown>(op, args);
-
-window.parent.postMessage({ v: 1, kind: "ready" }, shellOrigin);

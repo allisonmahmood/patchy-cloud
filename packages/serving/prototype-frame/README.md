@@ -32,6 +32,22 @@ Open <http://localhost:4175>, pick who you are, then open a patch.
 
 ## The envelope
 
+The broker lives on a `MessageChannel`. The shell posts one window-level message
+to the first document the frame loads, `{ v: 1, kind: "bootstrap", route }`,
+with the port attached; every request and reply after that rides the port. A
+document that replaces the first one (self-navigation, a redirect) gets no port,
+no in-flight replies and no second handshake; only reloading the shell issues a
+new one.
+
 Request from the frame: `{ v: 1, id, op, args }`. Reply from the shell:
-`{ v: 1, id, kind: "result" | "error" | "chunk" | "end", ... }`. Shell-initiated
-events: `{ v: 1, kind: "event", event, data }`. See `sdk.ts` and `shell.js`.
+`{ v: 1, id, kind: "result" | "error" }` today; the lifecycle the contract
+reserves for tier 2 is `chunk*` then exactly one `end | error` for streams, and
+`{ v: 1, id, kind: "cancel" }` from the frame, best effort. Shell events:
+`{ v: 1, kind: "event", event, data }`. Resource names in `args` are identifiers
+(`[a-z][a-z0-9_]*` for tables), never path fragments. See `sdk.ts` and `shell.js`.
+
+## What the click-through found
+
+`pnpm proto:frame:click` prints the table. The resolution comment on
+[#175](https://github.com/allisonmahmood/patchy-cloud/issues/175) carries the
+findings and astra's review.

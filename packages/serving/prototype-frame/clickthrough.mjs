@@ -123,9 +123,24 @@ async function run(browserName) {
     f.srcdoc = `<script>parent.postMessage({ v: 1, id: "y", op: "rows.read", args: { table: "items" } }, "*")</script>`;
     document.body.append(f);
     await new Promise((r) => setTimeout(r, 500));
-    return window.__brokerRefused.map((r) => `${r.origin}:${r.data.id}`);
+    return window.__brokerRefused.map((r) => `${r.source}@${r.origin}:${r.data.id}`);
   });
-  say(browserName, "broker checks event.source", `refused ${refused.length} message(s): ${refused.join(", ")}`);
+  say(browserName, "broker ignores window messages", `refused ${refused.length} message(s): ${refused.join(", ")}`);
+
+  // astra's inferred holes: a table name that is a path, and an inherited op name
+  const inFrame = (fn, arg) => page.frameLocator("#patch").locator("body").evaluate(fn, arg);
+  const traversal = await inFrame(() => PatchySDK.raw("rows.read", { table: "../../deck/tables/slides" }).then((r) => `answered with ${JSON.stringify(r).slice(0, 40)}`, (e) => `refused: ${e.code}`));
+  const inherited = await inFrame(() => PatchySDK.raw("toString").then((r) => `answered with ${JSON.stringify(r)}`, (e) => `refused: ${e.code}`));
+  say(browserName, "table name as a path / inherited op name", `${traversal} / ${inherited}`);
+
+  // the frame navigates itself: the replacement document must get no broker
+  await inFrame(() => { location.href = "/acme/deck/~content"; });
+  await page.waitForTimeout(1500);
+  const revoked = await page.evaluate(() => window.__brokerRevoked ?? 0);
+  const deckOut = await page.frameLocator("#patch").getByTestId("out").textContent().catch(() => "(no out)");
+  say(browserName, "frame navigated itself", `broker revoked ${revoked}x; replacement document's SDK output: ${JSON.stringify(deckOut.trim()) || '""'} (rows.read never answered)`);
+  await page.goto(`${ORIGIN}/acme/inventory`);
+  await waitFor(out(page), "rows.read");
 
   // ---- the probe patch: patch code trying the API directly (loose CSP) ----
   await clearLog(ctx);
