@@ -7,7 +7,9 @@ import { fileURLToPath } from "node:url";
 import { transformSync } from "esbuild";
 
 const PORT = Number(process.env.PORT ?? 4175);
-const ORIGIN = `http://localhost:${PORT}`;
+// The host is whatever the browser asked for, so the prototype works from
+// another machine on the LAN (Safari on a Mac) as well as from localhost.
+const originOf = (req) => `http://${req.headers.host ?? `localhost:${PORT}`}`;
 const here = path.dirname(fileURLToPath(import.meta.url));
 const read = (name) => fs.readFileSync(path.join(here, name));
 
@@ -128,7 +130,7 @@ const renderDoor = (status, reason) => `<!doctype html><meta charset="utf-8"><ti
 const SANDBOX = "allow-scripts allow-modals";
 const SANDBOX_EXTRAS = new Set(["allow-downloads"]);
 
-const renderShell = ({ company, name, patch, user, route, extras, long }) => `<!doctype html>
+const renderShell = ({ company, name, patch, user, route, extras, long, origin }) => `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${company}/${name}</title>
 ${user ? `<script>/* session scripts would go here on a company shell */window.__session = ${JSON.stringify({ user })};</script>` : "<!-- public shell: no session scripts -->"}
@@ -145,7 +147,7 @@ body{display:flex;flex-direction:column}
   sandbox="${SANDBOX}${extras.map((t) => " " + t).join("")}" referrerpolicy="no-referrer"
   src="/${company}/${name}/~content?${new URLSearchParams({ ...(long ? { long: "1" } : {}), sandbox: extras.join(" ") })}"></iframe>
 <script>
-window.__patchy = ${JSON.stringify({ company, name, base: `/${company}/${name}`, route, origin: ORIGIN })};
+window.__patchy = ${JSON.stringify({ company, name, base: `/${company}/${name}`, route, origin })};
 </script>
 <script src="/~shell.js"></script>
 </body></html>`;
@@ -166,10 +168,10 @@ const contentCsp = (mode, extras) =>
         "base-uri 'none'"
       ].join("; ");
 
-const renderContent = ({ company, name, patch, long }) => {
+const renderContent = ({ company, name, patch, long, origin }) => {
   const body = read(patch.html).toString() + (long ? Array.from({ length: 150 }, (_, i) => `<p>filler paragraph ${i + 1} so the document runs past one screen</p>`).join("") : "");
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${company}/${name} content</title>
-<script>window.__patchyContent = ${JSON.stringify({ shellOrigin: ORIGIN, patch: `${company}/${name}` })};</script>
+<script>window.__patchyContent = ${JSON.stringify({ shellOrigin: origin, patch: `${company}/${name}` })};</script>
 <script>${sdkJs}</script>
 </head><body>${body}</body></html>`;
 };
@@ -177,6 +179,7 @@ const renderContent = ({ company, name, patch, long }) => {
 // ---- server ---------------------------------------------------------------------
 
 const server = http.createServer(async (req, res) => {
+  const ORIGIN = originOf(req);
   const url = new URL(req.url, ORIGIN);
   const user = sessionOf(req);
 
@@ -253,11 +256,11 @@ const server = http.createServer(async (req, res) => {
     const extras = (url.searchParams.get("sandbox") ?? "").split(/\s+/).filter((t) => SANDBOX_EXTRAS.has(t));
     if (rest === "/~content") {
       record(req, url, "200 content");
-      return html(res, 200, renderContent({ company, name, patch, long: url.searchParams.has("long") }), {
+      return html(res, 200, renderContent({ company, name, patch, long: url.searchParams.has("long"), origin: ORIGIN }), {
         "content-security-policy": contentCsp(patch.csp, extras)
       });
     }
-    return html(res, 200, renderShell({ company, name, patch, user, route: rest || "/", extras, long: url.searchParams.has("long") }), {
+    return html(res, 200, renderShell({ company, name, patch, user, route: rest || "/", extras, long: url.searchParams.has("long"), origin: ORIGIN }), {
       "content-security-policy": "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; frame-src 'self'; connect-src 'self'; img-src 'self' blob:"
     });
   }
@@ -265,4 +268,4 @@ const server = http.createServer(async (req, res) => {
   html(res, 404, renderDoor(404, "nothing here"));
 });
 
-server.listen(PORT, () => console.log(`PROTOTYPE frame+broker on ${ORIGIN}`));
+server.listen(PORT, () => console.log(`PROTOTYPE frame+broker on http://localhost:${PORT} (and this machine's LAN address on the same port)`));
