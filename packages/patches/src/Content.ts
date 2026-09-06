@@ -15,6 +15,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type { SqlError } from "effect/unstable/sql/SqlError";
+import type { Manifest } from "@patchy/api";
 import { contentHash, newInternalId, newPatchId } from "@patchy/core";
 import { ContentStore } from "@patchy/content-store";
 import * as Patches from "./Patches.js";
@@ -36,6 +37,11 @@ export interface UploadInput {
   readonly gitCommitSha: string | null;
   readonly sourceIp: string | null;
   readonly userAgent: string | null;
+  /** PROTOTYPE (#176): set by publish, absent on a tier 0 upload. */
+  readonly tier?: 0 | 1 | undefined;
+  readonly manifest?: Manifest | undefined;
+  /** PROTOTYPE (#176): the id a create uses, when the caller provisioned under it first. */
+  readonly newPatchId?: string | undefined;
 }
 
 export class Content extends Context.Service<
@@ -79,7 +85,7 @@ export const make = Effect.gen(function* () {
     store.delete(key).pipe(Effect.orDie, Effect.andThen(Effect.fail(refusal)));
 
   const upload = Effect.fn("Content.upload")(function* (input: UploadInput) {
-    const patchId = input.patchId ?? newPatchId();
+    const patchId = input.patchId ?? input.newPatchId ?? newPatchId();
     const versionId = newInternalId("ver");
     const key = objectKey(patchId, versionId);
     const target = {
@@ -108,7 +114,9 @@ export const make = Effect.gen(function* () {
         gitBranch: input.gitBranch,
         gitCommitSha: input.gitCommitSha,
         sourceIp: input.sourceIp,
-        userAgent: input.userAgent
+        userAgent: input.userAgent,
+        tier: input.tier,
+        manifest: input.manifest
       })
       .pipe(
         // A refused row is the one case the object must not survive. A rollback

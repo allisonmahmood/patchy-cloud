@@ -27,6 +27,10 @@ import {
   PatchQuotaExceeded,
   PayloadTooLarge,
   PollDeviceLoginRequest,
+  PublishCreated,
+  PublishRefused,
+  PublishRequest,
+  PublishUpdated,
   RateLimited,
   RequestTargetTooLong,
   Shared,
@@ -140,6 +144,20 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "per-token create limit and counts against the user's live-patch quota; an update costs " +
           "nothing against either. Optional `scope` is `company` or `public`: omitted on a create " +
           "it defaults to `company`; omitted on an update it stays unchanged. An explicit scope sets it either way."
+      )
+    ),
+    // PROTOTYPE (#176): publish a patch repo's build with its manifest.
+    HttpApiEndpoint.post("publish", "/publish", {
+      payload: PublishRequest,
+      success: [PublishCreated, PublishUpdated],
+      error: [PatchQuotaExceeded, ...protectedErrors, PublishRefused, Conflict, PayloadTooLarge]
+    }).annotateMerge(
+      describe(
+        "PROTOTYPE. Publish a patch repo: the manifest compiled from `patchy.config.ts` and the " +
+          "single-file bundle. The server checks the declared tier against the bundle (script " +
+          "in a tier 0 bundle is refused), diffs the manifest against the served version's and " +
+          "refuses anything but additions, provisions the new tables, columns and file stores " +
+          "in the company database, and only then records the version. Nothing is stored on a refusal."
       )
     ),
     HttpApiEndpoint.post("share", "/patches/:patchId/share", {

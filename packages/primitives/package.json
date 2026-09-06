@@ -1,10 +1,10 @@
 {
-  "name": "@patchy/patches",
+  "name": "@patchy/primitives",
   "version": "0.0.0",
   "private": true,
   "license": "UNLICENSED",
   "type": "module",
-  "description": "The patches capability: records and versions, the upload contract, visits and the retention clock, owner-only deletion, the patch quota, the expiry sweep, the patches/patch_versions migrations, and the patches HttpApi group.",
+  "description": "PROTOTYPE (#176): the patch-scoped primitives as capability services — Tables (additive provisioning from a manifest, bounded reads and writes over SqlClient) and Files (bytes in the ContentStore, an index row per file) — plus the HTTP routes the SDK client speaks. Composed by the server over Postgres and by `patchy dev` over PGlite.",
   "exports": {
     ".": {
       "development": "./src/index.ts",
@@ -17,22 +17,17 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "vitest run",
+    "test": "vitest run --passWithNoTests",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@patchy/analytics": "workspace:*",
     "@patchy/api": "workspace:*",
     "@patchy/content-store": "workspace:*",
     "@patchy/core": "workspace:*",
-    "@patchy/limits": "workspace:*",
-    "@patchy/primitives": "workspace:*",
-    "@patchy/sql": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
-    "@patchy/auth": "workspace:*",
     "vitest": "^4.1.11"
   }
 }

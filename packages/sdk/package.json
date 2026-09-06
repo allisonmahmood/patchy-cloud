@@ -1,0 +1,23 @@
+{
+  "name": "@patchy/sdk",
+  "version": "0.0.0-prototype",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "description": "PROTOTYPE (#176): the SDK a patch repo pins. Code-first config (defineConfig, table, files, t) executed by the CLI into a manifest, and the browser client patch code calls. Dependency-free on purpose: the client ships in the patch's bundle.",
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  }
+}

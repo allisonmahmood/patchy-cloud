@@ -3,7 +3,10 @@
   "compilerOptions": {
     "paths": {
       "@patchy/api": ["../../packages/api/src/index.ts"],
-      "@patchy/core": ["../../packages/core/src/index.ts"]
+      "@patchy/core": ["../../packages/core/src/index.ts"],
+      "@patchy/content-store": ["../../packages/content-store/src/index.ts"],
+      "@patchy/primitives": ["../../packages/primitives/src/index.ts"],
+      "@patchy/sdk": ["../../packages/sdk/src/index.ts"]
     },
     // Bundled by esbuild, never emitted: declarations would only trip over
     // Effect's unnameable internal types.

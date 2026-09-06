@@ -26,7 +26,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import type * as Statement from "effect/unstable/sql/Statement";
-import { SharingScope } from "@patchy/api";
+import { Manifest, SharingScope } from "@patchy/api";
 
 /** The window an upload gives a patch. */
 export const RETENTION_WINDOW = Duration.days(90);
@@ -92,6 +92,9 @@ export interface PatchVersion {
   readonly gitCommitSha: string | null;
   readonly originalFilename: string | null;
   readonly createdAt: string;
+  /** PROTOTYPE (#176): the tier the version was built for, and its manifest when it came from a patch repo. */
+  readonly tier: 0 | 1;
+  readonly manifest: Manifest | null;
 }
 
 export interface UploadTarget {
@@ -118,6 +121,9 @@ export interface RecordInput extends UploadTarget {
   readonly gitCommitSha: string | null;
   readonly sourceIp: string | null;
   readonly userAgent: string | null;
+  /** PROTOTYPE (#176): absent on a tier 0 upload. */
+  readonly tier?: 0 | 1 | undefined;
+  readonly manifest?: Manifest | undefined;
 }
 
 export interface Recorded {
@@ -230,7 +236,9 @@ class VersionRow extends Schema.Class<VersionRow>("VersionRow")({
   gitBranch: Schema.NullOr(Schema.String),
   gitCommitSha: Schema.NullOr(Schema.String),
   originalFilename: Schema.NullOr(Schema.String),
-  createdAt: Stamp
+  createdAt: Stamp,
+  tier: Schema.Literals([0, 1]),
+  manifest: Schema.NullOr(Manifest)
 }) {}
 
 class Id extends Schema.Class<Id>("Id")({ id: Schema.String }) {}
@@ -273,8 +281,12 @@ const toVersion = (row: VersionRow): PatchVersion => ({
   gitBranch: row.gitBranch,
   gitCommitSha: row.gitCommitSha,
   originalFilename: row.originalFilename,
-  createdAt: iso(row.createdAt)
+  createdAt: iso(row.createdAt),
+  tier: row.tier,
+  manifest: row.manifest
 });
+
+const encodeManifest = Schema.encodeSync(Schema.fromJsonString(Manifest));
 
 /** A `SchemaError` on a row is a bug in the query or the schema, never a caller's fault. */
 const dieOnSchemaError = { SchemaError: Effect.die } as const;
@@ -296,7 +308,7 @@ const VERSION_COLUMNS = `
   created_by_machine_token_id AS "createdByMachineTokenId", source_ip AS "sourceIp",
   user_agent AS "userAgent", cli_version AS "cliVersion", git_branch AS "gitBranch",
   git_commit_sha AS "gitCommitSha", original_filename AS "originalFilename",
-  created_at AS "createdAt"`;
+  created_at AS "createdAt", tier, manifest`;
 
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -448,12 +460,13 @@ export const make = Effect.gen(function* () {
           INSERT INTO patch_versions (
             id, patch_id, version_number, object_key, content_hash, file_size,
             created_by_machine_token_id, source_ip, user_agent, cli_version,
-            git_branch, git_commit_sha, original_filename
+            git_branch, git_commit_sha, original_filename, tier, manifest
           ) VALUES (
             ${input.versionId}, ${input.patchId}, ${versionNumber}, ${input.objectKey},
             ${input.contentHash}, ${input.fileSize}, ${input.machineTokenId}, ${input.sourceIp},
             ${input.userAgent}, ${input.cliVersion}, ${input.gitBranch}, ${input.gitCommitSha},
-            ${input.filename}
+            ${input.filename}, ${input.tier ?? 0},
+            ${input.manifest === undefined ? null : encodeManifest(input.manifest)}
           )`;
         yield* sql`
           UPDATE patches

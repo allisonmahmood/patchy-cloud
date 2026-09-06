@@ -181,3 +181,86 @@ export class Shared extends Schema.Class<Shared>("Shared")({
 }) {}
 
 export class Ok extends Schema.Class<Ok>("Ok")({ ok: Schema.Literal(true) }) {}
+
+// --- PROTOTYPE (#176): the manifest and publish -----------------------------
+
+/** The Postgres-backed column kinds the SDK offers; the SDK's `ColumnKind` mirrors this. */
+export const ColumnKind = Schema.Literals(["text", "integer", "boolean", "timestamp", "json"]);
+
+/**
+ * Names that reach the database. A key schema on `Record` would *drop*
+ * non-matching keys on decode rather than refuse them, so names are checked
+ * as a filter over the whole record: a bad name fails the publish loudly.
+ */
+const isDbName = (value: string) => /^[a-zA-Z][a-zA-Z0-9_]{0,62}$/.test(value) && value !== "id";
+const namedRecord = <S extends Schema.Top>(value: S) =>
+  Schema.Record(Schema.String, value).check(
+    Schema.makeFilter(
+      (record: Record<string, unknown>) => {
+        const bad = Object.keys(record).filter((name) => !isDbName(name));
+        return bad.length === 0 || `Invalid name(s): ${bad.join(", ")}.`;
+      },
+      { title: "NamedRecord" }
+    )
+  );
+
+export const ColumnManifest = Schema.Struct({
+  kind: ColumnKind,
+  optional: Schema.Boolean,
+  default: Schema.optionalKey(Schema.Union([Schema.String, Schema.Number, Schema.Boolean]))
+});
+
+export const TableManifest = Schema.Struct({
+  shared: Schema.Boolean,
+  columns: namedRecord(ColumnManifest)
+});
+
+/**
+ * What `patchy.config.ts` compiles to: the tier, the tables and file stores
+ * the patch defines. The only form of the config the server ever sees.
+ */
+export class Manifest extends Schema.Class<Manifest>("Manifest")({
+  manifestVersion: Schema.Literal(1),
+  tier: Schema.Literals([0, 1]),
+  tables: namedRecord(TableManifest),
+  files: namedRecord(Schema.Struct({}))
+}) {}
+
+/**
+ * `POST /api/publish`: a built patch — its manifest and its single-file
+ * bundle. With a `patchId` it adds a version, without one it creates.
+ */
+export class PublishRequest extends Schema.Class<PublishRequest>("PublishRequest")({
+  manifest: Manifest,
+  html: Schema.String,
+  patchId: Schema.optionalKey(Schema.NullOr(PatchId)),
+  scope: Schema.optionalKey(SharingScope),
+  metadata: Schema.optionalKey(UploadMetadata)
+}) {}
+
+const publishedFields = {
+  ...uploadFields,
+  tier: Schema.Literals([0, 1]),
+  /** What this publish provisioned: new tables and columns, new file stores. Empty on a no-op. */
+  provisioned: Schema.Struct({
+    tables: Schema.Array(Schema.String),
+    columns: Schema.Array(Schema.String),
+    files: Schema.Array(Schema.String)
+  })
+};
+
+export class PublishCreated extends Schema.Class<PublishCreated>("PublishCreated")(
+  publishedFields,
+  { httpApiStatus: 201 }
+) {}
+export class PublishUpdated extends Schema.Class<PublishUpdated>("PublishUpdated")(
+  publishedFields
+) {}
+
+/** The publish was refused before anything was provisioned or stored: tier or schema. */
+export const PublishRefused = Schema.Struct({
+  ok: Schema.Literal(false),
+  code: Schema.Literals(["tier_mismatch", "schema_not_additive", "invalid_manifest"]),
+  error: Schema.String,
+  errors: Schema.Array(Schema.String)
+}).pipe(HttpApiSchema.status(422));

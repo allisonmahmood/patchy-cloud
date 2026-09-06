@@ -105,6 +105,22 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
     })
   );
 
+  // PROTOTYPE (#176). A tier 1 bundle is served as it was published, in the
+  // sandbox the frame decision (#171) prescribes on the content response
+  // itself: script runs, nothing is same-origin, every data call goes through
+  // the SDK's transport. The shell that frames it at the address is #175's.
+  if (served.value.version.tier >= 1) {
+    const raw = HttpServerResponse.html(html).pipe(
+      HttpServerResponse.setHeaders({
+        ...patchUrlHeaders,
+        "content-security-policy":
+          "sandbox allow-scripts allow-forms; default-src 'self' 'unsafe-inline' data: blob:",
+        "cache-control": PRIVATE_PATCH_CACHE_CONTROL
+      })
+    );
+    return isPublic ? raw : withCookies(raw, cookies);
+  }
+
   const response = HttpServerResponse.html(
     renderPatchWrapper({ ...served.value, html }, isPublic ? undefined : session)
   ).pipe(

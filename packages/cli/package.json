@@ -43,11 +43,16 @@
   },
   "devDependencies": {
     "@effect/platform-node": "catalog:",
+    "@effect/sql-pglite": "catalog:",
     "@effect/vitest": "catalog:",
     "@patchy/api": "workspace:*",
     "@patchy/auth": "workspace:*",
+    "@patchy/content-store": "workspace:*",
     "@patchy/core": "workspace:*",
+    "@patchy/primitives": "workspace:*",
+    "@patchy/sdk": "workspace:*",
     "effect": "catalog:",
+    "esbuild": "0.28.2",
     "vitest": "^4.1.11"
   }
 }

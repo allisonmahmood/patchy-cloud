@@ -24,6 +24,7 @@
     "@patchy/content-store": "workspace:*",
     "@patchy/limits": "workspace:*",
     "@patchy/patches": "workspace:*",
+    "@patchy/primitives": "workspace:*",
     "@patchy/serving": "workspace:*",
     "@patchy/sql": "workspace:*",
     "effect": "catalog:"

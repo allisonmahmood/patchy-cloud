@@ -38,6 +38,7 @@ import * as Instance from "./Instance.js";
 import * as Login from "./Login.js";
 import * as Output from "./Output.js";
 import * as State from "./State.js";
+import { commands as prototypeCommands } from "./prototype/commands.js";
 
 export const VERSION = typeof __PATCHY_VERSION__ === "string" ? __PATCHY_VERSION__ : "0.0.0-dev";
 
@@ -51,7 +52,7 @@ const local = Layer.provideMerge(
 );
 
 /** Every handler runs under the output contract with `Instance` and `State` resolved. */
-const run = <A, R>(handler: Effect.Effect<A, CliError, R>) =>
+export const run = <A, R>(handler: Effect.Effect<A, CliError, R>) =>
   Output.contract(handler).pipe(Effect.provide(local));
 
 const encodeIdentity = Schema.encodeSync(Identity);
@@ -80,7 +81,7 @@ const defaultHostHint = (apiUrl: string) =>
     : "";
 
 /** A refusal of a protected route, with the hint when the key itself was refused. */
-const refused = (error: Api.ClientFailure, fallback: string) =>
+export const refused = (error: Api.ClientFailure, fallback: string) =>
   Effect.gen(function* () {
     const { apiUrl } = yield* Instance.Instance;
     if (Api.isRefusal(error) && error.error === UNAUTHORIZED) {
@@ -106,7 +107,7 @@ const configuredCredential = Effect.gen(function* () {
 });
 
 /** Protected commands fail locally before making a request without a key. */
-const requiredToken = Effect.fn("requiredToken")(function* () {
+export const requiredToken = Effect.fn("requiredToken")(function* () {
   const credential = yield* configuredCredential;
   if (Option.isSome(credential)) return credential.value.token;
   const { apiUrl } = yield* Instance.Instance;
@@ -549,6 +550,17 @@ const del = Command.make(
 
 export const root = Command.make("patchy").pipe(
   Command.withDescription("Upload static HTML patches to a Patchy Cloud instance."),
-  Command.withSubcommands([login, logout, auth, whoami, status, validate, upload, share, del]),
+  Command.withSubcommands([
+    login,
+    logout,
+    auth,
+    whoami,
+    status,
+    validate,
+    upload,
+    share,
+    del,
+    ...prototypeCommands
+  ]),
   Command.withGlobalFlags([Output.JsonFlag, Instance.ApiUrlFlag])
 );

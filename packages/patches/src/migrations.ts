@@ -55,5 +55,13 @@ export const migrations: Migrations = {
     CREATE INDEX patches_company_id_idx ON patches(company_id);
     CREATE INDEX patches_owner_user_id_idx ON patches(owner_user_id);
     CREATE INDEX patch_versions_patch_id_idx ON patch_versions(patch_id);
+  `),
+  // PROTOTYPE (#176): a version carries the tier it was built for and the
+  // manifest its config compiled to, so publish can diff against what the
+  // patch serves and the page route can tell a tier 1 bundle from a tier 0
+  // document. Additive on purpose, as every schema change should be.
+  "0005_prototype_versions_tier_manifest": ddl(`
+    ALTER TABLE patch_versions ADD COLUMN tier INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE patch_versions ADD COLUMN manifest JSONB;
   `)
 };

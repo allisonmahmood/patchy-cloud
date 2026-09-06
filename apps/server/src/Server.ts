@@ -37,6 +37,7 @@ import {
   Patches,
   PatchesApi
 } from "@patchy/patches";
+import { Tables } from "@patchy/primitives";
 import { Pages, servingHeaders, TrustedProxies } from "@patchy/serving";
 import { migrate } from "@patchy/sql";
 import * as ApiGuard from "./ApiGuard.js";
@@ -72,6 +73,8 @@ const services = Layer.mergeAll(Content.layer, ExpirySweep.layer, DeviceLogins.l
       contentStore,
       MachineTokens.layer,
       Patches.layer,
+      // PROTOTYPE (#176): the tables primitive, provisioned by publish.
+      Tables.layer,
       Companies.layer,
       InviteMail.layer,
       Users.layer,

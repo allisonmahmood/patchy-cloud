@@ -14,6 +14,7 @@ overrides:
   effect: 4.0.0-rc.112
   '@effect/platform-node': 4.0.0-rc.112
   '@effect/sql-pg': 4.0.0-rc.112
+  '@effect/sql-pglite': 4.0.0-rc.112
   '@effect/vitest': 4.0.0-rc.112
   '@effect/language-service': 0.87.2
 
@@ -120,6 +121,9 @@ importers:
       '@patchy/patches':
         specifier: workspace:*
         version: link:../../packages/patches
+      '@patchy/primitives':
+        specifier: workspace:*
+        version: link:../../packages/primitives
       '@patchy/serving':
         specifier: workspace:*
         version: link:../../packages/serving
@@ -207,6 +211,9 @@ importers:
       '@effect/platform-node':
         specifier: 4.0.0-rc.112
         version: 4.0.0-rc.112(effect@4.0.0-rc.112)(redis@6.2.1)
+      '@effect/sql-pglite':
+        specifier: 4.0.0-rc.112
+        version: 4.0.0-rc.112(effect@4.0.0-rc.112)
       '@effect/vitest':
         specifier: 4.0.0-rc.112
         version: 4.0.0-rc.112(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0)))
@@ -216,12 +223,24 @@ importers:
       '@patchy/auth':
         specifier: workspace:*
         version: link:../auth
+      '@patchy/content-store':
+        specifier: workspace:*
+        version: link:../content-store
       '@patchy/core':
         specifier: workspace:*
         version: link:../core
+      '@patchy/primitives':
+        specifier: workspace:*
+        version: link:../primitives
+      '@patchy/sdk':
+        specifier: workspace:*
+        version: link:../sdk
       effect:
         specifier: 4.0.0-rc.112
         version: 4.0.0-rc.112
+      esbuild:
+        specifier: 0.28.2
+        version: 0.28.2
       vitest:
         specifier: ^4.1.11
         version: 4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0))
@@ -306,6 +325,9 @@ importers:
       '@patchy/limits':
         specifier: workspace:*
         version: link:../limits
+      '@patchy/primitives':
+        specifier: workspace:*
+        version: link:../primitives
       '@patchy/sql':
         specifier: workspace:*
         version: link:../sql
@@ -322,6 +344,30 @@ importers:
       vitest:
         specifier: ^4.1.11
         version: 4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0))
+
+  packages/primitives:
+    dependencies:
+      '@patchy/api':
+        specifier: workspace:*
+        version: link:../api
+      '@patchy/content-store':
+        specifier: workspace:*
+        version: link:../content-store
+      '@patchy/core':
+        specifier: workspace:*
+        version: link:../core
+      effect:
+        specifier: 4.0.0-rc.112
+        version: 4.0.0-rc.112
+    devDependencies:
+      '@effect/vitest':
+        specifier: 4.0.0-rc.112
+        version: 4.0.0-rc.112(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0)))
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0))
+
+  packages/sdk: {}
 
   packages/serving:
     dependencies:
@@ -522,11 +568,19 @@ packages:
     peerDependencies:
       effect: 4.0.0-rc.112
 
+  '@effect/sql-pglite@4.0.0-rc.112':
+    resolution: {integrity: sha512-WExt8bbV/Q9J4z0ECkXyqBToljYfGzskv1TO1GwYU93zAfhaCk6hcj/O7ZVdET5TZqnMFu31gtvX6wpvT8L2yw==}
+    peerDependencies:
+      effect: 4.0.0-rc.112
+
   '@effect/vitest@4.0.0-rc.112':
     resolution: {integrity: sha512-mEKh/FI64mt8JK1/v9mpOrJYdnp+UFZdRUBMEdZMiKz7klg6NPqVgg/oeAGH6wOOQc2iAPcfc2H9BbAv1KyzMQ==}
     peerDependencies:
       effect: 4.0.0-rc.112
       vitest: '>=4.1.0 <5.0.0'
+
+  '@electric-sql/pglite@0.5.8':
+    resolution: {integrity: sha512-n9tsbUOhwx2epK1V0ZG9Ar4SHWUju04dhmzZXiSBXwBoleOvIfals33NAaWgagQVAL4Rbvx/Ptsu3P+pA09f6Q==}
 
   '@embedded-postgres/darwin-arm64@18.4.0-beta.17':
     resolution: {integrity: sha512-Kg1ZMNFzkVIJs3g4V2UYEc5X005km9rGinxFBH8R1sOU2Rblvz4pt2Uf93Pu8Rk273Ue9HIdrbMPpgUqwjUi0Q==}
@@ -2248,10 +2302,17 @@ snapshots:
     transitivePeerDependencies:
       - pg-native
 
+  '@effect/sql-pglite@4.0.0-rc.112(effect@4.0.0-rc.112)':
+    dependencies:
+      '@electric-sql/pglite': 0.5.8
+      effect: 4.0.0-rc.112
+
   '@effect/vitest@4.0.0-rc.112(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0)))':
     dependencies:
       effect: 4.0.0-rc.112
       vitest: 4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0))
+
+  '@electric-sql/pglite@0.5.8': {}
 
   '@embedded-postgres/darwin-arm64@18.4.0-beta.17':
     optional: true
