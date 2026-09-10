@@ -17,7 +17,6 @@ export const migrations: Migrations = {
         credentials TEXT NOT NULL,
         key_id TEXT NOT NULL,
         credential_revision INTEGER NOT NULL CHECK (credential_revision > 0),
-        metadata JSONB NOT NULL,
         metadata_revision INTEGER NOT NULL CHECK (metadata_revision > 0),
         created_by TEXT NOT NULL,
         last_tested_at TIMESTAMPTZ,

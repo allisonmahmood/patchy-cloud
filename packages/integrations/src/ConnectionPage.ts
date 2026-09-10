@@ -116,7 +116,7 @@ const render = Effect.fn("ConnectionPage.render")(function* (
     : '<p class="auth-hint">Only admins can change this connection.</p>';
   return {
     title: connection.handle,
-    body: `<p>${company} · <a href="/company/connections">Connections</a></p>${noticeHtml(notice)}<p class="connection-status">${statusPill(connection)}<span class="connection-meta">Postgres · Company-wide</span></p>${description(connection)}<dl class="connection-details"><dt>Host</dt><dd>${escapeHtml(display.host)}:${escapeHtml(display.port)}</dd><dt>Database</dt><dd>${escapeHtml(display.database)}</dd><dt>Role</dt><dd>${escapeHtml(display.role)}</dd><dt>Last tested</dt><dd>${time(connection.lastTestedAt)}</dd><dt>Schema discovered</dt><dd>${time(connection.lastDiscoveredAt)}</dd><dt>Credential revision</dt><dd>${connection.credentialRevision}</dd><dt>Schema revision</dt><dd>${connection.metadataRevision}</dd></dl>${management}`,
+    body: `<p>${company} · <a href="/company/connections">Connections</a></p>${noticeHtml(notice)}<p class="connection-status">${statusPill(connection)}<span class="connection-meta">Postgres · Company-wide</span></p>${description(connection)}<dl class="connection-details"><dt>Connection ID</dt><dd><code>${escapeHtml(connection.id)}</code></dd><dt>Host</dt><dd>${escapeHtml(display.host)}:${escapeHtml(display.port)}</dd><dt>Database</dt><dd>${escapeHtml(display.database)}</dd><dt>Role</dt><dd>${escapeHtml(display.role)}</dd><dt>Last tested</dt><dd>${time(connection.lastTestedAt)}</dd><dt>Schema discovered</dt><dd>${time(connection.lastDiscoveredAt)}</dd><dt>Credential revision</dt><dd>${connection.credentialRevision}</dd><dt>Schema revision</dt><dd>${connection.metadataRevision}</dd></dl>${management}`,
     status: notice?.status
   };
 });

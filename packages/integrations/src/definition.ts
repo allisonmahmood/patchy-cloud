@@ -20,7 +20,7 @@ export const operation = <
 /** An integration keeps its source, pure generation and local binding together. */
 export const defineIntegration = <
   const Name extends string,
-  const Modes extends ReadonlyArray<"company" | "personal">,
+  const Modes extends ReadonlyArray<"company">,
   Credentials extends Schema.Top,
   Metadata extends Schema.Top,
   DiscoverError,

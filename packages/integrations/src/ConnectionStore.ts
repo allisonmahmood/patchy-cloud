@@ -134,7 +134,21 @@ export class ConnectionMutationUnavailable extends Schema.TaggedError<Connection
 export class ConnectionStorageFailed extends Schema.TaggedError<ConnectionStorageFailed>()(
   "ConnectionStorageFailed",
   {
-    operation: Schema.String,
+    operation: Schema.Literals([
+      "list",
+      "get",
+      "snapshot",
+      "connect",
+      "test",
+      "rotate",
+      "refresh",
+      "retarget",
+      "disconnect",
+      "reconnect",
+      "describe",
+      "delete",
+      "resolve"
+    ]),
     cause: Schema.Redacted(Schema.Defect())
   }
 ) {
@@ -231,7 +245,7 @@ export const make = Effect.gen(function* () {
     to_char(last_tested_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "lastTestedAt",
     to_char(last_discovered_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "lastDiscoveredAt",
     created_by AS "createdBy"`;
-  const safe = (operation: string) => ({
+  const safe = (operation: ConnectionStorageFailed["operation"]) => ({
     SqlError: (cause: SqlError) =>
       Effect.fail(new ConnectionStorageFailed({ operation, cause: Redacted.make(cause) })),
     SchemaError: (cause: Schema.SchemaError) =>
@@ -365,10 +379,10 @@ export const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const inserted = yield* sql`INSERT INTO connections
         (id, company_id, integration, handle, description, mode, status, display, credentials, key_id,
-         credential_revision, metadata, metadata_revision, created_by, last_tested_at, last_discovered_at)
+         credential_revision, metadata_revision, created_by, last_tested_at, last_discovered_at)
         VALUES (${identity.id}, ${input.companyId}, 'postgres', ${input.handle}, ${input.description}, 'company',
           'connected', ${encodeDisplay(inspected.display)}, ${encrypted.credentials}, ${encrypted.keyId},
-          1, ${encodeSnapshot(inspected.snapshot)}, 1, ${input.userId}, to_timestamp(${now / 1_000}), to_timestamp(${now / 1_000}))
+          1, 1, ${input.userId}, to_timestamp(${now / 1_000}), to_timestamp(${now / 1_000}))
         ON CONFLICT (company_id, handle) DO NOTHING RETURNING id`;
           if (inserted.length === 0) return yield* new ConnectionHandleTaken({});
           yield* writeSnapshot(identity, 1, inspected.snapshot, now);
@@ -434,7 +448,7 @@ export const make = Effect.gen(function* () {
         yield* lock(input, current);
         const revision = current.metadataRevision + 1;
         yield* writeSnapshot(input, revision, inspected.snapshot, now);
-        yield* sql`UPDATE connections SET metadata = ${encodeSnapshot(inspected.snapshot)}, metadata_revision = ${revision},
+        yield* sql`UPDATE connections SET metadata_revision = ${revision},
         display = ${encodeDisplay(inspected.display)}, last_tested_at = to_timestamp(${now / 1_000}),
         last_discovered_at = to_timestamp(${now / 1_000})
         ${encrypted === undefined ? sql`` : sql`, credentials = ${encrypted.credentials}, key_id = ${encrypted.keyId}, credential_revision = credential_revision + 1`}

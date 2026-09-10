@@ -34,10 +34,10 @@ const useMigratedTables = Effect.gen(function* () {
   yield* sql`
     INSERT INTO connections (
       id, company_id, integration, handle, description, mode, status, display,
-      credentials, key_id, credential_revision, metadata, metadata_revision, created_by
+      credentials, key_id, credential_revision, metadata_revision, created_by
     ) VALUES (
       'connection_migration', 'cmp_migration', 'postgres', 'warehouse', 'Migration check',
-      'company', 'disconnected', '{}', 'encrypted', 'test', 1, '{}', 1, 'usr_migration'
+      'company', 'disconnected', '{}', 'encrypted', 'test', 1, 1, 'usr_migration'
     )`;
   yield* sql`
     INSERT INTO runtime_calls (id, company_id, user_id, credential_kind, op,

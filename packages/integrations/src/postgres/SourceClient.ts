@@ -3,7 +3,6 @@ import { BlockList, isIP } from "node:net";
 import { checkServerIdentity } from "node:tls";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Pg from "pg";
@@ -236,4 +235,3 @@ export const make = Effect.fn("Postgres.open")(function* (settings: typeof Setti
   );
   return SourceClient.of({ query });
 });
-export const layer = (settings: typeof Settings.Type) => Layer.effect(SourceClient, make(settings));

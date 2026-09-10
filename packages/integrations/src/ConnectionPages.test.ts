@@ -205,7 +205,12 @@ it.layer(services)("company connection pages", (it) => {
         const description = '<img src=x onerror="alert(1)">';
         const database = '<sales&"archive>';
         const escapedCredentials = `postgresql://reader:page-secret-escaped@warehouse.example/${encodeURIComponent(database)}?sslmode=verify-full`;
-        const { path } = yield* connect(owner.user, "warehouse", escapedCredentials, description);
+        const { path, connection } = yield* connect(
+          owner.user,
+          "warehouse",
+          escapedCredentials,
+          description
+        );
         const foreign = yield* createCompany("connections-hidden");
         yield* connect(foreign.user, "foreign-warehouse", credentials, "Foreign company data");
         for (const viewer of [owner.user, member]) {
@@ -227,6 +232,7 @@ it.layer(services)("company connection pages", (it) => {
           const html = yield* Effect.promise(() => detail.text());
           assert.strictEqual(detail.status, 200);
           assert.include(html, "&lt;sales&amp;&quot;archive&gt;");
+          assert.include(html, `<dt>Connection ID</dt><dd><code>${connection.id}</code></dd>`);
           assert.notInclude(html, database);
           assert.notInclude(html, escapedCredentials);
           assert.notInclude(html, "page-secret-escaped");

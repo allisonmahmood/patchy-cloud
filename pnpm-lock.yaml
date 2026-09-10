@@ -535,6 +535,9 @@ importers:
       '@patchy/content-store':
         specifier: workspace:*
         version: link:../content-store
+      '@patchy/integrations':
+        specifier: workspace:*
+        version: link:../integrations
       '@patchy/limits':
         specifier: workspace:*
         version: link:../limits
