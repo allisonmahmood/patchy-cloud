@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- IP classification and certificate hostname checks require Node's network APIs.
 import { BlockList, isIP } from "node:net";
-import { checkServerIdentity } from "node:tls";
+import { checkServerIdentity, connect as connectTls, type TLSSocket } from "node:tls";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
@@ -141,8 +141,82 @@ const resolve = Effect.fn("Postgres.resolve")(function* (host: string) {
 });
 
 const tlsFailure = Schema.is(Schema.Struct({ code: Schema.String }));
-export const make = Effect.fn("Postgres.open")(function* (settings: typeof Settings.Type) {
-  // No pool caches DNS. Each inspect/test/refresh/rotation resolves and validates anew.
+const tlsOptions = (host: string) => ({
+  rejectUnauthorized: true,
+  minVersion: "TLSv1.2" as const,
+  ...(isIP(host) === 0 ? { servername: host } : {}),
+  checkServerIdentity: (_: string, certificate: Parameters<typeof checkServerIdentity>[1]) =>
+    checkServerIdentity(host, certificate)
+});
+
+const backendKey = Schema.is(Schema.Struct({ processID: Schema.Int, secretKey: Schema.Int }));
+/** CancelRequest has no login or pooled SQL session, but still requires fresh DNS admission and verified TLS. */
+export const cancel = Effect.fn("Postgres.cancel")(
+  function* (settings: typeof Settings.Type, client: Pg.Client) {
+    if (!backendKey(client)) return;
+    const address = yield* resolve(settings.host);
+    const network = yield* SourceNetwork.SourceNetwork;
+    const socket = yield* Effect.acquireRelease(network.socket, (socket) =>
+      Effect.sync(() => {
+        socket.destroy();
+      })
+    );
+    const request = Buffer.alloc(16);
+    request.writeInt32BE(16, 0);
+    request.writeInt32BE(80877102, 4);
+    request.writeInt32BE(client.processID, 8);
+    request.writeInt32BE(client.secretKey, 12);
+    yield* Effect.callback<void, SourceError>((resume) => {
+      let secure: TLSSocket | undefined;
+      let settled = false;
+      const fail = (cause: unknown) => {
+        if (settled) return;
+        settled = true;
+        resume(
+          Effect.fail(new SourceUnavailable({ stage: "connect", cause: Redacted.make(cause) }))
+        );
+      };
+      socket.on("error", fail);
+      socket.once("connect", () => {
+        const sslRequest = Buffer.alloc(8);
+        sslRequest.writeInt32BE(8, 0);
+        sslRequest.writeInt32BE(80877103, 4);
+        socket.write(sslRequest);
+      });
+      socket.once("data", (data) => {
+        if (data.length !== 1 || data[0] !== 83) {
+          fail(new TlsRequired({}));
+          return;
+        }
+        secure = connectTls({ socket, ...tlsOptions(settings.host) });
+        secure.on("error", fail);
+        secure.once("secureConnect", () => {
+          secure!.write(request);
+        });
+        // PostgreSQL closes the cancellation socket after processing the request.
+        secure.once("end", () => {
+          if (settled) return;
+          settled = true;
+          resume(Effect.void);
+        });
+      });
+      socket.connect(settings.port, address);
+      return Effect.sync(() => {
+        settled = true;
+        secure?.destroy();
+        socket.destroy();
+      });
+    });
+  },
+  Effect.scoped,
+  Effect.timeoutOrElse({ duration: 2_000, orElse: () => Effect.void })
+);
+
+/** Every physical connection, including pool replacements, repeats DNS admission and verified TLS. */
+export const open = Effect.fn("Postgres.open")(function* (
+  settings: typeof Settings.Type,
+  applicationName: "patchy-discovery" | "patchy-runtime" = "patchy-discovery"
+) {
   const address = yield* resolve(settings.host);
   const network = yield* SourceNetwork.SourceNetwork;
   const socket = yield* Effect.acquireRelease(network.socket, (socket) =>
@@ -159,16 +233,12 @@ export const make = Effect.fn("Postgres.open")(function* (settings: typeof Setti
         database: settings.database,
         user: settings.role,
         password: Redacted.value(settings.password),
-        ssl: {
-          rejectUnauthorized: true,
-          minVersion: "TLSv1.2",
-          ...(isIP(settings.host) === 0 ? { servername: settings.host } : {}),
-          checkServerIdentity: (_, certificate) => checkServerIdentity(settings.host, certificate)
-        },
+        ssl: tlsOptions(settings.host),
         connectionTimeoutMillis: 5_000,
-        statement_timeout: 10_000,
-        query_timeout: 10_000,
-        application_name: "patchy-discovery"
+        ...(applicationName === "patchy-discovery"
+          ? { statement_timeout: 10_000, query_timeout: 10_000 }
+          : {}),
+        application_name: applicationName
       });
       // An idle socket error must neither crash Node nor expose a driver diagnostic.
       client.on("error", () => {});
@@ -176,8 +246,7 @@ export const make = Effect.fn("Postgres.open")(function* (settings: typeof Setti
     }),
     (client) =>
       Effect.sync(() => {
-        // Closing the transport cancels all server work, including interrupted acquisition.
-        // There is no pooled session to reset and no finalizer waiting for a hung query.
+        // Destroy immediately even when acquisition or a query has been interrupted.
         client.connection.stream.destroy();
         void client.end().catch(() => {});
       })
@@ -195,6 +264,11 @@ export const make = Effect.fn("Postgres.open")(function* (settings: typeof Setti
       return new SourceUnavailable({ stage: "connect", cause: Redacted.make(cause) });
     }
   });
+  return client;
+});
+
+export const make = Effect.fn("Postgres.sourceClient")(function* (settings: typeof Settings.Type) {
+  const client = yield* open(settings);
   const query = Effect.fn("Postgres.query")(
     (statement: string, parameters: ReadonlyArray<unknown> = []) =>
       Effect.callback<ReadonlyArray<unknown>, SourceError>((resume) => {

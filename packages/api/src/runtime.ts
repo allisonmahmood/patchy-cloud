@@ -2,6 +2,7 @@
 import * as Schema from "effect/Schema";
 import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
 import { DefinitionName, Identity, IsoTimestamp, PatchId, PostgresText } from "./schemas.js";
+import { postgresOperations } from "./postgres.js";
 
 const NonEmptyText = Schema.String.check(Schema.isMinLength(1));
 const textEncoder = new TextEncoder();
@@ -98,6 +99,7 @@ export const TablePage = Schema.Struct({
 
 /** Byte operations carry their bytes outside the JSON arguments. */
 export const runtimeOperations = {
+  ...postgresOperations,
   me: {
     request: Schema.Struct({
       op: Schema.Literal("me"),
@@ -284,6 +286,7 @@ export const RuntimeFailure = Schema.Struct({
   ok: Schema.Literal(false),
   error: Schema.String,
   code: RuntimeCode,
+  details: Schema.optionalKey(Schema.Record(Schema.String, Schema.Json)),
   correlationId: Schema.optionalKey(NonEmptyText)
 }).annotate({ identifier: "RuntimeFailure" });
 export type RuntimeFailure = typeof RuntimeFailure.Type;

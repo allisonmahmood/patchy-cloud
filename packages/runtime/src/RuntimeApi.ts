@@ -22,6 +22,7 @@ export const failure = (error: Runtime.RuntimeError) =>
       ok: false,
       code: error.code,
       error: error.message,
+      ...("details" in error && error.details !== undefined ? { details: error.details } : {}),
       ...(error.correlationId === undefined ? {} : { correlationId: error.correlationId })
     }),
     {
@@ -74,9 +75,7 @@ const readCall = Effect.fn("RuntimeApi.readCall")(function* (runtime: Runtime.Ru
   const input = yield* decodeCall(text).pipe(
     Effect.mapError((cause) => new Runtime.InvalidRequest({ cause }))
   );
-  const maxBytes = runtime.bodyLimit(input.op);
-  if (size > maxBytes) return yield* new Runtime.TooLarge({ maxBytes });
-  return input;
+  return { input, byteLength: size };
 });
 
 /** This effect is evaluated by Runtime only after admission and the mutation log's begin. */
@@ -148,7 +147,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "runtime", (handlers) =>
     return handlers
       .handleRaw("call", () =>
         readCall(runtime).pipe(
-          Effect.flatMap(runtime.call),
+          Effect.flatMap(({ input, byteLength }) => runtime.call(input, byteLength)),
           Effect.flatMap((value) =>
             encodeSuccess({ ok: true, value }).pipe(
               Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))

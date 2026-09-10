@@ -17,7 +17,14 @@ export const ColumnType = Schema.Struct({
   sql: Schema.String.check(Schema.isMaxLength(1_024)),
   baseSchema: Name,
   baseName: Name,
-  kind: Schema.Literals(["base", "enum", "array"])
+  kind: Schema.Literals(["base", "enum", "array"]),
+  element: Schema.optionalKey(
+    Schema.Struct({
+      baseSchema: Name,
+      baseName: Name,
+      kind: Schema.Literals(["base", "enum"])
+    })
+  )
 });
 
 export const Column = Schema.Struct({
@@ -135,30 +142,3 @@ export const Snapshot = Schema.Struct({
     );
   })
 );
-
-/** Source-native types understood by the upcoming constrained read surface. */
-export const supportedType = (type: typeof ColumnType.Type): boolean =>
-  type.kind === "enum" ||
-  type.kind === "array" ||
-  type.baseName === "citext" ||
-  (type.baseSchema === "pg_catalog" &&
-    [
-      "int2",
-      "int4",
-      "int8",
-      "numeric",
-      "float4",
-      "float8",
-      "text",
-      "varchar",
-      "bpchar",
-      "name",
-      "char",
-      "uuid",
-      "bool",
-      "timestamptz",
-      "timestamp",
-      "date",
-      "json",
-      "jsonb"
-    ].includes(type.baseName));

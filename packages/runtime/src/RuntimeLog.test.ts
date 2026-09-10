@@ -21,6 +21,66 @@ const mutation = (correlationId: string): RuntimeLog.Begin => ({
 });
 
 it.layer(RuntimeLog.layer.pipe(Layer.provideMerge(Testing.layer())))("RuntimeLog", (it) => {
+  it.effect(
+    "bounds recent calls by company and connection with the same deadline semantics as correlation lookup",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(NOW);
+        const log = yield* RuntimeLog.RuntimeLog;
+        const sql = yield* SqlClient.SqlClient;
+        const companyId = DEV_SEED.companyId;
+        const connectionId = "recent-connection";
+        yield* sql`INSERT INTO runtime_calls
+        (id, at, company_id, user_id, credential_kind, op, connection_id, correlation_id, deadline_ms)
+        SELECT 'recent-' || n, to_timestamp(${NOW / 1000}) + n * interval '1 millisecond',
+          ${companyId}, ${DEV_SEED.userId}, 'session', 'postgres.list', ${connectionId},
+          'recent-correlation-' || n, 15000
+        FROM generate_series(1, 101) AS n`;
+        yield* log.begin({
+          ...mutation("recent-other-company"),
+          op: "postgres.query",
+          companyId: "foreign",
+          connectionId,
+          sql: "SELECT 'foreign-company'"
+        });
+        yield* log.begin({
+          ...mutation("recent-other-connection"),
+          op: "postgres.query",
+          connectionId: "another",
+          sql: "SELECT 'foreign-connection'"
+        });
+        const selected = yield* log.recent({ companyId, connectionId, limit: 2 });
+        assert.deepStrictEqual(
+          selected.map((call) => call.correlationId),
+          ["recent-correlation-101", "recent-correlation-100"]
+        );
+        assert.strictEqual((yield* log.recent({ companyId, connectionId })).length, 50);
+        assert.strictEqual(
+          (yield* log.recent({ companyId, connectionId, limit: 1000 })).length,
+          100
+        );
+        yield* TestClock.setTime(NOW + 15_101);
+        assert.strictEqual(
+          (yield* log.recent({ companyId, connectionId, limit: 1 }))[0]?.outcome,
+          "pending"
+        );
+        yield* TestClock.adjust(1);
+        assert.strictEqual(
+          (yield* log.recent({ companyId, connectionId, limit: 1 }))[0]?.outcome,
+          "unknown"
+        );
+        yield* log.finish({
+          correlationId: "recent-correlation-101",
+          outcome: "failure",
+          outcomeCode: "timeout",
+          durationMs: 15_001,
+          rowCount: null
+        });
+        const completed = (yield* log.recent({ companyId, connectionId, limit: 1 }))[0]!;
+        assert.strictEqual(completed.outcome, "failure");
+        assert.strictEqual(completed.outcomeCode, "timeout");
+      })
+  );
   it.effect("persists pending before completion and a fresh service finds the final result", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(NOW);

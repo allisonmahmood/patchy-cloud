@@ -30,7 +30,9 @@ const manifest = {
   tier: 0 as const,
   tables: {},
   files: {},
-  uses: {}
+  uses: {
+    sales: { kind: "postgres" as const, handle: "warehouse", id: "connection-runtime", revision: 1 }
+  }
 };
 const versions = Layer.succeed(LoadedVersions.LoadedVersions, {
   find: (patch, version = versionId) =>

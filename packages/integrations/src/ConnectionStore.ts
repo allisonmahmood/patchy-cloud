@@ -147,7 +147,8 @@ export class ConnectionStorageFailed extends Schema.TaggedError<ConnectionStorag
       "reconnect",
       "describe",
       "delete",
-      "resolve"
+      "resolve",
+      "poolCredentials"
     ]),
     cause: Schema.Redacted(Schema.Defect())
   }
@@ -216,6 +217,12 @@ export class ConnectionStore extends Context.Service<
       companyId: string,
       declaration: typeof PostgresDeclaration.Type
     ) => Effect.Effect<typeof PostgresDeclaration.Type, ResolveError>;
+    /** Live identity and credential revision, never the published metadata stamp. Decrypt only to create a pool. */
+    readonly poolCredentials: (
+      companyId: string,
+      declaration: typeof PostgresDeclaration.Type,
+      credentialRevision: number
+    ) => Effect.Effect<Redacted.Redacted<string>, ConnectionError>;
   }
 >()("@patchy/integrations/ConnectionStore") {}
 
@@ -546,6 +553,25 @@ export const make = Effect.gen(function* () {
     },
     Effect.catchTags(safe("resolve"))
   );
+  const poolCredentials = Effect.fn("ConnectionStore.poolCredentials")(
+    function* (
+      companyId: string,
+      declaration: typeof PostgresDeclaration.Type,
+      credentialRevision: number
+    ) {
+      const found = yield* storedRow({ companyId, id: declaration.id, locked: false });
+      if (
+        Option.isNone(found) ||
+        found.value.handle !== declaration.handle ||
+        found.value.status !== "connected"
+      )
+        return yield* new ConnectionNotConnected({});
+      if (found.value.credentialRevision !== credentialRevision)
+        return yield* new ConnectionChanged({});
+      return yield* keys.decrypt(found.value, found.value);
+    },
+    Effect.catchTags(safe("poolCredentials"))
+  );
 
   return ConnectionStore.of({
     list,
@@ -560,7 +586,8 @@ export const make = Effect.gen(function* () {
     reconnect,
     describe,
     delete: remove,
-    resolve
+    resolve,
+    poolCredentials
   });
 });
 
@@ -620,6 +647,7 @@ export const layerDev = (metadata: ReadonlyArray<DevConnection> = []) => {
           revision: item.connection.metadataRevision
         });
       },
+      poolCredentials: unavailable,
       connect: unavailable,
       test: unavailable,
       rotate: unavailable,

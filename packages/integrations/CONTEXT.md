@@ -41,7 +41,7 @@ The connection's server-assigned snapshot identifier. A published declaration ke
 _Avoid_: release, wire version, credential revision
 
 **Relation**:
-A source table or view described in a Postgres schema snapshot. Its source name is preserved.
+A source table or view described in a Postgres schema snapshot. Its source name is preserved; the typed client exposes a projection of its supported columns, not a copy of every source feature.
 _Avoid_: primitive table, collection
 
 **Retarget**:
@@ -53,7 +53,7 @@ The changing generation of a connection's credentials and connected state. It in
 _Avoid_: snapshot revision, key id
 
 **Escape hatch**:
-An explicit raw query instead of the planned relation-specific typed client. It remains a constrained read through the supplied role, not harmless execution of arbitrary SQL.
+An explicit raw query instead of the relation-specific typed client. It remains a constrained read through the supplied role, not harmless execution of arbitrary SQL.
 _Avoid_: unrestricted SQL, direct database access
 
 **Typed client**:
@@ -63,3 +63,11 @@ _Avoid_: proxy (how it is carried out, not what the code sees), driver, raw API
 **Call log**:
 The record of a call through a connection: the patch, the connection and the identity it ran as. It answers who acted when the outside system sees a shared company credential.
 _Avoid_: audit trail, analytics event (a business moment, not a call)
+
+**Dev binding**:
+The local implementation of an integration's supported operations, using synthetic data instead of production credentials or business rows. It preserves the operation contract while making its limits explicit.
+_Avoid_: Mock integration, production proxy
+
+**Fixture**:
+Agent-authored synthetic rows for a declared connection's local shape. A view fixture holds explicit rows rather than recomputing from its source tables.
+_Avoid_: Sample of production, mock response

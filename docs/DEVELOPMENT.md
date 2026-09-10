@@ -169,7 +169,17 @@ test, rotate, retarget, refresh schema, disconnect, reconnect, edit descriptions
 and delete undeclared connections; members read metadata. The normal production
 connector refuses local/private addresses even in a local instance. Offline tests
 exercise discovery against disposable Postgres through the source seam rather
-than weakening that restriction. No Postgres runtime operation is admitted yet.
+than weakening that restriction. Declared Postgres connections admit `list`, `get`,
+`getMany` and `query` through the runtime. Patch-development fixtures use the
+integration's PGlite binding, not the normal network connector: one local database
+per connection under `.patchy/dev/`, initialized from `fixtures/postgres-<handle>.sql`.
+The file is required; its header describes native columns and synthetic views.
+The patch-repo CLI that composes this binding arrives separately.
+
+Issue #202 adds exact operation outcome codes to the unmerged
+`0006_runtime_baseline`; no new migration ID is introduced. Disposable development
+databases created before this baseline change must be recreated with `pnpm dev reset`.
+Do not use a reset or baseline rewrite to upgrade a live database.
 
 ### Seed
 

@@ -7,7 +7,14 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
-import { RuntimeFailure, WIRE_VERSION } from "@patchy/api";
+import {
+  PostgresList,
+  PostgresPage,
+  PostgresQuery,
+  PostgresRows,
+  RuntimeFailure,
+  WIRE_VERSION
+} from "@patchy/api";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { PUBLIC_BASE_URL, signedInCookies } from "@patchy/auth/testing";
 import * as Binding from "./Binding.js";
@@ -31,6 +38,202 @@ const authenticatedHeaders = () => ({
   origin: PUBLIC_BASE_URL
 });
 
+const connectionId = (_args: unknown, binding: Binding.Binding["Service"]) => {
+  const declaration = binding.manifest.uses.sales;
+  return declaration?.kind === "postgres" ? declaration.id : null;
+};
+const queryText = (args: unknown) =>
+  typeof args === "object" && args !== null && "sql" in args && typeof args.sql === "string"
+    ? args.sql
+    : undefined;
+
+it.effect(
+  "logs trusted connection metadata before query decoding and preserves source error details",
+  () =>
+    Effect.gen(function* () {
+      const api = yield* Fixtures.client;
+      const query = `SELECT $1 -- ${"é".repeat(5000)}`;
+      const args = {
+        connection: "sales",
+        sql: query,
+        params: ["parameter-secret"],
+        shape: { result: { kind: "text" } }
+      };
+      for (const [payload, code] of [
+        [{ ...args, connectionId: "forged-connection" }, "invalid_request"],
+        [args, "invalid_query"]
+      ] as const) {
+        const response = yield* api.call({
+          payload: envelope("postgres.query", payload),
+          headers: authenticatedHeaders(),
+          responseMode: "response-only"
+        });
+        const refusal = decodeFailure(yield* response.json);
+        assert.strictEqual(refusal.code, code);
+        const log = yield* RuntimeLog.RuntimeLog;
+        const call = yield* log.find({
+          companyId: DEV_SEED.companyId,
+          correlationId: refusal.correlationId!
+        });
+        assert.strictEqual(call?.connectionId, "connection-runtime");
+        assert.strictEqual(call?.companyId, DEV_SEED.companyId);
+        assert.strictEqual(call?.userId, DEV_SEED.userId);
+        assert.strictEqual(call?.versionId, Fixtures.versionId);
+        assert.strictEqual(call?.outcomeCode, code);
+        assert.strictEqual(new TextEncoder().encode(call!.sql!).byteLength, 8191);
+        assert.isTrue(query.startsWith(call!.sql!));
+        assert.notInclude(JSON.stringify(call), "parameter-secret");
+        if (code === "invalid_query")
+          assert.deepStrictEqual(refusal.details, {
+            sqlstate: "42703",
+            message: "column does not exist",
+            position: "8"
+          });
+      }
+      const listed = yield* api.call({
+        payload: envelope("postgres.list", {
+          connection: "sales",
+          relation: { schema: "public", name: "orders" }
+        }),
+        headers: authenticatedHeaders(),
+        responseMode: "response-only"
+      });
+      assert.strictEqual(listed.status, 200);
+      const log = yield* RuntimeLog.RuntimeLog;
+      const calls = yield* log.recent({
+        companyId: DEV_SEED.companyId,
+        connectionId: "connection-runtime"
+      });
+      const list = calls.find((call) => call.op === "postgres.list")!;
+      assert.strictEqual(list.sql, null);
+      assert.strictEqual(list.rowCount, 1);
+      assert.strictEqual(list.outcome, "success");
+    }).pipe(
+      Effect.provide(
+        Fixtures.layer({
+          "postgres.query": Runtime.handler(
+            {
+              kind: "integration",
+              input: PostgresQuery,
+              output: PostgresRows,
+              connectionId,
+              sql: queryText
+            },
+            () =>
+              Effect.fail({
+                code: "invalid_query",
+                status: 422,
+                message: "The query is invalid.",
+                details: { sqlstate: "42703", message: "column does not exist", position: "8" }
+              } satisfies Runtime.OperationError)
+          ),
+          "postgres.list": Runtime.handler(
+            {
+              kind: "integration",
+              input: PostgresList,
+              output: PostgresPage,
+              connectionId,
+              sql: () => "generated SQL must not be logged",
+              rowCount: () => 1
+            },
+            () => Effect.succeed({ ok: true, rows: [{ id: 1 }], cursor: null })
+          )
+        })
+      )
+    )
+);
+
+it.effect(
+  "attributes integration origin, principal and size denials without trusting the envelope identity",
+  () =>
+    Effect.gen(function* () {
+      let executions = 0;
+      yield* Effect.gen(function* () {
+        const api = yield* Fixtures.client;
+        const args = {
+          connection: "sales",
+          sql: "SELECT $1",
+          params: ["secret"],
+          shape: { result: { kind: "text" } }
+        };
+        for (const [payload, headers, code] of [
+          [
+            envelope("postgres.query", args),
+            { ...authenticatedHeaders(), origin: `${PUBLIC_BASE_URL}/` },
+            "access_denied"
+          ],
+          [
+            { ...envelope("postgres.query", args), principal: { userId: "forged" } },
+            { ...authenticatedHeaders(), "x-patchy-principal": '{"userId":"forged"}' },
+            "principal_changed"
+          ],
+          [
+            envelope("postgres.query", { ...args, params: ["x".repeat(256 * 1024)] }),
+            authenticatedHeaders(),
+            "too_large"
+          ]
+        ] as const) {
+          const response = yield* api.call({ payload, headers, responseMode: "response-only" });
+          const refusal = decodeFailure(yield* response.json);
+          assert.strictEqual(refusal.code, code);
+          const log = yield* RuntimeLog.RuntimeLog;
+          const call = yield* log.find({
+            companyId: DEV_SEED.companyId,
+            correlationId: refusal.correlationId!
+          });
+          assert.strictEqual(call?.connectionId, "connection-runtime");
+          assert.strictEqual(call?.userId, DEV_SEED.userId);
+          assert.strictEqual(call?.companyId, DEV_SEED.companyId);
+          assert.strictEqual(call?.outcome, "failure");
+          assert.strictEqual(call?.outcomeCode, code);
+          assert.strictEqual(call?.sql, "SELECT $1");
+        }
+        assert.strictEqual(executions, 0);
+        for (let index = 0; index < 3; index++) {
+          const response = yield* api.call({
+            payload: envelope("postgres.query", args),
+            headers: authenticatedHeaders(),
+            responseMode: "response-only"
+          });
+          assert.strictEqual(response.status, 200);
+        }
+        const limited = yield* api.call({
+          payload: envelope("postgres.query", args),
+          headers: authenticatedHeaders(),
+          responseMode: "response-only"
+        });
+        const refusal = decodeFailure(yield* limited.json);
+        assert.strictEqual(refusal.code, "rate_limited");
+        const log = yield* RuntimeLog.RuntimeLog;
+        const call = yield* log.find({
+          companyId: DEV_SEED.companyId,
+          correlationId: refusal.correlationId!
+        });
+        assert.strictEqual(call?.connectionId, "connection-runtime");
+        assert.strictEqual(call?.outcomeCode, "rate_limited");
+        assert.strictEqual(executions, 3);
+      }).pipe(
+        Effect.provide(
+          Fixtures.layer({
+            "postgres.query": Runtime.handler(
+              {
+                kind: "integration",
+                input: PostgresQuery,
+                output: PostgresRows,
+                connectionId,
+                sql: queryText
+              },
+              () =>
+                Effect.sync(() => {
+                  executions++;
+                  return { ok: true as const, rows: [] };
+                })
+            )
+          })
+        )
+      );
+    })
+);
 it.effect(
   "a mutation refuses wrong origins before execution and uses only the admitted binding",
   () =>
@@ -133,6 +336,67 @@ it.effect("a failing handler's HTTP correlation finds the attributed failure row
       })
     )
   )
+);
+
+it.effect(
+  "times out the entire integration handler and interrupts its resources before recording the correlated failure",
+  () =>
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<Binding.Binding["Service"]>();
+      const released = yield* Deferred.make<void>();
+      yield* Effect.gen(function* () {
+        const api = yield* Fixtures.client;
+        const fiber = yield* api
+          .call({
+            payload: envelope("postgres.query", {
+              connection: "sales",
+              sql: "SELECT 1",
+              params: [],
+              shape: { result: { kind: "integer" } }
+            }),
+            headers: authenticatedHeaders(),
+            responseMode: "response-only"
+          })
+          .pipe(Effect.forkChild);
+        const binding = yield* Deferred.await(entered);
+        const log = yield* RuntimeLog.RuntimeLog;
+        const lookup = { companyId: DEV_SEED.companyId, correlationId: binding.correlationId };
+        yield* TestClock.adjust(14_999);
+        assert.strictEqual((yield* log.find(lookup))?.outcome, "pending");
+        assert.isFalse(yield* Deferred.isDone(released));
+        yield* TestClock.adjust(1);
+        const response = yield* Fiber.join(fiber);
+        const failure = decodeFailure(yield* response.json);
+        assert.strictEqual(response.status, 504);
+        assert.strictEqual(failure.code, "timeout");
+        assert.strictEqual(failure.correlationId, binding.correlationId);
+        assert.isTrue(yield* Deferred.isDone(released));
+        const call = yield* log.find(lookup);
+        assert.strictEqual(call?.outcome, "failure");
+        assert.strictEqual(call?.outcomeCode, "timeout");
+        assert.strictEqual(call?.connectionId, "connection-runtime");
+        assert.strictEqual(call?.durationMs, 15_000);
+      }).pipe(
+        Effect.provide(
+          Fixtures.layer({
+            "postgres.query": Runtime.handler(
+              {
+                kind: "integration",
+                input: PostgresQuery,
+                output: PostgresRows,
+                connectionId,
+                sql: queryText
+              },
+              () =>
+                Effect.gen(function* () {
+                  yield* Deferred.succeed(entered, yield* Binding.Binding);
+                  return yield* Effect.never;
+                }).pipe(Effect.ensuring(Deferred.succeed(released, undefined)))
+            )
+          })
+        )
+      );
+    })
 );
 
 it.effect(
