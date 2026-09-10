@@ -4,15 +4,15 @@
  * A patch whose retention clock has run out already stops serving and
  * refuses updates; the row and its stored HTML are still there, still
  * costing storage, still counting against its creator's quota. The sweep is
- * what finishes the job: for each expired patch it hard-deletes the
- * record and then the content behind it. There is no recovery — republishing
- * is the way back.
+ * what finishes the job: for each expired patch it hard-deletes the record
+ * and durably queues the content behind it for removal. There is no recovery
+ * — republishing is the way back.
  *
- * Order is deliberate. The record goes first, so a failure between the two
- * halves leaves unreachable objects rather than a live patch with no content;
- * an orphaned object costs storage, a contentless patch costs the reader the
- * page. Everything else follows from re-reading the database: a run is
- * idempotent and two overlapping runs are safe.
+ * It also reclaims expired publication intents. Claiming an intent fences
+ * out a late version transaction; committing a version consumes its intent.
+ * Store deletion happens without a database lock, and only a successful
+ * delete forgets the claimed key. Failures and interrupted runs therefore
+ * retry without risking committed content.
  *
  * `sweep` is one run. Deciding when to run is the server's: it forks
  * `Effect.repeat(sweep, Schedule.spaced("1 hour"))` in its scope, which also
@@ -37,13 +37,13 @@ const BATCH_SIZE = 100;
 const MAX_PER_RUN = 1_000;
 
 export interface SweepResult {
-  /** Patches hard-deleted: record gone, content gone. */
+  /** Patches hard-deleted, with their content durably queued for removal. */
   readonly deleted: number;
   /** Patches no longer the sweep's to take — already swept. */
   readonly skipped: number;
   /** Patches whose delete failed. They stay expired, and the next run retries. */
   readonly failed: number;
-  /** Objects left behind because their delete failed after the record's did not. */
+  /** Objects whose cleanup failed; their durable intents remain for retry. */
   readonly orphanedObjects: number;
 }
 
@@ -60,7 +60,7 @@ export const make = Effect.gen(function* () {
   const store = yield* ContentStore.ContentStore;
   const analytics = yield* Analytics.Analytics;
 
-  /** One patch's share of a run: exactly one of `deleted`, `skipped` or `failed`, plus what it orphaned. */
+  /** One patch's share of a run: exactly one of `deleted`, `skipped` or `failed`. */
   const sweepOne = Effect.fn("ExpirySweep.sweepOne")(function* (patchId: string) {
     // Some(None) is a patch no longer the sweep's to take; None is a delete that failed.
     const taken = yield* patches.deleteExpired(patchId).pipe(
@@ -77,7 +77,6 @@ export const make = Effect.gen(function* () {
     if (Option.isNone(taken.value))
       return { deleted: 0, skipped: 1, failed: 0, orphanedObjects: 0 };
     const keys = taken.value.value;
-    let orphanedObjects = 0;
 
     // Reported once the record is gone, which is the moment the patch stops
     // existing. No principal performed it — the clock ran out.
@@ -87,22 +86,34 @@ export const make = Effect.gen(function* () {
       properties: { patchId, versionsRemoved: keys.length }
     });
 
+    return { deleted: 1, skipped: 0, failed: 0, orphanedObjects: 0 } satisfies SweepResult;
+  });
+
+  const reclaimObjects = Effect.fn("ExpirySweep.reclaimObjects")(function* () {
+    const keys = yield* patches.claimObjects(MAX_PER_RUN).pipe(
+      Effect.catchTags({
+        SqlError: (error) =>
+          Effect.logWarning("Expiry sweep could not claim stored objects.", error).pipe(
+            Effect.as([])
+          )
+      })
+    );
+    let failed = 0;
+    // Claim only once per run: a failing store must not spin on the same keys.
     for (const key of keys) {
-      // The record is already gone, so nothing serves this object and no later
-      // run will list it again. It is storage to reclaim by hand, not a patch
-      // that survived, and it must not fail the rest of the sweep.
       yield* store.delete(key).pipe(
+        Effect.andThen(patches.completeObject(key)),
         Effect.catch((error) =>
-          Effect.logWarning("Expiry sweep orphaned a stored object.", error).pipe(
-            Effect.annotateLogs({ patchId, objectKey: key }),
+          Effect.logWarning("Expiry sweep could not reclaim a stored object.", error).pipe(
+            Effect.annotateLogs({ objectKey: key }),
             Effect.map(() => {
-              orphanedObjects += 1;
+              failed += 1;
             })
           )
         )
       );
     }
-    return { deleted: 1, skipped: 0, failed: 0, orphanedObjects } satisfies SweepResult;
+    return failed;
   });
 
   const sweep = Effect.gen(function* () {
@@ -133,6 +144,7 @@ export const make = Effect.gen(function* () {
       // rather than spin on patches this run cannot take.
       if (patchIds.length < batchLimit || result.deleted === deletedBefore) break;
     }
+    result = { ...result, orphanedObjects: yield* reclaimObjects() };
 
     return result;
   }).pipe(Effect.withSpan("ExpirySweep.sweep"));

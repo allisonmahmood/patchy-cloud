@@ -4,7 +4,7 @@ import { TestClock } from "effect/testing";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import { classify } from "./ApiGuard.js";
 import { DEV_SEED } from "@patchy/auth/seed";
-import { answer, html, send, server, upload } from "./test/server.js";
+import { answer, html, send, server, publish, publishBody } from "./test/server.js";
 
 const UNAUTHORIZED = { ok: false, error: "Missing or invalid API token." };
 const NOT_FOUND = { ok: false, error: "Not found." };
@@ -33,7 +33,7 @@ describe("classify", () => {
     assert.deepStrictEqual(classify("GET", "/public/%"), open);
     // An encoded slash is one segment to the router, so nothing routes here —
     // but it reads as a probe of the API, and answers as one after the token.
-    assert.deepStrictEqual(classify("POST", "/api%2Fuploads"), { kind: "refused", status: 404 });
+    assert.deepStrictEqual(classify("POST", "/api%2Fpublish"), { kind: "refused", status: 404 });
   });
 
   it("answers the shapes the router never sees, by the wire's status for each", () => {
@@ -112,11 +112,11 @@ it.layer(server({ PATCHY_PROTECTED_API_RATE_LIMIT_PER_MINUTE: "3" }))(
         Effect.gen(function* () {
           yield* TestClock.adjust("61 seconds");
           assert.deepStrictEqual(
-            yield* answer(yield* send(HttpClientRequest.put("/api/uploads"))),
+            yield* answer(yield* send(HttpClientRequest.put("/api/publish"))),
             { status: 401, body: UNAUTHORIZED }
           );
           for (const request of [
-            HttpClientRequest.put("/api/uploads"),
+            HttpClientRequest.put("/api/publish"),
             HttpClientRequest.get("/api/does-not-exist"),
             HttpClientRequest.get("/api")
           ]) {
@@ -144,11 +144,11 @@ it.layer(server({ PATCHY_PROTECTED_API_RATE_LIMIT_PER_MINUTE: "3" }))(
               HttpClientRequest.bodyText(oversized)
             )
           );
-        assert.deepStrictEqual(yield* answer(yield* post("/api/uploads")), {
+        assert.deepStrictEqual(yield* answer(yield* post("/api/publish")), {
           status: 401,
           body: UNAUTHORIZED
         });
-        assert.deepStrictEqual(yield* answer(yield* post("/api/uploads", "nope")), {
+        assert.deepStrictEqual(yield* answer(yield* post("/api/publish", "nope")), {
           status: 401,
           body: UNAUTHORIZED
         });
@@ -161,11 +161,15 @@ it.layer(server({ PATCHY_PROTECTED_API_RATE_LIMIT_PER_MINUTE: "3" }))(
   }
 );
 
-it.layer(server())("the guard: only the device-login POST routes are anonymous", (it) => {
+it.layer(server())("the guard: release and device-login routes are anonymous", (it) => {
   it.effect("admits a start and poll without a credential, even with an invalid bearer", () =>
     Effect.gen(function* () {
       for (const authorization of [undefined, "Bearer invalid-machine-token"]) {
         const headers = authorization === undefined ? {} : { authorization };
+        const release = yield* send(
+          HttpClientRequest.get("/api/release").pipe(HttpClientRequest.setHeaders(headers))
+        );
+        assert.strictEqual(release.status, 200);
         const started = yield* send(
           HttpClientRequest.post("/api/login/device").pipe(
             HttpClientRequest.setHeaders(headers),
@@ -199,7 +203,7 @@ it.layer(server())("the guard: only the device-login POST routes are anonymous",
         HttpClientRequest.post("/api/does-not-exist"),
         HttpClientRequest.get("/api/me"),
         HttpClientRequest.post("/api/logout"),
-        HttpClientRequest.post("/api/uploads")
+        HttpClientRequest.post("/api/publish")
       ]) {
         assert.deepStrictEqual(
           yield* answer(yield* send(request)),
@@ -326,53 +330,48 @@ it.layer(
 
 it.layer(
   server({
-    PATCHY_AUTHENTICATED_UPLOAD_RATE_LIMIT_PER_MINUTE: "2",
+    PATCHY_AUTHENTICATED_PUBLISH_RATE_LIMIT_PER_MINUTE: "2",
     PATCHY_MAX_HTML_BYTES: String(512 * 1024)
   })
-)("the upload route: the per-token limit before the body", (it) => {
-  it.effect("spends the token's upload attempts before the body is read", () =>
+)("the publish route: replay admission before content validation", (it) => {
+  it.effect("charges new attempts before validating their content", () =>
     Effect.gen(function* () {
-      assert.deepStrictEqual(yield* answer(yield* upload(DEV_SEED.token, {})), {
-        status: 400,
-        body: { ok: false, error: "Missing HTML document." }
-      });
-      assert.strictEqual((yield* upload(DEV_SEED.token, {})).status, 400);
-      const limited = yield* upload(DEV_SEED.token, { html: html("Never read") });
+      const malformedAttempt = yield* publish(DEV_SEED.token, {});
+      assert.strictEqual(malformedAttempt.status, 400);
+      assert.strictEqual((yield* publish(DEV_SEED.token, {})).status, 400);
+      const limited = yield* publish(DEV_SEED.token, { html: html("Never read") });
       assert.strictEqual(limited.headers["retry-after"], "60");
       assert.deepStrictEqual(yield* answer(limited), { status: 429, body: LIMITED });
 
       yield* TestClock.adjust("61 seconds");
-      assert.strictEqual((yield* upload(DEV_SEED.token, { html: html("Read now") })).status, 201);
+      assert.strictEqual((yield* publish(DEV_SEED.token, { html: html("Read now") })).status, 201);
     })
   );
 
   it.effect("routes the spellings the router normalises, and answers the ones it cannot", () =>
     Effect.gen(function* () {
       yield* TestClock.adjust("61 seconds");
-      // A trailing or doubled slash is the real route: the limit applies,
-      // and the body decides the answer.
-      for (const target of ["/api/uploads/", "/api//uploads"]) {
-        assert.deepStrictEqual(
-          yield* answer(
-            yield* send(
-              HttpClientRequest.post(target).pipe(
-                HttpClientRequest.bearerToken(DEV_SEED.token),
-                HttpClientRequest.bodyJsonUnsafe({})
-              )
+      // Normalised spellings reach publish rather than an unknown-route refusal.
+      for (const target of ["/api/publish/", "/api//publish"]) {
+        assert.strictEqual(
+          (yield* send(
+            HttpClientRequest.post(target).pipe(
+              HttpClientRequest.bearerToken(DEV_SEED.token),
+              HttpClientRequest.bodyJsonUnsafe(publishBody({ html: html("Normalised") }))
             )
-          ),
-          { status: 400, body: { ok: false, error: "Missing HTML document." } },
+          )).status,
+          201,
           target
         );
       }
-      assert.deepStrictEqual(yield* answer(yield* send(HttpClientRequest.post("/api%2Fuploads"))), {
+      assert.deepStrictEqual(yield* answer(yield* send(HttpClientRequest.post("/api%2Fpublish"))), {
         status: 401,
         body: UNAUTHORIZED
       });
       assert.deepStrictEqual(
         yield* answer(
           yield* send(
-            HttpClientRequest.post("/api%2Fuploads").pipe(
+            HttpClientRequest.post("/api%2Fpublish").pipe(
               HttpClientRequest.bearerToken(DEV_SEED.token)
             )
           )
@@ -386,7 +385,7 @@ it.layer(
     Effect.gen(function* () {
       yield* TestClock.adjust("61 seconds");
       const tooLarge = yield* send(
-        HttpClientRequest.post("/api/uploads").pipe(
+        HttpClientRequest.post("/api/publish").pipe(
           HttpClientRequest.bearerToken(DEV_SEED.token),
           HttpClientRequest.setHeader("content-type", "application/json"),
           HttpClientRequest.bodyText(`{"html":"${"x".repeat(2 * 1024 * 1024)}`)
@@ -399,7 +398,7 @@ it.layer(
 
       yield* TestClock.adjust("61 seconds");
       const malformed = yield* send(
-        HttpClientRequest.post("/api/uploads").pipe(
+        HttpClientRequest.post("/api/publish").pipe(
           HttpClientRequest.bearerToken(DEV_SEED.token),
           HttpClientRequest.setHeader("content-type", "application/json"),
           HttpClientRequest.bodyText("{oops")
@@ -412,21 +411,8 @@ it.layer(
 
       yield* TestClock.adjust("61 seconds");
       assert.deepStrictEqual(
-        yield* answer(yield* upload(DEV_SEED.token, { patchId: "", html: html("Bad target") })),
+        yield* answer(yield* publish(DEV_SEED.token, { patchId: "", html: html("Bad target") })),
         { status: 400, body: { ok: false, error: "Invalid patch ID." } }
-      );
-      assert.deepStrictEqual(
-        yield* answer(
-          yield* upload(DEV_SEED.token, { draftId: "abcdefghijkl", html: html("Old client") })
-        ),
-        {
-          status: 400,
-          body: {
-            ok: false,
-            error:
-              "Unknown field draftId: the wire renamed it to patchId. Send patchId to update that patch."
-          }
-        }
       );
     })
   );

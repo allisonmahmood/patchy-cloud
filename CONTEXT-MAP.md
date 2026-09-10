@@ -4,7 +4,7 @@ Patchy Cloud is one deployment: the hosting server on one side, the `patchy` CLI
 
 ## Contexts
 
-- [Patches](./packages/patches/CONTEXT.md) — `packages/patches`. Patches and immutable versions, user ownership, company/public sharing, the upload contract, owner deletion, retention and its sweep, the owner quota, and the `patches` API group. Patch repos, declared tiers, primitives, human-readable addresses and retirement remain future work
+- [Patches](./packages/patches/CONTEXT.md) — `packages/patches`. Patches and immutable versions, manifests and replay-safe publish keys, user ownership, company/public sharing, the publish contract, owner deletion, retention and its sweep, the owner quota, release metadata, and the `patches` API group. Patch repos, higher-tier serving, primitives, human-readable addresses and retirement remain future work
 - [Serving](./packages/serving/CONTEXT.md) — `packages/serving`. Tier 0 pages, the login door, serving guarantees, admitted visits and trusted-proxy attribution. Higher runtimes, the connect door and patch identity remain future work
 - [Companies](./packages/companies/CONTEXT.md) — `packages/companies`. Companies and handles, users and roles, create-or-join, invitations, the company page, deactivation and reactivation. Groups, verified domains, SSO, billing, suspension and the operator's surfaces remain future work
 - [Auth](./packages/auth/CONTEXT.md) — `packages/auth`. Clerk session verification and viewers, user-owned machine tokens, device login, identity, revocation and bearer parsing, the sign-in and sign-out pages, Your machines, the `auth` API group and the shared dev seed

@@ -25,6 +25,8 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import { PublishRequest } from "@patchy/api";
+import { sha256 } from "@patchy/core";
 import { LocalError } from "./CliError.js";
 
 const Machine = Schema.Struct({ id: Schema.String, name: Schema.String });
@@ -61,9 +63,17 @@ export class CachedPatch extends Schema.Class<CachedPatch>("CachedPatch")({
   updatedAt: Schema.String
 }) {}
 
+/** Everything needed to replay and apply a publish, never the credential used to send it. */
+export class PendingPublish extends Schema.Class<PendingPublish>("PendingPublish")({
+  request: PublishRequest,
+  file: Schema.String,
+  explicitPatch: Schema.Boolean
+}) {}
+const decodePendingPublish = Schema.decodeUnknownEffect(PendingPublish);
+
 /**
  * An entry written before the wire renamed `draftId` to `patchId` is the same
- * page: read as-is, rewritten under the new key on the next upload.
+ * page: read as-is, rewritten under the new key on the next publish.
  */
 const StoredPatch = Schema.Struct({
   patchId: Schema.optionalKey(Schema.NonEmptyString),
@@ -138,6 +148,14 @@ export class State extends Context.Service<
       login: PendingLogin
     ) => Effect.Effect<void, LocalError>;
     readonly forgetPendingLogin: (apiUrl: string) => Effect.Effect<void, LocalError>;
+    readonly readPendingPublish: (
+      apiUrl: string
+    ) => Effect.Effect<Option.Option<PendingPublish>, LocalError>;
+    readonly savePendingPublish: (
+      apiUrl: string,
+      attempt: PendingPublish
+    ) => Effect.Effect<void, LocalError>;
+    readonly forgetPendingPublish: (apiUrl: string) => Effect.Effect<void, LocalError>;
     readonly readCachedPatch: (
       apiUrl: string,
       file: string
@@ -150,7 +168,7 @@ export class State extends Context.Service<
     ) => Effect.Effect<void, LocalError>;
     /**
      * Drops every entry on this instance that points at `patchId` — a patch
-     * the instance no longer has is not one a later upload should try to
+     * the instance no longer has is not one a later publish should try to
      * update. Entries for other patches, and ones the cache cannot read, are
      * carried across as stored; other instances are never touched.
      */
@@ -176,6 +194,7 @@ export const make = Effect.gen(function* () {
   // new patch at a new URL instead of updating the one it remembers.
   const retiredPatchesPath = path.join(dir, "drafts.json");
   const stylePath = path.join(dir, "style.md");
+  const publishPath = (apiUrl: string) => path.join(dir, "publish", sha256(apiUrl), "attempt.json");
 
   const credentialErrors: HostKeyedErrors = {
     unreadable:
@@ -250,8 +269,9 @@ export const make = Effect.gen(function* () {
   const writeJson = (file: string, value: unknown) =>
     Effect.gen(function* () {
       yield* fs.makeDirectory(dir, { recursive: true, mode: 0o700 });
+      yield* fs.makeDirectory(path.dirname(file), { recursive: true, mode: 0o700 });
       const tempFile = path.join(
-        dir,
+        path.dirname(file),
         `.${path.basename(file)}.${yield* Clock.currentTimeMillis}.tmp`
       );
       yield* fs.writeFileString(tempFile, `${encodeJson(value)}\n`, {
@@ -351,6 +371,28 @@ export const make = Effect.gen(function* () {
         yield* writeJson(deviceLoginPath, { hosts: { ...hosts, [apiUrl]: login } });
       }),
     forgetPendingLogin: (apiUrl) => forgetHost(deviceLoginPath, readLoginFile, apiUrl),
+    readPendingPublish: (apiUrl) =>
+      Effect.gen(function* () {
+        const file = publishPath(apiUrl);
+        const invalid = `Pending publish is invalid: ${file}. Keep the file until the publish outcome is resolved.`;
+        const document = yield* readDocument(file, {
+          unreadable: `Pending publish could not be read: ${file}. Check permissions.`,
+          invalid
+        });
+        if (Option.isNone(document)) return Option.none<PendingPublish>();
+        return Option.some(yield* entry(decodePendingPublish(document.value), invalid));
+      }),
+    savePendingPublish: (apiUrl, attempt) => writeJson(publishPath(apiUrl), attempt),
+    forgetPendingPublish: (apiUrl) =>
+      fs.remove(publishPath(apiUrl), { force: true }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new LocalError({
+              message: `Could not clear the pending publish for ${apiUrl}. Run publish again to recover it.`,
+              cause
+            })
+        )
+      ),
     readCachedPatch: (apiUrl, file) =>
       Effect.gen(function* () {
         const { hosts } = yield* readPatchFile;

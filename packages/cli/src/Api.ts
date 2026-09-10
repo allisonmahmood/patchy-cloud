@@ -30,6 +30,7 @@ export interface Refusal {
   readonly ok: false;
   readonly error?: string;
   readonly errors?: ReadonlyArray<string>;
+  readonly code?: string;
 }
 
 export type ClientFailure = Refusal | HttpClientError.HttpClientError | SchemaError;
@@ -55,7 +56,10 @@ export const classify = (
   Effect.gen(function* () {
     const { apiUrl } = yield* Instance.Instance;
     if (isRefusal(error)) {
-      return yield* new RejectedError({ message: refusalMessage(error, fallback) });
+      return yield* new RejectedError({
+        message: refusalMessage(error, fallback),
+        ...(error.code === undefined ? {} : { code: error.code })
+      });
     }
     if (error._tag === "SchemaError") {
       return yield* new UnreachableError({

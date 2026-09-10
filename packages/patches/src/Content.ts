@@ -1,15 +1,13 @@
 /**
  * The one place a patch's bytes are touched on the way in and the way out:
- * the upload contract, and the read a served page is built from. Everything
- * else in the capability handles rows; `ExpirySweep` deletes objects only
- * once their rows are gone.
+ * the publish contract, and the read a served page is built from. Everything
+ * else in the capability handles rows; `ExpirySweep` reclaims unreachable
+ * objects through durable pending-object intents.
  *
- * The upload contract is object put, then row insert, object rollback on a
- * refused insert. The object goes first so the metadata lock is never held
- * while the store is slow, and so a refused row leaves nothing behind. A row
- * insert that fails for any reason but a refusal keeps its object: the
- * commit may have happened, and a stored object nobody references costs
- * storage where a referenced object that vanished costs the reader the page.
+ * Register an intent, put the object, then consume the intent and record the
+ * version in one transaction. No database lock spans the object write.
+ * Failures retain the intent for reclamation after its lease; a transaction
+ * that committed despite a lost response consumes it and preserves the bytes.
  */
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -19,23 +17,12 @@ import { contentHash, newInternalId, newPatchId } from "@patchy/core";
 import { ContentStore } from "@patchy/content-store";
 import * as Patches from "./Patches.js";
 
-export interface UploadInput {
-  /** The patch to add a version to, or `null` to create one. */
+export interface PublishInput extends Omit<
+  Patches.RecordInput,
+  "intent" | "patchId" | "versionId" | "objectKey" | "contentHash" | "fileSize"
+> {
   readonly patchId: string | null;
-  readonly companyId: string;
-  readonly ownerUserId: string;
-  readonly machineTokenId: string;
-  readonly scope?: Patches.Patch["scope"] | undefined;
-  readonly title: string;
   readonly html: string;
-  readonly filename: string | null;
-  readonly repoOrg: string | null;
-  readonly repoName: string | null;
-  readonly cliVersion: string | null;
-  readonly gitBranch: string | null;
-  readonly gitCommitSha: string | null;
-  readonly sourceIp: string | null;
-  readonly userAgent: string | null;
 }
 
 export class Content extends Context.Service<
@@ -43,15 +30,17 @@ export class Content extends Context.Service<
   {
     /**
      * Stores the document and records the version, creating the patch when
-     * `patchId` is null. The two refusals are the target's: an update to a
-     * patch the caller cannot write, a create on an id already taken.
+     * `patchId` is null. Failed attempts leave a durable reclamation intent,
+     * never an untracked object or a version whose bytes the sweep can claim.
      */
-    readonly upload: (
-      input: UploadInput
+    readonly publish: (
+      input: PublishInput
     ) => Effect.Effect<
       Patches.Recorded,
       | Patches.PatchUnavailable
       | Patches.PatchConflict
+      | Patches.PublishKeyTaken
+      | Patches.PatchQuotaReached
       | SqlError
       | ContentStore.InvalidObjectKey
       | ContentStore.StoreUnavailable
@@ -74,11 +63,7 @@ export const make = Effect.gen(function* () {
   const patches = yield* Patches.Patches;
   const store = yield* ContentStore.ContentStore;
 
-  /** Deletes the object a refused row left behind, then re-raises the refusal. */
-  const rollback = <E>(key: string, refusal: E) =>
-    store.delete(key).pipe(Effect.orDie, Effect.andThen(Effect.fail(refusal)));
-
-  const upload = Effect.fn("Content.upload")(function* (input: UploadInput) {
+  const publish = Effect.fn("Content.publish")(function* (input: PublishInput) {
     const patchId = input.patchId ?? newPatchId();
     const versionId = newInternalId("ver");
     const key = objectKey(patchId, versionId);
@@ -86,37 +71,32 @@ export const make = Effect.gen(function* () {
       intent: input.patchId === null ? "create" : "update",
       patchId,
       ownerUserId: input.ownerUserId
-    } satisfies Patches.UploadTarget;
+    } satisfies Patches.PublishTarget;
 
     yield* patches.checkTarget(target);
-    yield* store.put(key, input.html);
+    yield* patches.prepareObject(key).pipe(
+      Effect.andThen(store.put(key, input.html)),
+      // Together with record's 60-second deadline, this stays inside the
+      // five-minute intent lease and leaves time for interrupted I/O to settle.
+      Effect.timeout("60 seconds"),
+      Effect.catchTags({
+        TimeoutError: (cause) =>
+          Effect.fail(new ContentStore.StoreUnavailable({ operation: "put", key, cause }))
+      })
+    );
     return yield* patches
       .record({
+        ...input,
         ...target,
         versionId,
-        companyId: input.companyId,
-        machineTokenId: input.machineTokenId,
-        scope: input.scope,
-        title: input.title,
         objectKey: key,
         contentHash: contentHash(input.html),
-        fileSize: new TextEncoder().encode(input.html).length,
-        filename: input.filename,
-        repoOrg: input.repoOrg,
-        repoName: input.repoName,
-        cliVersion: input.cliVersion,
-        gitBranch: input.gitBranch,
-        gitCommitSha: input.gitCommitSha,
-        sourceIp: input.sourceIp,
-        userAgent: input.userAgent
+        fileSize: new TextEncoder().encode(input.html).length
       })
       .pipe(
-        // A refused row is the one case the object must not survive. A rollback
-        // that itself fails is a defect: an orphan reported as a clean refusal
-        // would be a lie.
         Effect.catchTags({
-          PatchUnavailable: (refusal) => rollback(key, refusal),
-          PatchConflict: (refusal) => rollback(key, refusal)
+          PendingObjectExpired: (cause) =>
+            Effect.fail(new ContentStore.StoreUnavailable({ operation: "put", key, cause }))
         })
       );
   });
@@ -125,7 +105,7 @@ export const make = Effect.gen(function* () {
     store.get(version.objectKey).pipe(Effect.catchTags({ ObjectNotFound: Effect.die }))
   );
 
-  return Content.of({ upload, read });
+  return Content.of({ publish, read });
 });
 
 /** Over `Patches` and the content store. */

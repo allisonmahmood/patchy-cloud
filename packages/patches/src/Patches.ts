@@ -4,7 +4,7 @@
  * module only, so a client type change lands in one place.
  *
  * The retention clock lives in these queries. Every patch carries one expiry
- * anchor and three rules act on it: an upload resets the anchor to the full
+ * anchor and three rules act on it: a publish resets the anchor to the full
  * retention window; a visit with less than the visit-extension window
  * remaining moves the anchor to exactly that window out — never shorter,
  * never reviving an expired patch; the clock check is `expires_at < now`, and
@@ -12,8 +12,8 @@
  * token's state.
  *
  * The clock is Effect's, read as `Clock.currentTimeMillis`, so a test winds
- * it. Only the retention anchor reads it: `created_at`, `updated_at`,
- * `deleted_at` and `disabled_at` stay on SQL `now()`.
+ * retention and pending-object leases. Audit stamps (`created_at`,
+ * `updated_at`, `deleted_at`, `disabled_at`) stay on SQL `now()`.
  */
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -26,15 +26,21 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import type * as Statement from "effect/unstable/sql/Statement";
-import { SharingScope } from "@patchy/api";
+import { Manifest, PublishUpdated, SharingScope } from "@patchy/api";
 
-/** The window an upload gives a patch. */
+const encodeManifest = Schema.encodeSync(Schema.fromJsonString(Manifest));
+const encodePublishResponse = Schema.encodeSync(Schema.fromJsonString(PublishUpdated));
+
+/** The window a publish gives a patch. */
 export const RETENTION_WINDOW = Duration.days(90);
 
 /** What a visit tops the remaining time up to, when less than this remains. */
 export const VISIT_EXTENSION_WINDOW = Duration.days(30);
 
-/** The first upload starts a patch's version sequence. */
+/** Allows the bounded put and 60-second record transaction to finish before reclamation. */
+export const PENDING_OBJECT_LEASE = Duration.minutes(5);
+
+/** The first publish starts a patch's version sequence. */
 const FIRST_VERSION_NUMBER = 1;
 
 /**
@@ -92,15 +98,49 @@ export interface PatchVersion {
   readonly gitCommitSha: string | null;
   readonly originalFilename: string | null;
   readonly createdAt: string;
+  readonly tier: number;
+  readonly release: string;
+  readonly manifestVersion: number;
+  readonly wireVersion: number;
+  readonly schemaRevision: number;
+  readonly manifest: typeof Manifest.Type;
+  readonly publishKey: string;
+  readonly payloadDigest: string;
 }
 
-export interface UploadTarget {
+export class PublishKeyTaken extends Schema.TaggedError<PublishKeyTaken>()("PublishKeyTaken", {}) {
+  override get message() {
+    return "Publish key already recorded.";
+  }
+}
+export class PatchQuotaReached extends Schema.TaggedError<PatchQuotaReached>()(
+  "PatchQuotaReached",
+  {
+    quota: Schema.Int
+  }
+) {
+  override get message() {
+    return `Patch quota reached: ${this.quota} live patches per user.`;
+  }
+}
+
+/** The sweep already owns these bytes, or their publication lease has elapsed. */
+export class PendingObjectExpired extends Schema.TaggedError<PendingObjectExpired>()(
+  "PendingObjectExpired",
+  { objectKey: Schema.String }
+) {
+  override get message() {
+    return `Publication lease expired for ${this.objectKey}.`;
+  }
+}
+
+export interface PublishTarget {
   readonly intent: "create" | "update";
   readonly patchId: string;
   readonly ownerUserId: string;
 }
 
-export interface RecordInput extends UploadTarget {
+export interface RecordInput extends PublishTarget {
   readonly companyId: string;
   readonly versionId: string;
   readonly machineTokenId: string;
@@ -118,15 +158,24 @@ export interface RecordInput extends UploadTarget {
   readonly gitCommitSha: string | null;
   readonly sourceIp: string | null;
   readonly userAgent: string | null;
+  readonly manifest: typeof Manifest.Type;
+  readonly wireVersion: number;
+  readonly publishKey: string;
+  readonly payloadDigest: string;
+  readonly publicBaseUrl: string;
+  readonly warnings: ReadonlyArray<string>;
+  readonly livePatchQuota?: number;
 }
 
-export interface Recorded {
-  readonly patchId: string;
-  readonly versionId: string;
-  readonly versionNumber: number;
-  readonly title: string;
-  readonly scope: Patch["scope"];
+export interface Recorded extends PublishUpdated {
+  readonly status: 200 | 201;
 }
+
+const Replay = Schema.Struct({
+  payloadDigest: Schema.String,
+  response: Schema.JsonObject,
+  status: Schema.Literals([200, 201])
+});
 
 export class Patches extends Context.Service<
   Patches,
@@ -138,22 +187,44 @@ export class Patches extends Context.Service<
      * expired patch still counts until the sweep takes its row.
      */
     readonly countLive: (ownerUserId: string) => Effect.Effect<number, SqlError>;
+    readonly replay: (
+      ownerUserId: string,
+      publishKey: string
+    ) => Effect.Effect<Option.Option<typeof Replay.Type>, SqlError>;
     /**
-     * The upload contract's preflight, before any bytes are written: an
+     * The publish contract's preflight, before any bytes are written: an
      * update needs a patch the caller may write, a create needs a free id.
      */
     readonly checkTarget: (
-      target: UploadTarget
+      target: PublishTarget
     ) => Effect.Effect<void, PatchUnavailable | PatchConflict | SqlError>;
+    /** Durably reserves a fresh object key before any bytes can be written. */
+    readonly prepareObject: (objectKey: string) => Effect.Effect<void, SqlError>;
     /**
-     * Records an upload whose bytes are already stored: the version row, the
+     * Fences expired, unreferenced objects against publication. Claimed rows
+     * remain eligible until deletion succeeds, so interrupted sweeps retry.
+     */
+    readonly claimObjects: (limit: number) => Effect.Effect<ReadonlyArray<string>, SqlError>;
+    /** Forgets a claimed object only after its bytes have been deleted. */
+    readonly completeObject: (objectKey: string) => Effect.Effect<void, SqlError>;
+    /**
+     * Records a publish whose bytes are already stored: the version row, the
      * patch row it creates or moves forward, and a fresh retention window,
-     * in one transaction. Re-checks the target under a row lock, so the
-     * answer `checkTarget` gave can still change here.
+     * in one transaction. Consumes the pending-object intent under a lock;
+     * a sweep that claimed it first prevents the version from being recorded.
+     * Re-checks the target, so `checkTarget`'s answer can still change here.
      */
     readonly record: (
       input: RecordInput
-    ) => Effect.Effect<Recorded, PatchUnavailable | PatchConflict | SqlError>;
+    ) => Effect.Effect<
+      Recorded,
+      | PatchUnavailable
+      | PatchConflict
+      | PublishKeyTaken
+      | PatchQuotaReached
+      | PendingObjectExpired
+      | SqlError
+    >;
     /** Changes an owned, available patch's audience without publishing or extending retention. */
     readonly setScope: (
       patchId: string,
@@ -182,10 +253,10 @@ export class Patches extends Context.Service<
      */
     readonly listExpired: (limit: number) => Effect.Effect<ReadonlyArray<string>, SqlError>;
     /**
-     * Hard-deletes one expired patch — its versions, then its row — and
-     * answers with the object keys those versions held, so the caller can
-     * delete the bytes behind them. `None` when the patch is no longer the
-     * sweep's to take: already gone, or no longer expired.
+     * Hard-deletes one expired patch and queues its version keys durably for
+     * object deletion in the same transaction. Returns those keys for the
+     * expiry event. `None` when the patch is no longer the sweep's to take:
+     * already gone, or no longer expired.
      */
     readonly deleteExpired: (
       patchId: string
@@ -230,6 +301,14 @@ class VersionRow extends Schema.Class<VersionRow>("VersionRow")({
   gitBranch: Schema.NullOr(Schema.String),
   gitCommitSha: Schema.NullOr(Schema.String),
   originalFilename: Schema.NullOr(Schema.String),
+  tier: Schema.Int,
+  release: Schema.String,
+  manifestVersion: Schema.Int,
+  wireVersion: Schema.Int,
+  schemaRevision: Schema.Int,
+  manifest: Manifest,
+  publishKey: Schema.String,
+  payloadDigest: Schema.String,
   createdAt: Stamp
 }) {}
 
@@ -273,6 +352,14 @@ const toVersion = (row: VersionRow): PatchVersion => ({
   gitBranch: row.gitBranch,
   gitCommitSha: row.gitCommitSha,
   originalFilename: row.originalFilename,
+  tier: row.tier,
+  release: row.release,
+  manifestVersion: row.manifestVersion,
+  wireVersion: row.wireVersion,
+  schemaRevision: row.schemaRevision,
+  manifest: row.manifest,
+  publishKey: row.publishKey,
+  payloadDigest: row.payloadDigest,
   createdAt: iso(row.createdAt)
 });
 
@@ -296,6 +383,8 @@ const VERSION_COLUMNS = `
   created_by_machine_token_id AS "createdByMachineTokenId", source_ip AS "sourceIp",
   user_agent AS "userAgent", cli_version AS "cliVersion", git_branch AS "gitBranch",
   git_commit_sha AS "gitCommitSha", original_filename AS "originalFilename",
+  tier, release, manifest_version AS "manifestVersion", wire_version AS "wireVersion",
+  schema_revision AS "schemaRevision", manifest, publish_key AS "publishKey", payload_digest AS "payloadDigest",
   created_at AS "createdAt"`;
 
 export const make = Effect.gen(function* () {
@@ -393,6 +482,16 @@ export const make = Effect.gen(function* () {
       FOR UPDATE`
   });
 
+  const replayRow = SqlSchema.findOneOption({
+    Request: Schema.Struct({ ownerUserId: Schema.String, publishKey: Schema.String }),
+    Result: Replay,
+    execute: ({ ownerUserId, publishKey }) => sql`
+      SELECT payload_digest AS "payloadDigest", publish_response AS response, publish_status AS status
+      FROM patch_versions WHERE owner_user_id = ${ownerUserId} AND publish_key = ${publishKey}`
+  });
+  const replay = Effect.fn("Patches.replay")((ownerUserId: string, publishKey: string) =>
+    replayRow({ ownerUserId, publishKey }).pipe(Effect.catchTags(dieOnSchemaError))
+  );
   const countLive = Effect.fn("Patches.countLive")((ownerUserId: string) =>
     countLiveRow(ownerUserId).pipe(
       Effect.map((row) => row.count),
@@ -401,7 +500,7 @@ export const make = Effect.gen(function* () {
     )
   );
 
-  const checkTarget = Effect.fn("Patches.checkTarget")(function* (target: UploadTarget) {
+  const checkTarget = Effect.fn("Patches.checkTarget")(function* (target: PublishTarget) {
     if (target.intent === "update") {
       const rows =
         yield* sql`SELECT 1 FROM patches WHERE ${writable(target.patchId, target.ownerUserId, yield* now)}`;
@@ -412,50 +511,131 @@ export const make = Effect.gen(function* () {
     if (rows.length > 0) return yield* new PatchConflict({ patchId: target.patchId });
   });
 
-  const record = Effect.fn("Patches.record")((input: RecordInput) =>
-    sql.withTransaction(
-      Effect.gen(function* () {
-        const millis = yield* Clock.currentTimeMillis;
-        // An upload — first version or fifth — restarts the whole window.
-        const expiresAt = stamp(millis + Duration.toMillis(RETENTION_WINDOW));
-        let versionNumber: number;
-        let scope: Patch["scope"] = input.scope ?? "company";
+  const prepareObject = Effect.fn("Patches.prepareObject")(function* (objectKey: string) {
+    const expiresAt = stamp(
+      (yield* Clock.currentTimeMillis) + Duration.toMillis(PENDING_OBJECT_LEASE)
+    );
+    yield* sql`
+      INSERT INTO pending_patch_objects (object_key, expires_at)
+      VALUES (${objectKey}, ${expiresAt})`;
+  });
 
-        if (input.intent === "update") {
-          // The row lock serialises concurrent updates of one patch: the
-          // version number is allocated after it, so each waits its turn and
-          // then sees the committed version before it.
-          const locked = yield* lockTarget({
-            patchId: input.patchId,
-            ownerUserId: input.ownerUserId,
-            nowMillis: millis
-          });
-          if (Option.isNone(locked)) return yield* new PatchUnavailable({ patchId: input.patchId });
-          scope = input.scope ?? locked.value.scope;
-          versionNumber = (yield* nextVersionNumber(input.patchId)).nextVersion;
-        } else {
-          versionNumber = FIRST_VERSION_NUMBER;
-          const created = yield* sql`
+  const claimObjectRows = SqlSchema.findAll({
+    Request: Schema.Struct({ nowMillis: Schema.Number, limit: Schema.Number }),
+    Result: ObjectKey,
+    execute: ({ nowMillis, limit }) => sql`
+      WITH candidates AS (
+        SELECT object_key FROM pending_patch_objects
+        WHERE expires_at <= ${stamp(nowMillis)}
+          AND NOT EXISTS (
+            SELECT 1 FROM patch_versions
+            WHERE patch_versions.object_key = pending_patch_objects.object_key
+          )
+        ORDER BY expires_at, object_key
+        LIMIT ${limit}
+        FOR UPDATE SKIP LOCKED
+      )
+      UPDATE pending_patch_objects SET claimed = true
+      FROM candidates
+      WHERE pending_patch_objects.object_key = candidates.object_key
+      RETURNING pending_patch_objects.object_key AS "objectKey"`
+  });
+  const claimObjects = Effect.fn("Patches.claimObjects")(function* (limit: number) {
+    if (limit <= 0) return [];
+    const rows = yield* claimObjectRows({ nowMillis: yield* Clock.currentTimeMillis, limit });
+    return rows.map((row) => row.objectKey);
+  }, Effect.catchTags(dieOnSchemaError));
+
+  const completeObject = Effect.fn("Patches.completeObject")(function* (objectKey: string) {
+    yield* sql`DELETE FROM pending_patch_objects WHERE object_key = ${objectKey} AND claimed`;
+  });
+
+  const record = Effect.fn("Patches.record")((input: RecordInput) =>
+    sql
+      .withTransaction(
+        Effect.gen(function* () {
+          yield* sql`SET LOCAL statement_timeout = '60s'`;
+          const millis = yield* Clock.currentTimeMillis;
+          // DELETE holds the intent's row lock until commit. A concurrent sweep
+          // skips it; rollback restores it; a lost commit reply cannot orphan
+          // live bytes because the version and intent change atomically.
+          const pending = yield* sql`
+            DELETE FROM pending_patch_objects
+            WHERE object_key = ${input.objectKey} AND NOT claimed
+              AND expires_at > ${stamp(millis)}
+            RETURNING object_key`;
+          if (pending.length === 0)
+            return yield* new PendingObjectExpired({ objectKey: input.objectKey });
+          // A publish — first version or fifth — restarts the whole window.
+          const expiresAt = stamp(millis + Duration.toMillis(RETENTION_WINDOW));
+          let versionNumber: number;
+          let scope: Patch["scope"] = input.scope ?? "company";
+
+          if (input.intent === "update") {
+            // The row lock serialises concurrent updates of one patch: the
+            // version number is allocated after it, so each waits its turn and
+            // then sees the committed version before it.
+            const locked = yield* lockTarget({
+              patchId: input.patchId,
+              ownerUserId: input.ownerUserId,
+              nowMillis: millis
+            });
+            if (Option.isNone(locked))
+              return yield* new PatchUnavailable({ patchId: input.patchId });
+            scope = input.scope ?? locked.value.scope;
+            versionNumber = (yield* nextVersionNumber(input.patchId)).nextVersion;
+          } else {
+            // Serialise quota accounting across distinct creates by the same owner.
+            yield* sql`SELECT id FROM users WHERE id = ${input.ownerUserId} FOR UPDATE`;
+            if (
+              input.livePatchQuota !== undefined &&
+              (yield* countLive(input.ownerUserId)) >= input.livePatchQuota
+            ) {
+              return yield* new PatchQuotaReached({ quota: input.livePatchQuota });
+            }
+            versionNumber = FIRST_VERSION_NUMBER;
+            const created = yield* sql`
             INSERT INTO patches (id, company_id, owner_user_id, scope, title, current_version_id, repo_org, repo_name, expires_at)
             VALUES (${input.patchId}, ${input.companyId}, ${input.ownerUserId}, ${scope},
                     ${input.title}, ${input.versionId}, ${input.repoOrg}, ${input.repoName}, ${expiresAt})
             ON CONFLICT (id) DO NOTHING
             RETURNING id`;
-          if (created.length === 0) return yield* new PatchConflict({ patchId: input.patchId });
-        }
+            if (created.length === 0) return yield* new PatchConflict({ patchId: input.patchId });
+          }
+          const response = new PublishUpdated({
+            ok: true,
+            patchId: input.patchId,
+            versionId: input.versionId,
+            versionNumber,
+            title: input.title,
+            scope,
+            publicUrl: `${input.publicBaseUrl.replace(/\/+$/, "")}/d/${input.patchId}`,
+            tier: input.manifest.tier,
+            schemaRevision: 0,
+            provisioned: { tables: [], columns: [], indexes: [], stores: [] },
+            unused: { tables: [], columns: [], indexes: [], stores: [] },
+            warnings: input.warnings
+          });
+          const status = input.intent === "create" ? (201 as const) : (200 as const);
 
-        yield* sql`
+          const inserted = yield* sql`
           INSERT INTO patch_versions (
             id, patch_id, version_number, object_key, content_hash, file_size,
             created_by_machine_token_id, source_ip, user_agent, cli_version,
-            git_branch, git_commit_sha, original_filename
+            git_branch, git_commit_sha, original_filename,
+            owner_user_id, tier, release, manifest_version, wire_version, schema_revision,
+            manifest, publish_key, payload_digest, publish_response, publish_status
           ) VALUES (
             ${input.versionId}, ${input.patchId}, ${versionNumber}, ${input.objectKey},
             ${input.contentHash}, ${input.fileSize}, ${input.machineTokenId}, ${input.sourceIp},
             ${input.userAgent}, ${input.cliVersion}, ${input.gitBranch}, ${input.gitCommitSha},
-            ${input.filename}
-          )`;
-        yield* sql`
+            ${input.filename}, ${input.ownerUserId}, ${input.manifest.tier}, ${input.manifest.release},
+            ${input.manifest.manifestVersion}, ${input.wireVersion}, 0,
+            ${encodeManifest(input.manifest)}::jsonb, ${input.publishKey}, ${input.payloadDigest},
+            ${encodePublishResponse(response)}::jsonb, ${status}
+          ) ON CONFLICT (owner_user_id, publish_key) DO NOTHING RETURNING id`;
+          if (inserted.length === 0) return yield* new PublishKeyTaken({});
+          yield* sql`
           UPDATE patches
           SET current_version_id = ${input.versionId}, title = ${input.title}, scope = ${scope},
               repo_org = COALESCE(${input.repoOrg}, repo_org),
@@ -463,15 +643,10 @@ export const make = Effect.gen(function* () {
               updated_at = now(), expires_at = ${expiresAt}
           WHERE id = ${input.patchId}`;
 
-        return {
-          patchId: input.patchId,
-          versionId: input.versionId,
-          versionNumber,
-          title: input.title,
-          scope
-        } satisfies Recorded;
-      }).pipe(Effect.catchTags({ ...dieOnSchemaError, NoSuchElementError: Effect.die }))
-    )
+          return { ...response, status } satisfies Recorded;
+        }).pipe(Effect.catchTags({ ...dieOnSchemaError, NoSuchElementError: Effect.die }))
+      )
+      .pipe(Effect.timeout("60 seconds"), Effect.catchTags({ TimeoutError: Effect.die }))
   );
 
   const setScope = Effect.fn("Patches.setScope")(function* (
@@ -540,6 +715,10 @@ export const make = Effect.gen(function* () {
         if (target.length === 0) return Option.none();
 
         const keys = yield* objectKeysOf(patchId);
+        yield* sql`
+          INSERT INTO pending_patch_objects (object_key, expires_at, claimed)
+          SELECT object_key, ${yield* now}, true FROM patch_versions
+          WHERE patch_id = ${patchId}`;
         // Foreign keys decide the order: versions name the patch, so the patch goes last.
         yield* sql`DELETE FROM patch_versions WHERE patch_id = ${patchId}`;
         yield* sql`DELETE FROM patches WHERE id = ${patchId}`;
@@ -561,7 +740,11 @@ export const make = Effect.gen(function* () {
 
   return Patches.of({
     countLive,
+    replay,
     checkTarget,
+    prepareObject,
+    claimObjects,
+    completeObject,
     record,
     setScope,
     find,

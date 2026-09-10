@@ -1,5 +1,5 @@
 /**
- * The `/api/*` contract: two groups, `auth` and `patches`, every route with
+ * The `/api/*` contract: auth, patches and public release discovery, every route with
  * its request, success and error shapes from `./schemas.ts`. The server
  * implements it and the CLI's client is derived from it; neither side
  * re-types a wire shape by hand. The route descriptions here are the text of
@@ -33,9 +33,12 @@ import {
   ShareRequest,
   StartDeviceLoginRequest,
   Unauthorized,
-  UploadCreated,
-  UploadRequest,
-  UploadUpdated
+  PublishCreated,
+  PublishRequest,
+  PublishUpdated,
+  PublishRefused,
+  PublishKeyConflict,
+  Release
 } from "./schemas.js";
 
 /** The identity a valid bearer token resolves to, provided to every protected handler. */
@@ -128,18 +131,30 @@ export class AuthGroup extends HttpApiGroup.make("auth", { topLevel: true })
 
 export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true })
   .add(
-    HttpApiEndpoint.post("upload", "/uploads", {
-      payload: UploadRequest,
-      success: [UploadCreated, UploadUpdated],
-      error: [PatchQuotaExceeded, ...protectedErrors, InvalidHtml, Conflict, PayloadTooLarge]
+    HttpApiEndpoint.post("publish", "/publish", {
+      payload: PublishRequest,
+      success: [PublishCreated, PublishUpdated],
+      error: [
+        PatchQuotaExceeded,
+        ...protectedErrors,
+        InvalidHtml,
+        PublishKeyConflict,
+        Conflict,
+        PayloadTooLarge,
+        PublishRefused
+      ]
     }).annotateMerge(
       describe(
-        "Publish a document for the bearer token's user. With no `patchId` it creates a patch " +
-          "and answers 201; with one it adds a version to that user's patch and answers 200. " +
-          "The HTML is checked against the safe-HTML policy first, and a 422 lists what failed. A create also debits " +
-          "per-token create limit and counts against the user's live-patch quota; an update costs " +
-          "nothing against either. Optional `scope` is `company` or `public`: omitted on a create " +
-          "it defaults to `company`; omitted on an update it stays unchanged. An explicit scope sets it either way."
+        "Publish one HTML bundle and its manifest. Without `patchId` creates a patch (201); " +
+          "with an owned `patchId` publishes a version (200). Authenticate, then replay by owner " +
+          "and `publishKey` before limits or release validation: identical payloads return the " +
+          "stored response and status, even after an upgrade; changed payloads answer 409 " +
+          "`publish_key_conflict`. New attempts require the exact current release and manifest " +
+          "version from `GET /api/release`. Only tier 0 with empty tables, files and uses is " +
+          "served yet; higher tiers answer `tier_mismatch`, resources `invalid_manifest`. " +
+          "Tier 0 HTML passes the safe-HTML policy. Creates spend the per-token create limit " +
+          "and live-patch quota; updates do not. Omitted scope defaults to company on creates " +
+          "and remains unchanged on updates. The JSON body cap is three times the HTML cap."
       )
     ),
     HttpApiEndpoint.post("share", "/patches/:patchId/share", {
@@ -155,8 +170,8 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "A patch the caller does not own answers 404. The current public version may be cached for 60 seconds " +
           "at both `/d/<id>` and `/d/<id>/v/<current n>`; older versions and company patches are " +
           "`private, no-store` and answer 401 without a session. " +
-          "The JSON body is bounded by the upload body limit: 2 MiB by default, or three times " +
-          "`PATCHY_MAX_HTML_BYTES` when that is larger. An oversized declared body answers 413; " +
+          "The JSON body is bounded by the publish body limit: three times " +
+          "`PATCHY_MAX_HTML_BYTES`. An oversized declared body answers 413; " +
           "streaming bodies are cut off at the cap. Rejected requests leave the scope unchanged."
       )
     ),
@@ -174,13 +189,25 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
   .middleware(Authorization)
   .prefix("/api") {}
 
+export class ReleaseGroup extends HttpApiGroup.make("release", { topLevel: true })
+  .add(
+    HttpApiEndpoint.get("release", "/release", { success: Release }).annotateMerge(
+      describe(
+        "The current tooling release and its manifest and wire versions. Unauthenticated. " +
+          "The immutable package URL is reserved for the SDK distribution ticket; integrity is null " +
+          "until a real package artifact is available."
+      )
+    )
+  )
+  .prefix("/api") {}
+
 export class PatchyApi extends HttpApi.make("patchy")
-  .add(AuthGroup, PatchesGroup)
+  .add(AuthGroup, PatchesGroup, ReleaseGroup)
   .annotateMerge(
     OpenApi.annotations({
       title: "Patchy Cloud API",
       description:
-        "Every route lives under `/api` and speaks JSON. Only `POST /api/login/device` and " +
+        "Every route lives under `/api` and speaks JSON. `GET /api/release`, `POST /api/login/device` and " +
         "`POST /api/login/device/token` are unauthenticated. Every other route needs " +
         "`Authorization: Bearer <token>`; a missing or invalid token is a 401 with " +
         "`{ ok: false, error }`. A refusal is always `{ ok: false, error }`, plus a `code` and " +

@@ -15,7 +15,11 @@ export type Kind = "local" | "rejected" | "unreachable";
 export const exitCode = (kind: Kind): 1 | 2 | 3 =>
   kind === "local" ? 1 : kind === "rejected" ? 2 : 3;
 
-const fields = { message: Schema.String, cause: Schema.optionalKey(Schema.Defect()) };
+const fields = {
+  message: Schema.String,
+  code: Schema.optionalKey(Schema.String),
+  cause: Schema.optionalKey(Schema.Defect())
+};
 
 /** Fixable without touching the network: arguments, files, local state, the HTML. */
 export class LocalError extends Schema.TaggedError<LocalError>()("LocalError", fields) {

@@ -16,7 +16,8 @@ let counter = 0;
 const create = (identity = uploader, title = "Page", scope?: Patches.Patch["scope"]) =>
   Effect.gen(function* () {
     const id = `p${String(++counter).padStart(11, "0")}`;
-    yield* (yield* patches).record({
+    yield* Fixtures.record({
+      ...Fixtures.publishRecord(),
       intent: "create",
       patchId: id,
       companyId: identity.company.id,
@@ -41,29 +42,28 @@ const create = (identity = uploader, title = "Page", scope?: Patches.Patch["scop
   });
 
 const update = (patchId: string, identity = uploader, scope?: Patches.Patch["scope"]) =>
-  Effect.flatMap(patches, (service) =>
-    service.record({
-      intent: "update",
-      patchId,
-      companyId: identity.company.id,
-      ownerUserId: identity.user.id,
-      versionId: `ver_${patchId}_${++counter}`,
-      machineTokenId: identity.machine.id,
-      scope,
-      title: "Updated",
-      objectKey: `patches/${patchId}/versions/${counter}.html`,
-      contentHash: "sha256:y",
-      fileSize: 1,
-      filename: null,
-      repoOrg: null,
-      repoName: null,
-      cliVersion: null,
-      gitBranch: null,
-      gitCommitSha: null,
-      sourceIp: null,
-      userAgent: null
-    })
-  );
+  Fixtures.record({
+    ...Fixtures.publishRecord(),
+    intent: "update",
+    patchId,
+    companyId: identity.company.id,
+    ownerUserId: identity.user.id,
+    versionId: `ver_${patchId}_${++counter}`,
+    machineTokenId: identity.machine.id,
+    scope,
+    title: "Updated",
+    objectKey: `patches/${patchId}/versions/${counter}.html`,
+    contentHash: "sha256:y",
+    fileSize: 1,
+    filename: null,
+    repoOrg: null,
+    repoName: null,
+    cliVersion: null,
+    gitBranch: null,
+    gitCommitSha: null,
+    sourceIp: null,
+    userAgent: null
+  });
 
 /** Takes every patch the sweep could, so a test's own listing is what it asserts on. */
 const drain = Effect.gen(function* () {

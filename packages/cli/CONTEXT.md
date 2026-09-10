@@ -21,7 +21,7 @@ The contract an agent branches on: 0 success, 1 locally fixable, 2 refused by th
 _Avoid_: error code (ambiguous with the wire's `code`), status (ambiguous with HTTP and with the probe)
 
 **State dir**:
-The home for the CLI's remembered instance choice, credentials, pending login, patch cache and default style. Shared per user by default, it can be isolated for a development check.
+The home for the CLI's remembered instance choice, credentials, pending login, pending publish, patch cache and default style. Shared per user by default, it can be isolated for a development check.
 _Avoid_: config directory, dotfiles
 
 **Default style**:
@@ -59,6 +59,18 @@ _Avoid_: token (in user-facing copy), password, account
 **Patch cache**:
 The per-instance record linking a local file to the patch it produced, so republishing the same file updates that patch instead of creating a new one, and sharing or deleting by file finds that patch. A deleted patch is forgotten.
 _Avoid_: upload history, manifest
+
+**Pending publish**:
+A complete publish attempt whose outcome or local application is not yet settled. It belongs to one instance and retains its original publish key, content and file identity so recovering it cannot create a second version.
+_Avoid_: queued publish, upload history
+
+**Publish key**:
+The identity of one publish attempt, letting the instance return the first result when that same attempt is sent again. It is not the machine's [publishing key](#language), which authenticates the caller.
+_Avoid_: publishing key, token
+
+**Release**:
+The version of Patchy's publishing tooling that an instance currently accepts. A fresh publish must use exactly that release; an unresolved attempt remains recoverable after the release changes.
+_Avoid_: wire version, patch version
 
 **Onboarding probe**:
 The local-only report of publishing state for the resolved instance — `status --json` — that lets onboarding skip settled questions and choose login-then-publish only when no key is available. It reaches no instance and reports the same credential precedence publishing uses, so it is a setup aid, never a per-session check or proof that a key still works.

@@ -19,7 +19,7 @@ import {
   signHandshake,
   signSession
 } from "@patchy/auth/testing";
-import { answer, html, send, server, upload } from "./test/server.js";
+import { answer, html, send, server, publish, publishBody } from "./test/server.js";
 
 const publicBaseUrl = "https://patchy.example";
 const sessionCookie = (sub: string = DEV_SEED.clerkUserId, email: string = DEV_SEED.email) =>
@@ -79,10 +79,10 @@ it.layer(
   it.effect("publishes through the API and serves the page, attributed through the proxy", () =>
     Effect.gen(function* () {
       const created = yield* send(
-        HttpClientRequest.post("/api/uploads").pipe(
+        HttpClientRequest.post("/api/publish").pipe(
           HttpClientRequest.bearerToken(DEV_SEED.token),
           HttpClientRequest.setHeader("x-forwarded-for", "203.0.113.9, 198.51.100.7"),
-          HttpClientRequest.bodyJsonUnsafe({ html: html("Booted"), scope: "public" })
+          HttpClientRequest.bodyJsonUnsafe(publishBody({ html: html("Booted"), scope: "public" }))
         )
       );
       const body = (yield* created.json) as { patchId: string; publicUrl: string };
@@ -117,7 +117,7 @@ it.layer(
       assert.deepStrictEqual(rows, [{ source_ip: "198.51.100.7" }]);
 
       // A direct request records the socket's own address, whatever it claims.
-      const direct = yield* upload(DEV_SEED.token, { html: html("Direct") });
+      const direct = yield* publish(DEV_SEED.token, { html: html("Direct") });
       assert.strictEqual(direct.status, 201);
       const directBody = (yield* direct.json) as { patchId: string };
       const [second] = yield* sql<{ source_ip: string }>`
@@ -129,7 +129,7 @@ it.layer(
 
   it.effect("bounds sharing bodies before changing a company patch's scope", () =>
     Effect.gen(function* () {
-      const created = yield* upload(DEV_SEED.token, { html: html("Bounded sharing secret") });
+      const created = yield* publish(DEV_SEED.token, { html: html("Bounded sharing secret") });
       const { patchId } = (yield* created.json) as { patchId: string };
       const share = HttpClientRequest.post(`/api/patches/${patchId}/share`).pipe(
         HttpClientRequest.bearerToken(DEV_SEED.token)
@@ -176,7 +176,7 @@ it.layer(
 
   it.effect("keeps company pages behind the same door and returns from the sign-in handshake", () =>
     Effect.gen(function* () {
-      const created = yield* upload(DEV_SEED.token, { html: html("Company secret") });
+      const created = yield* publish(DEV_SEED.token, { html: html("Company secret") });
       const { patchId } = (yield* created.json) as { patchId: string };
       const patchPath = `/d/${patchId}`;
       for (const path of [
@@ -257,7 +257,7 @@ it.layer(
         assert.strictEqual(yield* head.text, "");
       }
       // The same browser session opens another company patch without visiting sign-in again.
-      const second = yield* upload(DEV_SEED.token, { html: html("Colleague link") });
+      const second = yield* publish(DEV_SEED.token, { html: html("Colleague link") });
       const secondPatch = (yield* second.json) as { patchId: string };
       assert.strictEqual(
         (yield* send(signedRequest(`/d/${secondPatch.patchId}`, cookie))).status,
@@ -277,7 +277,7 @@ it.layer(
 
   it.effect("conceals company patches at PostgreSQL version boundaries", () =>
     Effect.gen(function* () {
-      const created = yield* upload(DEV_SEED.token, { html: html("Version boundary secret") });
+      const created = yield* publish(DEV_SEED.token, { html: html("Version boundary secret") });
       const { patchId } = (yield* created.json) as { patchId: string };
       const sql = yield* SqlClient.SqlClient;
       yield* sql`INSERT INTO companies (id, handle, name)
@@ -320,12 +320,12 @@ it.layer(
 
   it.effect("completes a public patch handshake before serving its cacheable document", () =>
     Effect.gen(function* () {
-      const created = yield* upload(DEV_SEED.token, {
+      const created = yield* publish(DEV_SEED.token, {
         html: html("Public handshake"),
         scope: "public"
       });
       const { patchId } = (yield* created.json) as { patchId: string };
-      const privateUpload = yield* upload(DEV_SEED.token, { html: html("Signed-in destination") });
+      const privateUpload = yield* publish(DEV_SEED.token, { html: html("Signed-in destination") });
       const privatePatch = (yield* privateUpload.json) as { patchId: string };
       for (const path of [`/d/${patchId}`, `/d/${patchId}/v/1`]) {
         const target = `${path}?view=chart`;
@@ -373,7 +373,7 @@ it.layer(
     "conceals foreign patches and drives enrollment and deactivation responses by hand",
     () =>
       Effect.gen(function* () {
-        const created = yield* upload(DEV_SEED.token, { html: html("Restricted content") });
+        const created = yield* publish(DEV_SEED.token, { html: html("Restricted content") });
         const { patchId } = (yield* created.json) as { patchId: string };
         const sql = yield* SqlClient.SqlClient;
         yield* sql`INSERT INTO companies (id, handle, name) VALUES ('cmp_socket_foreign', 'socket-foreign', 'Foreign')`;

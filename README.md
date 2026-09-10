@@ -10,7 +10,7 @@ A patch runs at one of a few **tiers**: tier 0 is a static page with no patch co
 
 Tier 0. An agent hands the server one self-contained HTML file and gets back a URL, shared with the company by default or made public on purpose. Patches belong to users in companies; publishing uses user-owned machine tokens. Clerk holds the browser session, and the shell keeps it fresh while the patch runs no script.
 
-`patchy login` hands the person a browser URL and code; after they confirm, the CLI's poll mints and saves the machine token. `patchy upload --share public` and `patchy share` change who can open a patch. **Your machines** lists and revokes keys and offers browser sign-out; the company page handles invites, roles, deactivation and reactivation. Higher tiers and integrations are still to come.
+`patchy login` hands the person a browser URL and code; after they confirm, the CLI's poll mints and saves the machine token. `patchy publish --share public` and `patchy share` change who can open a patch. **Your machines** lists and revokes keys and offers browser sign-out; the company page handles invites, roles, deactivation and reactivation. Higher tiers and integrations are still to come.
 
 This repository is a full-history copy of [PatchPage](https://github.com/allisonmahmood/PatchPage), taken in a different direction. PatchPage remains a separate, free product with its own instance; nothing here runs it or publishes to it, and commits from before the split describe PatchPage, not Patchy Cloud.
 
@@ -37,10 +37,10 @@ Once login reports success:
 
 ```sh
 pnpm patchy whoami
-pnpm patchy upload examples/plan.html
+pnpm patchy publish examples/plan.html
 ```
 
-Open the upload's URL in the same signed-in browser. **Company scope is the default:** colleagues in that company can read the page, but a publishing key cannot open it. An agent reads company patches through its user's browser; only public patches fetch directly by URL. Choose `--share public` on upload only when the page is intended for anyone holding the link. Don't publish secrets.
+Open the returned URL in the same signed-in browser. **Company scope is the default:** colleagues in that company can read the page, but a publishing key cannot open it. An agent reads company patches through its user's browser; only public patches fetch directly by URL. Choose `--share public` only when the page is intended for anyone holding the link. Don't publish secrets.
 
 `pnpm patchy` runs from source and discovers this worktree's instance automatically. `pnpm dev stop` shuts it down. The complete runner and login recipes are in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md), and the CLI's commands and contract are in [packages/cli/README.md](packages/cli/README.md).
 
@@ -54,7 +54,7 @@ A Turborepo monorepo managed with pnpm. [AGENTS.md](AGENTS.md) is the guide to w
 - `packages/api` — the wire contract: schemas, the `HttpApi`, the derived client (`@patchy/api`).
 - `packages/companies` — companies, users, roles, invites and membership lifecycle (`@patchy/companies`).
 - `packages/auth` — browser sessions, the shared login door, device login, machine tokens, Your machines, bearer identity, revocation, the shared development seed and the `auth` API group (`@patchy/auth`).
-- `packages/patches` — user-owned patches and versions, upload and sharing, retention and the expiry sweep, owner-only deletion, and the `patches` API group (`@patchy/patches`).
+- `packages/patches` — user-owned patches and versions, replay-safe publishing and sharing, release metadata, retention and the expiry sweep, owner-only deletion, and the `patches` API group (`@patchy/patches`).
 - `packages/serving` — the page routes and login door integration, sharing-aware CSP and caching, and the trusted-proxy schema (`@patchy/serving`).
 - `packages/content-store` — the object store for a patch's bytes, with filesystem and Azure Blob layers (`@patchy/content-store`).
 - `packages/sql`, `packages/analytics`, `packages/limits` — the Postgres client and Migrator, the event service, the rate limiter.

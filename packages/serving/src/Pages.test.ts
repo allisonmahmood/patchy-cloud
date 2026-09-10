@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { assert, it } from "@effect/vitest";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -10,6 +11,7 @@ import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import { CURRENT_RELEASE, MANIFEST_VERSION, WIRE_VERSION } from "@patchy/api";
 import { AuthPages, DeviceLogins, MachineTokens, Session } from "@patchy/auth";
 import { Analytics } from "@patchy/analytics";
 import { Limits } from "@patchy/limits";
@@ -84,7 +86,20 @@ const get = (url: string, headers: Record<string, string> = { cookie: signedInCo
 
 const publish = (title: string, scope?: Patches.Patch["scope"], patchId: string | null = null) =>
   Effect.flatMap(Content.Content, (content) =>
-    content.upload({
+    content.publish({
+      manifest: {
+        manifestVersion: MANIFEST_VERSION,
+        release: CURRENT_RELEASE,
+        tier: 0,
+        tables: {},
+        files: {},
+        uses: {}
+      },
+      publishKey: randomUUID(),
+      payloadDigest: title,
+      wireVersion: WIRE_VERSION,
+      publicBaseUrl: PUBLIC_BASE_URL,
+      warnings: [],
       patchId,
       companyId: DEV_SEED.companyId,
       ownerUserId: DEV_SEED.userId,

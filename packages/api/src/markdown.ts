@@ -15,6 +15,7 @@ interface JsonSchema {
   enum?: ReadonlyArray<unknown>;
   anyOf?: ReadonlyArray<JsonSchema>;
   properties?: Record<string, JsonSchema>;
+  additionalProperties?: boolean | JsonSchema;
   required?: ReadonlyArray<string>;
   items?: JsonSchema;
 }
@@ -101,7 +102,15 @@ export function renderApiMarkdown(): string {
 
   /** An object shape over several lines, optional keys marked `?`. */
   function renderShape(schema: JsonSchema, depth: number, linked: boolean): string {
-    if (!schema.properties) return renderType(schema, linked);
+    if (!schema.properties) {
+      if (schema.type !== "object") return renderType(schema, linked);
+      if (schema.additionalProperties === false) return "{}";
+      const value =
+        typeof schema.additionalProperties === "object"
+          ? renderType(schema.additionalProperties, linked)
+          : "unknown";
+      return `{ [key: string]: ${value} }`;
+    }
     const indent = "  ".repeat(depth + 1);
     const required = new Set(schema.required ?? []);
     const fields = Object.entries(schema.properties).map(([name, field]) => {

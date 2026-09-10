@@ -47,7 +47,7 @@ For the first publish as yourself:
 
    ```sh
    pnpm patchy whoami
-   pnpm patchy upload examples/plan.html
+   pnpm patchy publish examples/plan.html
    ```
 
 4. Open the returned URL in the same signed-in browser. The new patch belongs
@@ -66,7 +66,7 @@ command in that check, for example `export PATCHY_STATE_DIR="$PWD/.local/cli-che
 The default is shared `~/.patchy`, with credentials, pending logins and patch
 caches keyed by instance; it is not inside `.local/dev/`. Isolation leaves
 existing developer state untouched and is useful when an old cache format
-would otherwise refuse an upload. Keep the same state directory through login,
+would otherwise refuse a publish. Keep the same state directory through login,
 completion, publishing and logout, then revoke the test key before removing it.
 
 For anything else that needs the URL, token or database (`curl`, `psql`),
@@ -87,7 +87,7 @@ that environment token and warns about it.
 | `pnpm dev reset`            | Stop, wipe `.local/dev/`, and start a fresh seeded instance.                                     |
 
 `reset` is also the answer when the migration ledger changes shape under an
-instance you already have, including the three rewritten auth baselines. It
+instance you already have, including the rewritten `0003_patches_baseline`. It
 deletes the database and uploaded HTML; use it only for disposable dev data.
 
 `--json` also works on `status`, `reset` and a plain start. The server is not
@@ -250,8 +250,8 @@ consumed by the terminal's poll returns 404 unknown.
 
 ### Reading a published patch
 
-New uploads default to company scope, including the seeded admin's patches;
-reuploads without `--share` preserve their scope. The response includes `scope`;
+New publishes default to company scope, including the seeded admin's patches;
+republishing without `--share` preserves their scope. The response includes `scope`;
 `publicUrl` is a view URL, not a promise of anonymous access. For a company patch,
 a cookie-free `curl -i <publicUrl>` answers **401** with the same HTML door as `/login`, one
 **Sign in** link, `x-patchy-sign-in-url`, and `Cache-Control: private, no-store`;
@@ -260,7 +260,7 @@ the page. Only the current version of a public patch is public; older versions
 stay behind the company door, with **401** and `private, no-store` without a session.
 If you previously uploaded this file as a different user (for example as the
 seed before creating your own company), its cached patch is still owned by
-that user. Use `pnpm patchy upload examples/plan.html --new` to create your own
+that user. Use `pnpm patchy publish examples/plan.html --new` to create your own
 patch. After `pnpm dev reset`, `--new` also replaces a cache entry whose patch
 no longer exists; a cached update otherwise fails without silently creating one.
 
@@ -275,10 +275,10 @@ missing patch get identical private, uncached 404 responses.
 Exercise sharing and the current-version boundary through the CLI, not by editing rows:
 
 ```sh
-pnpm patchy upload examples/plan.html --share public --json
+pnpm patchy publish examples/plan.html --share public --json
 # Fetch the returned publicUrl and publicUrl/v/<versionNumber> with cookie-free curl -i: 200.
 # Keep this version URL for the history check.
-pnpm patchy upload examples/plan.html --json
+pnpm patchy publish examples/plan.html --json
 # Scope stays public. Fetch publicUrl and the NEW publicUrl/v/<versionNumber>: 200.
 # Fetch the previous version URL: 401, Cache-Control: private, no-store.
 pnpm patchy share examples/plan.html company --json
@@ -290,7 +290,7 @@ pnpm patchy share --patch <patchId> company --json
 ```
 
 The file form uses its cached patch; `--patch` selects an id instead, exactly one
-target. Only the owner may change sharing. Upload and share JSON report `scope`,
+target. Only the owner may change sharing. Publish and share JSON report `scope`,
 and text output announces who can open the link. While public, only the current
 version answers **200** at both `/d/<id>` and `/d/<id>/v/<current n>` with
 `Cache-Control: public, max-age=60`, no `Set-Cookie`, and the unchanged script-free
@@ -334,10 +334,18 @@ Session tests use `@patchy/auth/testing`: fake Clerk keys under `.invalid`, an
 RSA fixture and a loopback-only fetch guard. The packed CLI e2e starts its
 server with the same fake keys and PEM, never a real Clerk account. Its viewer
 checks cover the default company's cookie-free 401 with `private, no-store`,
-an explicit `--share public` upload's 200 with `public, max-age=60`, no
+an explicit `--share public` publish's 200 with `public, max-age=60`, no
 `Set-Cookie` and the locked CSP, and `share … company` returning it to the 401 door.
 It also drives the login handoff through confirmation with an offline-signed
 session, completion, saved-login precedence, logout and seed fallback.
+The packed flow also reads the stored version's tier, release and server-stamped
+wire version. File mode synthesises a tier 0 manifest with empty `tables`, `files`
+and `uses`; higher tiers and resources are refused until their SDK tickets land.
+
+`GET /api/release` is public. A new CLI publish checks its executing version
+against that release. Interrupted attempts live in the isolated `PATCHY_STATE_DIR`
+and are resent first on the next publish, before any release or file check.
+Keep that state when retrying an unknown outcome; removing it loses the publish key.
 The dev runner imports only the separate seed entry, so it never
 installs that guard. The production-domain Clerk handshake is a separate live
 verification, not part of these offline checks.
@@ -487,7 +495,7 @@ from `@patchy/auth/seed` after migration, optionally passing your Clerk user id
 as its second argument; use the development token through `PATCHY_API_TOKEN`.
 The seed is for development only.
 
-`pnpm seed:dev` uploads the accepted HTML fixture corpus. Both `PATCHY_API_URL`
+`pnpm seed:dev` publishes the accepted HTML fixture corpus. Both `PATCHY_API_URL`
 and `PATCHY_API_TOKEN` are required; neither has a default.
 
 ## Postgres

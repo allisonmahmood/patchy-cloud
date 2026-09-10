@@ -3,7 +3,7 @@
  * the contract every command's failure is rendered through. In text mode a
  * result is the lines agents already read and a failure is one message on
  * stderr. Under `--json` a result is exactly one document on stdout and a
- * failure is `{ ok: false, error, kind }` on stderr, with the other stream
+ * failure is `{ ok: false, error, kind, code? }` on stderr, with the other stream
  * empty. The exit code comes from the failure's kind and from nowhere else.
  */
 import * as Console from "effect/Console";
@@ -67,12 +67,12 @@ export const contract = <A, R>(handler: Effect.Effect<A, CliError, R>) =>
   Effect.gen(function* () {
     const json = yield* JsonFlag;
     const debug = isDebug(yield* GlobalFlag.LogLevel);
-    const fail = (error: string, kind: CliError["kind"]) =>
-      Console.error(json ? toJson({ ok: false, error, kind }) : error).pipe(
-        Effect.andThen(new Failed({ code: exitCode(kind) }))
-      );
+    const fail = (error: string, kind: CliError["kind"], code?: string) =>
+      Console.error(
+        json ? toJson({ ok: false, error, kind, ...(code === undefined ? {} : { code }) }) : error
+      ).pipe(Effect.andThen(new Failed({ code: exitCode(kind) })));
     return yield* handler.pipe(
-      Effect.catch((error) => fail(error.message, error.kind)),
+      Effect.catch((error) => fail(error.message, error.kind, error.code)),
       Effect.catchDefect((defect) => {
         const message = defect instanceof Error ? defect.message : String(defect);
         const stack = debug && defect instanceof Error && defect.stack ? `\n${defect.stack}` : "";

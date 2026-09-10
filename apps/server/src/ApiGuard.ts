@@ -2,14 +2,12 @@
  * The guard on `/api/*`, ahead of the router.
  *
  * The API's own bearer middleware authenticates every protected route the
- * router matches, before a body is read. Only the two POST device-login routes
- * are anonymous: start spends its own per-address limit and poll is limited
- * by device code in Auth. Every other `/api/*` request spends one attempt of
- * the per-address protected-API limit, then needs a token. A request the router
- * would refuse for its shape — a malformed target, an overlong patch id — or
- * not find at all learns that only once it has authenticated, so a caller
- * with no token cannot map the API by its status codes, and a flood of them
- * runs into the limit like any other.
+ * router matches, before a body is read. Release discovery and the two POST
+ * device-login routes are anonymous. Publish has its own limits after its
+ * authenticated replay lookup; the guard must not throttle a recovery attempt.
+ * Other `/api/*` requests spend the per-address protected-API limit, then need
+ * a token. Malformed targets and missing routes disclose their shape only
+ * after authentication.
  *
  * Two pieces: `make`, the middleware that spends the limit and answers the
  * shapes the router never sees; and `notFound`, the `/api/*` catch-all route
@@ -71,6 +69,7 @@ const PATCH_ROUTES = new Set(
 export type Target =
   | { readonly kind: "public" }
   | { readonly kind: "route" }
+  | { readonly kind: "publish" }
   | { readonly kind: "device-login"; readonly action: "start" | "poll" }
   | { readonly kind: "refused"; readonly status: 400 | 404 | 414 };
 
@@ -81,12 +80,14 @@ export function classify(method: string, requestTarget: string): Target {
       ? { kind: "refused", status: 400 }
       : { kind: "public" };
   }
+  if (method === "GET" && pathname === "/api/release") return { kind: "public" };
+  if (method === "POST" && pathname === "/api/publish") return { kind: "publish" };
   if (method === "POST") {
     if (pathname === "/api/login/device") return { kind: "device-login", action: "start" };
     if (pathname === "/api/login/device/token") return { kind: "device-login", action: "poll" };
   }
   if (!isApiPath(pathname)) {
-    // An encoded slash is one segment to the router, so `/api%2Fuploads` can
+    // An encoded slash is one segment to the router, so `/api%2Fpublish` can
     // never route; it still reads as a probe of the API, and answers as one.
     return isApiPath(normalize(pathname.replace(/%2f/gi, "/")))
       ? { kind: "refused", status: 404 }
@@ -131,7 +132,7 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest;
       const target = classify(request.method, request.url);
-      if (target.kind === "public") return yield* app;
+      if (target.kind === "public" || target.kind === "publish") return yield* app;
       if (target.kind === "device-login" && target.action === "poll") return yield* app;
 
       // Keyed by source address — after the trusted-proxy walk, so a proxy in

@@ -8,9 +8,40 @@ import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpApiMiddleware from "effect/unstable/httpapi/HttpApiMiddleware";
-import { Authorization, CurrentIdentity, Identity } from "@patchy/api";
+import {
+  Authorization,
+  CurrentIdentity,
+  Identity,
+  CURRENT_RELEASE,
+  MANIFEST_VERSION,
+  WIRE_VERSION
+} from "@patchy/api";
 import { DEV_SEED } from "@patchy/auth/seed";
 import * as Testing from "@patchy/sql/testing";
+import * as Patches from "../Patches.js";
+
+export const manifest = {
+  manifestVersion: MANIFEST_VERSION,
+  release: CURRENT_RELEASE,
+  tier: 0 as const,
+  tables: {},
+  files: {},
+  uses: {}
+};
+export const publishRecord = () => ({
+  manifest,
+  wireVersion: WIRE_VERSION,
+  publishKey: crypto.randomUUID(),
+  payloadDigest: "fixture",
+  publicBaseUrl: "https://patchy.example",
+  warnings: []
+});
+
+/** Direct persistence tests still honour the durable object-intent contract. */
+export const record = (input: Patches.RecordInput) =>
+  Effect.flatMap(Patches.Patches, (patches) =>
+    patches.prepareObject(input.objectKey).pipe(Effect.andThen(patches.record(input)))
+  );
 
 const company = {
   id: DEV_SEED.companyId,

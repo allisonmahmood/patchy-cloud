@@ -328,13 +328,13 @@ try {
   });
   assert.equal(shellWhoami.stdout, whoami.stdout);
   assert.equal(shellWhoami.stderr, "");
-  const first = parseUpload(
-    await runCli(cliPath, ["upload", fixtureArgument, "--share", "public"], {
+  const first = parsePublish(
+    await runCli(cliPath, ["publish", fixtureArgument, "--share", "public"], {
       cwd: consumerDir,
       env: cliEnv
     })
   );
-  assert.equal(first.label, "Uploaded patch");
+  assert.equal(first.label, "Published patch");
   assert.equal(first.versionNumber, 1);
   assert.equal(first.publicUrl, `${publicBaseUrl}/d/${first.patchId}`);
   assert.equal(first.scope, "public");
@@ -354,8 +354,8 @@ try {
   );
 
   await checkedCall(() => writeFile(fixturePath, secondHtml, "utf8"));
-  const second = parseUpload(
-    await runCli(cliPath, ["upload", fixtureArgument], { cwd: consumerDir, env: cliEnv })
+  const second = parsePublish(
+    await runCli(cliPath, ["publish", fixtureArgument], { cwd: consumerDir, env: cliEnv })
   );
   assert.equal(second.label, "Updated patch");
   assert.equal(second.patchId, first.patchId);
@@ -443,7 +443,7 @@ try {
   }
 
   await checkedCall(() => writeFile(fixturePath, newHtml, "utf8"));
-  const freshUpload = await runCli(cliPath, ["upload", fixtureArgument, "--new", "--json"], {
+  const freshUpload = await runCli(cliPath, ["publish", fixtureArgument, "--new", "--json"], {
     cwd: consumerDir,
     env: cliEnv
   });
@@ -486,7 +486,7 @@ try {
   await checkedCall(() => writeFile(fixturePath, unsafeHtml, "utf8"));
   await assertCliFailureNoMutation({
     cliPath,
-    args: ["upload", fixtureArgument],
+    args: ["publish", fixtureArgument],
     cwd: consumerDir,
     env: environment({
       PATCHY_STATE_DIR: unsafeValidationStateDir,
@@ -506,7 +506,7 @@ try {
   );
   await assertCliFailureNoMutation({
     cliPath,
-    args: ["upload", fixtureArgument],
+    args: ["publish", fixtureArgument],
     cwd: consumerDir,
     env: { ...cliEnv, PATCHY_API_TOKEN: "invalid-env-credential" },
     cliStateDir,
@@ -565,7 +565,7 @@ try {
   ]);
   await assertCliFailureNoMutation({
     cliPath,
-    args: ["upload", fixtureArgument],
+    args: ["publish", fixtureArgument],
     cwd: consumerDir,
     env: invalidStoredEnv,
     cliStateDir: invalidStoredStateDir,
@@ -582,7 +582,7 @@ try {
     "PATCHY_API_TOKEN"
   ]);
   for (const args of [
-    ["upload", fixtureArgument, "--json"],
+    ["publish", fixtureArgument, "--json"],
     ["delete", "--patch", fresh.patchId, "--json"],
     ["share", "--patch", fresh.patchId, "public", "--json"],
     ["whoami", "--json"]
@@ -611,8 +611,8 @@ try {
     "valid-env-overrode-invalid-stored"
   );
   await checkedCall(() => writeFile(fixturePath, envPrecedenceHtml, "utf8"));
-  const envPrecedence = parseUpload(
-    await runCli(cliPath, ["upload", fixtureArgument], {
+  const envPrecedence = parsePublish(
+    await runCli(cliPath, ["publish", fixtureArgument], {
       cwd: consumerDir,
       env: { ...invalidStoredEnv, PATCHY_API_TOKEN: DEV_SEED.token }
     })
@@ -646,8 +646,8 @@ try {
   // to the patch this step created, whatever the script cached before it.
   const doomedHtml = validHtml("Packed contract doomed", "packed-contract-doomed");
   await checkedCall(() => writeFile(fixturePath, doomedHtml, "utf8"));
-  const doomed = parseUpload(
-    await runCli(cliPath, ["upload", fixtureArgument, "--new"], { cwd: consumerDir, env: cliEnv })
+  const doomed = parsePublish(
+    await runCli(cliPath, ["publish", fixtureArgument, "--new"], { cwd: consumerDir, env: cliEnv })
   );
   const doomedViewer = await fetchViewer(doomed.publicUrl);
   assertViewerDoor(doomedViewer);
@@ -2594,7 +2594,7 @@ async function startServerAttempt({ publicBaseUrl, objectDir, serverEntryPath })
       DATABASE_URL: await startPostgres(),
       PATCHY_STORAGE_DIR: objectDir,
       PATCHY_PROTECTED_API_RATE_LIMIT_PER_MINUTE: "10000",
-      PATCHY_AUTHENTICATED_UPLOAD_RATE_LIMIT_PER_MINUTE: "10000"
+      PATCHY_AUTHENTICATED_PUBLISH_RATE_LIMIT_PER_MINUTE: "10000"
     },
     [
       "CLERK_AUTHORIZED_PARTIES",
@@ -3020,8 +3020,8 @@ async function snapshotTree(rootDir) {
   }
 }
 
-function parseUpload(result) {
-  const label = result.stdout.match(/^(Uploaded patch|Updated patch)$/m)?.[1];
+function parsePublish(result) {
+  const label = result.stdout.match(/^(Published patch|Updated patch)$/m)?.[1];
   const publicUrl = result.stdout.match(/^URL: (.+)$/m)?.[1];
   const patchId = result.stdout.match(/^Patch ID: ([a-z0-9]{12})$/m)?.[1];
   const scope = result.stdout.match(/^Scope: (company|public)\b/m)?.[1];
@@ -3184,13 +3184,16 @@ async function readMetadata() {
       })),
       draftVersions: (
         await query(
-          "SELECT id, patch_id, version_number, object_key, created_by_machine_token_id FROM patch_versions ORDER BY created_at"
+          "SELECT id, patch_id, version_number, object_key, created_by_machine_token_id, tier, release, wire_version FROM patch_versions ORDER BY created_at"
         )
       ).map((row) => ({
         id: row.id,
         patchId: row.patch_id,
         versionNumber: row.version_number,
         objectKey: row.object_key,
+        tier: row.tier,
+        release: row.release,
+        wireVersion: row.wire_version,
         createdByMachineTokenId: row.created_by_machine_token_id
       })),
       machineTokens: (
@@ -3223,6 +3226,9 @@ async function assertStoredDraft(
     const version = versions[index];
     assert.equal(version.versionNumber, index + 1);
     assert.equal(version.createdByMachineTokenId, machineTokenId);
+    assert.equal(version.tier, 0);
+    assert.equal(version.release, "0.0.1");
+    assert.equal(version.wireVersion, 1);
     assert.equal(
       await readFile(path.join(objectDir, version.objectKey), "utf8"),
       expectedHtmlByVersion[index]

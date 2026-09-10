@@ -20,17 +20,19 @@ import * as Command from "effect/unstable/cli/Command";
 import * as Flag from "effect/unstable/cli/Flag";
 import * as Prompt from "effect/unstable/cli/Prompt";
 import {
+  CURRENT_RELEASE,
+  MANIFEST_VERSION,
   Identity,
   Ok,
   Shared,
   ShareRequest,
   SharingScope,
-  UploadCreated,
-  UploadMetadata,
-  UploadRequest,
-  UploadUpdated
+  PublishCreated,
+  PublishMetadata,
+  PublishRequest,
+  PublishUpdated
 } from "@patchy/api";
-import { sha256, validateHtml } from "@patchy/core";
+import { newInternalId, sha256, validateHtml } from "@patchy/core";
 import * as Api from "./Api.js";
 import { type CliError, LocalError, RejectedError } from "./CliError.js";
 import * as Git from "./Git.js";
@@ -39,7 +41,8 @@ import * as Login from "./Login.js";
 import * as Output from "./Output.js";
 import * as State from "./State.js";
 
-export const VERSION = typeof __PATCHY_VERSION__ === "string" ? __PATCHY_VERSION__ : "0.0.0-dev";
+export const VERSION =
+  typeof __PATCHY_VERSION__ === "string" ? __PATCHY_VERSION__ : CURRENT_RELEASE;
 
 /** The working directory the entrypoint started in; where the dev-env walk begins. */
 export class Cwd extends Context.Service<Cwd, string>()("@patchy/cli/commands/Cwd") {}
@@ -56,7 +59,7 @@ const run = <A, R>(handler: Effect.Effect<A, CliError, R>) =>
 
 const encodeIdentity = Schema.encodeSync(Identity);
 // A create is 201, an update 200; the wire names them separately.
-const encodeUpload = Schema.encodeSync(Schema.Union([UploadCreated, UploadUpdated]));
+const encodePublish = Schema.encodeSync(Schema.Union([PublishCreated, PublishUpdated]));
 const encodeOk = Schema.encodeSync(Ok);
 const encodeShared = Schema.encodeSync(Shared);
 const decodeSharingScope = Schema.decodeUnknownEffect(SharingScope);
@@ -67,7 +70,7 @@ const scopeLines = {
 
 /** Wire literal of the 401 (`Unauthorized` in `@patchy/api`); the hint below keys on it. */
 const UNAUTHORIZED = "Missing or invalid API token.";
-/** Wire literal of the patch-route 404; `upload` and `delete` each turn it into their next action. */
+/** Wire literal of the patch-route 404; `publish` and `delete` each turn it into their next action. */
 const PATCH_NOT_FOUND = "Patch not found.";
 
 /**
@@ -84,7 +87,10 @@ const refused = (error: Api.ClientFailure, fallback: string) =>
   Effect.gen(function* () {
     const { apiUrl } = yield* Instance.Instance;
     if (Api.isRefusal(error) && error.error === UNAUTHORIZED) {
-      return yield* new RejectedError({ message: `${error.error}${defaultHostHint(apiUrl)}` });
+      return yield* new RejectedError({
+        message: `${error.error}${defaultHostHint(apiUrl)}`,
+        ...(error.code === undefined ? {} : { code: error.code })
+      });
     }
     return yield* Api.classify(error, fallback);
   });
@@ -312,12 +318,70 @@ const validate = Command.make("validate", { file: fileArgument }, ({ file }) =>
       for (const warning of warnings) yield* Output.warn(`Warning: ${warning}`);
     })
   )
-).pipe(Command.withDescription("Validate a static HTML patch without uploading it."));
+).pipe(Command.withDescription("Validate a static HTML patch without publishing it."));
 
-// --- upload -----------------------------------------------------------------
+// --- publish ----------------------------------------------------------------
 
-const upload = Command.make(
-  "upload",
+/** A replay uses only its saved request and application context, never today's file or flags. */
+const sendPublish = Effect.fn("sendPublish")(function* (attempt: State.PendingPublish) {
+  const instance = yield* Instance.Instance;
+  const state = yield* State.State;
+  const client = yield* Api.client(yield* requiredToken());
+  const published = yield* client.publish({ payload: attempt.request }).pipe(
+    Effect.catch((error) =>
+      refused(error, "Publish failed.").pipe(
+        Effect.catchTags({
+          RejectedError: (refusal) =>
+            Effect.gen(function* () {
+              // Only a definitive refusal settles the attempt. Unknown outcomes
+              // (including unreadable responses and server failures) must replay.
+              yield* state.forgetPendingPublish(instance.apiUrl);
+              if (
+                attempt.request.patchId !== undefined &&
+                Api.isRefusal(error) &&
+                error.error === PATCH_NOT_FOUND
+              ) {
+                return yield* new RejectedError({
+                  message: attempt.explicitPatch
+                    ? "Patch is unavailable for update. --patch never creates a new patch."
+                    : "Cached patch is unavailable for update. Use --new to create a new patch.",
+                  ...(refusal.code === undefined ? {} : { code: refusal.code })
+                });
+              }
+              return yield* refusal;
+            })
+        })
+      )
+    )
+  );
+  // A failed cache write leaves the original create request intact. Resending
+  // its key recovers the first response instead of publishing a second version.
+  yield* state.cachePatch(
+    instance.apiUrl,
+    attempt.file,
+    new State.CachedPatch({
+      patchId: published.patchId,
+      publicUrl: published.publicUrl,
+      latestVersionNumber: published.versionNumber,
+      updatedAt: yield* State.now
+    })
+  );
+  yield* state.forgetPendingPublish(instance.apiUrl);
+  yield* Output.report(encodePublish(published), [
+    attempt.request.patchId !== undefined ? "Updated patch" : "Published patch",
+    `URL: ${published.publicUrl}`,
+    scopeLines[published.scope],
+    `Patch ID: ${published.patchId}`,
+    `Tier: ${published.tier}`,
+    `Version: ${published.versionNumber}`,
+    `Provisioned: ${Output.toJson(published.provisioned)}`,
+    `Unused: ${Output.toJson(published.unused)}`
+  ]);
+  for (const warning of published.warnings) yield* Output.warn(`Warning: ${warning}`);
+});
+
+const publish = Command.make(
+  "publish",
   {
     file: fileArgument,
     patch: Flag.string("patch").pipe(
@@ -336,17 +400,30 @@ const upload = Command.make(
   (options) =>
     run(
       Effect.gen(function* () {
+        const instance = yield* Instance.Instance;
+        const state = yield* State.State;
+        const pending = yield* state.readPendingPublish(instance.apiUrl);
+        if (Option.isSome(pending)) return yield* sendPublish(pending.value);
+
         if (Option.isSome(options.patch) && options.new) {
           return yield* new LocalError({ message: "--patch and --new cannot be used together." });
         }
+        const apiToken = yield* requiredToken();
+        const client = yield* Api.client(apiToken);
+        const release = yield* client
+          .release()
+          .pipe(
+            Effect.catch((error) => Api.classify(error, "Could not read the instance release."))
+          );
+        if (release.release !== VERSION) {
+          return yield* new LocalError({
+            code: "release_mismatch",
+            message: `CLI release ${VERSION} does not match instance release ${release.release}. Run: patchy refresh`
+          });
+        }
         const path = yield* Path.Path;
         const { resolved, html } = yield* readHtml(options.file);
-        // Local validation gates the network.
         yield* validated(html);
-
-        const instance = yield* Instance.Instance;
-        const state = yield* State.State;
-        const apiToken = yield* requiredToken();
         yield* Output.notice(
           `Publishing to ${instance.apiUrl} (target came from ${Instance.describeSource(instance.source)}).`
         );
@@ -358,55 +435,34 @@ const upload = Command.make(
               Option.getOrNull(Option.map(cached, (c) => c.patchId))
             );
 
-        const client = yield* Api.client(apiToken);
-        const upload = yield* client
-          .upload({
-            payload: new UploadRequest({
-              html,
-              filename: path.basename(resolved),
-              ...(patchId !== null ? { patchId } : {}),
-              ...(Option.isSome(options.share) ? { scope: options.share.value } : {}),
-              metadata: new UploadMetadata({
-                ...(yield* Git.metadata(path.dirname(resolved))),
-                cliVersion: VERSION,
-                fileSha256: sha256(html)
-              })
+        const attempt = new State.PendingPublish({
+          file: resolved,
+          explicitPatch: Option.isSome(options.patch),
+          request: new PublishRequest({
+            manifest: {
+              manifestVersion: MANIFEST_VERSION,
+              release: VERSION,
+              tier: 0,
+              tables: {},
+              files: {},
+              uses: {}
+            },
+            html,
+            ...(patchId !== null ? { patchId } : {}),
+            ...(Option.isSome(options.share) ? { scope: options.share.value } : {}),
+            publishKey: newInternalId("pub"),
+            metadata: new PublishMetadata({
+              ...(yield* Git.metadata(path.dirname(resolved))),
+              cliVersion: VERSION,
+              fileSha256: sha256(html)
             })
           })
-          .pipe(
-            Effect.catch((error) => {
-              if (patchId !== null && Api.isRefusal(error) && error.error === PATCH_NOT_FOUND) {
-                return new RejectedError({
-                  message: Option.isSome(options.patch)
-                    ? "Patch is unavailable for update. --patch never creates a new patch."
-                    : "Cached patch is unavailable for update. Use --new to create a new patch."
-                });
-              }
-              return refused(error, "Upload failed.");
-            })
-          );
-
-        yield* state.cachePatch(
-          instance.apiUrl,
-          resolved,
-          new State.CachedPatch({
-            patchId: upload.patchId,
-            publicUrl: upload.publicUrl,
-            latestVersionNumber: upload.versionNumber,
-            updatedAt: yield* State.now
-          })
-        );
-        yield* Output.report(encodeUpload(upload), [
-          patchId !== null ? "Updated patch" : "Uploaded patch",
-          `URL: ${upload.publicUrl}`,
-          scopeLines[upload.scope],
-          `Patch ID: ${upload.patchId}`,
-          `Version: ${upload.versionNumber}`
-        ]);
-        for (const warning of upload.warnings) yield* Output.warn(`Warning: ${warning}`);
+        });
+        yield* state.savePendingPublish(instance.apiUrl, attempt);
+        yield* sendPublish(attempt);
       })
     )
-).pipe(Command.withDescription("Upload or update an HTML patch."));
+).pipe(Command.withDescription("Publish or update an HTML patch."));
 
 // --- patch targets ----------------------------------------------------------
 
@@ -420,13 +476,13 @@ const patchTarget = Effect.fn("patchTarget")(function* (
 ) {
   if (Option.isSome(file) && Option.isSome(patch)) {
     return yield* new LocalError({
-      message: "Pass the file the patch was uploaded from, or --patch <patch-id>, not both."
+      message: "Pass the file the patch was published from, or --patch <patch-id>, not both."
     });
   }
   if (Option.isSome(patch)) return patch.value;
   if (Option.isNone(file)) {
     return yield* new LocalError({
-      message: "Pass the file the patch was uploaded from, or --patch <patch-id>."
+      message: "Pass the file the patch was published from, or --patch <patch-id>."
     });
   }
   const path = yield* Path.Path;
@@ -437,7 +493,7 @@ const patchTarget = Effect.fn("patchTarget")(function* (
   if (Option.isNone(cached)) {
     return yield* new LocalError({
       message:
-        `No patch on ${apiUrl} was uploaded from ${resolved}.\n` +
+        `No patch on ${apiUrl} was published from ${resolved}.\n` +
         "Pass --patch <patch-id> to use a patch ID."
     });
   }
@@ -450,7 +506,7 @@ const share = Command.make(
   "share",
   {
     fileOrScope: Argument.string("file-or-scope").pipe(
-      Argument.withDescription("The uploaded HTML file, or company|public when using --patch"),
+      Argument.withDescription("The published HTML file, or company|public when using --patch"),
       Argument.optional
     ),
     scope: Argument.choice("scope", SharingScope.literals).pipe(Argument.optional),
@@ -506,7 +562,7 @@ const del = Command.make(
   "delete",
   {
     file: Argument.string("file").pipe(
-      Argument.withDescription("The HTML file the patch was uploaded from"),
+      Argument.withDescription("The HTML file the patch was published from"),
       Argument.optional
     ),
     patch: Flag.string("patch").pipe(
@@ -529,7 +585,8 @@ const del = Command.make(
           Effect.catch((error) => {
             if (Api.isRefusal(error) && error.error === PATCH_NOT_FOUND) {
               return new RejectedError({
-                message: `Patch ${patchId} is unavailable for deletion: it is not on ${instance.apiUrl}, or this publishing key does not own it.`
+                message: `Patch ${patchId} is unavailable for deletion: it is not on ${instance.apiUrl}, or this publishing key does not own it.`,
+                ...(error.code === undefined ? {} : { code: error.code })
               });
             }
             return refused(error, "Delete failed.");
@@ -548,7 +605,7 @@ const del = Command.make(
 // --- the tree ---------------------------------------------------------------
 
 export const root = Command.make("patchy").pipe(
-  Command.withDescription("Upload static HTML patches to a Patchy Cloud instance."),
-  Command.withSubcommands([login, logout, auth, whoami, status, validate, upload, share, del]),
+  Command.withDescription("Publish static HTML patches to a Patchy Cloud instance."),
+  Command.withSubcommands([login, logout, auth, whoami, status, validate, publish, share, del]),
   Command.withGlobalFlags([Output.JsonFlag, Instance.ApiUrlFlag])
 );

@@ -350,6 +350,9 @@ importers:
       '@patchy/analytics':
         specifier: workspace:*
         version: link:../analytics
+      '@patchy/api':
+        specifier: workspace:*
+        version: link:../api
       '@patchy/content-store':
         specifier: workspace:*
         version: link:../content-store
