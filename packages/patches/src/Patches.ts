@@ -188,7 +188,7 @@ export class HasPrimitives extends Schema.TaggedError<HasPrimitives>()("HasPrimi
 }) {
   readonly code = "has_primitives";
   override get message() {
-    return "This patch has provisioned resources; publish from its repo instead of a single HTML file.";
+    return "This patch has provisioned tables or file stores; publish from its repo instead of a single HTML file.";
   }
 }
 
@@ -277,9 +277,6 @@ export class Patches extends Context.Service<
      * The publish contract's preflight, before any bytes are written: an
      * update needs a patch the caller may write, a create needs a free id.
      */
-    readonly checkTarget: (
-      target: PublishTarget
-    ) => Effect.Effect<void, PatchUnavailable | PatchConflict | SqlError>;
     readonly preflight: (
       input: PublishPreflight
     ) => Effect.Effect<
@@ -304,7 +301,7 @@ export class Patches extends Context.Service<
      * patch row it creates or moves forward, and a fresh retention window,
      * in one transaction. Consumes the pending-object intent under a lock;
      * a sweep that claimed it first prevents the version from being recorded.
-     * Re-checks the target, so `checkTarget`'s answer can still change here.
+     * Re-checks the target, so the preflight's answer can still change here.
      */
     readonly record: (
       input: RecordInput
@@ -748,9 +745,9 @@ export const make = Effect.gen(function* () {
     if (Object.keys(input.manifest.tables).length > 0) {
       yield* databases.ensureReady(input.companyId);
     }
-    const snapshot =
+    const { companyId, snapshot } =
       input.intent === "create"
-        ? null
+        ? { companyId: input.companyId, snapshot: null }
         : yield* sql.withTransaction(
             Effect.gen(function* () {
               const locked = yield* lockTarget({
@@ -760,13 +757,21 @@ export const make = Effect.gen(function* () {
               });
               if (Option.isNone(locked))
                 return yield* new PatchUnavailable({ patchId: input.patchId });
-              return yield* readInventory(locked.value.companyId, input.patchId);
+              return {
+                companyId: locked.value.companyId,
+                snapshot: yield* readInventory(locked.value.companyId, input.patchId)
+              };
             }).pipe(Effect.catchTags(dieOnSchemaError))
           );
     if (snapshot !== null && isFileMode(input)) {
       return yield* new HasPrimitives({ patchId: input.patchId });
     }
     yield* tables.diff(input.manifest, snapshot);
+    if (snapshot !== null) {
+      yield* databases.withCompany(companyId)(
+        tables.validate(input.patchId, input.manifest, snapshot)
+      );
+    }
   });
 
   const inventory = Effect.fn("Patches.inventory")((patchId: string, ownerUserId: string) =>
@@ -1129,7 +1134,6 @@ export const make = Effect.gen(function* () {
   return Patches.of({
     countLive,
     replay,
-    checkTarget,
     preflight,
     inventory,
     prepareObject,

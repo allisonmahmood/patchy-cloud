@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { assert } from "@effect/vitest";
 import { Manifest, TableDefinition } from "@patchy/api";
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
@@ -480,6 +481,217 @@ export const columnLimit = Effect.fn("ProvisioningContract.columnLimit")(functio
       assert.strictEqual(snapshot?.schemaRevision, 2);
       assert.strictEqual(snapshot?.columns.length, 1597);
       assert.isFalse(snapshot?.columns.some((column) => column.name === "overflow"));
+    })
+  );
+});
+
+export const indexKeyLimit = Effect.fn("ProvisioningContract.indexKeyLimit")(function* (
+  companyId: string
+) {
+  const databases = yield* CompanyDatabases.CompanyDatabases;
+  const tables = yield* Tables.Tables;
+  const inventory = yield* Inventory.Inventory;
+  const patchId = "index-key-limit";
+  const long = Array.from({ length: 128 }, (_, index) =>
+    createHash("sha256").update(`index-key-${index}`).digest("hex")
+  ).join("");
+  const initial: typeof TableDefinition.Type = {
+    columns: {
+      title: { kind: "text" },
+      metadata: { kind: "json", default: { value: long } },
+      unindexed: { kind: "text", optional: true }
+    },
+    indexes: {}
+  };
+  yield* databases.ensureReady(companyId);
+  yield* databases.withCompany(companyId)(
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* databases.withPatchLock(patchId)(
+        tables.provision(patchId, manifest({ notes: initial }))
+      );
+      yield* sql.unsafe(`INSERT INTO ${qualified(patchId)} ("id", "title") VALUES ('old', $1)`, [
+        long
+      ]);
+      const before = yield* inventory.read(patchId);
+      const expanded = manifest({
+        shouldNotExist: { columns: {}, indexes: {} },
+        notes: {
+          columns: {
+            ...initial.columns,
+            defaulted: { kind: "text", default: long },
+            parent: { kind: "ref", table: "notes", default: long }
+          },
+          indexes: {
+            byTitle: { columns: ["title", "title"] },
+            byMetadata: { columns: ["metadata"] },
+            byDefault: { columns: ["defaulted"] }
+          }
+        }
+      });
+      const preview = yield* tables.validate(patchId, expanded, before).pipe(Effect.flip);
+      assert.instanceOf(preview, Tables.NotAdditive);
+      if (preview._tag !== "NotAdditive") return;
+      assert.deepStrictEqual(preview.changes.map((change) => change.object).sort(), [
+        "notes.byDefault",
+        "notes.byMetadata",
+        "notes.byTitle",
+        "notes.parent"
+      ]);
+      for (const change of preview.changes) assert.isAbove(change.fix.length, 0);
+      // Catch within the transaction: a refusal after any DDL would leak physical changes.
+      yield* databases.withPatchLock(patchId)(
+        Effect.gen(function* () {
+          const refused = yield* tables.provision(patchId, expanded).pipe(Effect.flip);
+          assert.instanceOf(refused, Tables.NotAdditive);
+          assert.deepStrictEqual(
+            yield* sql`SELECT to_regclass(${qualified(patchId, "shouldNotExist")})::text AS name`,
+            [{ name: null }]
+          );
+        })
+      );
+      assert.deepStrictEqual(yield* inventory.read(patchId), before);
+      assert.deepStrictEqual(
+        yield* sql.unsafe(
+          `SELECT "title", "metadata" FROM ${qualified(patchId)} WHERE "id" = 'old'`
+        ),
+        [{ title: long, metadata: { value: long } }]
+      );
+      yield* sql.unsafe(
+        `UPDATE ${qualified(patchId)} SET "title" = 'short', "metadata" = '{"value":"short"}' WHERE "id" = 'old'`
+      );
+      yield* databases.withPatchLock(patchId)(
+        tables.provision(
+          patchId,
+          manifest({
+            notes: {
+              columns: {
+                ...initial.columns,
+                parent: { kind: "ref", table: "notes", optional: true }
+              },
+              indexes: {
+                byTitle: { columns: ["title", "title"] },
+                byMetadata: { columns: ["metadata"] }
+              }
+            },
+            fresh: {
+              columns: {
+                title: { kind: "text" },
+                parent: { kind: "ref", table: "notes", optional: true }
+              },
+              indexes: { byTitle: { columns: ["title"] } }
+            }
+          })
+        )
+      );
+      // Physical checks protect old loaded writers and roll back their entire transaction.
+      for (const [table, column, value] of [
+        ["notes", "title", long],
+        ["notes", "metadata", JSON.stringify({ value: long })],
+        ["notes", "parent", long],
+        ["fresh", "title", long],
+        ["fresh", "parent", long],
+        // Compression must not make the supported key ceiling data-dependent.
+        ["notes", "title", "x".repeat(long.length)]
+      ] as const) {
+        const error = yield* sql
+          .withTransaction(
+            Effect.gen(function* () {
+              yield* sql.unsafe(
+                `INSERT INTO ${qualified(patchId, table)} ("id", "title"${table === "notes" ? ', "metadata"' : ""}) VALUES ('rolled-back', 'safe'${table === "notes" ? ", '{}'" : ""})`
+              );
+              yield* sql.unsafe(
+                `UPDATE ${qualified(patchId, table)} SET ${Inventory.quoteIdentifier(column)} = $1 WHERE "id" = 'rolled-back'`,
+                [value]
+              );
+            })
+          )
+          .pipe(Effect.flip);
+        assert.strictEqual(error._tag, "SqlError");
+        assert.deepStrictEqual(
+          yield* sql.unsafe(
+            `SELECT "id" FROM ${qualified(patchId, table)} WHERE "id" = 'rolled-back'`
+          ),
+          []
+        );
+      }
+      yield* sql.unsafe(`UPDATE ${qualified(patchId)} SET "unindexed" = $1 WHERE "id" = 'old'`, [
+        long
+      ]);
+      assert.deepStrictEqual(
+        yield* sql.unsafe(`SELECT "unindexed" FROM ${qualified(patchId)} WHERE "id" = 'old'`),
+        [{ unindexed: long }]
+      );
+    })
+  );
+});
+
+export const rowExpansionLimit = Effect.fn("ProvisioningContract.rowExpansionLimit")(function* (
+  companyId: string
+) {
+  const databases = yield* CompanyDatabases.CompanyDatabases;
+  const tables = yield* Tables.Tables;
+  const inventory = yield* Inventory.Inventory;
+  const patchId = "row-expansion-limit";
+  const retained = "r".repeat(600_000);
+  const initial: typeof TableDefinition.Type = {
+    columns: {
+      title: { kind: "text", default: "kept" },
+      retained: { kind: "text", optional: true }
+    },
+    indexes: { byTitle: { columns: ["title"] } }
+  };
+  yield* databases.ensureReady(companyId);
+  yield* databases.withCompany(companyId)(
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* databases.withPatchLock(patchId)(
+        tables.provision(patchId, manifest({ notes: initial }))
+      );
+      yield* sql.unsafe(`INSERT INTO ${qualified(patchId)} ("id", "retained") VALUES ('old', $1)`, [
+        retained
+      ]);
+      const before = yield* inventory.read(patchId);
+      const expanded = manifest({
+        shouldNotExist: { columns: {}, indexes: {} },
+        notes: {
+          // Omitted cumulative values and indexes still count.
+          columns: { added: { kind: "text", default: "n".repeat(600_000) } },
+          indexes: {}
+        }
+      });
+      const preview = yield* tables.validate(patchId, expanded, before).pipe(Effect.flip);
+      assert.instanceOf(preview, Tables.NotAdditive);
+      if (preview._tag !== "NotAdditive") return;
+      assert.deepStrictEqual(
+        preview.changes.map((change) => change.object),
+        ["notes"]
+      );
+      yield* databases.withPatchLock(patchId)(
+        Effect.gen(function* () {
+          const refused = yield* tables.provision(patchId, expanded).pipe(Effect.flip);
+          assert.instanceOf(refused, Tables.NotAdditive);
+          assert.deepStrictEqual(
+            yield* sql`SELECT to_regclass(${qualified(patchId, "shouldNotExist")})::text AS name`,
+            [{ name: null }]
+          );
+        })
+      );
+      assert.deepStrictEqual(yield* inventory.read(patchId), before);
+      assert.deepStrictEqual(
+        yield* sql.unsafe(
+          `SELECT "title", "retained" FROM ${qualified(patchId)} WHERE "id" = 'old'`
+        ),
+        [{ title: "kept", retained }]
+      );
+      yield* sql.unsafe(`UPDATE ${qualified(patchId)} SET "retained" = 'short' WHERE "id" = 'old'`);
+      yield* databases.withPatchLock(patchId)(tables.provision(patchId, expanded));
+      assert.deepStrictEqual(
+        yield* sql.unsafe(
+          `SELECT "title", "retained", length("added") AS "added" FROM ${qualified(patchId)} WHERE "id" = 'old'`
+        ),
+        [{ title: "kept", retained: "short", added: 600_000 }]
+      );
     })
   );
 });

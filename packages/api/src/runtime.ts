@@ -1,7 +1,7 @@
 /** The browser runtime wire; operation schemas are shared by the shell and server. */
 import * as Schema from "effect/Schema";
 import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
-import { Identity, PatchId } from "./schemas.js";
+import { DefinitionName, Identity, PatchId } from "./schemas.js";
 
 const NonEmptyText = Schema.String.check(Schema.isMinLength(1));
 
@@ -27,20 +27,17 @@ export const RuntimeMe = Schema.NullOr(
 ).annotate({ identifier: "RuntimeMe" });
 export type RuntimeMe = typeof RuntimeMe.Type;
 
-export const TableName = Schema.String.check(
-  Schema.makeFilter((value) => /^[a-z][a-zA-Z0-9]{0,62}$/.test(value) || "Invalid table name.")
-);
 export const TableRow = Schema.Record(Schema.String, Schema.Json);
 export const TableRange = Schema.Struct({
-  column: TableName,
+  column: DefinitionName,
   gt: Schema.optionalKey(Schema.Json),
   gte: Schema.optionalKey(Schema.Json),
   lt: Schema.optionalKey(Schema.Json),
   lte: Schema.optionalKey(Schema.Json)
 });
 export const TableList = Schema.Struct({
-  table: TableName,
-  index: Schema.optionalKey(TableName),
+  table: DefinitionName,
+  index: Schema.optionalKey(DefinitionName),
   eq: Schema.optionalKey(TableRow),
   range: Schema.optionalKey(TableRange),
   order: Schema.optionalKey(Schema.Literals(["asc", "desc"])),
@@ -65,7 +62,7 @@ export const runtimeOperations = {
   "tables.get": {
     request: Schema.Struct({
       op: Schema.Literal("tables.get"),
-      args: Schema.Struct({ table: TableName, id: NonEmptyText })
+      args: Schema.Struct({ table: DefinitionName, id: NonEmptyText })
     }),
     response: Schema.NullOr(TableRow),
     kind: "read"
@@ -73,7 +70,7 @@ export const runtimeOperations = {
   "tables.getMany": {
     request: Schema.Struct({
       op: Schema.Literal("tables.getMany"),
-      args: Schema.Struct({ table: TableName, ids: Schema.Array(NonEmptyText) })
+      args: Schema.Struct({ table: DefinitionName, ids: Schema.Array(NonEmptyText) })
     }),
     response: Schema.Array(Schema.NullOr(TableRow)),
     kind: "read"
@@ -86,7 +83,7 @@ export const runtimeOperations = {
   "tables.insert": {
     request: Schema.Struct({
       op: Schema.Literal("tables.insert"),
-      args: Schema.Struct({ table: TableName, row: TableRow })
+      args: Schema.Struct({ table: DefinitionName, row: TableRow })
     }),
     response: TableRow,
     kind: "mutation"
@@ -94,7 +91,7 @@ export const runtimeOperations = {
   "tables.insertMany": {
     request: Schema.Struct({
       op: Schema.Literal("tables.insertMany"),
-      args: Schema.Struct({ table: TableName, rows: Schema.Array(TableRow) })
+      args: Schema.Struct({ table: DefinitionName, rows: Schema.Array(TableRow) })
     }),
     response: Schema.Array(TableRow),
     kind: "mutation"
@@ -102,7 +99,7 @@ export const runtimeOperations = {
   "tables.update": {
     request: Schema.Struct({
       op: Schema.Literal("tables.update"),
-      args: Schema.Struct({ table: TableName, id: NonEmptyText, patch: TableRow })
+      args: Schema.Struct({ table: DefinitionName, id: NonEmptyText, patch: TableRow })
     }),
     response: TableRow,
     kind: "mutation"
@@ -110,7 +107,7 @@ export const runtimeOperations = {
   "tables.delete": {
     request: Schema.Struct({
       op: Schema.Literal("tables.delete"),
-      args: Schema.Struct({ table: TableName, id: NonEmptyText })
+      args: Schema.Struct({ table: DefinitionName, id: NonEmptyText })
     }),
     response: Schema.Null,
     kind: "mutation"

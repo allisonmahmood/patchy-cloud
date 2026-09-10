@@ -10,7 +10,13 @@ import { Inventory } from "@patchy/company-database";
 import { PgliteCompanyDatabases } from "@patchy/company-database/dev";
 import * as Testing from "@patchy/company-database/testing";
 import * as Tables from "./Tables.js";
-import { boundsContract, operationsContract, setup } from "./test/operationsContract.js";
+import {
+  boundsContract,
+  expandedResultsContract,
+  indexKeyContract,
+  operationsContract,
+  setup
+} from "./test/operationsContract.js";
 
 const decodePage = Schema.decodeUnknownEffect(TablePage);
 const postgres = Tables.layer.pipe(Layer.provideMerge(Testing.layer()));
@@ -23,6 +29,16 @@ it.layer(postgres)("TableOperations / Postgres", (it) => {
   it.effect(
     "enforces configurable item, row, batch, page and response bounds",
     () => boundsContract("cmp_dev"),
+    60_000
+  );
+  it.effect(
+    "bounds multirow reads and rolls back batches expanded by database defaults",
+    () => expandedResultsContract("cmp_dev"),
+    60_000
+  );
+  it.effect(
+    "reports oversized explicit and implicit index keys without restricting unindexed values",
+    () => indexKeyContract("cmp_dev"),
     60_000
   );
   it.effect(
@@ -79,6 +95,8 @@ it.layer(NodeFileSystem.layer)("TableOperations / PGlite", (it) => {
         yield* Effect.gen(function* () {
           yield* operationsContract("local-company");
           yield* boundsContract("local-company");
+          yield* expandedResultsContract("local-company");
+          yield* indexKeyContract("local-company");
         }).pipe(Effect.provide(local));
       }).pipe(Effect.scoped),
     60_000

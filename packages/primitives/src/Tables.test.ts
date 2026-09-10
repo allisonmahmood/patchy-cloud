@@ -11,8 +11,10 @@ import {
   additions,
   columnLimit,
   emptyAndRollback,
+  indexKeyLimit,
   omissions,
-  refusals
+  refusals,
+  rowExpansionLimit
 } from "./test/provisioningContract.js";
 
 const postgres = Tables.layer.pipe(Layer.provideMerge(CompanyTesting.layer()));
@@ -59,6 +61,16 @@ for (const [name, layer] of [
     it.effect(
       "counts omitted columns toward the cumulative Postgres column limit",
       () => columnLimit("cmp_dev"),
+      30_000
+    );
+    it.effect(
+      "preflights uncompressed index keys and protects old writers with physical checks",
+      () => indexKeyLimit("cmp_dev"),
+      30_000
+    );
+    it.effect(
+      "refuses default expansion beyond the cumulative row limit before any DDL",
+      () => rowExpansionLimit("cmp_dev"),
       30_000
     );
   });

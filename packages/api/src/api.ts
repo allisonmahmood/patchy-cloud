@@ -162,6 +162,8 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "version from `GET /api/release`. Tier 0 may define tables, provisioned additively; " +
           "higher tiers answer `tier_mismatch`, files and uses `invalid_manifest`. " +
           "Schema changes are checked before bytes and rechecked under the patch lock. " +
+          "Preflight also refuses new indexes with existing keys over the 2,000-byte uncompressed " +
+          "key-tuple ceiling, and added columns that expand existing rows over the row limit. " +
           "`not_additive` names every refused object, change and fix. Omitted tables remain in " +
           "the cumulative inventory and appear as `unused`; a required column cannot be omitted. " +
           "The schema revision advances only when provisioning changes something, never for a new bundle alone. " +
@@ -315,7 +317,11 @@ export class RuntimeGroup extends HttpApiGroup.make("runtime", { topLevel: true 
           "`asc` or `desc` with an id tie-breaker. Keyset cursors are bound to table, index, " +
           "filters and order. The page defaults to 100 rows and is capped at 1,000; `getMany` and " +
           "`insertMany` are capped at 1,000 items and 8 MiB, individual rows at 1 MiB. List and " +
-          "getMany results are capped at 8 MiB. Request bodies allow 1 MiB plus envelope for " +
+          "getMany results are capped at 8 MiB, checking database JSON transport before decoding " +
+          "and final wire bytes afterward. Transport whitespace can make its check stricter. " +
+          "Declared and implicit ref index keys are capped at 2,000 uncompressed bytes including " +
+          "tuple overhead; overflow is `too_large`. Unindexed values retain the full row allowance. " +
+          "Request bodies allow 1 MiB plus envelope for " +
           "insert/update and 8 MiB plus envelope for insertMany; all other calls are capped at " +
           "64 KiB. Overflow is `too_large` (413). Undeclared tables answer `table_not_declared`; " +
           "invalid fields/defaults answer `invalid_row`, uniqueness conflicts `unique_violation`, " +

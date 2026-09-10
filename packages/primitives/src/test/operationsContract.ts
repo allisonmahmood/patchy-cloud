@@ -1,9 +1,10 @@
+import { createHash } from "node:crypto";
 import { assert } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { CURRENT_RELEASE, Manifest, TablePage, TableRow, WIRE_VERSION } from "@patchy/api";
-import { CompanyDatabases } from "@patchy/company-database";
+import { CompanyDatabases, Inventory } from "@patchy/company-database";
 import { Binding } from "@patchy/runtime";
 import * as Tables from "../Tables.js";
 import * as TableOperations from "../TableOperations.js";
@@ -40,20 +41,21 @@ export const manifest: typeof Manifest.Type = {
 };
 export const setup = Effect.fn("test.tableOperations.setup")(function* (
   companyId: string,
-  patchId: string
+  patchId: string,
+  definition: typeof Manifest.Type = manifest
 ) {
   const databases = yield* CompanyDatabases.CompanyDatabases;
   const tables = yield* Tables.Tables;
   yield* databases.ensureReady(companyId);
   yield* databases.withCompany(companyId)(
-    databases.withPatchLock(patchId)(tables.provision(patchId, manifest))
+    databases.withPatchLock(patchId)(tables.provision(patchId, definition))
   );
   const handlers = yield* TableOperations.make;
   const binding = Binding.Binding.of({
     companyId,
     patchId,
     versionId: "ver_aaaaaaaaaaaaaaaaaaaaaaaa",
-    manifest,
+    manifest: definition,
     wireVersion: WIRE_VERSION,
     scope: "company",
     identity: null,
@@ -410,5 +412,144 @@ export const boundsContract = Effect.fn("test.boundsContract")(function* (compan
       Effect.flatMap(decodePage)
     )).rows,
     []
+  );
+});
+
+export const expandedResultsContract = Effect.fn("test.expandedResultsContract")(function* (
+  companyId: string
+) {
+  const definition: typeof Manifest.Type = {
+    ...manifest,
+    tables: {
+      notes: {
+        ...manifest.tables.notes!,
+        columns: {
+          ...manifest.tables.notes!.columns,
+          body: { kind: "text", default: "d".repeat(800) }
+        }
+      }
+    }
+  };
+  const { binding } = yield* setup(companyId, "expanded0001", definition);
+  const handlers = yield* TableOperations.make.pipe(
+    Effect.provide(
+      ConfigProvider.layer(
+        ConfigProvider.fromUnknown({
+          PATCHY_RUNTIME_ROW_BYTES: "2048",
+          PATCHY_RUNTIME_BATCH_BYTES: "1024",
+          PATCHY_RUNTIME_RESULT_BYTES: "1800"
+        })
+      )
+    )
+  );
+  const call = (op: keyof typeof handlers, args: unknown) =>
+    handlers[op].run(args).pipe(Effect.provideService(Binding.Binding, binding));
+  const rows = yield* Effect.forEach(["one", "two"], (slug) =>
+    call("tables.insert", {
+      table: "notes",
+      row: { title: slug, slug, at: "2026-09-10T12:00:00.123456Z" }
+    }).pipe(Effect.flatMap(decodeRow))
+  );
+  for (const [op, args] of [
+    ["tables.list", { table: "notes", index: "bySlug", limit: 2 }],
+    ["tables.getMany", { table: "notes", ids: rows.map((row) => row.id) }],
+    ["tables.getMany", { table: "notes", ids: [rows[0]!.id, rows[0]!.id] }]
+  ] as const)
+    assert.strictEqual((yield* call(op, args).pipe(Effect.flip)).code, "too_large");
+
+  // The lookahead row does not consume the page budget or lose timestamp precision.
+  const first = yield* call("tables.list", { table: "notes", index: "bySlug", limit: 1 }).pipe(
+    Effect.flatMap(decodePage)
+  );
+  assert.deepStrictEqual(first.rows, [rows[0]]);
+  assert.isString(first.cursor);
+  const second = yield* call("tables.list", {
+    table: "notes",
+    index: "bySlug",
+    limit: 1,
+    cursor: first.cursor
+  }).pipe(Effect.flatMap(decodePage));
+  assert.deepStrictEqual(second.rows, [rows[1]]);
+  assert.isNull(second.cursor);
+  assert.strictEqual(first.rows[0]!.at, "2026-09-10T12:00:00.123456Z");
+
+  // The inputs fit the batch budget and each stored row fits the row budget,
+  // but database defaults expand their combined result beyond the response budget.
+  assert.strictEqual(
+    (yield* call("tables.insertMany", {
+      table: "notes",
+      rows: [
+        { title: "three", slug: "three" },
+        { title: "four", slug: "four" }
+      ]
+    }).pipe(Effect.flip)).code,
+    "too_large"
+  );
+  for (const slug of ["three", "four"])
+    assert.deepStrictEqual(
+      (yield* call("tables.list", { table: "notes", index: "bySlug", eq: { slug } }).pipe(
+        Effect.flatMap(decodePage)
+      )).rows,
+      []
+    );
+});
+
+export const indexKeyContract = Effect.fn("test.indexKeyContract")(function* (companyId: string) {
+  const { call, databases, binding } = yield* setup(companyId, "indexkeys001");
+  const large = "x".repeat(Tables.INDEX_KEY_MAX_BYTES);
+  for (const row of [
+    { title: "explicit", slug: large },
+    { title: "implicit", slug: "implicit", noteId: large }
+  ]) {
+    const failure = yield* call("tables.insert", { table: "notes", row }).pipe(Effect.flip);
+    assert.strictEqual(failure.code, "too_large");
+    assert.instanceOf(failure, TableOperations.IndexKeyTooLarge);
+    if (failure instanceof TableOperations.IndexKeyTooLarge) {
+      assert.strictEqual(failure.table, "notes");
+      assert.strictEqual(failure.maxBytes, Tables.INDEX_KEY_MAX_BYTES);
+    }
+  }
+  const row = yield* call("tables.insert", {
+    table: "notes",
+    row: { title: "unindexed", slug: "unindexed", body: large }
+  }).pipe(Effect.flatMap(decodeRow));
+  assert.strictEqual(row.body, large);
+  assert.strictEqual(
+    (yield* call("tables.update", {
+      table: "notes",
+      id: row.id,
+      patch: { slug: large }
+    }).pipe(Effect.flip)).code,
+    "too_large"
+  );
+  assert.deepStrictEqual(yield* call("tables.get", { table: "notes", id: row.id }), row);
+  const qualified = `${Inventory.quoteIdentifier(Inventory.namespace(binding.patchId))}."notes"`;
+  yield* databases.withCompany(companyId)(
+    Effect.gen(function* () {
+      const sql = yield* CompanyDatabases.CompanyConnection;
+      yield* sql.unsafe(`CREATE INDEX "native_index_limit" ON ${qualified} ("body")`);
+      yield* sql.unsafe(
+        `ALTER TABLE ${qualified} ADD CONSTRAINT "business_check" CHECK ("title" <> 'refused')`
+      );
+    })
+  );
+  const nativeFailure = yield* call("tables.insert", {
+    table: "notes",
+    row: {
+      title: "native",
+      slug: "native",
+      body: Array.from({ length: 128 }, (_, index) =>
+        createHash("sha256").update(String(index)).digest("hex")
+      ).join("")
+    }
+  }).pipe(Effect.flip);
+  assert.instanceOf(nativeFailure, TableOperations.IndexKeyTooLarge);
+  assert.strictEqual(nativeFailure.code, "too_large");
+  assert.strictEqual(
+    (yield* call("tables.insert", {
+      table: "notes",
+      row: { title: "refused", slug: "refused" }
+    }).pipe(Effect.flip)).code,
+    "invalid_row"
   );
 });

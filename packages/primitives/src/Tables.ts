@@ -1,11 +1,14 @@
+import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { ColumnDefinition, Manifest, ProvisioningReport, TableDefinition } from "@patchy/api";
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
+import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
 
 export class NotAdditive extends Schema.TaggedError<NotAdditive>()("NotAdditive", {
@@ -33,6 +36,8 @@ export interface Plan extends Provisioned {
   readonly sharing: readonly string[];
 }
 
+export const INDEX_KEY_MAX_BYTES = 2000;
+
 export class Tables extends Context.Service<
   Tables,
   {
@@ -40,6 +45,11 @@ export class Tables extends Context.Service<
       manifest: typeof Manifest.Type,
       snapshot: Inventory.Snapshot | null
     ) => Effect.Effect<Plan, NotAdditive>;
+    readonly validate: (
+      patchId: string,
+      manifest: typeof Manifest.Type,
+      snapshot: Inventory.Snapshot | null
+    ) => Effect.Effect<void, NotAdditive | SqlError, SqlClient.SqlClient>;
     readonly provision: (
       patchId: string,
       manifest: typeof Manifest.Type
@@ -75,15 +85,17 @@ const sqlTypes = {
   timestamp: "timestamptz",
   json: "jsonb"
 } as const;
-const columnSql = (name: string, column: typeof ColumnDefinition.Type): string => {
+const defaultExpression = (column: typeof ColumnDefinition.Type): string => {
   const kind = defaultKind(column);
   const value = column.default;
-  const defaultSql =
-    kind === null
-      ? ""
-      : kind === "now"
-        ? " DEFAULT statement_timestamp()"
-        : ` DEFAULT ${column.kind === "json" ? `${literal(JSON.stringify(value))}::jsonb` : typeof value === "string" ? literal(value) : String(value)}`;
+  return kind === null
+    ? `NULL::${sqlTypes[column.kind]}`
+    : kind === "now"
+      ? "statement_timestamp()"
+      : `${column.kind === "json" ? literal(JSON.stringify(value)) : typeof value === "string" ? literal(value) : String(value)}::${sqlTypes[column.kind]}`;
+};
+const columnSql = (name: string, column: typeof ColumnDefinition.Type): string => {
+  const defaultSql = defaultKind(column) === null ? "" : ` DEFAULT ${defaultExpression(column)}`;
   return `${quote(name)} ${sqlTypes[column.kind]}${column.optional === true ? "" : " NOT NULL"}${defaultSql}`;
 };
 
@@ -93,6 +105,126 @@ const indexName = (table: string, kind: string, name: string): string =>
     .update(JSON.stringify([table, kind, name]))
     .digest("hex")
     .slice(0, 48)}`;
+
+const indexConstraintName = (table: string, kind: string, name: string): string =>
+  `patchy_index_size_${createHash("sha256")
+    .update(JSON.stringify([table, kind, name]))
+    .digest("hex")
+    .slice(0, 40)}`;
+
+interface IndexBudget {
+  readonly table: string;
+  readonly name: string;
+  readonly kind: "ref" | "declared";
+  readonly size: string;
+  readonly projectedSize: string;
+}
+
+const indexBudgets = (
+  manifest: typeof Manifest.Type,
+  snapshot: Inventory.Snapshot | null,
+  plan: Plan
+): readonly IndexBudget[] => {
+  const kinds = new Map(
+    snapshot?.columns.map((column) => [`${column.table}.${column.name}`, column.kind])
+  );
+  const newValues = new Map<string, string>();
+  for (const { table, name } of plan.newColumns) {
+    const column = manifest.tables[table]!.columns[name]!;
+    kinds.set(`${table}.${name}`, column.kind);
+    newValues.set(`${table}.${name}`, defaultExpression(column));
+  }
+  const size = (table: string, columns: readonly string[], projected: boolean) =>
+    `pg_column_size(ROW(${columns
+      .map((name) => {
+        const key = `${table}.${name}`;
+        const value = projected ? (newValues.get(key) ?? quote(name)) : quote(name);
+        const kind = name === "id" ? "text" : kinds.get(key);
+        // Rebuild varlena keys so TOAST compression/pointers cannot hide index bytes.
+        return kind === "text" || kind === "ref"
+          ? `(${value} || '')`
+          : kind === "json"
+            ? `(${value})::text::jsonb`
+            : value;
+      })
+      .join(", ")}))`;
+  const indexes: IndexBudget[] = [];
+  for (const { table, name } of plan.newColumns) {
+    if (manifest.tables[table]!.columns[name]!.kind !== "ref") continue;
+    indexes.push({
+      table,
+      name,
+      kind: "ref",
+      size: size(table, [name, "id"], false),
+      projectedSize: size(table, [name, "id"], true)
+    });
+  }
+  for (const { table, name } of plan.newIndexes) {
+    const columns = manifest.tables[table]!.indexes[name]!.columns;
+    indexes.push({
+      table,
+      name,
+      kind: "declared",
+      size: size(table, columns, false),
+      projectedSize: size(table, columns, true)
+    });
+  }
+  return indexes;
+};
+
+const validateData = Effect.fn("Tables.validateData")(function* (
+  patchId: string,
+  manifest: typeof Manifest.Type,
+  snapshot: Inventory.Snapshot | null,
+  plan: Plan,
+  indexes: readonly IndexBudget[],
+  rowBytes: number
+) {
+  const sql = yield* SqlClient.SqlClient;
+  const namespace = quote(Inventory.namespace(patchId));
+  const existingTables = new Set(snapshot?.tables.map((table) => table.name));
+  const changes: Array<{ object: string; change: string; fix: string }> = [];
+  for (const index of indexes) {
+    if (!existingTables.has(index.table)) continue;
+    const oversized = yield* sql.unsafe(
+      `SELECT 1 FROM ${namespace}.${quote(index.table)} WHERE ${index.projectedSize} > ${INDEX_KEY_MAX_BYTES} LIMIT 1`
+    );
+    if (oversized.length > 0)
+      changes.push({
+        object: `${index.table}.${index.name}`,
+        change: `existing rows exceed the ${INDEX_KEY_MAX_BYTES}-byte index key limit`,
+        fix: "shorten the indexed values or omit the index"
+      });
+  }
+  const additions = new Map<string, string[]>();
+  for (const { table, name } of plan.newColumns) {
+    if (!existingTables.has(table)) continue;
+    const columns = additions.get(table) ?? [];
+    columns.push(`${defaultExpression(manifest.tables[table]!.columns[name]!)} AS ${quote(name)}`);
+    additions.set(table, columns);
+  }
+  for (const [table, columns] of additions) {
+    let after: string | undefined;
+    while (true) {
+      // Bound memory while measuring exactly the same JSON representation as runtime writes.
+      const rows = yield* sql.unsafe<{ id: string; row: unknown }>(
+        `SELECT "id", to_jsonb(projected) AS "row" FROM (SELECT stored.*, ${columns.join(", ")} FROM ${namespace}.${quote(table)} AS stored) AS projected ${after === undefined ? "" : 'WHERE "id" > $1'} ORDER BY "id" LIMIT 16`,
+        after === undefined ? [] : [after]
+      );
+      if (rows.some(({ row }) => Buffer.byteLength(JSON.stringify(row), "utf8") > rowBytes)) {
+        changes.push({
+          object: table,
+          change: `adding columns expands existing rows beyond the ${rowBytes}-byte row limit`,
+          fix: "shorten existing values or use smaller defaults and fewer new columns"
+        });
+        break;
+      }
+      if (rows.length < 16) break;
+      after = rows[rows.length - 1]!.id;
+    }
+  }
+  if (changes.length > 0) return yield* new NotAdditive({ changes });
+});
 
 /** Reconstruct the cumulative definition, not the current version's manifest. */
 export const inventoryManifest = (
@@ -310,6 +442,24 @@ const diff = Effect.fn("Tables.diff")(function* (
 
 export const make = Effect.gen(function* () {
   const inventory = yield* Inventory.Inventory;
+  const rowBytes = yield* Config.int("PATCHY_RUNTIME_ROW_BYTES").pipe(
+    Config.withDefault(1024 * 1024)
+  );
+  const validate = Effect.fn("Tables.validate")(function* (
+    patchId: string,
+    manifest: typeof Manifest.Type,
+    snapshot: Inventory.Snapshot | null
+  ) {
+    const plan = yield* diff(manifest, snapshot);
+    yield* validateData(
+      patchId,
+      manifest,
+      snapshot,
+      plan,
+      indexBudgets(manifest, snapshot, plan),
+      rowBytes
+    );
+  });
   const provision = Effect.fn("Tables.provision")(function* (
     patchId: string,
     manifest: typeof Manifest.Type
@@ -324,6 +474,18 @@ export const make = Effect.gen(function* () {
     const sql = lock.sql;
     const namespace = quote(Inventory.namespace(patchId));
     const qualified = (table: string) => `${namespace}.${quote(table)}`;
+    const indexes = indexBudgets(manifest, snapshot, plan);
+    const existingTables = new Set(snapshot?.tables.map((table) => table.name));
+    const affectedTables = new Set([
+      ...indexes.map((index) => index.table),
+      ...plan.newColumns.map((column) => column.table)
+    ]);
+    // Writers must not race the data checks; acquire all locks before checking or issuing DDL.
+    for (const table of [...affectedTables].filter((table) => existingTables.has(table)).sort())
+      yield* sql.unsafe(`LOCK TABLE ${qualified(table)} IN SHARE MODE`);
+    yield* validateData(patchId, manifest, snapshot, plan, indexes, rowBytes).pipe(
+      Effect.provideService(SqlClient.SqlClient, sql)
+    );
     yield* inventory.ensurePatch(patchId);
     if (plan.newTables.length > 0) {
       yield* sql.unsafe(
@@ -351,10 +513,6 @@ export const make = Effect.gen(function* () {
       const column = manifest.tables[table]!.columns[name]!;
       if (!createdTables.has(table))
         yield* sql.unsafe(`ALTER TABLE ${qualified(table)} ADD COLUMN ${columnSql(name, column)}`);
-      if (column.kind === "ref")
-        yield* sql.unsafe(
-          `CREATE INDEX ${quote(indexName(table, "ref", name))} ON ${qualified(table)} (${quote(name)}, "id")`
-        );
       const kind = defaultKind(column);
       yield* inventory.putColumn({
         patchId,
@@ -367,18 +525,23 @@ export const make = Effect.gen(function* () {
         defaultValue: kind === "constant" ? column.default : null
       });
     }
-    for (const { table, name } of plan.newIndexes) {
-      const index = manifest.tables[table]!.indexes[name]!;
+    for (const { table, name, kind, size } of indexes) {
+      const index = kind === "declared" ? manifest.tables[table]!.indexes[name]! : undefined;
+      const columns = index?.columns ?? [name, "id"];
       yield* sql.unsafe(
-        `CREATE ${index.unique === true ? "UNIQUE " : ""}INDEX ${quote(indexName(table, "declared", name))} ON ${qualified(table)} (${index.columns.map(quote).join(", ")})`
+        `ALTER TABLE ${qualified(table)} ADD CONSTRAINT ${quote(indexConstraintName(table, kind, name))} CHECK (${size} <= ${INDEX_KEY_MAX_BYTES})`
       );
-      yield* inventory.putIndex({
-        patchId,
-        table,
-        name,
-        columns: index.columns,
-        unique: index.unique === true
-      });
+      yield* sql.unsafe(
+        `CREATE ${index?.unique === true ? "UNIQUE " : ""}INDEX ${quote(indexName(table, kind, name))} ON ${qualified(table)} (${columns.map(quote).join(", ")})`
+      );
+      if (index)
+        yield* inventory.putIndex({
+          patchId,
+          table,
+          name,
+          columns: index.columns,
+          unique: index.unique === true
+        });
     }
     for (const table of plan.sharing)
       yield* inventory.putTable({
@@ -394,7 +557,7 @@ export const make = Effect.gen(function* () {
       schemaRevision
     };
   });
-  return Tables.of({ diff, provision });
+  return Tables.of({ diff, validate, provision });
 });
 
 export const layer = Layer.effect(Tables, make);

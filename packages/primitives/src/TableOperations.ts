@@ -7,6 +7,7 @@ import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
 import {
+  DefinitionName,
   IsoTimestamp,
   PostgresJson,
   PostgresText,
@@ -14,10 +15,11 @@ import {
   type ColumnDefinition,
   type TableDefinition,
   type TableList,
-  type TableRow
+  TableRow
 } from "@patchy/api";
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
 import { Binding, Runtime } from "@patchy/runtime";
+import * as Tables from "./Tables.js";
 
 export class TableNotDeclared extends Schema.TaggedError<TableNotDeclared>()("TableNotDeclared", {
   table: Schema.String
@@ -81,6 +83,17 @@ export class ItemLimit extends Schema.TaggedError<ItemLimit>()("ItemLimit", {
     return `Table operation exceeds ${this.maxItems} items.`;
   }
 }
+export class IndexKeyTooLarge extends Schema.TaggedError<IndexKeyTooLarge>()("IndexKeyTooLarge", {
+  table: Schema.String,
+  maxBytes: Schema.Int,
+  cause: Schema.Defect()
+}) {
+  readonly code = "too_large" as const;
+  readonly status = 413;
+  override get message() {
+    return `An index key on ${this.table} exceeds ${this.maxBytes} bytes.`;
+  }
+}
 export class Busy extends Schema.TaggedError<Busy>()("TableBusy", {
   limit: Schema.Int,
   cause: Schema.Defect()
@@ -104,7 +117,7 @@ type Row = typeof TableRow.Type;
 type Column = typeof ColumnDefinition.Type;
 type Table = typeof TableDefinition.Type;
 type List = typeof TableList.Type;
-const encoder = new TextEncoder();
+const isDefinitionName = Schema.is(DefinitionName);
 const system = ["id", "createdAt", "updatedAt"];
 const isText = Schema.is(PostgresText);
 const isNumber = Schema.is(Schema.Number.check(Schema.isFinite()));
@@ -117,6 +130,53 @@ const isInteger = Schema.is(
 const isBoolean = Schema.is(Schema.Boolean);
 const isJson = Schema.is(PostgresJson);
 const isTimestamp = Schema.is(IsoTimestamp);
+const decodeRows = Schema.decodeUnknownSync(Schema.Array(TableRow));
+const queryRows = (sql: SqlClient.SqlClient, query: string, values: ReadonlyArray<unknown>) =>
+  sql.unsafe(query, values).pipe(Effect.map(decodeRows));
+const decodeEnvelope = Schema.decodeUnknownSync(
+  Schema.Array(
+    Schema.Struct({
+      rows: Schema.Array(TableRow),
+      hasMore: Schema.Boolean,
+      exceeded: Schema.Boolean
+    })
+  )
+);
+// The database gates the payload, not the driver: PGlite materializes complete query results.
+// __position is assigned using the original SQL ordering, before projecting timestamps to text.
+const boundedRows = Effect.fn("TableOperations.boundedRows")(function* (
+  sql: SqlClient.SqlClient,
+  query: string,
+  values: ReadonlyArray<unknown>,
+  pageSize: number,
+  maxBytes: number
+) {
+  const page = `$${values.length + 1}`;
+  const budget = `$${values.length + 2}`;
+  const envelopes = yield* sql
+    .unsafe(
+      `WITH "__selected" AS MATERIALIZED (${query}),
+      "__encoded" AS MATERIALIZED (
+        SELECT "__position", (to_jsonb("__selected") - '__position')::text AS "__row"
+        FROM "__selected" WHERE "__position" <= ${page}
+      ),
+      "__budget" AS (
+        SELECT COALESCE(sum(octet_length("__row") + 1), 0) + 2 > ${budget} AS exceeded
+        FROM "__encoded"
+      )
+      SELECT COALESCE((
+        SELECT json_agg("__row"::json ORDER BY "__position")
+        FROM "__encoded" WHERE NOT "__budget".exceeded
+      ), '[]'::json) AS rows,
+      EXISTS (SELECT 1 FROM "__selected" WHERE "__position" > ${page}) AS "hasMore",
+      exceeded FROM "__budget"`,
+      [...values, pageSize, maxBytes]
+    )
+    .pipe(Effect.map(decodeEnvelope));
+  const envelope = envelopes[0]!;
+  if (envelope.exceeded) return yield* new Runtime.TooLarge({ maxBytes });
+  return envelope;
+});
 const cursorSchema = Schema.Struct({
   version: Schema.Literal(1),
   binding: Schema.String,
@@ -166,16 +226,28 @@ const dbValue = (column: Column, value: unknown) =>
   column.kind === "json" && value !== null ? encodeJson(value) : value;
 const parameter = (column: Column, index: number) =>
   `$${index}${column.kind === "json" ? "::jsonb" : ""}`;
-const sqlFailure = (table: string, cause: SqlError): Runtime.RuntimeError =>
-  cause.reason._tag === "UniqueViolation"
+const isNativeIndexLimit = Schema.is(Schema.Struct({ code: Schema.Literal("54000") }));
+const isNativeCheck = Schema.is(
+  Schema.Struct({ code: Schema.Literal("23514"), constraint: Schema.optionalKey(Schema.String) })
+);
+const sqlFailure = (table: string, cause: SqlError): Runtime.RuntimeError => {
+  const native = cause.reason.cause;
+  if (
+    isNativeIndexLimit(native) ||
+    (isNativeCheck(native) && native.constraint?.startsWith("patchy_index_size_"))
+  )
+    return new IndexKeyTooLarge({ table, maxBytes: Tables.INDEX_KEY_MAX_BYTES, cause });
+  if (isNativeCheck(native)) return new InvalidRow({ table, problem: "invalid value" });
+  return cause.reason._tag === "UniqueViolation"
     ? new UniqueViolation({ table, cause })
     : new Runtime.SourceUnavailable({ cause });
+};
+const jsonBytes = (value: unknown) => Buffer.byteLength(encodeJson(value), "utf8");
 const byteLimit = Effect.fn("TableOperations.byteLimit")(function* (
   value: unknown,
   maxBytes: number
 ) {
-  if (encoder.encode(encodeJson(value)).byteLength > maxBytes)
-    return yield* new Runtime.TooLarge({ maxBytes });
+  if (jsonBytes(value) > maxBytes) return yield* new Runtime.TooLarge({ maxBytes });
 });
 const validateRow = Effect.fn("TableOperations.validateRow")(function* (
   name: string,
@@ -187,7 +259,7 @@ const validateRow = Effect.fn("TableOperations.validateRow")(function* (
     if (system.includes(key))
       return yield* new InvalidRow({ table: name, column: key, problem: "system column" });
     if (!Object.hasOwn(table.columns, key))
-      return yield* new InvalidRow({ table: name, problem: "unknown column" });
+      return yield* new InvalidRow({ table: name, column: key, problem: "unknown column" });
     if (!validValue(table.columns[key]!, row[key]))
       return yield* new InvalidRow({ table: name, column: key, problem: "invalid value" });
   }
@@ -212,11 +284,7 @@ const newId = Effect.map(Clock.currentTimeMillis, (milliseconds) => {
   return `${time.slice(0, 8)}-${time.slice(8)}-7${random.slice(15, 18)}-${random.slice(19)}`;
 });
 const resource: Runtime.Handler["resource"] = (args) =>
-  typeof args === "object" &&
-  args !== null &&
-  "table" in args &&
-  typeof args.table === "string" &&
-  /^[a-z][a-zA-Z0-9]{0,62}$/.test(args.table)
+  typeof args === "object" && args !== null && "table" in args && isDefinitionName(args.table)
     ? args.table
     : null;
 
@@ -273,7 +341,8 @@ export const make = Effect.gen(function* () {
     ];
     const columns = [Inventory.quoteIdentifier("id"), ...keys.map(Inventory.quoteIdentifier)];
     const params = ["$1", ...keys.map((key, index) => parameter(table.columns[key]!, index + 2))];
-    const rows = yield* sql.unsafe<Row>(
+    const rows = yield* queryRows(
+      sql,
       `INSERT INTO ${qualified} AS stored (${columns.join(", ")}) VALUES (${params.join(", ")}) RETURNING ${projection(table)}, to_jsonb(stored) AS "__storedRow"`,
       values
     );
@@ -290,7 +359,7 @@ export const make = Effect.gen(function* () {
     (args) =>
       withTable(args.table, (sql, table, qualified) =>
         Effect.map(
-          sql.unsafe<Row>(`SELECT ${projection(table)} FROM ${qualified} WHERE "id" = $1`, [
+          queryRows(sql, `SELECT ${projection(table)} FROM ${qualified} WHERE "id" = $1`, [
             args.id
           ]),
           (rows) => rows[0] ?? null
@@ -310,13 +379,23 @@ export const make = Effect.gen(function* () {
             return yield* new ItemLimit({ maxItems: settings.maxItems });
           yield* byteLimit(args.ids, settings.batchBytes);
           if (args.ids.length === 0) return [];
-          const rows = yield* sql.unsafe<Row>(
-            `SELECT ${projection(table)} FROM ${qualified} WHERE "id" IN (${args.ids.map((_, index) => `$${index + 1}`).join(", ")})`,
-            args.ids
+          const { rows } = yield* boundedRows(
+            sql,
+            `SELECT ${projection(table)}, row_number() OVER (ORDER BY "id") AS "__position" FROM ${qualified} WHERE "id" IN (${args.ids.map((_, index) => `$${index + 1}`).join(", ")})`,
+            args.ids,
+            settings.maxItems,
+            settings.resultBytes
           );
-          const byId = new Map(rows.map((row) => [row.id, row]));
-          const result = args.ids.map((id) => byId.get(id) ?? null);
-          yield* byteLimit(result, settings.resultBytes);
+          const byId = new Map(rows.map((row) => [row.id, { row, bytes: jsonBytes(row) }]));
+          const result: Array<Row | null> = [];
+          let bytes = 2;
+          for (const id of args.ids) {
+            const found = byId.get(id);
+            bytes += (result.length === 0 ? 0 : 1) + (found?.bytes ?? 4);
+            if (bytes > settings.resultBytes)
+              return yield* new Runtime.TooLarge({ maxBytes: settings.resultBytes });
+            result.push(found?.row ?? null);
+          }
           return result;
         })
       )
@@ -357,7 +436,18 @@ export const make = Effect.gen(function* () {
             yield* validateRow(args.table, table, row, true);
           }
           return yield* sql.withTransaction(
-            Effect.forEach(args.rows, (row) => insert(sql, table, qualified, row))
+            Effect.gen(function* () {
+              const result: Row[] = [];
+              let bytes = 2;
+              for (const row of args.rows) {
+                const inserted = yield* insert(sql, table, qualified, row);
+                bytes += (result.length === 0 ? 0 : 1) + jsonBytes(inserted);
+                if (bytes > settings.resultBytes)
+                  return yield* new Runtime.TooLarge({ maxBytes: settings.resultBytes });
+                result.push(inserted);
+              }
+              return result;
+            })
           );
         })
       )
@@ -388,7 +478,8 @@ export const make = Effect.gen(function* () {
                   .join(", ");
           return yield* sql.withTransaction(
             Effect.gen(function* () {
-              const rows = yield* sql.unsafe<Row>(
+              const rows = yield* queryRows(
+                sql,
                 `UPDATE ${qualified} AS stored SET ${assignments} WHERE "id" = $${values.length + 1} RETURNING ${projection(table)}, to_jsonb(stored) AS "__storedRow"`,
                 [...values, args.id]
               );
@@ -534,14 +625,21 @@ export const make = Effect.gen(function* () {
             conditions.push(`(${branches.length === 0 ? "FALSE" : branches.join(" OR ")})`);
           }
           values.push(limit + 1);
-          const rows = yield* sql.unsafe<Row>(
-            `SELECT ${projection(table)} FROM ${qualified}${conditions.length === 0 ? "" : ` WHERE ${conditions.join(" AND ")}`} ORDER BY ${columns.map((column) => `${Inventory.quoteIdentifier(column)} ${order.toUpperCase()} NULLS LAST`).join(", ")} LIMIT $${values.length}`,
-            values
+          const ordering = columns
+            .map(
+              (column) => `${Inventory.quoteIdentifier(column)} ${order.toUpperCase()} NULLS LAST`
+            )
+            .join(", ");
+          const { rows: page, hasMore } = yield* boundedRows(
+            sql,
+            `SELECT ${projection(table)}, row_number() OVER (ORDER BY ${ordering}) AS "__position" FROM ${qualified}${conditions.length === 0 ? "" : ` WHERE ${conditions.join(" AND ")}`} ORDER BY ${ordering} LIMIT $${values.length}`,
+            values,
+            limit,
+            settings.resultBytes
           );
-          const page = rows.slice(0, limit);
           const last = page[page.length - 1];
           const cursor =
-            rows.length > limit && last !== undefined
+            hasMore && last !== undefined
               ? Buffer.from(
                   encodeCursor({
                     version: 1,

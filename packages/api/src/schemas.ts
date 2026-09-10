@@ -158,12 +158,19 @@ export const PatchName = Schema.String.check(
 
 const NonEmptyText = Schema.String.check(Schema.isMinLength(1));
 const Revision = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
-const definitionName = /^[a-z][a-zA-Z0-9]{0,62}$/;
+export const DefinitionName = Schema.String.check(
+  Schema.makeFilter(
+    (value) =>
+      /^[a-z][a-zA-Z0-9]{0,62}$/.test(value) ||
+      "Definition names must be camelCase and at most 63 characters."
+  )
+);
+const isDefinitionName = Schema.is(DefinitionName);
 const definitions = <S extends Schema.Top>(value: S) =>
   Schema.Record(Schema.String, value).check(
     Schema.makeFilter(
       (record) =>
-        Object.keys(record).every((name) => definitionName.test(name)) ||
+        Object.keys(record).every(isDefinitionName) ||
         "Definition names must be camelCase and at most 63 characters."
     )
   );

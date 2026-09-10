@@ -26,6 +26,7 @@ import {
   PublishUnavailable,
   PatchQuotaExceeded,
   PatchyApi,
+  PatchInventory,
   PayloadTooLarge,
   rateLimited,
   readBody,
@@ -47,6 +48,13 @@ import * as Patches from "./Patches.js";
 import * as PatchesConfig from "./PatchesConfig.js";
 
 const notFound = () => refuse(NotFound, { ok: false, error: "Patch not found." });
+const databaseUnavailable = () =>
+  refuse(PublishUnavailable, {
+    ok: false,
+    code: "source_unavailable",
+    error: "Company database is unavailable."
+  });
+const encodeInventory = Schema.encodeSync(PatchInventory);
 
 const decodePublish = decodeBody(PublishRequest);
 const decodeKey = decodeBody(
@@ -281,22 +289,8 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
                       error: error.message
                     })
                   ),
-                CompanyDatabaseError: () =>
-                  replayOrRespond(
-                    refuse(PublishUnavailable, {
-                      ok: false,
-                      code: "source_unavailable",
-                      error: "Company database is unavailable."
-                    })
-                  ),
-                CompanyDatabaseNotReady: () =>
-                  replayOrRespond(
-                    refuse(PublishUnavailable, {
-                      ok: false,
-                      code: "source_unavailable",
-                      error: "Company database is not ready."
-                    })
-                  ),
+                CompanyDatabaseError: () => replayOrRespond(databaseUnavailable()),
+                CompanyDatabaseNotReady: () => replayOrRespond(databaseUnavailable()),
                 CompanyIdentityMismatch: Effect.die,
                 SqlError: (error) =>
                   Effect.flatMap(replay(), (stored) =>
@@ -340,28 +334,14 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
                     error: error.message
                   })
                 ),
-              CompanyDatabaseError: () =>
-                Effect.succeed(
-                  refuse(PublishUnavailable, {
-                    ok: false,
-                    code: "source_unavailable",
-                    error: "Company database is unavailable."
-                  })
-                ),
-              CompanyDatabaseNotReady: () =>
-                Effect.succeed(
-                  refuse(PublishUnavailable, {
-                    ok: false,
-                    code: "source_unavailable",
-                    error: "Company database is not ready."
-                  })
-                ),
+              CompanyDatabaseError: () => Effect.succeed(databaseUnavailable()),
+              CompanyDatabaseNotReady: () => Effect.succeed(databaseUnavailable()),
               CompanyIdentityMismatch: Effect.die,
               SqlError: Effect.die
             })
           );
           if (HttpServerResponse.isHttpServerResponse(result)) return result;
-          return HttpServerResponse.jsonUnsafe(result, {
+          return HttpServerResponse.jsonUnsafe(encodeInventory(result), {
             headers: { "cache-control": "private, no-store" }
           });
         })

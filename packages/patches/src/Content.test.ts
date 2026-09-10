@@ -196,6 +196,63 @@ it.layer(
     })
   );
 
+  it.effect("refuses oversized index keys and row expansion before writing content", () =>
+    Effect.gen(function* () {
+      const manifest = {
+        ...Fixtures.manifest,
+        name: "data-preflight",
+        tables: { notes: { columns: { title: { kind: "text" as const } }, indexes: {} } }
+      };
+      const created = yield* publish("<p>initial</p>", null, { manifest });
+      const databases = yield* CompanyDatabases.CompanyDatabases;
+      const qualified = `${Inventory.quoteIdentifier(Inventory.namespace(created.patchId))}."notes"`;
+      yield* databases.withCompany(uploader.company.id)(
+        Effect.flatMap(SqlClient.SqlClient, (sql) =>
+          sql.unsafe(`INSERT INTO ${qualified} ("id", "title")
+            SELECT 'existing', string_agg(md5(value::text), '')
+            FROM generate_series(1, 160) AS value`)
+        )
+      );
+      const before = yield* store.keys;
+      for (const notes of [
+        { ...manifest.tables.notes, indexes: { byTitle: { columns: ["title"] } } },
+        {
+          ...manifest.tables.notes,
+          columns: {
+            ...manifest.tables.notes.columns,
+            expanded: { kind: "text" as const, default: "x".repeat(1024 * 1024) }
+          }
+        }
+      ]) {
+        const refused = yield* publish("<p>refused</p>", created.patchId, {
+          manifest: { ...manifest, tables: { notes } }
+        }).pipe(Effect.flip);
+        assert.instanceOf(refused, Tables.NotAdditive);
+        assert.deepStrictEqual(yield* store.keys, before);
+      }
+      const service = yield* patches;
+      assert.strictEqual(
+        (yield* service.inventory(created.patchId, uploader.user.id)).schemaRevision,
+        1
+      );
+      yield* databases.withCompany(uploader.company.id)(
+        Effect.flatMap(SqlClient.SqlClient, (sql) =>
+          sql.unsafe(`UPDATE ${qualified} SET "title" = 'short'`)
+        )
+      );
+      const indexed = yield* publish("<p>indexed</p>", created.patchId, {
+        manifest: {
+          ...manifest,
+          tables: {
+            notes: { ...manifest.tables.notes, indexes: { byTitle: { columns: ["title"] } } }
+          }
+        }
+      });
+      assert.strictEqual(indexed.versionNumber, 2);
+      assert.deepStrictEqual(indexed.provisioned.indexes, ["notes.byTitle"]);
+    })
+  );
+
   it.effect(
     "recovers company-committed DDL after platform rollback even without version history",
     () =>

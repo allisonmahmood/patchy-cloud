@@ -219,8 +219,14 @@ returns null for each missing id. `list` uses a named index's leading equality
 columns and at most one trailing range, with the row id breaking ties. Its
 keyset cursor survives inserts ahead of it but is not a snapshot. The default
 index orders by creation time and id, newest first. Pages default to 100 rows,
-at most 1,000. Rows are bounded to 1 MB; batches to 1,000 items and 8 MB, and
-list/getMany results to 8 MB.
+at most 1,000. Rows are bounded to 1 MiB; batches to 1,000 items and 8 MiB,
+and list/getMany results to 8 MiB. Reads bound PostgreSQL's JSON transport
+representation before decoding, then check the final wire representation;
+transport whitespace can make that first check more conservative.
+Each declared or implicit ref index has a 2,000-byte uncompressed key-tuple
+ceiling, including tuple overhead. This keeps keys below PostgreSQL's B-tree
+page limit even when compression changes. Oversized indexed writes return
+`too_large`; unindexed values retain the full row allowance.
 
 On insert, omitted optional columns become null and omitted defaulted columns
 take their defaults. Explicit null on a required or defaulted column is refused.
@@ -236,6 +242,11 @@ New constant defaults fill existing rows; `now` fills existing rows at publish
 time and future inserts at their own time. Unique indexes are allowed only
 when their table is created: their null and case behavior is Postgres's.
 Ordinary index creation blocks writers while it runs.
+Preflight also refuses new indexes whose existing keys exceed that ceiling,
+and added columns whose defaults would expand existing rows beyond the row
+limit. These refusals are `not_additive`, before storing bytes. Provisioning
+locks affected tables and repeats those checks before any DDL; physical
+index-key checks also protect writes from older loaded versions.
 
 Retyping, changing optionality, changing or removing defaults, adding a required
 column to an existing table, changing an existing index, and adding uniqueness

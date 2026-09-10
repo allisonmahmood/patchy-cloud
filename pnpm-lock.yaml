@@ -390,9 +390,6 @@ importers:
       '@patchy/company-database':
         specifier: workspace:*
         version: link:../company-database
-      '@patchy/core':
-        specifier: workspace:*
-        version: link:../core
       '@patchy/runtime':
         specifier: workspace:*
         version: link:../runtime
