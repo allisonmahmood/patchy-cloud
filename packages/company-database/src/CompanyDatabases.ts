@@ -78,6 +78,16 @@ export class PatchLock extends Context.Service<
   }
 >()("@patchy/company-database/CompanyDatabases/PatchLock") {}
 
+export class FileLock extends Context.Service<
+  FileLock,
+  {
+    readonly patchId: string;
+    readonly store: string;
+    readonly name: string;
+    readonly sql: SqlClient.SqlClient;
+  }
+>()("@patchy/company-database/CompanyDatabases/FileLock") {}
+
 export class CompanyDatabases extends Context.Service<
   CompanyDatabases,
   {
@@ -97,6 +107,7 @@ export class CompanyDatabases extends Context.Service<
       Exclude<R, CompanyConnection | SqlClient.SqlClient>
     >;
     readonly withPatchLock: typeof withPatchLock;
+    readonly withFileLock: typeof withFileLock;
     readonly listReady: Effect.Effect<
       ReadonlyArray<Placement>,
       CompanyDatabaseError | CompanyIdentityMismatch
@@ -107,9 +118,9 @@ export class CompanyDatabases extends Context.Service<
 const encoder = new TextEncoder();
 
 /** Stable signed 64-bit FNV-1a, independent of process seeds and database collation. */
-const patchLockKey = (patchId: string): string => {
+const advisoryLockKey = (key: string): string => {
   let hash = 0xcbf29ce484222325n;
-  for (const byte of encoder.encode(patchId)) {
+  for (const byte of encoder.encode(key)) {
     hash = BigInt.asUintN(64, (hash ^ BigInt(byte)) * 0x100000001b3n);
   }
   return BigInt.asIntN(64, hash).toString();
@@ -127,10 +138,33 @@ export const withPatchLock =
   > =>
     Effect.flatMap(CompanyConnection, (sql) =>
       sql.withTransaction(
-        sql`SELECT pg_advisory_xact_lock(${patchLockKey(patchId)}::bigint)`.pipe(
+        sql`SELECT pg_advisory_xact_lock(${advisoryLockKey(patchId)}::bigint)`.pipe(
           Effect.andThen(effect),
           Effect.provideContext(
             Context.make(PatchLock, { patchId, sql }).pipe(Context.add(SqlClient.SqlClient, sql))
+          )
+        )
+      )
+    );
+
+/** Serialize one file-index entry; blob I/O and platform state stay outside this transaction. */
+export const withFileLock =
+  (patchId: string, store: string, name: string) =>
+  <A, E, R>(
+    effect: Effect.Effect<A, E, R>
+  ): Effect.Effect<
+    A,
+    E | SqlError,
+    Exclude<R, FileLock | SqlClient.SqlClient> | CompanyConnection
+  > =>
+    Effect.flatMap(CompanyConnection, (sql) =>
+      sql.withTransaction(
+        sql`SELECT pg_advisory_xact_lock(${advisoryLockKey(JSON.stringify(["file", patchId, store, name]))}::bigint)`.pipe(
+          Effect.andThen(effect),
+          Effect.provideContext(
+            Context.make(FileLock, { patchId, store, name, sql }).pipe(
+              Context.add(SqlClient.SqlClient, sql)
+            )
           )
         )
       )

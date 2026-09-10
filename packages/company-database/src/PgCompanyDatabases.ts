@@ -373,6 +373,7 @@ export const make = Effect.gen(function* () {
     ensureReady,
     withCompany,
     withPatchLock: CompanyDatabases.withPatchLock,
+    withFileLock: CompanyDatabases.withFileLock,
     listReady: readyPlacements(undefined).pipe(
       Effect.catchTags(dieOnSchemaError),
       Effect.mapError(

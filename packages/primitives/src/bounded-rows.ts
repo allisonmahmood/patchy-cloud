@@ -1,13 +1,12 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/unstable/sql/SqlClient";
-import { TableRow } from "@patchy/api";
 import { Runtime } from "@patchy/runtime";
 
 const decodeEnvelope = Schema.decodeUnknownSync(
   Schema.Array(
     Schema.Struct({
-      rows: Schema.Array(TableRow),
+      rows: Schema.Array(Schema.Record(Schema.String, Schema.Json)),
       hasMore: Schema.Boolean,
       exceeded: Schema.Boolean
     })

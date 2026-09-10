@@ -4,6 +4,7 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServer from "effect/unstable/http/HttpServer";
 import * as HttpBody from "effect/unstable/http/HttpBody";
@@ -14,8 +15,9 @@ import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { RuntimeGroup, RuntimeFileParams, WIRE_VERSION } from "@patchy/api";
 import { Session } from "@patchy/auth";
-import { clerkEnv, PUBLIC_BASE_URL, signedInCookies } from "@patchy/auth/testing";
+import { clerkEnv, PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
 import { Companies, Users } from "@patchy/companies";
+import { ContentStore } from "@patchy/content-store";
 import { Limits } from "@patchy/limits";
 import { LoadedVersions, Runtime, RuntimeApi, RuntimeLog, me } from "@patchy/runtime";
 import * as Files from "./Files.js";
@@ -114,6 +116,32 @@ it.layer(socket)("Files HTTP / real operations", (it) => {
         assert.strictEqual(read.headers["cache-control"], "no-store");
         assert.strictEqual(read.headers["x-content-type-options"], "nosniff");
         assert.strictEqual(read.headers["content-disposition"], "attachment");
+        const companies = yield* Companies.Companies;
+        const { user: outsider } = yield* companies.create({
+          name: "Files outsider",
+          handle: "files-outsider",
+          clerkUserId: "user_files_outsider",
+          email: "files-outsider@example.com",
+          userName: "Files outsider"
+        });
+        for (const [claims, principal] of [
+          [{ sub: outsider.clerkUserId, email: outsider.email }, { userId: outsider.id }],
+          [{ sub: "user_files_unenrolled", email: "files-unenrolled@example.com" }, null]
+        ] as const) {
+          const response = yield* client.get(fileUrl(params), {
+            headers: {
+              ...headers(),
+              cookie: signedInCookies(signSession(claims)),
+              "x-patchy-principal": JSON.stringify(principal),
+              "sec-fetch-site": "same-origin"
+            }
+          });
+          assert.strictEqual(response.status, 403);
+          const body = yield* response.json;
+          assert.include(body, { ok: false, code: "access_denied" });
+          assert.notProperty(body, "correlationId");
+          assert.strictEqual(response.headers["cache-control"], "no-store");
+        }
         for (const [version, requestHeaders, code] of [
           [
             versionId,
@@ -182,6 +210,93 @@ it.layer(socket)("Files HTTP / real operations", (it) => {
           assert.strictEqual(response.status, 400);
           assert.include(yield* response.json, { code: "invalid_request" });
         }
+      }),
+    60_000
+  );
+});
+
+it.layer(socket)("Files HTTP / deletion", (it) => {
+  it.effect(
+    "deletes through api.call idempotently, logs each success, and retains the stored bytes",
+    () =>
+      Effect.gen(function* () {
+        const { put } = yield* setup(patchId);
+        const name = "folder/remove.bin";
+        const bytes = new Uint8Array([0, 255, 128, 9]);
+        yield* put(name, bytes);
+        const client = yield* HttpClient.HttpClient;
+        const api = yield* HttpApiClient.makeWith(apiDefinition, { httpClient: client });
+        const content = yield* ContentStore.ContentStore;
+        const objects = yield* content.list(`files/${patchId}/docs/`).pipe(Stream.runCollect);
+        assert.lengthOf(objects, 1);
+        const params = { patchId, versionId, store: "docs", name };
+        const requestHeaders = { ...headers(), origin: PUBLIC_BASE_URL };
+        const payload = {
+          patchId,
+          versionId,
+          wire: WIRE_VERSION,
+          principal: { userId: "usr_dev" }
+        };
+        const before = yield* client.get(fileUrl(params), {
+          headers: { ...headers(), "sec-fetch-site": "same-origin" }
+        });
+        assert.strictEqual(before.status, 200);
+        assert.deepStrictEqual(new Uint8Array(yield* before.arrayBuffer), bytes);
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const deleted = yield* api.call({
+            payload: { ...payload, op: "files.delete", args: { store: "docs", name } },
+            headers: requestHeaders,
+            responseMode: "response-only"
+          });
+          assert.strictEqual(deleted.status, 200);
+          assert.deepStrictEqual(yield* deleted.json, { ok: true, value: null });
+          assert.strictEqual(deleted.headers["cache-control"], "no-store");
+          const missing = yield* client.get(fileUrl(params), {
+            headers: { ...headers(), "sec-fetch-site": "same-origin" }
+          });
+          assert.strictEqual(missing.status, 400);
+          const body = yield* missing.json;
+          assert.include(body, { ok: false, code: "invalid_request" });
+          assert.notProperty(body, "correlationId");
+          assert.strictEqual(missing.headers["cache-control"], "no-store");
+          assert.deepStrictEqual(yield* content.getBytes(objects[0]!.key), bytes);
+        }
+        const listed = yield* api.call({
+          payload: { ...payload, op: "files.list", args: { store: "docs" } },
+          headers: requestHeaders,
+          responseMode: "response-only"
+        });
+        assert.strictEqual(listed.status, 200);
+        assert.deepStrictEqual(yield* listed.json, {
+          ok: true,
+          value: { files: [], cursor: null }
+        });
+        assert.strictEqual(listed.headers["cache-control"], "no-store");
+        const sql = yield* SqlClient.SqlClient;
+        const calls = yield* sql`
+          SELECT op, resource, outcome, user_id AS "userId", correlation_id AS "correlationId"
+          FROM runtime_calls`;
+        assert.deepStrictEqual(
+          calls.map(({ correlationId, ...call }) => {
+            assert.isString(correlationId);
+            return call;
+          }),
+          [
+            {
+              op: "files.delete",
+              resource: "docs/folder/remove.bin",
+              outcome: "success",
+              userId: "usr_dev"
+            },
+            {
+              op: "files.delete",
+              resource: "docs/folder/remove.bin",
+              outcome: "success",
+              userId: "usr_dev"
+            }
+          ]
+        );
+        assert.notStrictEqual(calls[0]!.correlationId, calls[1]!.correlationId);
       }),
     60_000
   );

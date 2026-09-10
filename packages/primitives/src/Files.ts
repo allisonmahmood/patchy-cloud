@@ -105,57 +105,55 @@ const encodePage = Schema.encodeSync(
 export const make = Effect.gen(function* () {
   const databases = yield* CompanyDatabases.CompanyDatabases;
   const content = yield* ContentStore.ContentStore;
-  const platform = yield* SqlClient.SqlClient;
   const settings = yield* config;
-  const lockPlatformPatch = SqlSchema.findOneOption({
-    Request: Schema.Struct({ patchId: Schema.String, companyId: Schema.String }),
-    Result: Schema.Struct({ id: Schema.String }),
-    execute: ({ patchId, companyId }) => platform`
-      SELECT id FROM patches WHERE id = ${patchId} AND company_id = ${companyId}
-      AND deleted_at IS NULL AND disabled_at IS NULL FOR UPDATE`
-  });
+  const withCompany = <A, R>(
+    companyId: string,
+    effect: Effect.Effect<A, Runtime.RuntimeError | SqlError, R>
+  ) =>
+    databases
+      .withCompany(companyId)(effect)
+      .pipe(
+        Effect.catchTags({
+          SqlError: (cause) => Effect.fail(new Runtime.SourceUnavailable({ cause })),
+          Busy: (cause) => Effect.fail(new Busy({ limit: cause.limit, cause })),
+          CompanyDatabaseError: (cause) => Effect.fail(new Runtime.SourceUnavailable({ cause })),
+          CompanyDatabaseNotReady: (cause) => Effect.fail(new Runtime.SourceUnavailable({ cause })),
+          CompanyIdentityMismatch: (cause) => Effect.fail(new Runtime.SourceUnavailable({ cause }))
+        })
+      );
   const withStore = <A>(
     store: string,
-    run: (
-      sql: SqlClient.SqlClient,
-      patchId: string
-    ) => Effect.Effect<A, Runtime.RuntimeError | SqlError, SqlClient.SqlClient>
+    run: (binding: Binding.Binding["Service"]) => Effect.Effect<A, Runtime.RuntimeError>
   ) =>
     Effect.gen(function* () {
       const binding = yield* Binding.Binding;
       if (!Object.hasOwn(binding.manifest.files, store))
         return yield* new Runtime.InvalidRequest({});
-      // Hold the platform row before the company patch lock, exactly as publish and sweep do.
-      // Keeping reads inside both locks also prevents sweeping a pointer's object during its read.
-      return yield* platform
-        .withTransaction(
-          Effect.gen(function* () {
-            const patch = yield* lockPlatformPatch(binding).pipe(
-              Effect.catchTags({ SchemaError: Effect.die })
-            );
-            if (Option.isNone(patch)) return yield* new Runtime.AccessDenied({});
-            return yield* databases.withCompany(binding.companyId)(
-              databases.withPatchLock(binding.patchId)(
-                Effect.gen(function* () {
-                  const { sql } = yield* CompanyDatabases.PatchLock;
-                  return yield* run(sql, binding.patchId);
-                })
-              )
-            );
-          })
-        )
-        .pipe(
-          Effect.catchTags({
-            SqlError: (cause) => Effect.fail(new Runtime.SourceUnavailable({ cause })),
-            Busy: (cause) => Effect.fail(new Busy({ limit: cause.limit, cause })),
-            CompanyDatabaseError: (cause) => Effect.fail(new Runtime.SourceUnavailable({ cause })),
-            CompanyDatabaseNotReady: (cause) =>
-              Effect.fail(new Runtime.SourceUnavailable({ cause })),
-            CompanyIdentityMismatch: (cause) =>
-              Effect.fail(new Runtime.SourceUnavailable({ cause }))
-          })
-        );
+      return yield* run(binding);
     });
+  const withIndex = <A>(
+    binding: Binding.Binding["Service"],
+    store: string,
+    name: string,
+    run: (
+      sql: SqlClient.SqlClient
+    ) => Effect.Effect<A, Runtime.RuntimeError | SqlError, SqlClient.SqlClient>
+  ) =>
+    withCompany(
+      binding.companyId,
+      databases.withFileLock(
+        binding.patchId,
+        store,
+        name
+      )(
+        Effect.gen(function* () {
+          const lock = yield* CompanyDatabases.FileLock;
+          if (lock.patchId !== binding.patchId || lock.store !== store || lock.name !== name)
+            return yield* Effect.die(new Error("File index access requires a matching file lock"));
+          return yield* run(lock.sql);
+        })
+      )
+    );
   const put = {
     kind: "mutation",
     transport: "bytes-put",
@@ -167,20 +165,21 @@ export const make = Effect.gen(function* () {
         );
         if (bytes.byteLength > settings.fileBytes)
           return yield* new Runtime.TooLarge({ maxBytes: settings.fileBytes });
-        return yield* withStore(args.store, (sql, patchId) =>
+        return yield* withStore(args.store, (binding) =>
           Effect.gen(function* () {
             const objectId = newInternalId("obj");
             const sha256 = createHash("sha256").update(bytes).digest("hex");
-            // A failed write leaves the old pointer untouched; only fresh object ids are ever written.
+            // Unique immutable objects need no lease or lock; only the later pointer change does.
             yield* content
-              .putBytes(objectKey(patchId, args.store, objectId), bytes)
+              .putBytes(objectKey(binding.patchId, args.store, objectId), bytes)
               .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
-            yield* sql`INSERT INTO patchy.files (patch_id, store, name, object_id, size, content_type, sha256)
-          VALUES (${patchId}, ${args.store}, ${args.name}, ${objectId}, ${bytes.byteLength}, ${args.contentType}, ${sha256})
-          ON CONFLICT (patch_id, store, name) DO UPDATE SET
-            object_id = EXCLUDED.object_id, size = EXCLUDED.size, content_type = EXCLUDED.content_type,
-            sha256 = EXCLUDED.sha256, updated_at = clock_timestamp()`;
-            return null;
+            return yield* withIndex(binding, args.store, args.name, (sql) =>
+              sql`INSERT INTO patchy.files (patch_id, store, name, object_id, size, content_type, sha256)
+                VALUES (${binding.patchId}, ${args.store}, ${args.name}, ${objectId}, ${bytes.byteLength}, ${args.contentType}, ${sha256})
+                ON CONFLICT (patch_id, store, name) DO UPDATE SET
+                  object_id = EXCLUDED.object_id, size = EXCLUDED.size, content_type = EXCLUDED.content_type,
+                  sha256 = EXCLUDED.sha256, updated_at = clock_timestamp()`.pipe(Effect.as(null))
+            );
           })
         );
       })
@@ -193,14 +192,16 @@ export const make = Effect.gen(function* () {
         const args = yield* decodeGet(input).pipe(
           Effect.mapError((cause) => new Runtime.InvalidRequest({ cause }))
         );
-        return yield* withStore(args.store, (_sql, patchId) =>
+        return yield* withStore(args.store, (binding) =>
           Effect.gen(function* () {
-            const row = yield* findFile({ patchId, ...args }).pipe(
-              Effect.catchTags({ SchemaError: Effect.die })
+            const row = yield* withIndex(binding, args.store, args.name, () =>
+              findFile({ patchId: binding.patchId, ...args }).pipe(
+                Effect.catchTags({ SchemaError: Effect.die })
+              )
             );
             if (Option.isNone(row)) return yield* new Runtime.InvalidRequest({});
             const bytes = yield* content
-              .getBytes(objectKey(patchId, args.store, row.value.objectId))
+              .getBytes(objectKey(binding.patchId, args.store, row.value.objectId))
               .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
             return { bytes, contentType: row.value.contentType };
           })
@@ -214,30 +215,35 @@ export const make = Effect.gen(function* () {
       output: runtimeOperations["files.list"].response
     },
     (args) =>
-      withStore(args.store, (sql, patchId) =>
-        Effect.gen(function* () {
-          const limit = args.limit ?? settings.defaultPage;
-          if (limit > settings.maxPage) return yield* new PageLimit({ maxItems: settings.maxPage });
-          const prefix = args.prefix ?? "";
-          let after = "";
-          if (args.cursor !== undefined) {
-            if (!/^[A-Za-z0-9_-]+$/.test(args.cursor))
-              return yield* new InvalidCursor({ store: args.store });
-            const cursor = yield* decodeCursor(
-              Buffer.from(args.cursor, "base64url").toString("utf8")
-            ).pipe(Effect.mapError((cause) => new InvalidCursor({ store: args.store, cause })));
-            if (
-              cursor.patchId !== patchId ||
-              cursor.store !== args.store ||
-              cursor.prefix !== prefix ||
-              !cursor.after.startsWith(prefix)
-            )
-              return yield* new InvalidCursor({ store: args.store });
-            after = cursor.after;
-          }
-          const { rows, hasMore } = yield* boundedRows(
-            sql,
-            `SELECT name, size, "contentType", "updatedAt",
+      withStore(args.store, (binding) =>
+        withCompany(
+          binding.companyId,
+          Effect.gen(function* () {
+            const sql = yield* CompanyDatabases.CompanyConnection;
+            const patchId = binding.patchId;
+            const limit = args.limit ?? settings.defaultPage;
+            if (limit > settings.maxPage)
+              return yield* new PageLimit({ maxItems: settings.maxPage });
+            const prefix = args.prefix ?? "";
+            let after = "";
+            if (args.cursor !== undefined) {
+              if (!/^[A-Za-z0-9_-]+$/.test(args.cursor))
+                return yield* new InvalidCursor({ store: args.store });
+              const cursor = yield* decodeCursor(
+                Buffer.from(args.cursor, "base64url").toString("utf8")
+              ).pipe(Effect.mapError((cause) => new InvalidCursor({ store: args.store, cause })));
+              if (
+                cursor.patchId !== patchId ||
+                cursor.store !== args.store ||
+                cursor.prefix !== prefix ||
+                !cursor.after.startsWith(prefix)
+              )
+                return yield* new InvalidCursor({ store: args.store });
+              after = cursor.after;
+            }
+            const { rows, hasMore } = yield* boundedRows(
+              sql,
+              `SELECT name, size, "contentType", "updatedAt",
               row_number() OVER (ORDER BY name COLLATE "C") AS "__position"
             FROM (
               SELECT name, size, content_type AS "contentType",
@@ -246,31 +252,32 @@ export const make = Effect.gen(function* () {
                 AND starts_with(name, $3) AND name COLLATE "C" > $4 COLLATE "C"
               ORDER BY name COLLATE "C" LIMIT $5
             ) AS selected`,
-            [patchId, args.store, prefix, after, limit + 1],
-            limit,
-            settings.resultBytes
-          );
-          const files = decodeFiles(rows);
-          const last = files[files.length - 1];
-          const result = {
-            files,
-            cursor:
-              hasMore && last !== undefined
-                ? Buffer.from(
-                    encodeCursor({
-                      version: 1,
-                      patchId,
-                      store: args.store,
-                      prefix,
-                      after: last.name
-                    })
-                  ).toString("base64url")
-                : null
-          };
-          if (Buffer.byteLength(encodePage(result)) > settings.resultBytes)
-            return yield* new Runtime.TooLarge({ maxBytes: settings.resultBytes });
-          return result;
-        })
+              [patchId, args.store, prefix, after, limit + 1],
+              limit,
+              settings.resultBytes
+            );
+            const files = decodeFiles(rows);
+            const last = files[files.length - 1];
+            const result = {
+              files,
+              cursor:
+                hasMore && last !== undefined
+                  ? Buffer.from(
+                      encodeCursor({
+                        version: 1,
+                        patchId,
+                        store: args.store,
+                        prefix,
+                        after: last.name
+                      })
+                    ).toString("base64url")
+                  : null
+            };
+            if (Buffer.byteLength(encodePage(result)) > settings.resultBytes)
+              return yield* new Runtime.TooLarge({ maxBytes: settings.resultBytes });
+            return result;
+          })
+        )
       )
   );
   const remove = Runtime.handler(
@@ -281,9 +288,11 @@ export const make = Effect.gen(function* () {
       resource
     },
     (args) =>
-      withStore(args.store, (sql, patchId) =>
-        sql`DELETE FROM patchy.files WHERE patch_id = ${patchId} AND store = ${args.store} AND name = ${args.name}`.pipe(
-          Effect.as(null)
+      withStore(args.store, (binding) =>
+        withIndex(binding, args.store, args.name, (sql) =>
+          sql`DELETE FROM patchy.files WHERE patch_id = ${binding.patchId} AND store = ${args.store} AND name = ${args.name}`.pipe(
+            Effect.as(null)
+          )
         )
       )
   );
