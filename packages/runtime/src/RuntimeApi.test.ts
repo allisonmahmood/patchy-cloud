@@ -55,17 +55,20 @@ it.layer(Fixtures.layer())("runtime HTTP admission", (it) => {
           responseMode: "response-only"
         });
         assert.include(yield* absent.json, { code: "session_expired" });
+        assert.strictEqual(absent.status, 401);
         const expired = yield* api.call({
           payload,
           headers: { ...headers(), cookie: signedInCookies(signSession({ exp: 1 })) },
           responseMode: "response-only"
         });
         assert.include(yield* expired.json, { code: "session_expired" });
+        assert.strictEqual(expired.status, 401);
         const response = yield* api.call({
           payload,
           headers: { ...headers(), cookie: signedInCookies() },
           responseMode: "response-only"
         });
+        assert.strictEqual(response.status, 200);
         assert.deepStrictEqual(yield* response.json, {
           ok: true,
           value: {
@@ -84,12 +87,14 @@ it.layer(Fixtures.layer())("runtime HTTP admission", (it) => {
           responseMode: "response-only"
         });
         assert.include(yield* changed.json, { code: "principal_changed" });
+        assert.strictEqual(changed.status, 409);
         const mismatched = yield* api.call({
           payload,
           headers: { ...headers({ userId: DEV_SEED.userId }), cookie: signedInCookies() },
           responseMode: "response-only"
         });
         assert.include(yield* mismatched.json, { code: "invalid_request" });
+        assert.strictEqual(mismatched.status, 400);
       })
   );
 
@@ -117,6 +122,7 @@ it.layer(Fixtures.layer())("runtime HTTP admission", (it) => {
             responseMode: "response-only"
           });
           assert.include(yield* response.json, { code });
+          assert.strictEqual(response.status, code === "access_denied" ? 403 : 400);
         }
         const wire = yield* api.call({
           payload: { ...payload, wire: 2 },
@@ -124,6 +130,7 @@ it.layer(Fixtures.layer())("runtime HTTP admission", (it) => {
           responseMode: "response-only"
         });
         assert.include(yield* wire.json, { code: "shell_outdated" });
+        assert.strictEqual(wire.status, 409);
       })
   );
 
@@ -151,6 +158,7 @@ it.layer(Fixtures.layer())("runtime HTTP admission", (it) => {
           assert.include(yield* response.json, {
             code: site === "same-origin" ? "not_available_on_public" : "access_denied"
           });
+          assert.strictEqual(response.status, 403);
           assert.strictEqual(response.headers["cache-control"], "no-store");
         }
         const nullPrincipal = yield* api.getFile({
@@ -159,6 +167,7 @@ it.layer(Fixtures.layer())("runtime HTTP admission", (it) => {
           responseMode: "response-only"
         });
         assert.include(yield* nullPrincipal.json, { code: "principal_changed" });
+        assert.strictEqual(nullPrincipal.status, 409);
         const admitted = yield* api.getFile({
           params: { ...params, versionId },
           headers: {
@@ -169,6 +178,7 @@ it.layer(Fixtures.layer())("runtime HTTP admission", (it) => {
           responseMode: "response-only"
         });
         assert.include(yield* admitted.json, { code: "invalid_request" });
+        assert.strictEqual(admitted.status, 400);
       })
   );
 
@@ -189,6 +199,7 @@ it.layer(Fixtures.layer())("runtime HTTP admission", (it) => {
         assert.include(yield* response.json, {
           code: origin === PUBLIC_BASE_URL ? "not_available_on_public" : "access_denied"
         });
+        assert.strictEqual(response.status, 403);
       }
     })
   );
@@ -212,18 +223,21 @@ it.layer(Fixtures.layer())("runtime HTTP admission", (it) => {
           responseMode: "response-only"
         });
         assert.include(yield* missing.json, { code: "access_denied" });
+        assert.strictEqual(missing.status, 403);
         const unregistered = yield* api.call({
           payload,
           headers: { ...headers(), cookie: signedInCookies(signSession({ sub: "unknown-user" })) },
           responseMode: "response-only"
         });
         assert.include(yield* unregistered.json, { code: "access_denied" });
+        assert.strictEqual(unregistered.status, 403);
         const large = yield* api.call({
           payload,
           headers: { ...headers(), "content-length": String(9 * 1024 * 1024) },
           responseMode: "response-only"
         });
         assert.include(yield* large.json, { code: "too_large" });
+        assert.strictEqual(large.status, 413);
       })
   );
 

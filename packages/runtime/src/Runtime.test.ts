@@ -2,6 +2,8 @@ import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { RuntimeFailure, WIRE_VERSION } from "@patchy/api";
@@ -89,7 +91,9 @@ it.effect("a failing handler's HTTP correlation finds the attributed failure row
       responseMode: "response-only"
     });
     const failure = decodeFailure(yield* response.json);
-    assert.strictEqual(failure.code, "invalid_row");
+    assert.strictEqual(failure.code, "too_large");
+    assert.strictEqual(response.status, 413);
+    assert.include(failure.error, "1024");
     assert.isDefined(failure.correlationId);
     const log = yield* RuntimeLog.RuntimeLog;
     const row = yield* log.find({
@@ -105,7 +109,7 @@ it.effect("a failing handler's HTTP correlation finds the attributed failure row
         me,
         "tables.insert": {
           kind: "mutation",
-          run: () => new Runtime.RuntimeError({ code: "invalid_row" })
+          run: () => new Runtime.TooLarge({ maxBytes: 1024 })
         }
       })
     )
@@ -202,4 +206,75 @@ it.effect("public calls refuse unknown operations before even malformed principa
     });
     assert.include(yield* response.json, { code: "invalid_request" });
   }).pipe(Effect.provide(Fixtures.layer()))
+);
+
+it.effect("a logged integration refusal preserves Retry-After with its correlation", () =>
+  Effect.gen(function* () {
+    const api = yield* Fixtures.client;
+    const response = yield* api.call({
+      payload: envelope("postgres.query"),
+      headers: authenticatedHeaders(),
+      responseMode: "response-only"
+    });
+    const failure = decodeFailure(yield* response.json);
+    assert.strictEqual(response.status, 429);
+    assert.strictEqual(response.headers["retry-after"], "12");
+    assert.strictEqual(failure.code, "rate_limited");
+    assert.isDefined(failure.correlationId);
+    const log = yield* RuntimeLog.RuntimeLog;
+    assert.strictEqual(
+      (yield* log.find({ companyId: DEV_SEED.companyId, correlationId: failure.correlationId! }))
+        ?.outcome,
+      "failure"
+    );
+  }).pipe(
+    Effect.provide(
+      Fixtures.layer({
+        me,
+        "postgres.query": {
+          kind: "integration",
+          run: () => new Runtime.RateLimited({ retryAfterSeconds: 12 })
+        }
+      })
+    )
+  )
+);
+
+it.effect(
+  "a failed log insert prevents execution and does not advertise a missing correlation",
+  () =>
+    Effect.gen(function* () {
+      let executed = false;
+      const rejectedLog = Layer.effectDiscard(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`ALTER TABLE runtime_calls ADD CONSTRAINT reject_insert CHECK (false)`;
+        })
+      ).pipe(
+        Layer.provideMerge(
+          Fixtures.layer({
+            me,
+            "tables.insert": {
+              kind: "mutation",
+              run: () => {
+                executed = true;
+                return Effect.succeed(true);
+              }
+            }
+          })
+        )
+      );
+      yield* Effect.gen(function* () {
+        const api = yield* Fixtures.client;
+        const response = yield* api.call({
+          payload: envelope("tables.insert"),
+          headers: authenticatedHeaders(),
+          responseMode: "response-only"
+        });
+        assert.strictEqual(response.status, 503);
+        assert.include(yield* response.json, { code: "source_unavailable" });
+        assert.notProperty(yield* response.json, "correlationId");
+        assert.isFalse(executed);
+      }).pipe(Effect.provide(rejectedLog));
+    })
 );
