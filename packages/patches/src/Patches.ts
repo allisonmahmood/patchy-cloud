@@ -26,10 +26,14 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import type * as Statement from "effect/unstable/sql/Statement";
-import { Manifest, PublishUpdated, SharingScope } from "@patchy/api";
+import { Manifest, PublishCreated, PublishUpdated, SharingScope } from "@patchy/api";
 
 const encodeManifest = Schema.encodeSync(Schema.fromJsonString(Manifest));
-const encodePublishResponse = Schema.encodeSync(Schema.fromJsonString(PublishUpdated));
+const encodePublishCreated = Schema.encodeSync(Schema.fromJsonString(PublishCreated));
+const encodePublishUpdated = Schema.encodeSync(Schema.fromJsonString(PublishUpdated));
+const decodeResponseBodies = Schema.decodeUnknownEffect(
+  Schema.Array(Schema.Struct({ responseBody: Schema.String }))
+);
 
 /** The window a publish gives a patch. */
 export const RETENTION_WINDOW = Duration.days(90);
@@ -108,9 +112,13 @@ export interface PatchVersion {
   readonly payloadDigest: string;
 }
 
-export class PublishKeyTaken extends Schema.TaggedError<PublishKeyTaken>()("PublishKeyTaken", {}) {
+export class PublishKeyTaken extends Schema.TaggedError<PublishKeyTaken>()("PublishKeyTaken", {
+  ownerUserId: Schema.String,
+  /** The arbitrary client-supplied key is summarized, never echoed. */
+  publishKey: Schema.Struct({ length: Schema.Int })
+}) {
   override get message() {
-    return "Publish key already recorded.";
+    return `Publish key (${this.publishKey.length} characters) already recorded for owner ${this.ownerUserId}.`;
   }
 }
 export class PatchQuotaReached extends Schema.TaggedError<PatchQuotaReached>()(
@@ -169,11 +177,14 @@ export interface RecordInput extends PublishTarget {
 
 export interface Recorded extends PublishUpdated {
   readonly status: 200 | 201;
+  /** PostgreSQL's persisted JSONB representation, sent unchanged on the wire. */
+  readonly responseBody: string;
 }
 
 const Replay = Schema.Struct({
   payloadDigest: Schema.String,
   response: Schema.JsonObject,
+  body: Schema.String,
   status: Schema.Literals([200, 201])
 });
 
@@ -486,7 +497,8 @@ export const make = Effect.gen(function* () {
     Request: Schema.Struct({ ownerUserId: Schema.String, publishKey: Schema.String }),
     Result: Replay,
     execute: ({ ownerUserId, publishKey }) => sql`
-      SELECT payload_digest AS "payloadDigest", publish_response AS response, publish_status AS status
+      SELECT payload_digest AS "payloadDigest", publish_response AS response,
+        publish_response::text AS body, publish_status AS status
       FROM patch_versions WHERE owner_user_id = ${ownerUserId} AND publish_key = ${publishKey}`
   });
   const replay = Effect.fn("Patches.replay")((ownerUserId: string, publishKey: string) =>
@@ -602,7 +614,7 @@ export const make = Effect.gen(function* () {
             RETURNING id`;
             if (created.length === 0) return yield* new PatchConflict({ patchId: input.patchId });
           }
-          const response = new PublishUpdated({
+          const response = new (input.intent === "create" ? PublishCreated : PublishUpdated)({
             ok: true,
             patchId: input.patchId,
             versionId: input.versionId,
@@ -617,8 +629,12 @@ export const make = Effect.gen(function* () {
             warnings: input.warnings
           });
           const status = input.intent === "create" ? (201 as const) : (200 as const);
+          const responseJson =
+            input.intent === "create"
+              ? encodePublishCreated(response)
+              : encodePublishUpdated(response);
 
-          const inserted = yield* sql`
+          const [inserted] = yield* sql`
           INSERT INTO patch_versions (
             id, patch_id, version_number, object_key, content_hash, file_size,
             created_by_machine_token_id, source_ip, user_agent, cli_version,
@@ -632,9 +648,16 @@ export const make = Effect.gen(function* () {
             ${input.filename}, ${input.ownerUserId}, ${input.manifest.tier}, ${input.manifest.release},
             ${input.manifest.manifestVersion}, ${input.wireVersion}, 0,
             ${encodeManifest(input.manifest)}::jsonb, ${input.publishKey}, ${input.payloadDigest},
-            ${encodePublishResponse(response)}::jsonb, ${status}
-          ) ON CONFLICT (owner_user_id, publish_key) DO NOTHING RETURNING id`;
-          if (inserted.length === 0) return yield* new PublishKeyTaken({});
+            ${responseJson}::jsonb, ${status}
+          ) ON CONFLICT (owner_user_id, publish_key) DO NOTHING
+          RETURNING publish_response::text AS "responseBody"`.pipe(
+            Effect.flatMap(decodeResponseBodies)
+          );
+          if (inserted === undefined)
+            return yield* new PublishKeyTaken({
+              ownerUserId: input.ownerUserId,
+              publishKey: { length: input.publishKey.length }
+            });
           yield* sql`
           UPDATE patches
           SET current_version_id = ${input.versionId}, title = ${input.title}, scope = ${scope},
@@ -643,7 +666,7 @@ export const make = Effect.gen(function* () {
               updated_at = now(), expires_at = ${expiresAt}
           WHERE id = ${input.patchId}`;
 
-          return { ...response, status } satisfies Recorded;
+          return { ...response, status, responseBody: inserted.responseBody } satisfies Recorded;
         }).pipe(Effect.catchTags({ ...dieOnSchemaError, NoSuchElementError: Effect.die }))
       )
       .pipe(Effect.timeout("60 seconds"), Effect.catchTags({ TimeoutError: Effect.die }))

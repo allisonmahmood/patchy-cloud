@@ -10,7 +10,7 @@ A **patch** is the unit of what people build and deploy on Patchy Cloud — anyt
 
 ### What a patch is made of
 
-A patch is a **file tree**. The folder it is built in is the **patch repo**: the tree plus its id, its declared **tier**, and base config. Today's single HTML upload is a one-file tree with no repo; from tier 1 up, the CLI initialises the repo with the SDK and the parts the patch needs to run, and a person or their agent builds inside it. One repo is the working copy of exactly one patch: publishing from it updates that patch, cloning it elsewhere still publishes to the same patch, and the first publish from a repo with no id creates the patch and writes the id back.
+A patch is a **file tree**. The folder it is built in is the **patch repo**: the tree plus its id, its declared **tier**, and base config. Today's single HTML publish is a one-file tree with no repo; from tier 1 up, the CLI initialises the repo with the SDK and the parts the patch needs to run, and a person or their agent builds inside it. One repo is the working copy of exactly one patch: publishing from it updates that patch, cloning it elsewhere still publishes to the same patch, and the first publish from a repo with no id creates the patch and writes the id back.
 
 A patch has exactly one tier, declared in its repo. The structure of the tree says what the code is trying to do — client code, server code, and from tier 3 work that runs with no viewer present — so the cloud checks the declared tier against the tree and refuses a publish that claims less than the tree does. A patch is never two tiers at once.
 
@@ -26,7 +26,7 @@ Ownership: a patch belongs to a **user** in a company. The user holds a machine 
 
 **Publish** is the act; each new publish is an immutable **version**, and the patch serves the version its pointer names. There is no working copy in the cloud and no unpublished patch — the working copy is local, and the act that creates a patch is the act that makes it live. `patchy publish <file>` synthesises a tier 0 **manifest** and sends one HTML **bundle**. Each version records its tier, release, manifest version, server-stamped wire version and schema revision. Today only empty `tables`, `files` and `uses` are admitted. Moving the pointer back through rollback is future work.
 
-A **publish key** identifies one attempt for its owning user. The CLI persists the complete request before sending and recovers it first on the next publish. Repeating the same request returns the stored response without a new version, even after the instance's release changes; reusing the key with a different payload is a conflict. New publishes require an exact-current CLI release.
+A **publish key** identifies one attempt for its owning user. The CLI persists the complete request and owner before sending and recovers it first on the next publish, using a current token for that same user. An account switch cannot resend another user's saved content. Concurrent CLI processes cannot overwrite one another's pending attempt. Repeating the same request returns the stored response without a new version, even after the instance's release changes; reusing the key with a different payload is a conflict. New publishes require an exact-current CLI release.
 
 ### Sharing and finding
 
@@ -60,7 +60,7 @@ A patch may be set **public** — anyone with the link, no login — at any tier
 
 ### Tier 0 — static
 
-The uploaded document runs no script, so the patch cannot watch the reader or reach anything. The [serving guarantees](../packages/serving/CONTEXT.md) distinguish it from the shell: the patch remains in its script-free sandbox; a public shell runs no script, while a company shell runs only Patchy's own session script — Clerk's headless client and Patchy's external initializer — never analytics. Only the current version of a public patch is public; older versions stay behind the company door. Caching is keyed to sharing: a minute at most for the current public version at its latest and version URLs, never for a doored page. Pages stay open to any agent that may open them, never bot-blocked; an agent reads a company page through its user's signed-in browser, not a machine token. The host knows who opened a company page in order to let them in. The promise is _the patch cannot watch you_, not _nobody knows you were here_.
+The published document runs no script, so the patch cannot watch the reader or reach anything. The [serving guarantees](../packages/serving/CONTEXT.md) distinguish it from the shell: the patch remains in its script-free sandbox; a public shell runs no script, while a company shell runs only Patchy's own session script — Clerk's headless client and Patchy's external initializer — never analytics. Only the current version of a public patch is public; older versions stay behind the company door. Caching is keyed to sharing: a minute at most for the current public version at its latest and version URLs, never for a doored page. Pages stay open to any agent that may open them, never bot-blocked; an agent reads a company page through its user's signed-in browser, not a machine token. The host knows who opened a company page in order to let them in. The promise is _the patch cannot watch you_, not _nobody knows you were here_.
 
 ### Tier 1 — browser
 

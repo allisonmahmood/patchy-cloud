@@ -220,7 +220,7 @@ it.layer(Patches.layer.pipe(Layer.provideMerge(Fixtures.database)))("Patches", (
   );
 
   it.effect(
-    "runs the retention clock: expiry at the anchor, a visit tops up, an upload restarts",
+    "runs the retention clock: expiry at the anchor, a visit tops up, a publish restarts",
     () =>
       Effect.gen(function* () {
         const service = yield* patches;

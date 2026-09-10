@@ -86,7 +86,10 @@ const defaultHostHint = (apiUrl: string) =>
 const refused = (error: Api.ClientFailure, fallback: string) =>
   Effect.gen(function* () {
     const { apiUrl } = yield* Instance.Instance;
-    if (Api.isRefusal(error) && error.error === UNAUTHORIZED) {
+    if (
+      Api.isRefusal(error) &&
+      (error.status === 401 || (error.status === undefined && error.error === UNAUTHORIZED))
+    ) {
       return yield* new RejectedError({
         message: `${error.error}${defaultHostHint(apiUrl)}`,
         ...(error.code === undefined ? {} : { code: error.code })
@@ -323,22 +326,36 @@ const validate = Command.make("validate", { file: fileArgument }, ({ file }) =>
 // --- publish ----------------------------------------------------------------
 
 /** A replay uses only its saved request and application context, never today's file or flags. */
-const sendPublish = Effect.fn("sendPublish")(function* (attempt: State.PendingPublish) {
+const sendPublish = Effect.fn("sendPublish")(function* (
+  attempt: State.PendingPublish,
+  token: Redacted.Redacted
+) {
   const instance = yield* Instance.Instance;
   const state = yield* State.State;
-  const client = yield* Api.client(yield* requiredToken());
-  const published = yield* client.publish({ payload: attempt.request }).pipe(
+  const published = yield* Api.publish(token, attempt.request).pipe(
     Effect.catch((error) =>
       refused(error, "Publish failed.").pipe(
         Effect.catchTags({
           RejectedError: (refusal) =>
             Effect.gen(function* () {
-              // Only a definitive refusal settles the attempt. Unknown outcomes
-              // (including unreadable responses and server failures) must replay.
-              yield* state.forgetPendingPublish(instance.apiUrl);
+              // Admission refusals (including authentication, quota and rate
+              // limits) cannot tell us whether an earlier send committed.
+              const definitive =
+                Api.isRefusal(error) &&
+                ((error.status === 422 &&
+                  (error.code === "release_mismatch" ||
+                    error.code === "invalid_manifest" ||
+                    error.code === "tier_mismatch" ||
+                    error.errors !== undefined)) ||
+                  (error.status === 409 && error.code === "publish_key_conflict") ||
+                  (error.status === 404 &&
+                    attempt.request.patchId !== undefined &&
+                    error.error === PATCH_NOT_FOUND));
+              if (definitive) yield* state.forgetPendingPublish(instance.apiUrl);
               if (
                 attempt.request.patchId !== undefined &&
                 Api.isRefusal(error) &&
+                error.status === 404 &&
                 error.error === PATCH_NOT_FOUND
               ) {
                 return yield* new RejectedError({
@@ -402,14 +419,28 @@ const publish = Command.make(
       Effect.gen(function* () {
         const instance = yield* Instance.Instance;
         const state = yield* State.State;
+        yield* state.lockPublish(instance.apiUrl);
         const pending = yield* state.readPendingPublish(instance.apiUrl);
-        if (Option.isSome(pending)) return yield* sendPublish(pending.value);
+        const apiToken = yield* requiredToken();
+        const client = yield* Api.client(apiToken);
+        const identity = yield* client
+          .me()
+          .pipe(
+            Effect.catch((error) => refused(error, "Could not verify the publishing key's owner."))
+          );
+        if (Option.isSome(pending)) {
+          if (pending.value.ownerUserId !== identity.user.id) {
+            return yield* new LocalError({
+              message:
+                "The pending publish belongs to another account. Sign in to the same account that started it, then run publish again. The original attempt has been kept."
+            });
+          }
+          return yield* sendPublish(pending.value, apiToken);
+        }
 
         if (Option.isSome(options.patch) && options.new) {
           return yield* new LocalError({ message: "--patch and --new cannot be used together." });
         }
-        const apiToken = yield* requiredToken();
-        const client = yield* Api.client(apiToken);
         const release = yield* client
           .release()
           .pipe(
@@ -436,6 +467,7 @@ const publish = Command.make(
             );
 
         const attempt = new State.PendingPublish({
+          ownerUserId: identity.user.id,
           file: resolved,
           explicitPatch: Option.isSome(options.patch),
           request: new PublishRequest({
@@ -459,8 +491,8 @@ const publish = Command.make(
           })
         });
         yield* state.savePendingPublish(instance.apiUrl, attempt);
-        yield* sendPublish(attempt);
-      })
+        yield* sendPublish(attempt, apiToken);
+      }).pipe(Effect.scoped)
     )
 ).pipe(Command.withDescription("Publish or update an HTML patch."));
 

@@ -25,6 +25,9 @@ The wire contract is its own package, `@patchy/api`, beside neither context.
    responses and decodes its request bodies through them; the CLI decodes what it
    reads through them; `docs/API.md` is rendered from them and a test fails when
    the file drifts. A shape that exists in one place cannot disagree with itself.
+   A publish success is encoded once when its version is recorded. Both the
+   initial response and later replays return the stored JSONB representation;
+   a replay never applies today's schema to a historical response.
 2. **The `HttpApi` lives with the schemas.** `PatchyApi` — the `auth`, `patches`
    and public `release` groups, the bearer middleware _definition_, the derived
    `HttpApiClient` — is the whole of the package. It imports only `@patchy/core`

@@ -107,8 +107,11 @@ that only the current version is public at its latest and version URLs and older
 versions keep the company door. Check status, cache headers, cookies and CSP,
 along with foreign-company, unenrolled and deactivated readers. Use that section's
 expected responses, including the public-cache delay, rather than treating a successful publish as proof.
-For publish recovery, keep the isolated `PATCHY_STATE_DIR`: a pending attempt is
-resent first on the next `publish`, even if the file or current release changed.
+For publish recovery, keep the isolated `PATCHY_STATE_DIR` and original owning user:
+a pending attempt is resent first after authenticating that owner, even if the file
+or current release changed. Replacement tokens for that user work; account switches
+are refused without sending saved content. Authentication and admission failures
+preserve the attempt. A concurrent publish exits locally until the lock holder stops.
 New attempts check the executing CLI against the public `GET /api/release`.
 Production-domain Clerk handshake verification remains a separate live check.
 

@@ -32,7 +32,7 @@ const manifest = {
 };
 const attempt = { manifest, publishKey: "test-key", metadata: {} };
 describe("wire schemas", () => {
-  it("round-trips an upload request with every optional field present or absent", () => {
+  it("round-trips a publish request with every optional field present or absent", () => {
     const full = {
       ...attempt,
       html: "<!doctype html><html></html>",
@@ -57,7 +57,7 @@ describe("wire schemas", () => {
   });
 
   it("round-trips the success and error bodies the CLI branches on", () => {
-    const upload = {
+    const published = {
       ok: true as const,
       patchId: "abcdefghijkl",
       versionId: "ver_x",
@@ -71,7 +71,7 @@ describe("wire schemas", () => {
       unused: { tables: [], columns: [], indexes: [], stores: [] },
       warnings: ["Missing <title>."]
     };
-    expect(roundTrip(PublishCreated, upload)).toEqual(upload);
+    expect(roundTrip(PublishCreated, published)).toEqual(published);
 
     const identity = {
       user: { id: "usr_1", email: "dev@example.com", name: "Dev" },

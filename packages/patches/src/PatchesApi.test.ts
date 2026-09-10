@@ -10,6 +10,7 @@ import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpServer from "effect/unstable/http/HttpServer";
 import * as HttpApiMiddleware from "effect/unstable/httpapi/HttpApiMiddleware";
 import * as HttpApiTest from "effect/unstable/httpapi/HttpApiTest";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { Analytics } from "@patchy/analytics";
 import {
   Authorization,
@@ -58,7 +59,7 @@ const publishRequest = (payload: PublishPayload) =>
     metadata: {},
     ...payload
   });
-const upload = (payload: PublishPayload) =>
+const publish = (payload: PublishPayload) =>
   Effect.flatMap(client, (api) => api.publish({ payload: publishRequest(payload) }));
 
 const events: Analytics.AnalyticsEvent[] = [];
@@ -88,7 +89,7 @@ const layer = Layer.mergeAll(PatchesApi.layer, HttpServer.layerServices).pipe(
 it.layer(layer)("patches group", (it) => {
   it.effect("creates with 201 and updates with 200, on the configured public origin", () =>
     Effect.gen(function* () {
-      const created = yield* upload({ html: html("First") }).pipe(
+      const created = yield* publish({ html: html("First") }).pipe(
         Effect.provide(Fixtures.as(uploader))
       );
       assert.instanceOf(created, PublishCreated);
@@ -97,7 +98,7 @@ it.layer(layer)("patches group", (it) => {
       assert.strictEqual(created.publicUrl, `https://patchy.example/d/${created.patchId}`);
       assert.deepStrictEqual(created.warnings, []);
 
-      const updated = yield* upload({
+      const updated = yield* publish({
         html: html("Second"),
         patchId: created.patchId,
         scope: "public"
@@ -106,11 +107,11 @@ it.layer(layer)("patches group", (it) => {
       assert.strictEqual(updated.versionNumber, 2);
       assert.strictEqual(updated.scope, "public");
 
-      const preserved = yield* upload({ html: html("Third"), patchId: created.patchId }).pipe(
+      const preserved = yield* publish({ html: html("Third"), patchId: created.patchId }).pipe(
         Effect.provide(Fixtures.as(sibling))
       );
       assert.strictEqual(preserved.scope, "public");
-      const restricted = yield* upload({
+      const restricted = yield* publish({
         html: html("Fourth"),
         patchId: created.patchId,
         scope: "company"
@@ -181,7 +182,7 @@ it.layer(layer)("patches group", (it) => {
       })
   );
 
-  it.effect("rejects null or unknown scopes on upload and share", () =>
+  it.effect("rejects null or unknown scopes on publish and share", () =>
     Effect.gen(function* () {
       for (const scope of [null, "everyone"]) {
         const malformedScope = HttpApiMiddleware.layerClient(Authorization, ({ next, request }) =>
@@ -204,12 +205,12 @@ it.layer(layer)("patches group", (it) => {
             )
           )
         );
-        const uploadResponse = yield* api.publish({
+        const publishResponse = yield* api.publish({
           payload: publishRequest({ html: html("Invalid scope") }),
           responseMode: "response-only"
         });
-        assert.strictEqual(uploadResponse.status, 400);
-        expect(yield* uploadResponse.json).toEqual({ ok: false, error: expect.any(String) });
+        assert.strictEqual(publishResponse.status, 400);
+        expect(yield* publishResponse.json).toEqual({ ok: false, error: expect.any(String) });
         const shareResponse = yield* api.share({
           params: { patchId: "abcdefabcdef" },
           payload: new ShareRequest({ scope: "company" }),
@@ -224,19 +225,19 @@ it.layer(layer)("patches group", (it) => {
   it.effect("refuses what the policy and the target refuse, in wire words", () =>
     Effect.gen(function* () {
       const asUploader = Fixtures.as(uploader);
-      const invalid = yield* upload({ html: "<script>alert(1)</script>" }).pipe(
+      const invalid = yield* publish({ html: "<script>alert(1)</script>" }).pipe(
         Effect.provide(asUploader),
         Effect.flip
       );
       assert.include(invalid, { ok: false });
       assert.isTrue("errors" in invalid && invalid.errors.length > 0);
 
-      const admins = yield* upload({ html: html("Theirs") }).pipe(
+      const admins = yield* publish({ html: html("Theirs") }).pipe(
         Effect.provide(Fixtures.as(admin))
       );
       // Unknown and another user's: one 404, never saying which.
       for (const patchId of ["abcdefabcdef", admins.patchId]) {
-        const refused = yield* upload({ html: html("x"), patchId }).pipe(
+        const refused = yield* publish({ html: html("x"), patchId }).pipe(
           Effect.provide(asUploader),
           Effect.flip
         );
@@ -251,24 +252,24 @@ it.layer(layer)("patches group", (it) => {
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.UTC(2026, 0, 1));
         const as = Fixtures.as(Fixtures.identities.quota);
-        const first = yield* upload({ html: html("One") }).pipe(Effect.provide(as));
-        yield* upload({ html: html("Two") }).pipe(Effect.provide(as));
-        const quota = yield* upload({ html: html("Three") }).pipe(Effect.provide(as), Effect.flip);
+        const first = yield* publish({ html: html("One") }).pipe(Effect.provide(as));
+        yield* publish({ html: html("Two") }).pipe(Effect.provide(as));
+        const quota = yield* publish({ html: html("Three") }).pipe(Effect.provide(as), Effect.flip);
         assert.include(quota, { ok: false, code: "live_patch_quota_exceeded", quota: 2 });
         const asSibling = Fixtures.as(Fixtures.identities.quotaSibling);
-        const newMachineQuota = yield* upload({ html: html("New machine") }).pipe(
+        const newMachineQuota = yield* publish({ html: html("New machine") }).pipe(
           Effect.provide(asSibling),
           Effect.flip
         );
         assert.include(newMachineQuota, { ok: false, code: "live_patch_quota_exceeded", quota: 2 });
         // The bucket is spent before the quota is counted.
-        const throttled = yield* upload({ html: html("Four") }).pipe(
+        const throttled = yield* publish({ html: html("Four") }).pipe(
           Effect.provide(as),
           Effect.flip
         );
         assert.include(throttled, { ok: false, code: "rate_limited", retryAfterSeconds: 60 });
         // An update costs nothing against either.
-        const updated = yield* upload({ html: html("Still one"), patchId: first.patchId }).pipe(
+        const updated = yield* publish({ html: html("Still one"), patchId: first.patchId }).pipe(
           Effect.provide(asSibling)
         );
         assert.strictEqual(updated.versionNumber, 2);
@@ -277,7 +278,7 @@ it.layer(layer)("patches group", (it) => {
         yield* TestClock.adjust("1 minute");
         const api = yield* client.pipe(Effect.provide(as));
         yield* api.delete({ params: { patchId: first.patchId } });
-        yield* upload({ html: html("Three again") }).pipe(Effect.provide(as));
+        yield* publish({ html: html("Three again") }).pipe(Effect.provide(as));
       })
   );
 
@@ -329,7 +330,6 @@ const publishConfig = (
     ConfigProvider.fromUnknown({
       PATCHY_PUBLIC_BASE_URL: "https://patchy.example",
       PATCHY_RELEASE: release,
-      PATCHY_WIRE_VERSION: String(WIRE_VERSION),
       PATCHY_PATCH_CREATE_RATE_LIMIT_PER_MINUTE: String(createLimit),
       PATCHY_AUTHENTICATED_PUBLISH_RATE_LIMIT_PER_MINUTE: String(publishLimit),
       PATCHY_LIVE_PATCHES_PER_USER: String(quota)
@@ -349,29 +349,56 @@ const publishLayer = Layer.mergeAll(
 
 it.layer(publishLayer)("publish attempts", (it) => {
   it.effect(
-    "replays the exact create and update result after a release change without another version",
+    "replays stored JSONB bytes across release and response schema changes without another version",
     () =>
       Effect.gen(function* () {
         const api = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
         const first = publishRequest({ html: html("Original") });
-        const created = yield* api.publish({ payload: first });
+        const [created, createdResponse] = yield* api.publish({
+          payload: first,
+          responseMode: "decoded-and-response"
+        });
         const second = publishRequest({
           html: html("Updated"),
           patchId: created.patchId,
           scope: "public"
         });
-        const updated = yield* api.publish({ payload: second });
+        const [updated, updatedResponse] = yield* api.publish({
+          payload: second,
+          responseMode: "decoded-and-response"
+        });
         const upgraded = yield* client.pipe(
           Effect.provide(Fixtures.as(sibling)),
           Effect.provide(Layer.fresh(PatchesApi.layer.pipe(Layer.provide(publishConfig("9.0.0")))))
         );
-        for (const [payload, expected, status] of [
-          [first, created, 201],
-          [second, updated, 200]
+        const sql = yield* SqlClient.SqlClient;
+        for (const [payload, expected, initial, status] of [
+          [first, created, createdResponse, 201],
+          [second, updated, updatedResponse, 200]
         ] as const) {
+          const [stored] = yield* sql<{ body: string }>`
+            SELECT publish_response::text AS body FROM patch_versions
+            WHERE owner_user_id = ${uploader.user.id} AND publish_key = ${payload.publishKey}`;
+          assert.strictEqual(initial.status, status);
+          assert.strictEqual(yield* initial.text, stored!.body);
           const replayed = yield* upgraded.publish({ payload, responseMode: "response-only" });
           assert.strictEqual(replayed.status, status);
           assert.deepStrictEqual(yield* replayed.json, { ...expected });
+          assert.strictEqual(yield* replayed.text, stored!.body);
+
+          // A historic response can lack fields required today and retain retired fields.
+          const [historic] = yield* sql<{ body: string }>`
+            UPDATE patch_versions
+            SET publish_response = (publish_response - 'warnings') ||
+              '{"retiredReport":{"completed":true,"entries":["legacy"]}}'::jsonb
+            WHERE owner_user_id = ${uploader.user.id} AND publish_key = ${payload.publishKey}
+            RETURNING publish_response::text AS body`;
+          const historicReplay = yield* upgraded.publish({
+            payload,
+            responseMode: "response-only"
+          });
+          assert.strictEqual(historicReplay.status, status);
+          assert.strictEqual(yield* historicReplay.text, historic!.body);
         }
         const latest = Option.getOrThrow(yield* (yield* Patches.Patches).find(created.patchId));
         assert.strictEqual(latest.version.versionNumber, 2);

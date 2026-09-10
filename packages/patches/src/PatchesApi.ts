@@ -33,7 +33,9 @@ import {
   PublishRequest,
   PublishRefused,
   PublishKeyConflict,
-  Release
+  Release,
+  MANIFEST_VERSION,
+  WIRE_VERSION
 } from "@patchy/api";
 import { contentHash, validateHtml } from "@patchy/core";
 import { Limits } from "@patchy/limits";
@@ -112,8 +114,6 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
     const publishRateLimitPerMinute = yield* PatchesConfig.publishRateLimitPerMinute;
     const maxPublishBodyBytes = yield* PatchesConfig.maxPublishBodyBytes;
     const currentRelease = yield* PatchesConfig.release;
-    const manifestVersion = yield* PatchesConfig.manifestVersion;
-    const wireVersion = yield* PatchesConfig.wireVersion;
     const livePatchesPerUser = yield* PatchesConfig.livePatchesPerUser;
 
     const publicUrl = (patchId: string) => `${publicBaseUrl.replace(/\/+$/, "")}/d/${patchId}`;
@@ -148,7 +148,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
               .pipe(Effect.catchTags({ SqlError: Effect.die }));
             if (Option.isNone(stored)) return undefined;
             return stored.value.payloadDigest === digest
-              ? HttpServerResponse.text(canonicalJson(stored.value.response), {
+              ? HttpServerResponse.text(stored.value.body, {
                   status: stored.value.status,
                   contentType: "application/json"
                 })
@@ -156,21 +156,21 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
           });
           const previous = yield* replay();
           if (previous !== undefined) return previous;
-          const afterRace = (response: HttpServerResponse.HttpServerResponse) =>
+          const replayOrRespond = (response: HttpServerResponse.HttpServerResponse) =>
             Effect.map(replay(), (stored) => stored ?? response);
           const attempt = yield* limits.consume({
             key: `authenticated-publish:${identity.machine.id}`,
             limit: publishRateLimitPerMinute,
             window: "1 minute"
           });
-          if (!attempt.allowed) return yield* afterRace(rateLimited(attempt));
+          if (!attempt.allowed) return yield* replayOrRespond(rateLimited(attempt));
           if (!("patchId" in key)) {
             const createAttempt = yield* limits.consume({
               key: `patch-create:${identity.machine.id}`,
               limit: createRateLimitPerMinute,
               window: "1 minute"
             });
-            if (!createAttempt.allowed) return yield* afterRace(rateLimited(createAttempt));
+            if (!createAttempt.allowed) return yield* replayOrRespond(rateLimited(createAttempt));
           }
           const release = yield* decodeRelease(json).pipe(
             Effect.catchTags({
@@ -179,7 +179,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
           );
           if (HttpServerResponse.isHttpServerResponse(release)) return release;
           if (release.manifest.release !== currentRelease) {
-            return yield* afterRace(
+            return yield* replayOrRespond(
               rejected(
                 "release_mismatch",
                 `Release ${release.manifest.release} does not match instance release ${currentRelease}; run patchy refresh.`
@@ -190,8 +190,8 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             Effect.catch(() => Effect.succeed(rejected("invalid_manifest", "Invalid manifest.")))
           );
           if (HttpServerResponse.isHttpServerResponse(manifest)) return manifest;
-          if (manifest.manifestVersion !== manifestVersion) {
-            return rejected("invalid_manifest", `Manifest version must be ${manifestVersion}.`);
+          if (manifest.manifestVersion !== MANIFEST_VERSION) {
+            return rejected("invalid_manifest", `Manifest version must be ${MANIFEST_VERSION}.`);
           }
           const payload = yield* decodePublish(json).pipe(
             Effect.catchTags({
@@ -226,7 +226,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             const live = yield* patches
               .countLive(identity.user.id)
               .pipe(Effect.catchTags({ SqlError: Effect.die }));
-            if (live >= livePatchesPerUser) return yield* afterRace(quotaResponse());
+            if (live >= livePatchesPerUser) return yield* replayOrRespond(quotaResponse());
           }
           const origin = yield* requestOrigin;
           const metadata = payload.metadata;
@@ -248,7 +248,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
               manifest,
               publishKey: key.publishKey,
               payloadDigest: digest,
-              wireVersion,
+              wireVersion: WIRE_VERSION,
               publicBaseUrl,
               warnings: validation.warnings,
               livePatchQuota: livePatchesPerUser,
@@ -256,16 +256,17 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             })
             .pipe(
               Effect.catchTags({
-                PatchUnavailable: () => afterRace(notFound()),
+                PatchUnavailable: () => replayOrRespond(notFound()),
                 PatchConflict: () =>
-                  afterRace(refuse(Conflict, { ok: false, error: "Patch already exists." })),
-                PublishKeyTaken: () => afterRace(keyConflict()),
-                PatchQuotaReached: () => afterRace(quotaResponse()),
+                  replayOrRespond(refuse(Conflict, { ok: false, error: "Patch already exists." })),
+                PublishKeyTaken: () => replayOrRespond(keyConflict()),
+                PatchQuotaReached: () => replayOrRespond(quotaResponse()),
                 SqlError: (error) =>
                   Effect.flatMap(replay(), (stored) =>
                     stored === undefined ? Effect.die(error) : Effect.succeed(stored)
                   ),
                 InvalidObjectKey: Effect.die,
+                PendingObjectExpired: Effect.die,
                 StoreUnavailable: Effect.die
               })
             );
@@ -282,9 +283,8 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
               htmlBytes: new TextEncoder().encode(payload.html).length
             }
           });
-          const { status, ...response } = recorded;
-          return HttpServerResponse.text(canonicalJson(response), {
-            status,
+          return HttpServerResponse.text(recorded.responseBody, {
+            status: recorded.status,
             contentType: "application/json"
           });
         })
@@ -343,19 +343,16 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
 export const releaseLayer = HttpApiBuilder.group(PatchyApi, "release", (handlers) =>
   Effect.gen(function* () {
     const release = yield* PatchesConfig.release;
-    const manifestVersion = yield* PatchesConfig.manifestVersion;
-    const wireVersion = yield* PatchesConfig.wireVersion;
-    const integrity = yield* PatchesConfig.packageIntegrity;
     const base = yield* PatchesConfig.publicBaseUrl;
     return handlers.handle("release", () =>
       Effect.succeed(
         new Release({
           release,
-          manifestVersion,
-          wireVersion,
+          manifestVersion: MANIFEST_VERSION,
+          wireVersion: WIRE_VERSION,
           package: {
             tarball: `${base.replace(/\/+$/, "")}/sdk/patchy-${release}.tgz`,
-            integrity: integrity || null
+            integrity: null
           }
         })
       )

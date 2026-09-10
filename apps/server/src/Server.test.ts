@@ -1,5 +1,5 @@
 /**
- * The server booted whole, as `start.ts` boots it: one upload goes in through
+ * The server booted whole, as `start.ts` boots it: one publish goes in through
  * the API and comes out as a served page, with the headers a socket sees.
  * What each route does is its package's test; this proves the wiring.
  */
@@ -325,8 +325,10 @@ it.layer(
         scope: "public"
       });
       const { patchId } = (yield* created.json) as { patchId: string };
-      const privateUpload = yield* publish(DEV_SEED.token, { html: html("Signed-in destination") });
-      const privatePatch = (yield* privateUpload.json) as { patchId: string };
+      const privatePublish = yield* publish(DEV_SEED.token, {
+        html: html("Signed-in destination")
+      });
+      const privatePatch = (yield* privatePublish.json) as { patchId: string };
       for (const path of [`/d/${patchId}`, `/d/${patchId}/v/1`]) {
         const target = `${path}?view=chart`;
         const directives = sessionCookie()

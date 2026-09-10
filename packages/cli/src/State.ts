@@ -12,7 +12,8 @@
  * survives. A file in the retired single-instance format fails closed
  * everywhere: the token it holds is the only key to the pages it created.
  */
-// @effect-diagnostics nodeBuiltinImport:off -- the home directory is the OS's to name.
+// @effect-diagnostics nodeBuiltinImport:off -- homedir is OS-owned; Effect's FileSystem hides the FD required for advisory locking.
+import { open } from "node:fs/promises";
 import { homedir } from "node:os";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
@@ -25,6 +26,8 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import type * as Scope from "effect/Scope";
+import { tryLock } from "fs-native-extensions";
 import { PublishRequest } from "@patchy/api";
 import { sha256 } from "@patchy/core";
 import { LocalError } from "./CliError.js";
@@ -66,10 +69,12 @@ export class CachedPatch extends Schema.Class<CachedPatch>("CachedPatch")({
 /** Everything needed to replay and apply a publish, never the credential used to send it. */
 export class PendingPublish extends Schema.Class<PendingPublish>("PendingPublish")({
   request: PublishRequest,
+  ownerUserId: Schema.NonEmptyString,
   file: Schema.String,
   explicitPatch: Schema.Boolean
 }) {}
 const decodePendingPublish = Schema.decodeUnknownEffect(PendingPublish);
+const encodePendingPublish = Schema.encodeUnknownEffect(PendingPublish);
 
 /**
  * An entry written before the wire renamed `draftId` to `patchId` is the same
@@ -148,6 +153,8 @@ export class State extends Context.Service<
       login: PendingLogin
     ) => Effect.Effect<void, LocalError>;
     readonly forgetPendingLogin: (apiUrl: string) => Effect.Effect<void, LocalError>;
+    /** Holds this instance's publish state through read, request and local application. */
+    readonly lockPublish: (apiUrl: string) => Effect.Effect<void, LocalError, Scope.Scope>;
     readonly readPendingPublish: (
       apiUrl: string
     ) => Effect.Effect<Option.Option<PendingPublish>, LocalError>;
@@ -316,6 +323,51 @@ export const make = Effect.gen(function* () {
     yield* writeJson(file, { hosts: remaining });
   });
 
+  const lockPublish = Effect.fn("State.lockPublish")(function* (apiUrl: string) {
+    const lockPath = yield* Effect.gen(function* () {
+      yield* fs.makeDirectory(dir, { recursive: true, mode: 0o700 });
+      // Canonicalise before choosing the stable inode, including symlinked state dirs.
+      const realDir = yield* fs.realPath(dir);
+      const publishDir = path.join(realDir, "publish", sha256(apiUrl));
+      yield* fs.makeDirectory(publishDir, { recursive: true, mode: 0o700 });
+      return path.join(publishDir, "lock");
+    }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new LocalError({
+            message: `Could not prepare the publish lock for ${apiUrl}. Check state directory permissions.`,
+            cause
+          })
+      )
+    );
+    // Never unlink this file: replacing its inode would let another process take
+    // a different lock. Closing the descriptor releases the OS lock, even on SIGKILL.
+    const handle = yield* Effect.acquireRelease(
+      Effect.tryPromise({
+        try: () => open(lockPath, "a", 0o600),
+        catch: (cause) =>
+          new LocalError({
+            message: `Could not open the publish lock for ${apiUrl}. Check state directory permissions.`,
+            cause
+          })
+      }),
+      (handle) => Effect.promise(() => handle.close())
+    );
+    const acquired = yield* Effect.try({
+      try: () => tryLock(handle.fd),
+      catch: (cause) =>
+        new LocalError({
+          message: `Could not lock publishing for ${apiUrl}. Check filesystem locking support.`,
+          cause
+        })
+    });
+    if (!acquired) {
+      return yield* new LocalError({
+        message: `Another publish is running for ${apiUrl} in this state directory. Wait for it to finish, then run publish again.`
+      });
+    }
+  });
+
   return State.of({
     dir,
     credentialsPath,
@@ -371,6 +423,7 @@ export const make = Effect.gen(function* () {
         yield* writeJson(deviceLoginPath, { hosts: { ...hosts, [apiUrl]: login } });
       }),
     forgetPendingLogin: (apiUrl) => forgetHost(deviceLoginPath, readLoginFile, apiUrl),
+    lockPublish,
     readPendingPublish: (apiUrl) =>
       Effect.gen(function* () {
         const file = publishPath(apiUrl);
@@ -382,7 +435,16 @@ export const make = Effect.gen(function* () {
         if (Option.isNone(document)) return Option.none<PendingPublish>();
         return Option.some(yield* entry(decodePendingPublish(document.value), invalid));
       }),
-    savePendingPublish: (apiUrl, attempt) => writeJson(publishPath(apiUrl), attempt),
+    savePendingPublish: (apiUrl, attempt) =>
+      Effect.gen(function* () {
+        // Constructors do not validate: never persist a request that recovery
+        // cannot decode or the HTTP client cannot send.
+        const encoded = yield* entry(
+          encodePendingPublish(attempt),
+          "Publish request is invalid. Check the patch ID and publish options."
+        );
+        yield* writeJson(publishPath(apiUrl), encoded);
+      }),
     forgetPendingPublish: (apiUrl) =>
       fs.remove(publishPath(apiUrl), { force: true }).pipe(
         Effect.mapError(

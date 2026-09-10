@@ -41,6 +41,7 @@ export class Content extends Context.Service<
       | Patches.PatchConflict
       | Patches.PublishKeyTaken
       | Patches.PatchQuotaReached
+      | Patches.PendingObjectExpired
       | SqlError
       | ContentStore.InvalidObjectKey
       | ContentStore.StoreUnavailable
@@ -84,21 +85,14 @@ export const make = Effect.gen(function* () {
           Effect.fail(new ContentStore.StoreUnavailable({ operation: "put", key, cause }))
       })
     );
-    return yield* patches
-      .record({
-        ...input,
-        ...target,
-        versionId,
-        objectKey: key,
-        contentHash: contentHash(input.html),
-        fileSize: new TextEncoder().encode(input.html).length
-      })
-      .pipe(
-        Effect.catchTags({
-          PendingObjectExpired: (cause) =>
-            Effect.fail(new ContentStore.StoreUnavailable({ operation: "put", key, cause }))
-        })
-      );
+    return yield* patches.record({
+      ...input,
+      ...target,
+      versionId,
+      objectKey: key,
+      contentHash: contentHash(input.html),
+      fileSize: new TextEncoder().encode(input.html).length
+    });
   });
 
   const read = Effect.fn("Content.read")((version: Patches.PatchVersion) =>

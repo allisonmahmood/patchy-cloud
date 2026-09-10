@@ -88,7 +88,7 @@ that environment token and warns about it.
 
 `reset` is also the answer when the migration ledger changes shape under an
 instance you already have, including the rewritten `0003_patches_baseline`. It
-deletes the database and uploaded HTML; use it only for disposable dev data.
+deletes the database and published HTML; use it only for disposable dev data.
 
 `--json` also works on `status`, `reset` and a plain start. The server is not
 watched; after a code change, `pnpm dev stop && pnpm dev`.
@@ -108,7 +108,7 @@ State lives in `<worktree>/.local/dev/` (gitignored):
 - `env` — `PATCHY_API_URL`, `PATCHY_API_TOKEN`, `DATABASE_URL`.
 - `dev.log` — every line from every process, each prefixed `[dev]`,
   `[postgres]` or `[server]`.
-- `postgres/` — the cluster's data directory; `storage/` — uploaded HTML.
+- `postgres/` — the cluster's data directory; `storage/` — published HTML.
 
 ### Clerk keys
 
@@ -258,7 +258,7 @@ a cookie-free `curl -i <publicUrl>` answers **401** with the same HTML door as `
 it has neither `Location` nor `WWW-Authenticate`. A machine token does not open
 the page. Only the current version of a public patch is public; older versions
 stay behind the company door, with **401** and `private, no-store` without a session.
-If you previously uploaded this file as a different user (for example as the
+If you previously published this file as a different user (for example as the
 seed before creating your own company), its cached patch is still owned by
 that user. Use `pnpm patchy publish examples/plan.html --new` to create your own
 patch. After `pnpm dev reset`, `--new` also replaces a cache entry whose patch
@@ -286,7 +286,7 @@ pnpm patchy share examples/plan.html company --json
 pnpm patchy share examples/plan.html public --json
 # Latest and current-version URLs serve publicly again; the previous version still answers 401.
 pnpm patchy share --patch <patchId> company --json
-# The id form takes the same patch back inside without uploading another version.
+# The id form takes the same patch back inside without publishing another version.
 ```
 
 The file form uses its cached patch; `--patch` selects an id instead, exactly one
@@ -302,7 +302,7 @@ a scope or current-version change; downloaded copies cannot be recalled. Fetch
 only the current version of a public patch directly by URL; use the user's
 signed-in browser for company pages and older versions of public patches.
 The company shell permits only the configured Clerk Frontend API host and
-Patchy's external session initializer; the uploaded document's sandbox is unchanged.
+Patchy's external session initializer; the published document's sandbox is unchanged.
 
 ### Company management
 
@@ -344,8 +344,12 @@ and `uses`; higher tiers and resources are refused until their SDK tickets land.
 
 `GET /api/release` is public. A new CLI publish checks its executing version
 against that release. Interrupted attempts live in the isolated `PATCHY_STATE_DIR`
-and are resent first on the next publish, before any release or file check.
-Keep that state when retrying an unknown outcome; removing it loses the publish key.
+and are recovered before any release or file check, after authenticating the same
+owning user. Rotating that user's token is safe; a different account is refused
+without sending the saved content. Authentication, throttling and quota failures
+retain the attempt. A concurrent CLI publish exits locally until the process
+holding the instance's state lock stops. Keep the state when retrying an unknown
+outcome; removing it loses the publish key.
 The dev runner imports only the separate seed entry, so it never
 installs that guard. The production-domain Clerk handshake is a separate live
 verification, not part of these offline checks.

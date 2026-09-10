@@ -4,7 +4,7 @@
  * shapes, the token never in argv or output, and the state dir's fail-closed
  * files. What the commands do between those edges is the commands' own tests.
  */
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -12,6 +12,7 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync
 } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
@@ -129,10 +130,23 @@ const identity = {
   machine: { id: DEV_SEED.tokenId, name: DEV_SEED.tokenName }
 };
 
+/** Publish fixtures still dispatch identity refusals explicitly through stubInstance. */
+const stubPublishingInstance = (handler: Handler, release = () => CURRENT_RELEASE) =>
+  stubInstance((request, respond, disconnect) => {
+    if (request.url === "/api/me") return respond(200, identity);
+    handler(request, respond, disconnect);
+  }, release);
+
 /** Asynchronous on purpose: the stub instance answers from this same event loop. */
 const runCli = (
   args: ReadonlyArray<string>,
-  options: { stateDir?: string; env?: Record<string, string>; input?: string; cwd?: string } = {}
+  options: {
+    stateDir?: string;
+    env?: Record<string, string>;
+    input?: string;
+    cwd?: string;
+    onSpawn?: (child: ChildProcess) => void;
+  } = {}
 ) =>
   new Promise<{ status: number | null; stdout: string; stderr: string; stateDir: string }>(
     (resolve, reject) => {
@@ -153,6 +167,7 @@ const runCli = (
       child.on("error", reject);
       child.on("close", (status) => resolve({ status, stdout, stderr, stateDir }));
       child.stdin.end(options.input ?? "");
+      options.onSpawn?.(child);
     }
   );
 
@@ -685,6 +700,223 @@ describe("patchy validate", async () => {
 });
 
 describe("patchy publish", async () => {
+  it.each([
+    { status: 401, route: "/api/me", body: { ok: false, error: "Missing or invalid API token." } },
+    {
+      status: 401,
+      route: "/api/publish",
+      body: { ok: false, error: "Missing or invalid API token." }
+    },
+    {
+      status: 429,
+      route: "/api/publish",
+      body: { ok: false, code: "rate_limited", error: "Slow down.", retryAfterSeconds: 60 }
+    },
+    {
+      status: 403,
+      route: "/api/publish",
+      body: { ok: false, code: "live_patch_quota_exceeded", error: "Quota reached.", quota: 1 }
+    },
+    {
+      status: 422,
+      route: "/api/publish",
+      body: { ok: false, code: "unknown_admission_refusal", error: "Try later." }
+    },
+    { status: 400, route: "/api/publish", body: "undecodable admission refusal" }
+  ])(
+    "keeps one lost-success key through $status on $route and same-owner token rotation",
+    async ({ status, route, body }) => {
+      const dir = tempDir();
+      const file = htmlFile(dir, "page.html", validHtml);
+      let phase: "lost" | "refused" | "recovered" = "lost";
+      const response = publish(201, "abcdefghijkl", 1);
+      const instance = await stubInstance((request, respond, disconnect) => {
+        if (phase === "refused" && request.url === route) return respond(status, body);
+        if (request.url === "/api/me") return respond(200, identity);
+        if (phase === "lost") return disconnect();
+        respond(201, response);
+      });
+      const env = { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_original" };
+      expect((await runCli(["publish", file, "--json"], { stateDir: dir, env })).status).toBe(3);
+      const attemptPath = path.join(dir, "publish", sha256(instance.url), "attempt.json");
+      const original = readFileSync(attemptPath, "utf8");
+      phase = "refused";
+      const refused = await runCli(["publish", "missing.html", "--new", "--json"], {
+        stateDir: dir,
+        env
+      });
+      expect(refused.status).not.toBe(0);
+      expect(readFileSync(attemptPath, "utf8")).toBe(original);
+      phase = "recovered";
+      const recovered = await runCli(["publish", "missing.html", "--new", "--json"], {
+        stateDir: dir,
+        env: { ...env, PATCHY_API_TOKEN: "pp_rotated" }
+      });
+      expect(recovered).toMatchObject({ status: 0, stderr: "" });
+      expect(JSON.parse(recovered.stdout)).toEqual(response);
+      const sent = instance.requests.filter((request) => request.url === "/api/publish");
+      expect(sent.at(-1)).toMatchObject({
+        authorization: "Bearer pp_rotated",
+        body: sent[0]?.body
+      });
+      for (const request of sent) expect(request.body).toEqual(sent[0]?.body);
+      expect(instance.requests.filter((request) => request.url === "/api/release")).toHaveLength(1);
+      expect(existsSync(attemptPath)).toBe(false);
+    }
+  );
+
+  it("never sends recovered HTML to another owner, but accepts a rotated key for the original owner", async () => {
+    const dir = tempDir();
+    const file = htmlFile(dir, "page.html", validHtml);
+    let first = true;
+    const instance = await stubInstance((request, respond, disconnect) => {
+      if (request.url === "/api/me") {
+        return respond(
+          200,
+          request.authorization === "Bearer pp_other"
+            ? { ...identity, user: { ...identity.user, id: "usr_other" } }
+            : identity
+        );
+      }
+      if (first) {
+        first = false;
+        return disconnect();
+      }
+      respond(201, publish(201, "abcdefghijkl", 1));
+    });
+    const env = { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_original" };
+    expect((await runCli(["publish", file, "--json"], { stateDir: dir, env })).status).toBe(3);
+    const attemptPath = path.join(dir, "publish", sha256(instance.url), "attempt.json");
+    const original = readFileSync(attemptPath, "utf8");
+    expect(JSON.parse(original)).toMatchObject({ ownerUserId: identity.user.id });
+    const wrongOwner = await runCli(
+      ["publish", "missing.html", "--patch", "ignored", "--new", "--json"],
+      {
+        stateDir: dir,
+        env: { ...env, PATCHY_API_TOKEN: "pp_other" }
+      }
+    );
+    expect(wrongOwner.status).toBe(1);
+    expect(JSON.parse(wrongOwner.stderr)).toMatchObject({ kind: "local" });
+    expect(readFileSync(attemptPath, "utf8")).toBe(original);
+    expect(
+      instance.requests.filter((request) => request.authorization === "Bearer pp_other")
+    ).toEqual([
+      { method: "GET", url: "/api/me", authorization: "Bearer pp_other", body: undefined }
+    ]);
+    const recovered = await runCli(["publish", "missing.html", "--json"], {
+      stateDir: dir,
+      env: { ...env, PATCHY_API_TOKEN: "pp_rotated" }
+    });
+    expect(recovered.status).toBe(0);
+    const sent = instance.requests.filter((request) => request.url === "/api/publish");
+    expect(sent.map((request) => request.body)).toEqual([sent[0]?.body, sent[0]?.body]);
+    expect(existsSync(attemptPath)).toBe(false);
+  });
+
+  it("fails closed without guessing the owner of an old pending attempt", async () => {
+    const dir = tempDir();
+    const file = htmlFile(dir, "page.html", validHtml);
+    const instance = await stubPublishingInstance((_, __, disconnect) => disconnect());
+    const env = { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" };
+    expect((await runCli(["publish", file, "--json"], { stateDir: dir, env })).status).toBe(3);
+    const attemptPath = path.join(dir, "publish", sha256(instance.url), "attempt.json");
+    const legacy = JSON.parse(readFileSync(attemptPath, "utf8"));
+    delete legacy.ownerUserId;
+    const original = JSON.stringify(legacy);
+    writeFileSync(attemptPath, original);
+    const before = instance.requests.length;
+    const refused = await runCli(["publish", "missing.html", "--json"], { stateDir: dir, env });
+    expect(refused.status).toBe(1);
+    expect(JSON.parse(refused.stderr)).toMatchObject({ kind: "local" });
+    expect(readFileSync(attemptPath, "utf8")).toBe(original);
+    expect(instance.requests).toHaveLength(before);
+  });
+
+  it.each(["complete", "kill"] as const)(
+    "excludes a competing process through a state-dir symlink and releases the lock on %s",
+    async (finish) => {
+      const dir = tempDir();
+      const alias = path.join(tempDir(), "state-alias");
+      symlinkSync(dir, alias, process.platform === "win32" ? "junction" : "dir");
+      let entered!: () => void;
+      const atBarrier = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const file = htmlFile(dir, "page.html", validHtml);
+      let release: (() => void) | undefined;
+      let held = true;
+      const response = publish(201, "abcdefghijkl", 1);
+      const instance = await stubPublishingInstance((_, respond) => {
+        if (held) {
+          held = false;
+          release = () => {
+            release = undefined;
+            respond(201, response);
+          };
+          entered();
+        } else {
+          respond(201, response);
+        }
+      });
+      const env = { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" };
+      let child: ChildProcess | undefined;
+      const winner = runCli(["publish", file, "--json"], {
+        stateDir: dir,
+        env,
+        onSpawn: (process) => {
+          child = process;
+        }
+      });
+      try {
+        await Promise.race([
+          atBarrier,
+          winner.then((result) => {
+            throw new Error(`Publish exited before barrier: ${result.stderr}`);
+          })
+        ]);
+        const attemptPath = path.join(dir, "publish", sha256(instance.url), "attempt.json");
+        const original = readFileSync(attemptPath, "utf8");
+        const before = instance.requests.length;
+        const contender = await runCli(["publish", "missing.html", "--new", "--json"], {
+          stateDir: alias,
+          env
+        });
+        expect(contender.status).toBe(1);
+        expect(JSON.parse(contender.stderr)).toMatchObject({ kind: "local" });
+        expect(instance.requests).toHaveLength(before);
+        expect(readFileSync(attemptPath, "utf8")).toBe(original);
+        if (finish === "kill") {
+          child?.kill("SIGKILL");
+          expect((await winner).status).toBeNull();
+          expect(readFileSync(attemptPath, "utf8")).toBe(original);
+          const recovered = await runCli(["publish", "missing.html", "--json"], {
+            stateDir: alias,
+            env
+          });
+          expect(recovered.status).toBe(0);
+          const sent = instance.requests.filter((request) => request.url === "/api/publish");
+          expect(sent.map((request) => request.body)).toEqual([sent[0]?.body, sent[0]?.body]);
+        } else {
+          release?.();
+          expect((await winner).status).toBe(0);
+        }
+        expect(existsSync(attemptPath)).toBe(false);
+        expect(readJson(path.join(dir, "patches.json"))).toMatchObject({
+          hosts: {
+            [instance.url]: {
+              files: { [file]: { patchId: response.patchId, latestVersionNumber: 1 } }
+            }
+          }
+        });
+      } finally {
+        child?.kill("SIGKILL");
+        release?.();
+        await winner;
+      }
+    }
+  );
+
   it("replays a lost reply before file, flags and release checks, applies the original cache target, and stops", async () => {
     const dir = tempDir();
     const file = htmlFile(dir, "page.html", validHtml);
@@ -692,7 +924,7 @@ describe("patchy publish", async () => {
     let first = true;
     let durableAttempt: unknown;
     const response = publish(201, "abcdefghijkl", 1, "public");
-    const instance = await stubInstance(
+    const instance = await stubPublishingInstance(
       (_, respond, disconnect) => {
         const attemptPath = path.join(dir, "publish", sha256(instance.url), "attempt.json");
         durableAttempt = readJson(attemptPath);
@@ -713,7 +945,7 @@ describe("patchy publish", async () => {
     expect(initial.status).toBe(3);
     expect(JSON.parse(initial.stderr)).toMatchObject({ ok: false, kind: "unreachable" });
     const attemptPath = path.join(dir, "publish", sha256(instance.url), "attempt.json");
-    expect(durableAttempt).toMatchObject({ request: instance.requests[1]?.body, file });
+    expect(durableAttempt).toMatchObject({ request: instance.requests[2]?.body, file });
     expect(readFileSync(attemptPath, "utf8")).not.toContain(env.PATCHY_API_TOKEN);
     expect(statSync(attemptPath).mode & 0o777).toBe(0o600);
     expect(statSync(path.dirname(attemptPath)).mode & 0o777).toBe(0o700);
@@ -727,11 +959,13 @@ describe("patchy publish", async () => {
     expect(replay).toMatchObject({ status: 0, stderr: "" });
     expect(JSON.parse(replay.stdout)).toEqual(response);
     expect(instance.requests.map((r) => r.url)).toEqual([
+      "/api/me",
       "/api/release",
       "/api/publish",
+      "/api/me",
       "/api/publish"
     ]);
-    expect(instance.requests[2]?.body).toEqual(instance.requests[1]?.body);
+    expect(instance.requests[4]?.body).toEqual(instance.requests[2]?.body);
     expect(readJson(path.join(dir, "patches.json"))).toMatchObject({
       hosts: {
         [instance.url]: { files: { [file]: { patchId: response.patchId, latestVersionNumber: 1 } } }
@@ -746,7 +980,7 @@ describe("patchy publish", async () => {
     const cachePath = path.join(dir, "patches.json");
     let blockCache = true;
     const response = publish(201, "abcdefghijkl", 1);
-    const instance = await stubInstance((_, respond) => {
+    const instance = await stubPublishingInstance((_, respond) => {
       if (blockCache) {
         mkdirSync(cachePath);
         blockCache = false;
@@ -763,7 +997,7 @@ describe("patchy publish", async () => {
     // Replay is sent even while applying the cache is still impossible.
     const blocked = await runCli(["publish", "missing.html", "--json"], { stateDir: dir, env });
     expect(blocked.status).toBe(1);
-    expect(instance.requests[2]?.body).toEqual(instance.requests[1]?.body);
+    expect(instance.requests[4]?.body).toEqual(instance.requests[2]?.body);
     expect(existsSync(attemptPath)).toBe(true);
     rmSync(cachePath, { recursive: true });
     writeFileSync(file, "<script>unsafe today</script>");
@@ -771,12 +1005,15 @@ describe("patchy publish", async () => {
     expect(recovered).toMatchObject({ status: 0, stderr: "" });
     expect(JSON.parse(recovered.stdout)).toEqual(response);
     expect(instance.requests.map((r) => r.url)).toEqual([
+      "/api/me",
       "/api/release",
       "/api/publish",
+      "/api/me",
       "/api/publish",
+      "/api/me",
       "/api/publish"
     ]);
-    expect(instance.requests[3]?.body).toEqual(instance.requests[1]?.body);
+    expect(instance.requests[6]?.body).toEqual(instance.requests[2]?.body);
     expect(readJson(cachePath)).toMatchObject({
       hosts: {
         [instance.url]: { files: { [file]: { patchId: response.patchId, latestVersionNumber: 1 } } }
@@ -789,7 +1026,7 @@ describe("patchy publish", async () => {
     const dir = tempDir();
     const file = htmlFile(dir, "page.html", validHtml);
     let calls = 0;
-    const instance = await stubInstance((_, respond) => {
+    const instance = await stubPublishingInstance((_, respond) => {
       calls++;
       if (calls === 1) return respond(503, { error: "unknown commit outcome" });
       if (calls === 2)
@@ -812,24 +1049,27 @@ describe("patchy publish", async () => {
       kind: "rejected",
       code: "release_mismatch"
     });
-    expect(instance.requests[2]?.body).toEqual(instance.requests[1]?.body);
+    expect(instance.requests[4]?.body).toEqual(instance.requests[2]?.body);
     expect(existsSync(attemptPath)).toBe(false);
     const fresh = await runCli(["publish", file, "--json"], { stateDir: dir, env });
     expect(fresh.status).toBe(0);
     expect(instance.requests.map((r) => r.url)).toEqual([
+      "/api/me",
       "/api/release",
       "/api/publish",
+      "/api/me",
       "/api/publish",
+      "/api/me",
       "/api/release",
       "/api/publish"
     ]);
-    const firstRequest = Schema.decodeUnknownSync(PublishRequest)(instance.requests[1]?.body);
-    const freshRequest = Schema.decodeUnknownSync(PublishRequest)(instance.requests[4]?.body);
+    const firstRequest = Schema.decodeUnknownSync(PublishRequest)(instance.requests[2]?.body);
+    const freshRequest = Schema.decodeUnknownSync(PublishRequest)(instance.requests[7]?.body);
     expect(freshRequest.publishKey).not.toBe(firstRequest.publishKey);
   });
 
   it("reports an exact release mismatch locally before reading the file or persisting an attempt", async () => {
-    const instance = await stubInstance(
+    const instance = await stubPublishingInstance(
       (_, respond) => respond(201, publish(201, "abcdefghijkl", 1)),
       () => "9.9.9"
     );
@@ -846,12 +1086,37 @@ describe("patchy publish", async () => {
     });
     expect(result.stderr).toContain(CURRENT_RELEASE);
     expect(result.stderr).toContain("9.9.9");
-    expect(instance.requests.map((r) => r.url)).toEqual(["/api/release"]);
+    expect(instance.requests.map((r) => r.url)).toEqual(["/api/me", "/api/release"]);
     expect(existsSync(path.join(dir, "publish", sha256(instance.url), "attempt.json"))).toBe(false);
   });
 
+  it("never persists an unencodable request, so a corrected patch ID can publish next", async () => {
+    const dir = tempDir();
+    const file = htmlFile(dir, "page.html", validHtml);
+    const response = publish(200, "abcdefghijkl", 2);
+    const instance = await stubPublishingInstance((_, respond) => respond(200, response));
+    const env = { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" };
+    const invalid = await runCli(["publish", file, "--patch", "invalid", "--json"], {
+      stateDir: dir,
+      env
+    });
+    expect(invalid.status).toBe(1);
+    expect(JSON.parse(invalid.stderr)).toMatchObject({ kind: "local" });
+    expect(existsSync(path.join(dir, "publish", sha256(instance.url), "attempt.json"))).toBe(false);
+    expect(instance.requests.filter((request) => request.url === "/api/publish")).toEqual([]);
+    const corrected = await runCli(["publish", file, "--patch", "abcdefghijkl", "--json"], {
+      stateDir: dir,
+      env
+    });
+    expect(corrected).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(corrected.stdout)).toEqual(response);
+    expect(instance.requests.filter((request) => request.url === "/api/publish")).toMatchObject([
+      { body: { patchId: "abcdefghijkl", html: validHtml } }
+    ]);
+  });
+
   it("publishes with a saved key, then republishes with the cached patch id", async () => {
-    const instance = await stubInstance((request, respond) => {
+    const instance = await stubPublishingInstance((request, respond) => {
       const body = request.body as { patchId?: string };
       return body.patchId
         ? respond(200, publish(200, body.patchId, 2))
@@ -870,9 +1135,13 @@ describe("patchy publish", async () => {
     expect(first.stdout).toContain("Scope: company (signed-in colleagues in your company)");
     expect(first.stderr).toBe("Warning: No <title> found.\n");
     expect(`${first.stdout}${first.stderr}`).not.toContain(DEV_SEED.token);
-    expect(instance.requests.map((r) => r.url)).toEqual(["/api/release", "/api/publish"]);
-    expect(instance.requests[1]).toMatchObject({ authorization: `Bearer ${DEV_SEED.token}` });
-    expect(instance.requests[1]?.body).toMatchObject({
+    expect(instance.requests.map((r) => r.url)).toEqual([
+      "/api/me",
+      "/api/release",
+      "/api/publish"
+    ]);
+    expect(instance.requests[2]).toMatchObject({ authorization: `Bearer ${DEV_SEED.token}` });
+    expect(instance.requests[2]?.body).toMatchObject({
       html: validHtml,
       manifest: {
         manifestVersion: 1,
@@ -884,7 +1153,7 @@ describe("patchy publish", async () => {
       },
       metadata: { cliVersion: "0.0.1" }
     });
-    expect(instance.requests[1]?.body).not.toHaveProperty("scope");
+    expect(instance.requests[2]?.body).not.toHaveProperty("scope");
 
     // The cache turns the second publish of the same file into an update, and
     // under --json the document is the wire shape alone.
@@ -895,9 +1164,9 @@ describe("patchy publish", async () => {
     expect(second.status).toBe(0);
     expect(second.stderr).toBe("");
     expect(JSON.parse(second.stdout)).toEqual(publish(200, "abcdefghijkl", 2));
-    expect(instance.requests[3]?.body).toMatchObject({ patchId: "abcdefghijkl" });
-    expect(instance.requests[3]?.body).not.toHaveProperty("scope");
-    expect(instance.requests[3]).toMatchObject({ authorization: `Bearer ${DEV_SEED.token}` });
+    expect(instance.requests[5]?.body).toMatchObject({ patchId: "abcdefghijkl" });
+    expect(instance.requests[5]?.body).not.toHaveProperty("scope");
+    expect(instance.requests[5]).toMatchObject({ authorization: `Bearer ${DEV_SEED.token}` });
 
     // --new ignores the cache; the environment token beats the stored one.
     const fresh = await runCli(["publish", file, "--new"], {
@@ -905,13 +1174,13 @@ describe("patchy publish", async () => {
       env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_env" }
     });
     expect(fresh.status).toBe(0);
-    expect(instance.requests[5]?.body).not.toHaveProperty("patchId");
-    expect(instance.requests[5]).toMatchObject({ authorization: "Bearer pp_env" });
+    expect(instance.requests[8]?.body).not.toHaveProperty("patchId");
+    expect(instance.requests[8]).toMatchObject({ authorization: "Bearer pp_env" });
   });
 
   it("sets sharing explicitly on create and update, reporting the returned audience", async () => {
     let version = 0;
-    const instance = await stubInstance((_, respond) => {
+    const instance = await stubPublishingInstance((_, respond) => {
       version++;
       respond(
         version === 1 ? 201 : 200,
@@ -934,8 +1203,8 @@ describe("patchy publish", async () => {
     expect(published.status).toBe(0);
     expect(published.stderr).toBe("");
     expect(JSON.parse(published.stdout)).toMatchObject({ scope: "public" });
-    expect(instance.requests[1]?.body).toMatchObject({ scope: "public" });
-    expect(instance.requests[1]?.body).not.toHaveProperty("patchId");
+    expect(instance.requests[2]?.body).toMatchObject({ scope: "public" });
+    expect(instance.requests[2]?.body).not.toHaveProperty("patchId");
 
     const restricted = await runCli(["publish", file, "--share", "company"], {
       stateDir: dir,
@@ -943,7 +1212,7 @@ describe("patchy publish", async () => {
     });
     expect(restricted.status).toBe(0);
     expect(restricted.stdout).toContain("Scope: company (signed-in colleagues in your company)");
-    expect(instance.requests[3]?.body).toMatchObject({ scope: "company", patchId: "abcdefghijkl" });
+    expect(instance.requests[5]?.body).toMatchObject({ scope: "company", patchId: "abcdefghijkl" });
 
     const invalid = await runCli(["publish", file, "--share", "private", "--json"], {
       stateDir: dir,
@@ -951,11 +1220,11 @@ describe("patchy publish", async () => {
     });
     expect(invalid.status).toBe(1);
     expect(JSON.parse(invalid.stderr)).toMatchObject({ ok: false, kind: "local" });
-    expect(instance.requests).toHaveLength(4);
+    expect(instance.requests).toHaveLength(6);
   });
 
   it("publishes with the worktree seed and leaves stderr empty under --json", async () => {
-    const instance = await stubInstance((_, respond) =>
+    const instance = await stubPublishingInstance((_, respond) =>
       respond(201, publish(201, "abcdefghijkl", 1))
     );
     const dir = tempDir();
@@ -971,7 +1240,7 @@ describe("patchy publish", async () => {
     expect(result.status).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual(publish(201, "abcdefghijkl", 1));
     expect(result.stderr).toBe("");
-    expect(instance.requests[1]).toMatchObject({ authorization: `Bearer ${DEV_SEED.token}` });
+    expect(instance.requests[2]).toMatchObject({ authorization: `Bearer ${DEV_SEED.token}` });
 
     // A stored key outranks the seed, and an explicit environment key outranks both.
     await runCli(["auth", "set", "--token-stdin"], {
@@ -980,7 +1249,7 @@ describe("patchy publish", async () => {
     });
     const saved = await runCli(["publish", file, "--new", "--json"], { stateDir: dir });
     expect(saved.status).toBe(0);
-    expect(instance.requests[3]).toMatchObject({ authorization: "Bearer pp_saved" });
+    expect(instance.requests[5]).toMatchObject({ authorization: "Bearer pp_saved" });
     const savedStatus = await runCli(["status"], { stateDir: dir });
     expect(JSON.parse(savedStatus.stdout)).toMatchObject({
       hasToken: true,
@@ -990,7 +1259,7 @@ describe("patchy publish", async () => {
     const env = { PATCHY_API_TOKEN: "pp_environment" };
     const explicit = await runCli(["publish", file, "--new", "--json"], { stateDir: dir, env });
     expect(explicit.status).toBe(0);
-    expect(instance.requests[5]).toMatchObject({ authorization: "Bearer pp_environment" });
+    expect(instance.requests[8]).toMatchObject({ authorization: "Bearer pp_environment" });
     const environmentStatus = await runCli(["status"], { stateDir: dir, env });
     expect(JSON.parse(environmentStatus.stdout)).toMatchObject({
       hasToken: true,
@@ -998,31 +1267,32 @@ describe("patchy publish", async () => {
     });
   });
 
-  it("rejects unsafe HTML after checking release, and does not retry a refused key", async () => {
-    const instance = await stubInstance((_, respond) =>
-      respond(401, { ok: false, error: "Missing or invalid API token." })
+  it("checks identity before release and HTML, and does not retry a refused key", async () => {
+    const instance = await stubInstance((request, respond) =>
+      request.authorization === "Bearer pp_good"
+        ? respond(200, identity)
+        : respond(401, { ok: false, error: "Missing or invalid API token." })
     );
     const dir = tempDir();
     const bad = htmlFile(dir, "bad.html", "<!doctype html><script>1</script>");
     const env = { PATCHY_API_TOKEN: "pp_bad", PATCHY_API_URL: instance.url };
-    const local = await runCli(["publish", bad], { stateDir: dir, env });
+    const local = await runCli(["publish", bad], {
+      stateDir: dir,
+      env: { ...env, PATCHY_API_TOKEN: "pp_good" }
+    });
     expect(local.status).toBe(1);
     expect(local.stderr).toContain("HTML failed Patchy Cloud validation");
-    expect(instance.requests.map((r) => r.url)).toEqual(["/api/release"]);
+    expect(instance.requests.map((r) => r.url)).toEqual(["/api/me", "/api/release"]);
 
     const good = htmlFile(dir, "good.html", validHtml);
     const rejected = await runCli(["publish", good], { stateDir: dir, env });
     expect(rejected.status).toBe(2);
     expect(rejected.stderr).toContain("Missing or invalid API token.");
-    expect(instance.requests.map((r) => r.url)).toEqual([
-      "/api/release",
-      "/api/release",
-      "/api/publish"
-    ]);
+    expect(instance.requests.map((r) => r.url)).toEqual(["/api/me", "/api/release", "/api/me"]);
   });
 
   it("reports an unavailable update target without retrying as a create", async () => {
-    const instance = await stubInstance((_, respond) =>
+    const instance = await stubPublishingInstance((_, respond) =>
       respond(404, { ok: false, error: "Patch not found." })
     );
     const dir = tempDir();
@@ -1061,8 +1331,9 @@ describe("patchy publish", async () => {
       "Cached patch is unavailable for update. Use --new to create a new patch.\n"
     );
     // The pre-rename `draftId` entry was read as the same page.
-    expect(instance.requests[3]?.body).toMatchObject({ patchId: "mnopqrstuvwx" });
-    expect(instance.requests).toHaveLength(4);
+    expect(instance.requests[5]?.body).toMatchObject({ patchId: "mnopqrstuvwx" });
+    expect(instance.requests).toHaveLength(6);
+    expect(existsSync(path.join(dir, "publish", sha256(instance.url), "attempt.json"))).toBe(false);
 
     const conflict = await runCli(["publish", file, "--patch", "abcdefghijkl", "--new"], {
       stateDir: dir,
@@ -1073,7 +1344,7 @@ describe("patchy publish", async () => {
   });
 
   it("refuses to publish past a patch cache still named drafts.json", async () => {
-    const instance = await stubInstance((_, respond) =>
+    const instance = await stubPublishingInstance((_, respond) =>
       respond(201, publish(201, "abcdefghijkl", 1))
     );
     const dir = tempDir();
@@ -1092,7 +1363,7 @@ describe("patchy publish", async () => {
       `The patch cache is now ${path.join(dir, "patches.json")} but the old file is still here: ${path.join(dir, "drafts.json")}\n` +
         "Rename it to patches.json to keep updating the patches it remembers, or delete it to start a fresh cache.\n"
     );
-    expect(instance.requests).toHaveLength(1);
+    expect(instance.requests.map((request) => request.url)).toEqual(["/api/me", "/api/release"]);
   });
 
   it("fails closed on invalid stored credentials for this instance, and only this instance", async () => {
@@ -1231,7 +1502,7 @@ describe("patchy delete", async () => {
   it("takes down the patch a file was published from with the key that published it, then the patch is gone", async () => {
     // The stub remembers what is live, so a delete after a delete is a real 404.
     const live = new Set<string>();
-    const instance = await stubInstance((request, respond) => {
+    const instance = await stubPublishingInstance((request, respond) => {
       if (request.url === "/api/publish") {
         const body = request.body as { patchId?: string };
         if (body.patchId !== undefined) {
@@ -1258,7 +1529,7 @@ describe("patchy delete", async () => {
 
     const deleted = await runCli(["delete", file, "--json"], { stateDir: dir, env });
     expect(deleted).toMatchObject({ status: 0, stdout: '{"ok":true}\n', stderr: "" });
-    expect(instance.requests[4]).toMatchObject({
+    expect(instance.requests[6]).toMatchObject({
       method: "DELETE",
       url: "/api/patches/abcdefghijkl",
       authorization: "Bearer pp_owner"
@@ -1272,7 +1543,7 @@ describe("patchy delete", async () => {
     const forgotten = await runCli(["delete", file], { stateDir: dir, env });
     expect(forgotten.status).toBe(1);
     expect(forgotten.stderr).toMatch(/^No patch on .* was published from /);
-    expect(instance.requests).toHaveLength(5);
+    expect(instance.requests).toHaveLength(7);
 
     const gone = await runCli(["delete", "--patch", "abcdefghijkl"], { stateDir: dir, env });
     expect(gone.status).toBe(2);
@@ -1296,7 +1567,7 @@ describe("patchy delete", async () => {
     const keyless = await runCli(["delete", "--patch", "abcdefghijkl", "--api-url", instance.url]);
     expect(keyless.status).toBe(1);
     expect(keyless.stderr).toContain("Run: patchy login");
-    expect(instance.requests).toHaveLength(6);
+    expect(instance.requests).toHaveLength(8);
   });
 });
 

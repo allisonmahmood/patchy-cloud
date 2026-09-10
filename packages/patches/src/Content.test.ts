@@ -91,7 +91,7 @@ const content = Effect.flatMap(Content.Content, Effect.succeed);
 const patches = Effect.flatMap(Patches.Patches, Effect.succeed);
 const sweep = Effect.flatMap(ExpirySweep.ExpirySweep, (service) => service.sweep);
 
-const upload = (
+const publish = (
   html: string,
   patchId: string | null = null,
   extra: Partial<Content.PublishInput> = {}
@@ -125,9 +125,9 @@ it.layer(
 )("Content", (it) => {
   it.effect("stores the bytes, records the version, and reads both back", () =>
     Effect.gen(function* () {
-      const created = yield* upload("<p>one</p>");
+      const created = yield* publish("<p>one</p>");
       assert.strictEqual(created.versionNumber, 1);
-      const updated = yield* upload("<p>two</p>", created.patchId);
+      const updated = yield* publish("<p>two</p>", created.patchId);
       assert.strictEqual(updated.versionNumber, 2);
 
       const service = yield* content;
@@ -147,10 +147,38 @@ it.layer(
     })
   );
 
+  it.effect("refuses a taken publish key with bounded diagnostics and preserves its version", () =>
+    Effect.gen(function* () {
+      const publishKey = `${crypto.randomUUID()}\n${"unsafe-key".repeat(128)}`;
+      const created = yield* publish("<p>original</p>", null, { publishKey });
+      const error = yield* publish("<p>conflicting</p>", created.patchId, { publishKey }).pipe(
+        Effect.flip
+      );
+      assert.strictEqual(error._tag, "PublishKeyTaken");
+      if (error._tag !== "PublishKeyTaken") return;
+      assert.include(error.message, uploader.user.id);
+      assert.include(error.message, String(publishKey.length));
+      assert.isBelow(error.message.length, 200);
+      assert.notInclude(error.message, "unsafe-key");
+      assert.notInclude(JSON.stringify(error), "unsafe-key");
+      const service = yield* patches;
+      assert.strictEqual(
+        Option.getOrThrow(yield* service.find(created.patchId)).version.versionNumber,
+        1
+      );
+      assert.strictEqual(
+        Option.getOrThrow(yield* service.replay(uploader.user.id, publishKey)).response.versionId,
+        created.versionId
+      );
+      yield* TestClock.adjust(Patches.PENDING_OBJECT_LEASE);
+      yield* sweep;
+    })
+  );
+
   it.effect("writes nothing when the store refuses the object", () =>
     Effect.gen(function* () {
-      const created = yield* upload("<p>original</p>");
-      const failed = yield* upload("<p>lost</p>", created.patchId).pipe(
+      const created = yield* publish("<p>original</p>");
+      const failed = yield* publish("<p>lost</p>", created.patchId).pipe(
         over(putFails),
         Effect.flip
       );
@@ -162,13 +190,13 @@ it.layer(
 
   it.effect("reclaims bytes after a target refusal without removing its older version", () =>
     Effect.gen(function* () {
-      const created = yield* upload("<p>original</p>");
+      const created = yield* publish("<p>original</p>");
       const before = yield* store.keys;
       // The patch is taken down between the preflight and the row insert.
       store.control.afterPut = Effect.flatMap(patches, (service) =>
         service.delete(created.patchId, uploader.user.id).pipe(Effect.orDie, Effect.asVoid)
       );
-      const refused = yield* upload("<p>rejected</p>", created.patchId).pipe(
+      const refused = yield* publish("<p>rejected</p>", created.patchId).pipe(
         Effect.flip,
         Effect.ensuring(
           Effect.sync(() => {
@@ -191,7 +219,7 @@ it.layer(
     Effect.gen(function* () {
       const before = yield* store.keys;
       const publishKey = crypto.randomUUID();
-      const error = yield* upload("<p>unacknowledged</p>", null, { publishKey }).pipe(
+      const error = yield* publish("<p>unacknowledged</p>", null, { publishKey }).pipe(
         over(putReplyLost),
         Effect.flip
       );
@@ -208,10 +236,10 @@ it.layer(
 
   it.effect("reclaims an object when the version transaction rolls back", () =>
     Effect.gen(function* () {
-      const created = yield* upload("<p>original</p>");
+      const created = yield* publish("<p>original</p>");
       const before = yield* store.keys;
       const publishKey = crypto.randomUUID();
-      const error = yield* upload("<p>rolled back</p>", created.patchId, {
+      const error = yield* publish("<p>rolled back</p>", created.patchId, {
         publishKey,
         machineTokenId: "missing-machine-token"
       }).pipe(Effect.flip);
@@ -262,7 +290,7 @@ it.layer(
         )
       );
       const publishKey = crypto.randomUUID();
-      const error = yield* upload("<p>committed</p>", null, { publishKey }).pipe(
+      const error = yield* publish("<p>committed</p>", null, { publishKey }).pipe(
         Effect.provide(uncertain),
         Effect.flip
       );
@@ -286,7 +314,7 @@ it.layer(
   it.effect("retries reclamation after the store refuses deletion", () =>
     Effect.gen(function* () {
       const before = yield* store.keys;
-      yield* upload("<p>retry deletion</p>").pipe(over(putReplyLost), Effect.flip);
+      yield* publish("<p>retry deletion</p>").pipe(over(putReplyLost), Effect.flip);
       const key = (yield* store.keys).find((candidate) => !before.includes(candidate))!;
       yield* TestClock.adjust(Patches.PENDING_OBJECT_LEASE);
       const failed = yield* sweep.pipe(
@@ -311,7 +339,7 @@ it.layer(
       store.control.afterPut = Deferred.succeed(stored, undefined).pipe(
         Effect.andThen(Deferred.await(resume))
       );
-      const publication = yield* upload("<p>in flight</p>").pipe(
+      const publication = yield* publish("<p>in flight</p>").pipe(
         Effect.ensuring(
           Effect.sync(() => {
             store.control.afterPut = Effect.void;
@@ -365,7 +393,7 @@ it.layer(
           UPDATE pending_patch_objects SET expires_at = expires_at - interval '4 minutes 59 seconds'
           WHERE object_key = ${key}`;
       }).pipe(Effect.orDie);
-      const publication = yield* upload("<p>committing</p>").pipe(
+      const publication = yield* publish("<p>committing</p>").pipe(
         Effect.provide(held),
         Effect.ensuring(
           Effect.sync(() => {
@@ -399,7 +427,7 @@ it.layer(
         yield* sql`UPDATE pending_patch_objects SET expires_at = to_timestamp(0) WHERE object_key = ${key}`;
         yield* service.claimObjects(100);
       }).pipe(Effect.orDie);
-      const error = yield* upload("<p>too late</p>", null, { publishKey }).pipe(
+      const error = yield* publish("<p>too late</p>", null, { publishKey }).pipe(
         Effect.flip,
         Effect.ensuring(
           Effect.sync(() => {
@@ -407,7 +435,7 @@ it.layer(
           })
         )
       );
-      assert.strictEqual(error._tag, "StoreUnavailable");
+      assert.strictEqual(error._tag, "PendingObjectExpired");
       assert.isTrue(Option.isNone(yield* service.replay(uploader.user.id, publishKey)));
       yield* sweep;
       assert.deepStrictEqual(yield* store.keys, before);

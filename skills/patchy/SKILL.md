@@ -142,9 +142,12 @@ browser sign-out is a separate control on **Your machines**.
   A `release_mismatch` names both releases and `patchy refresh`; repo tooling arrives later.
   File mode synthesises a tier 0 manifest; higher tiers and resources are not admitted yet.
 - An interrupted publish keeps the complete attempt under the state dir. Rerun `publish`
-  with the same instance and state: it resends that attempt before checking the release
-  or reading the file, applies the original result and exits without another version.
-  Preserve the state directory until recovery succeeds.
+  with the same instance, state and owning user: it authenticates that user before
+  resending the saved content, then applies the original result without another version.
+  A replacement token for the same user works; another account is refused locally.
+  Authentication, rate-limit and quota failures retain the attempt. Preserve the state
+  directory until recovery succeeds. If another publish holds the state lock, retry
+  after that process exits; do not remove state to bypass the lock.
 - Republishing the same local file updates the patch it already created on that instance
   and preserves its sharing scope unless `--share company` or `--share public` is supplied.
   Pass `--new` to force a fresh patch, or `--patch` to update a known patch only.

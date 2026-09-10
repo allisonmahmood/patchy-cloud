@@ -1,5 +1,5 @@
-// Bundles the CLI into one file, Effect and the workspace packages included: a
-// packed CLI has no node_modules to resolve them from. The skill ships beside it.
+// Bundle Effect and workspace packages; the native advisory-lock addon remains
+// an installed runtime dependency so it can load its platform prebuild.
 import { access, chmod, copyFile, cp, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,6 +22,7 @@ await esbuild.build({
   bundle: true,
   platform: "node",
   format: "esm",
+  external: ["fs-native-extensions"],
   target: "node22",
   sourcemap: true,
   tsconfig: path.join(cliDir, "tsconfig.json"),

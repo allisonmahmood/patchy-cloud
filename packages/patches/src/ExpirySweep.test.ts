@@ -29,7 +29,7 @@ const filesystem = FilesystemContentStore.layer.pipe(
   Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ PATCHY_STORAGE_DIR: rootDir })))
 );
 
-const upload = (title: string) =>
+const publish = (title: string) =>
   Effect.flatMap(Content.Content, (content) =>
     content.publish({
       ...Fixtures.publishRecord(),
@@ -70,9 +70,9 @@ it.layer(
       const patches = yield* Patches.Patches;
       const files = yield* FileSystem.FileSystem;
       yield* TestClock.setTime(Date.UTC(2026, 0, 1));
-      const abandoned = yield* upload("Abandoned");
+      const abandoned = yield* publish("Abandoned");
       yield* TestClock.adjust(80 * DAY);
-      const fresh = yield* upload("Fresh");
+      const fresh = yield* publish("Fresh");
 
       // Start at the retention anchor: expiry is strictly after it.
       yield* TestClock.adjust(10 * DAY);
@@ -138,7 +138,7 @@ it.layer(
       yield* TestClock.setTime(Date.UTC(2027, 0, 1));
       // Whatever the block's earlier patches left behind goes first, with a store that works.
       yield* sweep;
-      const orphaned = yield* upload("Orphaned");
+      const orphaned = yield* publish("Orphaned");
       const key = Content.objectKey(orphaned.patchId, orphaned.versionId);
       yield* TestClock.adjust(91 * DAY);
 

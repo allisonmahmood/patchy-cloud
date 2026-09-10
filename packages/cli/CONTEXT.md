@@ -61,7 +61,7 @@ The per-instance record linking a local file to the patch it produced, so republ
 _Avoid_: upload history, manifest
 
 **Pending publish**:
-A complete publish attempt whose outcome or local application is not yet settled. It belongs to one instance and retains its original publish key, content and file identity so recovering it cannot create a second version.
+A complete publish attempt whose outcome or local application is not yet settled. It belongs to one instance and owning user and retains its original publish key, content and file identity. Recovery authenticates the same owner, allowing a replacement machine token but refusing account switches before sending content. One process holds the attempt through response application; authentication and admission failures preserve it.
 _Avoid_: queued publish, upload history
 
 **Publish key**:

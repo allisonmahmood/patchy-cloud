@@ -1,15 +1,8 @@
 /** The patches capability's configuration, read from the environment through Effect `Config`. */
 import * as Config from "effect/Config";
-import { CURRENT_RELEASE, MANIFEST_VERSION, WIRE_VERSION } from "@patchy/api";
+import { CURRENT_RELEASE } from "@patchy/api";
 
 export const release = Config.string("PATCHY_RELEASE").pipe(Config.withDefault(CURRENT_RELEASE));
-export const manifestVersion = Config.int("PATCHY_MANIFEST_VERSION").pipe(
-  Config.withDefault(MANIFEST_VERSION)
-);
-export const wireVersion = Config.int("PATCHY_WIRE_VERSION").pipe(Config.withDefault(WIRE_VERSION));
-export const packageIntegrity = Config.string("PATCHY_PACKAGE_INTEGRITY").pipe(
-  Config.withDefault("")
-);
 
 /** The required origin a patch's public URL is built on. */
 export const publicBaseUrl = Config.string("PATCHY_PUBLIC_BASE_URL");
