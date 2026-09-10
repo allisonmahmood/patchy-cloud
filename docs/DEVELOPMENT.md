@@ -348,9 +348,12 @@ against that release. Interrupted attempts live in the isolated `PATCHY_STATE_DI
 and are recovered before any release or file check, after authenticating the same
 owning user. Rotating that user's token is safe; a different account is refused
 without sending the saved content. Authentication, throttling and quota failures
-retain the attempt. A concurrent CLI publish exits locally until the process
-holding the instance's state lock stops. Keep the state when retrying an unknown
-outcome; removing it loses the publish key.
+retain the attempt. Exclusive creation of `attempt.json` selects one attempt; a
+concurrent CLI publish reads and resends it after checking its original owner,
+including when it loses the creation race. Success or a definitive payload refusal
+clears only the matching publish key, leaving a newer attempt untouched by a stale
+response. A killed process leaves the persisted attempt recoverable. Keep the state
+when retrying an unknown outcome; removing it loses the publish key.
 The dev runner imports only the separate seed entry, so it never
 installs that guard. The production-domain Clerk handshake is a separate live
 verification, not part of these offline checks.

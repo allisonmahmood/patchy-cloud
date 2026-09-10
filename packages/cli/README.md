@@ -17,7 +17,7 @@ node packages/cli/dist/index.js login --api-url https://pages.example.com
 
 The build puts an executable at `packages/cli/dist/index.js`. Create a symlink named `patchy` to that executable in a directory on your `PATH`; adding `dist` alone exposes `index.js`, not `patchy`. Alternatively, replace `patchy` in the commands below and in login's returned `next` command with `node /absolute/path/to/packages/cli/dist/index.js`.
 
-Keep the whole `dist` directory together: `dist/native` contains the advisory-lock loader and platform prebuilds. The packed CLI includes them and installs offline without running install scripts.
+The CLI is a JavaScript bundle. The packed CLI installs offline without running install scripts.
 
 First run is `patchy login`, then `patchy publish ./plan.html`. A person at a real
 terminal confirms in their browser while login waits. An agent receives a URL,
@@ -231,7 +231,7 @@ Before sending, the CLI authenticates the publishing key and saves the whole req
 
 Authentication failures, throttling, quota refusals, lost replies, server failures and failed cache writes keep the attempt recoverable. Only a definitive payload refusal clears it so you can correct the input and start a fresh attempt. Keep the state directory and sign in as the original owner when recovering; never discard an attempt merely because its result is unknown.
 
-One process at a time may publish through the same instance and state directory. A competing invocation exits 1 (`local`) without changing the pending attempt. The OS releases the lock when its process exits, including a killed process; retry once that process has stopped.
+Concurrent invocations through the same instance and state directory resend the same persisted attempt rather than replacing it or refusing contention. Each authenticates the attempt's original owner before sending, including an invocation that loses the race to create it. Killing a process leaves the attempt available for recovery. A response clears only its matching publish key, so a stale response cannot remove a newer attempt.
 
 The executing CLI must match the instance's release exactly. A local mismatch exits 1 with `kind: "local"` and `code: "release_mismatch"`; an instance-detected mismatch exits 2 with `kind: "rejected"` and the same code. The diagnostic names both releases and directs you to `patchy refresh`. File publishing is the only publish mode currently served; resource-bearing manifests and higher tiers are refused by the instance.
 
@@ -341,7 +341,7 @@ The CLI stores state under `~/.patchy` (or `PATCHY_STATE_DIR`):
 - `config.json` — the saved API base URL.
 - `credentials.json` — saved machine tokens, keyed by instance, with `source: "login"` or `"auth-set"`. A login entry also carries `machine: { id, name }`. On Unix, every save creates or repairs this file to owner-only (`0600`) permissions.
 - `device-login.json` — one pending login per instance: private device code, user code, both verification URLs, polling interval and expiry. Owner-only (`0600`); cleared for that instance on completion or logout.
-- `publish/<instance-hash>/attempt.json` — the pending publish request, original owner ID and file/cache context for that instance, with no machine credential. The hash is SHA-256 of the resolved API URL. Written atomically and owner-only (`0600`) under private directories (`0700`) before sending; cleared only after applying success to the cache or settling a definitive payload refusal. An OS-backed lock protects its entire read/send/apply lifecycle.
+- `publish/<instance-hash>/attempt.json` — the pending publish request, original owner ID and file/cache context for that instance, with no machine credential. The hash is SHA-256 of the resolved API URL. Schema-encoded before exclusive creation (`wx`), owner-only (`0600`) under private directories (`0700`), and persisted before sending. If it already exists, the CLI reads and resends that attempt instead of overwriting it. Cleared only for the matching publish key after applying success to the cache or settling a definitive payload refusal.
 - `patches.json` — the patch cache, keyed by instance and then by absolute file path, so later publishes from the same path update the same patch and `share` or `delete` can find it from the path. A successful `delete` drops every entry that pointed at the patch.
 - `style.md` — the default style, owned and written by the agent skill. The CLI never reads its contents; `status` reports only whether it exists.
 

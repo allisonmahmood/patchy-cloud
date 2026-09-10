@@ -137,6 +137,13 @@ const stubPublishingInstance = (handler: Handler, release = () => CURRENT_RELEAS
     handler(request, respond, disconnect);
   }, release);
 
+interface CliResult {
+  readonly status: number | null;
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly stateDir: string;
+}
+
 /** Asynchronous on purpose: the stub instance answers from this same event loop. */
 const runCli = (
   args: ReadonlyArray<string>,
@@ -148,28 +155,50 @@ const runCli = (
     onSpawn?: (child: ChildProcess) => void;
   } = {}
 ) =>
-  new Promise<{ status: number | null; stdout: string; stderr: string; stateDir: string }>(
-    (resolve, reject) => {
-      const stateDir = options.stateDir ?? tempDir();
-      const child = spawn(process.execPath, [cliPath, ...args], {
-        cwd: options.cwd ?? stateDir,
-        env: {
-          PATH: process.env.PATH ?? "",
-          HOME: stateDir,
-          PATCHY_STATE_DIR: stateDir,
-          ...options.env
-        }
-      });
-      let stdout = "";
-      let stderr = "";
-      child.stdout.setEncoding("utf8").on("data", (chunk: string) => (stdout += chunk));
-      child.stderr.setEncoding("utf8").on("data", (chunk: string) => (stderr += chunk));
-      child.on("error", reject);
-      child.on("close", (status) => resolve({ status, stdout, stderr, stateDir }));
-      child.stdin.end(options.input ?? "");
-      options.onSpawn?.(child);
-    }
-  );
+  new Promise<CliResult>((resolve, reject) => {
+    const stateDir = options.stateDir ?? tempDir();
+    const child = spawn(process.execPath, [cliPath, ...args], {
+      cwd: options.cwd ?? stateDir,
+      env: {
+        PATH: process.env.PATH ?? "",
+        HOME: stateDir,
+        PATCHY_STATE_DIR: stateDir,
+        ...options.env
+      }
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8").on("data", (chunk: string) => (stdout += chunk));
+    child.stderr.setEncoding("utf8").on("data", (chunk: string) => (stderr += chunk));
+    child.on("error", reject);
+    child.on("close", (status) => resolve({ status, stdout, stderr, stateDir }));
+    child.stdin.end(options.input ?? "");
+    options.onSpawn?.(child);
+  });
+
+interface HeldRequest {
+  readonly request: Recorded;
+  readonly respond: (status: number, body: unknown) => void;
+}
+
+/** Hold a real HTTP request until the test explicitly answers it. */
+const requestBarrier = () => {
+  let entered!: (request: HeldRequest) => void;
+  const reached = new Promise<HeldRequest>((resolve) => {
+    entered = resolve;
+  });
+  const handler: Handler = (request, respond) => entered({ request, respond });
+  return {
+    handler,
+    wait: (running: Promise<CliResult>) =>
+      Promise.race([
+        reached,
+        running.then((result) => {
+          throw new Error(`CLI exited before request barrier: ${result.stderr}`);
+        })
+      ])
+  };
+};
 
 const htmlFile = (dir: string, name: string, html: string) => {
   const file = path.join(dir, name);
@@ -833,89 +862,224 @@ describe("patchy publish", async () => {
     expect(instance.requests).toHaveLength(before);
   });
 
-  it.each(["complete", "kill"] as const)(
-    "excludes a competing process through a state-dir symlink and releases the lock on %s",
-    async (finish) => {
-      const dir = tempDir();
-      const alias = path.join(tempDir(), "state-alias");
-      symlinkSync(dir, alias, process.platform === "win32" ? "junction" : "dir");
-      let entered!: () => void;
-      const atBarrier = new Promise<void>((resolve) => {
-        entered = resolve;
-      });
-      const file = htmlFile(dir, "page.html", validHtml);
-      let release: (() => void) | undefined;
-      let held = true;
-      const response = publish(201, "abcdefghijkl", 1);
-      const instance = await stubPublishingInstance((_, respond) => {
-        if (held) {
-          held = false;
-          release = () => {
-            release = undefined;
-            respond(201, response);
-          };
-          entered();
-        } else {
-          respond(201, response);
+  it("replays the exclusive-creation winner through a state-dir symlink without letting its delayed response clear a newer attempt", async () => {
+    const dir = tempDir();
+    const alias = path.join(tempDir(), "state-alias");
+    symlinkSync(dir, alias, process.platform === "win32" ? "junction" : "dir");
+    const file = htmlFile(dir, "winner.html", validHtml);
+    const losingFile = htmlFile(dir, "loser.html", validHtml.replace("hi", "different candidate"));
+    const nextFile = htmlFile(dir, "next.html", validHtml.replace("hi", "next attempt"));
+    const winnerIdentity = requestBarrier();
+    const loserIdentity = requestBarrier();
+    const originalPublish = requestBarrier();
+    const replayPublish = requestBarrier();
+    const nextPublish = requestBarrier();
+    const instance = await stubInstance((request, respond, disconnect) => {
+      if (request.url === "/api/me") {
+        if (request.authorization === "Bearer pp_winner") {
+          return winnerIdentity.handler(request, respond, disconnect);
         }
-      });
-      const env = { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" };
-      let child: ChildProcess | undefined;
-      const winner = runCli(["publish", file, "--json"], {
-        stateDir: dir,
-        env,
-        onSpawn: (process) => {
-          child = process;
+        if (request.authorization === "Bearer pp_loser") {
+          return loserIdentity.handler(request, respond, disconnect);
         }
-      });
-      try {
-        await Promise.race([
-          atBarrier,
-          winner.then((result) => {
-            throw new Error(`Publish exited before barrier: ${result.stderr}`);
-          })
-        ]);
-        const attemptPath = path.join(dir, "publish", sha256(instance.url), "attempt.json");
-        const original = readFileSync(attemptPath, "utf8");
-        const before = instance.requests.length;
-        const contender = await runCli(["publish", "missing.html", "--new", "--json"], {
-          stateDir: alias,
-          env
-        });
-        expect(contender.status).toBe(1);
-        expect(JSON.parse(contender.stderr)).toMatchObject({ kind: "local" });
-        expect(instance.requests).toHaveLength(before);
-        expect(readFileSync(attemptPath, "utf8")).toBe(original);
-        if (finish === "kill") {
-          child?.kill("SIGKILL");
-          expect((await winner).status).toBeNull();
-          expect(readFileSync(attemptPath, "utf8")).toBe(original);
-          const recovered = await runCli(["publish", "missing.html", "--json"], {
-            stateDir: alias,
-            env
-          });
-          expect(recovered.status).toBe(0);
-          const sent = instance.requests.filter((request) => request.url === "/api/publish");
-          expect(sent.map((request) => request.body)).toEqual([sent[0]?.body, sent[0]?.body]);
-        } else {
-          release?.();
-          expect((await winner).status).toBe(0);
-        }
-        expect(existsSync(attemptPath)).toBe(false);
-        expect(readJson(path.join(dir, "patches.json"))).toMatchObject({
-          hosts: {
-            [instance.url]: {
-              files: { [file]: { patchId: response.patchId, latestVersionNumber: 1 } }
-            }
-          }
-        });
-      } finally {
-        child?.kill("SIGKILL");
-        release?.();
-        await winner;
+        return respond(200, identity);
       }
+      if (request.authorization === "Bearer pp_winner") {
+        return originalPublish.handler(request, respond, disconnect);
+      }
+      if (request.authorization === "Bearer pp_loser") {
+        return replayPublish.handler(request, respond, disconnect);
+      }
+      nextPublish.handler(request, respond, disconnect);
+    });
+    const env = { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_winner" };
+    const children: ChildProcess[] = [];
+    const onSpawn = (child: ChildProcess) => {
+      children.push(child);
+    };
+    const winner = runCli(["publish", file, "--json"], { stateDir: dir, env, onSpawn });
+    const loser = runCli(["publish", losingFile, "--new", "--share", "public", "--json"], {
+      stateDir: alias,
+      env: { ...env, PATCHY_API_TOKEN: "pp_loser" },
+      onSpawn
+    });
+    let next: Promise<CliResult> | undefined;
+    try {
+      const [firstIdentity, secondIdentity] = await Promise.all([
+        winnerIdentity.wait(winner),
+        loserIdentity.wait(loser)
+      ]);
+      const attemptPath = path.join(dir, "publish", sha256(instance.url), "attempt.json");
+      expect(existsSync(attemptPath)).toBe(false);
+      firstIdentity.respond(200, identity);
+      const firstRequest = await originalPublish.wait(winner);
+      const original = readFileSync(attemptPath, "utf8");
+      expect(JSON.parse(original)).toMatchObject({
+        file,
+        ownerUserId: identity.user.id,
+        request: firstRequest.request.body
+      });
+      secondIdentity.respond(200, identity);
+      const replay = await replayPublish.wait(loser);
+      expect(replay.request.body).toEqual(firstRequest.request.body);
+      expect(readFileSync(attemptPath, "utf8")).toBe(original);
+      const response = publish(201, "abcdefghijkl", 1);
+      replay.respond(201, response);
+      expect(await loser).toMatchObject({ status: 0, stderr: "" });
+      expect(existsSync(attemptPath)).toBe(false);
+      expect(readJson(path.join(dir, "patches.json"))).toMatchObject({
+        hosts: {
+          [instance.url]: {
+            files: { [file]: { patchId: response.patchId, latestVersionNumber: 1 } }
+          }
+        }
+      });
+      expect(readJson(path.join(dir, "patches.json"))).not.toMatchObject({
+        hosts: { [instance.url]: { files: { [losingFile]: expect.anything() } } }
+      });
+
+      next = runCli(["publish", nextFile, "--json"], {
+        stateDir: dir,
+        env: { ...env, PATCHY_API_TOKEN: "pp_next" },
+        onSpawn
+      });
+      const newerRequest = await nextPublish.wait(next);
+      const newer = readFileSync(attemptPath, "utf8");
+      expect(JSON.parse(newer).request.publishKey).not.toBe(
+        JSON.parse(original).request.publishKey
+      );
+      expect(JSON.parse(newer)).toMatchObject({
+        file: nextFile,
+        request: newerRequest.request.body
+      });
+      firstRequest.respond(201, response);
+      expect(await winner).toMatchObject({ status: 0, stderr: "" });
+      expect(readFileSync(attemptPath, "utf8")).toBe(newer);
+      newerRequest.respond(201, publish(201, "mnopqrstuvwx", 1));
+      expect(await next).toMatchObject({ status: 0, stderr: "" });
+      expect(existsSync(attemptPath)).toBe(false);
+    } finally {
+      for (const child of children) child.kill("SIGKILL");
+      await Promise.all([winner, loser, next]);
     }
-  );
+  });
+
+  it("does not send the winning attempt when a fresh candidate loses exclusive creation to another owner", async () => {
+    const dir = tempDir();
+    const file = htmlFile(dir, "winner.html", validHtml);
+    const losingFile = htmlFile(dir, "loser.html", validHtml.replace("hi", "other owner's page"));
+    const winnerIdentity = requestBarrier();
+    const loserIdentity = requestBarrier();
+    const originalPublish = requestBarrier();
+    const instance = await stubInstance((request, respond, disconnect) => {
+      if (request.url === "/api/me") {
+        return (
+          request.authorization === "Bearer pp_owner" ? winnerIdentity : loserIdentity
+        ).handler(request, respond, disconnect);
+      }
+      if (request.authorization === "Bearer pp_owner") {
+        return originalPublish.handler(request, respond, disconnect);
+      }
+      respond(201, publish(201, "mnopqrstuvwx", 1));
+    });
+    const env = { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" };
+    const children: ChildProcess[] = [];
+    const onSpawn = (child: ChildProcess) => {
+      children.push(child);
+    };
+    const winner = runCli(["publish", file, "--json"], { stateDir: dir, env, onSpawn });
+    const loser = runCli(["publish", losingFile, "--json"], {
+      stateDir: dir,
+      env: { ...env, PATCHY_API_TOKEN: "pp_other" },
+      onSpawn
+    });
+    try {
+      const [firstIdentity, secondIdentity] = await Promise.all([
+        winnerIdentity.wait(winner),
+        loserIdentity.wait(loser)
+      ]);
+      const attemptPath = path.join(dir, "publish", sha256(instance.url), "attempt.json");
+      expect(existsSync(attemptPath)).toBe(false);
+      firstIdentity.respond(200, identity);
+      const originalRequest = await originalPublish.wait(winner);
+      const original = readFileSync(attemptPath, "utf8");
+      secondIdentity.respond(200, {
+        ...identity,
+        user: { ...identity.user, id: "usr_other" }
+      });
+      const refused = await loser;
+      expect(refused.status).toBe(1);
+      expect(JSON.parse(refused.stderr)).toMatchObject({ kind: "local" });
+      expect(
+        instance.requests.filter(
+          (request) => request.url === "/api/publish" && request.authorization === "Bearer pp_other"
+        )
+      ).toEqual([]);
+      expect(readFileSync(attemptPath, "utf8")).toBe(original);
+      originalRequest.respond(201, publish(201, "abcdefghijkl", 1));
+      expect((await winner).status).toBe(0);
+      expect(existsSync(attemptPath)).toBe(false);
+    } finally {
+      for (const child of children) child.kill("SIGKILL");
+      await Promise.all([winner, loser]);
+    }
+  });
+
+  it("recovers the persisted request through a state-dir symlink after SIGKILL", async () => {
+    const dir = tempDir();
+    const alias = path.join(tempDir(), "state-alias");
+    symlinkSync(dir, alias, process.platform === "win32" ? "junction" : "dir");
+    const file = htmlFile(dir, "page.html", validHtml);
+    const originalPublish = requestBarrier();
+    const response = publish(201, "abcdefghijkl", 1);
+    let first = true;
+    const instance = await stubPublishingInstance((request, respond, disconnect) => {
+      if (first) {
+        first = false;
+        return originalPublish.handler(request, respond, disconnect);
+      }
+      respond(201, response);
+    });
+    const env = { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" };
+    let child: ChildProcess | undefined;
+    const killed = runCli(["publish", file, "--json"], {
+      stateDir: dir,
+      env,
+      onSpawn: (process) => {
+        child = process;
+      }
+    });
+    try {
+      const originalRequest = await originalPublish.wait(killed);
+      const attemptPath = path.join(dir, "publish", sha256(instance.url), "attempt.json");
+      const original = readFileSync(attemptPath, "utf8");
+      child?.kill("SIGKILL");
+      expect((await killed).status).toBeNull();
+      expect(readFileSync(attemptPath, "utf8")).toBe(original);
+      const recovered = await runCli(["publish", "missing.html", "--new", "--json"], {
+        stateDir: alias,
+        env
+      });
+      expect(recovered).toMatchObject({ status: 0, stderr: "" });
+      expect(JSON.parse(recovered.stdout)).toEqual(response);
+      const sent = instance.requests.filter((request) => request.url === "/api/publish");
+      expect(sent.map((request) => request.body)).toEqual([
+        originalRequest.request.body,
+        originalRequest.request.body
+      ]);
+      expect(existsSync(attemptPath)).toBe(false);
+      expect(readJson(path.join(dir, "patches.json"))).toMatchObject({
+        hosts: {
+          [instance.url]: {
+            files: { [file]: { patchId: response.patchId, latestVersionNumber: 1 } }
+          }
+        }
+      });
+    } finally {
+      child?.kill("SIGKILL");
+      await killed;
+    }
+  });
 
   it("replays a lost reply before file, flags and release checks, applies the original cache target, and stops", async () => {
     const dir = tempDir();

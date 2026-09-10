@@ -1,5 +1,4 @@
-// Bundle JavaScript dependencies and ship the advisory lock's native prebuilds
-// beside its CJS loader so the tarball installs without registry access or scripts.
+// Bundle JavaScript dependencies so the tarball installs without registry access or scripts.
 import { access, chmod, copyFile, cp, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,42 +13,13 @@ const rootSkillsDir = path.join(repoRoot, "skills");
 const packageSkillsDir = path.join(cliDir, "skills");
 const rootPatchySkill = path.join(rootSkillsDir, "patchy/SKILL.md");
 
-const nativeSourceDir = path.join(cliDir, "node_modules/fs-native-extensions");
-const nativeDistDir = path.join(distDir, "native");
 await rm(distDir, { recursive: true, force: true });
-await esbuild.build({
-  entryPoints: [path.join(nativeSourceDir, "index.js")],
-  outfile: path.join(nativeDistDir, "index.cjs"),
-  bundle: true,
-  platform: "node",
-  format: "cjs",
-  target: "node22"
-});
-await cp(path.join(nativeSourceDir, "prebuilds"), path.join(nativeDistDir, "prebuilds"), {
-  recursive: true
-});
-// The addon resolver uses the package name and prebuilds relative to __filename.
-for (const filename of ["package.json", "LICENSE"]) {
-  await copyFile(path.join(nativeSourceDir, filename), path.join(nativeDistDir, filename));
-}
-
 await esbuild.build({
   entryPoints: [path.join(cliDir, "src/index.ts")],
   outfile,
   bundle: true,
   platform: "node",
   format: "esm",
-  plugins: [
-    {
-      name: "native-lock",
-      setup(build) {
-        build.onResolve({ filter: /^fs-native-extensions$/ }, () => ({
-          path: "./native/index.cjs",
-          external: true
-        }));
-      }
-    }
-  ],
   target: "node22",
   sourcemap: true,
   tsconfig: path.join(cliDir, "tsconfig.json"),

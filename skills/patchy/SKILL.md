@@ -146,8 +146,11 @@ browser sign-out is a separate control on **Your machines**.
   resending the saved content, then applies the original result without another version.
   A replacement token for the same user works; another account is refused locally.
   Authentication, rate-limit and quota failures retain the attempt. Preserve the state
-  directory until recovery succeeds. If another publish holds the state lock, retry
-  after that process exits; do not remove state to bypass the lock.
+  directory until recovery succeeds, including after a killed process. Exclusive
+  creation of `attempt.json` selects the attempt; concurrent publishes resend the
+  existing one after checking its original owner, even if they lose the creation race.
+  Success or a definitive payload refusal clears only the matching publish key,
+  so a stale response leaves a newer attempt intact.
 - Republishing the same local file updates the patch it already created on that instance
   and preserves its sharing scope unless `--share company` or `--share public` is supplied.
   Pass `--new` to force a fresh patch, or `--patch` to update a known patch only.

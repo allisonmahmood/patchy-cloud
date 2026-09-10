@@ -328,8 +328,15 @@ const validate = Command.make("validate", { file: fileArgument }, ({ file }) =>
 /** A replay uses only its saved request and application context, never today's file or flags. */
 const sendPublish = Effect.fn("sendPublish")(function* (
   attempt: State.PendingPublish,
-  token: Redacted.Redacted
+  token: Redacted.Redacted,
+  ownerUserId: string
 ) {
+  if (attempt.ownerUserId !== ownerUserId) {
+    return yield* new LocalError({
+      message:
+        "The pending publish belongs to another account. Sign in to the same account that started it, then run publish again. The original attempt has been kept."
+    });
+  }
   const instance = yield* Instance.Instance;
   const state = yield* State.State;
   const published = yield* Api.publish(token, attempt.request).pipe(
@@ -351,7 +358,9 @@ const sendPublish = Effect.fn("sendPublish")(function* (
                   (error.status === 404 &&
                     attempt.request.patchId !== undefined &&
                     error.error === PATCH_NOT_FOUND));
-              if (definitive) yield* state.forgetPendingPublish(instance.apiUrl);
+              if (definitive) {
+                yield* state.forgetPendingPublish(instance.apiUrl, attempt.request.publishKey);
+              }
               if (
                 attempt.request.patchId !== undefined &&
                 Api.isRefusal(error) &&
@@ -383,7 +392,7 @@ const sendPublish = Effect.fn("sendPublish")(function* (
       updatedAt: yield* State.now
     })
   );
-  yield* state.forgetPendingPublish(instance.apiUrl);
+  yield* state.forgetPendingPublish(instance.apiUrl, attempt.request.publishKey);
   yield* Output.report(encodePublish(published), [
     attempt.request.patchId !== undefined ? "Updated patch" : "Published patch",
     `URL: ${published.publicUrl}`,
@@ -419,7 +428,6 @@ const publish = Command.make(
       Effect.gen(function* () {
         const instance = yield* Instance.Instance;
         const state = yield* State.State;
-        yield* state.lockPublish(instance.apiUrl);
         const pending = yield* state.readPendingPublish(instance.apiUrl);
         const apiToken = yield* requiredToken();
         const client = yield* Api.client(apiToken);
@@ -429,13 +437,7 @@ const publish = Command.make(
             Effect.catch((error) => refused(error, "Could not verify the publishing key's owner."))
           );
         if (Option.isSome(pending)) {
-          if (pending.value.ownerUserId !== identity.user.id) {
-            return yield* new LocalError({
-              message:
-                "The pending publish belongs to another account. Sign in to the same account that started it, then run publish again. The original attempt has been kept."
-            });
-          }
-          return yield* sendPublish(pending.value, apiToken);
+          return yield* sendPublish(pending.value, apiToken, identity.user.id);
         }
 
         if (Option.isSome(options.patch) && options.new) {
@@ -490,9 +492,9 @@ const publish = Command.make(
             })
           })
         });
-        yield* state.savePendingPublish(instance.apiUrl, attempt);
-        yield* sendPublish(attempt, apiToken);
-      }).pipe(Effect.scoped)
+        const selected = yield* state.lockPublish(instance.apiUrl, attempt);
+        yield* sendPublish(selected, apiToken, identity.user.id);
+      })
     )
 ).pipe(Command.withDescription("Publish or update an HTML patch."));
 

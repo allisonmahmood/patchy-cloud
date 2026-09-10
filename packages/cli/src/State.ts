@@ -12,10 +12,8 @@
  * survives. A file in the retired single-instance format fails closed
  * everywhere: the token it holds is the only key to the pages it created.
  */
-// @effect-diagnostics nodeBuiltinImport:off -- homedir is OS-owned; Effect's FileSystem hides the FD required for advisory locking.
-import { open } from "node:fs/promises";
+// @effect-diagnostics nodeBuiltinImport:off -- homedir is OS-owned.
 import { homedir } from "node:os";
-import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
@@ -26,10 +24,8 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import type * as Scope from "effect/Scope";
-import { tryLock } from "fs-native-extensions";
 import { PublishRequest } from "@patchy/api";
-import { sha256 } from "@patchy/core";
+import { newInternalId, sha256 } from "@patchy/core";
 import { LocalError } from "./CliError.js";
 
 const Machine = Schema.Struct({ id: Schema.String, name: Schema.String });
@@ -153,16 +149,18 @@ export class State extends Context.Service<
       login: PendingLogin
     ) => Effect.Effect<void, LocalError>;
     readonly forgetPendingLogin: (apiUrl: string) => Effect.Effect<void, LocalError>;
-    /** Holds this instance's publish state through read, request and local application. */
-    readonly lockPublish: (apiUrl: string) => Effect.Effect<void, LocalError, Scope.Scope>;
+    /** Exclusively persists a candidate or returns the attempt another invocation already saved. */
+    readonly lockPublish: (
+      apiUrl: string,
+      attempt: PendingPublish
+    ) => Effect.Effect<PendingPublish, LocalError>;
     readonly readPendingPublish: (
       apiUrl: string
     ) => Effect.Effect<Option.Option<PendingPublish>, LocalError>;
-    readonly savePendingPublish: (
+    readonly forgetPendingPublish: (
       apiUrl: string,
-      attempt: PendingPublish
+      publishKey: string
     ) => Effect.Effect<void, LocalError>;
-    readonly forgetPendingPublish: (apiUrl: string) => Effect.Effect<void, LocalError>;
     readonly readCachedPatch: (
       apiUrl: string,
       file: string
@@ -227,14 +225,18 @@ export const make = Effect.gen(function* () {
   /** `None` when the file does not exist; the caller's errors for anything else. */
   const readDocument = (file: string, errors: { unreadable: string; invalid: string }) =>
     Effect.gen(function* () {
-      if (!(yield* fs.exists(file).pipe(Effect.orElseSucceed(() => true)))) {
-        return Option.none<unknown>();
-      }
-      const text = yield* fs
-        .readFileString(file)
-        .pipe(Effect.mapError((cause) => new LocalError({ message: errors.unreadable, cause })));
+      const text = yield* fs.readFileString(file).pipe(
+        Effect.map(Option.some),
+        Effect.catchTags({
+          PlatformError: (cause) =>
+            cause.reason._tag === "NotFound"
+              ? Effect.succeed(Option.none<string>())
+              : Effect.fail(new LocalError({ message: errors.unreadable, cause }))
+        })
+      );
+      if (Option.isNone(text)) return Option.none<unknown>();
       return Option.some(
-        yield* decodeJson(text).pipe(
+        yield* decodeJson(text.value).pipe(
           Effect.mapError((cause) => new LocalError({ message: errors.invalid, cause }))
         )
       );
@@ -279,7 +281,7 @@ export const make = Effect.gen(function* () {
       yield* fs.makeDirectory(path.dirname(file), { recursive: true, mode: 0o700 });
       const tempFile = path.join(
         path.dirname(file),
-        `.${path.basename(file)}.${yield* Clock.currentTimeMillis}.tmp`
+        `.${path.basename(file)}.${newInternalId("tmp")}.tmp`
       );
       yield* fs.writeFileString(tempFile, `${encodeJson(value)}\n`, {
         flag: "wx",
@@ -323,49 +325,54 @@ export const make = Effect.gen(function* () {
     yield* writeJson(file, { hosts: remaining });
   });
 
-  const lockPublish = Effect.fn("State.lockPublish")(function* (apiUrl: string) {
-    const lockPath = yield* Effect.gen(function* () {
+  const readPendingPublish = Effect.fn("State.readPendingPublish")(function* (apiUrl: string) {
+    const file = publishPath(apiUrl);
+    const invalid = `Pending publish is invalid: ${file}. Keep the file until the publish outcome is resolved.`;
+    const document = yield* readDocument(file, {
+      unreadable: `Pending publish could not be read: ${file}. Check permissions.`,
+      invalid
+    });
+    if (Option.isNone(document)) return Option.none<PendingPublish>();
+    return Option.some(yield* entry(decodePendingPublish(document.value), invalid));
+  });
+
+  const lockPublish = Effect.fn("State.lockPublish")(function* (
+    apiUrl: string,
+    attempt: PendingPublish
+  ) {
+    // Constructors do not validate: never persist a request recovery cannot decode.
+    const encoded = yield* entry(
+      encodePendingPublish(attempt),
+      "Publish request is invalid. Check the patch ID and publish options."
+    );
+    const file = publishPath(apiUrl);
+    const created = yield* Effect.gen(function* () {
       yield* fs.makeDirectory(dir, { recursive: true, mode: 0o700 });
-      // Canonicalise before choosing the stable inode, including symlinked state dirs.
-      const realDir = yield* fs.realPath(dir);
-      const publishDir = path.join(realDir, "publish", sha256(apiUrl));
-      yield* fs.makeDirectory(publishDir, { recursive: true, mode: 0o700 });
-      return path.join(publishDir, "lock");
+      yield* fs.makeDirectory(path.dirname(file), { recursive: true, mode: 0o700 });
+      return yield* fs
+        .writeFileString(file, `${encodeJson(encoded)}\n`, {
+          flag: "wx",
+          mode: 0o600
+        })
+        .pipe(
+          Effect.as(true),
+          Effect.catchTags({
+            PlatformError: (cause) =>
+              cause.reason._tag === "AlreadyExists" ? Effect.succeed(false) : Effect.fail(cause)
+          })
+        );
     }).pipe(
       Effect.mapError(
-        (cause) =>
-          new LocalError({
-            message: `Could not prepare the publish lock for ${apiUrl}. Check state directory permissions.`,
-            cause
-          })
+        (cause) => new LocalError({ message: `Could not write ${file}. Check permissions.`, cause })
       )
     );
-    // Never unlink this file: replacing its inode would let another process take
-    // a different lock. Closing the descriptor releases the OS lock, even on SIGKILL.
-    const handle = yield* Effect.acquireRelease(
-      Effect.tryPromise({
-        try: () => open(lockPath, "a", 0o600),
-        catch: (cause) =>
-          new LocalError({
-            message: `Could not open the publish lock for ${apiUrl}. Check state directory permissions.`,
-            cause
-          })
-      }),
-      (handle) => Effect.promise(() => handle.close())
-    );
-    const acquired = yield* Effect.try({
-      try: () => tryLock(handle.fd),
-      catch: (cause) =>
-        new LocalError({
-          message: `Could not lock publishing for ${apiUrl}. Check filesystem locking support.`,
-          cause
-        })
+    if (created) return attempt;
+    const pending = yield* readPendingPublish(apiUrl);
+    if (Option.isSome(pending)) return pending.value;
+    return yield* new LocalError({
+      message:
+        "The concurrent publish finished before its attempt could be read. Run publish again."
     });
-    if (!acquired) {
-      return yield* new LocalError({
-        message: `Another publish is running for ${apiUrl} in this state directory. Wait for it to finish, then run publish again.`
-      });
-    }
   });
 
   return State.of({
@@ -424,37 +431,21 @@ export const make = Effect.gen(function* () {
       }),
     forgetPendingLogin: (apiUrl) => forgetHost(deviceLoginPath, readLoginFile, apiUrl),
     lockPublish,
-    readPendingPublish: (apiUrl) =>
+    readPendingPublish,
+    forgetPendingPublish: (apiUrl, publishKey) =>
       Effect.gen(function* () {
-        const file = publishPath(apiUrl);
-        const invalid = `Pending publish is invalid: ${file}. Keep the file until the publish outcome is resolved.`;
-        const document = yield* readDocument(file, {
-          unreadable: `Pending publish could not be read: ${file}. Check permissions.`,
-          invalid
-        });
-        if (Option.isNone(document)) return Option.none<PendingPublish>();
-        return Option.some(yield* entry(decodePendingPublish(document.value), invalid));
-      }),
-    savePendingPublish: (apiUrl, attempt) =>
-      Effect.gen(function* () {
-        // Constructors do not validate: never persist a request that recovery
-        // cannot decode or the HTTP client cannot send.
-        const encoded = yield* entry(
-          encodePendingPublish(attempt),
-          "Publish request is invalid. Check the patch ID and publish options."
+        const pending = yield* readPendingPublish(apiUrl);
+        if (Option.isNone(pending) || pending.value.request.publishKey !== publishKey) return;
+        yield* fs.remove(publishPath(apiUrl), { force: true }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new LocalError({
+                message: `Could not clear the pending publish for ${apiUrl}. Run publish again to recover it.`,
+                cause
+              })
+          )
         );
-        yield* writeJson(publishPath(apiUrl), encoded);
       }),
-    forgetPendingPublish: (apiUrl) =>
-      fs.remove(publishPath(apiUrl), { force: true }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new LocalError({
-              message: `Could not clear the pending publish for ${apiUrl}. Run publish again to recover it.`,
-              cause
-            })
-        )
-      ),
     readCachedPatch: (apiUrl, file) =>
       Effect.gen(function* () {
         const { hosts } = yield* readPatchFile;

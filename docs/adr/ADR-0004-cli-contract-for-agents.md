@@ -154,21 +154,22 @@ File publishing never reads `patchy.json`. The executing CLI must match
 `GET /api/release` exactly; a mismatch names both releases and `patchy refresh`.
 Repo mode and refresh arrive in later SDK tickets.
 
-Before a request, the CLI authenticates the publishing key and persists the complete
-attempt (publish key, request body, owner user ID and file-cache target) under its
-instance-scoped state directory. On the next `publish`, it authenticates again and
+Before a request, the CLI authenticates the publishing key and schema-encodes the complete
+attempt (publish key, request body, owner user ID and file-cache target), then exclusively
+creates `attempt.json` with `wx` under its instance-scoped state directory. An existing
+file is read, never overwritten: concurrent invocations resend that same attempt.
+The selected attempt's owner is checked even after losing exclusive creation.
+On the next `publish`, the CLI authenticates again and
 requires the original owner before sending any saved content. Replacement machine
 tokens for that same owner work; a different owner is a local refusal and leaves
 the attempt intact. Recovery precedes reading the file, validating new options or
-checking the release. Success updates the cache, clears the attempt and prints
-the recovered result; no additional version is published.
+checking the release. Success updates the cache, clears only the matching publish key
+and prints the recovered result; no additional version is published.
 
-A definitive payload refusal clears the attempt. Authentication, throttling and
-quota refusals do not establish its outcome; they preserve it, as do unknown
-outcomes and failed cache writes. One OS-backed lock covers reading, persisting,
-sending, applying and clearing an instance's attempt. A competing process exits
-1 (`local`) without sending or changing state. The lock is released on process
-exit, even when killed, so recovery is not stranded behind a stale lock.
+A definitive payload refusal clears only the matching publish key. Authentication,
+throttling and quota refusals do not establish its outcome; they preserve the attempt,
+as do unknown outcomes and failed cache writes. Killing a process leaves the persisted
+attempt available for recovery. A stale response cannot clear a newer attempt.
 
 The server stores the response under a publish key unique to the owning user.
 An identical retry returns that response even after the current release changes;

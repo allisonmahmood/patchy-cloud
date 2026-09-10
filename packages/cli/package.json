@@ -48,7 +48,6 @@
     "@patchy/auth": "workspace:*",
     "@patchy/core": "workspace:*",
     "effect": "catalog:",
-    "fs-native-extensions": "1.5.1",
     "vitest": "^4.1.11"
   }
 }

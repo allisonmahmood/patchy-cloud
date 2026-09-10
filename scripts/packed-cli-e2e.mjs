@@ -2957,7 +2957,7 @@ async function assertCliFailureNoMutation({
   exitCode
 }) {
   const authoritativeBefore = await authoritativeSnapshot(objectDir);
-  const cliStateBefore = await snapshotCliState(cliStateDir);
+  const cliStateBefore = await snapshotTree(cliStateDir);
   if (expectAuthoritativeNonEmpty) {
     assertAuthoritativeSnapshotNonEmpty(authoritativeBefore);
   }
@@ -2979,7 +2979,7 @@ async function assertCliFailureNoMutation({
     "failed CLI invocation mutated server metadata or object storage"
   );
   assert.deepEqual(
-    await snapshotCliState(cliStateDir),
+    await snapshotTree(cliStateDir),
     expectEmptyCliState ? [] : cliStateBefore,
     expectEmptyCliState
       ? "failed CLI invocation created CLI state"
@@ -2999,16 +2999,6 @@ function assertAuthoritativeSnapshotNonEmpty(snapshot) {
   const metadata = JSON.parse(snapshot.metadata);
   assert.ok(metadata.drafts.length > 0, "expected existing authoritative drafts before failure");
   assert.ok(snapshot.objects.length > 0, "expected existing authoritative objects before failure");
-}
-
-/** A stable empty advisory-lock inode is coordination, not remembered publishing data. */
-async function snapshotCliState(rootDir) {
-  const files = await snapshotTree(rootDir);
-  return files.filter(([file, content]) => {
-    if (!/^publish[/\\][0-9a-f]{64}[/\\]lock$/.test(file)) return true;
-    assert.equal(content, "", "the advisory lock file must remain empty");
-    return false;
-  });
 }
 
 async function snapshotTree(rootDir) {

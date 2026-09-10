@@ -111,7 +111,11 @@ For publish recovery, keep the isolated `PATCHY_STATE_DIR` and original owning u
 a pending attempt is resent first after authenticating that owner, even if the file
 or current release changed. Replacement tokens for that user work; account switches
 are refused without sending saved content. Authentication and admission failures
-preserve the attempt. A concurrent publish exits locally until the lock holder stops.
+preserve the attempt. Exclusive creation of `attempt.json` selects one attempt;
+concurrent publishes resend the existing one after checking its original owner,
+including when they lose the creation race. Success or a definitive payload refusal
+clears only the matching publish key, so a stale response leaves a newer attempt
+intact. A killed process leaves the persisted attempt recoverable.
 New attempts check the executing CLI against the public `GET /api/release`.
 Production-domain Clerk handshake verification remains a separate live check.
 
