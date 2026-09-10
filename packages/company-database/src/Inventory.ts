@@ -239,6 +239,16 @@ export const layer = Layer.succeed(
   Inventory.of({ ensurePatch, exists, read, putTable, putColumn, putIndex, putStore, bumpRevision })
 );
 
+/** Explicit readiness upgrades existing inventory without taking a DDL lock on current schemas. */
+export const upgrade = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const present = yield* sql`SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'patchy' AND table_name = 'columns' AND column_name = 'ref_table'`;
+  if (present.length === 0) {
+    yield* sql.unsafe('ALTER TABLE "patchy"."columns" ADD COLUMN IF NOT EXISTS "ref_table" text');
+  }
+});
+
 /** Shared bootstrap for PostgreSQL and PGlite; never submit multiple statements in one call. */
 export const initialize = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -267,7 +277,7 @@ export const initialize = Effect.gen(function* () {
     PRIMARY KEY ("patch_id", "table", "name"),
     FOREIGN KEY ("patch_id", "table") REFERENCES "patchy"."tables" ("patch_id", "name") ON DELETE CASCADE
   )`);
-  yield* sql.unsafe('ALTER TABLE "patchy"."columns" ADD COLUMN IF NOT EXISTS "ref_table" text');
+  yield* upgrade;
   yield* sql.unsafe(`CREATE TABLE IF NOT EXISTS "patchy"."indexes" (
     "patch_id" text NOT NULL,
     "table" text NOT NULL,

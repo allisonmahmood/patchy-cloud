@@ -514,6 +514,9 @@ For table changes, exercise the Primitives contract suites over both Postgres
 and PGlite, and the real-Postgres publish/unique-index races. Ordinary table
 operations lease an existing company database; only resource-introducing
 publishes call `ensureReady`. No new platform migration belongs to Primitives.
+Explicit readiness also upgrades metadata in already-ready company databases
+(including recorded ref targets); it preserves their inventory and does not
+retain a query-pool reservation. Normal leases never bootstrap or upgrade.
 
 ## Running the server by hand
 
