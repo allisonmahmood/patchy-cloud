@@ -39,6 +39,26 @@ export class UnreachableError extends Schema.TaggedError<UnreachableError>()("Un
   readonly kind = "unreachable";
 }
 
-export const CliError = Schema.Union([LocalError, RejectedError, UnreachableError]);
+/** Exact-current tooling is required before starting a new publish or dev session. */
+export class ReleaseMismatch extends Schema.TaggedError<ReleaseMismatch>()("ReleaseMismatch", {
+  component: Schema.Literals(["pin", "cli", "runtime"]),
+  loaded: Schema.String,
+  current: Schema.String
+}) {
+  readonly kind = "local";
+  readonly code = "release_mismatch";
+  override get message() {
+    const label =
+      this.component === "cli" ? "CLI" : this.component === "pin" ? "Pinned" : "Runtime";
+    return `${label} release ${this.loaded} does not match instance release ${this.current}. Run: patchy refresh`;
+  }
+}
+
+export const CliError = Schema.Union([
+  LocalError,
+  RejectedError,
+  UnreachableError,
+  ReleaseMismatch
+]);
 export type CliError = typeof CliError.Type;
 export const isCliError = Schema.is(CliError);

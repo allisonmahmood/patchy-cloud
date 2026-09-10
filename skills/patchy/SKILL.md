@@ -38,9 +38,12 @@ The `patchy` CLI publishes one safe static HTML document and returns its view UR
 New patches default to company scope; use `--share public` only when the user wants
 anyone with the link to read the page.
 
-Requires Node.js 22 or newer, and the `patchy` CLI on `PATH` — built from the
-patchy-cloud repo with `pnpm --filter @patchy/cli build`, then symlinked from
-`packages/cli/dist/index.js` as `patchy` into a directory on `PATH`.
+Requires Node.js 22.18 or newer, and the `patchy` CLI on `PATH` — built from the
+patchy-cloud repo with `pnpm --filter patchy build`, then symlinked from
+`packages/patchy/dist/index.js` as `patchy` into a directory on `PATH`.
+The private package is also available at your instance's `GET /api/release`:
+install its exact `package.tarball` URL and verify `package.integrity`. The
+installed skill lives at `node_modules/patchy/skills/patchy/SKILL.md`.
 
 Settle the instance and available key before login or publish:
 

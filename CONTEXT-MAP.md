@@ -4,14 +4,15 @@ Patchy Cloud is one deployment: the hosting server on one side, the `patchy` CLI
 
 ## Contexts
 
-- [Patches](./packages/patches/CONTEXT.md) — `packages/patches`. Patches and immutable versions, company-scoped names, manifests and replay-safe publish keys, additive table and store provisioning at publish, owner inventory, user ownership, company/public sharing, owner deletion, retention and its sweep, the owner quota, release metadata, and the `patches` API group. Patch repos, higher-tier serving and retirement remain future work
+- [Patches](./packages/patches/CONTEXT.md) — `packages/patches`. Patches and immutable versions, company-scoped names, manifests and replay-safe publish keys, additive table and store provisioning at publish, owner inventory, user ownership, company/public sharing, owner deletion, retention and its sweep, the owner quota, and the `patches` API group. Patch repos, higher-tier serving and retirement remain future work
 - [Serving](./packages/serving/CONTEXT.md) — `packages/serving`. Patch addresses and version/content URLs, tier 0 pages, the login door, serving guarantees, admitted visits and trusted-proxy attribution. Higher runtimes, the connect door and patch identity remain future work
 - [Companies](./packages/companies/CONTEXT.md) — `packages/companies`. Companies and handles, users and roles, create-or-join, invitations, the company page, deactivation and reactivation. Groups, verified domains, SSO, billing, suspension and the operator's surfaces remain future work
 - [Auth](./packages/auth/CONTEXT.md) — `packages/auth`. Clerk session verification and viewers, user-owned machine tokens, device login, identity, revocation and bearer parsing, the sign-in and sign-out pages, Your machines, the `auth` API group and the shared dev seed
 - [Runtime](./packages/runtime/CONTEXT.md) — `packages/runtime`. Browser-only operation admission, loaded-version binding, acting identity, wire versions, dispatch and the runtime log. Admits `me`, owned-table operations, shared-table reads, file operations and Postgres calls supplied by their capabilities
 - [Primitives](./packages/primitives/CONTEXT.md) — `packages/primitives`. Patch-owned table and file-store definitions, one additive diff and provisioning, schema revisions, system columns, refs, bounded row operations and immutable file objects over Postgres and PGlite. Shared-table declarations grant no authority: reads check the source's live access and cumulative inventory
 - [Integrations](./packages/integrations/CONTEXT.md) — `packages/integrations`. Company Postgres connections, encrypted credentials, immutable schema snapshots, constrained runtime reads, generated relation clients, local fixtures and admin connection pages with recent calls. Publish binds connected identities and exact metadata revisions
-- [Publishing](./packages/cli/CONTEXT.md) — `packages/cli` and the bundled skill, the `patchy` CLI agents use to publish patches
+- [Publishing](./packages/patchy/CONTEXT.md) — `packages/patchy`, the single `patchy` package: CLI, config builders, browser client and dev-runtime entrypoint
+- SDK distribution — `packages/sdk`, the instance's current release metadata and immutable package artifact; [Publishing](./packages/patchy/CONTEXT.md) owns the release vocabulary. The SDK spec (#193 §2) assigns release, catalog and generation to this package, separate from page serving
 
 ## Shared kernel
 
@@ -32,6 +33,7 @@ Supporting packages rather than product contexts; their glossaries define only t
 ## Relationships
 
 - **Publishing → `api`**: publishes through the shared wire contract using a user-owned machine token
+- **SDK distribution → Publishing, `api`**: distributes the packed `patchy` release and its integrity through the shared wire contract
 - **Serving → Patches, Auth**: relies on Patches for content, sharing and visits, and on Auth for viewer identity and session admission
 - **Patches → Content store**: owns the lifecycle of stored patch content, from publication through expiry
 - **Runtime → Auth, Limits, SQL**: admits the browser session as the acting identity, limits calls per viewer and owning patch, and records mutations and integration calls before execution
@@ -53,3 +55,5 @@ Supporting packages rather than product contexts; their glossaries define only t
 System-wide decisions are in [`docs/adr/`](./docs/adr/): ADR-0002 (the `api` contract package), ADR-0003 (Postgres only), ADR-0004 (the CLI contract for agents), ADR-0005 (one registrable domain for pages, API and Account Portal), ADR-0006 (Clerk holds the browser session; the shell keeps it fresh), [ADR-0007](./docs/adr/ADR-0007-patchy-holds-the-company.md) (Patchy holds the company; Clerk knows the user), and [ADR-0008](./docs/adr/ADR-0008-every-bearer-is-somebody.md) (Every bearer is somebody: the machine token). Product decisions not yet built are recorded in `docs/product.md`, and the PR that builds one writes its ADR. A superseded ADR is deleted, not kept: its replacement names what it replaced and git holds the old text.
 
 Company database placement, provisioning, pooling and the local PGlite boundary are recorded in [ADR-0009](./docs/adr/ADR-0009-one-postgres-database-per-company.md).
+
+One package, exact-current tooling and stable deployed wire contracts are recorded in [ADR-0011](./docs/adr/ADR-0011-one-package-one-release.md).

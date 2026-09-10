@@ -48,7 +48,7 @@ One line each; only the things you would not find by reading the tree.
 - `CONTEXT-MAP.md` and each package's `CONTEXT.md` — the vocabulary. Use their words; see `docs/agents/domain.md`.
 - `docs/DEVELOPMENT.md` — required Clerk keys, `pnpm dev`, browser sign-in and CLI login, the seeded company/user/machine token, and offline/live test tiers. Read before starting a local instance or checking auth.
 - `packages/sql/README.md` — how migrations and row decoding work.
-- `docs/adr/ADR-0004-cli-contract-for-agents.md` — the CLI's exit codes and `--json` contract; keep it when touching `packages/cli`.
+- `docs/adr/ADR-0004-cli-contract-for-agents.md` — the CLI's exit codes and `--json` contract; keep it when touching `packages/patchy`.
 
 ## Agent skills
 
@@ -71,7 +71,7 @@ Multi-context — the root `CONTEXT-MAP.md` names the product's contexts, the sh
 The most common defect here is a change that lands on the path you tested and is missing everywhere else it is mirrored. Before calling work done, walk this list and say which entries applied:
 
 - **The wire contract.** A request, response or route in `packages/api` follows through to the server handler, the CLI command and its `--json` shape, and `docs/API.md`. The api package is the source; the rest mirror it.
-- **The CLI.** A new or changed command, flag or exit code follows through to `packages/cli/README.md`, the contract in ADR-0004, and the public `patchy` skill that teaches agents to drive it. When that skill's `SKILL.md` changes, refresh the hash in `skills-lock.json` by hand; nothing in CI checks it.
+- **The CLI.** A new or changed command, flag or exit code follows through to `packages/patchy/README.md`, the contract in ADR-0004, and the public `patchy` skill that teaches agents to drive it. When that skill's `SKILL.md` changes, refresh the hash in `skills-lock.json` by hand; nothing in CI checks it.
 - **The dev loop.** A change to the runner under `scripts/dev`, its seed, or how the CLI finds a local instance follows through to `docs/DEVELOPMENT.md`, the `patchy-dev-loop` skill, and the vitest Postgres template that applies the same seed rows.
 - **Vocabulary and product shape.** A new or renamed concept follows through to the owning `CONTEXT.md` glossary, `CONTEXT-MAP.md` when a context gains or loses a package, and `docs/product.md` when the product's shape moved. An ADR the change contradicts is updated or deleted, never left standing.
 - **Migrations.** A package that gains its first migration record is spread into three places: the server's migrator run, the dev runner's, and the vitest template's. Miss one and that place silently does not migrate.

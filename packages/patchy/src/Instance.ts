@@ -50,7 +50,7 @@ export class Instance extends Context.Service<
     /** The seeded token beside a `dev-env` URL: `pnpm dev` wrote both so the CLI works at once. */
     readonly token: Option.Option<Redacted.Redacted>;
   }
->()("@patchy/cli/Instance") {}
+>()("patchy/Instance") {}
 
 export const normalizeApiUrl = (value: string): string => value.trim().replace(/\/+$/, "");
 

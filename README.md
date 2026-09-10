@@ -16,7 +16,7 @@ This repository is a full-history copy of [PatchPage](https://github.com/allison
 
 ## Try it
 
-Use Node 22.13+ and the pnpm version in `package.json`. Before starting, load your **Clerk development keys** into the developer-owned `dev.env` as described in [Development: Clerk keys](docs/DEVELOPMENT.md#clerk-keys); shell exports alone do not configure the dev server.
+Use Node 22.18+ and the pnpm version in `package.json`. Before starting, load your **Clerk development keys** into the developer-owned `dev.env` as described in [Development: Clerk keys](docs/DEVELOPMENT.md#clerk-keys); shell exports alone do not configure the dev server.
 
 ```sh
 pnpm install
@@ -42,14 +42,15 @@ pnpm patchy publish examples/plan.html
 
 Open the returned URL in the same signed-in browser. **Company scope is the default:** colleagues in that company can read the page, but a publishing key cannot open it. An agent reads company patches through its user's browser; only public patches fetch directly by URL. Choose `--share public` only when the page is intended for anyone holding the link. Don't publish secrets.
 
-`pnpm patchy` runs from source and discovers this worktree's instance automatically. `pnpm dev stop` shuts it down. The complete runner and login recipes are in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md), and the CLI's commands and contract are in [packages/cli/README.md](packages/cli/README.md).
+`pnpm patchy` runs from source and discovers this worktree's instance automatically. `pnpm dev stop` shuts it down. The complete runner and login recipes are in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md), and the CLI's commands and contract are in [packages/patchy/README.md](packages/patchy/README.md).
 
 ## Repository layout
 
 A Turborepo monorepo managed with pnpm. [AGENTS.md](AGENTS.md) is the guide to working in it, for people and agents alike.
 
 - `apps/server` — the Effect HTTP server: wires the capability packages into one layer, guards `/api/*`, and listens (`@patchy/server`).
-- `packages/cli` — `@patchy/cli`, the `patchy` command-line publisher.
+- `packages/patchy` — `patchy`, one package for the command-line publisher, config builders, browser client and dev-runtime entrypoint.
+- `packages/sdk` — current release metadata and immutable `patchy` tarball distribution (`@patchy/sdk`).
 - `packages/core` — shared HTML validation, hashing, ID helpers, and the first-party page shell (`@patchy/core`).
 - `packages/api` — the wire contract: schemas, the `HttpApi`, the derived client (`@patchy/api`).
 - `packages/companies` — companies, users, roles, invites and membership lifecycle (`@patchy/companies`).

@@ -179,7 +179,7 @@ export class State extends Context.Service<
      */
     readonly forgetPatch: (apiUrl: string, patchId: string) => Effect.Effect<void, LocalError>;
   }
->()("@patchy/cli/State") {}
+>()("patchy/State") {}
 
 export const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;

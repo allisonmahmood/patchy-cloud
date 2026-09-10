@@ -1,7 +1,7 @@
 {
-  "name": "@patchy/cli",
+  "name": "patchy",
   "version": "0.0.1",
-  "description": "Publish static HTML pages to a Patchy Cloud instance.",
+  "description": "The Patchy CLI, typed config, browser client and local dev runtime.",
   "type": "module",
   "private": true,
   "license": "UNLICENSED",
@@ -9,7 +9,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/allisonmahmood/patchy-cloud.git",
-    "directory": "packages/cli"
+    "directory": "packages/patchy"
   },
   "homepage": "https://github.com/allisonmahmood/patchy-cloud#readme",
   "bugs": "https://github.com/allisonmahmood/patchy-cloud/issues",
@@ -25,10 +25,32 @@
     "claude"
   ],
   "engines": {
-    "node": ">=22"
+    "node": ">=22.18"
   },
   "bin": {
     "patchy": "./dist/index.js"
+  },
+  "exports": {
+    "./config": {
+      "types": "./dist/config.d.ts",
+      "import": "./dist/config.js"
+    },
+    "./client": {
+      "types": "./dist/client.d.ts",
+      "import": "./dist/client.js"
+    },
+    "./dev": {
+      "types": "./dist/dev.d.ts",
+      "import": "./dist/dev.js"
+    },
+    "./executeConfig": {
+      "types": "./dist/executeConfig.d.ts",
+      "import": "./dist/executeConfig.js"
+    },
+    "./generateClient": {
+      "types": "./dist/generateClient.d.ts",
+      "import": "./dist/generateClient.js"
+    }
   },
   "files": [
     "dist",
@@ -36,8 +58,8 @@
     "skills"
   ],
   "scripts": {
-    "build": "node ../../scripts/build-cli-bundle.mjs",
-    "prepack": "node ../../scripts/build-cli-bundle.mjs",
+    "build": "node ../../scripts/build-patchy-package.mjs",
+    "prepack": "node ../../scripts/build-patchy-package.mjs --bundle-only",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

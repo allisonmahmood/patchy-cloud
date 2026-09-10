@@ -2,7 +2,7 @@
 
 - **Status**: Accepted
 - **Date**: 2026-08-29
-- **Contexts**: Hosting (`apps/server`) and Publishing (`packages/cli`) — the decision is about what sits between them, so it lives in the root ADR home.
+- **Contexts**: Hosting (`apps/server`) and Publishing (`packages/patchy`) — the decision is about what sits between them, so it lives in the root ADR home.
 - **Source**: Effect v4 port spec (#68) §1 and §9; build ticket #71, which supersedes #35.
 
 ## Context

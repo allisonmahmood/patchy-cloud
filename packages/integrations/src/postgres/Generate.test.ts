@@ -3,6 +3,9 @@ import * as ts from "typescript";
 import * as Schema from "effect/Schema";
 import { generate } from "./Generate.js";
 import type { Snapshot } from "./Snapshot.js";
+import * as PatchyClient from "../../../patchy/src/client.js";
+import { t } from "../../../patchy/src/config.js";
+import { expect } from "vitest";
 
 const text = {
   schema: "pg_catalog",
@@ -62,7 +65,18 @@ it("compiles projected keys, keyless views, query shapes and discriminated known
   const generated = generate(declaration, snapshot);
   const files: Readonly<Record<string, string>> = {
     "/generated.ts": generated.client,
-    "/consumer.ts": `import { createClient, isPatchyError, type ListError } from "./generated.js";
+    "/package.json": ts.sys.readFile(
+      new URL("../../../patchy/package.json", import.meta.url).pathname
+    )!,
+    ...Object.fromEntries(
+      ["client", "clientError", "clientTransport", "config", "release"].map((name) => [
+        `/${name}.ts`,
+        ts.sys.readFile(new URL(`../../../patchy/src/${name}.ts`, import.meta.url).pathname)!
+      ])
+    ),
+    "/consumer.ts": `import { createClient, type ListError } from "./generated.js";
+import { isPatchyError } from "patchy/client";
+import { t } from "patchy/config";
 const db = createClient("sales", async () => ({ ok: true, rows: [], cursor: null }));
 async function use(nullableFlag: boolean) {
   const page = await db.accounts.list({ eq: { id: "9" }, range: { column: "id", gt: "1" }, orderBy: { column: "name", direction: "asc" }, select: ["name"] });
@@ -93,6 +107,13 @@ async function use(nullableFlag: boolean) {
   db.query("SELECT 1", [], { n: { kind: "ref" } });
   // @ts-expect-error defaults are not accepted by query shape
   db.query("SELECT 1", [], { n: { kind: "integer", default: 1 } });
+  const built = await db.query("SELECT 1 AS n", [], { n: t.integer(), title: t.text().optional() });
+  const builtNumber: number = built.rows[0]!.n;
+  const builtTitle: string | null = built.rows[0]!.title;
+  // @ts-expect-error defaulted builders are not query shapes
+  db.query("SELECT 1", [], { n: t.integer().default(1) });
+  // @ts-expect-error ref builders are not query shapes
+  db.query("SELECT 1", [], { n: t.ref("notes") });
   try { await db.accounts.list(); } catch (error: unknown) {
     if (isPatchyError(error, "invalid_query")) {
       const sqlstate: string = error.details.sqlstate;
@@ -141,6 +162,9 @@ function inspect(error: ListError) {
     target: ts.ScriptTarget.ES2022,
     module: ts.ModuleKind.ESNext,
     moduleResolution: ts.ModuleResolutionKind.Bundler,
+    paths: { "patchy/client": ["/client.ts"], "patchy/config": ["/config.ts"] },
+    resolveJsonModule: true,
+    lib: ["lib.es2022.d.ts", "lib.dom.d.ts"],
     types: [],
     skipLibCheck: true
   };
@@ -154,7 +178,11 @@ function inspect(error: ListError) {
     Object.hasOwn(files, file)
       ? ts.createSourceFile(file, files[file]!, languageVersion, true)
       : getSourceFile(file, languageVersion, onError, shouldCreateNewSourceFile);
-  const program = ts.createProgram(Object.keys(files), options, host);
+  const program = ts.createProgram(
+    Object.keys(files).filter((file) => file.endsWith(".ts")),
+    options,
+    host
+  );
   assert.deepStrictEqual(
     ts
       .getPreEmitDiagnostics(program)
@@ -178,7 +206,13 @@ it("preserves arbitrary names without prototype mutation and narrows transport r
   const javascript = ts.transpileModule(generated.client, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS }
   }).outputText;
-  const exports = new Function("exports", `${javascript}\nreturn exports;`)({}) as {
+  const exports = new Function("exports", "require", `${javascript}\nreturn exports;`)(
+    {},
+    (name: string) => {
+      assert.strictEqual(name, "patchy/client");
+      return PatchyClient;
+    }
+  ) as {
     createClient: (
       connection: string,
       call: (op: string, args: unknown) => Promise<unknown>
@@ -188,8 +222,7 @@ it("preserves arbitrary names without prototype mutation and narrows transport r
         get: (key: unknown) => Promise<unknown>;
         list: () => Promise<unknown>;
       }
-    >;
-    isPatchyError: (error: unknown, code: string) => boolean;
+    > & { query(sql: string, params: readonly unknown[], shape: unknown): Promise<unknown> };
   };
   const seen: unknown[] = [];
   const client = exports.createClient("alias", async (op: string, args: unknown) => {
@@ -205,6 +238,28 @@ it("preserves arbitrary names without prototype mutation and narrows transport r
       { connection: "alias", relation: { schema: "public", name: malicious }, key: { id: "7" } }
     ]
   ]);
+  await client.query("SELECT 1 AS n", [], { n: t.integer(), title: t.text().optional() });
+  assert.deepStrictEqual(seen[1], [
+    "postgres.query",
+    {
+      connection: "alias",
+      sql: "SELECT 1 AS n",
+      params: [],
+      shape: { n: { kind: "integer", optional: false }, title: { kind: "text", optional: true } }
+    }
+  ]);
+  await expect(client.query("SELECT 1", [], { n: t.integer().default(1) })).rejects.toMatchObject({
+    code: "invalid_request"
+  });
+  await expect(client.query("SELECT 1", [], { n: t.ref("notes") })).rejects.toMatchObject({
+    code: "invalid_request"
+  });
+  await expect(
+    client.query("SELECT 1", [], { n: { kind: "integer", default: 1 } })
+  ).rejects.toMatchObject({ code: "invalid_request" });
+  await expect(
+    client.query("SELECT 1", [], { n: { kind: "integer", extra: true } })
+  ).rejects.toMatchObject({ code: "invalid_request" });
   const failing = exports.createClient("alias", async () => ({
     ok: false,
     code: "invalid_query",
@@ -215,7 +270,8 @@ it("preserves arbitrary names without prototype mutation and narrows transport r
     await failing[malicious].list();
     assert.fail("expected refusal");
   } catch (error) {
-    assert.isTrue(exports.isPatchyError(error, "invalid_query"));
+    assert.isTrue(PatchyClient.isPatchyError(error, "invalid_query"));
+    assert.instanceOf(error, PatchyClient.PatchyError);
     const parsed = Schema.decodeUnknownSync(
       Schema.Struct({ details: Schema.Struct({ sqlstate: Schema.String }) })
     )(error);

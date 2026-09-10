@@ -1,0 +1,34 @@
+{
+  "name": "@patchy/sdk",
+  "version": "0.0.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "description": "The instance's SDK distribution: current release discovery and immutable package artifacts.",
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "artifacts"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node ../../scripts/copy-sdk-artifact.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@patchy/api": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/platform-node": "catalog:",
+    "@effect/vitest": "catalog:",
+    "patchy": "workspace:*",
+    "vitest": "^4.1.11"
+  }
+}

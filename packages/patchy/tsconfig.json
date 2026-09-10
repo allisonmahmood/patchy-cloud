@@ -1,12 +1,12 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    "lib": ["ES2022", "ES2024.Promise", "DOM"],
     "paths": {
       "@patchy/api": ["../../packages/api/src/index.ts"],
       "@patchy/core": ["../../packages/core/src/index.ts"]
     },
-    // Bundled by esbuild, never emitted: declarations would only trip over
-    // Effect's unnameable internal types.
+    // Public subpaths receive standalone bundled declarations during the build.
     "declaration": false,
     "declarationMap": false,
     "noEmit": true

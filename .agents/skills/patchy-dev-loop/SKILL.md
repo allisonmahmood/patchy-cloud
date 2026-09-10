@@ -9,7 +9,9 @@ metadata:
 
 `pnpm dev` runs one complete Patchy Cloud per git worktree: embedded Postgres,
 migrations, a seeded **Patchy Dev** company and **Dev Machine** publishing key,
-then the server. Every command below is scoped to its worktree.
+the packed `patchy` release, then the server. Every command below is scoped to its worktree.
+Package-build failures appear under `[package]` in `dev.log`; a release check is
+only meaningful when its reported tarball downloads with the reported integrity.
 
 When the change needs live Clerk integration checks, read
 `docs/DEVELOPMENT.md`'s **Test tiers** first: `pnpm test:clerk` runs the

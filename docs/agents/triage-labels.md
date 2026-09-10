@@ -21,7 +21,7 @@ Triage sets one more axis: **which part of the codebase the issue touches**. App
 | Label         | Covers                                                                                                                          |
 | ------------- | ------------------------------------------------------------------------------------------------------------------------------- |
 | `area:server` | `apps/server` and the hosting-side packages: `analytics`, `api`, `auth`, `content-store`, `limits`, `patches`, `serving`, `sql` |
-| `area:cli`    | `packages/cli` — the `patchy` CLI package — and the `skills/` it ships                                                          |
+| `area:cli`    | `packages/patchy` — the `patchy` package — and the `skills/` it ships                                                           |
 | `area:core`   | `packages/core` — the safe-HTML policy, ids, crypto                                                                             |
 | `area:ci`     | `.github/`, `scripts/`, and root-level workspace and tooling config                                                             |
 | `area:docs`   | `docs/`, `examples/`, README, and other Markdown                                                                                |

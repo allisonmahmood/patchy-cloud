@@ -2,7 +2,7 @@
 
 - **Status**: Accepted
 - **Date**: 2026-08-29
-- **Contexts**: Publishing (`packages/cli`). System-wide because the contract is what every agent driving the CLI — and the dev runner's `.local/dev/env` — is held to.
+- **Contexts**: Publishing (`packages/patchy`). System-wide because the contract is what every agent driving the CLI — and the dev runner's `.local/dev/env` — is held to.
 - **Source**: Effect v4 port spec (#68) §5; [CLI contract on Effect cli](https://github.com/allisonmahmood/patchy-cloud/issues/60#issuecomment-5456839739); [Local dev environment](https://github.com/allisonmahmood/patchy-cloud/issues/15) for instance precedence; build ticket #78; [auth spec §10](https://github.com/allisonmahmood/patchy-cloud/issues/135) and [login/logout](https://github.com/allisonmahmood/patchy-cloud/issues/142) for device login and credential precedence.
 
 ## Context
@@ -15,6 +15,11 @@ network that was down, and it had to parse prose to find out. Moving the CLI
 onto `effect/unstable/cli` was the moment to write the contract down.
 
 ## Decision
+
+The npm package is `patchy` (formerly `@patchy/cli`), private until launch.
+It owns the binary and `patchy/config`, `patchy/client`, `patchy/dev` at one
+exact version, the release; see [ADR-0011](ADR-0011-one-package-one-release.md).
+This rename does not change the command name or exit-code ladder.
 
 ### Exit codes: a ladder keyed by who has to act
 
@@ -36,7 +41,7 @@ A command whose local act succeeded reports a failed courtesy call as a warning,
 never as an exit code. `logout` forgets the credential and pending login first;
 failure to revoke that deleted key does not undo the local logout.
 
-In code: one `CliError` union (`packages/cli/src/CliError.ts`), each tag
+In code: one `CliError` union (`packages/patchy/src/CliError.ts`), each tag
 carrying its `kind`, and a single table `exitCode(kind)`. Every command runs
 under one wrapper (`Output.contract`) that renders a failure and fails with
 its code; no command exits on its own.
@@ -152,6 +157,8 @@ key appears in the handoff or command output.
 
 File publishing never reads `patchy.json`. The executing CLI must match
 `GET /api/release` exactly; a mismatch names both releases and `patchy refresh`.
+The same check accepts the repo pin and loaded runtime release for repo publishing
+and dev starts; each must be exact-current, not a compatible version range.
 Repo mode and refresh arrive in later SDK tickets.
 File publishing onto a patch with cumulative table or store inventory is
 `has_primitives` (422, exit 2, `rejected`), even if its current version omits

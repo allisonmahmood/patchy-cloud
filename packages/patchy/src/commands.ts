@@ -20,8 +20,6 @@ import * as Command from "effect/unstable/cli/Command";
 import * as Flag from "effect/unstable/cli/Flag";
 import * as Prompt from "effect/unstable/cli/Prompt";
 import {
-  CURRENT_RELEASE,
-  MANIFEST_VERSION,
   PatchName,
   Identity,
   Ok,
@@ -41,12 +39,11 @@ import * as Instance from "./Instance.js";
 import * as Login from "./Login.js";
 import * as Output from "./Output.js";
 import * as State from "./State.js";
-
-export const VERSION =
-  typeof __PATCHY_VERSION__ === "string" ? __PATCHY_VERSION__ : CURRENT_RELEASE;
+import { RELEASE, MANIFEST_VERSION } from "./release.js";
+import { checkRelease } from "./ReleaseCheck.js";
 
 /** The working directory the entrypoint started in; where the dev-env walk begins. */
-export class Cwd extends Context.Service<Cwd, string>()("@patchy/cli/commands/Cwd") {}
+export class Cwd extends Context.Service<Cwd, string>()("patchy/commands/Cwd") {}
 
 /** The instance and the state dir, resolved once per command from the working directory. */
 const local = Layer.provideMerge(
@@ -299,7 +296,7 @@ const status = Command.make("status", {}, () =>
           tokenSource: Option.getOrNull(Option.map(credential, (c) => c.source)),
           stateDir: state.dir,
           hasDefaultStyle: yield* state.hasDefaultStyle,
-          cliVersion: VERSION
+          cliVersion: RELEASE
         })
       );
     })
@@ -472,12 +469,7 @@ const publish = Command.make(
           .pipe(
             Effect.catch((error) => Api.classify(error, "Could not read the instance release."))
           );
-        if (release.release !== VERSION) {
-          return yield* new LocalError({
-            code: "release_mismatch",
-            message: `CLI release ${VERSION} does not match instance release ${release.release}. Run: patchy refresh`
-          });
-        }
+        yield* checkRelease(release.release, { cli: RELEASE });
         const path = yield* Path.Path;
         const { resolved, html } = yield* readHtml(options.file);
         yield* validated(html);
@@ -499,7 +491,7 @@ const publish = Command.make(
           request: new PublishRequest({
             manifest: {
               manifestVersion: MANIFEST_VERSION,
-              release: VERSION,
+              release: RELEASE,
               ...(name === undefined ? {} : { name }),
               tier: 0,
               tables: {},
@@ -513,7 +505,7 @@ const publish = Command.make(
             metadata: new PublishMetadata({
               ...(yield* Git.metadata(path.dirname(resolved))),
               filename: path.basename(resolved),
-              cliVersion: VERSION,
+              cliVersion: RELEASE,
               fileSha256: sha256(html)
             })
           })

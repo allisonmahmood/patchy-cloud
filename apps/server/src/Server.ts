@@ -63,6 +63,7 @@ import {
   me,
   migrations as runtimeMigrations
 } from "@patchy/runtime";
+import { Artifact, SdkApi } from "@patchy/sdk";
 import { migrate } from "@patchy/sql";
 import * as ApiGuard from "./ApiGuard.js";
 
@@ -97,6 +98,7 @@ const migrated = Layer.effectDiscard(
  * a key is configured.
  */
 const services = Layer.mergeAll(
+  Artifact.layer,
   Content.layer,
   ExpirySweep.layer,
   DeviceLogins.layer,
@@ -164,7 +166,7 @@ export const sweeper = Layer.effectDiscard(
 
 /** `/api/*`: the groups' handlers, bearer middleware on protected endpoints, and catch-all. */
 const api = Layer.mergeAll(HttpApiBuilder.layer(PatchyApi), ApiGuard.notFound).pipe(
-  Layer.provide([AuthApi.layer, PatchesApi.layer, PatchesApi.releaseLayer, RuntimeApi.layer]),
+  Layer.provide([AuthApi.layer, PatchesApi.layer, SdkApi.layer, RuntimeApi.layer]),
   Layer.provide(Authorization.layer)
 );
 
@@ -185,7 +187,14 @@ const middleware = HttpRouter.middleware(
 );
 
 /** The routes and middleware as one router application. */
-const app = Layer.mergeAll(api, Pages.layer, AuthPages.layer, ConnectionPages.layer, middleware);
+const app = Layer.mergeAll(
+  api,
+  SdkApi.tarballLayer,
+  Pages.layer,
+  AuthPages.layer,
+  ConnectionPages.layer,
+  middleware
+);
 
 /** The server: serving the app, sweeping, and closing both with the scope. */
 export const layer = Layer.mergeAll(

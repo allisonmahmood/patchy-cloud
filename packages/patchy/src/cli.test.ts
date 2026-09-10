@@ -4,7 +4,7 @@
  * shapes, the token never in argv or output, and the state dir's fail-closed
  * files. What the commands do between those edges is the commands' own tests.
  */
-import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -20,7 +20,7 @@ import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
 import * as Schema from "effect/Schema";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { sha256 } from "@patchy/core";
@@ -30,13 +30,6 @@ const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".
 const cliPath = path.join(packageDir, "dist/index.js");
 const tempDirs: string[] = [];
 const servers: Server[] = [];
-
-beforeAll(() => {
-  execFileSync(process.execPath, [path.resolve(packageDir, "../../scripts/build-cli-bundle.mjs")], {
-    cwd: packageDir,
-    stdio: "pipe"
-  });
-});
 
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
@@ -88,7 +81,7 @@ const stubInstance = async (handler: Handler, release = () => CURRENT_RELEASE) =
       if (recorded.url === "/api/release") {
         respond(200, {
           release: release(),
-          package: { tarball: "/sdk/patchy.tgz", integrity: null },
+          package: { tarball: "/sdk/patchy.tgz", integrity: `sha512-${"A".repeat(86)}==` },
           manifestVersion: MANIFEST_VERSION,
           wireVersion: WIRE_VERSION
         });

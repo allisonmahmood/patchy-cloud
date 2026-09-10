@@ -24,8 +24,8 @@
 "area:cli":
   - changed-files:
       - any-glob-to-any-file:
-          - "packages/cli/**"
-          # Single-sourced into packages/cli and shipped with it.
+          - "packages/patchy/**"
+          # Single-sourced into packages/patchy and shipped with it.
           - "skills/**"
 
 "area:core":

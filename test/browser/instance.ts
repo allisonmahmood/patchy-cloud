@@ -211,12 +211,7 @@ export async function startInstance(clerkUserId: string): Promise<BrowserInstanc
       buildEnv
     );
     stage = "building CLI";
-    await checked(
-      pnpmCommand,
-      [...pnpmPrefix, "--filter", "@patchy/cli", "build"],
-      repoRoot,
-      buildEnv
-    );
+    await checked(pnpmCommand, [...pnpmPrefix, "--filter", "patchy", "build"], repoRoot, buildEnv);
     stage = "packing CLI";
     const packed = await checked(
       pnpmCommand,
@@ -228,7 +223,7 @@ export async function startInstance(clerkUserId: string): Promise<BrowserInstanc
         "--pack-destination",
         packDir
       ],
-      path.join(repoRoot, "packages/cli"),
+      path.join(repoRoot, "packages/patchy"),
       buildEnv
     );
     const parsed: unknown = JSON.parse(packed.stdout);
@@ -263,7 +258,7 @@ export async function startInstance(clerkUserId: string): Promise<BrowserInstanc
       consumerDir,
       runtimeEnv
     );
-    const cliEntry = path.join(consumerDir, "node_modules/@patchy/cli/dist/index.js");
+    const cliEntry = path.join(consumerDir, "node_modules/patchy/dist/index.js");
     await access(cliEntry);
 
     stage = "starting Postgres";
