@@ -1,3 +1,4 @@
+import type { PostgresShapeColumn } from "@patchy/api";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -183,6 +184,39 @@ export const nativeType = (
   return typeMapping(type) === undefined
     ? undefined
     : `${quoteIdentifier(type.baseSchema)}.${quoteIdentifier(type.baseName)}`;
+};
+
+/** Catalog identity on the source, or the exact resolved type used by native fixture DDL. */
+export const acceptedSourceTypes = (
+  type: typeof ColumnType.Type,
+  snapshot: typeof Snapshot.Type
+): ReadonlyArray<string> => {
+  const source = `${quoteIdentifier(type.schema)}.${quoteIdentifier(type.name)}`;
+  const fixture = nativeType(type, snapshot);
+  return fixture === undefined || fixture === source ? [source] : [source, fixture];
+};
+
+const nonTextQueryOids = new Set([16, 21, 23, 700, 701, 114, 3802, 1114, 1184]);
+
+/** Check field metadata before rows: int8/numeric never become lossy JS numbers, even when empty. */
+export const queryTypeCompatible = (
+  kind: (typeof PostgresShapeColumn.Type)["kind"],
+  oid: number
+): boolean => {
+  switch (kind) {
+    case "integer":
+      return oid === 21 || oid === 23;
+    case "number":
+      return oid === 21 || oid === 23 || oid === 700 || oid === 701;
+    case "boolean":
+      return oid === 16;
+    case "timestamp":
+      return oid === 1114 || oid === 1184;
+    case "text":
+      return !nonTextQueryOids.has(oid) && !(oid >= 1000 && oid <= 1028);
+    case "json":
+      return true;
+  }
 };
 
 export const reservedRelation = (

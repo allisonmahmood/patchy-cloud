@@ -137,6 +137,15 @@ it.layer(Layer.merge(NodeFileSystem.layer, NodePath.layer))("Postgres dev fixtur
             .query({ ...input, text: "SELECT generate_series(1, 1001)" })
             .pipe(Effect.flip);
           assert.instanceOf(tooMany, Execution.TooLarge);
+          const unsupported = yield* execution
+            .query({ ...input, text: "COPY (SELECT 1) TO STDOUT" })
+            .pipe(Effect.flip);
+          assert.instanceOf(unsupported, Execution.InvalidQuery);
+          if (unsupported instanceof Execution.InvalidQuery) {
+            assert.strictEqual(unsupported.details.sqlstate, "0A000");
+            assert.include(unsupported.details.message, "COPY");
+            assert.strictEqual(unsupported.message, denied.message);
+          }
           const duplicate = yield* execution.query({
             ...input,
             text: "SELECT 1 AS duplicate, 2 AS duplicate"
@@ -218,13 +227,13 @@ it.layer(Layer.merge(NodeFileSystem.layer, NodePath.layer))("Postgres dev fixtur
   );
 
   it.effect(
-    "kills a running local worker at the service deadline rather than leaving its SQL alive",
+    "destroys timed-out workers and reopens the same fixture for the next call",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "postgres-deadline-" });
         yield* fs.makeDirectory(`${root}/fixtures`);
-        yield* fs.writeFileString(`${root}/fixtures/postgres-warehouse.sql`, "");
+        yield* fs.writeFileString(`${root}/fixtures/postgres-warehouse.sql`, fixtureSql);
         yield* Effect.gen(function* () {
           const execution = yield* Execution.Execution;
           const input = { companyId: "dev", declaration, parameters: [] };
@@ -233,16 +242,19 @@ it.layer(Layer.merge(NodeFileSystem.layer, NodePath.layer))("Postgres dev fixtur
             .pipe(Effect.flip, Effect.forkChild);
           yield* TestClock.adjust("15 seconds");
           assert.instanceOf(yield* Fiber.join(fiber), Execution.Timeout);
-          assert.instanceOf(
-            yield* execution.query({ ...input, text: "SELECT 1" }).pipe(Effect.flip),
-            Execution.SourceUnavailable
+          assert.deepStrictEqual(
+            (yield* execution.query({
+              ...input,
+              text: "SELECT id, amount FROM public.invoices ORDER BY amount"
+            })).rows,
+            [
+              ["9007199254740993", "2"],
+              ["9007199254740994", "10"]
+            ]
           );
         }).pipe(
           Effect.provide(
-            Dev.dev(
-              { version: 1, relations: [], enums: [], exclusions: [] },
-              { connectionId: declaration.id, handle: declaration.handle, root }
-            )
+            Dev.dev(snapshot, { connectionId: declaration.id, handle: declaration.handle, root })
           ),
           Effect.scoped
         );

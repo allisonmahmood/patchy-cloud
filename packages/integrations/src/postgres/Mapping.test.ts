@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 import {
+  acceptedSourceTypes,
   nativeType,
   normalizeTimestamp,
   quoteIdentifier,
@@ -142,4 +143,29 @@ it("quotes names and resolves domain-native types without executing catalog SQL"
     nativeType({ ...type("_int8"), kind: "array" }, snapshot),
     '"pg_catalog"."int8"[]'
   );
+});
+
+it("accepts only the source identity and fixture-native spelling for arrays of domains", () => {
+  const snapshot = { version: 1 as const, enums: [], exclusions: [], relations: [] };
+  const domainArray: typeof ColumnType.Type = {
+    schema: "public",
+    name: "_positive",
+    sql: "positive[]",
+    baseSchema: "public",
+    baseName: "_positive",
+    kind: "array",
+    element: { baseSchema: "pg_catalog", baseName: "int4", kind: "base" }
+  };
+  assert.deepStrictEqual(acceptedSourceTypes(domainArray, snapshot), [
+    '"public"."_positive"',
+    '"pg_catalog"."int4"[]'
+  ]);
+  assert.deepStrictEqual(
+    acceptedSourceTypes(
+      { ...domainArray, name: "positive_array", sql: "positive_array" },
+      snapshot
+    ),
+    ['"public"."positive_array"', '"pg_catalog"."int4"[]']
+  );
+  assert.deepStrictEqual(acceptedSourceTypes(type("int4"), snapshot), ['"pg_catalog"."int4"']);
 });

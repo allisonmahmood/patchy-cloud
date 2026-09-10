@@ -1,5 +1,4 @@
 import type { PostgresDeclaration, PostgresParameter } from "@patchy/api";
-import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -16,7 +15,7 @@ import * as SourceClient from "./SourceClient.js";
 import * as SourceNetwork from "./SourceNetwork.js";
 
 const SecretCause = Schema.Redacted(Schema.Unknown, { disallowJsonEncode: true });
-export class InvalidQuery extends Schema.TaggedError<InvalidQuery>()("InvalidQuery", {
+export class InvalidQuery extends Schema.TaggedError<InvalidQuery>()("PostgresInvalidQuery", {
   details: Schema.Struct({
     sqlstate: Schema.String,
     message: Schema.String,
@@ -27,10 +26,10 @@ export class InvalidQuery extends Schema.TaggedError<InvalidQuery>()("InvalidQue
   readonly code = "invalid_query";
   readonly status = 400;
   override get message() {
-    return this.details.message;
+    return "The database rejected the query.";
   }
 }
-export class Timeout extends Schema.TaggedError<Timeout>()("Timeout", {
+export class Timeout extends Schema.TaggedError<Timeout>()("PostgresTimeout", {
   milliseconds: Schema.optionalKey(Schema.Int),
   cause: Schema.optionalKey(SecretCause)
 }) {
@@ -40,7 +39,7 @@ export class Timeout extends Schema.TaggedError<Timeout>()("Timeout", {
     return `The database call exceeded its ${this.milliseconds ?? 15_000} ms deadline.`;
   }
 }
-export class TooLarge extends Schema.TaggedError<TooLarge>()("TooLarge", {
+export class TooLarge extends Schema.TaggedError<TooLarge>()("PostgresTooLarge", {
   bound: Schema.Literals(["rows", "bytes"]),
   limit: Schema.Int
 }) {
@@ -50,7 +49,7 @@ export class TooLarge extends Schema.TaggedError<TooLarge>()("TooLarge", {
     return `A database call is limited to ${this.limit} ${this.bound}.`;
   }
 }
-export class AccessDenied extends Schema.TaggedError<AccessDenied>()("AccessDenied", {}) {
+export class AccessDenied extends Schema.TaggedError<AccessDenied>()("PostgresAccessDenied", {}) {
   readonly code = "access_denied";
   readonly status = 403;
   override get message() {
@@ -58,7 +57,7 @@ export class AccessDenied extends Schema.TaggedError<AccessDenied>()("AccessDeni
   }
 }
 export class SourceUnavailable extends Schema.TaggedError<SourceUnavailable>()(
-  "SourceUnavailable",
+  "PostgresSourceUnavailable",
   {
     stage: Schema.Literals(["access", "credentials", "connect", "query", "reset"]),
     cause: Schema.optionalKey(SecretCause)
@@ -96,39 +95,43 @@ export class Execution extends Context.Service<
   }
 >()("@patchy/integrations/postgres/Execution") {}
 
-const positive = Schema.Int.check(Schema.isGreaterThan(0));
-export const config = Config.all({
-  maxPerConnection: Config.schema(positive, "PATCHY_POSTGRES_MAX_PER_CONNECTION").pipe(
-    Config.withDefault(4)
-  ),
-  maxBackends: Config.schema(positive, "PATCHY_POSTGRES_MAX_BACKENDS").pipe(Config.withDefault(64)),
-  idleMs: Config.schema(positive, "PATCHY_POSTGRES_IDLE_MS").pipe(Config.withDefault(60_000)),
-  statementMs: Config.schema(positive, "PATCHY_POSTGRES_STATEMENT_MS").pipe(
-    Config.withDefault(10_000)
-  ),
-  deadlineMs: Config.schema(positive, "PATCHY_POSTGRES_DEADLINE_MS").pipe(
-    Config.withDefault(15_000)
-  ),
-  maxRows: Config.schema(positive, "PATCHY_POSTGRES_MAX_ROWS").pipe(Config.withDefault(1_000)),
-  maxBytes: Config.schema(positive, "PATCHY_POSTGRES_MAX_BYTES").pipe(
-    Config.withDefault(8 * 1024 * 1024)
-  )
-});
+export interface Limits {
+  readonly maxPerConnection: number;
+  readonly maxBackends: number;
+  readonly idleMs: number;
+  readonly statementMs: number;
+  readonly deadlineMs: number;
+  readonly maxRows: number;
+  readonly maxBytes: number;
+}
+export const specLimits: Limits = {
+  maxPerConnection: 4,
+  maxBackends: 64,
+  idleMs: 60_000,
+  statementMs: 10_000,
+  deadlineMs: 15_000,
+  maxRows: 1_000,
+  maxBytes: 8 * 1024 * 1024
+};
+
+/** One leased backend. A refused row stops execution without retaining the remaining rows. */
+export interface StatementTransport {
+  readonly execute: <E>(
+    text: string,
+    parameters: QueryInput["parameters"],
+    onRow: (row: ReadonlyArray<unknown>, fields: QueryResult["fields"]) => E | undefined
+  ) => Effect.Effect<QueryResult["fields"], ExecutionError | E>;
+  readonly destroy: Effect.Effect<void>;
+}
 
 /** Per-query parsers: never mutate pg's process-wide parser registry. */
+export const textTypeOids: ReadonlyArray<number> = [20, 1700, 1082, 1083, 1114, 1184, 1266];
 const textArrayOid: number = 1009;
 const preserveText = (value: string): string => value;
 const parseTextArray: (value: string) => unknown = Pg.types.getTypeParser(textArrayOid, "text");
 export const types: Pg.CustomTypesConfig = {
   getTypeParser: (oid: number, format) =>
-    format !== "binary" &&
-    (oid === 20 ||
-      oid === 1700 ||
-      oid === 1082 ||
-      oid === 1083 ||
-      oid === 1114 ||
-      oid === 1184 ||
-      oid === 1266)
+    format !== "binary" && textTypeOids.includes(oid)
       ? preserveText
       : format !== "binary" &&
           (oid === 1016 ||
@@ -149,7 +152,10 @@ const isDatabaseError = Schema.is(
   })
 );
 /** Only query diagnostics cross the wire; connection and credential diagnostics stay redacted. */
-export const queryError = (cause: unknown, statementMs = 10_000): ExecutionError => {
+export const queryError = (
+  cause: unknown,
+  statementMs = specLimits.statementMs
+): ExecutionError => {
   if (isDatabaseError(cause)) {
     if (cause.code === "57014")
       return new Timeout({ milliseconds: statementMs, cause: Redacted.make(cause) });
@@ -172,81 +178,123 @@ export const destroy = (client: Pg.Client): void => {
   void client.end().catch(() => {});
 };
 
-const collect = (
-  client: Pg.Client,
-  text: string,
-  parameters: QueryInput["parameters"],
-  limits: {
-    readonly maxRows: number;
-    readonly maxBytes: number;
-    readonly statementMs: number;
-  }
-) =>
-  Effect.callback<QueryResult, ExecutionError>((resume) => {
-    const rows: Array<ReadonlyArray<unknown>> = [];
-    let bytes = 2;
-    let namesBytes: number | undefined;
-    let settled = false;
-    const finish = (effect: Effect.Effect<QueryResult, ExecutionError>, discard = false) => {
-      if (settled) return;
-      settled = true;
-      if (discard) destroy(client);
-      resume(effect);
-    };
-    const query = new Pg.Query({
-      text,
-      values: [...parameters],
-      rowMode: "array",
-      queryMode: "extended",
-      types
-    } as Pg.QueryArrayConfig);
-    query.on("row", (row: ReadonlyArray<unknown>, result?: Pg.QueryResult) => {
-      if (settled) return;
-      if (rows.length >= limits.maxRows) {
-        finish(Effect.fail(new TooLarge({ bound: "rows", limit: limits.maxRows })), true);
-        return;
-      }
-      // Count the eventual object keys too, rather than undercounting array-mode results.
-      namesBytes ??= result!.fields.reduce(
-        (sum, field) => sum + Buffer.byteLength(JSON.stringify(field.name)) + 1,
-        0
-      );
-      try {
-        bytes += Buffer.byteLength(JSON.stringify(row)) + namesBytes + 1;
-      } catch (cause) {
-        finish(Effect.fail(queryError(cause, limits.statementMs)), true);
-        return;
-      }
-      if (bytes > limits.maxBytes) {
-        finish(Effect.fail(new TooLarge({ bound: "bytes", limit: limits.maxBytes })), true);
-        return;
-      }
-      rows.push(row);
-    });
-    query.on("error", (cause) => {
-      const failure = queryError(cause, limits.statementMs);
-      finish(Effect.fail(failure), failure._tag === "Timeout");
-    });
-    query.on("end", (result: Pg.QueryResult) =>
-      finish(
-        Effect.succeed({
-          fields: result.fields.map(({ name, dataTypeID }) => ({ name, dataTypeID })),
-          rows
-        })
-      )
-    );
-    try {
-      client.query(query);
-    } catch (cause) {
-      finish(Effect.fail(queryError(cause, limits.statementMs)), true);
-    }
-    return Effect.sync(() => {
-      if (!settled) {
+const nativeTransport = (client: Pg.Client): StatementTransport => ({
+  execute: <E>(
+    text: string,
+    parameters: QueryInput["parameters"],
+    onRow: (row: ReadonlyArray<unknown>, fields: QueryResult["fields"]) => E | undefined
+  ) =>
+    Effect.callback<QueryResult["fields"], ExecutionError | E>((resume) => {
+      let settled = false;
+      let fields: QueryResult["fields"] | undefined;
+      const describe = (result: Pg.QueryResult) =>
+        (fields ??= result.fields.map(({ name, dataTypeID }) => ({ name, dataTypeID })));
+      const finish = (
+        effect: Effect.Effect<QueryResult["fields"], ExecutionError | E>,
+        discard = false
+      ) => {
+        if (settled) return;
         settled = true;
-        destroy(client);
+        if (discard) destroy(client);
+        resume(effect);
+      };
+      const query = new Pg.Query({
+        text,
+        values: [...parameters],
+        rowMode: "array",
+        queryMode: "extended",
+        types
+      } as Pg.QueryArrayConfig);
+      query.on("row", (row: ReadonlyArray<unknown>, result?: Pg.QueryResult) => {
+        if (settled) return;
+        try {
+          const refused = onRow(row, describe(result!));
+          if (refused !== undefined) finish(Effect.fail(refused), true);
+        } catch (cause) {
+          finish(Effect.fail(queryError(cause)), true);
+        }
+      });
+      query.on("error", (cause) => finish(Effect.fail(queryError(cause))));
+      query.on("end", (result: Pg.QueryResult) => finish(Effect.succeed(describe(result))));
+      try {
+        client.query(query);
+      } catch (cause) {
+        finish(Effect.fail(queryError(cause)), true);
       }
-    });
-  });
+      return Effect.sync(() => {
+        if (!settled) {
+          settled = true;
+          destroy(client);
+        }
+      });
+    }),
+  destroy: Effect.sync(() => destroy(client))
+});
+
+/** Native and fixture backends share all statement policy; adapters only carry protocol rows. */
+export const runStatement = Effect.fn("Postgres.runStatement")(
+  (
+    transport: StatementTransport,
+    text: string,
+    parameters: QueryInput["parameters"],
+    limits: Limits = specLimits
+  ): Effect.Effect<QueryResult, ExecutionError> =>
+    Effect.gen(function* () {
+      const ignoreRow = () => undefined;
+      yield* transport.execute<never>("BEGIN READ ONLY", [], ignoreRow);
+      yield* transport.execute<never>(
+        `SET LOCAL statement_timeout = ${limits.statementMs}`,
+        [],
+        ignoreRow
+      );
+      yield* transport.execute<never>("SET LOCAL TIME ZONE 'UTC'", [], ignoreRow);
+      yield* transport.execute<never>("SET LOCAL DateStyle = 'ISO, YMD'", [], ignoreRow);
+      const rows: Array<ReadonlyArray<unknown>> = [];
+      let bytes = 2;
+      let namesBytes: number | undefined;
+      const fields = yield* transport
+        .execute<ExecutionError>(text, parameters, (row, fields) => {
+          if (rows.length >= limits.maxRows)
+            return new TooLarge({ bound: "rows", limit: limits.maxRows });
+          try {
+            // Account for the eventual object keys as well as the array-mode values.
+            namesBytes ??= fields.reduce(
+              (sum, field) => sum + Buffer.byteLength(JSON.stringify(field.name)) + 1,
+              0
+            );
+            bytes += Buffer.byteLength(JSON.stringify(row)) + namesBytes + 1;
+          } catch (cause) {
+            return queryError(cause, limits.statementMs);
+          }
+          if (bytes > limits.maxBytes)
+            return new TooLarge({ bound: "bytes", limit: limits.maxBytes });
+          rows.push(row);
+          return undefined;
+        })
+        .pipe(
+          Effect.catchTags({
+            PostgresTimeout: (cause) =>
+              Effect.fail(
+                new Timeout({ milliseconds: limits.statementMs, cause: Redacted.make(cause) })
+              )
+          }),
+          // This host timer also stops a WASM backend that cannot service PostgreSQL's timer.
+          Effect.timeoutOrElse({
+            duration: limits.statementMs,
+            orElse: () => Effect.fail(new Timeout({ milliseconds: limits.statementMs }))
+          })
+        );
+      yield* transport.execute<never>("ROLLBACK", [], ignoreRow);
+      yield* transport
+        .execute<never>("DISCARD ALL", [], ignoreRow)
+        .pipe(
+          Effect.mapError(
+            (cause) => new SourceUnavailable({ stage: "reset", cause: Redacted.make(cause) })
+          )
+        );
+      return { fields, rows };
+    }).pipe(Effect.onExit((exit) => (Exit.isFailure(exit) ? transport.destroy : Effect.void)))
+);
 
 interface Entry {
   readonly companyId: string;
@@ -271,11 +319,11 @@ export const makeWithClient = Effect.fn("Postgres.makeWithClient")(function* <R>
   cancel: (
     settings: typeof SourceClient.Settings.Type,
     client: Pg.Client
-  ) => Effect.Effect<void, SourceClient.SourceError, R>
+  ) => Effect.Effect<void, SourceClient.SourceError, R>,
+  limits: Limits = specLimits
 ) {
   const dependencies = yield* Effect.context<R>();
   const store = yield* ConnectionStore.ConnectionStore;
-  const limits = yield* config;
   const poolScope = yield* Scope.Scope;
   const entries = new Set<Entry>();
   const waiters = new Set<() => void>();
@@ -483,20 +531,7 @@ export const makeWithClient = Effect.fn("Postgres.makeWithClient")(function* <R>
   const query = Effect.fn("Postgres.execute")((input: QueryInput) =>
     Effect.acquireUseRelease(
       Effect.interruptible(acquire(input)),
-      (entry) =>
-        Effect.gen(function* () {
-          const client = entry.client!;
-          yield* collect(client, "BEGIN READ ONLY", [], limits);
-          yield* collect(client, `SET LOCAL statement_timeout = ${limits.statementMs}`, [], limits);
-          const result = yield* collect(client, input.text, input.parameters, limits);
-          yield* collect(client, "ROLLBACK", [], limits);
-          yield* collect(client, "DISCARD ALL", [], limits).pipe(
-            Effect.mapError(
-              (cause) => new SourceUnavailable({ stage: "reset", cause: Redacted.make(cause) })
-            )
-          );
-          return result;
-        }),
+      (entry) => runStatement(nativeTransport(entry.client!), input.text, input.parameters, limits),
       (entry, exit) =>
         Exit.isFailure(exit)
           ? close(entry)
@@ -523,7 +558,7 @@ export const makeWithClient = Effect.fn("Postgres.makeWithClient")(function* <R>
   return Execution.of({ query });
 });
 
-export const make = Effect.gen(function* () {
+export const make = Effect.fn("Postgres.make")(function* (limits: Limits = specLimits) {
   const network = yield* SourceNetwork.SourceNetwork;
   return yield* makeWithClient(
     (settings) =>
@@ -533,7 +568,8 @@ export const make = Effect.gen(function* () {
     (settings, client) =>
       SourceClient.cancel(settings, client).pipe(
         Effect.provideService(SourceNetwork.SourceNetwork, network)
-      )
+      ),
+    limits
   );
 });
-export const layer = Layer.effect(Execution, make).pipe(Layer.provide(SourceNetwork.layer));
+export const layer = Layer.effect(Execution, make()).pipe(Layer.provide(SourceNetwork.layer));

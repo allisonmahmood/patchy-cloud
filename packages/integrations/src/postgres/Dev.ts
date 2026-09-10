@@ -2,11 +2,13 @@
 import { Worker } from "node:worker_threads";
 import { sha256 } from "@patchy/core";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Execution from "./Execution.js";
 import { nativeType, quoteIdentifier, quoteLiteral, surface, typeMapping } from "./Mapping.js";
@@ -44,7 +46,7 @@ export class FixtureInvalid extends Schema.TaggedError<FixtureInvalid>()("Fixtur
   cause: Schema.Defect()
 }) {
   override get message() {
-    return `Invalid Postgres fixture ${this.path}: ${this.details.message}`;
+    return `Invalid Postgres fixture ${this.path} (${this.details.sqlstate}).`;
   }
 }
 export class FixtureRowInvalid extends Schema.TaggedError<FixtureRowInvalid>()(
@@ -74,92 +76,208 @@ export interface Fixture {
 const Reply = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("ready") }),
   Schema.Struct({
-    kind: Schema.Literal("result"),
+    kind: Schema.Literal("chunk"),
     fields: Schema.Array(Schema.Struct({ name: Schema.String, dataTypeID: Schema.Int })),
-    rows: Schema.Array(Schema.Array(Schema.Unknown))
+    row: Schema.optionalKey(Schema.Array(Schema.Unknown)),
+    done: Schema.Boolean
   }),
   Schema.Struct({
     kind: Schema.Literal("error"),
     code: Schema.String,
     message: Schema.String,
-    position: Schema.optionalKey(Schema.String),
-    bound: Schema.optionalKey(Schema.Literals(["rows", "bytes"])),
-    limit: Schema.optionalKey(Schema.Int)
+    position: Schema.optionalKey(Schema.String)
   })
 ]);
 const decodeReply = Schema.decodeUnknownSync(Reply);
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
-// A worker is the cancellation boundary: a synchronous WASM loop cannot starve the host's deadline.
-// The worker owns no platform connection, credential, network source, or runtime log.
+// Only the wire transport lives off-thread. Transaction policy and bounded collection
+// run in Execution.runStatement; acknowledgements prevent the worker from reading ahead.
 const workerSource = String.raw`
 const { parentPort, workerData } = require("node:worker_threads");
-const report = (error) => parentPort.postMessage({ kind: "error", code: typeof error.code === "string" ? error.code : "PGLITE", message: typeof error.message === "string" ? error.message : "PGlite could not execute this SQL.", ...(typeof error.position === "string" ? { position: error.position } : {}), ...(error.bound ? { bound: error.bound, limit: error.limit } : {}) });
+const report = (error) => {
+  const native = typeof error.code === "string" && /^[0-9A-Z]{5}$/.test(error.code);
+  const message = typeof error.message === "string" ? error.message : "PGlite cannot execute this SQL.";
+  parentPort.postMessage({ kind: "error", code: native ? error.code : "0A000",
+    message: native ? message : "Local PGlite cannot execute this query: " + message,
+    ...(typeof error.position === "string" ? { position: error.position } : {}) });
+};
 (async () => {
+  // Module URLs are supplied by the parent; static imports cannot cross this eval-worker boundary.
   const { PGlite, protocol, types } = await import(workerData.module);
-  // The worker receives resolved module URLs; a static import cannot cross this CommonJS worker boundary.
   const { citext } = await import(workerData.citextModule);
-  const raw = (value) => value;
-  const pg = await PGlite.create({ dataDir: workerData.dataDir, fsync: false, extensions: { citext }, parsers: { 20: raw, 1700: raw, 1082: raw, 1083: raw, 1114: raw, 1184: raw, 1266: raw } });
+  const parsers = Object.fromEntries(workerData.textTypeOids.map((oid) => [oid, (value) => value]));
+  const pg = await PGlite.create({ dataDir: workerData.dataDir, fsync: false, extensions: { citext }, parsers });
   const serialize = protocol.serialize;
   const batch = (...messages) => Buffer.concat(messages);
   if (workerData.initialize) {
     for (const sql of workerData.ddl) await pg.query(sql);
     await pg.exec(workerData.fixture);
   }
+  let fields = [];
   parentPort.on("message", async (input) => {
     try {
-      await pg.query("BEGIN READ ONLY");
-      await pg.query("SET LOCAL statement_timeout = '10000ms'");
-      await pg.query("SET LOCAL TIME ZONE 'UTC'");
-      await pg.query("SET LOCAL DateStyle = 'ISO, YMD'");
-      try {
+      let messages;
+      if (input.kind === "start") {
+        fields = [];
         const description = await pg.describeQuery(input.text);
         const values = input.parameters.map((value, index) => value === null ? null : description.queryParams[index]?.serializer?.(value) ?? String(value));
-        let messages = (await pg.execProtocol(batch(serialize.parse({ text: input.text }), serialize.bind({ values }), serialize.describe({ type: "P" }), serialize.execute({ rows: 1 }), serialize.flush()))).messages;
-        let fields = [];
-        const rows = [];
-        let bytes = 32;
-        while (true) {
-          let suspended = false;
-          for (const message of messages) {
-            if (message.name === "rowDescription") {
-              fields = message.fields.map(({ name, dataTypeID }) => ({ name, dataTypeID }));
-            } else if (message.name === "dataRow") {
-              const row = message.fields.map((value, index) => value === null ? null : types.parseType(value, fields[index].dataTypeID, pg.parsers));
-              bytes += Buffer.byteLength(JSON.stringify(row)) + fields.reduce((size, field) => size + Buffer.byteLength(JSON.stringify(field.name)) + 1, 0) + 1;
-              if (!input.validation && rows.length >= 1000) throw { code: "TOO_LARGE", message: "A database call is limited to 1000 rows.", bound: "rows", limit: 1000 };
-              if (!input.validation && bytes > 8 * 1024 * 1024) throw { code: "TOO_LARGE", message: "A database call is limited to 8388608 bytes.", bound: "bytes", limit: 8 * 1024 * 1024 };
-              rows.push(row);
-            } else if (message.name === "portalSuspended") suspended = true;
-          }
-          if (!suspended) break;
-          messages = (await pg.execProtocol(batch(serialize.execute({ rows: 1 }), serialize.flush()))).messages;
-        }
-        await pg.execProtocol(serialize.sync());
-        await pg.query("ROLLBACK");
-        await pg.query("DISCARD ALL");
-        parentPort.postMessage({ kind: "result", fields, rows });
-      } catch (error) {
-        try {
-          await pg.execProtocol(serialize.sync());
-          await pg.query("ROLLBACK");
-          await pg.query("DISCARD ALL");
-        } catch (resetError) {
-          report(resetError);
-          parentPort.close();
-          await pg.close();
-          return;
-        }
-        throw error;
+        messages = (await pg.execProtocol(batch(serialize.parse({ text: input.text }),
+          serialize.bind({ values }), serialize.describe({ type: "P" }),
+          serialize.execute({ rows: 1 }), serialize.flush()))).messages;
+      } else {
+        messages = (await pg.execProtocol(batch(serialize.execute({ rows: 1 }), serialize.flush()))).messages;
       }
+      let row;
+      let suspended = false;
+      for (const message of messages) {
+        if (message.name === "rowDescription") {
+          fields = message.fields.map(({ name, dataTypeID }) => ({ name, dataTypeID }));
+        } else if (message.name === "dataRow") {
+          row = message.fields.map((value, index) => value === null ? null : types.parseType(value, fields[index].dataTypeID, pg.parsers));
+        } else if (message.name === "portalSuspended") {
+          suspended = true;
+        } else if (message.name === "copyOutResponse" || message.name === "copyInResponse" || message.name === "copyBothResponse") {
+          throw { code: "0A000", message: "Local PGlite transport does not support COPY streams." };
+        }
+      }
+      if (!suspended) await pg.execProtocol(serialize.sync());
+      parentPort.postMessage({ kind: "chunk", fields, ...(row === undefined ? {} : { row }), done: !suspended });
     } catch (error) { report(error); }
   });
   parentPort.postMessage({ kind: "ready" });
 })().catch(report);
 `;
 
-export const dev = (input: typeof Snapshot.Type, fixture: Fixture) =>
+interface WorkerInput {
+  readonly dataDir: string;
+  readonly initialize: boolean;
+  readonly ddl: ReadonlyArray<string>;
+  readonly fixture: string;
+}
+
+const openWorker = Effect.fn("Postgres.Dev.openWorker")(function* (
+  input: WorkerInput,
+  limits: Execution.Limits
+) {
+  let alive = true;
+  let termination: Promise<number> | undefined;
+  const stop = (worker: Worker) =>
+    Effect.suspend(() => {
+      alive = false;
+      return Effect.promise(() => (termination ??= worker.terminate())).pipe(Effect.asVoid);
+    });
+  const worker = yield* Effect.acquireRelease(
+    Effect.try({
+      try: () =>
+        new Worker(workerSource, {
+          eval: true,
+          workerData: {
+            ...input,
+            module: import.meta.resolve("@electric-sql/pglite"),
+            citextModule: import.meta.resolve("@electric-sql/pglite/contrib/citext"),
+            textTypeOids: Execution.textTypeOids
+          }
+        }),
+      catch: (cause) =>
+        new Execution.SourceUnavailable({ stage: "connect", cause: Redacted.make(cause) })
+    }),
+    stop
+  );
+  worker.on("error", () => {
+    alive = false;
+  });
+  worker.on("exit", () => {
+    alive = false;
+  });
+  const exchange = <E>(
+    message?: {
+      readonly kind: "start";
+      readonly text: string;
+      readonly parameters: Execution.QueryInput["parameters"];
+    },
+    onRow?: (row: ReadonlyArray<unknown>, fields: Execution.QueryResult["fields"]) => E | undefined
+  ) =>
+    Effect.callback<Execution.QueryResult["fields"], Execution.ExecutionError | E>((resume) => {
+      if (!alive) {
+        resume(Effect.fail(new Execution.SourceUnavailable({ stage: "query" })));
+        return;
+      }
+      let settled = false;
+      const cleanup = () => {
+        worker.off("message", onMessage);
+        worker.off("error", onError);
+        worker.off("exit", onExit);
+      };
+      const finish = (
+        effect: Effect.Effect<Execution.QueryResult["fields"], Execution.ExecutionError | E>
+      ) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resume(effect);
+      };
+      const onError = (cause: unknown) => {
+        alive = false;
+        finish(
+          Effect.fail(
+            new Execution.SourceUnavailable({ stage: "query", cause: Redacted.make(cause) })
+          )
+        );
+      };
+      const onExit = () => {
+        alive = false;
+        finish(Effect.fail(new Execution.SourceUnavailable({ stage: "query" })));
+      };
+      const onMessage = (value: unknown) => {
+        try {
+          const reply = decodeReply(value);
+          if (reply.kind === "error") {
+            finish(Effect.fail(Execution.queryError(reply, limits.statementMs)));
+          } else if (reply.kind === "ready") {
+            finish(Effect.succeed([]));
+          } else {
+            const failure = reply.row === undefined ? undefined : onRow?.(reply.row, reply.fields);
+            if (failure !== undefined) finish(Effect.fail(failure));
+            else if (reply.done) finish(Effect.succeed(reply.fields));
+            else worker.postMessage({ kind: "next" });
+          }
+        } catch (cause) {
+          onError(cause);
+        }
+      };
+      worker.on("message", onMessage);
+      worker.once("error", onError);
+      worker.once("exit", onExit);
+      if (message) worker.postMessage(message);
+      return Effect.suspend(() => {
+        cleanup();
+        return settled ? Effect.void : stop(worker);
+      });
+    });
+  yield* exchange<never>().pipe(
+    Effect.timeoutOrElse({
+      duration: 30_000,
+      orElse: () => Effect.fail(new Execution.Timeout({ milliseconds: 30_000 }))
+    })
+  );
+  const transport: Execution.StatementTransport = {
+    execute: (text, parameters, onRow) => exchange({ kind: "start", text, parameters }, onRow),
+    destroy: stop(worker)
+  };
+  return {
+    transport,
+    get alive() {
+      return alive;
+    }
+  };
+});
+
+export const dev = (
+  input: typeof Snapshot.Type,
+  fixture: Fixture,
+  limits: Execution.Limits = Execution.specLimits
+) =>
   Layer.effect(
     Execution.Execution,
     Effect.gen(function* () {
@@ -248,97 +366,70 @@ export const dev = (input: typeof Snapshot.Type, fixture: Fixture) =>
           `CREATE TABLE ${quoteIdentifier(relation.schema)}.${quoteIdentifier(relation.name)} (${columns.join(", ")})`
         );
       }
-      const worker = yield* Effect.acquireRelease(
-        Effect.try({
-          try: () =>
-            new Worker(workerSource, {
-              eval: true,
-              workerData: {
-                module: import.meta.resolve("@electric-sql/pglite"),
-                citextModule: import.meta.resolve("@electric-sql/pglite/contrib/citext"),
-                dataDir,
-                initialize,
-                ddl,
-                fixture: sql
-              }
-            }),
-          catch: (cause) => new FixtureInitialization({ path: fixturePath, cause })
-        }),
-        (worker) => Effect.promise(() => worker.terminate()).pipe(Effect.asVoid)
+      let workerScope = Scope.makeUnsafe();
+      yield* Effect.addFinalizer(() => Scope.close(workerScope, Exit.void));
+      const open = Effect.fn("Postgres.Dev.checkout")(function* (initialize: boolean) {
+        yield* Scope.close(workerScope, Exit.void);
+        workerScope = Scope.makeUnsafe();
+        return yield* openWorker({ dataDir, initialize, ddl, fixture: sql }, limits).pipe(
+          Scope.provide(workerScope),
+          Effect.onExit((exit) =>
+            Exit.isFailure(exit) ? Scope.close(workerScope, exit) : Effect.void
+          )
+        );
+      });
+      let current = yield* open(initialize).pipe(
+        Effect.mapError((cause) =>
+          cause._tag === "PostgresInvalidQuery"
+            ? new FixtureInvalid({ path: fixturePath, details: cause.details, cause })
+            : new FixtureInitialization({ path: fixturePath, cause })
+        )
       );
-      let alive = true;
-      worker.on("error", () => {
-        alive = false;
-      });
-      worker.on("exit", () => {
-        alive = false;
-      });
-      const receive = (message?: {
-        readonly text: string;
-        readonly parameters: Execution.QueryInput["parameters"];
-        readonly validation?: boolean;
-      }) =>
-        Effect.callback<typeof Reply.Type, Execution.ExecutionError>((resume) => {
-          if (!alive) {
-            resume(Effect.fail(new Execution.SourceUnavailable({ stage: "query" })));
-            return;
-          }
-          let settled = false;
-          const cleanup = () => {
-            worker.off("message", onMessage);
-            worker.off("error", onError);
-            worker.off("exit", onExit);
-          };
-          const onMessage = (value: unknown) => {
-            settled = true;
-            cleanup();
-            try {
-              resume(Effect.succeed(decodeReply(value)));
-            } catch (cause) {
-              resume(
-                Effect.fail(
-                  new Execution.SourceUnavailable({ stage: "query", cause: Redacted.make(cause) })
+      // Initialization validates every authored row without retaining a second copy.
+      // This is privileged setup, not an unbounded caller operation.
+      for (const relation of snapshot.relations) {
+        const projections = relation.columns.map(
+          (column) =>
+            `${typeMapping(column.type)!.project(quoteIdentifier(column.name))} AS ${quoteIdentifier(column.name)}`
+        );
+        yield* current.transport
+          .execute(
+            `SELECT ${projections.join(", ")} FROM ${quoteIdentifier(relation.schema)}.${quoteIdentifier(relation.name)}`,
+            [],
+            (row) => {
+              for (const [index, column] of relation.columns.entries()) {
+                if (
+                  !(row[index] === null && column.nullable) &&
+                  !typeMapping(column.type)!.is(row[index])
                 )
-              );
+                  return new FixtureRowInvalid({
+                    path: fixturePath,
+                    relation: `${relation.schema}.${relation.name}`,
+                    column: column.name
+                  });
+              }
             }
-          };
-          const onError = (cause: unknown) => {
-            settled = true;
-            alive = false;
-            cleanup();
-            resume(
-              Effect.fail(
-                new Execution.SourceUnavailable({ stage: "query", cause: Redacted.make(cause) })
-              )
-            );
-          };
-          const onExit = () => onError(new Error("The local PGlite worker exited."));
-          worker.once("message", onMessage);
-          worker.once("error", onError);
-          worker.once("exit", onExit);
-          if (message) worker.postMessage(message);
-          return Effect.suspend(() => {
-            cleanup();
-            if (settled) return Effect.void;
-            alive = false;
-            return Effect.promise(() => worker.terminate()).pipe(Effect.asVoid);
-          });
-        });
-      const ready = yield* receive().pipe(
-        Effect.timeoutOrElse({
-          duration: 30_000,
-          orElse: () => Effect.fail(new Execution.Timeout({ milliseconds: 30_000 }))
-        }),
-        Effect.mapError((cause) => new FixtureInitialization({ path: fixturePath, cause }))
-      );
-      if (ready.kind === "error")
-        return yield* new FixtureInvalid({
-          path: fixturePath,
-          details: { sqlstate: ready.code, message: ready.message },
-          cause: ready
-        });
-      if (ready.kind !== "ready")
-        return yield* new FixtureInitialization({ path: fixturePath, cause: ready });
+          )
+          .pipe(
+            Effect.timeoutOrElse({
+              duration: limits.deadlineMs,
+              orElse: () => Effect.fail(new Execution.Timeout({ milliseconds: limits.deadlineMs }))
+            }),
+            Effect.mapError((cause) =>
+              cause._tag === "FixtureRowInvalid"
+                ? cause
+                : cause._tag === "PostgresInvalidQuery"
+                  ? new FixtureInvalid({ path: fixturePath, details: cause.details, cause })
+                  : new FixtureInitialization({ path: fixturePath, cause })
+            )
+          );
+      }
+      if (initialize)
+        yield* fs
+          .writeFileString(stampPath, stamp)
+          .pipe(
+            Effect.mapError((cause) => new FixtureInitialization({ path: fixturePath, cause }))
+          );
       const semaphore = yield* Semaphore.make(1);
       const query = Effect.fn("Postgres.Dev.query")(
         function* (query: Execution.QueryInput) {
@@ -347,81 +438,20 @@ export const dev = (input: typeof Snapshot.Type, fixture: Fixture) =>
             query.declaration.handle !== fixture.handle
           )
             return yield* new Execution.AccessDenied({});
-          const reply = yield* receive({ text: query.text, parameters: query.parameters }).pipe(
-            Effect.timeoutOrElse({
-              duration: 10_000,
-              orElse: () => Effect.fail(new Execution.Timeout({ milliseconds: 10_000 }))
-            })
+          if (!current.alive) current = yield* open(false);
+          return yield* Execution.runStatement(
+            current.transport,
+            query.text,
+            query.parameters,
+            limits
           );
-          if (reply.kind === "result") return { fields: reply.fields, rows: reply.rows };
-          if (reply.kind === "error") {
-            if (reply.bound && reply.limit)
-              return yield* new Execution.TooLarge({ bound: reply.bound, limit: reply.limit });
-            if (reply.code === "57014") {
-              alive = false;
-              yield* Effect.promise(() => worker.terminate());
-            }
-            if (reply.code === "PGLITE")
-              return yield* new Execution.InvalidQuery({
-                details: {
-                  sqlstate: "0A000",
-                  message: `Local PGlite cannot execute this query: ${reply.message}`
-                },
-                cause: Redacted.make(reply)
-              });
-            return yield* Execution.queryError(reply);
-          }
-          return yield* new Execution.SourceUnavailable({ stage: "query" });
         },
         semaphore.withPermits(1),
         Effect.timeoutOrElse({
-          duration: 15_000,
-          orElse: () => Effect.fail(new Execution.Timeout({ milliseconds: 15_000 }))
+          duration: limits.deadlineMs,
+          orElse: () => Effect.fail(new Execution.Timeout({ milliseconds: limits.deadlineMs }))
         })
       );
-      for (const relation of snapshot.relations) {
-        const projections = relation.columns.map(
-          (column) =>
-            `${typeMapping(column.type)!.project(quoteIdentifier(column.name))} AS ${quoteIdentifier(column.name)}`
-        );
-        const reply = yield* receive({
-          text: `SELECT ${projections.join(", ")} FROM ${quoteIdentifier(relation.schema)}.${quoteIdentifier(relation.name)}`,
-          parameters: [],
-          validation: true
-        }).pipe(
-          Effect.timeoutOrElse({
-            duration: 15_000,
-            orElse: () => Effect.fail(new Execution.Timeout({ milliseconds: 15_000 }))
-          }),
-          Effect.mapError((cause) => new FixtureInitialization({ path: fixturePath, cause }))
-        );
-        if (reply.kind === "error")
-          return yield* new FixtureInvalid({
-            path: fixturePath,
-            details: { sqlstate: reply.code, message: reply.message },
-            cause: reply
-          });
-        if (reply.kind !== "result")
-          return yield* new FixtureInitialization({ path: fixturePath, cause: reply });
-        for (const row of reply.rows)
-          for (const [index, column] of relation.columns.entries()) {
-            if (
-              !(row[index] === null && column.nullable) &&
-              !typeMapping(column.type)!.is(row[index])
-            )
-              return yield* new FixtureRowInvalid({
-                path: fixturePath,
-                relation: `${relation.schema}.${relation.name}`,
-                column: column.name
-              });
-          }
-      }
-      if (initialize)
-        yield* fs
-          .writeFileString(stampPath, stamp)
-          .pipe(
-            Effect.mapError((cause) => new FixtureInitialization({ path: fixturePath, cause }))
-          );
       return Execution.Execution.of({ query });
     })
   );

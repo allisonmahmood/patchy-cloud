@@ -1,5 +1,7 @@
 import { Buffer } from "node:buffer";
 import { PGlite } from "@electric-sql/pglite";
+import { citext } from "@electric-sql/pglite/contrib/citext";
+import { NodeFileSystem } from "@effect/platform-node";
 import { assert, it } from "@effect/vitest";
 import {
   CURRENT_RELEASE,
@@ -10,6 +12,7 @@ import {
 } from "@patchy/api";
 import { Binding } from "@patchy/runtime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import * as ConnectionStore from "../ConnectionStore.js";
 import * as Execution from "./Execution.js";
@@ -47,6 +50,19 @@ const snapshot: typeof Snapshot.Type = {
         column("single", "float4"),
         column("double", "float8"),
         column("label", "text"),
+        column("uuid", "uuid"),
+        {
+          name: "insensitive",
+          nullable: false,
+          type: {
+            schema: "public",
+            name: "citext",
+            sql: "public.citext",
+            baseSchema: "public",
+            baseName: "citext",
+            kind: "base"
+          }
+        },
         column("enabled", "bool"),
         column("at", "timestamptz"),
         column("local", "timestamp"),
@@ -158,55 +174,75 @@ const refreshed: typeof Snapshot.Type = {
   )
 };
 const setup = Effect.fn("test.postgresOperations.setup")(function* () {
-  const db = yield* Effect.acquireRelease(
-    Effect.promise(() => PGlite.create()),
-    (db) => Effect.promise(() => db.close())
-  );
-  const sql = (text: string) => Effect.promise(() => db.exec(text));
+  const fs = yield* FileSystem.FileSystem;
+  const dataDir = yield* fs.makeTempDirectoryScoped({ prefix: "postgres-operations-" });
+  let db: PGlite | undefined;
+  const open = Effect.fn("test.postgresOperations.open")(function* () {
+    return (db ??= yield* Effect.promise(() =>
+      PGlite.create({
+        dataDir,
+        extensions: { citext },
+        parsers: Object.fromEntries(
+          Execution.textTypeOids.map((oid) => [oid, Execution.types.getTypeParser(oid, "text")])
+        )
+      })
+    ));
+  });
+  const close = Effect.promise(async () => {
+    const current = db;
+    db = undefined;
+    await current?.close();
+  });
+  yield* Effect.addFinalizer(() => close);
+  const sql = Effect.fn("test.postgresOperations.sql")(function* (text: string) {
+    const db = yield* open();
+    return yield* Effect.promise(() => db.exec(text));
+  });
   yield* sql(`CREATE SCHEMA "sales"";--";
+    CREATE EXTENSION citext;
     CREATE TYPE public.mood AS ENUM ('happy', 'sad');
     CREATE DOMAIN public.positive AS integer CHECK (VALUE > 0);
     CREATE TABLE "sales"";--"."order"";--" (
       "id"";--" integer PRIMARY KEY, small smallint NOT NULL, wide bigint NOT NULL, decimal numeric NOT NULL,
-      single real NOT NULL, double double precision NOT NULL, label text NOT NULL, enabled boolean NOT NULL,
+      single real NOT NULL, double double precision NOT NULL, label text NOT NULL,
+      uuid uuid NOT NULL, insensitive public.citext NOT NULL, enabled boolean NOT NULL,
       at timestamptz NOT NULL, local timestamp NOT NULL, day date NOT NULL, document jsonb NOT NULL,
       tags text[] NOT NULL, mood public.mood NOT NULL, domain public.positive NOT NULL, rank integer,
       "__proto__" text NOT NULL, after_refresh text
     );
     INSERT INTO "sales"";--"."order"";--" SELECT n, 7, 9007199254740993, 12345678901234567890.123456,
-      1.5, 2.25, 'row-' || n, true, '2026-01-02 03:04:05.123456+02', '2026-01-02 03:04:05.654321',
+      1.5, 2.25, 'row-' || n, ('00000000-0000-4000-8000-' || lpad(n::text, 12, '0'))::uuid,
+      'MiXeD-' || n, true, '2026-01-02 03:04:05.123456+02', '2026-01-02 03:04:05.654321',
       '2026-01-02', '{"nested":[1,true]}', ARRAY['a','b'], 'happy', 1,
       CASE WHEN n > 2 THEN NULL ELSE 1 END, 'not-a-prototype', 'new-contract'
       FROM generate_series(1, 4) n;
     CREATE VIEW public.unkeyed AS SELECT n::integer AS id FROM generate_series(1, 10001) n;`);
   const queries: string[] = [];
+  // This trusted in-process adapter carries rows only; production owns all execution policy.
+  const transport: Execution.StatementTransport = {
+    execute: (text, parameters, onRow) =>
+      Effect.gen(function* () {
+        const db = yield* open();
+        const result = yield* Effect.tryPromise({
+          try: () => db.query<unknown[]>(text, [...parameters], { rowMode: "array" }),
+          catch: Execution.queryError
+        });
+        for (const row of result.rows) {
+          const refused = onRow(row, result.fields);
+          if (refused !== undefined) return yield* Effect.fail(refused);
+        }
+        return result.fields;
+      }),
+    destroy: close
+  };
   const execution = Execution.Execution.of({
-    query: ({ text, parameters }) =>
-      Effect.tryPromise({
-        try: async () => {
-          queries.push(text);
-          await db.exec("BEGIN READ ONLY");
-          try {
-            const result = await db.query<unknown[]>(text, [...parameters], {
-              rowMode: "array",
-              parsers: {
-                20: (value) => value,
-                1700: (value) => value,
-                1082: (value) => value,
-                1114: (value) => value,
-                1184: (value) => value
-              }
-            });
-            if (result.rows.length > 1000)
-              throw new Execution.TooLarge({ bound: "rows", limit: 1000 });
-            return { rows: result.rows, fields: result.fields };
-          } finally {
-            await db.exec("ROLLBACK");
-          }
-        },
-        catch: (cause) =>
-          cause instanceof Execution.TooLarge ? cause : Execution.queryError(cause)
-      })
+    query: Effect.fn("test.postgresOperations.query")(function* ({
+      text,
+      parameters
+    }: Execution.QueryInput) {
+      queries.push(text);
+      return yield* Execution.runStatement(transport, text, parameters);
+    })
   });
   const store = yield* ConnectionStore.ConnectionStore.pipe(
     Effect.provide(
@@ -246,7 +282,7 @@ const setup = Effect.fn("test.postgresOperations.setup")(function* () {
       current = next;
     }
   };
-});
+}, Effect.provide(NodeFileSystem.layer));
 const decodePage = Schema.decodeUnknownEffect(PostgresPage);
 const decodeRows = Schema.decodeUnknownEffect(PostgresRows);
 const decodeKeys = Schema.decodeUnknownEffect(PostgresKeyRows);
@@ -275,6 +311,8 @@ it.effect(
         single: 1.5,
         double: 2.25,
         label: "row-2",
+        uuid: "00000000-0000-4000-8000-000000000002",
+        insensitive: "MiXeD-2",
         enabled: true,
         at: "2026-01-02T01:04:05.123456Z",
         local: "2026-01-02T03:04:05.654321",
@@ -287,6 +325,18 @@ it.effect(
         ["__proto__"]: "not-a-prototype"
       });
       assert.isFalse(Object.hasOwn(page.rows[0]!, "after_refresh"));
+      const nativeText = yield* call("postgres.list", {
+        connection: "sales",
+        relation,
+        select: ["uuid", "insensitive"],
+        eq: {
+          uuid: "00000000-0000-4000-8000-000000000002",
+          insensitive: "mixed-2"
+        }
+      }).pipe(Effect.flatMap(decodePage));
+      assert.deepStrictEqual(nativeText.rows, [
+        { uuid: "00000000-0000-4000-8000-000000000002", insensitive: "MiXeD-2" }
+      ]);
       for (const args of [
         { eq: { document: "wrong-kind" } },
         { eq: { wide: 9007199254740992 } },
@@ -483,10 +533,10 @@ it.effect("refresh never rewrites the pinned contract and source drift fails exp
     const failure = yield* call("postgres.list", { connection: "sales", relation }).pipe(
       Effect.flip
     );
-    assert.strictEqual(failure.code, "invalid_query");
-    assert.instanceOf(failure, Execution.InvalidQuery);
-    if (failure instanceof Execution.InvalidQuery)
-      assert.strictEqual(failure.details.sqlstate, "42703");
+    assert.strictEqual(failure.code, "shape_mismatch");
+    assert.instanceOf(failure, Operations.SourceSchemaChanged);
+    if (failure instanceof Operations.SourceSchemaChanged)
+      assert.deepStrictEqual(failure.details, { relation, reason: "source_schema_changed" });
   }).pipe(Effect.scoped)
 );
 

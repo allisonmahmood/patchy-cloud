@@ -3,7 +3,6 @@ import { Socket } from "node:net";
 import { randomUUID } from "node:crypto";
 import { assert, it } from "@effect/vitest";
 import * as Testing from "@patchy/sql/testing";
-import * as ConfigProvider from "effect/ConfigProvider";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -46,7 +45,7 @@ const input = (text: string): Execution.QueryInput => ({
 });
 
 /** Only socket acquisition is replaced: every query still uses a real native pg backend. */
-const setup = Effect.fn("test.executionSetup")(function* (config: Record<string, number> = {}) {
+const setup = Effect.fn("test.executionSetup")(function* (limits: Partial<Execution.Limits> = {}) {
   const sql = yield* SqlClient.SqlClient;
   const databases = yield* sql<{ database: string }>`SELECT current_database() AS database`;
   const database = databases[0]!.database;
@@ -55,6 +54,8 @@ const setup = Effect.fn("test.executionSetup")(function* (config: Record<string,
   const rolePrefix = `execution_${randomUUID().replaceAll("-", "")}`;
   for (const revision of [1, 2]) {
     yield* sql.unsafe(`CREATE ROLE "${rolePrefix}_${revision}" LOGIN PASSWORD 'secret'`);
+    yield* sql.unsafe(`ALTER ROLE "${rolePrefix}_${revision}" SET timezone = 'Pacific/Auckland'`);
+    yield* sql.unsafe(`ALTER ROLE "${rolePrefix}_${revision}" SET datestyle = 'SQL, DMY'`);
     yield* sql.unsafe(`GRANT USAGE ON SCHEMA public TO "${rolePrefix}_${revision}"`);
     yield* sql.unsafe(
       `GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA public TO "${rolePrefix}_${revision}"`
@@ -132,7 +133,8 @@ const setup = Effect.fn("test.executionSetup")(function* (config: Record<string,
           return Effect.sync(() => {
             socket.destroy();
           });
-        })
+        }),
+      { ...Execution.specLimits, ...limits }
     ).pipe(
       Effect.provideService(Scope.Scope, scope),
       Effect.provideService(ConnectionStore.ConnectionStore, {
@@ -166,8 +168,7 @@ const setup = Effect.fn("test.executionSetup")(function* (config: Record<string,
           ]
         }
       ])
-    ),
-    Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(config)))
+    )
   );
   return {
     execution,
@@ -213,13 +214,14 @@ it.layer(Testing.emptyLayer({}))("native PostgreSQL execution", (it) => {
         ]) {
           const error = yield* execution.query(input(text)).pipe(Effect.flip);
           assert.instanceOf(error, Execution.InvalidQuery);
-          if (error._tag === "InvalidQuery") assert.strictEqual(error.details.sqlstate, "25006");
+          if (error._tag === "PostgresInvalidQuery")
+            assert.strictEqual(error.details.sqlstate, "25006");
         }
         const multiple = yield* execution
           .query(input("SELECT 1; INSERT INTO execution_writes VALUES (3)"))
           .pipe(Effect.flip);
         assert.instanceOf(multiple, Execution.InvalidQuery);
-        if (multiple._tag === "InvalidQuery")
+        if (multiple._tag === "PostgresInvalidQuery")
           assert.strictEqual(multiple.details.sqlstate, "42601");
         assert.deepStrictEqual(yield* sql.unsafe("SELECT value FROM execution_writes"), []);
       })
@@ -262,7 +264,7 @@ it.layer(Testing.emptyLayer({}))("native PostgreSQL execution", (it) => {
           "2026-09-10",
           "2026-09-10 12:13:14.123456"
         ]);
-        assert.include(String(precise.rows[0]![4]), ".123456");
+        assert.strictEqual(precise.rows[0]![4], "2026-09-10 12:13:14.123456+00");
         const arrays = yield* execution.query(
           input(
             "SELECT ARRAY[1234567890.1234567890123456789::numeric], ARRAY['2026-09-10 12:13:14.123456'::timestamp]"
@@ -282,13 +284,13 @@ it.layer(Testing.emptyLayer({}))("native PostgreSQL execution", (it) => {
     "destroys a backend on server statement timeout and on the queue-inclusive service deadline",
     () =>
       Effect.gen(function* () {
-        const short = yield* setup({ PATCHY_POSTGRES_STATEMENT_MS: 30 });
+        const short = yield* setup({ statementMs: 30 });
         const timeout = yield* short.execution.query(input("SELECT pg_sleep(1)")).pipe(Effect.flip);
         assert.instanceOf(timeout, Execution.Timeout);
         assert.isTrue(short.clients[0]!.connection.stream.destroyed);
         const deadline = yield* setup({
-          PATCHY_POSTGRES_STATEMENT_MS: 100_000,
-          PATCHY_POSTGRES_MAX_PER_CONNECTION: 1
+          statementMs: 100_000,
+          maxPerConnection: 1
         });
         const running = yield* deadline.execution
           .query(input("SELECT pg_sleep(30)"))
@@ -346,7 +348,7 @@ it.layer(Testing.emptyLayer({}))("native PostgreSQL execution", (it) => {
     "uses the live credential after waiting without exceeding four backends across revisions",
     () =>
       Effect.gen(function* () {
-        const state = yield* setup({ PATCHY_POSTGRES_STATEMENT_MS: 100_000 });
+        const state = yield* setup({ statementMs: 100_000 });
         const running = yield* Effect.forEach([1, 2, 3, 4], () =>
           state.execution.query(input("SELECT pg_sleep(30)")).pipe(Effect.forkChild)
         );
@@ -386,8 +388,8 @@ it.layer(Testing.emptyLayer({}))("native PostgreSQL execution", (it) => {
   it.effect("counts the process backend budget across different connections", () =>
     Effect.gen(function* () {
       const state = yield* setup({
-        PATCHY_POSTGRES_MAX_BACKENDS: 2,
-        PATCHY_POSTGRES_STATEMENT_MS: 100_000
+        maxBackends: 2,
+        statementMs: 100_000
       });
       const first = yield* state.execution
         .query(input("SELECT pg_sleep(30)"))
@@ -433,13 +435,13 @@ it.layer(Testing.emptyLayer({}))("native PostgreSQL execution", (it) => {
           .query(input("SELECT i, repeat('x', 1000) FROM generate_series(1, 1001) i"))
           .pipe(Effect.flip);
         assert.instanceOf(rows, Execution.TooLarge);
-        if (rows._tag === "TooLarge") assert.strictEqual(rows.bound, "rows");
+        if (rows._tag === "PostgresTooLarge") assert.strictEqual(rows.bound, "rows");
         assert.isTrue(clients[0]!.connection.stream.destroyed);
         const bytes = yield* execution
           .query(input("SELECT repeat('x', 8388609)"))
           .pipe(Effect.flip);
         assert.instanceOf(bytes, Execution.TooLarge);
-        if (bytes._tag === "TooLarge") assert.strictEqual(bytes.bound, "bytes");
+        if (bytes._tag === "PostgresTooLarge") assert.strictEqual(bytes.bound, "bytes");
         assert.isTrue(clients[1]!.connection.stream.destroyed);
         assert.deepStrictEqual((yield* execution.query(input("SELECT 7"))).rows, [[7]]);
       })

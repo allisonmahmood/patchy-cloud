@@ -153,7 +153,7 @@ const render = Effect.fn("ConnectionPage.render")(function* (
         Effect.catchTags({
           SqlError: () =>
             Effect.succeed(
-              '<section class="company-section"><h2>Recent calls</h2><p class="note note-warn" role="alert">Recent calls could not be loaded. Reload the page to try again.</p></section>'
+              '<section class="company-section" aria-labelledby="connection-calls"><h2 id="connection-calls">Recent calls</h2><div class="note note-warn" role="alert">Recent calls could not be loaded. Reload the page to try again.</div></section>'
             )
         })
       )

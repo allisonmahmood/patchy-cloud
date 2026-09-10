@@ -19,8 +19,15 @@ import * as Schema from "effect/Schema";
 import * as ConnectionStore from "../ConnectionStore.js";
 import { operation } from "../definition.js";
 import * as Execution from "./Execution.js";
-import { normalizeTimestamp, quoteIdentifier, surface, typeMapping } from "./Mapping.js";
-import type { Column, Relation } from "./Snapshot.js";
+import {
+  acceptedSourceTypes,
+  normalizeTimestamp,
+  queryTypeCompatible,
+  quoteIdentifier,
+  surface,
+  typeMapping
+} from "./Mapping.js";
+import type { Column, Relation, Snapshot } from "./Snapshot.js";
 
 export class ConnectionNotDeclared extends Schema.TaggedError<ConnectionNotDeclared>()(
   "PostgresConnectionNotDeclared",
@@ -139,7 +146,10 @@ type Resolved = {
   readonly binding: Binding.Binding["Service"];
   readonly declaration: typeof PostgresDeclaration.Type;
 };
-type BoundRelation = Resolved & { readonly relation: typeof Relation.Type };
+type BoundRelation = Resolved & {
+  readonly relation: typeof Relation.Type;
+  readonly snapshot: typeof Snapshot.Type;
+};
 const Scalar = Schema.Union([
   Schema.String,
   Schema.Number.check(Schema.isFinite()),
@@ -232,7 +242,7 @@ const resolveRelation = Effect.fn("PostgresOperations.resolveRelation")(function
   );
   if (relation === undefined || (keyed && relation.primaryKey === null))
     return yield* new RelationUnknown({ relation: requested });
-  return { ...resolved, relation };
+  return { ...resolved, relation, snapshot };
 });
 
 const execute = Effect.fn("PostgresOperations.execute")(function* (
@@ -251,10 +261,11 @@ const execute = Effect.fn("PostgresOperations.execute")(function* (
     })
     .pipe(
       Effect.catchTags({
-        InvalidQuery: (cause) =>
+        PostgresInvalidQuery: (cause) =>
           relation !== undefined &&
-          cause.details.sqlstate === "22P02" &&
-          cause.details.message.includes(SCHEMA_DRIFT)
+          ((cause.details.sqlstate === "22P02" && cause.details.message.includes(SCHEMA_DRIFT)) ||
+            cause.details.sqlstate === "42703" ||
+            cause.details.sqlstate === "42P01")
             ? Effect.fail(
                 new SourceSchemaChanged({
                   relation: { schema: relation.schema, name: relation.name },
@@ -275,18 +286,13 @@ const projection = (columns: ReadonlyArray<typeof Column.Type>) =>
     .join(", ");
 
 /** Limit evaluates OFFSET before reading rows, including an empty relation or an unmatched filter. */
-const typeGuardOffset = (relation: typeof Relation.Type, parameters: Parameter[]) => {
+const typeGuardOffset = ({ relation, snapshot }: BoundRelation, parameters: Parameter[]) => {
   const composite = `${quoteIdentifier(relation.schema)}.${quoteIdentifier(relation.name)}`;
   const checks = relation.columns.map((column) => {
-    const native = `${quoteIdentifier(column.type.schema)}.${quoteIdentifier(column.type.name)}`;
-    const base = `${quoteIdentifier(column.type.baseSchema)}.${quoteIdentifier(column.type.baseName)}`;
-    parameters.push(native);
-    const accepted = [`pg_catalog.to_regtype($${parameters.length})`];
-    // Domains are resolved by the mapping; the local fixture uses the same resolved base.
-    if (native !== base) {
-      parameters.push(base);
-      accepted.push(`pg_catalog.to_regtype($${parameters.length})`);
-    }
+    const accepted = acceptedSourceTypes(column.type, snapshot).map((type) => {
+      parameters.push(type);
+      return `pg_catalog.to_regtype($${parameters.length})`;
+    });
     return `pg_catalog.pg_typeof((NULL::${composite}).${quoteIdentifier(column.name)}) IN (${accepted.join(", ")})`;
   });
   // Cast the completed CASE, not a constant ELSE branch that the planner could evaluate eagerly.
@@ -463,7 +469,7 @@ const list = operation({
       orderNames.length === 0
         ? ""
         : ` ORDER BY ${orderNames.map((name) => `${stored(name)} ${order.toUpperCase()} NULLS LAST`).join(", ")}`;
-    const guardOffset = typeGuardOffset(relation, parameters);
+    const guardOffset = typeGuardOffset(resolved, parameters);
     const text = `SELECT ${projection(fetchedColumns)} FROM ${quoteIdentifier(relation.schema)}.${quoteIdentifier(relation.name)} AS stored${conditions.length === 0 ? "" : ` WHERE ${conditions.join(" AND ")}`}${ordering} LIMIT ${parameter(pageSize)} OFFSET (${guardOffset} + ${parameter(offset)})`;
     const result = yield* execute(resolved, text, parameters, relation);
     const mapped = yield* mappedRows(result, fetchedColumns);
@@ -521,7 +527,7 @@ const keyedRows = Effect.fn("PostgresOperations.keyedRows")(function* (
   let presence = "__patchy_present";
   while (relation.columns.some((column) => column.name === presence))
     presence = `__patchy_present_${++presenceIndex}`;
-  const guardOffset = typeGuardOffset(relation, parameters);
+  const guardOffset = typeGuardOffset(resolved, parameters);
   const result = yield* execute(
     resolved,
     `SELECT ${projection(relation.columns)}, (${stored(names[0]!)} IS NOT NULL) AS ${quoteIdentifier(presence)} FROM generate_series(0, ${keys.length - 1}) AS requested(position) LEFT JOIN ${quoteIdentifier(relation.schema)}.${quoteIdentifier(relation.name)} AS stored ON ${conditions.join(" OR ")} ORDER BY requested.position LIMIT ${keys.length} OFFSET ${guardOffset}`,
@@ -563,21 +569,8 @@ const query = operation({
     const indices = yield* checkFields(result, Object.keys(args.shape));
     for (const [name, shape] of Object.entries(args.shape)) {
       const oid = result.fields[indices.get(name)!]!.dataTypeID;
-      // int8/numeric stay strings even when their current values happen to fit a Number.
-      const compatible =
-        shape.kind === "integer"
-          ? oid === 21 || oid === 23
-          : shape.kind === "number"
-            ? oid === 21 || oid === 23 || oid === 700 || oid === 701
-            : shape.kind === "boolean"
-              ? oid === 16
-              : shape.kind === "timestamp"
-                ? oid === 1114 || oid === 1184
-                : shape.kind === "text"
-                  ? ![16, 21, 23, 700, 701, 114, 3802, 1114, 1184].includes(oid) &&
-                    !(oid >= 1000 && oid <= 1028)
-                  : true;
-      if (!compatible) return yield* new ShapeMismatch({ column: name, reason: "type" });
+      if (!queryTypeCompatible(shape.kind, oid))
+        return yield* new ShapeMismatch({ column: name, reason: "type" });
     }
     const rows: Row[] = [];
     for (const source of result.rows) {
