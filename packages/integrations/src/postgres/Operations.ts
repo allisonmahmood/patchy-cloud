@@ -13,6 +13,7 @@ import {
 import type { PostgresDeclaration } from "@patchy/api";
 import { Binding, Runtime } from "@patchy/runtime";
 import * as Effect from "effect/Effect";
+import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as ConnectionStore from "../ConnectionStore.js";
@@ -170,8 +171,6 @@ const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Json));
 const isJson = Schema.is(Schema.Json);
 const isRelation = Schema.is(PostgresRelation);
 const isScalar = Schema.is(Scalar);
-const ownObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 const stored = (name: string) => `stored.${quoteIdentifier(name)}`;
 const validValue = (column: typeof Column.Type, value: unknown) =>
   value === null ? column.nullable : typeMapping(column.type)?.is(value) === true;
@@ -623,12 +622,12 @@ const query = operation({
 export const operations = { list, get, getMany, query };
 
 const resource: Runtime.JsonHandler["resource"] = (args) =>
-  ownObject(args) && Object.hasOwn(args, "relation") && isRelation(args.relation)
+  Predicate.isObject(args) && Object.hasOwn(args, "relation") && isRelation(args.relation)
     ? `${quoteIdentifier(args.relation.schema)}.${quoteIdentifier(args.relation.name)}`
     : null;
 const connectionId = (args: unknown, binding: Binding.Binding["Service"]): string | null => {
   if (
-    !ownObject(args) ||
+    !Predicate.isObject(args) ||
     typeof args.connection !== "string" ||
     !Object.hasOwn(binding.manifest.uses, args.connection)
   )
@@ -637,7 +636,7 @@ const connectionId = (args: unknown, binding: Binding.Binding["Service"]): strin
   return declaration?.kind === "postgres" ? declaration.id : null;
 };
 const rowCount: Runtime.JsonHandler["rowCount"] = (value) => {
-  if (!ownObject(value) || !Array.isArray(value.rows)) return null;
+  if (!Predicate.isObject(value) || !Array.isArray(value.rows)) return null;
   let count = 0;
   for (const row of value.rows) if (row !== null) count++;
   return count;
@@ -670,7 +669,7 @@ export const makeHandlers = Effect.gen(function* () {
         ...metadata,
         ...query,
         sql: (args: unknown) =>
-          ownObject(args) && typeof args.sql === "string" ? args.sql : undefined
+          Predicate.isObject(args) && typeof args.sql === "string" ? args.sql : undefined
       },
       (args) => capture(query.run(args))
     )

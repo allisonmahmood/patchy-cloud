@@ -22,7 +22,7 @@ export class InvalidQuery extends Schema.TaggedError<InvalidQuery>()("InvalidQue
     message: Schema.String,
     position: Schema.optionalKey(Schema.String)
   }),
-  cause: Schema.optionalKey(SecretCause)
+  cause: SecretCause
 }) {
   readonly code = "invalid_query";
   readonly status = 400;
@@ -31,7 +31,8 @@ export class InvalidQuery extends Schema.TaggedError<InvalidQuery>()("InvalidQue
   }
 }
 export class Timeout extends Schema.TaggedError<Timeout>()("Timeout", {
-  milliseconds: Schema.optionalKey(Schema.Int)
+  milliseconds: Schema.optionalKey(Schema.Int),
+  cause: Schema.optionalKey(SecretCause)
 }) {
   readonly code = "timeout";
   readonly status = 504;
@@ -150,7 +151,8 @@ const isDatabaseError = Schema.is(
 /** Only query diagnostics cross the wire; connection and credential diagnostics stay redacted. */
 export const queryError = (cause: unknown, statementMs = 10_000): ExecutionError => {
   if (isDatabaseError(cause)) {
-    if (cause.code === "57014") return new Timeout({ milliseconds: statementMs });
+    if (cause.code === "57014")
+      return new Timeout({ milliseconds: statementMs, cause: Redacted.make(cause) });
     if (!/^(?:08|28|57P)/u.test(cause.code))
       return new InvalidQuery({
         details: {
@@ -262,7 +264,7 @@ interface Entry {
 }
 
 /** A real isolated-client seam for transport tests; production always uses SourceClient.open. */
-export const makeWithClient = <R>(
+export const makeWithClient = Effect.fn("Postgres.makeWithClient")(function* <R>(
   open: (
     settings: typeof SourceClient.Settings.Type
   ) => Effect.Effect<Pg.Client, SourceClient.SourceError, R | Scope.Scope>,
@@ -270,262 +272,256 @@ export const makeWithClient = <R>(
     settings: typeof SourceClient.Settings.Type,
     client: Pg.Client
   ) => Effect.Effect<void, SourceClient.SourceError, R>
-) =>
-  Effect.gen(function* () {
-    const dependencies = yield* Effect.context<R>();
-    const store = yield* ConnectionStore.ConnectionStore;
-    const limits = yield* config;
-    const poolScope = yield* Scope.Scope;
-    const entries = new Set<Entry>();
-    const waiters = new Set<() => void>();
-    let changed = 0;
-    const notify = () => {
-      changed++;
-      for (const resume of waiters) resume();
-      waiters.clear();
-    };
-    const wait = (version: number) =>
-      Effect.callback<void>((resume) => {
-        const wake = () => resume(Effect.void);
-        if (changed !== version) wake();
-        else waiters.add(wake);
-        return Effect.sync(() => {
-          waiters.delete(wake);
-        });
+) {
+  const dependencies = yield* Effect.context<R>();
+  const store = yield* ConnectionStore.ConnectionStore;
+  const limits = yield* config;
+  const poolScope = yield* Scope.Scope;
+  const entries = new Set<Entry>();
+  const waiters = new Set<() => void>();
+  let changed = 0;
+  const notify = () => {
+    changed++;
+    for (const resume of waiters) resume();
+    waiters.clear();
+  };
+  const wait = (version: number) =>
+    Effect.callback<void>((resume) => {
+      const wake = () => resume(Effect.void);
+      if (changed !== version) wake();
+      else waiters.add(wake);
+      return Effect.sync(() => {
+        waiters.delete(wake);
       });
-    const stopTimer = Effect.fn("Postgres.stopIdleTimer")(function* (entry: Entry) {
-      const timer = entry.timer;
-      entry.timer = undefined;
-      if (timer !== undefined) yield* Fiber.interrupt(timer);
     });
-    const close = Effect.fn("Postgres.closeBackend")(function* (entry: Entry, idleOnly = false) {
-      if (idleOnly && !entry.idle) return;
-      if (!entries.delete(entry)) return;
-      if (entry.client !== undefined) {
-        destroy(entry.client);
-        // Never extend the caller's deadline for a cancellation handshake. The original
-        // socket is already destroyed; the pool scope owns the bounded best-effort request.
-        if (!entry.idle && entry.settings !== undefined)
-          yield* cancel(entry.settings, entry.client).pipe(
-            Effect.provideContext(dependencies),
-            Effect.ignore,
-            Effect.forkIn(poolScope)
-          );
-      }
-      notify();
-      yield* stopTimer(entry);
-      yield* Scope.close(entry.scope, Exit.void);
-    });
-    yield* Effect.addFinalizer(() =>
-      Effect.forEach(entries, (entry) => close(entry), { discard: true })
-    );
-    const live = Effect.fn("Postgres.liveConnection")(function* (input: QueryInput) {
-      const connection = yield* store
-        .get(input.companyId, input.declaration.id)
-        .pipe(
-          Effect.mapError((cause) =>
-            cause._tag === "ConnectionNotFound"
-              ? new AccessDenied({})
-              : new SourceUnavailable({ stage: "access", cause: Redacted.make(cause) })
-          )
+  const stopTimer = Effect.fn("Postgres.stopIdleTimer")(function* (entry: Entry) {
+    const timer = entry.timer;
+    entry.timer = undefined;
+    if (timer !== undefined) yield* Fiber.interrupt(timer);
+  });
+  const close = Effect.fn("Postgres.closeBackend")(function* (entry: Entry, idleOnly = false) {
+    if (idleOnly && !entry.idle) return;
+    if (!entries.delete(entry)) return;
+    if (entry.client !== undefined) {
+      destroy(entry.client);
+      // Never extend the caller's deadline for a cancellation handshake. The original
+      // socket is already destroyed; the pool scope owns the bounded best-effort request.
+      if (!entry.idle && entry.settings !== undefined)
+        yield* cancel(entry.settings, entry.client).pipe(
+          Effect.provideContext(dependencies),
+          Effect.ignore,
+          Effect.forkIn(poolScope)
         );
-      if (connection.handle !== input.declaration.handle || connection.status !== "connected")
-        return yield* new AccessDenied({});
-      return connection;
-    });
-    const acquire = Effect.fn("Postgres.checkout")((input: QueryInput) =>
-      Effect.uninterruptibleMask((restore) =>
-        Effect.gen(function* () {
-          while (true) {
-            const version = changed;
-            const current = yield* restore(live(input));
-            for (const entry of entries) {
-              if (
-                entry.companyId === input.companyId &&
-                entry.id === current.id &&
-                entry.idle &&
-                (entry.revision !== current.credentialRevision ||
-                  entry.client?.connection.stream.destroyed)
-              )
-                yield* close(entry);
+    }
+    notify();
+    yield* stopTimer(entry);
+    yield* Scope.close(entry.scope, Exit.void);
+  });
+  yield* Effect.addFinalizer(() =>
+    Effect.forEach(entries, (entry) => close(entry), { discard: true })
+  );
+  const live = Effect.fn("Postgres.liveConnection")(function* (input: QueryInput) {
+    const connection = yield* store
+      .get(input.companyId, input.declaration.id)
+      .pipe(
+        Effect.mapError((cause) =>
+          cause._tag === "ConnectionNotFound"
+            ? new AccessDenied({})
+            : new SourceUnavailable({ stage: "access", cause: Redacted.make(cause) })
+        )
+      );
+    if (connection.handle !== input.declaration.handle || connection.status !== "connected")
+      return yield* new AccessDenied({});
+    return connection;
+  });
+  const acquire = Effect.fn("Postgres.checkout")((input: QueryInput) =>
+    Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        while (true) {
+          const version = changed;
+          const current = yield* restore(live(input));
+          for (const entry of entries) {
+            if (
+              entry.companyId === input.companyId &&
+              entry.id === current.id &&
+              entry.idle &&
+              (entry.revision !== current.credentialRevision ||
+                entry.client?.connection.stream.destroyed)
+            )
+              yield* close(entry);
+          }
+          let entry: Entry | undefined;
+          for (const item of entries) {
+            if (
+              item.companyId === input.companyId &&
+              item.id === current.id &&
+              item.revision === current.credentialRevision &&
+              item.idle
+            ) {
+              entry = item;
+              break;
             }
-            let entry: Entry | undefined;
-            for (const item of entries) {
-              if (
-                item.companyId === input.companyId &&
-                item.id === current.id &&
-                item.revision === current.credentialRevision &&
-                item.idle
-              ) {
-                entry = item;
-                break;
+          }
+          if (entry !== undefined) {
+            entry.idle = false;
+            yield* stopTimer(entry);
+          } else {
+            let count = 0;
+            let credentials: Entry["credentials"] | undefined;
+            for (const item of entries)
+              if (item.companyId === input.companyId && item.id === current.id) {
+                count++;
+                if (item.revision === current.credentialRevision) credentials = item.credentials;
               }
+            if (count >= limits.maxPerConnection) {
+              yield* restore(wait(version));
+              continue;
             }
-            if (entry !== undefined) {
-              entry.idle = false;
-              yield* stopTimer(entry);
-            } else {
-              let count = 0;
-              let credentials: Entry["credentials"] | undefined;
+            if (entries.size >= limits.maxBackends) {
+              let unused: Entry | undefined;
               for (const item of entries)
-                if (item.companyId === input.companyId && item.id === current.id) {
-                  count++;
-                  if (item.revision === current.credentialRevision) credentials = item.credentials;
+                if (item.idle) {
+                  unused = item;
+                  break;
                 }
-              if (count >= limits.maxPerConnection) {
+              if (unused === undefined) {
                 yield* restore(wait(version));
                 continue;
               }
-              if (entries.size >= limits.maxBackends) {
-                let unused: Entry | undefined;
-                for (const item of entries)
-                  if (item.idle) {
-                    unused = item;
-                    break;
-                  }
-                if (unused === undefined) {
-                  yield* restore(wait(version));
-                  continue;
-                }
-                yield* close(unused);
-                continue;
-              }
-              const { companyId, declaration } = input;
-              const revision = current.credentialRevision;
-              if (credentials === undefined) {
-                const gate = yield* Semaphore.make(1);
-                let settings: typeof SourceClient.Settings.Type | undefined;
-                credentials = gate.withPermits(1)(
-                  Effect.gen(function* () {
-                    if (settings !== undefined) return settings;
-                    const secret = yield* store
-                      .poolCredentials(companyId, declaration, revision)
-                      .pipe(
-                        Effect.mapError((cause) =>
-                          cause._tag === "ConnectionNotConnected" ||
-                          cause._tag === "ConnectionNotFound"
-                            ? new AccessDenied({})
-                            : cause._tag === "ConnectionChanged"
-                              ? cause
-                              : new SourceUnavailable({
-                                  stage: "credentials",
-                                  cause: Redacted.make(cause)
-                                })
-                        )
-                      );
-                    settings = yield* Source.parseCredentials(secret).pipe(
-                      Effect.mapError(
-                        (cause) =>
-                          new SourceUnavailable({
-                            stage: "credentials",
-                            cause: Redacted.make(cause)
-                          })
+              yield* close(unused);
+              continue;
+            }
+            const { companyId, declaration } = input;
+            const revision = current.credentialRevision;
+            if (credentials === undefined) {
+              const gate = yield* Semaphore.make(1);
+              let settings: typeof SourceClient.Settings.Type | undefined;
+              credentials = gate.withPermits(1)(
+                Effect.gen(function* () {
+                  if (settings !== undefined) return settings;
+                  const secret = yield* store
+                    .poolCredentials(companyId, declaration, revision)
+                    .pipe(
+                      Effect.mapError((cause) =>
+                        cause._tag === "ConnectionNotConnected" ||
+                        cause._tag === "ConnectionNotFound"
+                          ? new AccessDenied({})
+                          : cause._tag === "ConnectionChanged"
+                            ? cause
+                            : new SourceUnavailable({
+                                stage: "credentials",
+                                cause: Redacted.make(cause)
+                              })
                       )
                     );
-                    return settings;
-                  })
-                );
-              }
-              // Share successful decryption, not a caller's cached interruption, across the revision pool.
-              // Recheck capacity after constructing the gate so reservation remains atomic.
-              count = 0;
-              for (const item of entries)
-                if (item.companyId === input.companyId && item.id === current.id) {
-                  count++;
-                  if (item.revision === current.credentialRevision) credentials = item.credentials;
-                }
-              if (count >= limits.maxPerConnection || entries.size >= limits.maxBackends) continue;
-              entry = {
-                companyId: input.companyId,
-                id: current.id,
-                revision: current.credentialRevision,
-                scope: Scope.makeUnsafe(),
-                client: undefined,
-                idle: false,
-                timer: undefined,
-                credentials,
-                settings: undefined
-              };
-              entries.add(entry);
-            }
-            const reserved = entry;
-            const ready = yield* restore(
-              Effect.gen(function* () {
-                if (reserved.client === undefined) {
-                  const settings = yield* reserved.credentials;
-                  reserved.settings = settings;
-                  // Override the captured context's Scope nearest acquisition, including a hung connect.
-                  reserved.client = yield* open(settings).pipe(
-                    Scope.provide(reserved.scope),
-                    Effect.provideContext(dependencies),
+                  settings = yield* Source.parseCredentials(secret).pipe(
                     Effect.mapError(
                       (cause) =>
-                        new SourceUnavailable({ stage: "connect", cause: Redacted.make(cause) })
+                        new SourceUnavailable({
+                          stage: "credentials",
+                          cause: Redacted.make(cause)
+                        })
                     )
                   );
-                }
-                // Connection creation and queueing can race a rotation, retarget or disconnect.
-                const latest = yield* live(input);
-                if (latest.credentialRevision !== reserved.revision)
-                  return yield* new ConnectionStore.ConnectionChanged({});
-                return reserved;
-              })
-            ).pipe(
-              Effect.onExit((exit) => (Exit.isFailure(exit) ? close(reserved) : Effect.void)),
-              Effect.catchTags({ ConnectionChanged: () => Effect.void })
-            );
-            if (ready !== undefined) return ready;
+                  return settings;
+                })
+              );
+            }
+            // Share successful decryption, not a caller's cached interruption, across the revision pool.
+            // Recheck capacity after constructing the gate so reservation remains atomic.
+            count = 0;
+            for (const item of entries)
+              if (item.companyId === input.companyId && item.id === current.id) {
+                count++;
+                if (item.revision === current.credentialRevision) credentials = item.credentials;
+              }
+            if (count >= limits.maxPerConnection || entries.size >= limits.maxBackends) continue;
+            entry = {
+              companyId: input.companyId,
+              id: current.id,
+              revision: current.credentialRevision,
+              scope: Scope.makeUnsafe(),
+              client: undefined,
+              idle: false,
+              timer: undefined,
+              credentials,
+              settings: undefined
+            };
+            entries.add(entry);
           }
-        })
-      )
-    );
-    const query = Effect.fn("Postgres.execute")((input: QueryInput) =>
-      Effect.acquireUseRelease(
-        Effect.interruptible(acquire(input)),
-        (entry) =>
-          Effect.gen(function* () {
-            const client = entry.client!;
-            yield* collect(client, "BEGIN READ ONLY", [], limits);
-            yield* collect(
-              client,
-              `SET LOCAL statement_timeout = ${limits.statementMs}`,
-              [],
-              limits
-            );
-            const result = yield* collect(client, input.text, input.parameters, limits);
-            yield* collect(client, "ROLLBACK", [], limits);
-            yield* collect(client, "DISCARD ALL", [], limits).pipe(
-              Effect.mapError(
-                (cause) => new SourceUnavailable({ stage: "reset", cause: Redacted.make(cause) })
-              )
-            );
-            return result;
-          }),
-        (entry, exit) =>
-          Exit.isFailure(exit)
-            ? close(entry)
-            : Effect.gen(function* () {
-                entry.idle = true;
-                entry.timer = yield* Effect.sleep(limits.idleMs).pipe(
-                  Effect.andThen(
-                    Effect.suspend(() => {
-                      entry.timer = undefined;
-                      return close(entry, true);
-                    })
-                  ),
-                  Effect.forkIn(poolScope)
+          const reserved = entry;
+          const ready = yield* restore(
+            Effect.gen(function* () {
+              if (reserved.client === undefined) {
+                const settings = yield* reserved.credentials;
+                reserved.settings = settings;
+                // Override the captured context's Scope nearest acquisition, including a hung connect.
+                reserved.client = yield* open(settings).pipe(
+                  Scope.provide(reserved.scope),
+                  Effect.provideContext(dependencies),
+                  Effect.mapError(
+                    (cause) =>
+                      new SourceUnavailable({ stage: "connect", cause: Redacted.make(cause) })
+                  )
                 );
-                notify();
-              })
-      ).pipe(
-        Effect.timeoutOrElse({
-          duration: limits.deadlineMs,
-          orElse: () => Effect.fail(new Timeout({ milliseconds: limits.deadlineMs }))
-        })
-      )
-    );
-    return Execution.of({ query });
-  });
+              }
+              // Connection creation and queueing can race a rotation, retarget or disconnect.
+              const latest = yield* live(input);
+              if (latest.credentialRevision !== reserved.revision)
+                return yield* new ConnectionStore.ConnectionChanged({});
+              return reserved;
+            })
+          ).pipe(
+            Effect.onExit((exit) => (Exit.isFailure(exit) ? close(reserved) : Effect.void)),
+            Effect.catchTags({ ConnectionChanged: () => Effect.void })
+          );
+          if (ready !== undefined) return ready;
+        }
+      })
+    )
+  );
+  const query = Effect.fn("Postgres.execute")((input: QueryInput) =>
+    Effect.acquireUseRelease(
+      Effect.interruptible(acquire(input)),
+      (entry) =>
+        Effect.gen(function* () {
+          const client = entry.client!;
+          yield* collect(client, "BEGIN READ ONLY", [], limits);
+          yield* collect(client, `SET LOCAL statement_timeout = ${limits.statementMs}`, [], limits);
+          const result = yield* collect(client, input.text, input.parameters, limits);
+          yield* collect(client, "ROLLBACK", [], limits);
+          yield* collect(client, "DISCARD ALL", [], limits).pipe(
+            Effect.mapError(
+              (cause) => new SourceUnavailable({ stage: "reset", cause: Redacted.make(cause) })
+            )
+          );
+          return result;
+        }),
+      (entry, exit) =>
+        Exit.isFailure(exit)
+          ? close(entry)
+          : Effect.gen(function* () {
+              entry.idle = true;
+              entry.timer = yield* Effect.sleep(limits.idleMs).pipe(
+                Effect.andThen(
+                  Effect.suspend(() => {
+                    entry.timer = undefined;
+                    return close(entry, true);
+                  })
+                ),
+                Effect.forkIn(poolScope)
+              );
+              notify();
+            })
+    ).pipe(
+      Effect.timeoutOrElse({
+        duration: limits.deadlineMs,
+        orElse: () => Effect.fail(new Timeout({ milliseconds: limits.deadlineMs }))
+      })
+    )
+  );
+  return Execution.of({ query });
+});
 
 export const make = Effect.gen(function* () {
   const network = yield* SourceNetwork.SourceNetwork;

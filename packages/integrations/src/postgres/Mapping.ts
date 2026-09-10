@@ -203,35 +203,32 @@ export const surface = (snapshot: typeof Snapshot.Type): typeof Snapshot.Type =>
   const relations: Array<(typeof Snapshot.Type.relations)[number]> = [];
   for (const relation of snapshot.relations) {
     const reserved = reservedRelation(relation.schema, relation.name, schemas);
-    const unsupported = relation.columns.filter(
-      (column) =>
-        typeMapping(column.type) === undefined || nativeType(column.type, snapshot) === undefined
-    );
+    const columns = relation.columns.filter((column) => {
+      if (typeMapping(column.type) !== undefined && nativeType(column.type, snapshot) !== undefined)
+        return true;
+      if (
+        !exclusions.some(
+          (item) =>
+            item.schema === relation.schema &&
+            item.relation === relation.name &&
+            item.column === column.name
+        )
+      )
+        exclusions.push({
+          schema: relation.schema,
+          relation: relation.name,
+          column: column.name,
+          reason: "unsupported_type"
+        });
+      return false;
+    });
     const previous = exclusions.some(
       (item) =>
         item.schema === relation.schema &&
         item.relation === relation.name &&
-        (item.column === undefined ||
-          item.reason === "unsupported_type" ||
-          item.reason === "enum_limit")
+        item.column === undefined
     );
-    if (reserved || unsupported.length > 0 || previous || relation.columns.length === 0) {
-      for (const column of unsupported) {
-        if (
-          !exclusions.some(
-            (item) =>
-              item.schema === relation.schema &&
-              item.relation === relation.name &&
-              item.column === column.name
-          )
-        )
-          exclusions.push({
-            schema: relation.schema,
-            relation: relation.name,
-            column: column.name,
-            reason: "unsupported_type"
-          });
-      }
+    if (reserved || previous || columns.length === 0) {
       if (
         !exclusions.some(
           (item) =>
@@ -250,14 +247,17 @@ export const surface = (snapshot: typeof Snapshot.Type): typeof Snapshot.Type =>
     const primaryKey =
       relation.primaryKey !== null &&
       relation.primaryKey.columns.every((name) =>
-        relation.columns.some(
+        columns.some(
           (column) =>
             column.name === name && !column.nullable && typeMapping(column.type)?.comparable
         )
       )
         ? relation.primaryKey
         : null;
-    relations.push({ ...relation, primaryKey });
+    const foreignKeys = relation.foreignKeys.filter((key) =>
+      key.columns.every((name) => columns.some((column) => column.name === name))
+    );
+    relations.push({ ...relation, columns, primaryKey, foreignKeys });
   }
   return { ...snapshot, relations, exclusions };
 };

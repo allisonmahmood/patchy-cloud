@@ -98,6 +98,33 @@ it("names whole unrepresentable relations and collisions identically on repeated
   assert.isTrue(Schema.is(Snapshot)(selected));
 });
 
+it("preserves supported columns and usable keys beside named column exclusions", () => {
+  const relation = {
+    schema: "public",
+    name: "places",
+    kind: "table" as const,
+    columns: [
+      { name: "id", type: type("int4"), nullable: false },
+      { name: "location", type: type("point"), nullable: true }
+    ],
+    primaryKey: { name: "pk", columns: ["id"] },
+    foreignKeys: []
+  };
+  const selected = surface({ version: 1, relations: [relation], enums: [], exclusions: [] });
+  assert.deepStrictEqual(selected.relations, [{ ...relation, columns: [relation.columns[0]] }]);
+  assert.deepStrictEqual(selected.exclusions, [
+    { schema: "public", relation: "places", column: "location", reason: "unsupported_type" }
+  ]);
+  assert.deepStrictEqual(surface(selected), selected);
+  const unsupportedKey = surface({
+    version: 1,
+    relations: [{ ...relation, primaryKey: { name: "pk", columns: ["location"] } }],
+    enums: [],
+    exclusions: []
+  });
+  assert.isNull(unsupportedKey.relations[0]!.primaryKey);
+});
+
 it("quotes names and resolves domain-native types without executing catalog SQL", () => {
   const malicious = 'x"; DROP TABLE accounts; --';
   assert.strictEqual(quoteIdentifier(malicious), '"x""; DROP TABLE accounts; --"');

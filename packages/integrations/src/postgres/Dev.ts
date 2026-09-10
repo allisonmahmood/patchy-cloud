@@ -41,7 +41,7 @@ export class FixtureInitialization extends Schema.TaggedError<FixtureInitializat
 export class FixtureInvalid extends Schema.TaggedError<FixtureInvalid>()("FixtureInvalid", {
   path: Schema.String,
   details: Schema.Struct({ sqlstate: Schema.String, message: Schema.String }),
-  cause: Schema.optionalKey(Schema.Defect())
+  cause: Schema.Defect()
 }) {
   override get message() {
     return `Invalid Postgres fixture ${this.path}: ${this.details.message}`;

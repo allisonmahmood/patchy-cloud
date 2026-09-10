@@ -15,7 +15,7 @@ const text = {
 const id = { ...text, name: "int8", baseName: "int8", sql: "int8" };
 const snapshot: typeof Snapshot.Type = {
   version: 1,
-  enums: [],
+  enums: [{ schema: "public", name: "status", labels: ["open"] }],
   exclusions: [],
   relations: [
     {
@@ -24,7 +24,19 @@ const snapshot: typeof Snapshot.Type = {
       kind: "table",
       columns: [
         { name: "id", type: id, nullable: false },
-        { name: "name", type: text, nullable: false }
+        { name: "name", type: text, nullable: false },
+        {
+          name: "status",
+          type: {
+            schema: "public",
+            name: "status",
+            sql: "status",
+            baseSchema: "public",
+            baseName: "status",
+            kind: "enum"
+          },
+          nullable: false
+        }
       ],
       primaryKey: { name: "pk", columns: ["id"] },
       foreignKeys: []
@@ -52,7 +64,7 @@ it("compiles projected keys, keyless views, query shapes and discriminated known
     "/generated.ts": generated.client,
     "/consumer.ts": `import { createClient, isPatchyError, type ListError } from "./generated.js";
 const db = createClient("sales", async () => ({ ok: true, rows: [], cursor: null }));
-async function use() {
+async function use(nullableFlag: boolean) {
   const page = await db.accounts.list({ eq: { id: "9" }, range: { column: "id", gt: "1" }, orderBy: { column: "name", direction: "asc" }, select: ["name"] });
   const name: string = page.rows[0]!.name;
   // @ts-expect-error projection omitted id
@@ -65,6 +77,7 @@ async function use() {
   db.accounts.list({ range: { column: "id", gt: 4 } });
   const row = await db.accounts.get({ id: "9" });
   const key: string | undefined = row?.id;
+  const addedLabel: NonNullable<typeof row>["status"] = "added_after_discovery";
   // @ts-expect-error a keyless view does not expose get
   db.sales["daily totals"].get({ name: "x" });
   const view = await db.sales["daily totals"].list();
@@ -72,6 +85,10 @@ async function use() {
   const query = await db.query("SELECT 1 AS n", [], { n: { kind: "integer" }, at: { kind: "timestamp", optional: true } });
   const number: number = query.rows[0]!.n;
   const at: string | null = query.rows[0]!.at;
+  const dynamic = await db.query("SELECT NULL::integer AS n", [], { n: { kind: "integer", optional: nullableFlag } });
+  const dynamicValue: number | null = dynamic.rows[0]!.n;
+  // @ts-expect-error a runtime optional flag may permit null
+  const requiredValue: number = dynamic.rows[0]!.n;
   // @ts-expect-error references are not an escape-hatch kind
   db.query("SELECT 1", [], { n: { kind: "ref" } });
   // @ts-expect-error defaults are not accepted by query shape

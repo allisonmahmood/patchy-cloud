@@ -72,7 +72,7 @@ export type ShapeKind = "text" | "integer" | "number" | "boolean" | "timestamp" 
 export type ShapeColumn = { readonly kind: ShapeKind; readonly optional?: boolean };
 export type Shape = Readonly<Record<string, ShapeColumn>>;
 export type ShapeValue<K extends ShapeKind> = K extends "integer" | "number" ? number : K extends "boolean" ? boolean : K extends "json" ? unknown : string;
-export type ShapeRow<S extends Shape> = { readonly [K in keyof S]: ShapeValue<S[K]["kind"]> | (S[K] extends { readonly optional: true } ? null : never) };
+export type ShapeRow<S extends Shape> = { readonly [K in keyof S]: ShapeValue<S[K]["kind"]> | (S[K] extends { readonly optional?: infer Optional } ? true extends Optional ? null : never : never) };
 type StrictShape<S extends Shape> = { readonly [K in keyof S]: S[K] & Record<Exclude<keyof S[K], keyof ShapeColumn>, never> };
 export type Query = <const S extends Shape>(sql: string, params: readonly Parameter[], shape: S & StrictShape<S>) => Promise<Rows<ShapeRow<S>>>;
 type Call = (op: string, args: unknown) => Promise<unknown>;
@@ -124,16 +124,7 @@ export const generate = (
     rowTypes.push(
       `export interface ${row} {\n${relation.columns
         .map((column) => {
-          const enumeration =
-            column.type.kind === "enum"
-              ? snapshot.enums.find(
-                  (item) =>
-                    item.schema === column.type.baseSchema && item.name === column.type.baseName
-                )
-              : undefined;
-          const type = enumeration
-            ? enumeration.labels.map(literal).join(" | ") || "never"
-            : typeMapping(column.type)!.typescript;
+          const type = typeMapping(column.type)!.typescript;
           return `  readonly [${literal(column.name)}]: ${type}${column.nullable ? " | null" : ""};`;
         })
         .join("\n")}\n}`
@@ -176,7 +167,7 @@ export const generate = (
     top.push(`[${literal(schema)}]: { ${members.join(",\n")} }`);
   for (const [schema, members] of schemaTypes)
     topTypes.push(`readonly [${literal(schema)}]: { ${members.join("\n")} };`);
-  const client = `${prelude}\n${rowTypes.join("\n")}\nexport interface Client {\n  readonly query: Query;\n${topTypes.join("\n")}\n}\nexport function createClient(connection: string, call: Call): Client {\n  const query: Query = async (sql, params, shape) => await invoke(call, "postgres.query", { connection, sql, params, shape }) as Rows<ShapeRow<typeof shape>>;\n  return { query,\n${top.map((member) => `    ${member}`).join(",\n")}\n  };\n}\n`;
+  const client = `${prelude}\n${rowTypes.join("\n")}\nexport interface Client {\n  readonly query: Query;\n${topTypes.join("\n")}\n}\nexport function createClient(connection: string, call: Call): Client {\n  const query = async <const S extends Shape>(sql: string, params: readonly Parameter[], shape: S & StrictShape<S>) => await invoke(call, "postgres.query", { connection, sql, params, shape }) as Rows<ShapeRow<S>>;\n  return { query,\n${top.map((member) => `    ${member}`).join(",\n")}\n  };\n}\n`;
   const exclusions =
     snapshot.exclusions
       .map(

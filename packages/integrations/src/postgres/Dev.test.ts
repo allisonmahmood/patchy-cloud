@@ -60,7 +60,8 @@ const snapshot: typeof Snapshot.Type = {
           },
           nullable: false
         },
-        { name: "tags", type: { ...native("_text"), kind: "array" }, nullable: true }
+        { name: "tags", type: { ...native("_text"), kind: "array" }, nullable: true },
+        { name: "location", type: native("point"), nullable: true }
       ]
     }
   ]
