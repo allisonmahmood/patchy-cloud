@@ -297,9 +297,9 @@ export class RuntimeGroup extends HttpApiGroup.make("runtime", { topLevel: true 
     }).annotateMerge(
       describe(
         runtimeAdmission +
-          "PUT additionally requires the exact shell `Origin` (scheme, host and port) and " +
-          "`Content-Type` for the uploaded bytes. Principal and wire travel only in their " +
-          "required headers; the body contains only raw file bytes. " +
+          "PUT additionally requires the exact shell `Origin` (scheme, host and port). The " +
+          "uploaded media type travels as `Content-Type`. Principal and wire travel only " +
+          "in their required headers; the body contains only raw file bytes. " +
           runtimeFileContract +
           "The declared byte response contract uses `application/octet-stream` as its default, " +
           "with the actual media type supplied by the handler."

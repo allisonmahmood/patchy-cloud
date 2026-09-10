@@ -3,7 +3,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { Migrations } from "@patchy/sql";
 
 export const migrations: Migrations = {
-  "0007_runtime_baseline": Effect.flatMap(SqlClient.SqlClient, (sql) =>
+  "0006_runtime_baseline": Effect.flatMap(SqlClient.SqlClient, (sql) =>
     sql.unsafe(`
       CREATE TABLE runtime_calls (
         id TEXT PRIMARY KEY,
@@ -27,8 +27,6 @@ export const migrations: Migrations = {
         CHECK ((outcome = 'pending' AND duration_ms IS NULL AND row_count IS NULL)
           OR (outcome <> 'pending' AND duration_ms IS NOT NULL))
       );
-      CREATE INDEX runtime_calls_connection_recent_idx
-        ON runtime_calls(company_id, connection_id, at DESC, id DESC);
     `)
   )
 };

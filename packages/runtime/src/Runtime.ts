@@ -123,43 +123,21 @@ export class UnknownOutcome extends Schema.TaggedError<UnknownOutcome>()("Unknow
   }
 }
 
-const OperationError = Schema.Union([
-  InvalidRequest,
-  AccessDenied,
-  SessionExpired,
-  PrincipalChanged,
-  PublicUnavailable,
-  ShellOutdated,
-  TooLarge,
-  RateLimited,
-  SourceUnavailable,
-  UnknownOutcome
-]);
-type OperationError = typeof OperationError.Type;
-
-/** Correlation enriches a failure without replacing its immediate cause or losing its bounds. */
-export class LoggedFailure extends Schema.TaggedError<LoggedFailure>()("LoggedFailure", {
-  cause: OperationError,
-  correlationId: Schema.String
-}) {
-  get code() {
-    return this.cause.code;
-  }
-  get status() {
-    return this.cause.status;
-  }
-  get retryAfterSeconds() {
-    return this.cause._tag === "RateLimited" ? this.cause.retryAfterSeconds : undefined;
-  }
-  override get message() {
-    return this.cause.message;
-  }
-}
-export type RuntimeError = OperationError | LoggedFailure;
+export type RuntimeError =
+  | InvalidRequest
+  | AccessDenied
+  | SessionExpired
+  | PrincipalChanged
+  | PublicUnavailable
+  | ShellOutdated
+  | TooLarge
+  | RateLimited
+  | SourceUnavailable
+  | UnknownOutcome;
 
 export interface Handler {
   readonly kind: "read" | "mutation" | "integration";
-  readonly run: (args: unknown) => Effect.Effect<unknown, OperationError, Binding.Binding>;
+  readonly run: (args: unknown) => Effect.Effect<unknown, RuntimeError, Binding.Binding>;
 }
 
 /** Compile each operation's schemas once, retaining the handler's inferred input/output. */
@@ -168,7 +146,7 @@ export const handler = <
   Output extends Schema.Top & Schema.Codec<unknown, unknown>
 >(
   definition: { readonly kind: Handler["kind"]; readonly input: Input; readonly output: Output },
-  run: (args: Input["Type"]) => Effect.Effect<Output["Type"], OperationError, Binding.Binding>
+  run: (args: Input["Type"]) => Effect.Effect<Output["Type"], RuntimeError, Binding.Binding>
 ): Handler => {
   const decode = Schema.decodeUnknownEffect(definition.input, { onExcessProperty: "error" });
   const encode = Schema.encodeEffect(definition.output);
@@ -202,7 +180,7 @@ export const config = Config.all({
 
 const decodePrincipal = Schema.decodeUnknownEffect(Schema.fromJsonString(RuntimePrincipal));
 const decodeBodyPrincipal = Schema.decodeUnknownEffect(RuntimePrincipal);
-const decodeWire = Schema.decodeUnknownEffect(
+export const decodeWire = Schema.decodeUnknownEffect(
   Schema.NumberFromString.check(Schema.isInt(), Schema.isGreaterThan(0))
 );
 
@@ -359,12 +337,9 @@ export const make = (
         );
       if (Exit.isFailure(result)) {
         const failure = Cause.findErrorOption(result.cause);
-        return yield* new LoggedFailure({
-          cause: Option.isSome(failure)
-            ? failure.value
-            : new SourceUnavailable({ cause: result.cause }),
-          correlationId: binding.correlationId
-        });
+        return yield* Option.isSome(failure)
+          ? Object.assign(failure.value, { correlationId: binding.correlationId })
+          : new SourceUnavailable({ cause: result.cause, correlationId: binding.correlationId });
       }
       return result.value;
     });

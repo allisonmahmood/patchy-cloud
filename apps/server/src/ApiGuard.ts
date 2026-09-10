@@ -5,6 +5,7 @@
  * router matches, before a body is read. Release discovery and the two POST
  * device-login routes are anonymous. Publish has its own limits after its
  * authenticated replay lookup; the guard must not throttle a recovery attempt.
+ * Runtime has its own browser admission and per-viewer/patch limit.
  * Other `/api/*` requests spend the per-address protected-API limit, then need
  * a token. Malformed targets and missing routes disclose their shape only
  * after authentication.
@@ -70,6 +71,7 @@ export type Target =
   | { readonly kind: "public" }
   | { readonly kind: "route" }
   | { readonly kind: "publish" }
+  | { readonly kind: "runtime" }
   | { readonly kind: "device-login"; readonly action: "start" | "poll" }
   | { readonly kind: "refused"; readonly status: 400 | 404 | 414 };
 
@@ -88,7 +90,7 @@ export function classify(method: string, requestTarget: string): Target {
     ((method === "PUT" || method === "GET") &&
       /^\/api\/runtime\/files\/[^/]+\/[^/]+\/[^/]+\/.+$/.test(pathname))
   )
-    return { kind: "public" };
+    return { kind: "runtime" };
   if (method === "POST") {
     if (pathname === "/api/login/device") return { kind: "device-login", action: "start" };
     if (pathname === "/api/login/device/token") return { kind: "device-login", action: "poll" };
@@ -139,7 +141,8 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest;
       const target = classify(request.method, request.url);
-      if (target.kind === "public" || target.kind === "publish") return yield* app;
+      if (target.kind === "public" || target.kind === "publish" || target.kind === "runtime")
+        return yield* app;
       if (target.kind === "device-login" && target.action === "poll") return yield* app;
 
       // Keyed by source address — after the trusted-proxy walk, so a proxy in

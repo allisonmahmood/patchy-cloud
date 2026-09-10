@@ -1,11 +1,13 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { WIRE_VERSION } from "@patchy/api";
 import { PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { client, headers, patchId, versionId, publicVersionId } from "./test/fixtures.js";
 import * as Fixtures from "./test/fixtures.js";
+import { me } from "./me.js";
 
 it.layer(Fixtures.layer())("runtime HTTP admission", (it) => {
   it.effect(
@@ -33,6 +35,8 @@ it.layer(Fixtures.layer())("runtime HTTP admission", (it) => {
           assert.deepStrictEqual(yield* response.json, { ok: true, value: null });
           assert.strictEqual(response.headers["cache-control"], "no-store");
         }
+        const sql = yield* SqlClient.SqlClient;
+        assert.deepStrictEqual(yield* sql`SELECT id FROM runtime_calls`, []);
       })
   );
 
@@ -95,6 +99,15 @@ it.layer(Fixtures.layer())("runtime HTTP admission", (it) => {
         });
         assert.include(yield* mismatched.json, { code: "invalid_request" });
         assert.strictEqual(mismatched.status, 400);
+        const nullMutation = yield* api.call({
+          payload: { ...payload, op: "tables.insert" },
+          headers: { ...headers(), cookie: signedInCookies() },
+          responseMode: "response-only"
+        });
+        assert.strictEqual(nullMutation.status, 409);
+        assert.include(yield* nullMutation.json, { code: "principal_changed" });
+        const sql = yield* SqlClient.SqlClient;
+        assert.deepStrictEqual(yield* sql`SELECT id FROM runtime_calls`, []);
       })
   );
 
@@ -224,6 +237,13 @@ it.layer(Fixtures.layer())("runtime HTTP admission", (it) => {
         });
         assert.include(yield* missing.json, { code: "access_denied" });
         assert.strictEqual(missing.status, 403);
+        const missingVersion = yield* api.call({
+          payload: { ...payload, versionId: "ver_cccccccccccccccccccccccc" },
+          headers: { ...headers(), cookie: signedInCookies() },
+          responseMode: "response-only"
+        });
+        assert.strictEqual(missingVersion.status, 403);
+        assert.include(yield* missingVersion.json, { code: "access_denied" });
         const unregistered = yield* api.call({
           payload,
           headers: { ...headers(), cookie: signedInCookies(signSession({ sub: "unknown-user" })) },
@@ -290,6 +310,7 @@ it.effect(
           responseMode: "response-only"
         });
         assert.include(yield* response.json, { code: "access_denied" });
+        assert.strictEqual(response.status, 403);
       }
       const response = yield* api.call({
         payload: {
@@ -308,6 +329,7 @@ it.effect(
         },
         responseMode: "response-only"
       });
+      assert.strictEqual(response.status, 200);
       assert.deepStrictEqual(yield* response.json, {
         ok: true,
         value: {
@@ -338,7 +360,67 @@ it.effect("me rejects arguments outside its operation schema without a log corre
       headers: { ...headers(), cookie: signedInCookies() },
       responseMode: "response-only"
     });
+    assert.strictEqual(response.status, 400);
     assert.include(yield* response.json, { code: "invalid_request" });
     assert.notProperty(yield* response.json, "correlationId");
   }).pipe(Effect.provide(Fixtures.layer()))
+);
+
+it.effect("reserved PUT enforces browser headers and its viewer limit before refusal", () =>
+  Effect.gen(function* () {
+    const api = yield* client;
+    const params = { patchId, versionId, store: "images", "*": "a.png" };
+    const required = headers({ userId: DEV_SEED.userId });
+    const authenticated = { cookie: signedInCookies(), origin: PUBLIC_BASE_URL };
+    for (const [custom, status, code] of [
+      [{ "x-patchy-wire": required["x-patchy-wire"] }, 400, "invalid_request"],
+      [{ "x-patchy-principal": required["x-patchy-principal"] }, 400, "invalid_request"],
+      [{ ...required, "x-patchy-wire": "1.5" }, 400, "invalid_request"],
+      [{ ...required, authorization: "Bearer patchy-dev-token" }, 403, "access_denied"]
+    ] as const) {
+      const response = yield* api.putFile({
+        params,
+        payload: new Uint8Array([1]),
+        headers: { ...authenticated, ...custom },
+        responseMode: "response-only"
+      });
+      assert.strictEqual(response.status, status);
+      assert.include(yield* response.json, { code });
+    }
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const response = yield* api.putFile({
+        params,
+        payload: new Uint8Array([1]),
+        headers: { ...authenticated, ...required },
+        responseMode: "response-only"
+      });
+      assert.strictEqual(response.status, attempt < 3 ? 400 : 429);
+      assert.include(yield* response.json, {
+        code: attempt < 3 ? "invalid_request" : "rate_limited"
+      });
+      assert.notProperty(yield* response.json, "correlationId");
+      if (attempt === 3) assert.isAbove(Number(response.headers["retry-after"]), 0);
+    }
+  }).pipe(Effect.provide(Fixtures.layer()))
+);
+
+it.effect("the HTTP success boundary refuses a handler value outside the wire schema", () =>
+  Effect.gen(function* () {
+    const api = yield* client;
+    const response = yield* api.call({
+      payload: {
+        patchId,
+        versionId,
+        principal: null,
+        wire: WIRE_VERSION,
+        op: "me",
+        args: {}
+      },
+      headers: { ...headers(), cookie: signedInCookies() },
+      responseMode: "response-only"
+    });
+    assert.strictEqual(response.status, 503);
+    assert.include(yield* response.json, { code: "source_unavailable" });
+    assert.notProperty(yield* response.json, "correlationId");
+  }).pipe(Effect.provide(Fixtures.layer({ me: { ...me, run: () => Effect.succeed(true) } })))
 );

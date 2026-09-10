@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { RuntimeFailure, WIRE_VERSION } from "@patchy/api";
@@ -48,20 +49,23 @@ it.effect(
         });
         assert.include(yield* response.json, { code: "access_denied" });
       }
-      const response = yield* api.call({
-        payload,
-        headers: authenticatedHeaders(),
-        responseMode: "response-only"
-      });
-      const result = yield* response.json;
+      const runtime = yield* Runtime.Runtime;
+      const result = yield* runtime.call(payload).pipe(
+        Effect.provideService(
+          HttpServerRequest.HttpServerRequest,
+          HttpServerRequest.fromWeb(
+            new Request(`${PUBLIC_BASE_URL}/api/runtime/call`, {
+              method: "POST",
+              headers: authenticatedHeaders()
+            })
+          )
+        )
+      );
       assert.deepInclude(result, {
-        ok: true,
-        value: {
-          companyId: DEV_SEED.companyId,
-          userId: DEV_SEED.userId,
-          patchId: Fixtures.patchId,
-          versionId: Fixtures.versionId
-        }
+        companyId: DEV_SEED.companyId,
+        userId: DEV_SEED.userId,
+        patchId: Fixtures.patchId,
+        versionId: Fixtures.versionId
       });
     }).pipe(
       Effect.provide(
@@ -103,6 +107,21 @@ it.effect("a failing handler's HTTP correlation finds the attributed failure row
     assert.strictEqual(row?.outcome, "failure");
     assert.strictEqual(row?.userId, DEV_SEED.userId);
     assert.strictEqual(row?.patchId, Fixtures.patchId);
+    // In-process consumers can still recover the original domain error by tag.
+    const runtime = yield* Runtime.Runtime;
+    const maxBytes = yield* runtime.call(envelope("tables.insert")).pipe(
+      Effect.catchTags({ TooLarge: (error) => Effect.succeed(error.maxBytes) }),
+      Effect.provideService(
+        HttpServerRequest.HttpServerRequest,
+        HttpServerRequest.fromWeb(
+          new Request(`${PUBLIC_BASE_URL}/api/runtime/call`, {
+            method: "POST",
+            headers: authenticatedHeaders()
+          })
+        )
+      )
+    );
+    assert.strictEqual(maxBytes, 1024);
   }).pipe(
     Effect.provide(
       Fixtures.layer({
@@ -172,16 +191,20 @@ it.effect("operation body bounds count UTF-8 bytes and allow only the operation'
         headers: authenticatedHeaders(),
         responseMode: "response-only"
       });
-      if (code === undefined)
-        assert.deepStrictEqual(yield* response.json, { ok: true, value: true });
-      else assert.include(yield* response.json, { code });
+      if (code === undefined) {
+        assert.strictEqual(response.status, 200);
+        assert.deepStrictEqual(yield* response.json, { ok: true, value: null });
+      } else {
+        assert.strictEqual(response.status, 413);
+        assert.include(yield* response.json, { code });
+      }
     }
   }).pipe(
     Effect.provide(
       Fixtures.layer({
         me,
-        "tables.insert": { kind: "mutation", run: () => Effect.succeed(true) },
-        "tables.insertMany": { kind: "mutation", run: () => Effect.succeed(true) }
+        "tables.insert": { kind: "mutation", run: () => Effect.succeed(null) },
+        "tables.insertMany": { kind: "mutation", run: () => Effect.succeed(null) }
       })
     )
   )

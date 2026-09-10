@@ -4,14 +4,13 @@ import * as Stream from "effect/Stream";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
-import { PatchyApi, RuntimeEnvelope, RuntimeFailure } from "@patchy/api";
+import { PatchyApi, RuntimeEnvelope, RuntimeFailure, RuntimeSuccess } from "@patchy/api";
 import * as Runtime from "./Runtime.js";
 
 const decodeCall = Schema.decodeUnknownEffect(Schema.fromJsonString(RuntimeEnvelope), {
   onExcessProperty: "error"
 });
-const decodeBytes = Schema.decodeUnknownEffect(Schema.Uint8Array);
-const decodeWire = Schema.decodeUnknownEffect(Schema.NumberFromString);
+const encodeSuccess = Schema.encodeUnknownEffect(RuntimeSuccess);
 const encodeFailure = Schema.encodeSync(RuntimeFailure);
 const noStore = { "cache-control": "no-store" };
 
@@ -67,13 +66,13 @@ export const layer = HttpApiBuilder.group(PatchyApi, "runtime", (handlers) =>
     const runtime = yield* Runtime.Runtime;
     const file = Effect.fn("RuntimeApi.file")(function* (params: Readonly<Record<string, string>>) {
       const request = yield* HttpServerRequest.HttpServerRequest;
-      const wire = yield* decodeWire(request.headers["x-patchy-wire"]).pipe(
+      const wire = yield* Runtime.decodeWire(request.headers["x-patchy-wire"]).pipe(
         Effect.mapError((cause) => new Runtime.InvalidRequest({ cause }))
       );
       if (request.method === "PUT" && Number(request.headers["content-length"]) > runtime.fileBytes)
         return yield* new Runtime.TooLarge({ maxBytes: runtime.fileBytes });
       // File handlers are not registered until the Files ticket. They still pass the same admission.
-      const value = yield* runtime.call({
+      yield* runtime.call({
         patchId: params.patchId ?? "",
         versionId: params.versionId ?? "",
         principal: null,
@@ -85,18 +84,18 @@ export const layer = HttpApiBuilder.group(PatchyApi, "runtime", (handlers) =>
           contentType: request.headers["content-type"]
         }
       });
-      const bytes = yield* decodeBytes(value).pipe(
-        Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))
-      );
-      return HttpServerResponse.uint8Array(bytes, { headers: noStore });
+      return yield* new Runtime.InvalidRequest({});
     });
     return handlers
       .handleRaw("call", () =>
         readCall(runtime).pipe(
           Effect.flatMap(runtime.call),
-          Effect.map((value) =>
-            HttpServerResponse.jsonUnsafe({ ok: true, value }, { headers: noStore })
+          Effect.flatMap((value) =>
+            encodeSuccess({ ok: true, value }).pipe(
+              Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))
+            )
           ),
+          Effect.map((body) => HttpServerResponse.jsonUnsafe(body, { headers: noStore })),
           Effect.catch((error) => Effect.succeed(failure(error)))
         )
       )

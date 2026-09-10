@@ -96,10 +96,6 @@ it.layer(RuntimeLog.layer.pipe(Layer.provideMerge(Testing.layer())))("RuntimeLog
         "unknown"
       );
       assert.strictEqual(
-        (yield* restarted.recent({ companyId, connectionId }))[0]?.outcome,
-        "unknown"
-      );
-      assert.strictEqual(
         (yield* restarted.find({ companyId, correlationId: mutationId }))?.outcome,
         "pending"
       );
@@ -133,63 +129,27 @@ it.layer(RuntimeLog.layer.pipe(Layer.provideMerge(Testing.layer())))("RuntimeLog
     })
   );
 
-  it.effect("isolates company lookups and limits recent calls to the requested connection", () =>
+  it.effect("isolates correlation lookups by company", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(NOW);
       const log = yield* RuntimeLog.RuntimeLog;
-      const sql = yield* SqlClient.SqlClient;
-      const otherCompanyId = "cmp_runtime_other";
-      const otherUserId = "usr_runtime_other";
-      yield* sql`INSERT INTO companies (id, handle, name)
-        VALUES (${otherCompanyId}, 'runtime-other', 'Other company')`;
-      yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
-        VALUES (${otherUserId}, 'user_runtime_other', ${otherCompanyId},
-          'other@runtime.test', 'Other member', 'member')`;
       const companyId = DEV_SEED.companyId;
-      const connectionId = "connection-recent";
-      yield* log.begin({
-        ...mutation("runtime-recent-first"),
-        op: "postgres.list",
-        connectionId
-      });
-      yield* TestClock.adjust(1);
-      yield* log.begin({
-        ...mutation("runtime-recent-second"),
-        op: "postgres.get",
-        connectionId
-      });
-      yield* TestClock.adjust(1);
-      yield* log.begin({
-        ...mutation("runtime-recent-other-connection"),
-        op: "postgres.list",
-        connectionId: "connection-unrelated"
-      });
-      yield* log.begin({
-        ...mutation("runtime-recent-other-company"),
+      const otherCompanyId = "cmp_runtime_other";
+      const correlationId = "runtime-company";
+      const otherCorrelationId = "runtime-other-company";
+      const id = yield* log.begin(mutation(correlationId));
+      const otherId = yield* log.begin({
+        ...mutation(otherCorrelationId),
         companyId: otherCompanyId,
-        userId: otherUserId,
-        op: "postgres.list",
-        connectionId
+        userId: "usr_runtime_other"
       });
-      assert.deepStrictEqual(
-        (yield* log.recent({ companyId, connectionId })).map((row) => row.correlationId),
-        ["runtime-recent-second", "runtime-recent-first"]
+      assert.strictEqual((yield* log.find({ companyId, correlationId }))?.id, id);
+      assert.strictEqual(
+        (yield* log.find({ companyId: otherCompanyId, correlationId: otherCorrelationId }))?.id,
+        otherId
       );
-      assert.deepStrictEqual(
-        (yield* log.recent({ companyId, connectionId, limit: 1 })).map((row) => row.correlationId),
-        ["runtime-recent-second"]
-      );
-      assert.deepStrictEqual(
-        (yield* log.recent({ companyId: otherCompanyId, connectionId })).map(
-          (row) => row.correlationId
-        ),
-        ["runtime-recent-other-company"]
-      );
-      assert.isNull(
-        yield* log.find({ companyId: otherCompanyId, correlationId: "runtime-recent-first" })
-      );
-      assert.isNull(yield* log.find({ companyId, correlationId: "runtime-recent-other-company" }));
-      assert.deepStrictEqual(yield* log.recent({ companyId, connectionId: "missing" }), []);
+      assert.isNull(yield* log.find({ companyId: otherCompanyId, correlationId }));
+      assert.isNull(yield* log.find({ companyId, correlationId: otherCorrelationId }));
     })
   );
 
@@ -271,21 +231,6 @@ it.layer(RuntimeLog.layer.pipe(Layer.provideMerge(Testing.layer())))("RuntimeLog
       assert.strictEqual(retained?.userId, userId);
       assert.strictEqual(retained?.patchId, patchId);
       assert.strictEqual(retained?.versionId, versionId);
-      const discoveryId = "runtime-admin-discovery";
-      yield* log.begin({
-        ...mutation(discoveryId),
-        patchId: null,
-        versionId: null,
-        credentialKind: "admin",
-        op: "postgres.discover",
-        resource: null,
-        connectionId: "connection-discovery"
-      });
-      const discovery = yield* log.find({ companyId, correlationId: discoveryId });
-      assert.strictEqual(discovery?.credentialKind, "admin");
-      assert.strictEqual(discovery?.userId, DEV_SEED.userId);
-      assert.strictEqual(discovery?.patchId, null);
-      assert.strictEqual(discovery?.versionId, null);
     })
   );
 

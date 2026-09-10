@@ -87,8 +87,10 @@ that environment token and warns about it.
 | `pnpm dev reset`            | Stop, wipe `.local/dev/`, and start a fresh seeded instance.                                     |
 
 `reset` is also the answer when the migration ledger changes shape under an
-instance you already have, including the rewritten `0003_patches_baseline`. It
-deletes the database and published HTML; use it only for disposable dev data.
+instance you already have, including the rewritten `0003_patches_baseline` and
+pre-merge instances that ran the old `0007_runtime_baseline` instead of
+`0006_runtime_baseline`. It deletes the database and published HTML; use it only
+for disposable dev data, never to repair a live migration ledger.
 
 `--json` also works on `status`, `reset` and a plain start. The server is not
 watched; after a code change, `pnpm dev stop && pnpm dev`.
@@ -482,8 +484,9 @@ SIGTERM — tears the other down. Migrations run through Effect's Migrator in
 `0002_auth_baseline`, and Patches owns `0003_patches_baseline`. Companies also
 owns `0004_invites_expiry`, which adds and backfills invitation expiry.
 Company database owns `0005_company_database_baseline`; Runtime owns
-`0007_runtime_baseline`. The gap at `0006` is reserved for Integrations; Effect's
-Migrator applies ids in order and tolerates the gap. The three migrator spreads are `apps/server/src/Server.ts`,
+`0006_runtime_baseline`. Allocate migration ids monotonically in landing order:
+Effect's Migrator applies only ids above the ledger's highest applied id, so a
+later migration cannot fill a lower-numbered gap. The three migrator spreads are `apps/server/src/Server.ts`,
 `scripts/dev/src/supervisor.ts` and `test/postgres.ts`; server tests clone the
 template without passing migrations. Packed and live browser servers migrate
 through the server's existing spread rather than maintaining another one.
