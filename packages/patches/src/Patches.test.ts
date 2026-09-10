@@ -208,6 +208,46 @@ it.layer(Patches.layer.pipe(Layer.provideMerge(Fixtures.database)))("Patches", (
     })
   );
 
+  it.effect("backfills title names in creation order without renaming or reviving patches", () =>
+    Effect.gen(function* () {
+      const service = yield* patches;
+      const named = yield* create(uploader, "Backfill Report");
+      const later = yield* create(uploader, "Bäckfill Réport");
+      const earlier = yield* create(admin, "BACKFILL___REPORT!");
+      const deleted = yield* create(uploader, "Backfill Report");
+      yield* service.delete(deleted, uploader.user.id);
+
+      const sql = yield* SqlClient.SqlClient;
+      // Recreate legacy missing claims, with creation order opposite to their ids.
+      yield* sql`DELETE FROM patch_names WHERE patch_id IN (${earlier}, ${later})`;
+      yield* sql`UPDATE patches SET created_at = '2020-01-01'::timestamptz WHERE id = ${deleted}`;
+      yield* sql`UPDATE patches SET created_at = '2020-01-02'::timestamptz WHERE id = ${earlier}`;
+      yield* sql`UPDATE patches SET created_at = '2020-01-03'::timestamptz WHERE id = ${later}`;
+      yield* sql`UPDATE patches SET title = 'Already named title' WHERE id = ${named}`;
+
+      for (let run = 0; run < 2; run++) {
+        yield* Patches.backfillNames();
+        for (const [patchId, name] of [
+          [named, "backfill-report"],
+          [earlier, "backfill-report-2"],
+          [later, "backfill-report-3"]
+        ] as const) {
+          assert.strictEqual(Option.getOrThrow(yield* service.find(patchId)).patch.name, name);
+          assert.deepStrictEqual(
+            { ...Option.getOrThrow(yield* service.resolveName(uploader.company.handle, name)) },
+            { patchId, name, current: true }
+          );
+        }
+        assert.isTrue(
+          Option.isNone(yield* service.resolveName(uploader.company.handle, "backfill-report-4"))
+        );
+        assert.isTrue(
+          Option.isNone(yield* service.resolveName(uploader.company.handle, "already-named-title"))
+        );
+      }
+    })
+  );
+
   it.effect("counts live patches per owner across machines, releasing the taken-down ones", () =>
     Effect.gen(function* () {
       const service = yield* patches;

@@ -374,7 +374,7 @@ class Id extends Schema.Class<Id>("Id")({ id: Schema.String }) {}
 class Count extends Schema.Class<Count>("Count")({ count: Schema.Int }) {}
 class NextVersion extends Schema.Class<NextVersion>("NextVersion")({ nextVersion: Schema.Int }) {}
 class ObjectKey extends Schema.Class<ObjectKey>("ObjectKey")({ objectKey: Schema.String }) {}
-class ScopeRow extends Schema.Class<ScopeRow>("ScopeRow")({
+class PatchTargetRow extends Schema.Class<PatchTargetRow>("PatchTargetRow")({
   scope: SharingScope,
   companyId: Schema.String,
   companyHandle: Schema.String,
@@ -632,7 +632,7 @@ export const make = Effect.gen(function* () {
       ownerUserId: Schema.String,
       nowMillis: Schema.Number
     }),
-    Result: ScopeRow,
+    Result: PatchTargetRow,
     execute: ({ patchId, ownerUserId, nowMillis }) => sql`
       SELECT patches.scope, patches.name, patches.company_id AS "companyId",
         companies.handle AS "companyHandle"
@@ -859,7 +859,7 @@ export const make = Effect.gen(function* () {
       scope: SharingScope,
       nowMillis: Schema.Number
     }),
-    Result: ScopeRow,
+    Result: PatchTargetRow,
     execute: ({ patchId, ownerUserId, scope, nowMillis }) => sql`
       UPDATE patches
       SET scope = ${scope}, updated_at = now()

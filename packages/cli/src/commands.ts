@@ -453,10 +453,11 @@ const publish = Command.make(
         const name = Option.isSome(options.name)
           ? yield* decodePublishName(options.name.value).pipe(
               Effect.mapError(
-                () =>
+                (cause) =>
                   new LocalError({
                     message:
-                      "--name must be 3–32 lowercase letters, digits or hyphens, with no hyphen at either end."
+                      "--name must be 3–32 lowercase letters, digits or hyphens, with no hyphen at either end.",
+                    cause
                   })
               )
             )

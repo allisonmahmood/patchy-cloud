@@ -5,6 +5,7 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { TestClock } from "effect/testing";
+import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
@@ -76,7 +77,8 @@ const services = Layer.mergeAll(Content.layer, DeviceLogins.layer).pipe(
 /** The same routes and services in memory and on a real socket. */
 const layer = HttpRouter.serve(routes, { disableLogger: true, disableListenLog: true }).pipe(
   Layer.provideMerge(NodeHttpServer.layerTest),
-  Layer.provideMerge(services)
+  Layer.provideMerge(services),
+  Layer.provideMerge(Layer.succeed(FetchHttpClient.RequestInit)({ redirect: "manual" }))
 );
 
 const get = (url: string, headers: Record<string, string> = { cookie: signedInCookies() }) =>
@@ -84,7 +86,12 @@ const get = (url: string, headers: Record<string, string> = { cookie: signedInCo
     client.execute(HttpClientRequest.get(url).pipe(HttpClientRequest.setHeaders(headers)))
   );
 
-const publish = (title: string, scope?: Patches.Patch["scope"], patchId: string | null = null) =>
+const publish = (
+  title: string,
+  scope?: Patches.Patch["scope"],
+  patchId: string | null = null,
+  name?: string
+) =>
   Effect.flatMap(Content.Content, (content) =>
     content
       .publish({
@@ -92,6 +99,7 @@ const publish = (title: string, scope?: Patches.Patch["scope"], patchId: string 
           manifestVersion: MANIFEST_VERSION,
           release: CURRENT_RELEASE,
           tier: 0,
+          ...(name === undefined ? {} : { name }),
           tables: {},
           files: {},
           uses: {}
@@ -218,6 +226,140 @@ it.layer(layer)("pages", (it) => {
       })
   );
 
+  it.effect("reclaims renamed addresses permanently without opening the privacy door", () =>
+    Effect.gen(function* () {
+      yield* (yield* Companies.Companies).create({
+        name: "Alias outsider",
+        handle: "alias-outsider",
+        clerkUserId: "user_alias_outsider",
+        email: "alias-outsider@example.com",
+        userName: "Outsider"
+      });
+      const foreign = {
+        cookie: signedInCookies(
+          signSession({ sub: "user_alias_outsider", email: "alias-outsider@example.com" })
+        )
+      };
+      const patches = yield* Patches.Patches;
+      const suffixes = ["", "/~v/1/reports/weekly?view=chart&tag=first%20item&tag=second"];
+      for (const scope of ["company", "public"] as const) {
+        const oldName = `${scope}-brief`;
+        const newName = `${scope}-renamed-brief`;
+        const oldPath = `/${DEV_SEED.companyHandle}/${oldName}`;
+        const newPath = `/${DEV_SEED.companyHandle}/${newName}`;
+        const originalTitle = `Original ${scope} report`;
+        const renamedTitle = `Renamed ${scope} report`;
+        const replacementTitle = `Replacement ${scope} report`;
+        const { patchId } = yield* publish(originalTitle, scope, null, oldName);
+        yield* publish(renamedTitle, undefined, patchId, newName);
+
+        for (const suffix of suffixes) {
+          const url = `${oldPath}${suffix}`;
+          const redirect = yield* get(url);
+          assert.strictEqual(redirect.status, 308, url);
+          assert.strictEqual(redirect.headers.location, `${newPath}${suffix}`);
+          assert.strictEqual(redirect.headers["cache-control"], "private, no-store");
+
+          // Even a public patch's historical version needs company admission.
+          const isPublic = scope === "public" && suffix === "";
+          const signedOut = yield* get(url, {});
+          assert.strictEqual(signedOut.status, isPublic ? 308 : 401, url);
+          assert.strictEqual(signedOut.headers["cache-control"], "private, no-store");
+          const outsider = yield* get(url, foreign);
+          assert.strictEqual(outsider.status, isPublic ? 308 : 404, url);
+          if (isPublic) {
+            assert.strictEqual(signedOut.headers.location, newPath);
+            assert.strictEqual(outsider.headers.location, newPath);
+            assert.isUndefined(signedOut.headers["x-patchy-sign-in-url"]);
+          } else {
+            assert.isUndefined(signedOut.headers.location);
+            const door = yield* signedOut.text;
+            assert.include(door, ">Sign in</a>");
+            assert.notInclude(door, newName);
+            assert.notInclude(door, originalTitle);
+            assert.notInclude(door, renamedTitle);
+            assert.isUndefined(outsider.headers.location);
+            assert.isUndefined(outsider.headers["x-patchy-sign-in-url"]);
+            const denied = yield* outsider.text;
+            assert.notInclude(denied, newName);
+            assert.notInclude(denied, originalTitle);
+            assert.notInclude(denied, renamedTitle);
+          }
+        }
+
+        const replacement = yield* publish(replacementTitle, scope, null, oldName);
+        for (const suffix of suffixes) {
+          const response = yield* get(
+            `${oldPath}${suffix}`,
+            scope === "public" ? {} : { cookie: signedInCookies() }
+          );
+          assert.strictEqual(response.status, 200);
+          assert.isUndefined(response.headers.location);
+          const body = yield* response.text;
+          assert.include(body, `&lt;h1&gt;${replacementTitle}&lt;/h1&gt;`);
+          assert.notInclude(body, originalTitle);
+          assert.notInclude(body, renamedTitle);
+        }
+
+        yield* patches.delete(replacement.patchId, DEV_SEED.userId);
+        for (const suffix of suffixes) {
+          const gone = yield* get(`${oldPath}${suffix}`);
+          assert.strictEqual(gone.status, 404);
+          assert.isUndefined(gone.headers.location);
+          assert.notInclude(yield* gone.text, originalTitle);
+        }
+        const original = yield* get(newPath);
+        assert.strictEqual(original.status, 200);
+        assert.include(yield* original.text, `&lt;h1&gt;${renamedTitle}&lt;/h1&gt;`);
+      }
+    })
+  );
+
+  it.effect("keeps removed /d routes and bare company handles out of address admission", () =>
+    Effect.gen(function* () {
+      const { patchId } = yield* publish("Removed route must stay hidden");
+      const client = yield* HttpClient.HttpClient;
+      const paths = [
+        `/${DEV_SEED.companyHandle}`,
+        ...[patchId, "missing-patch"].flatMap((id) => [`/d/${id}`, `/d/${id}/v/1`, `/d/${id}/~v/1`])
+      ];
+      for (const url of paths) {
+        for (const method of ["GET", "HEAD"] as const) {
+          const response = yield* client.execute(
+            method === "GET" ? HttpClientRequest.get(url) : HttpClientRequest.head(url)
+          );
+          assert.strictEqual(response.status, 404, `${method} ${url}`);
+          assert.strictEqual(response.headers["cache-control"], "no-store");
+          assert.isUndefined(response.headers.location);
+          assert.isUndefined(response.headers["x-patchy-sign-in-url"]);
+          const body = yield* response.text;
+          assert.notInclude(body, ">Sign in</a>");
+          assert.notInclude(body, "Removed route must stay hidden");
+          if (method === "HEAD") assert.strictEqual(body, "");
+        }
+      }
+    })
+  );
+
+  it.effect("matches static routes before the patch-address wildcard", () =>
+    Effect.gen(function* () {
+      for (const url of ["/", "/healthz", "/auth/session.js"]) {
+        const response = yield* get(url, {});
+        assert.strictEqual(response.status, 200, url);
+        assert.strictEqual(response.headers["cache-control"], "no-store");
+        assert.strictEqual(response.headers["x-content-type-options"], "nosniff");
+        assert.isUndefined(response.headers["x-patchy-sign-in-url"]);
+        if (url === "/auth/session.js") {
+          assert.include(response.headers["content-type"], "text/javascript");
+        } else if (url === "/healthz") {
+          assert.deepStrictEqual(yield* response.json, { ok: true });
+        } else {
+          assert.include(yield* response.text, PUBLIC_BASE_URL);
+        }
+      }
+    })
+  );
+
   it.effect("404s as HTML, uncached, and keeps a patch URL's headers on the 404 too", () =>
     Effect.gen(function* () {
       const { path } = yield* publish("One version");
@@ -237,14 +379,6 @@ it.layer(layer)("pages", (it) => {
       assert.strictEqual(elsewhere.status, 404);
       assert.strictEqual(elsewhere.headers["cache-control"], "no-store");
       assert.include(elsewhere.headers["content-type"], "text/html");
-
-      for (const url of ["/", "/healthz"]) {
-        const response = yield* get(url);
-        assert.strictEqual(response.status, 200, url);
-        assert.strictEqual(response.headers["cache-control"], "no-store");
-        assert.strictEqual(response.headers["x-content-type-options"], "nosniff");
-      }
-      assert.include(yield* (yield* get("/")).text, PUBLIC_BASE_URL);
     })
   );
 

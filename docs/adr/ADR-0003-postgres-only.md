@@ -44,6 +44,13 @@ an alternative server mode.
 **A future migration has one database target.** Schema changes and any required
 data backfill are Postgres steps, with no JSON transform to maintain beside them.
 
+The pre-deployment name backfill requested by #195 is a seed operation, not an
+upgrade of an existing schema: the rewritten baseline already contains the name
+columns and namespace. The shared `Patches.backfillNames` seed runs transactionally
+against Postgres and reuses publishing's Unicode normalization and suffix rules;
+the dev runner and test template call the same implementation. This exception
+does not replace Migrator steps for deployed schema changes or their data backfills.
+
 ## Alternatives considered
 
 - **Keep the JSON driver for local runs.** Rejected: the runner already

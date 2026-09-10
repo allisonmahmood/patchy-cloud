@@ -367,6 +367,37 @@ const publishLayer = Layer.mergeAll(
   Layer.provide(publishConfig())
 );
 
+const racingClients = Effect.fn("racingClients")(function* () {
+  const store = yield* ContentStore.ContentStore;
+  const ready = yield* Deferred.make<void>();
+  let puts = 0;
+  const heldStore = Layer.succeed(
+    ContentStore.ContentStore,
+    ContentStore.ContentStore.of({
+      ...store,
+      put: (key, body) =>
+        Effect.gen(function* () {
+          yield* store.put(key, body);
+          if (++puts === 2) yield* Deferred.succeed(ready, undefined);
+          yield* Deferred.await(ready);
+        })
+    })
+  );
+  const routes = Layer.fresh(
+    PatchesApi.layer.pipe(
+      Layer.provide(Content.layer.pipe(Layer.provide(heldStore))),
+      Layer.provide(publishConfig())
+    )
+  );
+  // Same company, different users: the owner quota locks cannot serialize the name claims.
+  return yield* Effect.forEach([uploader, reader], (identity) =>
+    Effect.gen(function* () {
+      const api = yield* client.pipe(Effect.provide(Fixtures.as(identity)), Effect.provide(routes));
+      return { identity, api };
+    })
+  );
+});
+
 it.layer(publishLayer)("publish attempts", (it) => {
   it.effect(
     "replays stored JSONB bytes across release and response schema changes without another version",
@@ -521,6 +552,150 @@ it.layer(publishLayer)("publish attempts", (it) => {
           assert.strictEqual(yield* (yield* Patches.Patches).countLive(identity.user.id), 1);
         }
       })
+  );
+
+  it.effect("arbitrates exact-name creates across owners and frees the name on deletion", () =>
+    Effect.gen(function* () {
+      const contenders = yield* racingClients();
+      const patches = yield* Patches.Patches;
+      const before = yield* Effect.forEach(contenders, ({ identity }) =>
+        patches.countLive(identity.user.id)
+      );
+      const responses = yield* Effect.all(
+        contenders.map(({ identity, api }) =>
+          api.publish({
+            payload: publishRequest({
+              html: html(`Exact name from ${identity.user.name}`),
+              manifest: { ...Fixtures.manifest, name: "company-name-race" }
+            }),
+            responseMode: "response-only"
+          })
+        ),
+        { concurrency: "unbounded" }
+      );
+      assert.deepStrictEqual(responses.map((response) => response.status).toSorted(), [201, 409]);
+      const winner = responses[0]!.status === 201 ? 0 : 1;
+      const loser = 1 - winner;
+      assert.include(yield* responses[loser]!.json, { ok: false, code: "name_taken" });
+      const created = Schema.decodeUnknownSync(PublishCreated)(yield* responses[winner]!.json);
+      assert.strictEqual(created.name, "company-name-race");
+      const current = Option.getOrThrow(yield* patches.find(created.patchId));
+      assert.strictEqual(current.patch.ownerUserId, contenders[winner]!.identity.user.id);
+      assert.include(
+        yield* (yield* Content.Content).read(current.version),
+        `Exact name from ${contenders[winner]!.identity.user.name}`
+      );
+      for (let index = 0; index < contenders.length; index++) {
+        assert.strictEqual(
+          yield* patches.countLive(contenders[index]!.identity.user.id),
+          before[index]! + (index === winner ? 1 : 0)
+        );
+      }
+
+      yield* contenders[winner]!.api.delete({ params: { patchId: created.patchId } });
+      assert.isTrue(
+        Option.isNone(yield* patches.resolveName(uploader.company.handle, "company-name-race"))
+      );
+      const [reused, response] = yield* contenders[loser]!.api.publish({
+        payload: publishRequest({
+          html: html("Reused exact name"),
+          manifest: { ...Fixtures.manifest, name: "company-name-race" }
+        }),
+        responseMode: "decoded-and-response"
+      });
+      assert.strictEqual(response.status, 201);
+      assert.strictEqual(reused.name, "company-name-race");
+      assert.notStrictEqual(reused.patchId, created.patchId);
+      assert.deepStrictEqual(
+        {
+          ...Option.getOrThrow(
+            yield* patches.resolveName(uploader.company.handle, "company-name-race")
+          )
+        },
+        { patchId: reused.patchId, name: "company-name-race", current: true }
+      );
+    })
+  );
+
+  it.effect("allocates derived filename collisions across owners as base, -2 and -3", () =>
+    Effect.gen(function* () {
+      const contenders = yield* racingClients();
+      const results = yield* Effect.all(
+        contenders.map(({ identity, api }) =>
+          api.publish({
+            payload: publishRequest({
+              html: html(`Derived name from ${identity.user.name}`),
+              metadata: { filename: "  Résumé___Review!! .HTML  " }
+            }),
+            responseMode: "decoded-and-response"
+          })
+        ),
+        { concurrency: "unbounded" }
+      );
+      assert.deepStrictEqual(results.map(([created]) => created.name).toSorted(), [
+        "resume-review",
+        "resume-review-2"
+      ]);
+      assert.notStrictEqual(results[0]![0].patchId, results[1]![0].patchId);
+      const patches = yield* Patches.Patches;
+      const content = yield* Content.Content;
+      for (let index = 0; index < results.length; index++) {
+        const [created, response] = results[index]!;
+        assert.strictEqual(response.status, 201);
+        const current = Option.getOrThrow(yield* patches.find(created.patchId));
+        assert.strictEqual(current.patch.ownerUserId, contenders[index]!.identity.user.id);
+        assert.include(
+          yield* content.read(current.version),
+          `Derived name from ${contenders[index]!.identity.user.name}`
+        );
+        assert.strictEqual(
+          Option.getOrThrow(yield* patches.resolveName(uploader.company.handle, created.name))
+            .patchId,
+          created.patchId
+        );
+      }
+      const [third, response] = yield* contenders[0]!.api.publish({
+        payload: publishRequest({
+          html: html("Third derived name"),
+          metadata: { filename: "Résumé Review.html" }
+        }),
+        responseMode: "decoded-and-response"
+      });
+      assert.strictEqual(response.status, 201);
+      assert.strictEqual(third.name, "resume-review-3");
+      assert.notStrictEqual(third.patchId, results[0]![0].patchId);
+      assert.notStrictEqual(third.patchId, results[1]![0].patchId);
+    })
+  );
+
+  it.effect("bounds filename names including suffixes and falls back for an unusable title", () =>
+    Effect.gen(function* () {
+      const api = yield* client.pipe(Effect.provide(Fixtures.as(admin)));
+      for (const [title, name] of [
+        ["Long filename first", "abcdefghijklmnopqrstuvwxyz012345"],
+        ["Long filename second", "abcdefghijklmnopqrstuvwxyz0123-2"]
+      ] as const) {
+        const created = yield* api.publish({
+          payload: publishRequest({
+            html: html(title),
+            metadata: { filename: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.html" }
+          })
+        });
+        assert.strictEqual(created.name, name);
+        assert.strictEqual(
+          created.address,
+          `https://patchy.example/${admin.company.handle}/${name}`
+        );
+      }
+      const fallback = yield* api.publish({
+        payload: publishRequest({ html: html("東京") })
+      });
+      assert.strictEqual(fallback.name, "patch");
+      assert.strictEqual(
+        Option.getOrThrow(yield* (yield* Patches.Patches).find(fallback.patchId)).patch.name,
+        "patch"
+      );
+    })
   );
 
   it.effect("refuses opposing renames without deadlocking or changing either address", () =>
