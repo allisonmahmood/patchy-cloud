@@ -64,7 +64,7 @@ for (const [name, layer] of [
       30_000
     );
     it.effect(
-      "preflights uncompressed index keys and protects old writers with physical checks",
+      "preflights existing index keys without imposing a new limit on old writers",
       () => indexKeyLimit("cmp_dev"),
       30_000
     );

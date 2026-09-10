@@ -1,10 +1,14 @@
 import { createHash } from "node:crypto";
+import { Buffer } from "node:buffer";
 import { assert } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
+import * as Clock from "effect/Clock";
+import * as SqlError from "effect/unstable/sql/SqlError";
 import { CURRENT_RELEASE, Manifest, TablePage, TableRow, WIRE_VERSION } from "@patchy/api";
-import { CompanyDatabases, Inventory } from "@patchy/company-database";
+import { CompanyDatabases } from "@patchy/company-database";
 import { Binding } from "@patchy/runtime";
 import * as Tables from "../Tables.js";
 import * as TableOperations from "../TableOperations.js";
@@ -232,6 +236,15 @@ export const operationsContract = Effect.fn("test.operationsContract")(function*
     filtered.rows.map((row) => row.rank),
     [2, 2]
   );
+  const nullRanks = yield* call("tables.list", {
+    table: "notes",
+    index: "byRank",
+    eq: { rank: null }
+  }).pipe(Effect.flatMap(decodePage));
+  assert.deepStrictEqual(
+    new Set(nullRanks.rows.map((row) => row.id)),
+    new Set([first.id, added[3]!.id])
+  );
   for (const args of [
     { index: "byTitleRank", eq: { rank: 2 } },
     { index: "byTitleRank", range: { column: "rank", gt: 1 } },
@@ -250,6 +263,13 @@ export const operationsContract = Effect.fn("test.operationsContract")(function*
       (yield* call("tables.list", { table: "notes", ...args }).pipe(Effect.flip)).code,
       "invalid_cursor"
     );
+  const malformedCursor = yield* call("tables.list", {
+    table: "notes",
+    cursor: Buffer.from("{").toString("base64url")
+  }).pipe(Effect.flip);
+  assert.instanceOf(malformedCursor, TableOperations.InvalidCursor);
+  if (malformedCursor instanceof TableOperations.InvalidCursor)
+    assert.instanceOf(malformedCursor.cause, Schema.SchemaError);
   const otherPatch = yield* handlers["tables.list"]
     .run({ table: "notes", index: "byRank", cursor: page1.cursor })
     .pipe(
@@ -285,6 +305,31 @@ export const operationsContract = Effect.fn("test.operationsContract")(function*
       Effect.flatMap(decodeRow)
     );
   assert.strictEqual(newRead.later, "added later");
+  const omitted: typeof Manifest.Type = { ...newer, tables: {} };
+  yield* databases.withCompany(companyId)(
+    databases.withPatchLock(binding.patchId)(tables.provision(binding.patchId, omitted))
+  );
+  for (const [op, args] of [
+    ["tables.get", { table: "notes", id: oldInsert.id }],
+    ["tables.insert", { table: "notes", row: { title: "latest", slug: "latest" } }]
+  ] as const) {
+    const denied = yield* handlers[op]
+      .run(args)
+      .pipe(Effect.provideService(Binding.Binding, { ...binding, manifest: omitted }), Effect.flip);
+    assert.strictEqual(denied.code, "table_not_declared");
+  }
+  assert.deepStrictEqual(
+    yield* call("tables.get", { table: "notes", id: oldInsert.id }),
+    oldInsert
+  );
+  const stillWritable = yield* call("tables.insert", {
+    table: "notes",
+    row: { title: "still loaded", slug: "still-loaded" }
+  }).pipe(Effect.flatMap(decodeRow));
+  assert.deepStrictEqual(
+    yield* call("tables.get", { table: "notes", id: stillWritable.id }),
+    stillWritable
+  );
   assert.isNull(yield* call("tables.delete", { table: "notes", id: first.id }));
   assert.isNull(yield* call("tables.delete", { table: "notes", id: first.id }));
   assert.isNull(yield* call("tables.get", { table: "notes", id: first.id }));
@@ -495,8 +540,10 @@ export const expandedResultsContract = Effect.fn("test.expandedResultsContract")
 });
 
 export const indexKeyContract = Effect.fn("test.indexKeyContract")(function* (companyId: string) {
-  const { call, databases, binding } = yield* setup(companyId, "indexkeys001");
-  const large = "x".repeat(Tables.INDEX_KEY_MAX_BYTES);
+  const { call, databases, tables, binding } = yield* setup(companyId, "indexkeys001");
+  const large = Array.from({ length: 128 }, (_, index) =>
+    createHash("sha256").update(String(index)).digest("hex")
+  ).join("");
   for (const row of [
     { title: "explicit", slug: large },
     { title: "implicit", slug: "implicit", noteId: large }
@@ -506,7 +553,9 @@ export const indexKeyContract = Effect.fn("test.indexKeyContract")(function* (co
     assert.instanceOf(failure, TableOperations.IndexKeyTooLarge);
     if (failure instanceof TableOperations.IndexKeyTooLarge) {
       assert.strictEqual(failure.table, "notes");
-      assert.strictEqual(failure.maxBytes, Tables.INDEX_KEY_MAX_BYTES);
+      assert.instanceOf(failure.cause, SqlError.SqlError);
+      const sqlError = failure.cause as SqlError.SqlError;
+      assert.propertyVal(sqlError.reason.cause, "code", "54000");
     }
   }
   const row = yield* call("tables.insert", {
@@ -523,33 +572,91 @@ export const indexKeyContract = Effect.fn("test.indexKeyContract")(function* (co
     "too_large"
   );
   assert.deepStrictEqual(yield* call("tables.get", { table: "notes", id: row.id }), row);
-  const qualified = `${Inventory.quoteIdentifier(Inventory.namespace(binding.patchId))}."notes"`;
-  yield* databases.withCompany(companyId)(
-    Effect.gen(function* () {
-      const sql = yield* CompanyDatabases.CompanyConnection;
-      yield* sql.unsafe(`CREATE INDEX "native_index_limit" ON ${qualified} ("body")`);
-      yield* sql.unsafe(
-        `ALTER TABLE ${qualified} ADD CONSTRAINT "business_check" CHECK ("title" <> 'refused')`
-      );
-    })
-  );
-  const nativeFailure = yield* call("tables.insert", {
-    table: "notes",
-    row: {
-      title: "native",
-      slug: "native",
-      body: Array.from({ length: 128 }, (_, index) =>
-        createHash("sha256").update(String(index)).digest("hex")
-      ).join("")
+  yield* call("tables.update", { table: "notes", id: row.id, patch: { body: "short" } });
+  const indexed: typeof Manifest.Type = {
+    ...manifest,
+    tables: {
+      notes: {
+        ...manifest.tables.notes!,
+        indexes: { ...manifest.tables.notes!.indexes, byBody: { columns: ["body"] } }
+      }
     }
+  };
+  yield* databases.withCompany(companyId)(
+    databases.withPatchLock(binding.patchId)(tables.provision(binding.patchId, indexed))
+  );
+  // An old loaded manifest is not retroactively subject to publish's conservative preflight.
+  const compressible = "x".repeat(8192);
+  const oldWrite = yield* call("tables.insert", {
+    table: "notes",
+    row: { title: "old writer", slug: "old-writer", body: compressible }
+  }).pipe(Effect.flatMap(decodeRow));
+  assert.strictEqual(oldWrite.body, compressible);
+  const nativeFailure = yield* call("tables.insertMany", {
+    table: "notes",
+    rows: [
+      { title: "rollback", slug: "rollback" },
+      { title: "native", slug: "native", body: large }
+    ]
   }).pipe(Effect.flip);
   assert.instanceOf(nativeFailure, TableOperations.IndexKeyTooLarge);
   assert.strictEqual(nativeFailure.code, "too_large");
-  assert.strictEqual(
-    (yield* call("tables.insert", {
+  if (nativeFailure instanceof TableOperations.IndexKeyTooLarge) {
+    assert.instanceOf(nativeFailure.cause, SqlError.SqlError);
+    assert.propertyVal((nativeFailure.cause as SqlError.SqlError).reason.cause, "code", "54000");
+  }
+  assert.deepStrictEqual(
+    (yield* call("tables.list", {
       table: "notes",
-      row: { title: "refused", slug: "refused" }
-    }).pipe(Effect.flip)).code,
-    "invalid_row"
+      index: "bySlug",
+      eq: { slug: "rollback" }
+    }).pipe(Effect.flatMap(decodePage))).rows,
+    []
   );
+  assert.deepStrictEqual(yield* call("tables.get", { table: "notes", id: oldWrite.id }), oldWrite);
+});
+
+export const uuidContract = Effect.fn("test.uuidContract")(function* (companyId: string) {
+  const { call } = yield* setup(companyId, "uuidversion7");
+  const milliseconds = 1_789_056_789_123;
+  yield* TestClock.setTime(milliseconds);
+  const rows = yield* call("tables.insertMany", {
+    table: "notes",
+    rows: Array.from({ length: 128 }, (_, index) => ({ title: "uuid", slug: `uuid-${index}` }))
+  }).pipe(Effect.flatMap(decodeRows));
+  let anyRandom = 0n;
+  let everyRandom = (1n << 74n) - 1n;
+  let independentFields = false;
+  const randomA = new Set<number>();
+  const randomB = new Set<bigint>();
+  for (const row of rows) {
+    const bytes = Buffer.from(String(row.id).replaceAll("-", ""), "hex");
+    assert.strictEqual(bytes.readUIntBE(0, 6), milliseconds);
+    assert.strictEqual(bytes[6]! >>> 4, 7);
+    assert.strictEqual(bytes[8]! >>> 6, 2);
+    const a = bytes.readUInt16BE(6) & 0x0fff;
+    const b = bytes.readBigUInt64BE(8) & ((1n << 62n) - 1n);
+    randomA.add(a);
+    randomB.add(b);
+    independentFields ||= BigInt(a) !== (b & 0xfffn);
+    const bits = (BigInt(a) << 62n) | b;
+    anyRandom |= bits;
+    everyRandom &= bits;
+  }
+  // Every random bit varies at a fixed timestamp, including all twelve rand_a bits.
+  assert.strictEqual(anyRandom, (1n << 74n) - 1n);
+  assert.strictEqual(everyRandom, 0n);
+  assert.isAbove(randomA.size, 1);
+  assert.strictEqual(randomB.size, rows.length);
+  assert.isTrue(independentFields);
+  yield* TestClock.adjust(1);
+  const next = yield* call("tables.insert", {
+    table: "notes",
+    row: { title: "next millisecond", slug: "next" }
+  }).pipe(Effect.flatMap(decodeRow));
+  assert.strictEqual(
+    Buffer.from(String(next.id).replaceAll("-", ""), "hex").readUIntBE(0, 6),
+    yield* Clock.currentTimeMillis
+  );
+  assert.isTrue(rows.every((row) => String(row.id) < String(next.id)));
 });

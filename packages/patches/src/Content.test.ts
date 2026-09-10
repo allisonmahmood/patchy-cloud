@@ -253,6 +253,54 @@ it.layer(
     })
   );
 
+  it.effect("fails closed for claimed placements during inventory, preflight and recording", () =>
+    Effect.gen(function* () {
+      const created = yield* publish("<p>initial</p>");
+      const databases = yield* CompanyDatabases.CompanyDatabases;
+      yield* databases.ensureReady(uploader.company.id);
+      const service = yield* patches;
+      const sql = yield* SqlClient.SqlClient;
+      const claim = sql`UPDATE company_databases SET status = 'claimed', ready_at = NULL
+        WHERE company_id = ${uploader.company.id}`;
+      const restore = sql`UPDATE company_databases SET status = 'ready', ready_at = now()
+        WHERE company_id = ${uploader.company.id}`;
+      yield* Effect.gen(function* () {
+        yield* claim;
+        const absent = yield* service
+          .inventory(created.patchId, uploader.user.id)
+          .pipe(Effect.flip);
+        assert.instanceOf(absent, CompanyDatabases.CompanyDatabaseNotReady);
+        assert.strictEqual(
+          absent._tag === "CompanyDatabaseNotReady" ? absent.status : null,
+          "claimed"
+        );
+        const before = yield* store.keys;
+        const preflight = yield* publish("<p>refused before bytes</p>", created.patchId).pipe(
+          Effect.flip
+        );
+        assert.instanceOf(preflight, CompanyDatabases.CompanyDatabaseNotReady);
+        assert.deepStrictEqual(yield* store.keys, before);
+
+        yield* restore;
+        store.control.afterPut = claim.pipe(Effect.orDie, Effect.asVoid);
+        const recorded = yield* publish("<p>refused after bytes</p>", created.patchId).pipe(
+          Effect.flip
+        );
+        assert.instanceOf(recorded, CompanyDatabases.CompanyDatabaseNotReady);
+        assert.strictEqual(
+          Option.getOrThrow(yield* service.find(created.patchId)).version.versionNumber,
+          created.versionNumber
+        );
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            store.control.afterPut = Effect.void;
+          }).pipe(Effect.andThen(restore), Effect.orDie)
+        )
+      );
+    })
+  );
+
   it.effect(
     "recovers company-committed DDL after platform rollback even without version history",
     () =>

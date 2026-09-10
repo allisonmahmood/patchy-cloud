@@ -36,7 +36,7 @@ export interface Plan extends Provisioned {
   readonly sharing: readonly string[];
 }
 
-export const INDEX_KEY_MAX_BYTES = 2000;
+const INDEX_PREFLIGHT_MAX_BYTES = 2000;
 
 export class Tables extends Context.Service<
   Tables,
@@ -106,17 +106,10 @@ const indexName = (table: string, kind: string, name: string): string =>
     .digest("hex")
     .slice(0, 48)}`;
 
-const indexConstraintName = (table: string, kind: string, name: string): string =>
-  `patchy_index_size_${createHash("sha256")
-    .update(JSON.stringify([table, kind, name]))
-    .digest("hex")
-    .slice(0, 40)}`;
-
 interface IndexBudget {
   readonly table: string;
   readonly name: string;
   readonly kind: "ref" | "declared";
-  readonly size: string;
   readonly projectedSize: string;
 }
 
@@ -134,13 +127,13 @@ const indexBudgets = (
     kinds.set(`${table}.${name}`, column.kind);
     newValues.set(`${table}.${name}`, defaultExpression(column));
   }
-  const size = (table: string, columns: readonly string[], projected: boolean) =>
+  const size = (table: string, columns: readonly string[]) =>
     `pg_column_size(ROW(${columns
       .map((name) => {
         const key = `${table}.${name}`;
-        const value = projected ? (newValues.get(key) ?? quote(name)) : quote(name);
+        const value = newValues.get(key) ?? quote(name);
         const kind = name === "id" ? "text" : kinds.get(key);
-        // Rebuild varlena keys so TOAST compression/pointers cannot hide index bytes.
+        // Conservatively preflight uncompressed keys, not a persistent write limit.
         return kind === "text" || kind === "ref"
           ? `(${value} || '')`
           : kind === "json"
@@ -155,8 +148,7 @@ const indexBudgets = (
       table,
       name,
       kind: "ref",
-      size: size(table, [name, "id"], false),
-      projectedSize: size(table, [name, "id"], true)
+      projectedSize: size(table, [name, "id"])
     });
   }
   for (const { table, name } of plan.newIndexes) {
@@ -165,8 +157,7 @@ const indexBudgets = (
       table,
       name,
       kind: "declared",
-      size: size(table, columns, false),
-      projectedSize: size(table, columns, true)
+      projectedSize: size(table, columns)
     });
   }
   return indexes;
@@ -187,12 +178,12 @@ const validateData = Effect.fn("Tables.validateData")(function* (
   for (const index of indexes) {
     if (!existingTables.has(index.table)) continue;
     const oversized = yield* sql.unsafe(
-      `SELECT 1 FROM ${namespace}.${quote(index.table)} WHERE ${index.projectedSize} > ${INDEX_KEY_MAX_BYTES} LIMIT 1`
+      `SELECT 1 FROM ${namespace}.${quote(index.table)} WHERE ${index.projectedSize} > ${INDEX_PREFLIGHT_MAX_BYTES} LIMIT 1`
     );
     if (oversized.length > 0)
       changes.push({
         object: `${index.table}.${index.name}`,
-        change: `existing rows exceed the ${INDEX_KEY_MAX_BYTES}-byte index key limit`,
+        change: `existing rows exceed the conservative ${INDEX_PREFLIGHT_MAX_BYTES}-byte index preflight budget`,
         fix: "shorten the indexed values or omit the index"
       });
   }
@@ -525,12 +516,9 @@ export const make = Effect.gen(function* () {
         defaultValue: kind === "constant" ? column.default : null
       });
     }
-    for (const { table, name, kind, size } of indexes) {
+    for (const { table, name, kind } of indexes) {
       const index = kind === "declared" ? manifest.tables[table]!.indexes[name]! : undefined;
       const columns = index?.columns ?? [name, "id"];
-      yield* sql.unsafe(
-        `ALTER TABLE ${qualified(table)} ADD CONSTRAINT ${quote(indexConstraintName(table, kind, name))} CHECK (${size} <= ${INDEX_KEY_MAX_BYTES})`
-      );
       yield* sql.unsafe(
         `CREATE ${index?.unique === true ? "UNIQUE " : ""}INDEX ${quote(indexName(table, kind, name))} ON ${qualified(table)} (${columns.map(quote).join(", ")})`
       );

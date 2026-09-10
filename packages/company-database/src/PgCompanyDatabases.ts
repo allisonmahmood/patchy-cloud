@@ -180,7 +180,7 @@ export const make = Effect.gen(function* () {
           (cause) =>
             new CompanyDatabases.CompanyDatabaseError({
               companyId: placement.companyId,
-              operation: "initialize",
+              operation: "upgrade",
               cause
             })
         )

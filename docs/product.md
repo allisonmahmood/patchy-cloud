@@ -223,10 +223,10 @@ at most 1,000. Rows are bounded to 1 MiB; batches to 1,000 items and 8 MiB,
 and list/getMany results to 8 MiB. Reads bound PostgreSQL's JSON transport
 representation before decoding, then check the final wire representation;
 transport whitespace can make that first check more conservative.
-Each declared or implicit ref index has a 2,000-byte uncompressed key-tuple
-ceiling, including tuple overhead. This keeps keys below PostgreSQL's B-tree
-page limit even when compression changes. Oversized indexed writes return
-`too_large`; unindexed values retain the full row allowance.
+PostgreSQL's own B-tree limit governs indexed writes: native oversized-key
+failures return `too_large`. Publishing a non-unique index adds no separate
+size CHECK constraint, so an older bundle may still write wide values that
+PostgreSQL can index, including compressible text.
 
 On insert, omitted optional columns become null and omitted defaulted columns
 take their defaults. Explicit null on a required or defaulted column is refused.
@@ -242,11 +242,11 @@ New constant defaults fill existing rows; `now` fills existing rows at publish
 time and future inserts at their own time. Unique indexes are allowed only
 when their table is created: their null and case behavior is Postgres's.
 Ordinary index creation blocks writers while it runs.
-Preflight also refuses new indexes whose existing keys exceed that ceiling,
-and added columns whose defaults would expand existing rows beyond the row
-limit. These refusals are `not_additive`, before storing bytes. Provisioning
-locks affected tables and repeats those checks before any DDL; physical
-index-key checks also protect writes from older loaded versions.
+Preflight conservatively refuses new indexes whose existing uncompressed
+key tuples exceed 2,000 bytes, and added columns whose defaults would expand
+existing rows beyond the row limit. These refusals are `not_additive`, before
+storing bytes. Provisioning locks affected tables and repeats those checks
+before any DDL; the preflight estimate is not a runtime write limit.
 
 Retyping, changing optionality, changing or removing defaults, adding a required
 column to an existing table, changing an existing index, and adding uniqueness

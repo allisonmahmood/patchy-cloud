@@ -573,48 +573,43 @@ export const indexKeyLimit = Effect.fn("ProvisioningContract.indexKeyLimit")(fun
                 byTitle: { columns: ["title", "title"] },
                 byMetadata: { columns: ["metadata"] }
               }
-            },
-            fresh: {
-              columns: {
-                title: { kind: "text" },
-                parent: { kind: "ref", table: "notes", optional: true }
-              },
-              indexes: { byTitle: { columns: ["title"] } }
             }
           })
         )
       );
-      // Physical checks protect old loaded writers and roll back their entire transaction.
-      for (const [table, column, value] of [
-        ["notes", "title", long],
-        ["notes", "metadata", JSON.stringify({ value: long })],
-        ["notes", "parent", long],
-        ["fresh", "title", long],
-        ["fresh", "parent", long],
-        // Compression must not make the supported key ceiling data-dependent.
-        ["notes", "title", "x".repeat(long.length)]
-      ] as const) {
-        const error = yield* sql
-          .withTransaction(
-            Effect.gen(function* () {
-              yield* sql.unsafe(
-                `INSERT INTO ${qualified(patchId, table)} ("id", "title"${table === "notes" ? ', "metadata"' : ""}) VALUES ('rolled-back', 'safe'${table === "notes" ? ", '{}'" : ""})`
-              );
-              yield* sql.unsafe(
-                `UPDATE ${qualified(patchId, table)} SET ${Inventory.quoteIdentifier(column)} = $1 WHERE "id" = 'rolled-back'`,
-                [value]
-              );
-            })
-          )
-          .pipe(Effect.flip);
-        assert.strictEqual(error._tag, "SqlError");
-        assert.deepStrictEqual(
-          yield* sql.unsafe(
-            `SELECT "id" FROM ${qualified(patchId, table)} WHERE "id" = 'rolled-back'`
-          ),
-          []
-        );
-      }
+      const compressible = "x".repeat(long.length);
+      yield* sql.unsafe(
+        `INSERT INTO ${qualified(patchId)} ("id", "title", "metadata") VALUES ('old-writer', $1, '{}')`,
+        [compressible]
+      );
+      yield* sql.unsafe(`UPDATE ${qualified(patchId)} SET "title" = $1 WHERE "id" = 'old'`, [
+        compressible
+      ]);
+      assert.deepStrictEqual(
+        yield* sql.unsafe(`SELECT "id", "title" FROM ${qualified(patchId)} ORDER BY "id"`),
+        [
+          { id: "old", title: compressible },
+          { id: "old-writer", title: compressible }
+        ]
+      );
+      const error = yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* sql.unsafe(
+              `INSERT INTO ${qualified(patchId)} ("id", "title", "metadata") VALUES ('rolled-back', 'safe', '{}')`
+            );
+            yield* sql.unsafe(
+              `UPDATE ${qualified(patchId)} SET "title" = $1 WHERE "id" = 'rolled-back'`,
+              [long]
+            );
+          })
+        )
+        .pipe(Effect.flip);
+      assert.deepInclude(error.reason.cause, { code: "54000" });
+      assert.deepStrictEqual(
+        yield* sql.unsafe(`SELECT "id" FROM ${qualified(patchId)} WHERE "id" = 'rolled-back'`),
+        []
+      );
       yield* sql.unsafe(`UPDATE ${qualified(patchId)} SET "unindexed" = $1 WHERE "id" = 'old'`, [
         long
       ]);

@@ -28,6 +28,74 @@ it.layer(NodeFileSystem.layer)("PgliteCompanyDatabases", (it) => {
     30_000
   );
 
+  it.effect("upgrades a reopened ready directory without losing its inventory", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const dataDir = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-pglite-upgrade-" });
+      const local = Layer.merge(
+        Inventory.layer,
+        PgliteCompanyDatabases.layer({ companyId: "local-company", dataDir })
+      );
+      yield* Effect.gen(function* () {
+        const databases = yield* CompanyDatabases.CompanyDatabases;
+        const inventory = yield* Inventory.Inventory;
+        yield* databases.ensureReady("local-company");
+        yield* databases.withCompany("local-company")(
+          databases.withPatchLock("legacy")(
+            Effect.gen(function* () {
+              const sql = yield* SqlClient.SqlClient;
+              yield* inventory.ensurePatch("legacy");
+              yield* inventory.putTable({ patchId: "legacy", name: "notes", shared: true });
+              yield* inventory.putColumn({
+                patchId: "legacy",
+                table: "notes",
+                name: "body",
+                kind: "text",
+                refTable: null,
+                optional: false,
+                defaultKind: "constant",
+                defaultValue: "kept"
+              });
+              yield* inventory.bumpRevision("legacy");
+              yield* sql.unsafe('ALTER TABLE "patchy"."columns" DROP COLUMN "ref_table"');
+            })
+          )
+        );
+      }).pipe(Effect.provide(local, { local: true }));
+      yield* Effect.gen(function* () {
+        const databases = yield* CompanyDatabases.CompanyDatabases;
+        const inventory = yield* Inventory.Inventory;
+        yield* databases.ensureReady("local-company");
+        yield* databases.withCompany("local-company")(
+          Effect.gen(function* () {
+            const snapshot = yield* inventory.read("legacy");
+            assert.strictEqual(snapshot?.schemaRevision, 1);
+            assert.strictEqual(snapshot?.columns[0]?.defaultValue, "kept");
+            assert.isNull(snapshot?.columns[0]?.refTable);
+            assert.isTrue(snapshot?.tables[0]?.shared);
+            yield* databases.withPatchLock("legacy")(
+              inventory.putColumn({
+                patchId: "legacy",
+                table: "notes",
+                name: "parent",
+                kind: "ref",
+                refTable: "notes",
+                optional: true,
+                defaultKind: null,
+                defaultValue: null
+              })
+            );
+            const updated = yield* inventory.read("legacy");
+            assert.strictEqual(
+              updated?.columns.find((column) => column.name === "parent")?.refTable,
+              "notes"
+            );
+          })
+        );
+      }).pipe(Effect.provide(local, { local: true }));
+    }).pipe(Effect.scoped)
+  );
+
   it.effect(
     "persists inventory and prevents a reopened directory from changing companies",
     () =>

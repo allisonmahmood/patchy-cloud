@@ -731,7 +731,12 @@ export const make = Effect.gen(function* () {
           return yield* inventoryStore.read(patchId);
         })
       )
-      .pipe(Effect.catchTags({ CompanyDatabaseNotReady: () => Effect.succeed(null) }))
+      .pipe(
+        Effect.catchTags({
+          CompanyDatabaseNotReady: (error) =>
+            error.status === null ? Effect.succeed(null) : Effect.fail(error)
+        })
+      )
   );
 
   const preflight = Effect.fn("Patches.preflight")(function* (input: PublishPreflight) {
@@ -815,7 +820,9 @@ export const make = Effect.gen(function* () {
       .pipe(
         Effect.catchTags({
           CompanyDatabaseNotReady: (error) =>
-            introducesTables ? Effect.fail(error) : tables.diff(input.manifest, null)
+            !introducesTables && error.status === null
+              ? tables.diff(input.manifest, null)
+              : Effect.fail(error)
         })
       );
   });

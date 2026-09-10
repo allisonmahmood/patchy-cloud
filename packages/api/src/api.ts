@@ -162,8 +162,8 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "version from `GET /api/release`. Tier 0 may define tables, provisioned additively; " +
           "higher tiers answer `tier_mismatch`, files and uses `invalid_manifest`. " +
           "Schema changes are checked before bytes and rechecked under the patch lock. " +
-          "Preflight also refuses new indexes with existing keys over the 2,000-byte uncompressed " +
-          "key-tuple ceiling, and added columns that expand existing rows over the row limit. " +
+          "Preflight conservatively refuses new indexes with existing uncompressed key tuples " +
+          "over 2,000 bytes, and added columns that expand existing rows over the row limit. " +
           "`not_additive` names every refused object, change and fix. Omitted tables remain in " +
           "the cumulative inventory and appear as `unused`; a required column cannot be omitted. " +
           "The schema revision advances only when provisioning changes something, never for a new bundle alone. " +
@@ -319,8 +319,8 @@ export class RuntimeGroup extends HttpApiGroup.make("runtime", { topLevel: true 
           "`insertMany` are capped at 1,000 items and 8 MiB, individual rows at 1 MiB. List and " +
           "getMany results are capped at 8 MiB, checking database JSON transport before decoding " +
           "and final wire bytes afterward. Transport whitespace can make its check stricter. " +
-          "Declared and implicit ref index keys are capped at 2,000 uncompressed bytes including " +
-          "tuple overhead; overflow is `too_large`. Unindexed values retain the full row allowance. " +
+          "Native PostgreSQL B-tree key-size failures are `too_large`; publishing a non-unique " +
+          "index adds no separate size CHECK constraint or 2,000-byte runtime write limit. " +
           "Request bodies allow 1 MiB plus envelope for " +
           "insert/update and 8 MiB plus envelope for insertMany; all other calls are capped at " +
           "64 KiB. Overflow is `too_large` (413). Undeclared tables answer `table_not_declared`; " +

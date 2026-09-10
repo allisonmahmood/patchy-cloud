@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { Buffer } from "node:buffer";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
@@ -19,7 +19,6 @@ import {
 } from "@patchy/api";
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
 import { Binding, Runtime } from "@patchy/runtime";
-import * as Tables from "./Tables.js";
 
 export class TableNotDeclared extends Schema.TaggedError<TableNotDeclared>()("TableNotDeclared", {
   table: Schema.String
@@ -33,6 +32,7 @@ export class TableNotDeclared extends Schema.TaggedError<TableNotDeclared>()("Ta
 export class InvalidRow extends Schema.TaggedError<InvalidRow>()("InvalidRow", {
   table: Schema.String,
   column: Schema.optionalKey(Schema.String),
+  cause: Schema.optionalKey(Schema.Defect()),
   problem: Schema.Literals([
     "unknown column",
     "system column",
@@ -66,7 +66,8 @@ export class UniqueViolation extends Schema.TaggedError<UniqueViolation>()("Uniq
   }
 }
 export class InvalidCursor extends Schema.TaggedError<InvalidCursor>()("InvalidCursor", {
-  table: Schema.String
+  table: Schema.String,
+  cause: Schema.optionalKey(Schema.Defect())
 }) {
   readonly code = "invalid_cursor" as const;
   readonly status = 400;
@@ -85,13 +86,12 @@ export class ItemLimit extends Schema.TaggedError<ItemLimit>()("ItemLimit", {
 }
 export class IndexKeyTooLarge extends Schema.TaggedError<IndexKeyTooLarge>()("IndexKeyTooLarge", {
   table: Schema.String,
-  maxBytes: Schema.Int,
   cause: Schema.Defect()
 }) {
   readonly code = "too_large" as const;
   readonly status = 413;
   override get message() {
-    return `An index key on ${this.table} exceeds ${this.maxBytes} bytes.`;
+    return `An index key on ${this.table} exceeds the database's B-tree entry size limit.`;
   }
 }
 export class Busy extends Schema.TaggedError<Busy>()("TableBusy", {
@@ -227,17 +227,11 @@ const dbValue = (column: Column, value: unknown) =>
 const parameter = (column: Column, index: number) =>
   `$${index}${column.kind === "json" ? "::jsonb" : ""}`;
 const isNativeIndexLimit = Schema.is(Schema.Struct({ code: Schema.Literal("54000") }));
-const isNativeCheck = Schema.is(
-  Schema.Struct({ code: Schema.Literal("23514"), constraint: Schema.optionalKey(Schema.String) })
-);
+const isNativeCheck = Schema.is(Schema.Struct({ code: Schema.Literal("23514") }));
 const sqlFailure = (table: string, cause: SqlError): Runtime.RuntimeError => {
   const native = cause.reason.cause;
-  if (
-    isNativeIndexLimit(native) ||
-    (isNativeCheck(native) && native.constraint?.startsWith("patchy_index_size_"))
-  )
-    return new IndexKeyTooLarge({ table, maxBytes: Tables.INDEX_KEY_MAX_BYTES, cause });
-  if (isNativeCheck(native)) return new InvalidRow({ table, problem: "invalid value" });
+  if (isNativeIndexLimit(native)) return new IndexKeyTooLarge({ table, cause });
+  if (isNativeCheck(native)) return new InvalidRow({ table, problem: "invalid value", cause });
   return cause.reason._tag === "UniqueViolation"
     ? new UniqueViolation({ table, cause })
     : new Runtime.SourceUnavailable({ cause });
@@ -279,9 +273,12 @@ const validateRow = Effect.fn("TableOperations.validateRow")(function* (
     }
 });
 const newId = Effect.map(Clock.currentTimeMillis, (milliseconds) => {
-  const time = milliseconds.toString(16).padStart(12, "0");
-  const random = randomUUID();
-  return `${time.slice(0, 8)}-${time.slice(8)}-7${random.slice(15, 18)}-${random.slice(19)}`;
+  const bytes = randomBytes(16);
+  bytes.writeUIntBE(milliseconds, 0, 6);
+  bytes[6] = (bytes[6]! & 0x0f) | 0x70;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = bytes.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 });
 const resource: Runtime.Handler["resource"] = (args) =>
   typeof args === "object" && args !== null && "table" in args && isDefinitionName(args.table)
@@ -381,7 +378,7 @@ export const make = Effect.gen(function* () {
           if (args.ids.length === 0) return [];
           const { rows } = yield* boundedRows(
             sql,
-            `SELECT ${projection(table)}, row_number() OVER (ORDER BY "id") AS "__position" FROM ${qualified} WHERE "id" IN (${args.ids.map((_, index) => `$${index + 1}`).join(", ")})`,
+            `SELECT ${projection(table)}, row_number() OVER (ORDER BY stored."id") AS "__position" FROM ${qualified} AS stored WHERE stored."id" IN (${args.ids.map((_, index) => `$${index + 1}`).join(", ")})`,
             args.ids,
             settings.maxItems,
             settings.resultBytes
@@ -543,6 +540,7 @@ export const make = Effect.gen(function* () {
             return yield* new Runtime.InvalidRequest({});
           const values: unknown[] = [];
           const conditions: string[] = [];
+          const storageColumn = (column: string) => `stored.${Inventory.quoteIdentifier(column)}`;
           const add = (column: string, value: unknown) => {
             const definition = columnAt(table, column)!;
             values.push(dbValue(definition, value));
@@ -552,7 +550,9 @@ export const make = Effect.gen(function* () {
             if (!validValue(columnAt(table, key)!, eq[key]))
               return yield* new Runtime.InvalidRequest({});
             conditions.push(
-              `${Inventory.quoteIdentifier(key)} IS NOT DISTINCT FROM ${add(key, eq[key])}`
+              eq[key] === null
+                ? `${storageColumn(key)} IS NULL`
+                : `${storageColumn(key)} = ${add(key, eq[key])}`
             );
           }
           if (args.range !== undefined) {
@@ -573,7 +573,7 @@ export const make = Effect.gen(function* () {
                 if (value === null || !validValue(columnAt(table, range.column)!, value))
                   return yield* new Runtime.InvalidRequest({});
                 conditions.push(
-                  `${Inventory.quoteIdentifier(range.column)} ${operators[bound]} ${add(range.column, value)}`
+                  `${storageColumn(range.column)} ${operators[bound]} ${add(range.column, value)}`
                 );
               }
           }
@@ -599,7 +599,7 @@ export const make = Effect.gen(function* () {
               return yield* new InvalidCursor({ table: args.table });
             const decoded = yield* decodeCursor(
               Buffer.from(args.cursor, "base64url").toString("utf8")
-            ).pipe(Effect.mapError(() => new InvalidCursor({ table: args.table })));
+            ).pipe(Effect.mapError((cause) => new InvalidCursor({ table: args.table, cause })));
             if (
               decoded.binding !== binding ||
               decoded.values.length !== columns.length ||
@@ -608,18 +608,18 @@ export const make = Effect.gen(function* () {
               )
             )
               return yield* new InvalidCursor({ table: args.table });
-            // Explicit NULLS LAST in either direction, with lexicographic equality prefixes.
+            // Nullable keys stay NULLS LAST in either direction.
             const branches: string[] = [];
             const equal: string[] = [];
             columns.forEach((column, index) => {
               const value = decoded.values[index];
-              const identifier = Inventory.quoteIdentifier(column);
+              const identifier = storageColumn(column);
               if (value !== null) {
                 const param = add(column, value);
                 branches.push(
-                  `(${[...equal, `(${identifier} ${order === "asc" ? ">" : "<"} ${param} OR ${identifier} IS NULL)`].join(" AND ")})`
+                  `(${[...equal, `(${identifier} ${order === "asc" ? ">" : "<"} ${param}${validValue(columnAt(table, column)!, null) ? ` OR ${identifier} IS NULL` : ""})`].join(" AND ")})`
                 );
-                equal.push(`${identifier} IS NOT DISTINCT FROM ${param}`);
+                equal.push(`${identifier} = ${param}`);
               } else equal.push(`${identifier} IS NULL`);
             });
             conditions.push(`(${branches.length === 0 ? "FALSE" : branches.join(" OR ")})`);
@@ -627,12 +627,13 @@ export const make = Effect.gen(function* () {
           values.push(limit + 1);
           const ordering = columns
             .map(
-              (column) => `${Inventory.quoteIdentifier(column)} ${order.toUpperCase()} NULLS LAST`
+              (column) =>
+                `${storageColumn(column)} ${order.toUpperCase()}${validValue(columnAt(table, column)!, null) ? " NULLS LAST" : ""}`
             )
             .join(", ");
           const { rows: page, hasMore } = yield* boundedRows(
             sql,
-            `SELECT ${projection(table)}, row_number() OVER (ORDER BY ${ordering}) AS "__position" FROM ${qualified}${conditions.length === 0 ? "" : ` WHERE ${conditions.join(" AND ")}`} ORDER BY ${ordering} LIMIT $${values.length}`,
+            `SELECT ${projection(table)}, row_number() OVER (ORDER BY ${ordering}) AS "__position" FROM (SELECT * FROM ${qualified} AS stored${conditions.length === 0 ? "" : ` WHERE ${conditions.join(" AND ")}`} ORDER BY ${ordering} LIMIT $${values.length}) AS stored`,
             values,
             limit,
             settings.resultBytes
