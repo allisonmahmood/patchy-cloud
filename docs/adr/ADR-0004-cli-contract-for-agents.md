@@ -153,6 +153,11 @@ key appears in the handoff or command output.
 File publishing never reads `patchy.json`. The executing CLI must match
 `GET /api/release` exactly; a mismatch names both releases and `patchy refresh`.
 Repo mode and refresh arrive in later SDK tickets.
+File publishing onto a patch with cumulative table or store inventory is
+`has_primitives` (422, exit 2, `rejected`), even if its current version omits
+those definitions. Publish that patch from its repo. `has_primitives` and
+`not_additive` clear the matching refused attempt; they retain their wire codes
+in the CLI's JSON failure document.
 
 Every patch opens at `/<company>/<name>`; a version at `/<company>/<name>/~v/<n>`.
 `--name` sets or renames it using 3–32 lowercase letters, digits or hyphens, without

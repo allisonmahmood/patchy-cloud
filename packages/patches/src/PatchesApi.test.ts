@@ -21,6 +21,7 @@ import {
   PublishCreated,
   PublishRequest,
   PublishUpdated,
+  NotAdditive,
   CURRENT_RELEASE,
   WIRE_VERSION
 } from "@patchy/api";
@@ -59,6 +60,7 @@ const memoryStore = Layer.sync(ContentStore.ContentStore, () => {
 });
 
 const client = HttpApiTest.groups(PatchyApi, ["patches"]);
+const decodeNotAdditive = Schema.decodeUnknownEffect(NotAdditive);
 
 const html = (title: string) =>
   `<!doctype html><html><head><title>${title}</title></head><body><p>${title}</p></body></html>`;
@@ -411,6 +413,120 @@ const racingClients = Effect.fn("racingClients")(function* () {
 });
 
 it.layer(publishLayer)("publish attempts", (it) => {
+  it.effect(
+    "publishes tier-zero tables, replays their reports, and exposes only the owner's cumulative inventory",
+    () =>
+      Effect.gen(function* () {
+        const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+        const other = yield* client.pipe(Effect.provide(Fixtures.as(reader)));
+        const manifest = {
+          ...Fixtures.manifest,
+          name: "inventory-notes",
+          tables: {
+            notes: {
+              columns: {
+                title: { kind: "text" as const },
+                parent: { kind: "ref" as const, table: "notes", optional: true },
+                priority: { kind: "integer" as const, default: 1 }
+              },
+              indexes: { byTitle: { columns: ["title"] } },
+              shared: true
+            }
+          }
+        };
+        const payload = publishRequest({ html: html("Table repo"), manifest });
+        const [created, response] = yield* owner.publish({
+          payload,
+          responseMode: "decoded-and-response"
+        });
+        assert.strictEqual(created.schemaRevision, 1);
+        assert.deepStrictEqual(created.provisioned.tables, ["notes"]);
+        const replayed = yield* owner.publish({ payload, responseMode: "response-only" });
+        assert.strictEqual(yield* replayed.text, yield* response.text);
+        const params = { patchId: created.patchId };
+        const baseline = yield* owner.inventory({ params });
+        assert.strictEqual(baseline.schemaRevision, 1);
+        assert.deepStrictEqual(baseline.tables.notes?.columns, manifest.tables.notes.columns);
+        assert.deepStrictEqual(baseline.tables.notes?.indexes.byTitle?.columns, ["title"]);
+        assert.strictEqual(baseline.tables.notes?.shared, true);
+        for (const patchId of [created.patchId, "not-a-patch"]) {
+          assert.deepStrictEqual(
+            yield* other.inventory({ params: { patchId } }).pipe(Effect.flip),
+            { ok: false, error: "Patch not found." }
+          );
+        }
+        const omitted = yield* owner.publish({
+          payload: publishRequest({
+            patchId: created.patchId,
+            html: html("No longer uses notes"),
+            manifest: { ...Fixtures.manifest, name: manifest.name }
+          })
+        });
+        assert.strictEqual(omitted.schemaRevision, 1);
+        assert.deepStrictEqual(omitted.unused.tables, ["notes"]);
+        assert.deepStrictEqual(yield* owner.inventory({ params }), baseline);
+        const restored = yield* owner.publish({
+          payload: publishRequest({
+            patchId: created.patchId,
+            html: html("Uses notes again"),
+            manifest
+          })
+        });
+        assert.strictEqual(restored.schemaRevision, 1);
+        assert.deepStrictEqual(restored.provisioned, {
+          tables: [],
+          columns: [],
+          indexes: [],
+          stores: []
+        });
+        const store = yield* ContentStore.ContentStore;
+        const before = yield* Stream.runCollect(store.list("patches/"));
+        for (const name of [undefined, "named-file"]) {
+          const refused = yield* owner.publish({
+            payload: publishRequest({
+              patchId: created.patchId,
+              html: html("Single file"),
+              manifest: { ...Fixtures.manifest, ...(name === undefined ? {} : { name }) },
+              metadata: { filename: "notes.html" }
+            }),
+            responseMode: "response-only"
+          });
+          assert.strictEqual(refused.status, 422);
+          assert.include(yield* refused.json, { code: "has_primitives" });
+        }
+        const incompatible = yield* owner.publish({
+          payload: publishRequest({
+            patchId: created.patchId,
+            html: html("Changed kind"),
+            manifest: {
+              ...manifest,
+              tables: {
+                notes: {
+                  ...manifest.tables.notes,
+                  columns: { ...manifest.tables.notes.columns, title: { kind: "integer" } }
+                }
+              }
+            }
+          }),
+          responseMode: "response-only"
+        });
+        assert.strictEqual(incompatible.status, 422);
+        const refusal = yield* incompatible.json.pipe(Effect.flatMap(decodeNotAdditive));
+        assert.strictEqual(refusal.code, "not_additive");
+        assert.deepStrictEqual(
+          refusal.changes.map((change) => change.object),
+          ["notes.title"]
+        );
+        assert.include(refusal.error, "notes.title");
+        assert.deepStrictEqual(yield* Stream.runCollect(store.list("patches/")), before);
+        yield* owner.delete({ params });
+        assert.deepStrictEqual(yield* owner.inventory({ params }).pipe(Effect.flip), {
+          ok: false,
+          error: "Patch not found."
+        });
+      })
+  );
+
   it.effect(
     "replays stored JSONB bytes across release and response schema changes without another version",
     () =>
@@ -819,13 +935,6 @@ it.layer(publishLayer)("publish attempts", (it) => {
       const before = yield* patches.countLive(admin.user.id);
       const cases = [
         { manifest: { ...Fixtures.manifest, tier: 1 as const }, code: "tier_mismatch" },
-        {
-          manifest: {
-            ...Fixtures.manifest,
-            tables: { notes: { columns: { title: { kind: "text" as const } }, indexes: {} } }
-          },
-          code: "invalid_manifest"
-        },
         { manifest: { ...Fixtures.manifest, files: { images: {} } }, code: "invalid_manifest" },
         {
           manifest: {

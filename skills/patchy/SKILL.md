@@ -140,7 +140,9 @@ browser sign-out is a separate control on **Your machines**.
   that user's pages; if an environment key overrides it, resolve that override.
 - A new publish checks the executing CLI against `GET /api/release`, then validates the file.
   A `release_mismatch` names both releases and `patchy refresh`; repo tooling arrives later.
-  File mode synthesises a tier 0 manifest; higher tiers and resources are not admitted yet.
+  File mode synthesises a tier 0 manifest with no resources; higher tiers remain refused.
+  If the instance returns `has_primitives`, this patch has cumulative resources:
+  publish it from its repo, not as a file. An omitted table still counts as inventory.
 - An interrupted publish keeps the complete attempt under the state dir. Rerun `publish`
   with the same instance, state and owning user: it authenticates that user before
   resending the saved content, then applies the original result without another version.

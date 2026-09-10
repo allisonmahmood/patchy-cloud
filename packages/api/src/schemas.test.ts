@@ -7,6 +7,8 @@ import {
   Ok,
   PatchId,
   PatchQuotaExceeded,
+  PatchInventory,
+  NotAdditive,
   RateLimited,
   Shared,
   ShareRequest,
@@ -32,6 +34,34 @@ const manifest = {
 };
 const attempt = { manifest, publishKey: "test-key", metadata: {} };
 describe("wire schemas", () => {
+  it("preserves cumulative definitions and structured additive refusals on the wire", () => {
+    const inventory = {
+      schemaRevision: 3,
+      tables: {
+        notes: {
+          columns: {
+            parent: { kind: "ref" as const, table: "notes", optional: true },
+            priority: { kind: "integer" as const, default: 1 }
+          },
+          indexes: { byPriority: { columns: ["priority"], unique: false } },
+          shared: true
+        }
+      },
+      files: {}
+    };
+    expect(roundTrip(PatchInventory, inventory)).toEqual(inventory);
+    const refusal = {
+      ok: false as const,
+      code: "not_additive" as const,
+      error: "notes.priority: changing kind; add a new column.",
+      changes: [{ object: "notes.priority", change: "changing kind", fix: "add a new column" }]
+    };
+    expect(roundTrip(NotAdditive, refusal)).toEqual(refusal);
+    expect(
+      Schema.decodeUnknownExit(PatchInventory)({ ...inventory, schemaRevision: -1 })._tag
+    ).toBe("Failure");
+  });
+
   it("round-trips a publish request with every optional field present or absent", () => {
     const full = {
       ...attempt,
@@ -126,6 +156,26 @@ describe("wire schemas", () => {
     expect(decode({ ...manifest, release: "0.0.0", manifestVersion: 7 })._tag).toBe("Success");
     for (const tables of [
       { "not-valid": { columns: {}, indexes: {} } },
+      { ["a".repeat(64)]: { columns: {}, indexes: {} } },
+      { notes: { columns: { count: { kind: "integer", default: 2147483648 } }, indexes: {} } },
+      { notes: { columns: { data: { kind: "json", default: null } }, indexes: {} } },
+      { notes: { columns: { title: { kind: "text", default: "nul\u0000text" } }, indexes: {} } },
+      {
+        notes: { columns: { data: { kind: "json", default: { nested: ["\ud800"] } } }, indexes: {} }
+      },
+      {
+        notes: {
+          columns: { data: { kind: "json", default: { ["nul\u0000key"]: true } } },
+          indexes: {}
+        }
+      },
+      {
+        notes: {
+          columns: { at: { kind: "timestamp", default: "2026-02-30T00:00:00Z" } },
+          indexes: {}
+        }
+      },
+      { notes: { columns: {}, indexes: { inherited: { columns: ["toString"] } } } },
       { notes: { columns: { id: { kind: "text" } }, indexes: {} } },
       { notes: { columns: { title: { kind: "integer", default: "wrong" } }, indexes: {} } },
       {

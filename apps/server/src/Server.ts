@@ -30,6 +30,7 @@ import {
 } from "@patchy/auth";
 import { Companies, InviteMail, Users, migrations as companiesMigrations } from "@patchy/companies";
 import {
+  Inventory,
   PgCompanyDatabases,
   OrphanSweep,
   migrations as companyDatabaseMigrations
@@ -44,6 +45,7 @@ import {
   Patches,
   PatchesApi
 } from "@patchy/patches";
+import { Tables, TableOperations } from "@patchy/primitives";
 import { Pages, servingHeaders, TrustedProxies } from "@patchy/serving";
 import {
   Runtime,
@@ -89,7 +91,9 @@ const services = Layer.mergeAll(
   ExpirySweep.layer,
   DeviceLogins.layer,
   OrphanSweep.layer,
-  Runtime.layer({ me }).pipe(Layer.provide([LoadedVersions.layer, RuntimeLog.layer]))
+  Layer.unwrap(
+    Effect.map(TableOperations.make, (handlers) => Runtime.layer({ me, ...handlers }))
+  ).pipe(Layer.provide([LoadedVersions.layer, RuntimeLog.layer]))
 ).pipe(
   Layer.provideMerge(
     Layer.mergeAll(
@@ -97,12 +101,15 @@ const services = Layer.mergeAll(
       Limits.layer,
       contentStore,
       MachineTokens.layer,
-      PgCompanyDatabases.layer,
       Patches.layer,
       Companies.layer,
       InviteMail.layer,
       Users.layer,
       Session.layer
+    ).pipe(
+      Layer.provideMerge(Tables.layer),
+      Layer.provideMerge(Inventory.layer),
+      Layer.provideMerge(PgCompanyDatabases.layer)
     )
   ),
   Layer.provide(migrated)

@@ -258,6 +258,7 @@ it.layer(Testing.layer())("CompanyDatabases", (it) => {
                 table: "notes",
                 name: "body",
                 kind: "text",
+                refTable: null,
                 optional: true,
                 defaultKind: null,
                 defaultValue: null

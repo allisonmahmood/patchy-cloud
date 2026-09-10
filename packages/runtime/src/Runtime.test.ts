@@ -301,3 +301,61 @@ it.effect(
       }).pipe(Effect.provide(rejectedLog));
     })
 );
+
+it.effect(
+  "capability errors and safe mutation metadata cross the central runtime log boundary",
+  () =>
+    Effect.gen(function* () {
+      const api = yield* Fixtures.client;
+      const failed = yield* api.call({
+        payload: envelope("tables.update"),
+        headers: authenticatedHeaders(),
+        responseMode: "response-only"
+      });
+      const refusal = decodeFailure(yield* failed.json);
+      assert.strictEqual(failed.status, 404);
+      assert.strictEqual(refusal.code, "row_not_found");
+      const log = yield* RuntimeLog.RuntimeLog;
+      const failureRow = yield* log.find({
+        companyId: DEV_SEED.companyId,
+        correlationId: refusal.correlationId!
+      });
+      assert.strictEqual(failureRow?.outcome, "failure");
+      assert.strictEqual(failureRow?.resource, "notes");
+      const succeeded = yield* api.call({
+        payload: envelope("tables.insertMany"),
+        headers: authenticatedHeaders(),
+        responseMode: "response-only"
+      });
+      assert.strictEqual(succeeded.status, 200);
+      const sql = yield* SqlClient.SqlClient;
+      const rows = yield* sql<{
+        resource: string;
+        row_count: number;
+        outcome: string;
+      }>`SELECT resource, row_count, outcome FROM runtime_calls WHERE op = 'tables.insertMany'`;
+      assert.deepStrictEqual(rows, [{ resource: "notes", row_count: 2, outcome: "success" }]);
+    }).pipe(
+      Effect.provide(
+        Fixtures.layer({
+          me,
+          "tables.update": {
+            kind: "mutation",
+            resource: () => "notes",
+            run: () =>
+              Effect.fail({
+                code: "row_not_found",
+                status: 404,
+                message: "Row not found in notes."
+              } satisfies Runtime.OperationError)
+          },
+          "tables.insertMany": {
+            kind: "mutation",
+            resource: () => "notes",
+            rowCount: (value) => (Array.isArray(value) ? value.length : null),
+            run: () => Effect.succeed([{ id: "a" }, { id: "b" }])
+          }
+        })
+      )
+    )
+);

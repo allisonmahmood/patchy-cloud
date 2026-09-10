@@ -26,6 +26,7 @@ export class Column extends Schema.Class<Column>("Inventory.Column")({
   table: Schema.String,
   name: Schema.String,
   kind: Schema.Literals(["text", "integer", "number", "boolean", "timestamp", "json", "ref"]),
+  refTable: Schema.NullOr(Schema.String),
   optional: Schema.Boolean,
   defaultKind: Schema.NullOr(Schema.Literals(["constant", "now"])),
   defaultValue: Schema.Unknown
@@ -71,6 +72,9 @@ export class Inventory extends Context.Service<
     readonly ensurePatch: (
       patchId: string
     ) => Effect.Effect<number, SqlError, CompanyDatabases.PatchLock>;
+    readonly exists: (
+      patchId: string
+    ) => Effect.Effect<boolean, SqlError, CompanyDatabases.CompanyConnection>;
     readonly read: (
       patchId: string
     ) => Effect.Effect<Snapshot | null, SqlError, CompanyDatabases.CompanyConnection>;
@@ -112,7 +116,7 @@ const findColumns = SqlSchema.findAll({
   execute: Effect.fn("Inventory.findColumns")(function* (patchId) {
     const sql = yield* SqlClient.SqlClient;
     return yield* sql`SELECT "patch_id" AS "patchId", "table", "name", "kind", "optional",
-      "default_kind" AS "defaultKind", "default_value" AS "defaultValue"
+      "ref_table" AS "refTable", "default_kind" AS "defaultKind", "default_value" AS "defaultValue"
       FROM "patchy"."columns" WHERE "patch_id" = ${patchId} ORDER BY "table", "name"`;
   })
 });
@@ -170,6 +174,13 @@ const ensurePatch = Effect.fn("Inventory.ensurePatch")(function* (patchId: strin
   });
 });
 
+/** A presence probe does not open a company transaction; publish holds the platform row lock. */
+const exists = Effect.fn("Inventory.exists")(function* (patchId: string) {
+  const sql = yield* CompanyDatabases.CompanyConnection;
+  const rows = yield* sql`SELECT 1 FROM "patchy"."patches" WHERE "patch_id" = ${patchId}`;
+  return rows.length > 0;
+});
+
 // Readers take the same patch lock as writers so revision and resources cannot
 // straddle a provisioning commit across the component queries.
 const read = Effect.fn("Inventory.read")(
@@ -195,8 +206,8 @@ const putTable = Effect.fn("Inventory.putTable")(function* (row: Omit<Table, "cr
 const putColumn = Effect.fn("Inventory.putColumn")(function* (row: Column) {
   const sql = yield* lockedClient(row.patchId);
   yield* sql`INSERT INTO "patchy"."columns"
-      ("patch_id", "table", "name", "kind", "optional", "default_kind", "default_value")
-      VALUES (${row.patchId}, ${row.table}, ${row.name}, ${row.kind}, ${row.optional},
+      ("patch_id", "table", "name", "kind", "ref_table", "optional", "default_kind", "default_value")
+      VALUES (${row.patchId}, ${row.table}, ${row.name}, ${row.kind}, ${row.refTable}, ${row.optional},
         ${row.defaultKind}, ${encodeDefault(row.defaultValue)}::jsonb)
       ON CONFLICT ("patch_id", "table", "name") DO NOTHING`;
 });
@@ -225,7 +236,7 @@ const bumpRevision = Effect.fn("Inventory.bumpRevision")(function* (patchId: str
 
 export const layer = Layer.succeed(
   Inventory,
-  Inventory.of({ ensurePatch, read, putTable, putColumn, putIndex, putStore, bumpRevision })
+  Inventory.of({ ensurePatch, exists, read, putTable, putColumn, putIndex, putStore, bumpRevision })
 );
 
 /** Shared bootstrap for PostgreSQL and PGlite; never submit multiple statements in one call. */
@@ -249,12 +260,14 @@ export const initialize = Effect.gen(function* () {
     "table" text NOT NULL,
     "name" text NOT NULL,
     "kind" text NOT NULL CHECK ("kind" IN ('text', 'integer', 'number', 'boolean', 'timestamp', 'json', 'ref')),
+    "ref_table" text,
     "optional" boolean NOT NULL,
     "default_kind" text CHECK ("default_kind" IN ('constant', 'now')),
     "default_value" jsonb,
     PRIMARY KEY ("patch_id", "table", "name"),
     FOREIGN KEY ("patch_id", "table") REFERENCES "patchy"."tables" ("patch_id", "name") ON DELETE CASCADE
   )`);
+  yield* sql.unsafe('ALTER TABLE "patchy"."columns" ADD COLUMN IF NOT EXISTS "ref_table" text');
   yield* sql.unsafe(`CREATE TABLE IF NOT EXISTS "patchy"."indexes" (
     "patch_id" text NOT NULL,
     "table" text NOT NULL,

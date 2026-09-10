@@ -355,6 +355,8 @@ const sendPublish = Effect.fn("sendPublish")(function* (
                   (error.code === "release_mismatch" ||
                     error.code === "invalid_manifest" ||
                     error.code === "tier_mismatch" ||
+                    error.code === "has_primitives" ||
+                    error.code === "not_additive" ||
                     error.errors !== undefined)) ||
                   (error.status === 409 &&
                     (error.code === "publish_key_conflict" || error.code === "name_taken")) ||

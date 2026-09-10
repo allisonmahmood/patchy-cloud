@@ -20,6 +20,8 @@ COPY packages/content-store/package.json packages/content-store/package.json
 COPY packages/core/package.json packages/core/package.json
 COPY packages/limits/package.json packages/limits/package.json
 COPY packages/patches/package.json packages/patches/package.json
+COPY packages/primitives/package.json packages/primitives/package.json
+COPY packages/runtime/package.json packages/runtime/package.json
 COPY packages/serving/package.json packages/serving/package.json
 COPY packages/sql/package.json packages/sql/package.json
 COPY scripts/dev/package.json scripts/dev/package.json

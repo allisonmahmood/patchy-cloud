@@ -43,6 +43,7 @@ export class Content extends Context.Service<
       | Patches.PublishKeyTaken
       | Patches.PatchQuotaReached
       | Patches.PendingObjectExpired
+      | Patches.ResourceError
       | SqlError
       | ContentStore.InvalidObjectKey
       | ContentStore.StoreUnavailable
@@ -75,7 +76,7 @@ export const make = Effect.gen(function* () {
       ownerUserId: input.ownerUserId
     } satisfies Patches.PublishTarget;
 
-    yield* patches.checkTarget(target);
+    yield* patches.preflight({ ...input, ...target });
     yield* patches.prepareObject(key).pipe(
       Effect.andThen(store.put(key, input.html)),
       // Together with record's 60-second deadline, this stays inside the

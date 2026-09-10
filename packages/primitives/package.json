@@ -1,10 +1,10 @@
 {
-  "name": "@patchy/patches",
+  "name": "@patchy/primitives",
   "version": "0.0.0",
   "private": true,
   "license": "UNLICENSED",
   "type": "module",
-  "description": "The patches capability: records and versions, the publish contract, visits and the retention clock, owner-only deletion, the patch quota, the expiry sweep, the patches/patch_versions migrations, and the patches HttpApi group.",
+  "description": "Additive company tables and their runtime operations.",
   "exports": {
     ".": {
       "development": "./src/index.ts",
@@ -21,20 +21,15 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@patchy/analytics": "workspace:*",
     "@patchy/api": "workspace:*",
     "@patchy/company-database": "workspace:*",
-    "@patchy/content-store": "workspace:*",
     "@patchy/core": "workspace:*",
-    "@patchy/limits": "workspace:*",
-    "@patchy/primitives": "workspace:*",
     "@patchy/runtime": "workspace:*",
-    "@patchy/sql": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {
+    "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
-    "@patchy/auth": "workspace:*",
     "vitest": "^4.1.11"
   }
 }

@@ -33,7 +33,7 @@ The act that puts a patch up: a new version, live at once to everyone the patch 
 _Avoid_: deploy, upload (moving bytes, not publishing), release, promote
 
 **Primitive**:
-A capability the cloud provides because a patch declared the need, belonging either to that patch or to its company. The future provision and ownership rules live in [the product](../../docs/product.md#integrations).
+A capability the cloud provides because a patch declared the need, belonging either to that patch or to its company. Patch-owned tables are defined in the manifest and provisioned additively at publish; their language belongs to [Primitives](../primitives/CONTEXT.md).
 _Avoid_: resource, service, addon
 
 **Extension**:
@@ -59,6 +59,14 @@ _Avoid_: two-phase commit, saga
 **Manifest**:
 The serializable description of one version's release, tier, owned tables and file stores, and declared connections and shared tables. It describes the patch's contract rather than executing its source.
 _Avoid_: config (the source from which a manifest is produced), inventory (the cumulative provisioned definitions)
+
+**Inventory**:
+The cumulative resources provisioned for a patch, including definitions omitted by its current version. It is the company database's authority, not a reconstruction of the active manifest; see [Company database](../company-database/CONTEXT.md).
+_Avoid_: manifest, current schema
+
+**Unused definition**:
+A cumulative definition that a published version no longer uses. Its resource and data remain, and older versions that still define it keep reaching it.
+_Avoid_: dropped resource, deleted definition
 
 **Publish key**:
 The owner-scoped identity of one publish attempt. Resending its unchanged payload recovers the original result; a changed payload under the same key is a conflict, not another version.
