@@ -1,6 +1,6 @@
 /**
  * The Azure Blob container the Azure content store writes to, narrowed to
- * the three calls the store makes so the SDK stays behind one adapter. A
+ * the calls the store makes so the SDK stays behind one adapter. A
  * test that needs a broken container provides another layer of it.
  */
 import { DefaultAzureCredential } from "@azure/identity";
@@ -12,12 +12,14 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import type { StoredObject } from "./ContentStore.js";
 
 /** A blob call the service refused or never answered; the HTTP status when it gave one. */
 export class BlobRequestFailed extends Schema.TaggedError<BlobRequestFailed>()(
   "BlobRequestFailed",
   {
-    operation: Schema.Literals(["upload", "download", "deleteIfExists"]),
+    operation: Schema.Literals(["upload", "download", "deleteIfExists", "list"]),
     statusCode: Schema.Option(Schema.Int),
     cause: Schema.Defect()
   }
@@ -42,6 +44,7 @@ export class BlobContainer extends Context.Service<
     readonly upload: (key: string, html: string) => Effect.Effect<void, BlobRequestFailed>;
     readonly download: (key: string) => Effect.Effect<string, BlobRequestFailed>;
     readonly deleteIfExists: (key: string) => Effect.Effect<void, BlobRequestFailed>;
+    readonly list: (prefix: string) => Stream.Stream<StoredObject, BlobRequestFailed>;
   }
 >()("@patchy/content-store/BlobContainer") {}
 
@@ -98,7 +101,26 @@ export const make = Effect.gen(function* () {
       Effect.tryPromise({
         try: () => client.getBlobClient(key).deleteIfExists(),
         catch: failed("deleteIfExists")
-      })
+      }),
+    list: (prefix) =>
+      Stream.suspend(() =>
+        Stream.fromAsyncIterable(
+          (async function* () {
+            for await (const page of client
+              .listBlobsFlat({ prefix })
+              .byPage({ maxPageSize: 100 })) {
+              for (const blob of page.segment.blobItems) {
+                // Missing age information must never turn into an old, reclaimable object.
+                if (!blob.properties.lastModified) {
+                  throw new Error("Azure Blob listing did not include lastModified.");
+                }
+                yield { key: blob.name, lastModified: blob.properties.lastModified.getTime() };
+              }
+            }
+          })(),
+          failed("list")
+        )
+      )
   });
 });
 

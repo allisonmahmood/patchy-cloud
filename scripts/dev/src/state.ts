@@ -44,7 +44,9 @@ export const envFileContents = (plan: Plan) =>
   [
     `PATCHY_API_URL=${plan.apiUrl}`,
     `PATCHY_API_TOKEN=${plan.token}`,
-    `DATABASE_URL=${plan.databaseUrl}`
+    `DATABASE_URL=${plan.databaseUrl}`,
+    `PATCHY_COMPANY_DB_ADMIN_URL=${plan.databaseUrl}`,
+    `PATCHY_COMPANY_DB_URL=${plan.databaseUrl}`
   ].join("\n") + "\n";
 
 export const writeEnv = Effect.fn("writeEnv")(function* (plan: Plan) {

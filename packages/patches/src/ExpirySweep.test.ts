@@ -4,6 +4,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schedule from "effect/Schedule";
+import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 import { Analytics } from "@patchy/analytics";
 import { ContentStore, FilesystemContentStore } from "@patchy/content-store";
@@ -127,6 +128,14 @@ it.layer(
       const failing = Layer.succeed(
         ContentStore.ContentStore,
         ContentStore.ContentStore.of({
+          list: (key) =>
+            Stream.fail(
+              new ContentStore.StoreUnavailable({
+                operation: "list",
+                key,
+                cause: new Error()
+              })
+            ),
           put: () => Effect.void,
           get: (key) => Effect.fail(new ContentStore.ObjectNotFound({ key })),
           delete: (key) =>

@@ -1,10 +1,12 @@
 import { assert, expect, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpServer from "effect/unstable/http/HttpServer";
@@ -32,12 +34,22 @@ import * as Fixtures from "./test/fixtures.js";
 const { admin, reader, sibling, uploader } = Fixtures.identities;
 
 const memoryStore = Layer.sync(ContentStore.ContentStore, () => {
-  const objects = new Map<string, string>();
+  const objects = new Map<string, { html: string; lastModified: number }>();
   return ContentStore.ContentStore.of({
-    put: (key, html) => Effect.sync(() => void objects.set(key, html)),
+    list: (prefix) =>
+      Stream.suspend(() =>
+        Stream.fromIterable(
+          [...objects]
+            .filter(([key]) => key.startsWith(prefix))
+            .map(([key, object]) => ({ key, lastModified: object.lastModified }))
+        )
+      ),
+    put: Effect.fn(function* (key, html) {
+      objects.set(key, { html, lastModified: yield* Clock.currentTimeMillis });
+    }),
     get: (key) =>
       Effect.suspend(() => {
-        const html = objects.get(key);
+        const html = objects.get(key)?.html;
         return html === undefined
           ? Effect.fail(new ContentStore.ObjectNotFound({ key }))
           : Effect.succeed(html);

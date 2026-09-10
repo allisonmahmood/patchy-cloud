@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { inject } from "vitest";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
@@ -30,6 +31,8 @@ export const server = (env: Record<string, string | undefined> = {}) =>
           ...clerkEnv(),
           PATCHY_STORAGE_DIR: mkdtempSync(path.join(os.tmpdir(), "patchy-server-")),
           PATCHY_PUBLIC_BASE_URL: "https://patchy.example",
+          PATCHY_COMPANY_DB_ADMIN_URL: inject("postgres").adminUrl,
+          PATCHY_COMPANY_DB_URL: inject("postgres").adminUrl,
           ...env
         })
       )

@@ -58,6 +58,7 @@ A Turborepo monorepo managed with pnpm. [AGENTS.md](AGENTS.md) is the guide to w
 - `packages/serving` — the page routes and login door integration, sharing-aware CSP and caching, and the trusted-proxy schema (`@patchy/serving`).
 - `packages/content-store` — the object store for a patch's bytes, with filesystem and Azure Blob layers (`@patchy/content-store`).
 - `packages/sql`, `packages/analytics`, `packages/limits` — the Postgres client and Migrator, the event service, the rate limiter.
+- `packages/company-database` — company placements, lazy Postgres databases, bounded pools, transactional patch locks, cumulative inventory and the PGlite development layer.
 - `skills/patchy` — the agent skill that teaches an assistant to produce safe static HTML and publish it.
 - `examples/plan.html` — a Patchy-styled starter patch.
 

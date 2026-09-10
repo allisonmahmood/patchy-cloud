@@ -6,6 +6,7 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import * as BlobContainer from "./BlobContainer.js";
 import * as ContentStore from "./ContentStore.js";
 
@@ -47,7 +48,22 @@ export const make = Effect.gen(function* () {
       );
   });
 
-  return ContentStore.ContentStore.of({ put, get, delete: remove });
+  const list = (prefix: string) =>
+    Stream.unwrap(
+      Effect.gen(function* () {
+        if (prefix !== "") yield* ContentStore.checkKey(prefix);
+        return blobs
+          .list(prefix)
+          .pipe(
+            Stream.mapError(
+              (cause) =>
+                new ContentStore.StoreUnavailable({ operation: "list", key: prefix, cause })
+            )
+          );
+      })
+    );
+
+  return ContentStore.ContentStore.of({ put, get, delete: remove, list });
 });
 
 export const layer = Layer.effect(ContentStore.ContentStore, make).pipe(

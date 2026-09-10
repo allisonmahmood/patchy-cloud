@@ -308,6 +308,8 @@ export async function startInstance(clerkUserId: string): Promise<BrowserInstanc
         ...runtimeEnv,
         PORT: port,
         DATABASE_URL: databaseUrl,
+        PATCHY_COMPANY_DB_ADMIN_URL: databaseUrl,
+        PATCHY_COMPANY_DB_URL: databaseUrl,
         PATCHY_STORAGE_DIR: path.join(tempRoot, "objects"),
         PATCHY_PUBLIC_BASE_URL: origin,
         CLERK_SECRET_KEY: secretKey,

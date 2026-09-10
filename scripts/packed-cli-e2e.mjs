@@ -2621,6 +2621,7 @@ async function startServerAttempt({ publicBaseUrl, objectDir, serverEntryPath })
   throwIfSignalLatched();
 
   authTesting ??= await tsImport("../packages/auth/src/testing.ts", import.meta.url);
+  const databaseUrl = await startPostgres();
 
   const serverEnv = environment(
     {
@@ -2628,7 +2629,9 @@ async function startServerAttempt({ publicBaseUrl, objectDir, serverEntryPath })
       PORT: new URL(publicBaseUrl).port,
       PATCHY_PUBLIC_BASE_URL: publicBaseUrl,
       PATCHY_MAX_HTML_BYTES: String(512 * 1024),
-      DATABASE_URL: await startPostgres(),
+      DATABASE_URL: databaseUrl,
+      PATCHY_COMPANY_DB_ADMIN_URL: databaseUrl,
+      PATCHY_COMPANY_DB_URL: databaseUrl,
       PATCHY_STORAGE_DIR: objectDir,
       PATCHY_PROTECTED_API_RATE_LIMIT_PER_MINUTE: "10000",
       PATCHY_AUTHENTICATED_PUBLISH_RATE_LIMIT_PER_MINUTE: "10000"

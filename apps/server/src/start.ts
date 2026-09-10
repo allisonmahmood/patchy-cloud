@@ -39,7 +39,12 @@ const server = Layer.effectDiscard(announce).pipe(
 // cannot hide a missing Clerk key or public origin behind a connection error.
 NodeRuntime.runMain(
   Effect.gen(function* () {
-    yield* Config.all([Config.redacted("DATABASE_URL"), Session.config]);
+    yield* Config.all([
+      Config.redacted("DATABASE_URL"),
+      Config.redacted("PATCHY_COMPANY_DB_ADMIN_URL"),
+      Config.redacted("PATCHY_COMPANY_DB_URL"),
+      Session.config
+    ]);
     return yield* Layer.launch(server);
   })
 );

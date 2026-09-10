@@ -5,6 +5,8 @@ import { clerkEnv } from "@patchy/auth/testing";
 
 for (const missing of [
   "DATABASE_URL",
+  "PATCHY_COMPANY_DB_ADMIN_URL",
+  "PATCHY_COMPANY_DB_URL",
   "PATCHY_PUBLIC_BASE_URL",
   "CLERK_PUBLISHABLE_KEY",
   "CLERK_SECRET_KEY"
@@ -12,7 +14,9 @@ for (const missing of [
   it(`names missing ${missing} before trying to connect to Postgres`, () => {
     const env: NodeJS.ProcessEnv = {
       ...clerkEnv(),
-      DATABASE_URL: "postgresql://postgres:postgres@127.0.0.1:1/patchy"
+      DATABASE_URL: "postgresql://postgres:postgres@127.0.0.1:1/patchy",
+      PATCHY_COMPANY_DB_ADMIN_URL: "postgresql://postgres:postgres@127.0.0.1:1/postgres",
+      PATCHY_COMPANY_DB_URL: "postgresql://postgres:postgres@127.0.0.1:1/patchy"
     };
     delete env[missing];
     const result = spawnSync(

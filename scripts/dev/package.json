@@ -11,6 +11,7 @@
     "@effect/platform-node": "catalog:",
     "@patchy/auth": "workspace:*",
     "@patchy/companies": "workspace:*",
+    "@patchy/company-database": "workspace:*",
     "@patchy/patches": "workspace:*",
     "@patchy/sql": "workspace:*",
     "effect": "catalog:",

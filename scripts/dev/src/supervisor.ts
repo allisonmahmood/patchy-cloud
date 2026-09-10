@@ -21,6 +21,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { migrations as authMigrations } from "@patchy/auth";
 import { applyDevSeed } from "@patchy/auth/seed";
 import { migrations as companiesMigrations } from "@patchy/companies";
+import { migrations as companyDatabaseMigrations } from "@patchy/company-database";
 import { migrations as patchesMigrations, Patches } from "@patchy/patches";
 import { layerFromUrl, migrate } from "@patchy/sql";
 import { developerEnvFile, readDeveloperEnv } from "./developerEnv.js";
@@ -144,9 +145,12 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
 
   // The server migrates on its own way up too; running it here first means
   // the seed below always lands on the current schema.
-  yield* migrate({ ...companiesMigrations, ...authMigrations, ...patchesMigrations }).pipe(
-    Effect.provide(layerFromUrl(Redacted.make(plan.databaseUrl)))
-  );
+  yield* migrate({
+    ...companiesMigrations,
+    ...authMigrations,
+    ...patchesMigrations,
+    ...companyDatabaseMigrations
+  }).pipe(Effect.provide(layerFromUrl(Redacted.make(plan.databaseUrl))));
   const inherited = yield* Config.all({
     PATH: Config.string("PATH"),
     HOME: Config.string("HOME").pipe(Config.withDefault(plan.stateDir))
@@ -184,6 +188,8 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
           ...clerk,
           PORT: String(plan.ports.server),
           DATABASE_URL: plan.databaseUrl,
+          PATCHY_COMPANY_DB_ADMIN_URL: plan.databaseUrl,
+          PATCHY_COMPANY_DB_URL: plan.databaseUrl,
           PATCHY_STORAGE_DIR: files.storageDir,
           PATCHY_PUBLIC_BASE_URL: plan.apiUrl
         },

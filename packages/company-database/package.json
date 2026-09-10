@@ -1,0 +1,49 @@
+{
+  "name": "@patchy/company-database",
+  "version": "0.0.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "description": "Company database placement, provisioning, scoped pools, inventory and orphan reclamation.",
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./dev": {
+      "development": "./src/dev.ts",
+      "types": "./dist/dev.d.ts",
+      "import": "./dist/dev.js"
+    },
+    "./testing": {
+      "development": "./src/testing.ts",
+      "types": "./dist/testing.d.ts",
+      "import": "./dist/testing.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@effect/sql-pg": "catalog:",
+    "@effect/sql-pglite": "catalog:",
+    "@patchy/core": "workspace:*",
+    "pg": "^8.23.0",
+    "@electric-sql/pglite": "0.5.8",
+    "@patchy/content-store": "workspace:*",
+    "@patchy/sql": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/platform-node": "catalog:",
+    "@effect/vitest": "catalog:",
+    "@types/pg": "^8.23.1",
+    "vitest": "^4.1.11"
+  }
+}

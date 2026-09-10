@@ -13,7 +13,7 @@ If any of these files don't exist, **proceed silently**. Don't flag their absenc
 
 ## Layout
 
-This is a **multi-context** repo — a pnpm workspace whose two sides are the service that hosts patches and the CLI agents run to publish them, with the hosting side cut into capability packages. `CONTEXT-MAP.md` names the product's contexts (Patches, Serving, Companies, Auth, Integrations, Publishing), the shared kernel (`core`), the infrastructure packages (`api`, `sql`, `content-store`, `analytics`, `limits`, and `apps/server` as wiring) and the relationships between them. Every context and infrastructure package but `core` and `api` has a `CONTEXT.md` at its package's path.
+This is a **multi-context** repo — a pnpm workspace whose two sides are the service that hosts patches and the CLI agents run to publish them, with the hosting side cut into capability packages. `CONTEXT-MAP.md` names the product's contexts (Patches, Serving, Companies, Auth, Integrations, Publishing), the shared kernel (`core`), the infrastructure packages (`api`, `sql`, `company-database`, `content-store`, `analytics`, `limits`, and `apps/server` as wiring) and the relationships between them. Every context and infrastructure package but `core` and `api` has a `CONTEXT.md` at its package's path.
 
 A context can exist before its code: its `CONTEXT.md` sits alone at the path the package will take (`packages/integrations/CONTEXT.md`), so the words are settled before the build and the package is born beside them. A folder with no `package.json` is invisible to pnpm and turbo.
 

@@ -28,6 +28,11 @@ import {
   Session
 } from "@patchy/auth";
 import { Companies, InviteMail, Users, migrations as companiesMigrations } from "@patchy/companies";
+import {
+  PgCompanyDatabases,
+  OrphanSweep,
+  migrations as companyDatabaseMigrations
+} from "@patchy/company-database";
 import { AzureContentStore, BlobContainer, FilesystemContentStore } from "@patchy/content-store";
 import { Limits } from "@patchy/limits";
 import {
@@ -57,20 +62,31 @@ const contentStore = Layer.unwrap(
 
 /** Every capability's migrations as one record, applied before anything reads the database. */
 const migrated = Layer.effectDiscard(
-  migrate({ ...companiesMigrations, ...authMigrations, ...patchesMigrations })
+  migrate({
+    ...companiesMigrations,
+    ...authMigrations,
+    ...patchesMigrations,
+    ...companyDatabaseMigrations
+  })
 );
 
 /**
  * The services, over the migrated database. Analytics reports nothing unless
  * a key is configured.
  */
-const services = Layer.mergeAll(Content.layer, ExpirySweep.layer, DeviceLogins.layer).pipe(
+const services = Layer.mergeAll(
+  Content.layer,
+  ExpirySweep.layer,
+  DeviceLogins.layer,
+  OrphanSweep.layer
+).pipe(
   Layer.provideMerge(
     Layer.mergeAll(
       Analytics.layer,
       Limits.layer,
       contentStore,
       MachineTokens.layer,
+      PgCompanyDatabases.layer,
       Patches.layer,
       Companies.layer,
       InviteMail.layer,
@@ -89,10 +105,10 @@ const services = Layer.mergeAll(Content.layer, ExpirySweep.layer, DeviceLogins.l
  * interrupts it.
  */
 const sweeper = Layer.effectDiscard(
-  Effect.flatMap(ExpirySweep.ExpirySweep, (sweep) => sweep.sweep).pipe(
-    Effect.repeat(Schedule.spaced("1 hour")),
-    Effect.forkScoped
-  )
+  Effect.gen(function* () {
+    yield* (yield* ExpirySweep.ExpirySweep).sweep;
+    yield* (yield* OrphanSweep.OrphanSweep).sweep;
+  }).pipe(Effect.repeat(Schedule.spaced("1 hour")), Effect.forkScoped)
 );
 
 /** `/api/*`: the groups' handlers, bearer middleware on protected endpoints, and catch-all. */

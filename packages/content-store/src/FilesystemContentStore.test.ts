@@ -4,6 +4,7 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
 import * as ContentStore from "./ContentStore.js";
 import * as FilesystemContentStore from "./FilesystemContentStore.js";
 
@@ -13,10 +14,12 @@ const storeInTempDir = Layer.unwrap(
     const fs = yield* FileSystem.FileSystem;
     const dir = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-content-store-" });
     return FilesystemContentStore.layer.pipe(
-      Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ PATCHY_STORAGE_DIR: dir })))
+      Layer.provideMerge(
+        ConfigProvider.layer(ConfigProvider.fromUnknown({ PATCHY_STORAGE_DIR: dir }))
+      )
     );
   })
-).pipe(Layer.provide(NodeFileSystem.layer));
+).pipe(Layer.provideMerge(NodeFileSystem.layer));
 
 it.layer(Layer.merge(storeInTempDir, NodePath.layer))("FilesystemContentStore", (it) => {
   it.effect("stores and reads an object back", () =>
@@ -47,6 +50,36 @@ it.layer(Layer.merge(storeInTempDir, NodePath.layer))("FilesystemContentStore", 
       assert.strictEqual(escaped._tag, "InvalidObjectKey");
       assert.strictEqual(escaped.key, "../escape.html");
       assert.strictEqual((yield* service.get("").pipe(Effect.flip))._tag, "InvalidObjectKey");
+    })
+  );
+
+  it.effect("lists nested objects by prefix with their modification times", () =>
+    Effect.gen(function* () {
+      const service = yield* ContentStore.ContentStore;
+      yield* service.put("files/listing/store/one", "one");
+      yield* service.put("files/listing/store/two", "two");
+      yield* service.put("files/other/store/three", "three");
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* FilesystemContentStore.rootDir;
+      yield* fs.utimes(`${root}/files/listing/store/one`, 123456789, 123456789);
+      const objects = yield* service.list("files/listing/").pipe(Stream.runCollect);
+      assert.deepStrictEqual(objects.map((object) => object.key).sort(), [
+        "files/listing/store/one",
+        "files/listing/store/two"
+      ]);
+      assert.strictEqual(
+        objects.find((object) => object.key === "files/listing/store/one")!.lastModified,
+        123456789000
+      );
+      yield* service.delete("files/listing/store/one");
+      assert.deepStrictEqual(
+        (yield* service.list("files/listing/").pipe(Stream.runCollect)).map((object) => object.key),
+        ["files/listing/store/two"]
+      );
+      assert.strictEqual(
+        (yield* service.list("../").pipe(Stream.runCollect, Effect.flip))._tag,
+        "InvalidObjectKey"
+      );
     })
   );
 });

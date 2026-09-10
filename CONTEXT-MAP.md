@@ -21,6 +21,7 @@ Supporting packages rather than product contexts; their glossaries define only t
 
 - `packages/api` — the wire schemas and the `HttpApi` both sides speak: the server implements it, the CLI's client is derived from it, `docs/API.md` is rendered from it. Belongs to neither side; see [ADR-0002](./docs/adr/ADR-0002-api-is-the-contract-package.md). No `CONTEXT.md`: its terms are the contexts' own
 - [SQL](./packages/sql/CONTEXT.md) — `packages/sql`, the Postgres client and Effect's Migrator every capability migrates through; owns no tables ([ADR-0003](./docs/adr/ADR-0003-postgres-only.md))
+- [Company database](./packages/company-database/CONTEXT.md) — `packages/company-database`, company placement, lazy database creation, bounded pools, patch locks, cumulative inventory and orphan reclamation; the same inventory over PGlite for patch development ([ADR-0009](./docs/adr/ADR-0009-one-postgres-database-per-company.md))
 - [Content store](./packages/content-store/CONTEXT.md) — `packages/content-store`, the object store a patch's bytes go into; a filesystem layer and an Azure Blob layer
 - [Analytics](./packages/analytics/CONTEXT.md) — `packages/analytics`, the event service Patches and Auth report business moments through
 - [Limits](./packages/limits/CONTEXT.md) — `packages/limits`, the fixed-window rate limiter behind every per-minute limit
@@ -32,6 +33,7 @@ Supporting packages rather than product contexts; their glossaries define only t
 - **Serving → Patches, Auth**: relies on Patches for content, sharing and visits, and on Auth for viewer identity and session admission
 - **Patches → Content store**: owns the lifecycle of stored patch content, from publication through expiry
 - **Companies, Auth, Patches → SQL**: persist their own domain data in the shared Postgres database
+- **Company database → SQL, Content store**: keeps placements in the platform database, inventories in each company database, and reclaims unreferenced file objects
 - **Auth, Patches → Analytics**: report business events
 - **Auth → Companies**: relies on company membership, roles and deactivation to authenticate users and machines
 - **Hosting, Auth, Patches → Limits**: rely on shared rate limiting for API access, device login and publishing
@@ -41,3 +43,5 @@ Supporting packages rather than product contexts; their glossaries define only t
 ## Decisions
 
 System-wide decisions are in [`docs/adr/`](./docs/adr/): ADR-0002 (the `api` contract package), ADR-0003 (Postgres only), ADR-0004 (the CLI contract for agents), ADR-0005 (one registrable domain for pages, API and Account Portal), ADR-0006 (Clerk holds the browser session; the shell keeps it fresh), [ADR-0007](./docs/adr/ADR-0007-patchy-holds-the-company.md) (Patchy holds the company; Clerk knows the user), and [ADR-0008](./docs/adr/ADR-0008-every-bearer-is-somebody.md) (Every bearer is somebody: the machine token). Product decisions not yet built are recorded in `docs/product.md`, and the PR that builds one writes its ADR. A superseded ADR is deleted, not kept: its replacement names what it replaced and git holds the old text.
+
+Company database placement, provisioning, pooling and the local PGlite boundary are recorded in [ADR-0009](./docs/adr/ADR-0009-one-postgres-database-per-company.md).

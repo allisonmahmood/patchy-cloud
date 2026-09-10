@@ -32,6 +32,11 @@ Read it again before changing that binding on an existing instance: a healthy
 idempotent start does not reseed or move an enrolled user between companies.
 The seed also backfills missing patch names from titles in creation order; named
 patches keep their addresses. The test Postgres template runs the same backfill.
+The runner also supplies both company-database URLs from its embedded Postgres;
+company databases are created only when resources need them. For placement,
+pool-budget or PGlite changes, follow DEVELOPMENT's **How it works** section:
+exercise real-Postgres concurrency and the PGlite inventory suite, not a browser
+publish of a primitive-free page.
 
 ```sh
 pnpm dev
