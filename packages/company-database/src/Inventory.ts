@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
+import { withPatchLock } from "./CompanyDatabases.js";
 
 export class Patch extends Schema.Class<Patch>("Inventory.Patch")({
   patchId: Schema.String,
@@ -169,15 +170,24 @@ export const make = Effect.sync(() => {
     });
   });
 
-  const read = Effect.fn("Inventory.read")(function* (patchId: string) {
-    const patch = yield* findPatch(patchId).pipe(Effect.catchTags({ SchemaError: Effect.die }));
-    if (Option.isNone(patch)) return null;
-    const tables = yield* findTables(patchId).pipe(Effect.catchTags({ SchemaError: Effect.die }));
-    const columns = yield* findColumns(patchId).pipe(Effect.catchTags({ SchemaError: Effect.die }));
-    const indexes = yield* findIndexes(patchId).pipe(Effect.catchTags({ SchemaError: Effect.die }));
-    const stores = yield* findStores(patchId).pipe(Effect.catchTags({ SchemaError: Effect.die }));
-    return new Snapshot({ ...patch.value, tables, columns, indexes, stores });
-  });
+  // Readers take the same patch lock as writers so revision and resources cannot
+  // straddle a provisioning commit across the component queries.
+  const read = Effect.fn("Inventory.read")(
+    function* (patchId: string) {
+      const patch = yield* findPatch(patchId).pipe(Effect.catchTags({ SchemaError: Effect.die }));
+      if (Option.isNone(patch)) return null;
+      const tables = yield* findTables(patchId).pipe(Effect.catchTags({ SchemaError: Effect.die }));
+      const columns = yield* findColumns(patchId).pipe(
+        Effect.catchTags({ SchemaError: Effect.die })
+      );
+      const indexes = yield* findIndexes(patchId).pipe(
+        Effect.catchTags({ SchemaError: Effect.die })
+      );
+      const stores = yield* findStores(patchId).pipe(Effect.catchTags({ SchemaError: Effect.die }));
+      return new Snapshot({ ...patch.value, tables, columns, indexes, stores });
+    },
+    (effect, patchId) => withPatchLock(patchId)(effect)
+  );
 
   const putTable = Effect.fn("Inventory.putTable")(function* (row: Omit<Table, "createdAt">) {
     const sql = yield* SqlClient.SqlClient;

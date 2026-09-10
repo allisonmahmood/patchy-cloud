@@ -16,6 +16,7 @@ import { layerFromUrl } from "@patchy/sql";
 import * as CompanyDatabases from "./CompanyDatabases.js";
 import * as PgCompanyDatabases from "./PgCompanyDatabases.js";
 import { quoteIdentifier } from "./Inventory.js";
+import * as Inventory from "./Inventory.js";
 import * as Testing from "./testing.js";
 import { inventoryContract } from "./test/inventoryContract.js";
 
@@ -85,7 +86,7 @@ it.layer(Testing.layer())("CompanyDatabases", (it) => {
             `CREATE ROLE ${quoteIdentifier(dataRole)} LOGIN PASSWORD 'local-test'`
           );
           yield* platform.unsafe(
-            `CREATE ROLE ${quoteIdentifier(adminRole)} LOGIN CREATEDB PASSWORD 'local-test'`
+            `CREATE ROLE ${quoteIdentifier(adminRole)} LOGIN CREATEDB NOINHERIT PASSWORD 'local-test'`
           );
           yield* platform.unsafe(
             `GRANT ${quoteIdentifier(dataRole)} TO ${quoteIdentifier(adminRole)}`
@@ -104,7 +105,9 @@ it.layer(Testing.layer())("CompanyDatabases", (it) => {
       adminUrl.username = adminRole;
       adminUrl.password = "local-test";
       const dataUrl = new URL(adminUrl);
-      dataUrl.username = dataRole;
+      dataUrl.username = "ignored-authority";
+      dataUrl.searchParams.append("user", "ignored-query");
+      dataUrl.searchParams.append("user", dataRole);
       const restricted = Layer.effect(
         CompanyDatabases.CompanyDatabases,
         PgCompanyDatabases.make
@@ -138,6 +141,75 @@ it.layer(Testing.layer())("CompanyDatabases", (it) => {
           })
         );
       }).pipe(Effect.provide(restricted, { local: true }));
+    }).pipe(Effect.scoped)
+  );
+
+  it.effect("reads one inventory revision when provisioning commits between component reads", () =>
+    Effect.gen(function* () {
+      yield* createCompany("snapshot-race");
+      const service = yield* CompanyDatabases.CompanyDatabases;
+      const inventory = yield* Inventory.Inventory;
+      const platform = yield* SqlClient.SqlClient;
+      yield* service.withCompany("snapshot-race")(
+        service.withPatchLock("snapshot")(inventory.ensurePatch("snapshot"))
+      );
+      const writerReady = yield* Deferred.make<void>();
+      const commit = yield* Deferred.make<void>();
+      const writer = yield* service
+        .withCompany("snapshot-race")(
+          service.withPatchLock("snapshot")(
+            Effect.gen(function* () {
+              const sql = yield* SqlClient.SqlClient;
+              // Hold the later component query behind this transaction while earlier
+              // components remain readable, exposing a mixed snapshot without the lock.
+              yield* sql`LOCK TABLE patchy.columns IN ACCESS EXCLUSIVE MODE`;
+              yield* inventory.putTable({ patchId: "snapshot", name: "notes", shared: false });
+              yield* inventory.putColumn({
+                patchId: "snapshot",
+                table: "notes",
+                name: "body",
+                kind: "text",
+                optional: true,
+                defaultKind: null,
+                defaultValue: null
+              });
+              yield* inventory.bumpRevision("snapshot");
+              yield* Deferred.succeed(writerReady, undefined);
+              yield* Deferred.await(commit);
+            })
+          )
+        )
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(writerReady);
+      const readerPid = yield* Deferred.make<number>();
+      const reader = yield* service
+        .withCompany("snapshot-race")(
+          Effect.gen(function* () {
+            const sql = yield* SqlClient.SqlClient;
+            const [row] = yield* sql<{ pid: number }>`SELECT pg_backend_pid() AS pid`;
+            yield* Deferred.succeed(readerPid, row!.pid);
+            return yield* inventory.read("snapshot");
+          })
+        )
+        .pipe(Effect.forkScoped);
+      const pid = yield* Deferred.await(readerPid);
+      yield* platform<{ waiting: boolean }>`SELECT EXISTS (
+      SELECT 1 FROM pg_stat_activity WHERE pid = ${pid} AND wait_event_type = 'Lock'
+    ) AS waiting`.pipe(Effect.repeat({ until: (rows) => rows[0]!.waiting }));
+      yield* Deferred.succeed(commit, undefined);
+      yield* Fiber.join(writer);
+      const snapshot = yield* Fiber.join(reader);
+      assert.deepInclude(
+        [
+          { revision: 0, tables: [], columns: [] },
+          { revision: 1, tables: ["notes"], columns: [["notes", "body"]] }
+        ],
+        {
+          revision: snapshot?.schemaRevision,
+          tables: snapshot?.tables.map((table) => table.name),
+          columns: snapshot?.columns.map((column) => [column.table, column.name])
+        }
+      );
     }).pipe(Effect.scoped)
   );
 

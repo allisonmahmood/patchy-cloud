@@ -92,9 +92,23 @@ export const make = Effect.fn("PgliteCompanyDatabases.make")(function* (options:
     return yield* sql
       .withTransaction(
         Effect.gen(function* () {
-          yield* Inventory.initialize;
+          yield* Inventory.initialize.pipe(
+            Effect.mapError(
+              (cause) =>
+                new CompanyDatabases.CompanyDatabaseError({
+                  companyId,
+                  operation: "initialize",
+                  cause
+                })
+            )
+          );
           yield* sql`UPDATE "patchy"."local_company" SET "status" = 'ready', "ready_at" = now()
-          WHERE "company_id" = ${companyId} AND "status" = 'claimed'`;
+          WHERE "company_id" = ${companyId} AND "status" = 'claimed'`.pipe(
+            Effect.mapError(
+              (cause) =>
+                new CompanyDatabases.CompanyDatabaseError({ companyId, operation: "ready", cause })
+            )
+          );
           return yield* claim(companyId);
         }).pipe(Effect.provideService(SqlClient.SqlClient, sql))
       )
@@ -104,7 +118,7 @@ export const make = Effect.fn("PgliteCompanyDatabases.make")(function* (options:
             Effect.fail(
               new CompanyDatabases.CompanyDatabaseError({
                 companyId,
-                operation: "provision",
+                operation: "claim",
                 cause
               })
             )

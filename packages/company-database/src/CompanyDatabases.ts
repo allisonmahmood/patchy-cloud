@@ -28,12 +28,20 @@ export class CompanyDatabaseError extends Schema.TaggedError<CompanyDatabaseErro
   "CompanyDatabaseError",
   {
     companyId: Schema.String,
-    operation: Schema.Literals(["claim", "provision", "connect", "list"]),
+    operation: Schema.Literals([
+      "claim",
+      "create",
+      "configure",
+      "initialize",
+      "ready",
+      "connect",
+      "list"
+    ]),
     cause: Schema.Defect()
   }
 ) {
   override get message() {
-    return `Could not ${this.operation} the company database.`;
+    return `Company database ${this.operation} failed.`;
   }
 }
 

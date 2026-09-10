@@ -34,3 +34,31 @@ for (const missing of [
     expect(`${result.stdout}${result.stderr}`).not.toContain("server listening");
   });
 }
+
+for (const key of ["PATCHY_COMPANY_DB_ADMIN_URL", "PATCHY_COMPANY_DB_URL"]) {
+  it(`rejects invalid ${key} without exposing its credential`, () => {
+    const secret = "private-company-db-password";
+    const env = {
+      ...clerkEnv(),
+      DATABASE_URL: "postgresql://postgres:postgres@127.0.0.1:1/patchy",
+      PATCHY_COMPANY_DB_ADMIN_URL: "postgresql://postgres:postgres@127.0.0.1:1/postgres",
+      PATCHY_COMPANY_DB_URL: "postgresql://postgres:postgres@127.0.0.1:1/patchy",
+      [key]: `https://operator:${secret}@localhost/patchy`
+    };
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "--conditions=development",
+        fileURLToPath(new URL("./start.ts", import.meta.url))
+      ],
+      { env, encoding: "utf8", timeout: 10_000 }
+    );
+    expect(result.status).toBe(1);
+    const output = `${result.stdout}${result.stderr}`;
+    expect(output).toContain(key);
+    expect(output).not.toContain(secret);
+    expect(output).not.toContain("server listening");
+  });
+}

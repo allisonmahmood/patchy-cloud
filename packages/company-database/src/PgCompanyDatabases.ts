@@ -32,9 +32,31 @@ export class AdminClient extends Context.Service<AdminClient, SqlClient.SqlClien
   "@patchy/company-database/PgCompanyDatabases/AdminClient"
 ) {}
 
+// pg uses the last `user` query value when nonempty, otherwise the authority.
+const username = (url: URL): string =>
+  url.searchParams.getAll("user").at(-1) || decodeURIComponent(url.username);
+
+const DatabaseUrl = Schema.Redacted(Schema.String).check(
+  Schema.makeFilter((secret) => {
+    try {
+      const url = new URL(Redacted.value(secret));
+      decodeURIComponent(url.password);
+      decodeURI(url.pathname);
+      return (
+        (url.protocol === "postgres:" || url.protocol === "postgresql:") &&
+        username(url).length > 0 &&
+        url.hash === "" &&
+        (url.hostname !== "" || Boolean(url.searchParams.getAll("host").at(-1)))
+      );
+    } catch {
+      return false;
+    }
+  })
+);
+
 export const config = Config.all({
-  adminUrl: Config.redacted("PATCHY_COMPANY_DB_ADMIN_URL"),
-  dataUrl: Config.redacted("PATCHY_COMPANY_DB_URL"),
+  adminUrl: Config.schema(DatabaseUrl, "PATCHY_COMPANY_DB_ADMIN_URL"),
+  dataUrl: Config.schema(DatabaseUrl, "PATCHY_COMPANY_DB_URL"),
   maxBackends: Config.schema(
     Schema.Int.check(Schema.isGreaterThanOrEqualTo(4)),
     "PATCHY_COMPANY_DB_MAX_BACKENDS"
@@ -150,48 +172,84 @@ export const make = Effect.gen(function* () {
           const claimed = rows[0]!;
           if (claimed.status === "ready") return claimed;
           const name = Inventory.quoteIdentifier(claimed.databaseName);
-          const dataRole = Inventory.quoteIdentifier(
-            decodeURIComponent(new URL(Redacted.value(settings.dataUrl)).username)
-          );
+          const roleUrl = new URL(Redacted.value(settings.dataUrl));
+          const dataRole = Inventory.quoteIdentifier(username(roleUrl));
           // The committed claim is the authority. Only this exact claimed name can resume a duplicate CREATE.
           // Keep the row lock until CREATE settles; cancellation must not race a still-running CREATE.
-          yield* admin.unsafe(`CREATE DATABASE ${name} TEMPLATE template1`).pipe(
+          yield* admin.unsafe(`CREATE DATABASE ${name} OWNER ${dataRole} TEMPLATE template1`).pipe(
             Effect.catchIf(
               (error) => duplicateDatabase(error.reason.cause),
               () => Effect.void
             ),
+            Effect.mapError(
+              (cause) =>
+                new CompanyDatabases.CompanyDatabaseError({ companyId, operation: "create", cause })
+            ),
             Effect.uninterruptible
           );
-          yield* admin.unsafe(`ALTER DATABASE ${name} OWNER TO ${dataRole}`);
-          yield* admin.unsafe(`REVOKE ALL ON DATABASE ${name} FROM PUBLIC`);
-          yield* admin.unsafe(`GRANT CONNECT, TEMPORARY ON DATABASE ${name} TO ${dataRole}`);
-          yield* admin.unsafe(`ALTER DATABASE ${name} SET timezone TO 'UTC'`);
-          yield* admin.unsafe(`ALTER DATABASE ${name} SET statement_timeout TO '30s'`);
-          yield* Effect.scoped(
-            Effect.gen(function* () {
-              const companyAdmin = yield* pool(
-                databaseUrl(settings.adminUrl, claimed.databaseName),
-                1
-              );
-              yield* companyAdmin.unsafe(`REVOKE CREATE ON SCHEMA public FROM PUBLIC`);
-            })
-          ).pipe(Effect.provideService(Reactivity.Reactivity, reactivity));
           yield* Effect.scoped(
             Effect.gen(function* () {
               const data = yield* pool(databaseUrl(settings.dataUrl, claimed.databaseName), 1);
-              yield* Inventory.initialize.pipe(Effect.provideService(SqlClient.SqlClient, data));
+              yield* Effect.gen(function* () {
+                yield* data.unsafe(`REVOKE ALL ON DATABASE ${name} FROM PUBLIC`);
+                yield* data.unsafe(`GRANT CONNECT, TEMPORARY ON DATABASE ${name} TO ${dataRole}`);
+                yield* data.unsafe(`ALTER DATABASE ${name} SET timezone TO 'UTC'`);
+                yield* data.unsafe(`ALTER DATABASE ${name} SET statement_timeout TO '30s'`);
+                yield* data.unsafe(`REVOKE CREATE ON SCHEMA public FROM PUBLIC`);
+              }).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new CompanyDatabases.CompanyDatabaseError({
+                      companyId,
+                      operation: "configure",
+                      cause
+                    })
+                )
+              );
+              yield* Inventory.initialize.pipe(
+                Effect.provideService(SqlClient.SqlClient, data),
+                Effect.mapError(
+                  (cause) =>
+                    new CompanyDatabases.CompanyDatabaseError({
+                      companyId,
+                      operation: "initialize",
+                      cause
+                    })
+                )
+              );
             })
-          ).pipe(Effect.provideService(Reactivity.Reactivity, reactivity));
-          yield* platform`UPDATE company_databases SET status = 'ready', ready_at = now() WHERE company_id = ${companyId}`;
-          const ready = yield* placements(companyId).pipe(Effect.catchTags(dieOnSchemaError));
-          return ready[0]!;
+          ).pipe(
+            Effect.provideService(Reactivity.Reactivity, reactivity),
+            Effect.catchTags({
+              SqlError: (cause) =>
+                Effect.fail(
+                  new CompanyDatabases.CompanyDatabaseError({
+                    companyId,
+                    operation: "connect",
+                    cause
+                  })
+                )
+            })
+          );
+          return yield* Effect.gen(function* () {
+            yield* platform`UPDATE company_databases SET status = 'ready', ready_at = now() WHERE company_id = ${companyId}`;
+            const ready = yield* placements(companyId).pipe(Effect.catchTags(dieOnSchemaError));
+            return ready[0]!;
+          }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new CompanyDatabases.CompanyDatabaseError({ companyId, operation: "ready", cause })
+            )
+          );
         })
       )
       .pipe(
-        Effect.mapError(
-          (cause) =>
-            new CompanyDatabases.CompanyDatabaseError({ companyId, operation: "provision", cause })
-        )
+        Effect.catchTags({
+          SqlError: (cause) =>
+            Effect.fail(
+              new CompanyDatabases.CompanyDatabaseError({ companyId, operation: "claim", cause })
+            )
+        })
       );
   });
 

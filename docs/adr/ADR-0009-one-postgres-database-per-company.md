@@ -6,7 +6,7 @@ Company resources live in one Postgres database per company, separate from the p
 
 The platform `company_databases` row is the authority: company id, server id, database name, placement version, status and creation/readiness timestamps. A first operation needing resources claims it idempotently; company signup and primitive-free publishing create nothing. One server exists today, `primary`. A claim moves to `ready` only after creation, ownership, grants, settings and inventory initialization succeed. An interrupted operation resumes the same claim, including when `CREATE DATABASE` succeeded before the process stopped.
 
-Creation runs outside any transaction through `PATCHY_COMPANY_DB_ADMIN_URL`, a maintenance-database login with `CREATEDB`. The provisioning login must be able to assign ownership to the data role. `template1` is the creation template; settings and permissions are applied afterwards. `PATCHY_COMPANY_DB_URL` supplies the data role and server connection options; the placement replaces its database name. Both URLs are required at server startup. Do not give the ordinary data login cluster administration privileges; the embedded development superuser is a disposable-local exception.
+Creation runs outside any transaction through `PATCHY_COMPANY_DB_ADMIN_URL`, a maintenance-database login with `CREATEDB` and permission to `SET ROLE` to the data role. `CREATE DATABASE ... OWNER` establishes ownership immediately from `template1`; the data owner then applies settings, permissions and inventory initialization. The provisioning login needs no inherited data access. `PATCHY_COMPANY_DB_URL` supplies the data role and server connection options; the placement replaces its database name. Both URLs are validated as redacted PostgreSQL URLs at startup, with an explicit login; the last `user` query value overrides the authority when nonempty, matching `pg`. Do not give the ordinary data login cluster administration privileges; the embedded development superuser is a disposable-local exception.
 
 The new platform migration is `0005_company_database_baseline`: issue #196 reserved 0004 before `0004_invites_expiry` occupied it. Preserving that existing ledger entry takes precedence over reusing its number.
 
@@ -21,6 +21,10 @@ Callers always take the platform patch-row lock first. Only existing inventory o
 ## Inventory and reclamation
 
 The company database's `patchy` schema holds the cumulative provisioning authority: patches and their schema revisions, tables, columns, indexes, stores, and the file index. Physical namespaces are `p_<patchId>`; table and column identifiers are quoted as written. Inventory commits with DDL and is never rolled back merely because the active patch version is rolled back. Table-change callers advance the revision; a new patch version alone does not.
+
+Inventory reads acquire the same patch lock as provisioning, so their revision
+and component queries cannot straddle a writer's commit. These metadata reads
+may wait for provisioning; they do not return a partly old, partly new inventory.
 
 The existing startup/hourly sweep reclaims namespaces with no platform patch row after a day, and immutable `files/<patchId>/<store>/<objectId>` objects unnamed by any file index after a day. Namespace age is recorded with inventory; previously untracked schemas are first observed and given a full grace period. An unavailable company database is not evidence that a file is unreferenced. Version cleanup never owns file objects.
 
