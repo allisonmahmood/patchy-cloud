@@ -37,6 +37,9 @@ company databases are created only when resources need them. For placement,
 pool-budget or PGlite changes, follow DEVELOPMENT's **How it works** section:
 exercise real-Postgres concurrency and the PGlite inventory suite, not a browser
 publish of a primitive-free page.
+For runtime admission changes, follow DEVELOPMENT's **How it works** section:
+use an offline browser session for company calls, not the dev machine token,
+and exercise historical versions as well as the current public version.
 
 ```sh
 pnpm dev

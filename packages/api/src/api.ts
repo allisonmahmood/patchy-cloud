@@ -1,6 +1,6 @@
 /**
- * The `/api/*` contract: auth, patches and public release discovery, every route with
- * its request, success and error shapes from `./schemas.ts`. The server
+ * The `/api/*` contract: auth, patches, browser runtime and public release discovery.
+ * Request, success and error shapes come from the API's schema modules. The server
  * implements it and the CLI's client is derived from it; neither side
  * re-types a wire shape by hand. The route descriptions here are the text of
  * `docs/API.md`.
@@ -11,6 +11,7 @@ import * as HttpApi from "effect/unstable/httpapi/HttpApi";
 import * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
 import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
 import * as HttpApiMiddleware from "effect/unstable/httpapi/HttpApiMiddleware";
+import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
 import * as HttpApiSecurity from "effect/unstable/httpapi/HttpApiSecurity";
 import * as OpenApi from "effect/unstable/httpapi/OpenApi";
 import {
@@ -41,6 +42,7 @@ import {
   PublishKeyConflict,
   Release
 } from "./schemas.js";
+import { RuntimeBytes, RuntimeCall, RuntimeFailure, RuntimeSuccess } from "./runtime.js";
 
 /** The identity a valid bearer token resolves to, provided to every protected handler. */
 export class CurrentIdentity extends Context.Service<CurrentIdentity, Identity>()(
@@ -210,17 +212,133 @@ export class ReleaseGroup extends HttpApiGroup.make("release", { topLevel: true 
   )
   .prefix("/api") {}
 
+/**
+ * Raw handlers choose an explicit HTTP status when encoding RuntimeFailure:
+ * the identical wire shape at each status cannot select its own status.
+ */
+const runtimeErrors = [400, 401, 403, 409, 413, 429, 503].map((status) =>
+  RuntimeFailure.pipe(HttpApiSchema.status(status))
+);
+
+/**
+ * handleRaw bypasses payload decoding, not header/param decoding. Keep these
+ * permissive so admission returns runtime failures, never generic schema errors.
+ */
+const runtimeHeaders = {
+  "x-patchy-wire": Schema.optionalKey(Schema.String),
+  "x-patchy-principal": Schema.optionalKey(Schema.String),
+  cookie: Schema.optionalKey(Schema.String),
+  authorization: Schema.optionalKey(Schema.String),
+  "content-length": Schema.optionalKey(Schema.String)
+};
+const runtimeFileParams = {
+  patchId: Schema.String,
+  versionId: Schema.String,
+  store: Schema.String,
+  "*": Schema.String
+};
+const runtimeAdmission =
+  "Browser-only: no bearer middleware, and machine tokens are refused. Every request requires " +
+  "`X-Patchy-Wire` (the decimal wire version) and `X-Patchy-Principal` (JSON `null` or " +
+  '`{"userId":"..."}`). Admission resolves the loaded patch/version before validating an operation. ' +
+  "A public version answers `me` with null and every other operation, including unknown ones, " +
+  "with `not_available_on_public`, with or without a session and before any principal check. " +
+  "Public shells always send a null principal. Company versions require a browser session " +
+  "(`session_expired`), a viewer who can open the patch (`access_denied`), and a principal " +
+  "matching that session's user (`principal_changed`); only `me` may bootstrap with null. " +
+  "Wire compatibility is checked before dispatch (`shell_outdated`). Per-viewer per-patch calls " +
+  "are limited to 300 per minute by default; `rate_limited` is 429 with `Retry-After` seconds. " +
+  "Responses, including failures, are `Cache-Control: no-store`. ";
+const runtimeFileContract =
+  "The trailing `*` is the file name, not an object URL. Encode the full name with " +
+  "`encodeURIComponent(name)` so slashes travel as `%2F`; the router decodes exactly once. " +
+  "The wildcard also accepts slash-separated segments and avoids the router's 100-character " +
+  "named-parameter limit. Names are 1–512 UTF-8 bytes, with no empty, `.` or `..` segments; " +
+  "`store` is a camelCase manifest-defined file store. Patch ids are twelve lowercase letters " +
+  "or digits; version ids are `ver_` followed by 24 lowercase letters or digits. The loaded " +
+  "manifest, never a client-supplied name, is the authority. Raw byte bodies are not JSON or " +
+  "base64; the byte limit is 20 MiB. These file routes are reserved: after the same admission " +
+  "they currently answer `invalid_request` on company versions or `not_available_on_public` " +
+  "on public versions, never a fake success. ";
+
+export class RuntimeGroup extends HttpApiGroup.make("runtime", { topLevel: true })
+  .add(
+    HttpApiEndpoint.post("call", "/runtime/call", {
+      headers: { ...runtimeHeaders, origin: Schema.optionalKey(Schema.String) },
+      payload: RuntimeCall,
+      success: RuntimeSuccess,
+      error: runtimeErrors
+    }).annotateMerge(
+      describe(
+        runtimeAdmission +
+          "The JSON envelope is `{ patchId, versionId, principal, wire, op, args }`; its principal " +
+          "and wire must match the required headers. Mutating operations additionally require " +
+          "the exact shell `Origin` (scheme, host and port); a cross-site or missing Origin is " +
+          "refused before execution. Only `me` with `args: {}` is admitted now. Its success is " +
+          "`{ ok: true, value: { user: { id, name, email }, company: { id, handle, name }, admin } }` " +
+          "on company versions, or `{ ok: true, value: null }` on public versions; `admin` is a UI " +
+          "hint, not additional authority. Unknown operations on company versions answer " +
+          "`invalid_request`. The current call body cap is 64 KiB (`too_large`, 413). Failures " +
+          "are `{ ok: false, error, code, correlationId? }`; every logged failure carries its " +
+          "runtime-log correlation id, while read failures such as `me` do not. Unsupported " +
+          "operation names are not part of the request union."
+      )
+    ),
+    HttpApiEndpoint.put("putFile", "/runtime/files/:patchId/:versionId/:store/*", {
+      params: runtimeFileParams,
+      headers: {
+        ...runtimeHeaders,
+        origin: Schema.optionalKey(Schema.String),
+        "content-type": Schema.optionalKey(Schema.String)
+      },
+      payload: RuntimeBytes,
+      success: RuntimeBytes,
+      error: runtimeErrors
+    }).annotateMerge(
+      describe(
+        runtimeAdmission +
+          "PUT additionally requires the exact shell `Origin` (scheme, host and port) and " +
+          "`Content-Type` for the uploaded bytes. Principal and wire travel only in their " +
+          "required headers; the body contains only raw file bytes. " +
+          runtimeFileContract +
+          "The declared byte response contract uses `application/octet-stream` as its default, " +
+          "with the actual media type supplied by the handler."
+      )
+    ),
+    HttpApiEndpoint.get("getFile", "/runtime/files/:patchId/:versionId/:store/*", {
+      params: runtimeFileParams,
+      headers: {
+        ...runtimeHeaders,
+        "sec-fetch-site": Schema.optionalKey(Schema.String)
+      },
+      success: RuntimeBytes,
+      error: runtimeErrors
+    }).annotateMerge(
+      describe(
+        runtimeAdmission +
+          "GET additionally requires the exact browser header `Sec-Fetch-Site: same-origin`. " +
+          "Principal and wire travel only in their required headers; GET has no request body. " +
+          runtimeFileContract +
+          "The byte response carries the stored `Content-Type` and `no-store`, never a redirect " +
+          "to uploaded content. HTML and SVG remain bytes, never a navigable page."
+      )
+    )
+  )
+  .prefix("/api") {}
+
 export class PatchyApi extends HttpApi.make("patchy")
-  .add(AuthGroup, PatchesGroup, ReleaseGroup)
+  .add(AuthGroup, PatchesGroup, ReleaseGroup, RuntimeGroup)
   .annotateMerge(
     OpenApi.annotations({
       title: "Patchy Cloud API",
       description:
-        "Every route lives under `/api` and speaks JSON. `GET /api/release`, `POST /api/login/device` and " +
-        "`POST /api/login/device/token` are unauthenticated. Every other route needs " +
-        "`Authorization: Bearer <token>`; a missing or invalid token is a 401 with " +
-        "`{ ok: false, error }`. A refusal is always `{ ok: false, error }`, plus a `code` and " +
-        "the number a client needs on the ones it branches on. A 429 also carries a " +
-        "`Retry-After` header with the same seconds as `retryAfterSeconds`."
+        "Every route lives under `/api`. Most speak JSON; runtime file routes carry raw bytes. " +
+        "`GET /api/release`, `POST /api/login/device` and `POST /api/login/device/token` are " +
+        "unauthenticated. `/api/runtime/*` admits only the shell's browser requests with the " +
+        "runtime headers and loaded-version admission described below; machine tokens are refused. " +
+        "Other routes need `Authorization: Bearer <token>`; a missing or invalid token is a " +
+        "401 with `{ ok: false, error }`. Refusals add `code` and operation-specific fields when " +
+        "clients branch on them. A 429 carries `Retry-After` seconds; bearer API rate-limit " +
+        "responses also carry `retryAfterSeconds`."
     })
   ) {}

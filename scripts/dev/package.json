@@ -13,6 +13,7 @@
     "@patchy/companies": "workspace:*",
     "@patchy/company-database": "workspace:*",
     "@patchy/patches": "workspace:*",
+    "@patchy/runtime": "workspace:*",
     "@patchy/sql": "workspace:*",
     "effect": "catalog:",
     "embedded-postgres": "18.4.0-beta.17"

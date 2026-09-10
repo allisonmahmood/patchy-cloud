@@ -66,6 +66,12 @@ The published document runs no script, so the patch cannot watch the reader or r
 
 Code runs in the viewer's browser and acts **as the viewer**. It never holds a credential: not the Clerk session, not an integration token, not another patch's storage. It learns who the viewer is as claims, and it reaches everything else — the patch's primitives (its tables, its files) and the company's integrations — through Patchy, which performs the call as the viewer within the viewer's own permissions. A tier 1 patch can therefore never do more than the person using it could do themselves. Nothing leaves the browser except through Patchy: there is no direct outbound to third-party APIs, credentialed or not — reaching outside systems is what integrations are for.
 
+The runtime operation path now admits `me`: a company version returns its active
+viewer and company, while a current public version returns null even to a
+signed-in viewer. Requests are bound to the loaded version and cannot switch
+acting users mid-page. Runtime has the attributed mutation/integration log;
+the broker and table, file and integration operations remain future work.
+
 What tier 1 cannot do is anything the viewer's browser is not there to do: no pre-processing before the data reaches the page, no work on behalf of one viewer visible to another. Save a photo to file storage and it is saved; that is the whole story.
 
 ### Tier 2 — hosted

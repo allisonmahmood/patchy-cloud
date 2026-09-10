@@ -56,6 +56,7 @@ A Turborepo monorepo managed with pnpm. [AGENTS.md](AGENTS.md) is the guide to w
 - `packages/auth` — browser sessions, the shared login door, device login, machine tokens, Your machines, bearer identity, revocation, the shared development seed and the `auth` API group (`@patchy/auth`).
 - `packages/patches` — user-owned patches and versions, replay-safe publishing and sharing, release metadata, retention and the expiry sweep, owner-only deletion, and the `patches` API group (`@patchy/patches`).
 - `packages/serving` — the page routes and login door integration, sharing-aware CSP and caching, and the trusted-proxy schema (`@patchy/serving`).
+- `packages/runtime` — browser-only admission, loaded-version binding, operation dispatch and the attributed runtime log; currently admits `me` (`@patchy/runtime`).
 - `packages/content-store` — the object store for a patch's bytes, with filesystem and Azure Blob layers (`@patchy/content-store`).
 - `packages/sql`, `packages/analytics`, `packages/limits` — the Postgres client and Migrator, the event service, the rate limiter.
 - `packages/company-database` — company placements, lazy Postgres databases, bounded pools, transactional patch locks, cumulative inventory and the PGlite development layer.

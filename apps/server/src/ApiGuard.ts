@@ -82,6 +82,13 @@ export function classify(method: string, requestTarget: string): Target {
   }
   if (method === "GET" && pathname === "/api/release") return { kind: "public" };
   if (method === "POST" && pathname === "/api/publish") return { kind: "publish" };
+  // Browser runtime admission owns its session, audience and per-viewer limit.
+  if (
+    (method === "POST" && pathname === "/api/runtime/call") ||
+    ((method === "PUT" || method === "GET") &&
+      /^\/api\/runtime\/files\/[^/]+\/[^/]+\/[^/]+\/.+$/.test(pathname))
+  )
+    return { kind: "public" };
   if (method === "POST") {
     if (pathname === "/api/login/device") return { kind: "device-login", action: "start" };
     if (pathname === "/api/login/device/token") return { kind: "device-login", action: "poll" };

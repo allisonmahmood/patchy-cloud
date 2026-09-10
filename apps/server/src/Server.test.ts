@@ -8,6 +8,8 @@ import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
+import * as Schema from "effect/Schema";
+import { PublishCreated, PublishUpdated, WIRE_VERSION } from "@patchy/api";
 import * as Cookies from "effect/unstable/http/Cookies";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
@@ -476,5 +478,101 @@ it.layer(
           assert.strictEqual(yield* head.text, "");
         }
       })
+  );
+});
+
+const decodeCreated = Schema.decodeUnknownSync(PublishCreated);
+const decodeUpdated = Schema.decodeUnknownSync(PublishUpdated);
+it.layer(server())("runtime over the real server and Patches resolver", (it) => {
+  it.effect("binds exact versions and rechecks sharing without passing the bearer API guard", () =>
+    Effect.gen(function* () {
+      const created = decodeCreated(
+        yield* (yield* publish(DEV_SEED.token, {
+          html: html("Runtime version one"),
+          scope: "public"
+        })).json
+      );
+      const call = (versionId: string, cookie?: string, op = "me") =>
+        send(
+          HttpClientRequest.post("/api/runtime/call").pipe(
+            HttpClientRequest.setHeaders({
+              "x-patchy-wire": String(WIRE_VERSION),
+              "x-patchy-principal": "null",
+              ...(cookie === undefined ? {} : { cookie })
+            }),
+            HttpClientRequest.bodyJsonUnsafe({
+              patchId: created.patchId,
+              versionId,
+              wire: WIRE_VERSION,
+              principal: null,
+              op,
+              args: {}
+            })
+          )
+        );
+      assert.deepStrictEqual(yield* answer(yield* call(created.versionId)), {
+        status: 200,
+        body: { ok: true, value: null }
+      });
+      const updated = decodeUpdated(
+        yield* (yield* publish(DEV_SEED.token, {
+          html: html("Runtime version two"),
+          patchId: created.patchId
+        })).json
+      );
+      assert.include(yield* (yield* call(created.versionId)).json, { code: "session_expired" });
+      const historical = yield* call(created.versionId, sessionCookie());
+      assert.strictEqual(historical.status, 200);
+      assert.deepInclude(yield* historical.json, {
+        ok: true,
+        value: {
+          user: { id: DEV_SEED.userId, name: DEV_SEED.userName, email: DEV_SEED.email },
+          company: {
+            id: DEV_SEED.companyId,
+            handle: DEV_SEED.companyHandle,
+            name: DEV_SEED.companyName
+          },
+          admin: true
+        }
+      });
+      assert.include(yield* (yield* call(updated.versionId, sessionCookie(), "tables.get")).json, {
+        code: "not_available_on_public"
+      });
+      const other = decodeCreated(
+        yield* (yield* publish(DEV_SEED.token, { html: html("Other runtime patch") })).json
+      );
+      assert.include(yield* (yield* call(other.versionId, sessionCookie())).json, {
+        code: "access_denied"
+      });
+      yield* send(
+        HttpClientRequest.post(`/api/patches/${created.patchId}/share`).pipe(
+          HttpClientRequest.bearerToken(DEV_SEED.token),
+          HttpClientRequest.bodyJsonUnsafe({ scope: "company" })
+        )
+      );
+      assert.include(yield* (yield* call(updated.versionId)).json, { code: "session_expired" });
+      const oversized = yield* send(
+        HttpClientRequest.post("/api/runtime/call").pipe(
+          HttpClientRequest.setHeaders({ "x-patchy-wire": "1", "x-patchy-principal": "null" }),
+          HttpClientRequest.bodyStream(
+            Stream.succeed(
+              new TextEncoder().encode(
+                JSON.stringify({
+                  patchId: created.patchId,
+                  versionId: updated.versionId,
+                  principal: null,
+                  wire: 1,
+                  op: "me",
+                  args: { padding: "x".repeat(70 * 1024) }
+                })
+              )
+            ),
+            { contentType: "application/json" }
+          )
+        )
+      );
+      assert.strictEqual(oversized.status, 413);
+      assert.include(yield* oversized.json, { code: "too_large" });
+    })
   );
 });

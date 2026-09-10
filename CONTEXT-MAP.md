@@ -8,6 +8,7 @@ Patchy Cloud is one deployment: the hosting server on one side, the `patchy` CLI
 - [Serving](./packages/serving/CONTEXT.md) — `packages/serving`. Patch addresses and version/content URLs, tier 0 pages, the login door, serving guarantees, admitted visits and trusted-proxy attribution. Higher runtimes, the connect door and patch identity remain future work
 - [Companies](./packages/companies/CONTEXT.md) — `packages/companies`. Companies and handles, users and roles, create-or-join, invitations, the company page, deactivation and reactivation. Groups, verified domains, SSO, billing, suspension and the operator's surfaces remain future work
 - [Auth](./packages/auth/CONTEXT.md) — `packages/auth`. Clerk session verification and viewers, user-owned machine tokens, device login, identity, revocation and bearer parsing, the sign-in and sign-out pages, Your machines, the `auth` API group and the shared dev seed
+- [Runtime](./packages/runtime/CONTEXT.md) — `packages/runtime`. Browser-only operation admission, loaded-version binding, acting identity, wire versions, dispatch and the runtime log. Currently admits only `me`; tables, files and integration handlers arrive with their capabilities
 - [Integrations](./packages/integrations/CONTEXT.md) — no code yet. The company-scoped primitive that reaches outside systems: integration, connection and personal connection, connection handle, the typed client patch code is handed, the call log
 - [Publishing](./packages/cli/CONTEXT.md) — `packages/cli` and the bundled skill, the `patchy` CLI agents use to publish patches
 
@@ -32,6 +33,11 @@ Supporting packages rather than product contexts; their glossaries define only t
 - **Publishing → `api`**: publishes through the shared wire contract using a user-owned machine token
 - **Serving → Patches, Auth**: relies on Patches for content, sharing and visits, and on Auth for viewer identity and session admission
 - **Patches → Content store**: owns the lifecycle of stored patch content, from publication through expiry
+- **Runtime → Auth, Limits, SQL**: admits the browser session as the acting identity, limits calls per viewer and owning patch, and records mutations and integration calls before execution
+- **Patches → Runtime**: supplies Runtime's loaded-version lookup: the manifest, effective sharing scope, owning company and server-stamped wire version
+- **Hosting → Runtime, Patches**: supplies the loaded-version layer and the operation handler map; Runtime does not import Patches
+- **Primitives → Company database, Runtime** (planned): implements table and file operations under the admitted binding
+- **Integrations → Runtime, Auth** (planned): implements integration operations as the admitted viewer
 - **Companies, Auth, Patches → SQL**: persist their own domain data in the shared Postgres database
 - **Company database → SQL, Content store**: keeps placements in the platform database, inventories in each company database, and reclaims unreferenced file objects
 - **Auth, Patches → Analytics**: report business events
