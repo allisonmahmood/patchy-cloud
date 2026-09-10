@@ -162,14 +162,20 @@ it.layer(Patches.layer.pipe(Layer.provideMerge(Fixtures.database)))("Patches", (
       const before = Option.getOrThrow(yield* service.find(owned));
 
       yield* TestClock.adjust(DAY);
-      assert.strictEqual(yield* service.setScope(owned, sibling.user.id, "public"), "public");
+      assert.strictEqual(
+        (yield* service.setScope(owned, sibling.user.id, "public")).scope,
+        "public"
+      );
       const published = Option.getOrThrow(yield* service.find(owned));
       assert.strictEqual(published.patch.scope, "public");
       assert.strictEqual(published.patch.expiresAt, before.patch.expiresAt);
       assert.deepStrictEqual(published.version, before.version);
       assert.isTrue(Option.isNone(yield* service.find(owned, 2)));
 
-      assert.strictEqual(yield* service.setScope(owned, uploader.user.id, "company"), "company");
+      assert.strictEqual(
+        (yield* service.setScope(owned, uploader.user.id, "company")).scope,
+        "company"
+      );
       const restricted = Option.getOrThrow(yield* service.find(owned));
       assert.strictEqual(restricted.patch.scope, "company");
       assert.strictEqual(restricted.patch.expiresAt, before.patch.expiresAt);

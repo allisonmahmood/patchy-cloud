@@ -55,7 +55,7 @@ test("login-door: portal handshake, session renewal and company isolation", asyn
   const refused = await outsider.reload();
   expect(refused?.status()).toBe(404);
   const refusedBody = await refused!.text();
-  const missing = await outsider.goto(`${live.origin}/d/000000000000`);
+  const missing = await outsider.goto(new URL("missing-patch", live.patchUrl).href);
   expect(missing?.status()).toBe(404);
   expect(missing?.headers()["cache-control"]).toBe("private, no-store");
   expect(refused?.headers()["cache-control"]).toBe(missing?.headers()["cache-control"]);

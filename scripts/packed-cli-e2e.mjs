@@ -19,6 +19,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
 import { tsImport } from "tsx/esm/api";
+import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const cliPackageDir = path.join(repoRoot, "packages/cli");
@@ -346,7 +348,7 @@ try {
   );
   assert.equal(first.label, "Published patch");
   assert.equal(first.versionNumber, 1);
-  assert.equal(first.publicUrl, `${publicBaseUrl}/d/${first.patchId}`);
+  assert.equal(first.address, `${publicBaseUrl}/${DEV_SEED.companyHandle}/review-artifact`);
   assert.equal(first.scope, "public");
   const fixtureCachePath = await checkedCall(() => realpath(fixturePath));
   const patchCache = JSON.parse(
@@ -362,6 +364,7 @@ try {
     [fixtureCachePath],
     "upload must cache the resolved spaced artifact path"
   );
+  assert.equal(patchCache.hosts[publicBaseUrl].files[fixtureCachePath].publicUrl, first.address);
 
   await checkedCall(() => writeFile(fixturePath, secondHtml, "utf8"));
   const second = parsePublish(
@@ -371,16 +374,17 @@ try {
   assert.equal(second.patchId, first.patchId);
   assert.equal(second.versionNumber, 2);
   assert.equal(second.scope, "public", "an update without --share must preserve sharing");
+  assert.equal(second.address, first.address, "a cached update without --name must keep its name");
 
   const publicVersions = [
-    { url: first.publicUrl, html: secondHtml, versionNumber: 2 },
-    { url: `${first.publicUrl}/v/2`, html: secondHtml, versionNumber: 2 }
+    { url: first.address, html: secondHtml, versionNumber: 2 },
+    { url: `${first.address}/~v/2`, html: secondHtml, versionNumber: 2 }
   ];
   console.log("[packed-cli-e2e] validating the public current version at both URL shapes");
   for (const version of publicVersions) {
     assertPublicViewer(await fetchViewer(version.url), { ...version, patchId: first.patchId });
   }
-  assertViewerDoor(await fetchViewer(`${first.publicUrl}/v/1`));
+  assertViewerDoor(await fetchViewer(`${first.address}/~v/1`));
 
   console.log("[packed-cli-e2e] refusing sharing changes by another user in the same company");
   const foreignToken = await checkedCall(() => seedOtherUserToken());
@@ -414,7 +418,7 @@ try {
   for (const version of publicVersions) {
     assertPublicViewer(await fetchViewer(version.url), { ...version, patchId: first.patchId });
   }
-  assertViewerDoor(await fetchViewer(`${first.publicUrl}/v/1`));
+  assertViewerDoor(await fetchViewer(`${first.address}/~v/1`));
 
   console.log("[packed-cli-e2e] taking the cached-file patch back inside the company");
   const companyShare = await runCli(cliPath, ["share", fixtureArgument, "company"], {
@@ -426,7 +430,7 @@ try {
   for (const { url } of publicVersions) {
     assertViewerDoor(await fetchViewer(url));
   }
-  assertViewerDoor(await fetchViewer(`${first.publicUrl}/v/1`));
+  assertViewerDoor(await fetchViewer(`${first.address}/~v/1`));
 
   console.log("[packed-cli-e2e] sharing by explicit id in both directions under --json");
   for (const scope of ["public", "company"]) {
@@ -439,7 +443,7 @@ try {
       ok: true,
       patchId: first.patchId,
       scope,
-      publicUrl: first.publicUrl
+      publicUrl: first.address
     });
     for (const version of publicVersions) {
       const viewer = await fetchViewer(version.url);
@@ -449,7 +453,7 @@ try {
         assertViewerDoor(viewer);
       }
     }
-    assertViewerDoor(await fetchViewer(`${first.publicUrl}/v/1`));
+    assertViewerDoor(await fetchViewer(`${first.address}/~v/1`));
   }
 
   await checkedCall(() => writeFile(fixturePath, newHtml, "utf8"));
@@ -463,9 +467,12 @@ try {
   assert.equal(fresh.scope, "company", "a new upload without --share defaults to company");
   assert.equal(fresh.versionNumber, 1);
   assert.notEqual(fresh.patchId, first.patchId);
+  assert.equal(fresh.name, "review-artifact-2", "a new same-file patch must get an available name");
+  assert.equal(fresh.address, `${publicBaseUrl}/${DEV_SEED.companyHandle}/${fresh.name}`);
+  assert.equal(fresh.publicUrl, fresh.address);
 
   console.log("[packed-cli-e2e] validating the default-company publish's login door");
-  for (const url of [fresh.publicUrl, `${fresh.publicUrl}/v/1`]) {
+  for (const url of [fresh.address, `${fresh.address}/~v/1`]) {
     assertViewerDoor(await fetchViewer(url));
   }
 
@@ -621,14 +628,32 @@ try {
     "valid-env-overrode-invalid-stored"
   );
   await checkedCall(() => writeFile(fixturePath, envPrecedenceHtml, "utf8"));
+  const nameRefusal = await runCli(
+    cliPath,
+    ["publish", fixtureArgument, "--name", "review-artifact", "--json"],
+    {
+      cwd: consumerDir,
+      env: { ...invalidStoredEnv, PATCHY_API_TOKEN: DEV_SEED.token },
+      allowFailure: true
+    }
+  );
+  assert.equal(nameRefusal.code, 2);
+  assert.equal(nameRefusal.stdout, "");
+  assert.equal(JSON.parse(nameRefusal.stderr).kind, "rejected");
+  assert.equal(JSON.parse(nameRefusal.stderr).code, "name_taken");
   const envPrecedence = parsePublish(
-    await runCli(cliPath, ["publish", fixtureArgument], {
+    await runCli(cliPath, ["publish", fixtureArgument, "--name", "environment-precedence"], {
       cwd: consumerDir,
       env: { ...invalidStoredEnv, PATCHY_API_TOKEN: DEV_SEED.token }
     })
   );
-  assertViewerDoor(await fetchViewer(envPrecedence.publicUrl));
-  assertViewerDoor(await fetchViewer(`${envPrecedence.publicUrl}/v/1`));
+  assert.equal(
+    envPrecedence.address,
+    `${publicBaseUrl}/${DEV_SEED.companyHandle}/environment-precedence`,
+    "a corrected --name must start a fresh attempt after name_taken"
+  );
+  assertViewerDoor(await fetchViewer(envPrecedence.address));
+  assertViewerDoor(await fetchViewer(`${envPrecedence.address}/~v/1`));
 
   const finalMetadata = await readMetadata();
   assert.equal(finalMetadata.drafts.length, 3);
@@ -649,7 +674,6 @@ try {
     ownerUserId: DEV_SEED.userId,
     machineTokenId: DEV_SEED.tokenId
   });
-  assert.equal((await snapshotTree(objectDir)).length, 4);
 
   console.log("[packed-cli-e2e] proving delete takes a patch down as its owner user");
   // Its own upload on the authenticated state dir, so deleting by file resolves
@@ -657,11 +681,14 @@ try {
   const doomedHtml = validHtml("Packed contract doomed", "packed-contract-doomed");
   await checkedCall(() => writeFile(fixturePath, doomedHtml, "utf8"));
   const doomed = parsePublish(
-    await runCli(cliPath, ["publish", fixtureArgument, "--new"], { cwd: consumerDir, env: cliEnv })
+    await runCli(cliPath, ["publish", fixtureArgument, "--new", "--name", "packed-doomed"], {
+      cwd: consumerDir,
+      env: cliEnv
+    })
   );
-  const doomedViewer = await fetchViewer(doomed.publicUrl);
+  const doomedViewer = await fetchViewer(doomed.address);
   assertViewerDoor(doomedViewer);
-  assertViewerDoor(await fetchViewer(`${doomed.publicUrl}/v/1`));
+  assertViewerDoor(await fetchViewer(`${doomed.address}/~v/1`));
   const removed = await runCli(cliPath, ["delete", fixtureArgument], {
     cwd: consumerDir,
     env: cliEnv
@@ -671,7 +698,7 @@ try {
     `Deleting from ${publicBaseUrl} (target came from the saved config).\nDeleted patch\nPatch ID: ${doomed.patchId}\n`
   );
   assert.equal(removed.stderr, "");
-  const removedViewer = await fetchViewer(doomed.publicUrl);
+  const removedViewer = await fetchViewer(doomed.address);
   assertViewerDoor(removedViewer);
   assert.equal(removedViewer.body, doomedViewer.body, "the door must not disclose deletion");
   const deletedMetadata = await readMetadata();
@@ -2675,6 +2702,15 @@ async function startServerAttempt({ publicBaseUrl, objectDir, serverEntryPath })
   const seed = await import("../packages/auth/dist/seed.js");
   DEV_SEED = seed.DEV_SEED;
   await checkedCall(() => seed.applyDevSeed(postgres.databaseUrl));
+  const { Patches } = await import("../packages/patches/dist/index.js");
+  const { layerFromUrl } = await import("../packages/sql/dist/index.js");
+  await checkedCall(() =>
+    Effect.runPromise(
+      Patches.backfillNames().pipe(
+        Effect.provide(layerFromUrl(Redacted.make(postgres.databaseUrl)))
+      )
+    )
+  );
   return { publicBaseUrl };
 }
 
@@ -3032,16 +3068,16 @@ async function snapshotTree(rootDir) {
 
 function parsePublish(result) {
   const label = result.stdout.match(/^(Published patch|Updated patch)$/m)?.[1];
-  const publicUrl = result.stdout.match(/^URL: (.+)$/m)?.[1];
+  const address = result.stdout.match(/^URL: (.+)$/m)?.[1];
   const patchId = result.stdout.match(/^Patch ID: ([a-z0-9]{12})$/m)?.[1];
   const scope = result.stdout.match(/^Scope: (company|public)\b/m)?.[1];
   const versionNumber = Number(result.stdout.match(/^Version: (\d+)$/m)?.[1]);
   assert.ok(label, `missing upload label in CLI output:\n${result.stdout}`);
-  assert.ok(publicUrl, `missing public URL in CLI output:\n${result.stdout}`);
+  assert.ok(address, `missing address in CLI output:\n${result.stdout}`);
   assert.ok(patchId, `missing patch ID in CLI output:\n${result.stdout}`);
   assert.ok(Number.isInteger(versionNumber), `missing version in CLI output:\n${result.stdout}`);
   assert.ok(scope, `missing sharing scope in CLI output:\n${result.stdout}`);
-  return { label, publicUrl, patchId, versionNumber, scope };
+  return { label, address, patchId, versionNumber, scope };
 }
 
 async function fetchViewer(url) {

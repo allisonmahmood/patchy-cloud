@@ -30,6 +30,8 @@ To bind the seeded **Patchy Dev** admin to the person's Clerk development user,
 follow [Seed](../../../docs/DEVELOPMENT.md#seed) before their first sign-in.
 Read it again before changing that binding on an existing instance: a healthy
 idempotent start does not reseed or move an enrolled user between companies.
+The seed also backfills missing patch names from titles in creation order; named
+patches keep their addresses. The test Postgres template runs the same backfill.
 
 ```sh
 pnpm dev
@@ -72,14 +74,14 @@ and company; **Dev Machine** is the seed, not evidence of a personal login.
 pnpm patchy publish examples/plan.html --json
 ```
 
-Open the published URL in that same signed-in browser.
+Open the returned `address` (`/<company>/<name>`) in that same signed-in browser.
 
 A seed-only CLI check can skip login: `pnpm patchy whoami` names **Dev Machine**
 and publishes belong to the seeded admin. Its company pages can only be read by
 a browser user in **Patchy Dev**; a different signed-in company gets 404.
 
 New patches default to company scope; use the returned `scope` to interpret
-`publicUrl`. Before reusing a cached publish after a reset or identity switch,
+`address` (`publicUrl` equals it). Before reusing a cached publish after a reset or identity switch,
 read [Reading a published patch](../../../docs/DEVELOPMENT.md#reading-a-published-patch)
 for when `--new` is needed. Login does not transfer ownership of a seed's patch.
 
@@ -90,7 +92,7 @@ For `curl` against the API with the token, or for `DATABASE_URL`, export the env
 Fetch the page and read what the server actually sent:
 
 ```sh
-curl -i <publicUrl>
+curl -i <address>
 ```
 
 With no cookies, a company-scoped patch must answer **401** with the HTML

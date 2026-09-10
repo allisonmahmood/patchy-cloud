@@ -22,6 +22,7 @@ import * as Prompt from "effect/unstable/cli/Prompt";
 import {
   CURRENT_RELEASE,
   MANIFEST_VERSION,
+  PatchName,
   Identity,
   Ok,
   Shared,
@@ -63,6 +64,7 @@ const encodePublish = Schema.encodeSync(Schema.Union([PublishCreated, PublishUpd
 const encodeOk = Schema.encodeSync(Ok);
 const encodeShared = Schema.encodeSync(Shared);
 const decodeSharingScope = Schema.decodeUnknownEffect(SharingScope);
+const decodePublishName = Schema.decodeUnknownEffect(PatchName);
 const scopeLines = {
   company: "Scope: company (signed-in colleagues in your company)",
   public: "Scope: public (anyone with the link)"
@@ -354,7 +356,8 @@ const sendPublish = Effect.fn("sendPublish")(function* (
                     error.code === "invalid_manifest" ||
                     error.code === "tier_mismatch" ||
                     error.errors !== undefined)) ||
-                  (error.status === 409 && error.code === "publish_key_conflict") ||
+                  (error.status === 409 &&
+                    (error.code === "publish_key_conflict" || error.code === "name_taken")) ||
                   (error.status === 404 &&
                     attempt.request.patchId !== undefined &&
                     error.error === PATCH_NOT_FOUND));
@@ -395,7 +398,7 @@ const sendPublish = Effect.fn("sendPublish")(function* (
   yield* state.forgetPendingPublish(instance.apiUrl, attempt.request.publishKey);
   yield* Output.report(encodePublish(published), [
     attempt.request.patchId !== undefined ? "Updated patch" : "Published patch",
-    `URL: ${published.publicUrl}`,
+    `URL: ${published.address}`,
     scopeLines[published.scope],
     `Patch ID: ${published.patchId}`,
     `Tier: ${published.tier}`,
@@ -410,6 +413,10 @@ const publish = Command.make(
   "publish",
   {
     file: fileArgument,
+    name: Flag.string("name").pipe(
+      Flag.withDescription("Set the patch's name in its company"),
+      Flag.optional
+    ),
     patch: Flag.string("patch").pipe(
       Flag.withDescription("Update an existing patch only; never creates a patch"),
       Flag.optional
@@ -443,6 +450,17 @@ const publish = Command.make(
         if (Option.isSome(options.patch) && options.new) {
           return yield* new LocalError({ message: "--patch and --new cannot be used together." });
         }
+        const name = Option.isSome(options.name)
+          ? yield* decodePublishName(options.name.value).pipe(
+              Effect.mapError(
+                () =>
+                  new LocalError({
+                    message:
+                      "--name must be 3–32 lowercase letters, digits or hyphens, with no hyphen at either end."
+                  })
+              )
+            )
+          : undefined;
         const release = yield* client
           .release()
           .pipe(
@@ -476,6 +494,7 @@ const publish = Command.make(
             manifest: {
               manifestVersion: MANIFEST_VERSION,
               release: VERSION,
+              ...(name === undefined ? {} : { name }),
               tier: 0,
               tables: {},
               files: {},
@@ -487,6 +506,7 @@ const publish = Command.make(
             publishKey: newInternalId("pub"),
             metadata: new PublishMetadata({
               ...(yield* Git.metadata(path.dirname(resolved))),
+              filename: path.basename(resolved),
               cliVersion: VERSION,
               fileSha256: sha256(html)
             })

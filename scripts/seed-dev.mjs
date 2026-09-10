@@ -23,7 +23,7 @@ for (const fixture of fixtures) {
       manifest: { manifestVersion, release, tier: 0, tables: {}, files: {}, uses: {} },
       html: fixture.html,
       publishKey: randomUUID(),
-      metadata: {}
+      metadata: { filename: fixture.filename }
     })
   });
 
@@ -34,7 +34,7 @@ for (const fixture of fixtures) {
   }
 
   const result = await response.json();
-  console.log(`${fixture.filename}: ${result.publicUrl}`);
+  console.log(`${fixture.filename}: ${result.address}`);
 }
 
 console.log(`Seeded ${fixtures.length} HTML fixtures from packages/core/fixtures/accept/.`);

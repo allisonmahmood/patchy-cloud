@@ -85,12 +85,19 @@ it.layer(
           HttpClientRequest.bodyJsonUnsafe(publishBody({ html: html("Booted"), scope: "public" }))
         )
       );
-      const body = (yield* created.json) as { patchId: string; publicUrl: string };
+      const body = (yield* created.json) as {
+        patchId: string;
+        name: string;
+        address: string;
+        publicUrl: string;
+      };
       assert.strictEqual(created.status, 201);
-      assert.strictEqual(body.publicUrl, `https://patchy.example/d/${body.patchId}`);
+      assert.strictEqual(body.address, `${publicBaseUrl}/${DEV_SEED.companyHandle}/${body.name}`);
+      assert.strictEqual(body.publicUrl, body.address);
+      const patchPath = new URL(body.address).pathname;
       const sql = yield* SqlClient.SqlClient;
 
-      for (const path of [`/d/${body.patchId}`, `/d/${body.patchId}/v/1`]) {
+      for (const path of [patchPath, `${patchPath}/~v/1`]) {
         const page = yield* send(HttpClientRequest.get(path));
         assert.strictEqual(page.status, 200);
         assert.strictEqual(page.headers["x-robots-tag"], "noindex");
@@ -130,7 +137,8 @@ it.layer(
   it.effect("bounds sharing bodies before changing a company patch's scope", () =>
     Effect.gen(function* () {
       const created = yield* publish(DEV_SEED.token, { html: html("Bounded sharing secret") });
-      const { patchId } = (yield* created.json) as { patchId: string };
+      const { patchId, address } = (yield* created.json) as { patchId: string; address: string };
+      const patchPath = new URL(address).pathname;
       const share = HttpClientRequest.post(`/api/patches/${patchId}/share`).pipe(
         HttpClientRequest.bearerToken(DEV_SEED.token)
       );
@@ -156,7 +164,7 @@ it.layer(
           assert.strictEqual(response.status, status);
           expect(yield* response.json).toEqual({ ok: false, error: expect.any(String) });
         }
-        for (const path of [`/d/${patchId}`, `/d/${patchId}/v/1`]) {
+        for (const path of [patchPath, `${patchPath}/~v/1`]) {
           const page = yield* send(HttpClientRequest.get(path));
           assert.strictEqual(page.status, 401);
           assert.notInclude(yield* page.text, "Bounded sharing secret");
@@ -166,9 +174,9 @@ it.layer(
       const shared = yield* send(share.pipe(HttpClientRequest.bodyJsonUnsafe({ scope: "public" })));
       assert.deepStrictEqual(yield* answer(shared), {
         status: 200,
-        body: { ok: true, patchId, scope: "public", publicUrl: `${publicBaseUrl}/d/${patchId}` }
+        body: { ok: true, patchId, scope: "public", publicUrl: address }
       });
-      const page = yield* send(HttpClientRequest.get(`/d/${patchId}`));
+      const page = yield* send(HttpClientRequest.get(patchPath));
       assert.strictEqual(page.status, 200);
       assert.include(yield* page.text, "Bounded sharing secret");
     })
@@ -177,13 +185,13 @@ it.layer(
   it.effect("keeps company pages behind the same door and returns from the sign-in handshake", () =>
     Effect.gen(function* () {
       const created = yield* publish(DEV_SEED.token, { html: html("Company secret") });
-      const { patchId } = (yield* created.json) as { patchId: string };
-      const patchPath = `/d/${patchId}`;
+      const { address } = (yield* created.json) as { address: string };
+      const patchPath = new URL(address).pathname;
       for (const path of [
         patchPath,
-        `${patchPath}/v/1`,
-        "/d/missing12345",
-        "/d/missing12345/v/1"
+        `${patchPath}/~v/1`,
+        `/${DEV_SEED.companyHandle}/missing12345`,
+        `/${DEV_SEED.companyHandle}/missing12345/~v/1`
       ]) {
         const door = yield* send(HttpClientRequest.get(path));
         assert.strictEqual(door.status, 401);
@@ -230,7 +238,7 @@ it.layer(
       const target = new URL(handshake.headers.location!, publicBaseUrl);
       assert.strictEqual(`${target.pathname}${target.search}`, patchPath);
       const cookie = Cookies.toCookieHeader(handshake.cookies);
-      for (const path of [patchPath, `${patchPath}/v/1`]) {
+      for (const path of [patchPath, `${patchPath}/~v/1`]) {
         const page = yield* send(signedRequest(path, cookie));
         assert.strictEqual(page.status, 200);
         assert.strictEqual(page.headers["cache-control"], "private, no-store");
@@ -258,9 +266,9 @@ it.layer(
       }
       // The same browser session opens another company patch without visiting sign-in again.
       const second = yield* publish(DEV_SEED.token, { html: html("Colleague link") });
-      const secondPatch = (yield* second.json) as { patchId: string };
+      const secondPatch = (yield* second.json) as { address: string };
       assert.strictEqual(
-        (yield* send(signedRequest(`/d/${secondPatch.patchId}`, cookie))).status,
+        (yield* send(signedRequest(new URL(secondPatch.address).pathname, cookie))).status,
         200
       );
       const sql = yield* SqlClient.SqlClient;
@@ -278,7 +286,8 @@ it.layer(
   it.effect("conceals company patches at PostgreSQL version boundaries", () =>
     Effect.gen(function* () {
       const created = yield* publish(DEV_SEED.token, { html: html("Version boundary secret") });
-      const { patchId } = (yield* created.json) as { patchId: string };
+      const { patchId, address } = (yield* created.json) as { patchId: string; address: string };
+      const patchPath = new URL(address).pathname;
       const sql = yield* SqlClient.SqlClient;
       yield* sql`INSERT INTO companies (id, handle, name)
         VALUES ('cmp_version_foreign', 'version-foreign', 'Foreign')`;
@@ -288,8 +297,8 @@ it.layer(
       yield* sql`UPDATE patch_versions SET version_number = 2147483647 WHERE patch_id = ${patchId}`;
       const foreignCookie = sessionCookie("user_version_foreign", "version-foreign@example.com");
       for (const version of ["2147483647", "2147483648", "9007199254740993"]) {
-        const path = `/d/${patchId}/v/${version}`;
-        const missingPath = `/d/missing12345/v/${version}`;
+        const path = `${patchPath}/~v/${version}`;
+        const missingPath = `/${DEV_SEED.companyHandle}/missing12345/~v/${version}`;
         const door = yield* send(HttpClientRequest.get(path));
         const missingDoor = yield* send(HttpClientRequest.get(missingPath));
         assert.strictEqual(door.status, 401);
@@ -297,8 +306,11 @@ it.layer(
         assert.strictEqual(door.headers["cache-control"], "private, no-store");
         assert.strictEqual(missingDoor.headers["cache-control"], "private, no-store");
         assert.strictEqual(
-          (yield* door.text).replaceAll(encodeURIComponent(path), "PATCH"),
-          (yield* missingDoor.text).replaceAll(encodeURIComponent(missingPath), "PATCH")
+          (yield* door.text).replaceAll(encodeURIComponent(path).replaceAll("~", "%7E"), "PATCH"),
+          (yield* missingDoor.text).replaceAll(
+            encodeURIComponent(missingPath).replaceAll("~", "%7E"),
+            "PATCH"
+          )
         );
         const foreign = yield* send(signedRequest(path, foreignCookie));
         const missing = yield* send(signedRequest(missingPath, foreignCookie));
@@ -311,10 +323,10 @@ it.layer(
           Object.fromEntries(Object.entries(missing.headers).filter(([name]) => name !== "date"))
         );
       }
-      const lastValid = yield* send(signedRequest(`/d/${patchId}/v/2147483647`));
+      const lastValid = yield* send(signedRequest(`${patchPath}/~v/2147483647`));
       assert.strictEqual(lastValid.status, 200);
       assert.include(yield* lastValid.text, "Version boundary secret");
-      assert.strictEqual((yield* send(signedRequest(`/d/${patchId}/v/2147483648`))).status, 404);
+      assert.strictEqual((yield* send(signedRequest(`${patchPath}/~v/2147483648`))).status, 404);
     })
   );
 
@@ -324,12 +336,13 @@ it.layer(
         html: html("Public handshake"),
         scope: "public"
       });
-      const { patchId } = (yield* created.json) as { patchId: string };
+      const { address } = (yield* created.json) as { address: string };
+      const patchPath = new URL(address).pathname;
       const privatePublish = yield* publish(DEV_SEED.token, {
         html: html("Signed-in destination")
       });
-      const privatePatch = (yield* privatePublish.json) as { patchId: string };
-      for (const path of [`/d/${patchId}`, `/d/${patchId}/v/1`]) {
+      const privatePatch = (yield* privatePublish.json) as { address: string };
+      for (const path of [patchPath, `${patchPath}/~v/1`]) {
         const target = `${path}?view=chart`;
         const directives = sessionCookie()
           .split("; ")
@@ -348,7 +361,9 @@ it.layer(
         assert.strictEqual(page.headers["cache-control"], "public, max-age=60");
         assert.deepStrictEqual(Cookies.toSetCookieHeaders(page.cookies), []);
         assert.notInclude(yield* page.text, "<script");
-        const companyPage = yield* send(signedRequest(`/d/${privatePatch.patchId}`, cookie));
+        const companyPage = yield* send(
+          signedRequest(new URL(privatePatch.address).pathname, cookie)
+        );
         assert.strictEqual(
           companyPage.status,
           200,
@@ -376,7 +391,8 @@ it.layer(
     () =>
       Effect.gen(function* () {
         const created = yield* publish(DEV_SEED.token, { html: html("Restricted content") });
-        const { patchId } = (yield* created.json) as { patchId: string };
+        const { patchId, address } = (yield* created.json) as { patchId: string; address: string };
+        const addressPath = new URL(address).pathname;
         const sql = yield* SqlClient.SqlClient;
         yield* sql`INSERT INTO companies (id, handle, name) VALUES ('cmp_socket_foreign', 'socket-foreign', 'Foreign')`;
         yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
@@ -390,9 +406,9 @@ it.layer(
         const expiresAt = new Date((yield* Clock.currentTimeMillis) + 86_400_000).toISOString();
         yield* sql`UPDATE patches SET expires_at = ${expiresAt} WHERE id = ${patchId}`;
         const [before] = yield* sql`SELECT expires_at FROM patches WHERE id = ${patchId}`;
-        for (const suffix of ["", "/v/1"]) {
-          const patchPath = `/d/${patchId}${suffix}`;
-          const missingPath = `/d/missing12345${suffix}`;
+        for (const suffix of ["", "/~v/1"]) {
+          const patchPath = `${addressPath}${suffix}`;
+          const missingPath = `/${DEV_SEED.companyHandle}/missing12345${suffix}`;
           const foreign = yield* send(signedRequest(patchPath, foreignCookie));
           const missing = yield* send(signedRequest(missingPath, foreignCookie));
           assert.strictEqual(foreign.status, 404);
@@ -410,8 +426,14 @@ it.layer(
           assert.strictEqual(noSession.status, 401);
           // Only the return URL varies; neither response may reveal patch existence.
           assert.strictEqual(
-            (yield* noSession.text).replaceAll(encodeURIComponent(patchPath), "PATCH"),
-            (yield* missingNoSession.text).replaceAll(encodeURIComponent(missingPath), "PATCH")
+            (yield* noSession.text).replaceAll(
+              encodeURIComponent(patchPath).replaceAll("~", "%7E"),
+              "PATCH"
+            ),
+            (yield* missingNoSession.text).replaceAll(
+              encodeURIComponent(missingPath).replaceAll("~", "%7E"),
+              "PATCH"
+            )
           );
 
           const unenrolled = yield* send(signedRequest(patchPath, unenrolledCookie));

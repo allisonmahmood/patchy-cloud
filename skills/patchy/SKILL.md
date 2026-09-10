@@ -154,6 +154,12 @@ browser sign-out is a separate control on **Your machines**.
 - Republishing the same local file updates the patch it already created on that instance
   and preserves its sharing scope unless `--share company` or `--share public` is supplied.
   Pass `--new` to force a fresh patch, or `--patch` to update a known patch only.
+- Use `--name quarterly-plan` to set or rename a patch: 3–32 lowercase letters,
+  digits or hyphens, no leading or trailing hyphen. Without it, a new patch derives
+  its name from the filename and adds a suffix on collision; republishing keeps it.
+  `name_taken` is a definitive refusal (exit 2): choose another name and retry.
+  Renaming leaves a 308 redirect until another patch takes the old name; deleting
+  frees every name. Names never select the patch to update; the file cache or id does.
 - Set sharing during publish with `patchy publish './plan.html' --share public` or
   `--share company`. Change it without publishing a version with
   `patchy share './plan.html' public` or `patchy share './plan.html' company`;
@@ -163,9 +169,9 @@ browser sign-out is a separate control on **Your machines**.
 - Announce the returned `scope`, not an assumed default: `company` means signed-in
   colleagues in the user's company can open the link; `public` means anyone with
   the link can open it without signing in. Text output names both scope and readership.
-  The response field is still named `publicUrl`; that name does not make the page public.
+  Publish returns `name` and `address`; `publicUrl` equals the address, not a grant of public access.
 - Only the current version of a public patch is public; older versions stay behind the company door.
-  The current version is public at both `/d/<id>` and `/d/<id>/v/<current n>`.
+  The current version is public at both `/<company>/<name>` and `/<company>/<name>/~v/<current n>`.
   Older versions, and all versions after taking a patch back to company, have origin responses
   of `private, no-store` and answer 401 without a session. Previously public copies may remain
   cached for up to 60 seconds; already downloaded copies cannot be recalled.
@@ -187,7 +193,7 @@ browser sign-out is a separate control on **Your machines**.
   `unreachable` and matches the exit code. Branch on `code` when present: a local
   `release_mismatch` is `local`, the instance's is `rejected`.
   `publish --json` prints the instance's response as it is on the wire
-  (`patchId`, `publicUrl`, `scope`, `tier`, `versionNumber`, `schemaRevision`,
+  (`patchId`, `name`, `address`, `publicUrl`, `scope`, `tier`, `versionNumber`, `schemaRevision`,
   `provisioned`, `unused`, `warnings`, …).
   `share --json` prints `{ "ok": true, "patchId", "scope", "publicUrl" }`.
   Stderr carries failures only.
@@ -198,10 +204,13 @@ browser sign-out is a separate control on **Your machines**.
 
 ## Reading a patch
 
+Open the returned `address`: `/<company>/<name>`, or append `/~v/<n>` for a version.
 Read company pages and older versions of public patches through the user's signed-in browser.
-Only the current version of a public patch can be fetched directly by URL; a publishing key
-never opens a `/d/*` page. If browser access is unavailable, say so and ask the user to open
-the link or supply the content.
+Only the current version of a public patch can be fetched directly by address; a publishing key
+never opens a patch page. Old names may redirect with 308; follow the destination using the
+same browser access. `/~content/<patchId>/<versionId>` is internal, not a sharing link;
+the former `/d/*` URLs are gone. If browser access is unavailable, say so and ask
+the user to open the link or supply the content.
 
 When a page refuses access, report the refusal rather than treating its HTML as the patch:
 

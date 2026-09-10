@@ -4,6 +4,14 @@ How a published patch reaches its reader: the page, admission at its login door 
 
 ## Language
 
+**Address**:
+The human-readable location of a patch within its company, independent of tier and sharing scope. An address points to the patch's current version or a numbered version; a former name redirects only until another patch claims it.
+_Avoid_: identity (the patch keeps its id), public URL (an address does not grant anonymous access)
+
+**Content URL**:
+The internal, non-redirecting location of one version's bytes, protected by the same login door and sharing rules as its address. It names that version's content and tier, not whichever version is current.
+_Avoid_: address (the reader-facing location), download link, public URL
+
 **Serving guarantee**:
 A fixed promise about how a published patch reaches its reader: pages are **share-a-link-never-be-found** (kept out of search results, with no other measure against discovery); readers are **unwatched by the patch** (the patch runs no script; a company page's shell runs only Patchy's own session script, never analytics); patch URLs are **open to machines** that may open them, never bot-blocked or challenged; and caching is **keyed to sharing**, a minute at most for the current public version at its latest and version URLs, and never for a doored page. Only the current version of a public patch is public; older versions stay behind the company door. Access checks belong to the host, not the patch, and public cache windows expire without relying on a CDN purge.
 _Avoid_: bot protection (authorized agents may open pages), unlisted as a synonym for private (sharing scope controls access), privacy (the host checks access; the guarantee is that the patch cannot watch its reader)

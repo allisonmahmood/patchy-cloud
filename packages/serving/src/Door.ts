@@ -61,7 +61,7 @@ const admission = Effect.gen(function* () {
   })
 );
 
-/** Installed only on the two patch routes; the handler owns scope and response cookies. */
+/** Installed only on patch addresses and content URLs; handlers own scope and cookies. */
 export const layer = HttpRouter.middleware<{ provides: Admission }>()(
   Effect.gen(function* () {
     const services = yield* Effect.context<Session.Session | Companies.Companies | Users.Users>();

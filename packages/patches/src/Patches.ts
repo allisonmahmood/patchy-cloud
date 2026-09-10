@@ -26,7 +26,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import type * as Statement from "effect/unstable/sql/Statement";
-import { Manifest, PublishCreated, PublishUpdated, SharingScope } from "@patchy/api";
+import { Manifest, PatchName, PublishCreated, PublishUpdated, SharingScope } from "@patchy/api";
 
 const encodeManifest = Schema.encodeSync(Schema.fromJsonString(Manifest));
 const encodePublishCreated = Schema.encodeSync(Schema.fromJsonString(PublishCreated));
@@ -46,6 +46,28 @@ export const PENDING_OBJECT_LEASE = Duration.minutes(5);
 
 /** The first publish starts a patch's version sequence. */
 const FIRST_VERSION_NUMBER = 1;
+
+const isName = Schema.is(PatchName);
+
+/** A title or extension-free filename, normalized and bounded for this collision ordinal. */
+export const deriveName = (source: string, ordinal = 1): string => {
+  const normalized = source
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const suffix = ordinal === 1 ? "" : `-${ordinal}`;
+  const base = (normalized.length < 3 ? "patch" : normalized)
+    .slice(0, 32 - suffix.length)
+    .replace(/-+$/, "");
+  const candidate = `${base}${suffix}`;
+  return isName(candidate) ? candidate : `patch${suffix}`;
+};
+
+/** An absolute address is independent of the patch's current sharing scope. */
+export const address = (publicBaseUrl: string, companyHandle: string, name: string) =>
+  `${publicBaseUrl.replace(/\/+$/, "")}/${companyHandle}/${name}`;
 
 /**
  * A write named a patch the caller cannot write: unknown, another
@@ -69,9 +91,19 @@ export class PatchConflict extends Schema.TaggedError<PatchConflict>()("PatchCon
   }
 }
 
+export class NameTaken extends Schema.TaggedError<NameTaken>()("NameTaken", {
+  name: PatchName
+}) {
+  override get message() {
+    return `Patch name "${this.name}" is already taken.`;
+  }
+}
+
 export interface Patch {
   readonly id: string;
   readonly companyId: string;
+  readonly companyHandle: string;
+  readonly name: string;
   readonly ownerUserId: string;
   readonly scope: typeof SharingScope.Type;
   readonly title: string;
@@ -231,6 +263,7 @@ export class Patches extends Context.Service<
       Recorded,
       | PatchUnavailable
       | PatchConflict
+      | NameTaken
       | PublishKeyTaken
       | PatchQuotaReached
       | PendingObjectExpired
@@ -241,7 +274,18 @@ export class Patches extends Context.Service<
       patchId: string,
       ownerUserId: string,
       scope: Patch["scope"]
-    ) => Effect.Effect<Patch["scope"], PatchUnavailable | SqlError>;
+    ) => Effect.Effect<
+      { scope: Patch["scope"]; name: string; companyHandle: string },
+      PatchUnavailable | SqlError
+    >;
+    /** A current name or a redirect to the destination patch's current name. */
+    readonly resolveName: (
+      companyHandle: string,
+      name: string
+    ) => Effect.Effect<
+      Option.Option<{ patchId: string; name: string; current: boolean }>,
+      SqlError
+    >;
     /**
      * A patch in service and one of its versions — the current one, or the
      * numbered one asked for. Deleted, disabled and expired patches are
@@ -249,7 +293,8 @@ export class Patches extends Context.Service<
      */
     readonly find: (
       patchId: string,
-      versionNumber?: number
+      versionNumber?: number,
+      versionId?: string
     ) => Effect.Effect<Option.Option<{ patch: Patch; version: PatchVersion }>, SqlError>;
     /**
      * Tops a served patch's clock up to the visit-extension window when less
@@ -284,6 +329,8 @@ const NullableStamp = Schema.NullOr(Schema.Date);
 class PatchRow extends Schema.Class<PatchRow>("PatchRow")({
   id: Schema.String,
   companyId: Schema.String,
+  companyHandle: Schema.String,
+  name: PatchName,
   ownerUserId: Schema.String,
   scope: SharingScope,
   title: Schema.String,
@@ -327,7 +374,26 @@ class Id extends Schema.Class<Id>("Id")({ id: Schema.String }) {}
 class Count extends Schema.Class<Count>("Count")({ count: Schema.Int }) {}
 class NextVersion extends Schema.Class<NextVersion>("NextVersion")({ nextVersion: Schema.Int }) {}
 class ObjectKey extends Schema.Class<ObjectKey>("ObjectKey")({ objectKey: Schema.String }) {}
-class ScopeRow extends Schema.Class<ScopeRow>("ScopeRow")({ scope: SharingScope }) {}
+class ScopeRow extends Schema.Class<ScopeRow>("ScopeRow")({
+  scope: SharingScope,
+  companyId: Schema.String,
+  companyHandle: Schema.String,
+  name: PatchName
+}) {}
+class NameRow extends Schema.Class<NameRow>("NameRow")({ name: PatchName }) {}
+class ResolvedName extends Schema.Class<ResolvedName>("ResolvedName")({
+  patchId: Schema.String,
+  name: PatchName,
+  current: Schema.Boolean
+}) {}
+class CompanyHandle extends Schema.Class<CompanyHandle>("CompanyHandle")({
+  handle: Schema.String
+}) {}
+class UnnamedPatch extends Schema.Class<UnnamedPatch>("UnnamedPatch")({
+  id: Schema.String,
+  companyId: Schema.String,
+  title: Schema.String
+}) {}
 
 const iso = (date: Date) => date.toISOString();
 const isoOrNull = (date: Date | null) => (date === null ? null : date.toISOString());
@@ -335,6 +401,8 @@ const isoOrNull = (date: Date | null) => (date === null ? null : date.toISOStrin
 const toPatch = (row: PatchRow): Patch => ({
   id: row.id,
   companyId: row.companyId,
+  companyHandle: row.companyHandle,
+  name: row.name,
   ownerUserId: row.ownerUserId,
   scope: row.scope,
   title: row.title,
@@ -380,6 +448,7 @@ const dieOnSchemaError = { SchemaError: Effect.die } as const;
 /** The columns of `patches`, aliased to the record's names. */
 const PATCH_COLUMNS = `
   patches.id, patches.company_id AS "companyId",
+  companies.handle AS "companyHandle", patches.name,
   patches.owner_user_id AS "ownerUserId", patches.scope, patches.title,
   patches.current_version_id AS "currentVersionId",
   patches.repo_org AS "repoOrg", patches.repo_name AS "repoName",
@@ -397,6 +466,46 @@ const VERSION_COLUMNS = `
   tier, release, manifest_version AS "manifestVersion", wire_version AS "wireVersion",
   schema_revision AS "schemaRevision", manifest, publish_key AS "publishKey", payload_digest AS "payloadDigest",
   created_at AS "createdAt"`;
+
+/** Seeds legacy patches' names from titles in creation order, without changing existing claims. */
+export const backfillNames = Effect.fn("Patches.backfillNames")(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const unnamed = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: UnnamedPatch,
+    execute: () => sql`
+      SELECT patches.id, patches.company_id AS "companyId", patches.title FROM patches
+      WHERE patches.deleted_at IS NULL AND NOT EXISTS (
+        SELECT 1 FROM patch_names WHERE patch_names.patch_id = patches.id AND patch_names.current
+      )
+      ORDER BY patches.created_at, patches.id FOR UPDATE OF patches`
+  });
+  yield* sql.withTransaction(
+    Effect.gen(function* () {
+      for (const patch of yield* unnamed(undefined)) {
+        // Another seed may have completed while this one waited for the patch row.
+        const current =
+          yield* sql`SELECT 1 FROM patch_names WHERE patch_id = ${patch.id} AND current`;
+        if (current.length > 0) continue;
+        const baseName = deriveName(patch.title);
+        let ordinal = 1;
+        let name = baseName;
+        while (true) {
+          const claimed = yield* sql`
+          INSERT INTO patch_names (company_id, name, patch_id, current)
+          VALUES (${patch.companyId}, ${name}, ${patch.id}, true)
+          ON CONFLICT (company_id, name) DO UPDATE
+          SET patch_id = EXCLUDED.patch_id, current = true
+          WHERE NOT patch_names.current
+          RETURNING name`;
+          if (claimed.length > 0) break;
+          name = deriveName(baseName, ++ordinal);
+        }
+        yield* sql`UPDATE patches SET name = ${name} WHERE id = ${patch.id}`;
+      }
+    }).pipe(Effect.catchTags(dieOnSchemaError))
+  );
+});
 
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -434,7 +543,7 @@ export const make = Effect.gen(function* () {
     Result: PatchRow,
     execute: ({ nowMillis, patchId }) => sql`
       SELECT ${sql.unsafe(PATCH_COLUMNS)}
-      FROM patches
+      FROM patches JOIN companies ON companies.id = patches.company_id
       WHERE patches.id = ${patchId}
         AND patches.deleted_at IS NULL
         AND patches.disabled_at IS NULL
@@ -450,9 +559,46 @@ export const make = Effect.gen(function* () {
   });
 
   const findVersionById = SqlSchema.findOneOption({
-    Request: Schema.String,
+    Request: Schema.Struct({ patchId: Schema.String, versionId: Schema.String }),
     Result: VersionRow,
-    execute: (id) => sql`SELECT ${sql.unsafe(VERSION_COLUMNS)} FROM patch_versions WHERE id = ${id}`
+    execute: ({ patchId, versionId }) => sql`
+      SELECT ${sql.unsafe(VERSION_COLUMNS)} FROM patch_versions
+      WHERE id = ${versionId} AND patch_id = ${patchId}`
+  });
+
+  const resolveNameRow = SqlSchema.findOneOption({
+    Request: Schema.Struct({
+      companyHandle: Schema.String,
+      name: Schema.String,
+      nowMillis: Schema.Number
+    }),
+    Result: ResolvedName,
+    execute: ({ companyHandle, name, nowMillis }) => sql`
+      SELECT patches.id AS "patchId", patches.name, patch_names.current
+      FROM patch_names
+      JOIN companies ON companies.id = patch_names.company_id
+      JOIN patches ON patches.id = patch_names.patch_id
+      WHERE companies.handle = ${companyHandle} AND patch_names.name = ${name}
+        AND patches.deleted_at IS NULL AND patches.disabled_at IS NULL
+        AND ${notExpired(stamp(nowMillis))}`
+  });
+
+  const companyHandleRow = SqlSchema.findOne({
+    Request: Schema.String,
+    Result: CompanyHandle,
+    execute: (companyId) => sql`SELECT handle FROM companies WHERE id = ${companyId}`
+  });
+
+  const claimName = SqlSchema.findOneOption({
+    Request: Schema.Struct({ companyId: Schema.String, patchId: Schema.String, name: PatchName }),
+    Result: NameRow,
+    execute: ({ companyId, patchId, name }) => sql`
+      INSERT INTO patch_names (company_id, name, patch_id, current)
+      VALUES (${companyId}, ${name}, ${patchId}, true)
+      ON CONFLICT (company_id, name) DO UPDATE
+      SET patch_id = EXCLUDED.patch_id, current = true
+      WHERE NOT patch_names.current
+      RETURNING name`
   });
 
   const listExpiredRows = SqlSchema.findAll({
@@ -488,9 +634,11 @@ export const make = Effect.gen(function* () {
     }),
     Result: ScopeRow,
     execute: ({ patchId, ownerUserId, nowMillis }) => sql`
-      SELECT scope FROM patches
+      SELECT patches.scope, patches.name, patches.company_id AS "companyId",
+        companies.handle AS "companyHandle"
+      FROM patches JOIN companies ON companies.id = patches.company_id
       WHERE ${writable(patchId, ownerUserId, stamp(nowMillis))}
-      FOR UPDATE`
+      FOR UPDATE OF patches`
   });
 
   const replayRow = SqlSchema.findOneOption({
@@ -582,6 +730,10 @@ export const make = Effect.gen(function* () {
           const expiresAt = stamp(millis + Duration.toMillis(RETENTION_WINDOW));
           let versionNumber: number;
           let scope: Patch["scope"] = input.scope ?? "company";
+          let companyId = input.companyId;
+          let companyHandle: string;
+          let name: string;
+          let rename = false;
 
           if (input.intent === "update") {
             // The row lock serialises concurrent updates of one patch: the
@@ -595,6 +747,10 @@ export const make = Effect.gen(function* () {
             if (Option.isNone(locked))
               return yield* new PatchUnavailable({ patchId: input.patchId });
             scope = input.scope ?? locked.value.scope;
+            companyId = locked.value.companyId;
+            companyHandle = locked.value.companyHandle;
+            name = input.manifest.name ?? locked.value.name;
+            rename = name !== locked.value.name;
             versionNumber = (yield* nextVersionNumber(input.patchId)).nextVersion;
           } else {
             // Serialise quota accounting across distinct creates by the same owner.
@@ -606,14 +762,35 @@ export const make = Effect.gen(function* () {
               return yield* new PatchQuotaReached({ quota: input.livePatchQuota });
             }
             versionNumber = FIRST_VERSION_NUMBER;
+            companyHandle = (yield* companyHandleRow(companyId)).handle;
+            name =
+              input.manifest.name ??
+              deriveName(
+                input.filename === null ? input.title : input.filename.replace(/\.[^.]*$/, "")
+              );
             const created = yield* sql`
-            INSERT INTO patches (id, company_id, owner_user_id, scope, title, current_version_id, repo_org, repo_name, expires_at)
-            VALUES (${input.patchId}, ${input.companyId}, ${input.ownerUserId}, ${scope},
-                    ${input.title}, ${input.versionId}, ${input.repoOrg}, ${input.repoName}, ${expiresAt})
+            INSERT INTO patches (id, company_id, owner_user_id, scope, title, name, current_version_id, repo_org, repo_name, expires_at)
+            VALUES (${input.patchId}, ${companyId}, ${input.ownerUserId}, ${scope},
+                    ${input.title}, ${name}, ${input.versionId}, ${input.repoOrg}, ${input.repoName}, ${expiresAt})
             ON CONFLICT (id) DO NOTHING
             RETURNING id`;
             if (created.length === 0) return yield* new PatchConflict({ patchId: input.patchId });
           }
+          if (input.intent === "create" || rename) {
+            const baseName = name;
+            let ordinal = 1;
+            while (Option.isNone(yield* claimName({ companyId, patchId: input.patchId, name }))) {
+              if (input.manifest.name !== undefined) return yield* new NameTaken({ name });
+              name = deriveName(baseName, ++ordinal);
+            }
+          }
+          if (rename) {
+            // Claim before retiring: opposing renames must refuse occupied names,
+            // not each hold their source name while waiting for the other's.
+            yield* sql`UPDATE patch_names SET current = false
+              WHERE patch_id = ${input.patchId} AND current AND name <> ${name}`;
+          }
+          const publicUrl = address(input.publicBaseUrl, companyHandle, name);
           const response = new (input.intent === "create" ? PublishCreated : PublishUpdated)({
             ok: true,
             patchId: input.patchId,
@@ -621,7 +798,9 @@ export const make = Effect.gen(function* () {
             versionNumber,
             title: input.title,
             scope,
-            publicUrl: `${input.publicBaseUrl.replace(/\/+$/, "")}/d/${input.patchId}`,
+            name,
+            address: publicUrl,
+            publicUrl,
             tier: input.manifest.tier,
             schemaRevision: 0,
             provisioned: { tables: [], columns: [], indexes: [], stores: [] },
@@ -661,6 +840,7 @@ export const make = Effect.gen(function* () {
           yield* sql`
           UPDATE patches
           SET current_version_id = ${input.versionId}, title = ${input.title}, scope = ${scope},
+              name = ${name},
               repo_org = COALESCE(${input.repoOrg}, repo_org),
               repo_name = COALESCE(${input.repoName}, repo_name),
               updated_at = now(), expires_at = ${expiresAt}
@@ -672,30 +852,64 @@ export const make = Effect.gen(function* () {
       .pipe(Effect.timeout("60 seconds"), Effect.catchTags({ TimeoutError: Effect.die }))
   );
 
+  const setScopeRow = SqlSchema.findOneOption({
+    Request: Schema.Struct({
+      patchId: Schema.String,
+      ownerUserId: Schema.String,
+      scope: SharingScope,
+      nowMillis: Schema.Number
+    }),
+    Result: ScopeRow,
+    execute: ({ patchId, ownerUserId, scope, nowMillis }) => sql`
+      UPDATE patches
+      SET scope = ${scope}, updated_at = now()
+      FROM companies
+      WHERE ${writable(patchId, ownerUserId, stamp(nowMillis))}
+        AND companies.id = patches.company_id
+      RETURNING patches.scope, patches.name, patches.company_id AS "companyId",
+        companies.handle AS "companyHandle"`
+  });
   const setScope = Effect.fn("Patches.setScope")(function* (
     patchId: string,
     ownerUserId: string,
     scope: Patch["scope"]
   ) {
-    const rows = yield* sql`
-      UPDATE patches
-      SET scope = ${scope}, updated_at = now()
-      WHERE ${writable(patchId, ownerUserId, yield* now)}
-      RETURNING id`;
-    if (rows.length === 0) return yield* new PatchUnavailable({ patchId });
-    return scope;
-  });
+    const row = yield* setScopeRow({
+      patchId,
+      ownerUserId,
+      scope,
+      nowMillis: yield* Clock.currentTimeMillis
+    });
+    if (Option.isNone(row)) return yield* new PatchUnavailable({ patchId });
+    return { scope: row.value.scope, name: row.value.name, companyHandle: row.value.companyHandle };
+  }, Effect.catchTags(dieOnSchemaError));
 
-  const find = Effect.fn("Patches.find")(function* (patchId: string, versionNumber?: number) {
+  const resolveName = Effect.fn("Patches.resolveName")(function* (
+    companyHandle: string,
+    name: string
+  ) {
+    return yield* resolveNameRow({
+      companyHandle,
+      name,
+      nowMillis: yield* Clock.currentTimeMillis
+    });
+  }, Effect.catchTags(dieOnSchemaError));
+
+  const find = Effect.fn("Patches.find")(function* (
+    patchId: string,
+    versionNumber?: number,
+    versionId?: string
+  ) {
     const nowMillis = yield* Clock.currentTimeMillis;
     const patch = yield* findPatch({ patchId, nowMillis });
     if (Option.isNone(patch)) return Option.none();
+    const selectedId = versionId ?? patch.value.currentVersionId;
     const version =
-      versionNumber === undefined
-        ? patch.value.currentVersionId === null
+      versionId === undefined && versionNumber !== undefined
+        ? yield* findVersionByNumber({ patchId, versionNumber })
+        : selectedId === null
           ? Option.none()
-          : yield* findVersionById(patch.value.currentVersionId)
-        : yield* findVersionByNumber({ patchId, versionNumber });
+          : yield* findVersionById({ patchId, versionId: selectedId });
     return Option.map(version, (row) => ({ patch: toPatch(patch.value), version: toVersion(row) }));
   }, Effect.catchTags(dieOnSchemaError));
 
@@ -750,16 +964,22 @@ export const make = Effect.gen(function* () {
     )
   );
 
-  const delete_ = Effect.fn("Patches.delete")(function* (patchId: string, ownerUserId: string) {
-    const rows = yield* sql`
-      UPDATE patches
-      SET deleted_at = now(), updated_at = now()
-      WHERE id = ${patchId}
-        AND owner_user_id = ${ownerUserId}
-        AND deleted_at IS NULL
-      RETURNING id`;
-    return rows.length > 0;
-  });
+  const delete_ = Effect.fn("Patches.delete")((patchId: string, ownerUserId: string) =>
+    sql.withTransaction(
+      Effect.gen(function* () {
+        const rows = yield* sql`
+          UPDATE patches
+          SET deleted_at = now(), updated_at = now()
+          WHERE id = ${patchId}
+            AND owner_user_id = ${ownerUserId}
+            AND deleted_at IS NULL
+          RETURNING id`;
+        if (rows.length === 0) return false;
+        yield* sql`DELETE FROM patch_names WHERE patch_id = ${patchId}`;
+        return true;
+      })
+    )
+  );
 
   return Patches.of({
     countLive,
@@ -770,6 +990,7 @@ export const make = Effect.gen(function* () {
     completeObject,
     record,
     setScope,
+    resolveName,
     find,
     recordVisit,
     listExpired,

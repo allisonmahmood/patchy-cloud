@@ -70,7 +70,7 @@ The server, packages and CLI run on Effect 4. These rules bind their services an
 
 These are decided; a diff that improvises a different shape is a finding.
 
-- `/api/*` is one `HttpApi` defined in `packages/api` (wire schemas, the API, the derived client) and consumed by the CLI. Serving owns `/`, `/d/*` and `/healthz`; Auth mounts session pages and Companies' page renderers through plain `HttpRouter` routes. Map domain errors onto declared `HttpApiError` responses at the handler; do not let an untyped failure decide a status code.
+- `/api/*` is one `HttpApi` defined in `packages/api` (wire schemas, the API, the derived client) and consumed by the CLI. Serving owns `/`, patch addresses, the internal content URL and `/healthz`; Auth mounts session pages and Companies' page renderers through plain `HttpRouter` routes. Map domain errors onto declared `HttpApiError` responses at the handler; do not let an untyped failure decide a status code.
 - Persistence is `@effect/sql-pg` with `SqlSchema` and `sql.withTransaction`, Postgres only, row decoding through Schema in one module. Schema changes go through Effect's `Migrator`.
 - Tests use `@effect/vitest` (`it.effect`, `it.layer`), `HttpApiTest` for API routes, `NodeHttpServer.layerTest` for raw-socket cases, `TestClock` for the clock, and `Scope` for manual close pairs. Inject faults with an alternate layer.
 - Read configuration through Effect `Config` per capability, with `Redacted` for secrets.

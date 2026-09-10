@@ -19,6 +19,8 @@ describe("renderPatchWrapper", () => {
   const patch: Patches.Patch = {
     id: "patch12345ab",
     companyId: DEV_SEED.companyId,
+    companyHandle: DEV_SEED.companyHandle,
+    name: "render-fixture",
     ownerUserId: DEV_SEED.userId,
     scope: "public",
     title: "",

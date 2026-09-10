@@ -150,12 +150,12 @@ and preserves its current scope; pass `--share company` or `--share public` only
 the user explicitly chooses that audience. The welcome page's copy explains the
 company default and the owner's public option, rather than assuming its current scope.
 
-Hand over `publicUrl` and announce the **returned `scope`**:
+Hand over `address` and announce the **returned `scope`**:
 
 - `company`: **"Signed-in colleagues in your company can open it; people outside the
   company cannot."** Read it through the user's signed-in browser.
 - `public`: **"Anyone with the link can open it, without signing in."** Only the
-  current version can be fetched directly at `/d/<id>` or `/d/<id>/v/<current n>`.
+  current version can be fetched directly at `/<company>/<name>` or `/<company>/<name>/~v/<current n>`.
 
 Only the current version of a public patch is public; older versions stay behind
 the company door. The field name `publicUrl` is not proof of anonymous access.
@@ -196,7 +196,7 @@ you; never invent one, and never carry these into a real session.
 >
 > **Agent**: Done. Your pages go to `pages.example.com`, which is already set up here.
 > You're publishing as alex@example.com at Acme, from "Work laptop".
-> Publishing your welcome page now… Here it is: `https://pages.example.com/d/a1b2c3` —
+> Publishing your welcome page now… Here it is: `https://pages.example.com/acme/welcome` —
 > signed-in colleagues in your company can open it. It was published
 > with your configured publishing key. Next time you want a page, just say
 > "publish this with patchy".
@@ -227,5 +227,5 @@ you; never invent one, and never carry these into a real session.
 > **Agent**: This machine is logged in to Greenfield Pottery as
 > alex@greenfieldpottery.com, named "Studio laptop". Its publishing key is saved
 > here. Publishing your welcome page now… Here it is:
-> `https://pages.greenfield.internal/d/a1b2c3` — signed-in colleagues in your
+> `https://pages.greenfield.internal/greenfield/welcome` — signed-in colleagues in your
 > company can open it. Next time, just say "publish this with patchy".

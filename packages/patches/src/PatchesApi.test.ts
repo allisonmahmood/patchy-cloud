@@ -89,13 +89,19 @@ const layer = Layer.mergeAll(PatchesApi.layer, HttpServer.layerServices).pipe(
 it.layer(layer)("patches group", (it) => {
   it.effect("creates with 201 and updates with 200, on the configured public origin", () =>
     Effect.gen(function* () {
-      const created = yield* publish({ html: html("First") }).pipe(
-        Effect.provide(Fixtures.as(uploader))
-      );
+      const created = yield* publish({
+        html: html("First"),
+        metadata: { filename: "Launch Plan.HTML" }
+      }).pipe(Effect.provide(Fixtures.as(uploader)));
       assert.instanceOf(created, PublishCreated);
       assert.strictEqual(created.title, "First");
       assert.strictEqual(created.scope, "company");
-      assert.strictEqual(created.publicUrl, `https://patchy.example/d/${created.patchId}`);
+      assert.strictEqual(created.name, "launch-plan");
+      assert.strictEqual(
+        created.address,
+        `https://patchy.example/${uploader.company.handle}/launch-plan`
+      );
+      assert.strictEqual(created.publicUrl, created.address);
       assert.deepStrictEqual(created.warnings, []);
 
       const updated = yield* publish({
@@ -106,6 +112,8 @@ it.layer(layer)("patches group", (it) => {
       assert.instanceOf(updated, PublishUpdated);
       assert.strictEqual(updated.versionNumber, 2);
       assert.strictEqual(updated.scope, "public");
+      assert.strictEqual(updated.name, created.name);
+      assert.strictEqual(updated.address, created.address);
 
       const preserved = yield* publish({ html: html("Third"), patchId: created.patchId }).pipe(
         Effect.provide(Fixtures.as(sibling))
@@ -114,7 +122,8 @@ it.layer(layer)("patches group", (it) => {
       const restricted = yield* publish({
         html: html("Fourth"),
         patchId: created.patchId,
-        scope: "company"
+        scope: "company",
+        manifest: { ...Fixtures.manifest, name: "launch-notes" }
       }).pipe(Effect.provide(Fixtures.as(uploader)));
       assert.strictEqual(restricted.scope, "company");
       assert.deepStrictEqual(
@@ -126,6 +135,17 @@ it.layer(layer)("patches group", (it) => {
 
       const served = Option.getOrThrow(yield* (yield* Patches.Patches).find(created.patchId));
       assert.strictEqual(served.patch.scope, "company");
+      assert.strictEqual(restricted.name, "launch-notes");
+      assert.strictEqual(served.patch.name, restricted.name);
+      assert.strictEqual(served.patch.companyHandle, uploader.company.handle);
+      assert.deepStrictEqual(
+        {
+          ...Option.getOrThrow(
+            yield* (yield* Patches.Patches).resolveName(uploader.company.handle, created.name)
+          )
+        },
+        { patchId: created.patchId, name: restricted.name, current: false }
+      );
       assert.include(yield* (yield* Content.Content).read(served.version), "Fourth");
     })
   );
@@ -481,7 +501,13 @@ it.layer(publishLayer)("publish attempts", (it) => {
               )
             )
           );
-          const payload = publishRequest({ html: html("Concurrent") });
+          const payload = publishRequest({
+            html: html("Concurrent"),
+            manifest: {
+              ...Fixtures.manifest,
+              name: `concurrent-${identity.user.id.replace(/_/g, "-")}`
+            }
+          });
           const [a, b] = yield* Effect.all(
             [
               api.publish({ payload, responseMode: "response-only" }),
@@ -495,6 +521,108 @@ it.layer(publishLayer)("publish attempts", (it) => {
           assert.strictEqual(yield* (yield* Patches.Patches).countLive(identity.user.id), 1);
         }
       })
+  );
+
+  it.effect("refuses opposing renames without deadlocking or changing either address", () =>
+    Effect.gen(function* () {
+      const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+      const alpha = yield* owner.publish({
+        payload: publishRequest({
+          html: html("Alpha"),
+          manifest: { ...Fixtures.manifest, name: "rename-alpha" }
+        })
+      });
+      const beta = yield* owner.publish({
+        payload: publishRequest({
+          html: html("Beta"),
+          manifest: { ...Fixtures.manifest, name: "rename-beta" }
+        })
+      });
+      const store = yield* ContentStore.ContentStore;
+      const ready = yield* Deferred.make<void>();
+      let puts = 0;
+      const heldStore = Layer.succeed(
+        ContentStore.ContentStore,
+        ContentStore.ContentStore.of({
+          ...store,
+          put: (key, body) =>
+            Effect.gen(function* () {
+              yield* store.put(key, body);
+              if (++puts === 2) yield* Deferred.succeed(ready, undefined);
+              yield* Deferred.await(ready);
+            })
+        })
+      );
+      const api = yield* client.pipe(
+        Effect.provide(Fixtures.as(uploader)),
+        Effect.provide(
+          Layer.fresh(
+            PatchesApi.layer.pipe(
+              Layer.provide(Content.layer.pipe(Layer.provide(heldStore))),
+              Layer.provide(publishConfig())
+            )
+          )
+        )
+      );
+      const responses = yield* Effect.all(
+        (
+          [
+            [alpha, beta.name],
+            [beta, alpha.name]
+          ] as const
+        ).map(([patch, name]) =>
+          api.publish({
+            payload: publishRequest({
+              patchId: patch.patchId,
+              html: html("Rename"),
+              manifest: { ...Fixtures.manifest, name }
+            }),
+            responseMode: "response-only"
+          })
+        ),
+        { concurrency: "unbounded" }
+      );
+      for (const response of responses) {
+        assert.strictEqual(response.status, 409);
+        assert.include(yield* response.json, { code: "name_taken" });
+      }
+      const patches = yield* Patches.Patches;
+      for (const patch of [alpha, beta]) {
+        const unchanged = Option.getOrThrow(yield* patches.find(patch.patchId));
+        assert.strictEqual(unchanged.patch.name, patch.name);
+        assert.strictEqual(unchanged.version.id, patch.versionId);
+      }
+      const renamed = yield* owner.publish({
+        payload: publishRequest({
+          patchId: alpha.patchId,
+          html: html("Gamma"),
+          manifest: { ...Fixtures.manifest, name: "rename-gamma" }
+        })
+      });
+      assert.strictEqual(renamed.name, "rename-gamma");
+      assert.isTrue(
+        Option.getOrThrow(yield* patches.resolveName(uploader.company.handle, renamed.name)).current
+      );
+      const former = Option.getOrThrow(
+        yield* patches.resolveName(uploader.company.handle, alpha.name)
+      );
+      assert.isFalse(former.current);
+      assert.strictEqual(former.name, renamed.name);
+      const restored = yield* owner.publish({
+        payload: publishRequest({
+          patchId: alpha.patchId,
+          html: html("Alpha restored"),
+          manifest: { ...Fixtures.manifest, name: alpha.name }
+        })
+      });
+      assert.isTrue(
+        Option.getOrThrow(yield* patches.resolveName(uploader.company.handle, restored.name))
+          .current
+      );
+      assert.isFalse(
+        Option.getOrThrow(yield* patches.resolveName(uploader.company.handle, renamed.name)).current
+      );
+    })
   );
 
   it.effect("refuses unsupported tiers and unprovisioned resources before writing content", () =>

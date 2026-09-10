@@ -20,6 +20,7 @@ import {
   InvalidHtml,
   type MalformedBody,
   NotFound,
+  NameTaken,
   Ok,
   PatchQuotaExceeded,
   PatchyApi,
@@ -115,8 +116,6 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
     const maxPublishBodyBytes = yield* PatchesConfig.maxPublishBodyBytes;
     const currentRelease = yield* PatchesConfig.release;
     const livePatchesPerUser = yield* PatchesConfig.livePatchesPerUser;
-
-    const publicUrl = (patchId: string) => `${publicBaseUrl.replace(/\/+$/, "")}/d/${patchId}`;
 
     return handlers
       .handleRaw("publish", () =>
@@ -239,7 +238,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
               scope: payload.scope,
               title: validation.title || manifest.name || "Untitled Patch",
               html: payload.html,
-              filename: null,
+              filename: cleanText(metadata.filename),
               repoOrg: cleanText(metadata.repoOrg),
               repoName: cleanText(metadata.repoName),
               cliVersion: cleanText(metadata.cliVersion),
@@ -259,6 +258,10 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
                 PatchUnavailable: () => replayOrRespond(notFound()),
                 PatchConflict: () =>
                   replayOrRespond(refuse(Conflict, { ok: false, error: "Patch already exists." })),
+                NameTaken: (error) =>
+                  replayOrRespond(
+                    refuse(NameTaken, { ok: false, code: "name_taken", error: error.message })
+                  ),
                 PublishKeyTaken: () => replayOrRespond(keyConflict()),
                 PatchQuotaReached: () => replayOrRespond(quotaResponse()),
                 SqlError: (error) =>
@@ -304,7 +307,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             })
           );
           if (HttpServerResponse.isHttpServerResponse(payload)) return payload;
-          const scope = yield* patches
+          const shared = yield* patches
             .setScope(params.patchId, identity.user.id, payload.scope)
             .pipe(
               Effect.catchTags({
@@ -312,12 +315,12 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
                 SqlError: Effect.die
               })
             );
-          if (HttpServerResponse.isHttpServerResponse(scope)) return scope;
+          if (HttpServerResponse.isHttpServerResponse(shared)) return shared;
           return new Shared({
             ok: true,
             patchId: params.patchId,
-            scope,
-            publicUrl: publicUrl(params.patchId)
+            scope: shared.scope,
+            publicUrl: Patches.address(publicBaseUrl, shared.companyHandle, shared.name)
           });
         })
       )

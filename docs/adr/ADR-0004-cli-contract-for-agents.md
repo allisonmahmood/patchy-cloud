@@ -47,8 +47,8 @@ its code; no command exits on its own.
   `delete` it is the wire shape from `@patchy/api`; `validate` prints `{ ok, warnings }`,
   `auth set` `{ ok, instanceUrl }`, `status` its report (its only format).
   Login's three success shapes and logout's shape are below. Warnings ride in the
-  success document, never on stderr. Publish and share report `scope`; the field name
-  `publicUrl` alone does not imply anonymous access.
+  success document, never on stderr. Publish reports `name`, `address` and `scope`;
+  `publicUrl` equals the address and remains on publish and share, not a promise of anonymous access.
 - Failure: stderr is `{ "ok": false, "error": "<the one-line message>", "kind": "local" | "rejected" | "unreachable", "code"?: "<wire refusal code>" }`,
   stdout is empty, the exit code follows `kind`. Preserve the instance's `code`
   when present. A release mismatch detected before publishing is `local` with
@@ -145,14 +145,24 @@ key appears in the handoff or command output.
 
 ### Publishing and sharing commands
 
-| command                                                                                  | behaviour                                                                                                                                                                                                                              | `--json`                                                                                            |
-| ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `patchy publish <file> [--share company\|public] [--patch <id>] [--new]`                 | Synthesises a tier 0 manifest and publishes the file. A new patch defaults to `company`; an update preserves its scope without the flag. `--patch` only updates; `--new` bypasses the file cache to create.                            | The publish wire response, including `scope`, `tier`, `schemaRevision`, `provisioned` and `unused`. |
-| `patchy share <file> <company\|public>` or `patchy share --patch <id> <company\|public>` | Changes sharing without publishing a version. Select the file's cached patch or an explicit id, exactly one, as `delete` does. Only the owner may change it; an unavailable or unowned patch answers 404. With no key, exit 1 `local`. | `{ ok: true, patchId, scope, publicUrl }`.                                                          |
+| command                                                                                  | behaviour                                                                                                                                                                                                                              | `--json`                                                                                                               |
+| ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `patchy publish <file> [--name <name>] [--share company\|public] [--patch <id>] [--new]` | Synthesises a tier 0 manifest and publishes the file. A new patch defaults to `company`; an update preserves its scope without the flag. `--patch` only updates; `--new` bypasses the file cache to create.                            | The publish wire response, including `name`, `address`, `scope`, `tier`, `schemaRevision`, `provisioned` and `unused`. |
+| `patchy share <file> <company\|public>` or `patchy share --patch <id> <company\|public>` | Changes sharing without publishing a version. Select the file's cached patch or an explicit id, exactly one, as `delete` does. Only the owner may change it; an unavailable or unowned patch answers 404. With no key, exit 1 `local`. | `{ ok: true, patchId, scope, publicUrl }`.                                                                             |
 
 File publishing never reads `patchy.json`. The executing CLI must match
 `GET /api/release` exactly; a mismatch names both releases and `patchy refresh`.
 Repo mode and refresh arrive in later SDK tickets.
+
+Every patch opens at `/<company>/<name>`; a version at `/<company>/<name>/~v/<n>`.
+`--name` sets or renames it using 3–32 lowercase letters, digits or hyphens, without
+leading or trailing hyphens. An explicit name already held by another patch is
+`name_taken` (409, exit 2, `rejected`); it clears the definitive refused attempt so
+the caller can choose another name. Without the flag, a create derives a name from
+the filename, normalises it, falls back to `patch` when unusable, and adds `-2`,
+`-3`, and so on for collisions. An update preserves its current name. Rename leaves
+a 308 redirect until another patch takes the old name; deleting frees every name.
+The id or cached file, never the name, selects which patch is updated.
 
 Before a request, the CLI authenticates the publishing key and schema-encodes the complete
 attempt (publish key, request body, owner user ID and file-cache target), then exclusively

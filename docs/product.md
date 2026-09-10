@@ -2,7 +2,7 @@
 
 The product, written down where agents read it. Each section is the resolution of one decision on the [foundation map](https://github.com/allisonmahmood/patchy-cloud/issues/5); the glossaries in each `CONTEXT.md` carry the words, this file carries the shape.
 
-**Built today:** tier 0 HTML patches with manifests, release checks and replay-safe publishing; user ownership and company/public sharing; Clerk sign-in; create-or-join and company administration; machine login, logout and revocation. Higher runtimes, patch repos, the portal, narrower sharing, addresses, integrations, billing and company lifecycle remain the intended product shape below, not available features.
+**Built today:** tier 0 HTML patches with manifests, release checks and replay-safe publishing; names and company addresses; user ownership and company/public sharing; Clerk sign-in; create-or-join and company administration; machine login, logout and revocation. Higher runtimes, patch repos, the portal, narrower sharing, integrations, billing and company lifecycle remain the intended product shape below, not available features.
 
 ## Patches
 
@@ -32,7 +32,7 @@ A **publish key** identifies one attempt for its owning user. The CLI exclusivel
 
 A published patch is shared with **everyone in the company** by default, or made **public** on purpose: anyone with the link, without a login. Today its owner chooses either scope with `patchy publish <file> --share company|public` or changes an existing patch with `patchy share <file> company|public` (or `patchy share --patch <id> company|public`); a publish without `--share` preserves an existing patch's scope. Only the owner changes sharing. Narrower scopes — the owner plus named users, or one group — remain future work; who may open, and who may change, a patch is spelled out under [Identity and access](#access-to-a-patch).
 
-The future way to find a patch is a portal of everything you have access to; today a person shares its link. A patch's identity is its **id**, so two sales dashboards made by two salespeople never collide; the planned human-readable address follows its sharing scope (see [Addresses](#addresses)).
+The future way to find a patch is a portal of everything you have access to; today a person shares its address. A patch's identity is its **id**, while its **name** is unique within the company. Two sales dashboards need different names, but renaming one never changes which patch it is (see [Addresses](#addresses)).
 
 ### Updating, retiring, deleting
 
@@ -114,9 +114,11 @@ Patchy ships the **integration** — Salesforce-the-capability, the same for eve
 
 ### Addresses
 
-Human-readable addresses are future work; today the link is `/d/<id>`, or `/d/<id>/v/<n>` for a version, for either sharing scope.
+Every patch has an address at `/<company>/<patch>`, for every tier and sharing scope. A numbered version opens at `/<company>/<patch>/~v/<n>`. A trailing route belongs to the patch at tier 1 and above and is ignored at tier 0; every segment starting with `~` belongs to Patchy. A company handle alone is not a page. The former `/d/*` routes are gone, not redirects; `d` remains a reserved company handle.
 
-The intended internal sharing choice is single-select — the owner (plus named users), exactly one group, or the whole company — and its human-readable address will follow that choice: `company/user/patch`, `company/group/patch`, `company/patch`. Users and groups will draw their handles from one per-company namespace, so the two middle shapes never collide. Patch names are first-come and never reserved: widening a patch to company-wide will prompt for a name free at `company/`, the old address will keep redirecting, and a new patch later taking that name will simply win the address. The patch's identity stays its id throughout — addresses are pointers, and a move never touches the patch.
+A patch's **name** follows the company handle's grammar: 3–32 lowercase letters, digits or hyphens, no leading or trailing hyphen. Names share one per-company namespace, alongside future user and group handles. An explicit manifest name or file-mode `--name` must be free on create and rename alike (`name_taken`); without `--name`, file publishing normalises the filename and adds `-2`, `-3`, and so on when needed. Republishing a file preserves its name unless explicitly renamed. Renaming leaves a 308 redirect from the old name until another patch takes it; that claim removes the former redirect for good. Deleting a patch frees all its names. The patch's identity remains its id, never its name.
+
+Only the current public version is public and caches for at most a minute at both its address and its numbered version URL; older versions stay behind the company door. `/~content/<patchId>/<versionId>` is an internal, non-redirecting **content URL**, never the link to share: it serves that version's bytes with that version's tier and content security policy, the same door and sharing-based caching as the address. Tier 0 keeps its script-free `srcdoc` frame with `sandbox=""`; the higher-tier shell and broker arrive separately.
 
 ### The operator
 

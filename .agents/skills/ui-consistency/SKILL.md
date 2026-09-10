@@ -26,7 +26,7 @@ Two page kinds, and the distinction drives most findings:
 
 ## Served patches
 
-- The patch runs no JavaScript. A public wrapper also runs none; a company wrapper loads only Clerk's headless script from the exact configured Frontend API host and Patchy's external `/auth/session.js` initializer. Its CSP admits only those script sources and that host for connections, never inline script.
+- Tier-zero patch content runs no JavaScript. A public wrapper also runs none; a company wrapper loads only Clerk's headless script from the exact configured Frontend API host and Patchy's external `/auth/session.js` initializer. Its CSP admits only those script sources and that host for connections, never inline script. The internal content URL uses its stored version's tier: tier ≥ 1 allows inline script only inside `sandbox allow-scripts allow-modals`, with `default-src 'none'`, `connect-src 'none'`, and only blob/data media sources; camera, microphone and geolocation remain denied. This does not enable a higher-tier wrapper or broker.
 - Keep the patch iframe's `sandbox` and `title`, and its `srcdoc` escaping. Patch HTML reaches the attribute through `escapeAttribute`; a patch title reaching markup goes through `escapeHtml`. Flag any user-supplied value interpolated raw.
 - Readers are unwatched by the patch: no analytics at either scope. Public wrappers keep their script-free, session-free policy; company wrappers may maintain Clerk's session, isolated from the patch.
 - The wrapper's visible content is the sandboxed frame and nothing else: no footer, no chrome, no first-party link out of the page. The company shell's session scripts do not change that.
