@@ -3,13 +3,22 @@ import { Buffer } from "node:buffer";
 import { assert } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import * as Clock from "effect/Clock";
 import * as SqlError from "effect/unstable/sql/SqlError";
-import { CURRENT_RELEASE, Manifest, TablePage, TableRow, WIRE_VERSION } from "@patchy/api";
+import {
+  CURRENT_RELEASE,
+  Manifest,
+  sharedTableId,
+  TablePage,
+  TableRow,
+  WIRE_VERSION
+} from "@patchy/api";
 import { CompanyDatabases } from "@patchy/company-database";
-import { Binding } from "@patchy/runtime";
+import { Binding, LoadedVersions } from "@patchy/runtime";
 import * as Tables from "../Tables.js";
 import * as TableOperations from "../TableOperations.js";
 
@@ -335,6 +344,302 @@ export const operationsContract = Effect.fn("test.operationsContract")(function*
   assert.isNull(yield* call("tables.get", { table: "notes", id: first.id }));
   assert.deepStrictEqual(yield* call("tables.getMany", { table: "notes", ids: [] }), []);
   assert.deepStrictEqual(yield* call("tables.insertMany", { table: "notes", rows: [] }), []);
+});
+
+export const sharedOperationsContract = Effect.fn("test.sharedOperationsContract")(function* (
+  companyId: string
+) {
+  const definition: typeof Manifest.Type = {
+    ...manifest,
+    name: "shared-source",
+    tables: { notes: { ...manifest.tables.notes!, shared: true } }
+  };
+  const source = yield* setup(companyId, "sharedsource", definition);
+  const rows = yield* source
+    .call("tables.insertMany", {
+      table: "notes",
+      rows: [
+        { title: "shared", slug: "first", rank: 1 },
+        { title: "shared", slug: "second", rank: 2 },
+        { title: "shared", slug: "third", rank: null }
+      ]
+    })
+    .pipe(Effect.flatMap(decodeRows));
+  const declaration = {
+    kind: "sharedTable" as const,
+    patchId: source.binding.patchId,
+    table: "notes",
+    id: sharedTableId(source.binding.patchId, "notes"),
+    revision: 1
+  };
+  const consumer = yield* setup(companyId, "sharedreader", {
+    ...manifest,
+    uses: { contacts: declaration, alternate: declaration }
+  });
+  const own = yield* consumer
+    .call("tables.insert", {
+      table: "notes",
+      row: { title: "mine", slug: "first" }
+    })
+    .pipe(Effect.flatMap(decodeRow));
+  const binding: Binding.Binding["Service"] = {
+    ...consumer.binding,
+    principal: { userId: "usr_viewer" },
+    identity: {
+      user: { id: "usr_viewer", name: "Viewer", email: "viewer@example.test" },
+      company: { id: companyId, handle: "company", name: "Company" },
+      admin: false
+    }
+  };
+  const live = yield* Ref.make(
+    new Map<string, LoadedVersions.LoadedVersion>([[source.binding.patchId, source.binding]])
+  );
+  const versions = LoadedVersions.LoadedVersions.of({
+    find: (patchId, versionId) =>
+      Ref.get(live).pipe(
+        Effect.map((current) => {
+          const found = current.get(patchId);
+          return found === undefined || (versionId !== undefined && found.versionId !== versionId)
+            ? Option.none()
+            : Option.some(found);
+        })
+      )
+  });
+  const handlers = yield* TableOperations.make.pipe(
+    Effect.provideService(LoadedVersions.LoadedVersions, versions)
+  );
+  const call = (op: keyof typeof handlers, args: unknown) =>
+    handlers[op].run(args).pipe(Effect.provideService(Binding.Binding, binding));
+  assert.deepStrictEqual(
+    yield* call("shared.getMany", {
+      alias: "contacts",
+      ids: [rows[1]!.id, "dangling", rows[0]!.id, rows[1]!.id]
+    }),
+    [rows[1], null, rows[0], rows[1]]
+  );
+  assert.isNull(yield* call("shared.get", { alias: "contacts", id: own.id }));
+  assert.deepStrictEqual(yield* call("shared.getMany", { alias: "contacts", ids: [] }), []);
+  assert.strictEqual(
+    (yield* call("shared.getMany", { alias: "missing", ids: [] }).pipe(Effect.flip)).code,
+    "table_not_declared"
+  );
+  assert.strictEqual(
+    (yield* call("tables.insert", {
+      table: "contacts",
+      row: { title: "forbidden", slug: "forbidden" }
+    }).pipe(Effect.flip)).code,
+    "table_not_declared"
+  );
+  for (const identity of [
+    null,
+    { ...binding.identity!, company: { id: "other", handle: "other", name: "Other" } }
+  ]) {
+    assert.strictEqual(
+      (yield* handlers["shared.getMany"]
+        .run({ alias: "contacts", ids: [] })
+        .pipe(Effect.provideService(Binding.Binding, { ...binding, identity }), Effect.flip)).code,
+      "access_denied"
+    );
+  }
+  const bounded = yield* TableOperations.make.pipe(
+    Effect.provideService(LoadedVersions.LoadedVersions, versions),
+    Effect.provide(
+      ConfigProvider.layer(
+        ConfigProvider.fromUnknown({
+          PATCHY_TABLE_MAX_ITEMS: "2",
+          PATCHY_TABLE_MAX_PAGE: "2",
+          PATCHY_RUNTIME_RESULT_BYTES: "32"
+        })
+      )
+    )
+  );
+  for (const [op, args] of [
+    ["shared.getMany", { alias: "contacts", ids: ["a", "b", "c"] }],
+    ["shared.list", { alias: "contacts", limit: 3 }],
+    ["shared.getMany", { alias: "contacts", ids: [rows[0]!.id] }],
+    ["shared.list", { alias: "contacts", limit: 1 }]
+  ] as const) {
+    assert.strictEqual(
+      (yield* bounded[op]
+        .run(args)
+        .pipe(Effect.provideService(Binding.Binding, binding), Effect.flip)).code,
+      "too_large"
+    );
+  }
+  const first = yield* call("shared.list", {
+    alias: "contacts",
+    index: "byTitleRank",
+    eq: { title: "shared" },
+    limit: 1
+  }).pipe(Effect.flatMap(decodePage));
+  assert.deepStrictEqual(first.rows, [rows[0]]);
+  assert.isString(first.cursor);
+  const second = yield* call("shared.list", {
+    alias: "alternate",
+    index: "byTitleRank",
+    eq: { title: "shared" },
+    cursor: first.cursor,
+    limit: 1
+  }).pipe(Effect.flatMap(decodePage));
+  assert.deepStrictEqual(second.rows, [rows[1]]);
+  const last = yield* call("shared.list", {
+    alias: "contacts",
+    index: "byTitleRank",
+    eq: { title: "shared" },
+    cursor: second.cursor
+  }).pipe(Effect.flatMap(decodePage));
+  assert.deepStrictEqual(last.rows, [rows[2]]);
+  assert.isNull(last.cursor);
+  assert.strictEqual(
+    (yield* call("shared.list", {
+      alias: "contacts",
+      index: "byTitleRank",
+      eq: { title: "other" },
+      cursor: first.cursor
+    }).pipe(Effect.flip)).code,
+    "invalid_cursor"
+  );
+
+  const expanded: typeof Manifest.Type = {
+    ...definition,
+    tables: {
+      notes: {
+        ...definition.tables.notes!,
+        columns: {
+          ...definition.tables.notes!.columns,
+          added: { kind: "text", default: "inventory" }
+        },
+        indexes: { ...definition.tables.notes!.indexes, byAdded: { columns: ["added"] } }
+      }
+    }
+  };
+  yield* source.databases.withCompany(companyId)(
+    source.databases.withPatchLock(source.binding.patchId)(
+      source.tables.provision(source.binding.patchId, expanded)
+    )
+  );
+  const omitted = { ...definition, tables: {} };
+  yield* source.databases.withCompany(companyId)(
+    source.databases.withPatchLock(source.binding.patchId)(
+      source.tables.provision(source.binding.patchId, omitted)
+    )
+  );
+  yield* Ref.set(
+    live,
+    new Map([[source.binding.patchId, { ...source.binding, manifest: omitted }]])
+  );
+  const cumulative = rows.map((row) => ({ ...row, added: "inventory" }));
+  assert.deepStrictEqual(
+    yield* call("shared.get", { alias: "contacts", id: rows[0]!.id }),
+    cumulative[0]
+  );
+  const indexed = yield* call("shared.list", {
+    alias: "contacts",
+    index: "byAdded",
+    eq: { added: "inventory" }
+  }).pipe(Effect.flatMap(decodePage));
+  assert.deepStrictEqual(
+    indexed.rows.map((row) => row.id).sort(),
+    rows.map((row) => row.id).sort()
+  );
+  assert.isTrue(indexed.rows.every((row) => row.added === "inventory"));
+  const ranged = yield* call("shared.list", {
+    alias: "contacts",
+    index: "byRank",
+    range: { column: "rank", gte: 2 }
+  }).pipe(Effect.flatMap(decodePage));
+  assert.deepStrictEqual(ranged.rows, [cumulative[1]]);
+
+  const deniedReads = [
+    ["shared.list", { alias: "contacts", cursor: first.cursor }],
+    ["shared.get", { alias: "contacts", id: rows[0]!.id }],
+    ["shared.getMany", { alias: "contacts", ids: [rows[0]!.id, "dangling"] }],
+    ["shared.getMany", { alias: "contacts", ids: [] }]
+  ] as const;
+  yield* source.databases.withCompany(companyId)(
+    source.databases.withPatchLock(source.binding.patchId)(
+      source.tables.provision(source.binding.patchId, {
+        ...definition,
+        tables: { notes: { ...definition.tables.notes!, shared: false } }
+      })
+    )
+  );
+  // A rollback changes only the loaded manifest, never the inventory's sharing authority.
+  yield* Ref.set(live, new Map([[source.binding.patchId, source.binding]]));
+  for (const [op, args] of deniedReads)
+    assert.strictEqual((yield* call(op, args).pipe(Effect.flip)).code, "access_denied");
+  assert.deepStrictEqual(yield* consumer.call("tables.get", { table: "notes", id: own.id }), own);
+  assert.deepStrictEqual(
+    yield* source.call("tables.get", { table: "notes", id: rows[0]!.id }),
+    rows[0]
+  );
+
+  yield* source.databases.withCompany(companyId)(
+    source.databases.withPatchLock(source.binding.patchId)(
+      source.tables.provision(source.binding.patchId, definition)
+    )
+  );
+  yield* Ref.set(
+    live,
+    new Map([[source.binding.patchId, { ...source.binding, companyId: "other" }]])
+  );
+  for (const [op, args] of deniedReads)
+    assert.strictEqual((yield* call(op, args).pipe(Effect.flip)).code, "access_denied");
+
+  const replacement = yield* setup(companyId, "sharednewone", definition);
+  const replacementRow = yield* replacement
+    .call("tables.insert", {
+      table: "notes",
+      row: { title: "replacement", slug: "first" }
+    })
+    .pipe(Effect.flatMap(decodeRow));
+  yield* Ref.set(live, new Map([[replacement.binding.patchId, replacement.binding]]));
+  for (const [op, args] of deniedReads)
+    assert.strictEqual((yield* call(op, args).pipe(Effect.flip)).code, "access_denied");
+  assert.deepStrictEqual(yield* consumer.call("tables.get", { table: "notes", id: own.id }), own);
+  const rebound = {
+    ...binding,
+    manifest: {
+      ...binding.manifest,
+      uses: {
+        contacts: {
+          ...declaration,
+          patchId: replacement.binding.patchId,
+          id: sharedTableId(replacement.binding.patchId, "notes")
+        }
+      }
+    }
+  };
+  assert.deepStrictEqual(
+    yield* handlers["shared.get"]
+      .run({ alias: "contacts", id: replacementRow.id })
+      .pipe(Effect.provideService(Binding.Binding, rebound)),
+    replacementRow
+  );
+  assert.strictEqual(
+    (yield* handlers["shared.list"]
+      .run({
+        alias: "contacts",
+        index: "byTitleRank",
+        eq: { title: "shared" },
+        cursor: first.cursor
+      })
+      .pipe(Effect.provideService(Binding.Binding, rebound), Effect.flip)).code,
+    "invalid_cursor"
+  );
+  assert.strictEqual(
+    (yield* handlers["shared.getMany"].run({ alias: "contacts", ids: [] }).pipe(
+      Effect.provideService(Binding.Binding, {
+        ...rebound,
+        manifest: {
+          ...rebound.manifest,
+          uses: { contacts: { ...rebound.manifest.uses.contacts, id: declaration.id } }
+        }
+      }),
+      Effect.flip
+    )).code,
+    "access_denied"
+  );
 });
 
 export const boundsContract = Effect.fn("test.boundsContract")(function* (companyId: string) {

@@ -222,11 +222,41 @@ describe("wire schemas", () => {
             kind: "sharedTable",
             patchId: "abcdefghijkl",
             table: "notes",
-            id: "table_1",
+            id: "abcdefghijkl/notes",
             revision: 2
           }
         }
       })._tag
     ).toBe("Success");
+  });
+
+  it("round-trips shared declarations and resolved refs while rejecting invalid source table names", () => {
+    const declaration = {
+      kind: "sharedTable" as const,
+      patchId: "abcdefghijkl",
+      table: "contacts",
+      id: "abcdefghijkl/contacts",
+      revision: 3
+    };
+    const consumer = {
+      ...manifest,
+      tables: {
+        notes: {
+          columns: { contact: { kind: "ref" as const, table: declaration.id } },
+          indexes: {}
+        }
+      },
+      uses: { contacts: declaration }
+    };
+    expect(roundTrip(Manifest, consumer)).toEqual(consumer);
+    const decode = Schema.decodeUnknownExit(Manifest);
+    for (const table of ["contacts/name", "contact_name", "AContact", "a".repeat(64)]) {
+      expect(decode({ ...consumer, uses: { contacts: { ...declaration, table } } })._tag).toBe(
+        "Failure"
+      );
+    }
+    expect(
+      decode({ ...consumer, uses: { contacts: { ...declaration, patchId: "source-name" } } })._tag
+    ).toBe("Failure");
   });
 });

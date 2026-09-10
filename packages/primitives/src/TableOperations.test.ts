@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/unstable/sql/SqlClient";
 import { TablePage } from "@patchy/api";
@@ -12,23 +13,32 @@ import { PgliteCompanyDatabases } from "@patchy/company-database/dev";
 import * as Testing from "@patchy/company-database/testing";
 import * as Tables from "./Tables.js";
 import * as TableOperations from "./TableOperations.js";
-import { Binding } from "@patchy/runtime";
+import { Binding, LoadedVersions } from "@patchy/runtime";
 import {
   boundsContract,
   expandedResultsContract,
   indexKeyContract,
   operationsContract,
+  sharedOperationsContract,
   setup,
   manifest,
   uuidContract
 } from "./test/operationsContract.js";
 
 const decodePage = Schema.decodeUnknownEffect(TablePage);
-const postgres = Tables.layer.pipe(Layer.provideMerge(Testing.layer()));
+const versions = Layer.succeed(LoadedVersions.LoadedVersions, {
+  find: () => Effect.succeed(Option.none())
+});
+const postgres = Tables.layer.pipe(Layer.provideMerge([Testing.layer(), versions]));
 it.layer(postgres)("TableOperations / Postgres", (it) => {
   it.effect(
     "obeys the seven operation contracts and stable version-bound cursors",
     () => operationsContract("cmp_dev"),
+    60_000
+  );
+  it.effect(
+    "reads cumulative shared definitions and revokes every read without rebinding",
+    () => sharedOperationsContract("cmp_dev"),
     60_000
   );
   it.effect(
@@ -194,14 +204,16 @@ it.layer(NodeFileSystem.layer)("TableOperations / PGlite", (it) => {
         const dataDir = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-table-operations-" });
         const local = Tables.layer.pipe(
           Layer.provideMerge(
-            Layer.merge(
+            Layer.mergeAll(
               Inventory.layer,
-              PgliteCompanyDatabases.layer({ companyId: "local-company", dataDir })
+              PgliteCompanyDatabases.layer({ companyId: "local-company", dataDir }),
+              versions
             )
           )
         );
         yield* Effect.gen(function* () {
           yield* operationsContract("local-company");
+          yield* sharedOperationsContract("local-company");
           yield* boundsContract("local-company");
           yield* expandedResultsContract("local-company");
           yield* indexKeyContract("local-company");

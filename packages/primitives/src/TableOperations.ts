@@ -3,6 +3,7 @@ import { Buffer } from "node:buffer";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
@@ -12,14 +13,16 @@ import {
   PostgresJson,
   PostgresText,
   runtimeOperations,
+  sharedTableId,
   type ColumnDefinition,
   type TableDefinition,
   type TableList,
   TableRow
 } from "@patchy/api";
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
-import { Binding, Runtime } from "@patchy/runtime";
+import { Binding, LoadedVersions, Runtime } from "@patchy/runtime";
 import { boundedRows } from "./bounded-rows.js";
+import { inventoryManifest } from "./Tables.js";
 
 export class TableNotDeclared extends Schema.TaggedError<TableNotDeclared>()("TableNotDeclared", {
   table: Schema.String
@@ -118,6 +121,13 @@ type Row = typeof TableRow.Type;
 type Column = typeof ColumnDefinition.Type;
 type Table = typeof TableDefinition.Type;
 type List = typeof TableList.Type;
+type TableQuery<A> = (
+  sql: SqlClient.SqlClient,
+  table: Table,
+  qualified: string,
+  patchId: string,
+  name: string
+) => Effect.Effect<A, Runtime.RuntimeError | SqlError>;
 const isDefinitionName = Schema.is(DefinitionName);
 const system = ["id", "createdAt", "updatedAt"];
 const isText = Schema.is(PostgresText);
@@ -244,44 +254,89 @@ const resource: Runtime.Handler["resource"] = (args) =>
 
 export const make = Effect.gen(function* () {
   const databases = yield* CompanyDatabases.CompanyDatabases;
+  const inventory = yield* Inventory.Inventory;
+  const versions = yield* LoadedVersions.LoadedVersions;
   const settings = yield* config;
-  const withTable = <A>(
-    name: string,
-    run: (
-      sql: SqlClient.SqlClient,
-      table: Table,
-      qualified: string,
-      patchId: string
-    ) => Effect.Effect<A, Runtime.RuntimeError | SqlError>
+  const withCompany = <A>(
+    companyId: string,
+    effect: Effect.Effect<A, Runtime.RuntimeError, CompanyDatabases.CompanyConnection>
   ) =>
+    databases
+      .withCompany(companyId)(effect)
+      .pipe(
+        Effect.catchTags({
+          Busy: (cause) => Effect.fail(new Busy({ limit: cause.limit, cause })),
+          CompanyDatabaseError: (cause) => Effect.fail(new Runtime.SourceUnavailable({ cause })),
+          CompanyDatabaseNotReady: (cause) => Effect.fail(new Runtime.SourceUnavailable({ cause })),
+          CompanyIdentityMismatch: (cause) => Effect.fail(new Runtime.SourceUnavailable({ cause }))
+        })
+      );
+  const withTable = <A>(name: string, run: TableQuery<A>) =>
     Effect.gen(function* () {
       const binding = yield* Binding.Binding;
       if (!Object.hasOwn(binding.manifest.tables, name))
         return yield* new TableNotDeclared({ table: name });
       const table = binding.manifest.tables[name]!;
-      return yield* databases
-        .withCompany(binding.companyId)(
-          Effect.gen(function* () {
-            const sql = yield* CompanyDatabases.CompanyConnection;
-            return yield* run(
-              sql,
-              table,
-              `${Inventory.quoteIdentifier(Inventory.namespace(binding.patchId))}.${Inventory.quoteIdentifier(name)}`,
-              binding.patchId
-            ).pipe(Effect.catchTags({ SqlError: (cause) => Effect.fail(sqlFailure(name, cause)) }));
-          })
-        )
-        .pipe(
-          Effect.catchTags({
-            Busy: (cause) => Effect.fail(new Busy({ limit: cause.limit, cause })),
-            CompanyDatabaseError: (cause) => Effect.fail(new Runtime.SourceUnavailable({ cause })),
-            CompanyDatabaseNotReady: (cause) =>
-              Effect.fail(new Runtime.SourceUnavailable({ cause })),
-            CompanyIdentityMismatch: (cause) =>
-              Effect.fail(new Runtime.SourceUnavailable({ cause }))
-          })
-        );
+      return yield* withCompany(
+        binding.companyId,
+        Effect.gen(function* () {
+          const sql = yield* CompanyDatabases.CompanyConnection;
+          return yield* run(
+            sql,
+            table,
+            `${Inventory.quoteIdentifier(Inventory.namespace(binding.patchId))}.${Inventory.quoteIdentifier(name)}`,
+            binding.patchId,
+            name
+          ).pipe(Effect.catchTags({ SqlError: (cause) => Effect.fail(sqlFailure(name, cause)) }));
+        })
+      );
     });
+  const withSharedTable = Effect.fn("TableOperations.withSharedTable")(function* <A>(
+    alias: string,
+    run: TableQuery<A>
+  ) {
+    const binding = yield* Binding.Binding;
+    const declaration = Object.hasOwn(binding.manifest.uses, alias)
+      ? binding.manifest.uses[alias]
+      : undefined;
+    if (declaration?.kind !== "sharedTable") return yield* new TableNotDeclared({ table: alias });
+    if (
+      declaration.id !== sharedTableId(declaration.patchId, declaration.table) ||
+      binding.identity === null ||
+      binding.identity.company.id !== binding.companyId
+    )
+      return yield* new Runtime.AccessDenied({});
+    // Resolve liveness before acquiring a company lease or inventory lock.
+    const source = yield* versions
+      .find(declaration.patchId)
+      .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
+    if (Option.isNone(source) || source.value.companyId !== binding.companyId)
+      return yield* new Runtime.AccessDenied({});
+    return yield* withCompany(
+      binding.companyId,
+      Effect.gen(function* () {
+        const snapshot = yield* inventory.read(declaration.patchId);
+        if (
+          snapshot === null ||
+          !snapshot.tables.some((table) => table.name === declaration.table && table.shared)
+        )
+          return yield* new Runtime.AccessDenied({});
+        const table = inventoryManifest(snapshot).tables[declaration.table]!;
+        const sql = yield* CompanyDatabases.CompanyConnection;
+        return yield* run(
+          sql,
+          table,
+          `${Inventory.quoteIdentifier(Inventory.namespace(declaration.patchId))}.${Inventory.quoteIdentifier(declaration.table)}`,
+          declaration.patchId,
+          declaration.table
+        );
+      }).pipe(
+        Effect.catchTags({
+          SqlError: (cause) => Effect.fail(sqlFailure(declaration.table, cause))
+        })
+      )
+    );
+  });
   const insert = Effect.fn("TableOperations.insertRow")(function* (
     sql: SqlClient.SqlClient,
     table: Table,
@@ -304,6 +359,40 @@ export const make = Effect.gen(function* () {
     yield* byteLimit(__storedRow, settings.rowBytes);
     return result;
   });
+  const getRow = (sql: SqlClient.SqlClient, table: Table, qualified: string, id: string) =>
+    Effect.map(
+      queryRows(sql, `SELECT ${projection(table)} FROM ${qualified} WHERE "id" = $1`, [id]),
+      (rows) => rows[0] ?? null
+    );
+  const getRows = Effect.fn("TableOperations.getRows")(function* (
+    sql: SqlClient.SqlClient,
+    table: Table,
+    qualified: string,
+    ids: ReadonlyArray<string>
+  ) {
+    if (ids.length > settings.maxItems)
+      return yield* new ItemLimit({ maxItems: settings.maxItems });
+    yield* byteLimit(ids, settings.batchBytes);
+    if (ids.length === 0) return [];
+    const { rows } = yield* boundedRows(
+      sql,
+      `SELECT ${projection(table)}, row_number() OVER (ORDER BY stored."id") AS "__position" FROM ${qualified} AS stored WHERE stored."id" IN (${ids.map((_, index) => `$${index + 1}`).join(", ")})`,
+      ids,
+      settings.maxItems,
+      settings.resultBytes
+    );
+    const byId = new Map(rows.map((row) => [row.id, { row, bytes: jsonBytes(row) }]));
+    const result: Array<Row | null> = [];
+    let bytes = 2;
+    for (const id of ids) {
+      const found = byId.get(id);
+      bytes += (result.length === 0 ? 0 : 1) + (found?.bytes ?? 4);
+      if (bytes > settings.resultBytes)
+        return yield* new Runtime.TooLarge({ maxBytes: settings.resultBytes });
+      result.push(found?.row ?? null);
+    }
+    return result;
+  });
   const get = Runtime.handler(
     {
       kind: "read",
@@ -311,14 +400,7 @@ export const make = Effect.gen(function* () {
       output: runtimeOperations["tables.get"].response
     },
     (args) =>
-      withTable(args.table, (sql, table, qualified) =>
-        Effect.map(
-          queryRows(sql, `SELECT ${projection(table)} FROM ${qualified} WHERE "id" = $1`, [
-            args.id
-          ]),
-          (rows) => rows[0] ?? null
-        )
-      )
+      withTable(args.table, (sql, table, qualified) => getRow(sql, table, qualified, args.id))
   );
   const getMany = Runtime.handler(
     {
@@ -327,32 +409,7 @@ export const make = Effect.gen(function* () {
       output: runtimeOperations["tables.getMany"].response
     },
     (args) =>
-      withTable(args.table, (sql, table, qualified) =>
-        Effect.gen(function* () {
-          if (args.ids.length > settings.maxItems)
-            return yield* new ItemLimit({ maxItems: settings.maxItems });
-          yield* byteLimit(args.ids, settings.batchBytes);
-          if (args.ids.length === 0) return [];
-          const { rows } = yield* boundedRows(
-            sql,
-            `SELECT ${projection(table)}, row_number() OVER (ORDER BY stored."id") AS "__position" FROM ${qualified} AS stored WHERE stored."id" IN (${args.ids.map((_, index) => `$${index + 1}`).join(", ")})`,
-            args.ids,
-            settings.maxItems,
-            settings.resultBytes
-          );
-          const byId = new Map(rows.map((row) => [row.id, { row, bytes: jsonBytes(row) }]));
-          const result: Array<Row | null> = [];
-          let bytes = 2;
-          for (const id of args.ids) {
-            const found = byId.get(id);
-            bytes += (result.length === 0 ? 0 : 1) + (found?.bytes ?? 4);
-            if (bytes > settings.resultBytes)
-              return yield* new Runtime.TooLarge({ maxBytes: settings.resultBytes });
-            result.push(found?.row ?? null);
-          }
-          return result;
-        })
-      )
+      withTable(args.table, (sql, table, qualified) => getRows(sql, table, qualified, args.ids))
   );
   const insertOne = Runtime.handler(
     {
@@ -458,6 +515,152 @@ export const make = Effect.gen(function* () {
         Effect.as(sql.unsafe(`DELETE FROM ${qualified} WHERE "id" = $1`, [args.id]), null)
       )
   );
+  const listRows = Effect.fn("TableOperations.listRows")(function* (
+    sql: SqlClient.SqlClient,
+    table: Table,
+    qualified: string,
+    patchId: string,
+    name: string,
+    args: Omit<List, "table">
+  ) {
+    const limit = args.limit ?? settings.defaultPage;
+    if (limit > settings.maxPage) return yield* new ItemLimit({ maxItems: settings.maxPage });
+    const indexName = args.index ?? "createdAt";
+    const declared =
+      args.index !== undefined && Object.hasOwn(table.indexes, indexName)
+        ? table.indexes[indexName]
+        : undefined;
+    const ref = Object.hasOwn(table.columns, indexName) && table.columns[indexName]!.kind === "ref";
+    const index =
+      args.index === undefined
+        ? ["createdAt", "id"]
+        : (declared?.columns ??
+          (indexName === "createdAt" ? ["createdAt", "id"] : ref ? [indexName] : undefined));
+    if (index === undefined) return yield* new Runtime.InvalidRequest({});
+    const columns = [...new Set([...index, "id"])];
+    const order =
+      args.order ??
+      (args.index === undefined || (indexName === "createdAt" && declared === undefined)
+        ? "desc"
+        : "asc");
+    const eq = args.eq ?? {};
+    const leading = Object.keys(eq).length;
+    if (
+      leading > index.length ||
+      Object.keys(eq).some((key) => !index.slice(0, leading).includes(key))
+    )
+      return yield* new Runtime.InvalidRequest({});
+    const values: unknown[] = [];
+    const conditions: string[] = [];
+    const storageColumn = (column: string) => `stored.${Inventory.quoteIdentifier(column)}`;
+    const add = (column: string, value: unknown) => {
+      const definition = columnAt(table, column)!;
+      values.push(dbValue(definition, value));
+      return parameter(definition, values.length);
+    };
+    for (const key of index.slice(0, leading)) {
+      if (!validValue(columnAt(table, key)!, eq[key])) return yield* new Runtime.InvalidRequest({});
+      conditions.push(
+        eq[key] === null
+          ? `${storageColumn(key)} IS NULL`
+          : `${storageColumn(key)} = ${add(key, eq[key])}`
+      );
+    }
+    if (args.range !== undefined) {
+      const range = args.range;
+      if (
+        range.column !== index[leading] ||
+        (range.gt !== undefined && range.gte !== undefined) ||
+        (range.lt !== undefined && range.lte !== undefined)
+      )
+        return yield* new Runtime.InvalidRequest({});
+      const bounds = ["gt", "gte", "lt", "lte"] as const;
+      const operators = { gt: ">", gte: ">=", lt: "<", lte: "<=" };
+      if (!bounds.some((bound) => Object.hasOwn(range, bound)))
+        return yield* new Runtime.InvalidRequest({});
+      for (const bound of bounds)
+        if (Object.hasOwn(range, bound)) {
+          const value = range[bound];
+          if (value === null || !validValue(columnAt(table, range.column)!, value))
+            return yield* new Runtime.InvalidRequest({});
+          conditions.push(
+            `${storageColumn(range.column)} ${operators[bound]} ${add(range.column, value)}`
+          );
+        }
+    }
+    // Only canonical, validated selectors are persisted; never raw operation arguments.
+    const binding = encodeJson([
+      patchId,
+      name,
+      indexName,
+      columns,
+      order,
+      index.slice(0, leading).map((key) => [key, eq[key]]),
+      args.range === undefined
+        ? null
+        : [
+            args.range.column,
+            ...["gt", "gte", "lt", "lte"].map(
+              (key) => args.range![key as keyof NonNullable<List["range"]>] ?? null
+            )
+          ]
+    ]);
+    if (args.cursor !== undefined) {
+      if (!/^[A-Za-z0-9_-]+$/.test(args.cursor)) return yield* new InvalidCursor({ table: name });
+      const decoded = yield* decodeCursor(
+        Buffer.from(args.cursor, "base64url").toString("utf8")
+      ).pipe(Effect.mapError((cause) => new InvalidCursor({ table: name, cause })));
+      if (
+        decoded.binding !== binding ||
+        decoded.values.length !== columns.length ||
+        decoded.values.some((value, index) => !validValue(columnAt(table, columns[index]!)!, value))
+      )
+        return yield* new InvalidCursor({ table: name });
+      // Nullable keys stay NULLS LAST in either direction.
+      const branches: string[] = [];
+      const equal: string[] = [];
+      columns.forEach((column, index) => {
+        const value = decoded.values[index];
+        const identifier = storageColumn(column);
+        if (value !== null) {
+          const param = add(column, value);
+          branches.push(
+            `(${[...equal, `(${identifier} ${order === "asc" ? ">" : "<"} ${param}${validValue(columnAt(table, column)!, null) ? ` OR ${identifier} IS NULL` : ""})`].join(" AND ")})`
+          );
+          equal.push(`${identifier} = ${param}`);
+        } else equal.push(`${identifier} IS NULL`);
+      });
+      conditions.push(`(${branches.length === 0 ? "FALSE" : branches.join(" OR ")})`);
+    }
+    values.push(limit + 1);
+    const ordering = columns
+      .map(
+        (column) =>
+          `${storageColumn(column)} ${order.toUpperCase()}${validValue(columnAt(table, column)!, null) ? " NULLS LAST" : ""}`
+      )
+      .join(", ");
+    const { rows: page, hasMore } = yield* boundedRows(
+      sql,
+      `SELECT ${projection(table)}, row_number() OVER (ORDER BY ${ordering}) AS "__position" FROM (SELECT * FROM ${qualified} AS stored${conditions.length === 0 ? "" : ` WHERE ${conditions.join(" AND ")}`} ORDER BY ${ordering} LIMIT $${values.length}) AS stored`,
+      values,
+      limit,
+      settings.resultBytes
+    );
+    const last = page[page.length - 1];
+    const cursor =
+      hasMore && last !== undefined
+        ? Buffer.from(
+            encodeCursor({
+              version: 1,
+              binding,
+              values: columns.map((column) => last[column]!)
+            })
+          ).toString("base64url")
+        : null;
+    const result = { rows: page, cursor };
+    yield* byteLimit(result, settings.resultBytes);
+    return result;
+  });
   const list = Runtime.handler(
     {
       kind: "read",
@@ -465,157 +668,48 @@ export const make = Effect.gen(function* () {
       output: runtimeOperations["tables.list"].response
     },
     (args) =>
-      withTable(args.table, (sql, table, qualified, patchId) =>
-        Effect.gen(function* () {
-          const limit = args.limit ?? settings.defaultPage;
-          if (limit > settings.maxPage) return yield* new ItemLimit({ maxItems: settings.maxPage });
-          const indexName = args.index ?? "createdAt";
-          const declared =
-            args.index !== undefined && Object.hasOwn(table.indexes, indexName)
-              ? table.indexes[indexName]
-              : undefined;
-          const ref =
-            Object.hasOwn(table.columns, indexName) && table.columns[indexName]!.kind === "ref";
-          const index =
-            args.index === undefined
-              ? ["createdAt", "id"]
-              : (declared?.columns ??
-                (indexName === "createdAt" ? ["createdAt", "id"] : ref ? [indexName] : undefined));
-          if (index === undefined) return yield* new Runtime.InvalidRequest({});
-          const columns = [...new Set([...index, "id"])];
-          const order =
-            args.order ??
-            (args.index === undefined || (indexName === "createdAt" && declared === undefined)
-              ? "desc"
-              : "asc");
-          const eq = args.eq ?? {};
-          const leading = Object.keys(eq).length;
-          if (
-            leading > index.length ||
-            Object.keys(eq).some((key) => !index.slice(0, leading).includes(key))
-          )
-            return yield* new Runtime.InvalidRequest({});
-          const values: unknown[] = [];
-          const conditions: string[] = [];
-          const storageColumn = (column: string) => `stored.${Inventory.quoteIdentifier(column)}`;
-          const add = (column: string, value: unknown) => {
-            const definition = columnAt(table, column)!;
-            values.push(dbValue(definition, value));
-            return parameter(definition, values.length);
-          };
-          for (const key of index.slice(0, leading)) {
-            if (!validValue(columnAt(table, key)!, eq[key]))
-              return yield* new Runtime.InvalidRequest({});
-            conditions.push(
-              eq[key] === null
-                ? `${storageColumn(key)} IS NULL`
-                : `${storageColumn(key)} = ${add(key, eq[key])}`
-            );
-          }
-          if (args.range !== undefined) {
-            const range = args.range;
-            if (
-              range.column !== index[leading] ||
-              (range.gt !== undefined && range.gte !== undefined) ||
-              (range.lt !== undefined && range.lte !== undefined)
-            )
-              return yield* new Runtime.InvalidRequest({});
-            const bounds = ["gt", "gte", "lt", "lte"] as const;
-            const operators = { gt: ">", gte: ">=", lt: "<", lte: "<=" };
-            if (!bounds.some((bound) => Object.hasOwn(range, bound)))
-              return yield* new Runtime.InvalidRequest({});
-            for (const bound of bounds)
-              if (Object.hasOwn(range, bound)) {
-                const value = range[bound];
-                if (value === null || !validValue(columnAt(table, range.column)!, value))
-                  return yield* new Runtime.InvalidRequest({});
-                conditions.push(
-                  `${storageColumn(range.column)} ${operators[bound]} ${add(range.column, value)}`
-                );
-              }
-          }
-          // Only canonical, validated selectors are persisted; never raw operation arguments.
-          const binding = encodeJson([
-            patchId,
-            args.table,
-            indexName,
-            columns,
-            order,
-            index.slice(0, leading).map((key) => [key, eq[key]]),
-            args.range === undefined
-              ? null
-              : [
-                  args.range.column,
-                  ...["gt", "gte", "lt", "lte"].map(
-                    (key) => args.range![key as keyof NonNullable<List["range"]>] ?? null
-                  )
-                ]
-          ]);
-          if (args.cursor !== undefined) {
-            if (!/^[A-Za-z0-9_-]+$/.test(args.cursor))
-              return yield* new InvalidCursor({ table: args.table });
-            const decoded = yield* decodeCursor(
-              Buffer.from(args.cursor, "base64url").toString("utf8")
-            ).pipe(Effect.mapError((cause) => new InvalidCursor({ table: args.table, cause })));
-            if (
-              decoded.binding !== binding ||
-              decoded.values.length !== columns.length ||
-              decoded.values.some(
-                (value, index) => !validValue(columnAt(table, columns[index]!)!, value)
-              )
-            )
-              return yield* new InvalidCursor({ table: args.table });
-            // Nullable keys stay NULLS LAST in either direction.
-            const branches: string[] = [];
-            const equal: string[] = [];
-            columns.forEach((column, index) => {
-              const value = decoded.values[index];
-              const identifier = storageColumn(column);
-              if (value !== null) {
-                const param = add(column, value);
-                branches.push(
-                  `(${[...equal, `(${identifier} ${order === "asc" ? ">" : "<"} ${param}${validValue(columnAt(table, column)!, null) ? ` OR ${identifier} IS NULL` : ""})`].join(" AND ")})`
-                );
-                equal.push(`${identifier} = ${param}`);
-              } else equal.push(`${identifier} IS NULL`);
-            });
-            conditions.push(`(${branches.length === 0 ? "FALSE" : branches.join(" OR ")})`);
-          }
-          values.push(limit + 1);
-          const ordering = columns
-            .map(
-              (column) =>
-                `${storageColumn(column)} ${order.toUpperCase()}${validValue(columnAt(table, column)!, null) ? " NULLS LAST" : ""}`
-            )
-            .join(", ");
-          const { rows: page, hasMore } = yield* boundedRows(
-            sql,
-            `SELECT ${projection(table)}, row_number() OVER (ORDER BY ${ordering}) AS "__position" FROM (SELECT * FROM ${qualified} AS stored${conditions.length === 0 ? "" : ` WHERE ${conditions.join(" AND ")}`} ORDER BY ${ordering} LIMIT $${values.length}) AS stored`,
-            values,
-            limit,
-            settings.resultBytes
-          );
-          const last = page[page.length - 1];
-          const cursor =
-            hasMore && last !== undefined
-              ? Buffer.from(
-                  encodeCursor({
-                    version: 1,
-                    binding,
-                    values: columns.map((column) => last[column]!)
-                  })
-                ).toString("base64url")
-              : null;
-          const result = { rows: page, cursor };
-          yield* byteLimit(result, settings.resultBytes);
-          return result;
-        })
+      withTable(args.table, (sql, table, qualified, patchId, name) =>
+        listRows(sql, table, qualified, patchId, name, args)
+      )
+  );
+  const sharedGet = Runtime.handler(
+    {
+      kind: "read",
+      input: runtimeOperations["shared.get"].request.fields.args,
+      output: runtimeOperations["shared.get"].response
+    },
+    (args) =>
+      withSharedTable(args.alias, (sql, table, qualified) => getRow(sql, table, qualified, args.id))
+  );
+  const sharedGetMany = Runtime.handler(
+    {
+      kind: "read",
+      input: runtimeOperations["shared.getMany"].request.fields.args,
+      output: runtimeOperations["shared.getMany"].response
+    },
+    (args) =>
+      withSharedTable(args.alias, (sql, table, qualified) =>
+        getRows(sql, table, qualified, args.ids)
+      )
+  );
+  const sharedList = Runtime.handler(
+    {
+      kind: "read",
+      input: runtimeOperations["shared.list"].request.fields.args,
+      output: runtimeOperations["shared.list"].response
+    },
+    (args) =>
+      withSharedTable(args.alias, (sql, table, qualified, patchId, name) =>
+        listRows(sql, table, qualified, patchId, name, args)
       )
   );
   return {
     "tables.get": get,
     "tables.getMany": getMany,
     "tables.list": list,
+    "shared.get": sharedGet,
+    "shared.getMany": sharedGetMany,
+    "shared.list": sharedList,
     "tables.insert": insertOne,
     "tables.insertMany": insertMany,
     "tables.update": update,

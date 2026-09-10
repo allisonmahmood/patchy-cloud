@@ -27,7 +27,7 @@ const patchId = "filehttptest";
 const publicVersionId = "ver_bbbbbbbbbbbbbbbbbbbbbbbb";
 const omittedVersionId = "ver_cccccccccccccccccccccccc";
 const versions = Layer.succeed(LoadedVersions.LoadedVersions, {
-  find: (patch, version) =>
+  find: (patch, version = versionId) =>
     Effect.succeed(
       patch !== patchId || ![versionId, publicVersionId, omittedVersionId].includes(version)
         ? Option.none()

@@ -28,6 +28,14 @@ Provisioning and reclamation callers take the platform patch-row lock first. Onl
 
 Runtime file operations are company-only: `LoadedVersions` admission supplies patch liveness and viewer authority, never a second platform lookup inside `Files`. `withFileLock` requires a company lease and serializes the index entry for one patch/store/name using a distinct advisory key. Its file-lock capability carries that identity; index writes reject a mismatched patch, store or name. Put writes a unique immutable object before acquiring the lease and index lock; get reads its pointer under the lock and releases the lease before fetching bytes. Delete changes only the index, and list uses a lease without a write lock. Blob I/O therefore holds neither platform nor company transactions, and unrelated names do not share a file lock. Failed or interrupted puts may leave unnamed objects for the existing grace-period sweep.
 
+Shared-table reads resolve source liveness through `LoadedVersions` before
+leasing the company database; they never query or lock platform rows inside
+the primitive operation. The source inventory supplies the live sharing flag
+and cumulative definition under its company patch lock. The reader then uses
+the same indexed row operations as owned tables. A declaration's source patch
+id and table are stable; active-version changes never replace that identity
+or sharing authority.
+
 ## Inventory and reclamation
 
 The company database's `patchy` schema holds the cumulative provisioning authority: patches and their schema revisions, tables, columns, indexes, stores, and the file index. Physical namespaces are `p_<patchId>`; table and column identifiers are quoted as written. Inventory commits with DDL and is never rolled back merely because the active patch version is rolled back. Table-definition changes and new stores advance the revision; a new patch version or a file-content mutation alone does not.

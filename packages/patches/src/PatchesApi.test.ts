@@ -23,7 +23,8 @@ import {
   PublishUpdated,
   NotAdditive,
   CURRENT_RELEASE,
-  WIRE_VERSION
+  WIRE_VERSION,
+  sharedTableId
 } from "@patchy/api";
 import { ContentStore } from "@patchy/content-store";
 import { Limits } from "@patchy/limits";
@@ -1170,5 +1171,308 @@ it.layer(publishLayer)("publish attempts", (it) => {
         }
       );
     })
+  );
+});
+
+it.layer(Layer.fresh(publishLayer))("shared table publishing", (it) => {
+  it.effect(
+    "keeps shared metadata after omission and counts declaring patches across stored versions",
+    () =>
+      Effect.gen(function* () {
+        const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+        const consumer = yield* client.pipe(Effect.provide(Fixtures.as(reader)));
+        const patches = yield* Patches.Patches;
+        const sourceManifest = {
+          ...Fixtures.manifest,
+          name: "shared-contacts",
+          tables: {
+            contacts: {
+              columns: { name: { kind: "text" as const } },
+              indexes: { byName: { columns: ["name"] } },
+              shared: true
+            }
+          }
+        };
+        const source = yield* owner.publish({
+          payload: publishRequest({ html: html("Contacts"), manifest: sourceManifest })
+        });
+        const declaration = {
+          kind: "sharedTable" as const,
+          patchId: source.patchId,
+          table: "contacts",
+          id: sharedTableId(source.patchId, "contacts"),
+          revision: source.schemaRevision
+        };
+        const evolvedManifest = {
+          ...sourceManifest,
+          tables: {
+            contacts: {
+              ...sourceManifest.tables.contacts,
+              columns: {
+                ...sourceManifest.tables.contacts.columns,
+                email: { kind: "text" as const, optional: true }
+              }
+            }
+          }
+        };
+        const evolved = yield* owner.publish({
+          payload: publishRequest({
+            patchId: source.patchId,
+            html: html("Contacts with email"),
+            manifest: evolvedManifest
+          })
+        });
+        assert.strictEqual(evolved.schemaRevision, source.schemaRevision + 1);
+        const omitted = yield* owner.publish({
+          payload: publishRequest({
+            patchId: source.patchId,
+            html: html("Source omits contacts"),
+            manifest: { ...Fixtures.manifest, name: source.name }
+          })
+        });
+        assert.deepStrictEqual(omitted.unused.tables, ["contacts"]);
+        const metadata = yield* patches.sharedTable(source.patchId, "contacts", reader.company.id);
+        assert.strictEqual(metadata.id, declaration.id);
+        assert.strictEqual(metadata.schemaRevision, evolved.schemaRevision);
+        assert.deepStrictEqual(
+          metadata.definition.columns,
+          evolvedManifest.tables.contacts.columns
+        );
+        assert.deepStrictEqual(metadata.definition.indexes.byName?.columns, ["name"]);
+        assert.isTrue(metadata.definition.shared);
+        yield* owner.share({
+          params: { patchId: source.patchId },
+          payload: new ShareRequest({ scope: "public" })
+        });
+        const consumerManifest = {
+          ...Fixtures.manifest,
+          name: "shared-consumer",
+          tables: {
+            notes: {
+              columns: { contact: { kind: "ref" as const, table: declaration.id } },
+              indexes: {}
+            }
+          },
+          uses: { contacts: declaration, duplicate: declaration }
+        };
+        const undeclaredRef = yield* consumer.publish({
+          payload: publishRequest({
+            html: html("Undeclared shared ref"),
+            manifest: { ...consumerManifest, uses: {} }
+          }),
+          responseMode: "response-only"
+        });
+        assert.strictEqual(undeclaredRef.status, 422);
+        const refRefusal = yield* undeclaredRef.json.pipe(Effect.flatMap(decodeNotAdditive));
+        assert.deepStrictEqual(
+          refRefusal.changes.map((change) => change.object),
+          ["notes.contact"]
+        );
+        const payload = publishRequest({ html: html("Consumer"), manifest: consumerManifest });
+        const [created, response] = yield* consumer.publish({
+          payload,
+          responseMode: "decoded-and-response"
+        });
+        assert.isTrue(
+          created.warnings.some(
+            (warning) =>
+              warning.includes("revision 1") &&
+              warning.includes("revision 2") &&
+              warning.includes(declaration.id)
+          )
+        );
+        const baseline = yield* consumer.inventory({ params: { patchId: created.patchId } });
+        assert.deepStrictEqual(baseline.tables.notes?.columns.contact, {
+          kind: "ref",
+          table: declaration.id
+        });
+        const fileMode = yield* consumer.publish({
+          payload: publishRequest({
+            patchId: created.patchId,
+            html: html("File update with a declaration"),
+            metadata: { filename: "consumer.html" },
+            manifest: { ...Fixtures.manifest, uses: { contacts: declaration } }
+          }),
+          responseMode: "response-only"
+        });
+        assert.strictEqual(fileMode.status, 422);
+        assert.include(yield* fileMode.json, { code: "has_primitives" });
+        const loaded = Option.getOrThrow(yield* patches.find(created.patchId));
+        assert.strictEqual(loaded.version.manifest.uses.contacts?.id, declaration.id);
+        yield* consumer.publish({
+          payload: publishRequest({
+            patchId: created.patchId,
+            html: html("Another declaring version"),
+            manifest: consumerManifest
+          })
+        });
+        const historical = yield* consumer.publish({
+          payload: publishRequest({
+            html: html("Historical declaration"),
+            manifest: {
+              ...Fixtures.manifest,
+              name: "historical-declaration",
+              uses: { contacts: declaration }
+            }
+          })
+        });
+        yield* consumer.publish({
+          payload: publishRequest({
+            patchId: historical.patchId,
+            html: html("No current declaration"),
+            manifest: { ...Fixtures.manifest, name: historical.name }
+          })
+        });
+        const sql = yield* SqlClient.SqlClient;
+        for (const state of ["deleted", "expired", "disabled"] as const) {
+          const inactive = yield* consumer.publish({
+            payload: publishRequest({
+              html: html(state),
+              manifest: {
+                ...Fixtures.manifest,
+                name: `shared-${state}`,
+                uses: { contacts: declaration }
+              }
+            })
+          });
+          if (state === "deleted")
+            yield* consumer.delete({ params: { patchId: inactive.patchId } });
+          else if (state === "expired") {
+            const expiredAt = (yield* Clock.currentTimeMillis) / 1_000 - 1;
+            yield* sql`UPDATE patches SET expires_at = to_timestamp(${expiredAt})
+            WHERE id = ${inactive.patchId}`;
+          } else yield* sql`UPDATE patches SET disabled_at = now() WHERE id = ${inactive.patchId}`;
+        }
+        const unshared = yield* owner.publish({
+          payload: publishRequest({
+            patchId: source.patchId,
+            html: html("No longer shared"),
+            manifest: {
+              ...evolvedManifest,
+              tables: { contacts: { ...evolvedManifest.tables.contacts, shared: false } }
+            }
+          })
+        });
+        assert.isTrue(unshared.warnings.some((warning) => warning.includes("2 declaring patches")));
+        assert.deepStrictEqual(
+          yield* consumer.inventory({ params: { patchId: created.patchId } }),
+          baseline
+        );
+        assert.instanceOf(
+          yield* patches
+            .sharedTable(source.patchId, "contacts", reader.company.id)
+            .pipe(Effect.flip),
+          Patches.PatchNotOpenable
+        );
+        const replay = yield* consumer.publish({ payload, responseMode: "response-only" });
+        assert.strictEqual(yield* replay.text, yield* response.text);
+        const store = yield* ContentStore.ContentStore;
+        const before = yield* Stream.runCollect(store.list("patches/"));
+        const refused = yield* consumer.publish({
+          payload: publishRequest({
+            patchId: created.patchId,
+            html: html("Fresh attempt after unshare"),
+            manifest: consumerManifest
+          }),
+          responseMode: "response-only"
+        });
+        assert.strictEqual(refused.status, 422);
+        assert.include(yield* refused.json, { code: "patch_not_openable" });
+        assert.deepStrictEqual(yield* Stream.runCollect(store.list("patches/")), before);
+      })
+  );
+
+  it.effect(
+    "refuses unavailable shared identities before bytes and never rebinds a recreated name",
+    () =>
+      Effect.gen(function* () {
+        const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+        const consumer = yield* client.pipe(Effect.provide(Fixtures.as(reader)));
+        const manifest = {
+          ...Fixtures.manifest,
+          name: "stable-source-name",
+          tables: { contacts: { columns: {}, indexes: {}, shared: true } }
+        };
+        const source = yield* owner.publish({
+          payload: publishRequest({ html: html("Source"), manifest })
+        });
+        const declaration = {
+          kind: "sharedTable" as const,
+          patchId: source.patchId,
+          table: "contacts",
+          id: sharedTableId(source.patchId, "contacts"),
+          revision: source.schemaRevision
+        };
+        const store = yield* ContentStore.ContentStore;
+        const before = yield* Stream.runCollect(store.list("patches/"));
+        for (const unavailable of [
+          { ...declaration, id: "forged-id" },
+          { ...declaration, table: "missing", id: sharedTableId(source.patchId, "missing") },
+          { ...declaration, patchId: "abcdefghijkl", id: "abcdefghijkl/contacts" }
+        ]) {
+          const refused = yield* consumer.publish({
+            payload: publishRequest({
+              html: html("Refused consumer"),
+              manifest: { ...Fixtures.manifest, uses: { contacts: unavailable } }
+            }),
+            responseMode: "response-only"
+          });
+          assert.strictEqual(refused.status, 422);
+          assert.include(yield* refused.json, { code: "patch_not_openable" });
+        }
+        assert.deepStrictEqual(yield* Stream.runCollect(store.list("patches/")), before);
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`INSERT INTO companies (id, handle, name)
+        VALUES ('cmp_shared_foreign', 'shared-foreign', 'Foreign company')`;
+        yield* sql`UPDATE patches SET company_id = 'cmp_shared_foreign' WHERE id = ${source.patchId}`;
+        const foreign = yield* consumer.publish({
+          payload: publishRequest({
+            html: html("Foreign consumer"),
+            manifest: { ...Fixtures.manifest, uses: { contacts: declaration } }
+          }),
+          responseMode: "response-only"
+        });
+        assert.include(yield* foreign.json, { code: "patch_not_openable" });
+        assert.deepStrictEqual(yield* Stream.runCollect(store.list("patches/")), before);
+        yield* sql`UPDATE patches SET company_id = ${uploader.company.id} WHERE id = ${source.patchId}`;
+        const expiredAt = (yield* Clock.currentTimeMillis) / 1_000 - 1;
+        yield* sql`UPDATE patches SET expires_at = to_timestamp(${expiredAt}) WHERE id = ${source.patchId}`;
+        const expired = yield* consumer.publish({
+          payload: publishRequest({
+            html: html("Expired source"),
+            manifest: { ...Fixtures.manifest, uses: { contacts: declaration } }
+          }),
+          responseMode: "response-only"
+        });
+        assert.include(yield* expired.json, { code: "patch_not_openable" });
+        assert.deepStrictEqual(yield* Stream.runCollect(store.list("patches/")), before);
+        yield* sql`UPDATE patches SET expires_at = to_timestamp(${expiredAt + 86400})
+        WHERE id = ${source.patchId}`;
+        yield* owner.delete({ params: { patchId: source.patchId } });
+        const replacement = yield* owner.publish({
+          payload: publishRequest({ html: html("Replacement"), manifest })
+        });
+        assert.strictEqual(replacement.name, source.name);
+        assert.notStrictEqual(replacement.patchId, source.patchId);
+        const refused = yield* consumer.publish({
+          payload: publishRequest({
+            html: html("Old identity"),
+            manifest: { ...Fixtures.manifest, uses: { contacts: declaration } }
+          }),
+          responseMode: "response-only"
+        });
+        assert.include(yield* refused.json, { code: "patch_not_openable" });
+        const patches = yield* Patches.Patches;
+        assert.instanceOf(
+          yield* patches
+            .sharedTable(source.patchId, "contacts", reader.company.id)
+            .pipe(Effect.flip),
+          Patches.PatchNotOpenable
+        );
+        assert.strictEqual(
+          (yield* patches.sharedTable(replacement.patchId, "contacts", reader.company.id)).id,
+          sharedTableId(replacement.patchId, "contacts")
+        );
+      })
   );
 });

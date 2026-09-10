@@ -29,7 +29,7 @@ A column identifying a row in a named table, without requiring that row to exist
 _Avoid_: foreign key, join, embedded row
 
 **Shared table**:
-A source patch's table made available for other patches to declare and read, never write. Sharing authority belongs to the cumulative inventory; cross-patch declarations and reads arrive with [#200](https://github.com/allisonmahmood/patchy-cloud/issues/200).
+A source patch's table made available for other patches to declare and read, never write. Its identity is the source patch and table; sharing authority and the cumulative definition belong to the inventory, independent of the source's active version.
 _Avoid_: public table, copied table
 
 **File store**:

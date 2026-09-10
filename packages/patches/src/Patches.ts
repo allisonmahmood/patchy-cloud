@@ -32,7 +32,9 @@ import {
   PatchName,
   PublishCreated,
   PublishUpdated,
-  SharingScope
+  SharingScope,
+  TableDefinition,
+  sharedTableId
 } from "@patchy/api";
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
 import { Tables } from "@patchy/primitives";
@@ -192,13 +194,32 @@ export class HasPrimitives extends Schema.TaggedError<HasPrimitives>()("HasPrimi
   }
 }
 
+/** A declaration never reveals whether its source is missing, private or unshared. */
+export class PatchNotOpenable extends Schema.TaggedError<PatchNotOpenable>()("PatchNotOpenable", {
+  patchId: Schema.String,
+  table: Schema.String
+}) {
+  readonly code = "patch_not_openable" as const;
+  override get message() {
+    return `Shared table ${this.patchId}/${this.table} is not openable.`;
+  }
+}
+
+export interface SharedTable {
+  readonly id: string;
+  readonly patchId: string;
+  readonly table: string;
+  readonly schemaRevision: number;
+  readonly definition: typeof TableDefinition.Type;
+}
+
 export type DatabaseError =
   | CompanyDatabases.Busy
   | CompanyDatabases.CompanyDatabaseError
   | CompanyDatabases.CompanyDatabaseNotReady
   | CompanyDatabases.CompanyIdentityMismatch;
 
-export type ResourceError = HasPrimitives | Tables.NotAdditive | DatabaseError;
+export type ResourceError = HasPrimitives | PatchNotOpenable | Tables.NotAdditive | DatabaseError;
 
 export interface PublishTarget {
   readonly intent: "create" | "update";
@@ -218,8 +239,8 @@ const hasOwnedDefinitions = (manifest: typeof Manifest.Type) =>
 /** File requests may carry --name; empty named repo manifests are not file requests. */
 const isFileMode = (input: PublishPreflight) =>
   !hasOwnedDefinitions(input.manifest) &&
-  Object.keys(input.manifest.uses).length === 0 &&
-  (input.manifest.name === undefined || input.filename !== null);
+  (input.filename !== null ||
+    (Object.keys(input.manifest.uses).length === 0 && input.manifest.name === undefined));
 
 export interface RecordInput extends PublishTarget {
   readonly companyId: string;
@@ -289,6 +310,12 @@ export class Patches extends Context.Service<
       patchId: string,
       ownerUserId: string
     ) => Effect.Effect<PatchInventory, PatchUnavailable | DatabaseError | SqlError>;
+    /** Metadata for generation and fixtures, from live same-company shared inventory. */
+    readonly sharedTable: (
+      patchId: string,
+      table: string,
+      companyId: string
+    ) => Effect.Effect<SharedTable, PatchNotOpenable | DatabaseError | SqlError>;
     /** Durably reserves a fresh object key before any bytes can be written. */
     readonly prepareObject: (objectKey: string) => Effect.Effect<void, SqlError>;
     /**
@@ -423,6 +450,10 @@ class Id extends Schema.Class<Id>("Id")({ id: Schema.String }) {}
 class Count extends Schema.Class<Count>("Count")({ count: Schema.Int }) {}
 class NextVersion extends Schema.Class<NextVersion>("NextVersion")({ nextVersion: Schema.Int }) {}
 class ObjectKey extends Schema.Class<ObjectKey>("ObjectKey")({ objectKey: Schema.String }) {}
+class DeclaringPatches extends Schema.Class<DeclaringPatches>("DeclaringPatches")({
+  table: Schema.String,
+  count: Schema.Int
+}) {}
 class PatchTargetRow extends Schema.Class<PatchTargetRow>("PatchTargetRow")({
   scope: SharingScope,
   companyId: Schema.String,
@@ -711,6 +742,23 @@ export const make = Effect.gen(function* () {
       Effect.catchTags({ ...dieOnSchemaError, NoSuchElementError: Effect.die })
     )
   );
+  const find = Effect.fn("Patches.find")(function* (
+    patchId: string,
+    versionNumber?: number,
+    versionId?: string
+  ) {
+    const nowMillis = yield* Clock.currentTimeMillis;
+    const patch = yield* findPatch({ patchId, nowMillis });
+    if (Option.isNone(patch)) return Option.none();
+    const selectedId = versionId ?? patch.value.currentVersionId;
+    const version =
+      versionId === undefined && versionNumber !== undefined
+        ? yield* findVersionByNumber({ patchId, versionNumber })
+        : selectedId === null
+          ? Option.none()
+          : yield* findVersionById({ patchId, versionId: selectedId });
+    return Option.map(version, (row) => ({ patch: toPatch(patch.value), version: toVersion(row) }));
+  }, Effect.catchTags(dieOnSchemaError));
 
   const checkTarget = Effect.fn("Patches.checkTarget")(function* (target: PublishTarget) {
     if (target.intent === "update") {
@@ -741,6 +789,69 @@ export const make = Effect.gen(function* () {
       )
   );
 
+  const sharedTable = Effect.fn("Patches.sharedTable")(function* (
+    patchId: string,
+    table: string,
+    companyId: string
+  ) {
+    // Never nest platform patch locks: source liveness is read before the company inventory lock.
+    const source = yield* find(patchId);
+    if (Option.isNone(source) || source.value.patch.companyId !== companyId)
+      return yield* new PatchNotOpenable({ patchId, table });
+    const snapshot = yield* readInventory(companyId, patchId);
+    if (snapshot === null || !snapshot.tables.some((entry) => entry.name === table && entry.shared))
+      return yield* new PatchNotOpenable({ patchId, table });
+    return {
+      id: sharedTableId(patchId, table),
+      patchId,
+      table,
+      schemaRevision: snapshot.schemaRevision,
+      definition: Tables.inventoryManifest(snapshot).tables[table]!
+    } satisfies SharedTable;
+  });
+
+  const resolveDeclarations = Effect.fn("Patches.resolveDeclarations")(function* (
+    manifest: typeof Manifest.Type,
+    companyId: string
+  ) {
+    const warnings: string[] = [];
+    for (const [alias, declaration] of Object.entries(manifest.uses)) {
+      if (declaration.kind !== "sharedTable") continue;
+      if (declaration.id !== sharedTableId(declaration.patchId, declaration.table))
+        return yield* new PatchNotOpenable({
+          patchId: declaration.patchId,
+          table: declaration.table
+        });
+      const source = yield* sharedTable(declaration.patchId, declaration.table, companyId);
+      if (declaration.revision < source.schemaRevision)
+        warnings.push(
+          `Shared table \`${alias}\` was generated at revision ${declaration.revision}; source ${source.id} is at revision ${source.schemaRevision}. Run patchy refresh.`
+        );
+    }
+    return warnings;
+  });
+
+  const declaringPatchRows = SqlSchema.findAll({
+    Request: Schema.Struct({
+      patchId: Schema.String,
+      companyId: Schema.String,
+      nowMillis: Schema.Number
+    }),
+    Result: DeclaringPatches,
+    execute: ({ patchId, companyId, nowMillis }) => sql`
+      SELECT declaration.value->>'table' AS "table", count(DISTINCT patches.id)::int AS count
+      FROM patches
+      JOIN patch_versions ON patch_versions.patch_id = patches.id
+      CROSS JOIN LATERAL jsonb_each(patch_versions.manifest->'uses') AS declaration
+      WHERE patches.company_id = ${companyId}
+        AND patches.deleted_at IS NULL AND patches.disabled_at IS NULL
+        AND ${notExpired(stamp(nowMillis))}
+        AND declaration.value->>'kind' = 'sharedTable'
+        AND declaration.value->>'patchId' = ${patchId}
+        AND declaration.value->>'id' = ${patchId} || '/' || (declaration.value->>'table')
+      GROUP BY declaration.value->>'table'`
+  });
+
   const preflight = Effect.fn("Patches.preflight")(function* (input: PublishPreflight) {
     yield* checkTarget(input);
     if (input.manifest.name !== undefined) {
@@ -749,6 +860,7 @@ export const make = Effect.gen(function* () {
           AND name = ${input.manifest.name} AND current AND patch_id <> ${input.patchId}`;
       if (occupied.length > 0) return yield* new NameTaken({ name: input.manifest.name });
     }
+    yield* resolveDeclarations(input.manifest, input.companyId);
     if (hasOwnedDefinitions(input.manifest)) {
       yield* databases.ensureReady(input.companyId);
     }
@@ -800,7 +912,10 @@ export const make = Effect.gen(function* () {
     )
   );
 
-  const provision = Effect.fn("Patches.provision")(function* (input: RecordInput) {
+  const provision = Effect.fn("Patches.provision")(function* (
+    input: RecordInput,
+    declaringPatches: ReadonlyMap<string, number>
+  ) {
     const hasDefinitions = hasOwnedDefinitions(input.manifest);
     if (input.intent === "create" && !hasDefinitions) {
       return yield* tables.diff(input.manifest, null);
@@ -814,7 +929,7 @@ export const make = Effect.gen(function* () {
           return yield* databases.withPatchLock(input.patchId)(
             Effect.gen(function* () {
               if (isFileMode(input)) return yield* new HasPrimitives({ patchId: input.patchId });
-              return yield* tables.provision(input.patchId, input.manifest);
+              return yield* tables.provision(input.patchId, input.manifest, declaringPatches);
             })
           );
         })
@@ -948,7 +1063,19 @@ export const make = Effect.gen(function* () {
             yield* sql`UPDATE patch_names SET current = false
               WHERE patch_id = ${input.patchId} AND current AND name <> ${name}`;
           }
-          const resources = yield* provision({ ...input, companyId });
+          const declarationWarnings = yield* resolveDeclarations(input.manifest, companyId);
+          const declaringPatches = Object.values(input.manifest.tables).some(
+            (definition) => definition.shared !== true
+          )
+            ? new Map(
+                (yield* declaringPatchRows({
+                  patchId: input.patchId,
+                  companyId,
+                  nowMillis: yield* Clock.currentTimeMillis
+                })).map((row) => [row.table, row.count])
+              )
+            : new Map<string, number>();
+          const resources = yield* provision({ ...input, companyId }, declaringPatches);
           const publicUrl = address(input.publicBaseUrl, companyHandle, name);
           const response = new (input.intent === "create" ? PublishCreated : PublishUpdated)({
             ok: true,
@@ -964,7 +1091,7 @@ export const make = Effect.gen(function* () {
             schemaRevision: resources.schemaRevision,
             provisioned: resources.provisioned,
             unused: resources.unused,
-            warnings: [...input.warnings, ...resources.warnings]
+            warnings: [...input.warnings, ...declarationWarnings, ...resources.warnings]
           });
           const status = input.intent === "create" ? (201 as const) : (200 as const);
           const responseJson =
@@ -1054,24 +1181,6 @@ export const make = Effect.gen(function* () {
     });
   }, Effect.catchTags(dieOnSchemaError));
 
-  const find = Effect.fn("Patches.find")(function* (
-    patchId: string,
-    versionNumber?: number,
-    versionId?: string
-  ) {
-    const nowMillis = yield* Clock.currentTimeMillis;
-    const patch = yield* findPatch({ patchId, nowMillis });
-    if (Option.isNone(patch)) return Option.none();
-    const selectedId = versionId ?? patch.value.currentVersionId;
-    const version =
-      versionId === undefined && versionNumber !== undefined
-        ? yield* findVersionByNumber({ patchId, versionNumber })
-        : selectedId === null
-          ? Option.none()
-          : yield* findVersionById({ patchId, versionId: selectedId });
-    return Option.map(version, (row) => ({ patch: toPatch(patch.value), version: toVersion(row) }));
-  }, Effect.catchTags(dieOnSchemaError));
-
   // One predicate says both halves of the visit rule: `expires_at` below the
   // topped-up anchor is exactly "less than the visit-extension window
   // remains", and it is also exactly "this move does not shorten the clock".
@@ -1145,6 +1254,7 @@ export const make = Effect.gen(function* () {
     replay,
     preflight,
     inventory,
+    sharedTable,
     prepareObject,
     claimObjects,
     completeObject,

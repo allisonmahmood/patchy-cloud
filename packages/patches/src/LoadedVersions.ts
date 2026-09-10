@@ -4,7 +4,7 @@ import * as Option from "effect/Option";
 import { LoadedVersions } from "@patchy/runtime";
 import * as Patches from "./Patches.js";
 
-/** Shares the serving door's exact-version lookup and effective audience. */
+/** Shares the serving door's live current/exact-version lookup and effective audience. */
 export const make = Effect.gen(function* () {
   const patches = yield* Patches.Patches;
   return LoadedVersions.LoadedVersions.of({

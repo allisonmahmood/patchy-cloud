@@ -155,9 +155,11 @@ File publishing never reads `patchy.json`. The executing CLI must match
 Repo mode and refresh arrive in later SDK tickets.
 File publishing onto a patch with cumulative table or store inventory is
 `has_primitives` (422, exit 2, `rejected`), even if its current version omits
-those definitions. Publish that patch from its repo. `has_primitives` and
-`not_additive` clear the matching refused attempt; they retain their wire codes
-in the CLI's JSON failure document.
+those definitions. Publish that patch from its repo. `has_primitives`,
+`not_additive` and `patch_not_openable` clear the matching refused attempt;
+they retain their wire codes in the CLI's JSON failure document. A
+`patch_not_openable` refusal means a declared shared source is unavailable;
+correct the declaration or restore source access before starting a fresh attempt.
 
 Every patch opens at `/<company>/<name>`; a version at `/<company>/<name>/~v/<n>`.
 `--name` sets or renames it using 3–32 lowercase letters, digits or hyphens, without

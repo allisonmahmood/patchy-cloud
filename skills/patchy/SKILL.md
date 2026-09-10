@@ -153,6 +153,8 @@ browser sign-out is a separate control on **Your machines**.
   existing one after checking its original owner, even if they lose the creation race.
   Success or a definitive payload refusal clears only the matching publish key,
   so a stale response leaves a newer attempt intact.
+  `patch_not_openable` is definitive (exit 2): correct the shared-table declaration
+  or restore source access before publishing a fresh attempt.
 - Republishing the same local file updates the patch it already created on that instance
   and preserves its sharing scope unless `--share company` or `--share public` is supplied.
   Pass `--new` to force a fresh patch, or `--patch` to update a known patch only.

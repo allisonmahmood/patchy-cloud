@@ -160,7 +160,13 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "stored response and status, even after an upgrade; changed payloads answer 409 " +
           "`publish_key_conflict`. New attempts require the exact current release and manifest " +
           "version from `GET /api/release`. Tier 0 may define tables and file stores, provisioned additively; " +
-          "higher tiers answer `tier_mismatch`, uses `invalid_manifest`. " +
+          "higher tiers answer `tier_mismatch`, integration uses `invalid_manifest`. " +
+          'Shared-table uses carry `{ kind: "sharedTable", patchId, table, id, revision }`, keyed by alias. ' +
+          "The resolved id is `<patchId>/<table>`, never a patch name; revision stamps the source inventory. " +
+          "Publish requires a live same-company source the publisher can open and an inventory table " +
+          "marked shared, otherwise `patch_not_openable`. A stamp behind the source revision warns, " +
+          "not refuses. Unsharing a defined table reports the number of distinct live declaring patches, " +
+          "including declarations in retained versions; omission and rollback never change sharing. " +
           "Schema changes are checked before bytes and rechecked under the patch lock. " +
           "Preflight conservatively refuses new indexes with existing uncompressed key tuples " +
           "over 2,000 bytes, and added columns that expand existing rows over the row limit. " +
@@ -322,6 +328,14 @@ export class RuntimeGroup extends HttpApiGroup.make("runtime", { topLevel: true 
           "and final wire bytes afterward. Transport whitespace can make its check stricter. " +
           "Native PostgreSQL B-tree key-size failures are `too_large`; publishing a non-unique " +
           "index adds no separate size CHECK constraint or 2,000-byte runtime write limit. " +
+          "`shared.get { alias, id }`, `shared.getMany { alias, ids }` and `shared.list { alias, ... }` " +
+          "reuse those read contracts and source indexes, without writes. The alias resolves through " +
+          "the loaded consumer manifest to a stable source patch id and table. Every call checks " +
+          "source liveness, the viewer's same-company access and the inventory's shared flag; losing " +
+          "any of them fails the entire call with `access_denied`, including an empty getMany. " +
+          "While authorized, dangling ids remain null in input order. Source definitions come from " +
+          "cumulative inventory, so omission from the source's active manifest does not remove access. " +
+          "Deletion and recreation under the same patch name never rebind a declaration. " +
           "Request bodies allow 1 MiB plus envelope for " +
           "insert/update and 8 MiB plus envelope for insertMany; all other calls are capped at " +
           "64 KiB. Overflow is `too_large` (413). Undeclared tables answer `table_not_declared`; " +

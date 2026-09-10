@@ -18,9 +18,10 @@ export interface LoadedVersion {
 export class LoadedVersions extends Context.Service<
   LoadedVersions,
   {
+    /** Omit versionId for the live current source; exact-version admission is unchanged. */
     readonly find: (
       patchId: string,
-      versionId: string
+      versionId?: string
     ) => Effect.Effect<Option.Option<LoadedVersion>, SqlError>;
   }
 >()("@patchy/runtime/LoadedVersions") {}
