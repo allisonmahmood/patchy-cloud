@@ -4,21 +4,15 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServer from "effect/unstable/http/HttpServer";
+import * as HttpBody from "effect/unstable/http/HttpBody";
+import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpApi from "effect/unstable/httpapi/HttpApi";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
-import * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
-import * as HttpApiTest from "effect/unstable/httpapi/HttpApiTest";
+import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
-import {
-  RuntimeGroup,
-  RuntimeBytes,
-  RuntimeSuccess,
-  RuntimeFileParams,
-  WIRE_VERSION
-} from "@patchy/api";
+import { RuntimeGroup, RuntimeFileParams, WIRE_VERSION } from "@patchy/api";
 import { Session } from "@patchy/auth";
 import { clerkEnv, PUBLIC_BASE_URL, signedInCookies } from "@patchy/auth/testing";
 import { Companies, Users } from "@patchy/companies";
@@ -64,68 +58,55 @@ const settings = ConfigProvider.layer(
     PATCHY_RUNTIME_FILE_BYTES: "1024"
   })
 );
-const http = Layer.merge(apiLayer, HttpServer.layerServices).pipe(Layer.provide(settings));
-// Effect's derived client does not substitute wildcard params. Only its URL template
-// uses :name here; the server still registers RuntimeApi's real wildcard handlers.
-const clientFiles = {
-  params: RuntimeFileParams,
-  headers: Schema.Record(Schema.String, Schema.String),
-  error: Array.from(RuntimeGroup.endpoints.getFile.error)
-};
-const clientDefinition = HttpApi.make("patchy").add(
-  RuntimeGroup.add(
-    HttpApiEndpoint.put("putFile", "/api/runtime/files/:patchId/:versionId/:store/:name", {
-      ...clientFiles,
-      payload: RuntimeBytes,
-      success: RuntimeSuccess
-    }),
-    HttpApiEndpoint.get("getFile", "/api/runtime/files/:patchId/:versionId/:store/:name", {
-      ...clientFiles,
-      success: RuntimeBytes
-    })
-  )
+const socket = HttpRouter.serve(HttpApiBuilder.layer(apiDefinition).pipe(Layer.provide(apiLayer)), {
+  disableLogger: true,
+  disableListenLog: true
+}).pipe(
+  Layer.provideMerge(NodeHttpServer.layerTest),
+  Layer.provideMerge(runtime),
+  Layer.provide(settings)
 );
-const apiClient = HttpApiTest.groups(clientDefinition, ["runtime"], { baseUrl: PUBLIC_BASE_URL });
+const fileUrl = ({ patchId, versionId, store, name }: typeof RuntimeFileParams.Type) =>
+  RuntimeGroup.endpoints.getFile.path
+    .replace(":patchId", encodeURIComponent(patchId))
+    .replace(":versionId", encodeURIComponent(versionId))
+    .replace(":store", encodeURIComponent(store))
+    .replace("*", name.split("/").map(encodeURIComponent).join("/"));
 const headers = () => ({
   "x-patchy-wire": String(WIRE_VERSION),
   "x-patchy-principal": JSON.stringify({ userId: "usr_dev" }),
   cookie: signedInCookies()
 });
 
-it.layer(http)("Files HTTP / real operations", (it) => {
+it.layer(socket)("Files HTTP / real operations", (it) => {
   it.effect(
     "authorizes raw active content live, returns no-store, and logs only admitted mutations",
     () =>
       Effect.gen(function* () {
         yield* setup(patchId);
-        const api = yield* apiClient;
+        const client = yield* HttpClient.HttpClient;
+        const api = yield* HttpApiClient.makeWith(apiDefinition, { httpClient: client });
         const sql = yield* SqlClient.SqlClient;
         const params = { patchId, versionId, store: "docs", name: "folder/active.svg" };
         const bytes = new TextEncoder().encode(
           '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'
         );
-        const denied = yield* api.putFile({
-          params,
-          payload: bytes,
-          headers: { ...headers(), origin: "https://foreign.invalid" },
-          responseMode: "response-only"
+        const denied = yield* client.put(fileUrl(params), {
+          body: HttpBody.uint8Array(bytes),
+          headers: { ...headers(), origin: "https://foreign.invalid" }
         });
         assert.strictEqual(denied.status, 403);
         assert.include(yield* denied.json, { code: "access_denied" });
         assert.deepStrictEqual(yield* sql`SELECT id FROM runtime_calls`, []);
-        const uploaded = yield* api.putFile({
-          params,
-          payload: bytes,
-          headers: { ...headers(), origin: PUBLIC_BASE_URL, "content-type": "image/svg+xml" },
-          responseMode: "response-only"
+        const uploaded = yield* client.put(fileUrl(params), {
+          body: HttpBody.uint8Array(bytes, "image/svg+xml"),
+          headers: { ...headers(), origin: PUBLIC_BASE_URL }
         });
         assert.strictEqual(uploaded.status, 200);
         assert.deepStrictEqual(yield* uploaded.json, { ok: true, value: null });
         assert.strictEqual(uploaded.headers["cache-control"], "no-store");
-        const read = yield* api.getFile({
-          params,
-          headers: { ...headers(), "sec-fetch-site": "same-origin" },
-          responseMode: "response-only"
+        const read = yield* client.get(fileUrl(params), {
+          headers: { ...headers(), "sec-fetch-site": "same-origin" }
         });
         assert.strictEqual(read.status, 200);
         assert.deepStrictEqual(new Uint8Array(yield* read.arrayBuffer), bytes);
@@ -156,10 +137,8 @@ it.layer(http)("Files HTTP / real operations", (it) => {
           ],
           [omittedVersionId, { ...headers(), "sec-fetch-site": "same-origin" }, "invalid_request"]
         ] as const) {
-          const response = yield* api.getFile({
-            params: { ...params, versionId: version },
-            headers: requestHeaders,
-            responseMode: "response-only"
+          const response = yield* client.get(fileUrl({ ...params, versionId: version }), {
+            headers: requestHeaders
           });
           assert.include(yield* response.json, { code });
           assert.strictEqual(response.headers["cache-control"], "no-store");
@@ -175,17 +154,13 @@ it.layer(http)("Files HTTP / real operations", (it) => {
             }
           ]
         );
-        const missing = yield* api.getFile({
-          params: { ...params, name: "missing" },
-          headers: { ...headers(), "sec-fetch-site": "same-origin" },
-          responseMode: "response-only"
+        const missing = yield* client.get(fileUrl({ ...params, name: "missing" }), {
+          headers: { ...headers(), "sec-fetch-site": "same-origin" }
         });
         assert.include(yield* missing.json, { code: "invalid_request" });
         assert.notProperty(yield* missing.json, "correlationId");
-        const old = yield* api.getFile({
-          params,
-          headers: { ...headers(), "sec-fetch-site": "same-origin" },
-          responseMode: "response-only"
+        const old = yield* client.get(fileUrl(params), {
+          headers: { ...headers(), "sec-fetch-site": "same-origin" }
         });
         assert.deepStrictEqual(new Uint8Array(yield* old.arrayBuffer), bytes);
         for (const op of ["files.get", "files.put"] as const) {
@@ -212,15 +187,6 @@ it.layer(http)("Files HTTP / real operations", (it) => {
   );
 });
 
-const socket = HttpRouter.serve(HttpApiBuilder.layer(apiDefinition).pipe(Layer.provide(apiLayer)), {
-  disableLogger: true,
-  disableListenLog: true
-}).pipe(
-  Layer.provideMerge(NodeHttpServer.layerTest),
-  Layer.provideMerge(runtime),
-  Layer.provide(settings)
-);
-
 it.layer(socket)("Files HTTP / streamed bytes", (it) => {
   it.effect(
     "counts chunked overflow after admission, correlates its log, and preserves the old file",
@@ -231,7 +197,7 @@ it.layer(socket)("Files HTTP / streamed bytes", (it) => {
         yield* put("chunked.bin", original);
         const server = yield* HttpServer.HttpServer;
         if (server.address._tag !== "TcpAddress") return assert.fail("Expected a TCP listener");
-        const url = `http://127.0.0.1:${server.address.port}/api/runtime/files/${patchId}/${versionId}/docs/chunked.bin`;
+        const url = `http://127.0.0.1:${server.address.port}${fileUrl({ patchId, versionId, store: "docs", name: "chunked.bin" })}`;
         const response = yield* Effect.tryPromise(async () => {
           const options: RequestInit & { duplex: "half" } = {
             method: "PUT",

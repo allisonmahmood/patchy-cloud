@@ -107,9 +107,9 @@ export class Busy extends Schema.TaggedError<Busy>()("TableBusy", {
 }
 
 export const config = Config.all({
-  rowBytes: Config.int("PATCHY_RUNTIME_ROW_BYTES").pipe(Config.withDefault(1024 * 1024)),
-  batchBytes: Config.int("PATCHY_RUNTIME_BATCH_BYTES").pipe(Config.withDefault(8 * 1024 * 1024)),
-  resultBytes: Config.int("PATCHY_RUNTIME_RESULT_BYTES").pipe(Config.withDefault(8 * 1024 * 1024)),
+  rowBytes: Runtime.byteLimits.rowBytes,
+  batchBytes: Runtime.byteLimits.batchBytes,
+  resultBytes: Runtime.byteLimits.resultBytes,
   maxItems: Config.int("PATCHY_TABLE_MAX_ITEMS").pipe(Config.withDefault(1000)),
   defaultPage: Config.int("PATCHY_TABLE_DEFAULT_PAGE").pipe(Config.withDefault(100)),
   maxPage: Config.int("PATCHY_TABLE_MAX_PAGE").pipe(Config.withDefault(1000))

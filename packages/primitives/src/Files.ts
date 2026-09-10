@@ -51,8 +51,8 @@ export class Busy extends Schema.TaggedError<Busy>()("FileBusy", {
 }
 
 export const config = Config.all({
-  fileBytes: Config.int("PATCHY_RUNTIME_FILE_BYTES").pipe(Config.withDefault(20 * 1024 * 1024)),
-  resultBytes: Config.int("PATCHY_RUNTIME_RESULT_BYTES").pipe(Config.withDefault(8 * 1024 * 1024)),
+  fileBytes: Runtime.byteLimits.fileBytes,
+  resultBytes: Runtime.byteLimits.resultBytes,
   defaultPage: Config.int("PATCHY_FILE_DEFAULT_PAGE").pipe(Config.withDefault(100)),
   maxPage: Config.int("PATCHY_FILE_MAX_PAGE").pipe(Config.withDefault(1000))
 });

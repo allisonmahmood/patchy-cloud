@@ -210,13 +210,20 @@ export const handler = <
   };
 };
 
+export const byteLimits = {
+  rowBytes: Config.int("PATCHY_RUNTIME_ROW_BYTES").pipe(Config.withDefault(1024 * 1024)),
+  batchBytes: Config.int("PATCHY_RUNTIME_BATCH_BYTES").pipe(Config.withDefault(8 * 1024 * 1024)),
+  resultBytes: Config.int("PATCHY_RUNTIME_RESULT_BYTES").pipe(Config.withDefault(8 * 1024 * 1024)),
+  fileBytes: Config.int("PATCHY_RUNTIME_FILE_BYTES").pipe(Config.withDefault(20 * 1024 * 1024))
+};
+
 export const config = Config.all({
   callsPerMinute: Config.int("PATCHY_RUNTIME_CALLS_PER_MINUTE").pipe(Config.withDefault(300)),
   callBytes: Config.int("PATCHY_RUNTIME_CALL_BYTES").pipe(Config.withDefault(64 * 1024)),
-  rowBytes: Config.int("PATCHY_RUNTIME_ROW_BYTES").pipe(Config.withDefault(1024 * 1024)),
-  batchBytes: Config.int("PATCHY_RUNTIME_BATCH_BYTES").pipe(Config.withDefault(8 * 1024 * 1024)),
+  rowBytes: byteLimits.rowBytes,
+  batchBytes: byteLimits.batchBytes,
   postgresBytes: Config.int("PATCHY_RUNTIME_POSTGRES_BYTES").pipe(Config.withDefault(256 * 1024)),
-  fileBytes: Config.int("PATCHY_RUNTIME_FILE_BYTES").pipe(Config.withDefault(20 * 1024 * 1024)),
+  fileBytes: byteLimits.fileBytes,
   mutationDeadlineMs: Config.int("PATCHY_RUNTIME_MUTATION_DEADLINE_MS").pipe(
     Config.withDefault(30_000)
   ),

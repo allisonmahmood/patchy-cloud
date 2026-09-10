@@ -212,10 +212,12 @@ export interface PublishPreflight extends PublishTarget {
   readonly filename: string | null;
 }
 
+const hasOwnedDefinitions = (manifest: typeof Manifest.Type) =>
+  Object.keys(manifest.tables).length > 0 || Object.keys(manifest.files).length > 0;
+
 /** File requests may carry --name; empty named repo manifests are not file requests. */
 const isFileMode = (input: PublishPreflight) =>
-  Object.keys(input.manifest.tables).length === 0 &&
-  Object.keys(input.manifest.files).length === 0 &&
+  !hasOwnedDefinitions(input.manifest) &&
   Object.keys(input.manifest.uses).length === 0 &&
   (input.manifest.name === undefined || input.filename !== null);
 
@@ -747,10 +749,7 @@ export const make = Effect.gen(function* () {
           AND name = ${input.manifest.name} AND current AND patch_id <> ${input.patchId}`;
       if (occupied.length > 0) return yield* new NameTaken({ name: input.manifest.name });
     }
-    if (
-      Object.keys(input.manifest.tables).length > 0 ||
-      Object.keys(input.manifest.files).length > 0
-    ) {
+    if (hasOwnedDefinitions(input.manifest)) {
       yield* databases.ensureReady(input.companyId);
     }
     const { companyId, snapshot } =
@@ -802,8 +801,7 @@ export const make = Effect.gen(function* () {
   );
 
   const provision = Effect.fn("Patches.provision")(function* (input: RecordInput) {
-    const hasDefinitions =
-      Object.keys(input.manifest.tables).length > 0 || Object.keys(input.manifest.files).length > 0;
+    const hasDefinitions = hasOwnedDefinitions(input.manifest);
     if (input.intent === "create" && !hasDefinitions) {
       return yield* tables.diff(input.manifest, null);
     }
