@@ -17,6 +17,8 @@ node packages/cli/dist/index.js login --api-url https://pages.example.com
 
 The build puts an executable at `packages/cli/dist/index.js`. Create a symlink named `patchy` to that executable in a directory on your `PATH`; adding `dist` alone exposes `index.js`, not `patchy`. Alternatively, replace `patchy` in the commands below and in login's returned `next` command with `node /absolute/path/to/packages/cli/dist/index.js`.
 
+Keep the whole `dist` directory together: `dist/native` contains the advisory-lock loader and platform prebuilds. The packed CLI includes them and installs offline without running install scripts.
+
 First run is `patchy login`, then `patchy publish ./plan.html`. A person at a real
 terminal confirms in their browser while login waits. An agent receives a URL,
 code and next command, relays them to the person, and runs that next command

@@ -321,7 +321,8 @@ user's machine tokens; reactivation restores browser access, not old keys.
 ### Test tiers
 
 `pnpm test` stays offline and needs no Clerk account or development keys.
-`pnpm test:packed-cli-e2e` exercises an installed CLI against its own server;
+`pnpm test:packed-cli-e2e` installs the packed CLI offline with an empty npm cache
+and install scripts disabled, then exercises it against its own server;
 `pnpm test:all` runs package tests through Turbo and that packed e2e, but not
 the live Clerk tiers. CI runs offline Vitest on Node 22 and 24, and one packed
 e2e on Node 22 in `cli-smoke`, separately from the eligible live job.

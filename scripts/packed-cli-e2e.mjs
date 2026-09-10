@@ -229,10 +229,20 @@ try {
   }
 
   const tarballPath = path.join(packDir, tarballs[0]);
-  console.log("[packed-cli-e2e] installing tarball in a clean consumer directory");
+  console.log("[packed-cli-e2e] installing tarball offline with an empty npm cache");
   await run(
     "npm",
-    ["install", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error", tarballPath],
+    [
+      "install",
+      "--offline",
+      "--cache",
+      path.join(tempRoot, "npm-cache"),
+      "--ignore-scripts",
+      "--no-audit",
+      "--no-fund",
+      "--loglevel=error",
+      tarballPath
+    ],
     { cwd: consumerDir, timeoutMs: 120_000 }
   );
 
