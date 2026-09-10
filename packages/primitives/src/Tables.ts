@@ -33,6 +33,7 @@ export interface Provisioned {
   readonly unused: typeof ProvisioningReport.Type;
   readonly warnings: readonly string[];
   readonly schemaRevision: number;
+  readonly sharing: readonly string[];
 }
 
 export interface Plan extends Provisioned {
@@ -40,7 +41,6 @@ export interface Plan extends Provisioned {
   readonly newColumns: readonly { readonly table: string; readonly name: string }[];
   readonly newIndexes: readonly { readonly table: string; readonly name: string }[];
   readonly newStores: readonly string[];
-  readonly sharing: readonly string[];
 }
 
 const INDEX_PREFLIGHT_MAX_BYTES = 2000;
@@ -50,8 +50,7 @@ export class Tables extends Context.Service<
   {
     readonly diff: (
       manifest: typeof Manifest.Type,
-      snapshot: Inventory.Snapshot | null,
-      declaringPatches?: ReadonlyMap<string, number>
+      snapshot: Inventory.Snapshot | null
     ) => Effect.Effect<Plan, NotAdditive>;
     readonly validate: (
       patchId: string,
@@ -60,8 +59,7 @@ export class Tables extends Context.Service<
     ) => Effect.Effect<void, NotAdditive | SqlError, SqlClient.SqlClient>;
     readonly provision: (
       patchId: string,
-      manifest: typeof Manifest.Type,
-      declaringPatches?: ReadonlyMap<string, number>
+      manifest: typeof Manifest.Type
     ) => Effect.Effect<
       Provisioned,
       NotAdditive | SqlError,
@@ -262,8 +260,7 @@ const decodeColumn = Schema.decodeUnknownSync(ColumnDefinition);
 
 const diff = Effect.fn("Tables.diff")(function* (
   manifest: typeof Manifest.Type,
-  snapshot: Inventory.Snapshot | null,
-  declaringPatches?: ReadonlyMap<string, number>
+  snapshot: Inventory.Snapshot | null
 ) {
   const provisioned = report();
   const unused = report();
@@ -309,13 +306,6 @@ const diff = Effect.fn("Tables.diff")(function* (
     } else if (oldTable.shared !== (definition.shared === true)) {
       sharing.push(table);
       provisioned.tables.push(table);
-      warnings.push(
-        definition.shared === true
-          ? `\`${table}\` is now shared.`
-          : declaringPatches === undefined
-            ? `\`${table}\` is no longer shared.`
-            : `\`${table}\` is no longer shared; ${declaringPatches.get(table) ?? 0} declaring patches are affected.`
-      );
     }
     let columnCount = oldColumnCounts.get(table) ?? 0;
     for (const [name, column] of Object.entries(definition.columns)) {
@@ -479,15 +469,14 @@ export const make = Effect.gen(function* () {
   });
   const provision = Effect.fn("Tables.provision")(function* (
     patchId: string,
-    manifest: typeof Manifest.Type,
-    declaringPatches?: ReadonlyMap<string, number>
+    manifest: typeof Manifest.Type
   ) {
     const lock = yield* CompanyDatabases.PatchLock;
     if (lock.patchId !== patchId)
       return yield* Effect.die(new Error("Table provisioning requires a matching patch lock"));
     const snapshot = yield* inventory.read(patchId);
     // Never execute even the first DDL statement until the entire diff has passed.
-    const plan = yield* diff(manifest, snapshot, declaringPatches);
+    const plan = yield* diff(manifest, snapshot);
     if (plan.schemaRevision === (snapshot?.schemaRevision ?? 0)) return plan;
     const sql = lock.sql;
     const namespace = quote(Inventory.namespace(patchId));
@@ -570,6 +559,7 @@ export const make = Effect.gen(function* () {
       provisioned: plan.provisioned,
       unused: plan.unused,
       warnings: plan.warnings,
+      sharing: plan.sharing,
       schemaRevision
     };
   });

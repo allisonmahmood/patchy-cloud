@@ -501,10 +501,11 @@ recreatable, with fsync off and normalized `int8`/`DATE` codecs.
 
 Runtime admission tests use `HttpApiTest` with offline signed browser sessions;
 the server's socket test publishes real versions and checks historical and live
-sharing. `/api/runtime/call` admits `me` and the seven `tables.*` operations.
+sharing. `/api/runtime/call` admits `me`, the seven `tables.*` operations, the
+three `shared.*` reads, and `files.list`/`files.delete`; file bytes use separate routes.
 A company version needs a browser session, never the dev machine token; a current
-public version returns null for `me` and refuses tables. Required headers and
-request shapes are in [API.md](API.md#runtime).
+public version returns null for `me` and refuses owned-table, shared-table and file access.
+Required headers and request shapes are in [API.md](API.md#runtime).
 The runtime log baseline is applied by all three migration entrypoints above.
 
 Table manifests can be published directly to `POST /api/publish` at tier 0;

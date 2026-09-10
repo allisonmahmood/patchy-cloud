@@ -310,7 +310,7 @@ export class Patches extends Context.Service<
       patchId: string,
       ownerUserId: string
     ) => Effect.Effect<PatchInventory, PatchUnavailable | DatabaseError | SqlError>;
-    /** Metadata for generation and fixtures, from live same-company shared inventory. */
+    /** Cumulative metadata from live same-company shared inventory. */
     readonly sharedTable: (
       patchId: string,
       table: string,
@@ -815,7 +815,7 @@ export const make = Effect.gen(function* () {
     companyId: string
   ) {
     const warnings: string[] = [];
-    for (const [alias, declaration] of Object.entries(manifest.uses)) {
+    for (const declaration of Object.values(manifest.uses)) {
       if (declaration.kind !== "sharedTable") continue;
       if (declaration.id !== sharedTableId(declaration.patchId, declaration.table))
         return yield* new PatchNotOpenable({
@@ -825,7 +825,7 @@ export const make = Effect.gen(function* () {
       const source = yield* sharedTable(declaration.patchId, declaration.table, companyId);
       if (declaration.revision < source.schemaRevision)
         warnings.push(
-          `Shared table \`${alias}\` was generated at revision ${declaration.revision}; source ${source.id} is at revision ${source.schemaRevision}. Run patchy refresh.`
+          `Shared table \`${source.id}\`: declared schema revision ${declaration.revision} is behind source schema revision ${source.schemaRevision}.`
         );
     }
     return warnings;
@@ -912,10 +912,7 @@ export const make = Effect.gen(function* () {
     )
   );
 
-  const provision = Effect.fn("Patches.provision")(function* (
-    input: RecordInput,
-    declaringPatches: ReadonlyMap<string, number>
-  ) {
+  const provision = Effect.fn("Patches.provision")(function* (input: RecordInput) {
     const hasDefinitions = hasOwnedDefinitions(input.manifest);
     if (input.intent === "create" && !hasDefinitions) {
       return yield* tables.diff(input.manifest, null);
@@ -929,7 +926,7 @@ export const make = Effect.gen(function* () {
           return yield* databases.withPatchLock(input.patchId)(
             Effect.gen(function* () {
               if (isFileMode(input)) return yield* new HasPrimitives({ patchId: input.patchId });
-              return yield* tables.provision(input.patchId, input.manifest, declaringPatches);
+              return yield* tables.provision(input.patchId, input.manifest);
             })
           );
         })
@@ -1064,8 +1061,9 @@ export const make = Effect.gen(function* () {
               WHERE patch_id = ${input.patchId} AND current AND name <> ${name}`;
           }
           const declarationWarnings = yield* resolveDeclarations(input.manifest, companyId);
-          const declaringPatches = Object.values(input.manifest.tables).some(
-            (definition) => definition.shared !== true
+          const resources = yield* provision({ ...input, companyId });
+          const declaringPatches = resources.sharing.some(
+            (table) => input.manifest.tables[table]!.shared !== true
           )
             ? new Map(
                 (yield* declaringPatchRows({
@@ -1075,7 +1073,11 @@ export const make = Effect.gen(function* () {
                 })).map((row) => [row.table, row.count])
               )
             : new Map<string, number>();
-          const resources = yield* provision({ ...input, companyId }, declaringPatches);
+          const sharingWarnings = resources.sharing.map((table) =>
+            input.manifest.tables[table]!.shared === true
+              ? `\`${table}\` is now shared.`
+              : `\`${table}\` is no longer shared; ${declaringPatches.get(table) ?? 0} declaring patches are affected.`
+          );
           const publicUrl = address(input.publicBaseUrl, companyHandle, name);
           const response = new (input.intent === "create" ? PublishCreated : PublishUpdated)({
             ok: true,
@@ -1091,7 +1093,12 @@ export const make = Effect.gen(function* () {
             schemaRevision: resources.schemaRevision,
             provisioned: resources.provisioned,
             unused: resources.unused,
-            warnings: [...input.warnings, ...declarationWarnings, ...resources.warnings]
+            warnings: [
+              ...input.warnings,
+              ...declarationWarnings,
+              ...resources.warnings,
+              ...sharingWarnings
+            ]
           });
           const status = input.intent === "create" ? (201 as const) : (200 as const);
           const responseJson =
