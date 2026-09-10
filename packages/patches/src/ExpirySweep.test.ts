@@ -128,6 +128,7 @@ it.layer(
       const failing = Layer.succeed(
         ContentStore.ContentStore,
         ContentStore.ContentStore.of({
+          ...objects,
           list: (key) =>
             Stream.fail(
               new ContentStore.StoreUnavailable({

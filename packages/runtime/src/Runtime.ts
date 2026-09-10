@@ -13,7 +13,8 @@ import {
   RuntimePrincipal,
   WIRE_VERSION,
   type RuntimeCode,
-  type RuntimeEnvelope
+  type RuntimeEnvelope,
+  type FileBody
 } from "@patchy/api";
 import { RequireSession, Session } from "@patchy/auth";
 import { newInternalId } from "@patchy/core";
@@ -150,12 +151,33 @@ export type RuntimeError =
   | UnknownOutcome
   | OperationError;
 
-export interface Handler {
+interface HandlerMetadata {
   readonly kind: "read" | "mutation" | "integration";
-  readonly run: (args: unknown) => Effect.Effect<unknown, RuntimeError, Binding.Binding>;
   readonly resource?: (args: unknown) => string | null;
   readonly rowCount?: (value: unknown) => number | null;
 }
+
+export interface JsonHandler extends HandlerMetadata {
+  readonly transport?: never;
+  readonly run: (args: unknown) => Effect.Effect<unknown, RuntimeError, Binding.Binding>;
+}
+
+export interface BytesPutHandler extends HandlerMetadata {
+  readonly transport: "bytes-put";
+  readonly kind: "mutation";
+  readonly run: (
+    args: unknown,
+    bytes: Uint8Array
+  ) => Effect.Effect<null, RuntimeError, Binding.Binding>;
+}
+
+export interface BytesGetHandler extends HandlerMetadata {
+  readonly transport: "bytes-get";
+  readonly kind: "read";
+  readonly run: (args: unknown) => Effect.Effect<FileBody, RuntimeError, Binding.Binding>;
+}
+
+export type Handler = JsonHandler | BytesPutHandler | BytesGetHandler;
 
 /** Compile each operation's schemas once, retaining the handler's inferred input/output. */
 export const handler = <
@@ -170,7 +192,7 @@ export const handler = <
     readonly rowCount?: Handler["rowCount"];
   },
   run: (args: Input["Type"]) => Effect.Effect<Output["Type"], RuntimeError, Binding.Binding>
-): Handler => {
+): JsonHandler => {
   const decode = Schema.decodeUnknownEffect(definition.input, { onExcessProperty: "error" });
   const encode = Schema.encodeEffect(definition.output);
   return {
@@ -209,6 +231,10 @@ export const decodeWire = Schema.decodeUnknownEffect(
   Schema.NumberFromString.check(Schema.isInt(), Schema.isGreaterThan(0))
 );
 
+/**
+ * Admission consumes the current browser request, never a request captured at startup.
+ * @effect-expect-leaking HttpServerRequest
+ */
 export class Runtime extends Context.Service<
   Runtime,
   {
@@ -218,6 +244,13 @@ export class Runtime extends Context.Service<
     readonly call: (
       input: typeof RuntimeEnvelope.Type
     ) => Effect.Effect<unknown, RuntimeError, HttpServerRequest.HttpServerRequest>;
+    readonly putFile: (
+      input: typeof RuntimeEnvelope.Type,
+      readBytes: Effect.Effect<Uint8Array, RuntimeError, HttpServerRequest.HttpServerRequest>
+    ) => Effect.Effect<null, RuntimeError, HttpServerRequest.HttpServerRequest>;
+    readonly getFile: (
+      input: typeof RuntimeEnvelope.Type
+    ) => Effect.Effect<FileBody, RuntimeError, HttpServerRequest.HttpServerRequest>;
   }
 >()("@patchy/runtime/Runtime") {}
 
@@ -251,125 +284,149 @@ export const make = (
             ? settings.postgresBytes
             : settings.callBytes;
 
-    const call = Effect.fn("Runtime.call")(function* (input: typeof RuntimeEnvelope.Type) {
-      const request = yield* HttpServerRequest.HttpServerRequest;
-      if (request.headers.authorization !== undefined) return yield* new AccessDenied({});
-      const wire = yield* decodeWire(request.headers["x-patchy-wire"]).pipe(
-        Effect.mapError((cause) => new InvalidRequest({ cause }))
-      );
-      if (request.headers["x-patchy-principal"] === undefined) return yield* new InvalidRequest({});
-      if (wire !== input.wire) return yield* new InvalidRequest({});
-      const operation = Object.hasOwn(handlers, input.op) ? handlers[input.op] : undefined;
-      const mutating = operation?.kind === "mutation" || request.method === "PUT";
-      if (
-        (mutating && request.headers.origin !== origin) ||
-        (request.method === "GET" && request.headers["sec-fetch-site"] !== "same-origin")
-      )
-        return yield* new AccessDenied({});
-      const loaded = yield* versions
-        .find(input.patchId, input.versionId)
-        .pipe(Effect.mapError((cause) => new SourceUnavailable({ cause })));
-      if (Option.isNone(loaded)) return yield* new AccessDenied({});
-      const version = loaded.value;
-      if (wire !== WIRE_VERSION || wire !== version.wireVersion)
-        return yield* new ShellOutdated({});
-      let identity: Binding.Binding["Service"]["identity"] = null;
-      if (version.scope === "public") {
-        if (input.op !== "me") return yield* new PublicUnavailable({});
-      } else {
-        const admission = yield* RequireSession.admission.pipe(
-          Effect.provideService(Session.Session, session),
-          Effect.mapError((cause) => new SessionExpired({ cause }))
-        );
-        if (HttpServerResponse.isHttpServerResponse(admission.result))
-          return yield* new SessionExpired({});
-        const viewer = yield* RequireSession.resolveViewer.pipe(
-          Effect.provideContext(viewerContext),
-          Effect.provideService(RequireSession.SignedIn, admission.result),
-          Effect.mapError((cause) => new SourceUnavailable({ cause }))
-        );
-        if (
-          viewer === null ||
-          HttpServerResponse.isHttpServerResponse(viewer) ||
-          viewer.company.id !== version.companyId
-        )
-          return yield* new AccessDenied({});
-        const principal = yield* decodePrincipal(request.headers["x-patchy-principal"]).pipe(
+    const dispatch = <A>(
+      input: typeof RuntimeEnvelope.Type,
+      run: (
+        operation: Handler
+      ) => Effect.Effect<A, RuntimeError, Binding.Binding | HttpServerRequest.HttpServerRequest>
+    ) =>
+      Effect.gen(function* () {
+        const request = yield* HttpServerRequest.HttpServerRequest;
+        if (request.headers.authorization !== undefined) return yield* new AccessDenied({});
+        const wire = yield* decodeWire(request.headers["x-patchy-wire"]).pipe(
           Effect.mapError((cause) => new InvalidRequest({ cause }))
         );
-        if (request.method === "POST") {
-          const bodyPrincipal = yield* decodeBodyPrincipal(input.principal).pipe(
+        if (request.headers["x-patchy-principal"] === undefined)
+          return yield* new InvalidRequest({});
+        if (wire !== input.wire) return yield* new InvalidRequest({});
+        const operation = Object.hasOwn(handlers, input.op) ? handlers[input.op] : undefined;
+        const mutating = operation?.kind === "mutation" || request.method === "PUT";
+        if (
+          (mutating && request.headers.origin !== origin) ||
+          (request.method === "GET" && request.headers["sec-fetch-site"] !== "same-origin")
+        )
+          return yield* new AccessDenied({});
+        const loaded = yield* versions
+          .find(input.patchId, input.versionId)
+          .pipe(Effect.mapError((cause) => new SourceUnavailable({ cause })));
+        if (Option.isNone(loaded)) return yield* new AccessDenied({});
+        const version = loaded.value;
+        if (wire !== WIRE_VERSION || wire !== version.wireVersion)
+          return yield* new ShellOutdated({});
+        let identity: Binding.Binding["Service"]["identity"] = null;
+        if (version.scope === "public") {
+          if (input.op !== "me") return yield* new PublicUnavailable({});
+        } else {
+          const admission = yield* RequireSession.admission.pipe(
+            Effect.provideService(Session.Session, session),
+            Effect.mapError((cause) => new SessionExpired({ cause }))
+          );
+          if (HttpServerResponse.isHttpServerResponse(admission.result))
+            return yield* new SessionExpired({});
+          const viewer = yield* RequireSession.resolveViewer.pipe(
+            Effect.provideContext(viewerContext),
+            Effect.provideService(RequireSession.SignedIn, admission.result),
+            Effect.mapError((cause) => new SourceUnavailable({ cause }))
+          );
+          if (
+            viewer === null ||
+            HttpServerResponse.isHttpServerResponse(viewer) ||
+            viewer.company.id !== version.companyId
+          )
+            return yield* new AccessDenied({});
+          const principal = yield* decodePrincipal(request.headers["x-patchy-principal"]).pipe(
             Effect.mapError((cause) => new InvalidRequest({ cause }))
           );
-          if (principal?.userId !== bodyPrincipal?.userId) return yield* new InvalidRequest({});
+          if (request.method === "POST") {
+            const bodyPrincipal = yield* decodeBodyPrincipal(input.principal).pipe(
+              Effect.mapError((cause) => new InvalidRequest({ cause }))
+            );
+            if (principal?.userId !== bodyPrincipal?.userId) return yield* new InvalidRequest({});
+          }
+          if (principal === null ? input.op !== "me" : principal.userId !== viewer.user.id)
+            return yield* new PrincipalChanged({});
+          identity = { user: viewer.user, company: viewer.company, admin: viewer.role === "admin" };
         }
-        if (principal === null ? input.op !== "me" : principal.userId !== viewer.user.id)
-          return yield* new PrincipalChanged({});
-        identity = { user: viewer.user, company: viewer.company, admin: viewer.role === "admin" };
-      }
-      const attempt = yield* limits.consume({
-        key: `runtime:${identity?.user.id ?? `anonymous:${Option.getOrElse(request.remoteAddress, () => "")}`}:${version.patchId}`,
-        limit: settings.callsPerMinute,
-        window: "1 minute"
-      });
-      if (!attempt.allowed)
-        return yield* new RateLimited({ retryAfterSeconds: attempt.retryAfterSeconds });
-      if (operation === undefined) return yield* new InvalidRequest({});
-      const binding = Binding.Binding.of({
-        ...version,
-        identity,
-        principal: identity === null ? null : { userId: identity.user.id },
-        correlationId: newInternalId("call")
-      });
-      const execute = Effect.suspend(() => operation.run(input.args)).pipe(
-        Effect.provideService(Binding.Binding, binding)
-      );
-      if (operation.kind === "read") return yield* execute;
-      const started = yield* Clock.currentTimeMillis;
-      const deadlineMs =
-        operation.kind === "mutation"
-          ? settings.mutationDeadlineMs
-          : settings.integrationDeadlineMs;
-      yield* log
-        .begin({
-          companyId: binding.companyId,
-          patchId: binding.patchId,
-          versionId: binding.versionId,
-          userId: identity!.user.id,
-          credentialKind: "session",
-          op: input.op,
-          resource: operation.resource?.(input.args) ?? null,
-          connectionId: null,
-          correlationId: binding.correlationId,
-          deadlineMs
-        })
-        .pipe(Effect.mapError((cause) => new SourceUnavailable({ cause })));
-      const result = yield* Effect.exit(execute);
-      // Interruption includes a lost client or process shutdown: do not claim the write failed.
-      if (Exit.isFailure(result) && Cause.hasInterrupts(result.cause))
-        return yield* Effect.failCause(result.cause);
-      yield* log
-        .finish({
-          correlationId: binding.correlationId,
-          outcome: Exit.isSuccess(result) ? "success" : "failure",
-          durationMs: (yield* Clock.currentTimeMillis) - started,
-          rowCount: Exit.isSuccess(result) ? (operation.rowCount?.(result.value) ?? null) : null
-        })
-        .pipe(
-          Effect.mapError(
-            (cause) => new UnknownOutcome({ cause, correlationId: binding.correlationId })
-          )
+        const attempt = yield* limits.consume({
+          key: `runtime:${identity?.user.id ?? `anonymous:${Option.getOrElse(request.remoteAddress, () => "")}`}:${version.patchId}`,
+          limit: settings.callsPerMinute,
+          window: "1 minute"
+        });
+        if (!attempt.allowed)
+          return yield* new RateLimited({ retryAfterSeconds: attempt.retryAfterSeconds });
+        if (operation === undefined) return yield* new InvalidRequest({});
+        const binding = Binding.Binding.of({
+          ...version,
+          identity,
+          principal: identity === null ? null : { userId: identity.user.id },
+          correlationId: newInternalId("call")
+        });
+        const execute = Effect.suspend(() => run(operation)).pipe(
+          Effect.provideService(Binding.Binding, binding)
         );
-      if (Exit.isFailure(result)) {
-        const failure = Cause.findErrorOption(result.cause);
-        return yield* Option.isSome(failure)
-          ? Effect.fail(Object.assign(failure.value, { correlationId: binding.correlationId }))
-          : new SourceUnavailable({ cause: result.cause, correlationId: binding.correlationId });
-      }
-      return result.value;
-    });
+        if (operation.kind === "read") return yield* execute;
+        const started = yield* Clock.currentTimeMillis;
+        const deadlineMs =
+          operation.kind === "mutation"
+            ? settings.mutationDeadlineMs
+            : settings.integrationDeadlineMs;
+        yield* log
+          .begin({
+            companyId: binding.companyId,
+            patchId: binding.patchId,
+            versionId: binding.versionId,
+            userId: identity!.user.id,
+            credentialKind: "session",
+            op: input.op,
+            resource: operation.resource?.(input.args) ?? null,
+            connectionId: null,
+            correlationId: binding.correlationId,
+            deadlineMs
+          })
+          .pipe(Effect.mapError((cause) => new SourceUnavailable({ cause })));
+        const result = yield* Effect.exit(execute);
+        // Interruption includes a lost client or process shutdown: do not claim the write failed.
+        if (Exit.isFailure(result) && Cause.hasInterrupts(result.cause))
+          return yield* Effect.failCause(result.cause);
+        yield* log
+          .finish({
+            correlationId: binding.correlationId,
+            outcome: Exit.isSuccess(result) ? "success" : "failure",
+            durationMs: (yield* Clock.currentTimeMillis) - started,
+            rowCount: Exit.isSuccess(result) ? (operation.rowCount?.(result.value) ?? null) : null
+          })
+          .pipe(
+            Effect.mapError(
+              (cause) => new UnknownOutcome({ cause, correlationId: binding.correlationId })
+            )
+          );
+        if (Exit.isFailure(result)) {
+          const failure = Cause.findErrorOption(result.cause);
+          return yield* Option.isSome(failure)
+            ? Effect.fail(Object.assign(failure.value, { correlationId: binding.correlationId }))
+            : new SourceUnavailable({ cause: result.cause, correlationId: binding.correlationId });
+        }
+        return result.value;
+      });
     return Runtime.of({
-      call,
+      call: (input) =>
+        dispatch(input, (operation) =>
+          operation.transport === undefined
+            ? operation.run(input.args)
+            : Effect.fail(new InvalidRequest({}))
+        ),
+      putFile: (input, readBytes) =>
+        dispatch(input, (operation) =>
+          operation.transport === "bytes-put"
+            ? readBytes.pipe(Effect.flatMap((bytes) => operation.run(input.args, bytes)))
+            : Effect.fail(new InvalidRequest({}))
+        ),
+      getFile: (input) =>
+        dispatch(input, (operation) =>
+          operation.transport === "bytes-get"
+            ? operation.run(input.args)
+            : Effect.fail(new InvalidRequest({}))
+        ),
       bodyLimit,
       maxCallBytes: Math.max(settings.batchBytes + settings.callBytes, settings.postgresBytes),
       fileBytes: settings.fileBytes

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { assert, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
@@ -27,7 +28,7 @@ const { uploader } = Fixtures.identities;
  * its target between preflight and recording. Faults come from alternate layers.
  */
 const memoryStore = (() => {
-  const objects = Ref.makeUnsafe(new Map<string, { html: string; lastModified: number }>());
+  const objects = Ref.makeUnsafe(new Map<string, { bytes: Uint8Array; lastModified: number }>());
   const control = { afterPut: Effect.void as Effect.Effect<void> };
   const service = ContentStore.ContentStore.of({
     list: (prefix) =>
@@ -42,15 +43,30 @@ const memoryStore = (() => {
       ),
     put: Effect.fn(function* (key, html) {
       const lastModified = yield* Clock.currentTimeMillis;
-      yield* Ref.update(objects, (map) => new Map(map).set(key, { html, lastModified }));
+      yield* Ref.update(objects, (map) =>
+        new Map(map).set(key, { bytes: new TextEncoder().encode(html), lastModified })
+      );
       yield* control.afterPut;
     }),
     get: (key) =>
       Effect.flatMap(Ref.get(objects), (map) => {
-        const html = map.get(key)?.html;
-        return html === undefined
+        const bytes = map.get(key)?.bytes;
+        return bytes === undefined
           ? Effect.fail(new ContentStore.ObjectNotFound({ key }))
-          : Effect.succeed(html);
+          : Effect.succeed(new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes));
+      }),
+    putBytes: Effect.fn(function* (key, bytes) {
+      const lastModified = yield* Clock.currentTimeMillis;
+      yield* Ref.update(objects, (map) =>
+        new Map(map).set(key, { bytes: bytes.slice(), lastModified })
+      );
+    }),
+    getBytes: (key) =>
+      Effect.flatMap(Ref.get(objects), (map) => {
+        const bytes = map.get(key)?.bytes;
+        return bytes === undefined
+          ? Effect.fail(new ContentStore.ObjectNotFound({ key }))
+          : Effect.succeed(bytes.slice());
       }),
     delete: (key) =>
       Ref.update(objects, (map) => {
@@ -139,6 +155,156 @@ it.layer(
     Layer.provideMerge(Fixtures.database)
   )
 )("Content", (it) => {
+  it.effect("bootstraps a company database for a store-only publish", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      assert.deepStrictEqual(yield* sql`SELECT company_id FROM company_databases`, []);
+      const created = yield* publish("<p>file store</p>", null, {
+        manifest: { ...Fixtures.manifest, name: "first-store", files: { attachments: {} } }
+      });
+      assert.strictEqual(created.schemaRevision, 1);
+      assert.deepStrictEqual(created.provisioned.stores, ["attachments"]);
+      assert.deepStrictEqual(
+        yield* sql`SELECT company_id AS "companyId", status FROM company_databases`,
+        [{ companyId: uploader.company.id, status: "ready" }]
+      );
+      assert.deepStrictEqual(
+        (yield* (yield* patches).inventory(created.patchId, uploader.user.id)).files,
+        { attachments: {} }
+      );
+    })
+  );
+
+  it.effect("serializes competing store-only additions and provisions each store once", () =>
+    Effect.gen(function* () {
+      const manifest = {
+        ...Fixtures.manifest,
+        name: "serialized-stores",
+        files: { attachments: {} }
+      };
+      const created = yield* publish("<p>initial</p>", null, { manifest });
+      const ready = yield* Deferred.make<void>();
+      let puts = 0;
+      store.control.afterPut = Effect.gen(function* () {
+        if (++puts === 2) yield* Deferred.succeed(ready, undefined);
+        yield* Deferred.await(ready);
+      });
+      const results = yield* Effect.all(
+        ["one", "two"].map((title) =>
+          publish(`<p>${title}</p>`, created.patchId, {
+            manifest: { ...manifest, files: { ...manifest.files, images: {} } }
+          })
+        ),
+        { concurrency: "unbounded" }
+      ).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            store.control.afterPut = Effect.void;
+          })
+        )
+      );
+      assert.deepStrictEqual(results.map((result) => result.versionNumber).sort(), [2, 3]);
+      assert.deepStrictEqual(
+        results.map((result) => result.schemaRevision),
+        [2, 2]
+      );
+      assert.deepStrictEqual(
+        results.flatMap((result) => result.provisioned.stores),
+        ["images"]
+      );
+      const cumulative = yield* (yield* patches).inventory(created.patchId, uploader.user.id);
+      assert.strictEqual(cumulative.schemaRevision, 2);
+      assert.deepStrictEqual(cumulative.files, { attachments: {}, images: {} });
+    })
+  );
+
+  it.effect(
+    "keeps file objects through failed publish rollback, older manifests and version cleanup",
+    () =>
+      Effect.gen(function* () {
+        const manifest = {
+          ...Fixtures.manifest,
+          name: "retained-files",
+          files: { attachments: {} }
+        };
+        const created = yield* publish("<p>initial</p>", null, { manifest });
+        const bytes = new Uint8Array([0, 255, 128, 1]);
+        const key = `files/${created.patchId}/attachments/immutable-object`;
+        yield* store.service.putBytes(key, bytes);
+        const sql = yield* SqlClient.SqlClient;
+        const databases = yield* CompanyDatabases.CompanyDatabases;
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`SELECT id FROM patches WHERE id = ${created.patchId} FOR UPDATE`;
+            yield* databases.withCompany(uploader.company.id)(
+              databases.withPatchLock(created.patchId)(
+                Effect.flatMap(
+                  SqlClient.SqlClient,
+                  (companySql) =>
+                    companySql`INSERT INTO patchy.files
+                    (patch_id, store, name, object_id, size, content_type, sha256)
+                    VALUES (${created.patchId}, 'attachments', 'kept.bin', 'immutable-object',
+                      ${bytes.byteLength}, 'application/octet-stream', ${createHash("sha256").update(bytes).digest("hex")})`
+                )
+              )
+            );
+          })
+        );
+        const failed = yield* publish("<p>not committed</p>", created.patchId, {
+          manifest: { ...manifest, files: { ...manifest.files, images: {} } },
+          machineTokenId: "missing-machine-token"
+        }).pipe(Effect.flip);
+        assert.strictEqual(failed._tag, "SqlError");
+        const service = yield* patches;
+        assert.strictEqual(
+          Option.getOrThrow(yield* service.find(created.patchId)).version.id,
+          created.versionId
+        );
+        const cumulative = yield* service.inventory(created.patchId, uploader.user.id);
+        assert.strictEqual(cumulative.schemaRevision, 2);
+        assert.deepStrictEqual(cumulative.files, { attachments: {}, images: {} });
+        yield* TestClock.adjust(Patches.PENDING_OBJECT_LEASE);
+        yield* sweep;
+        assert.deepStrictEqual(yield* store.service.getBytes(key), bytes);
+        assert.deepStrictEqual(
+          (yield* store.keys).filter((object) => object.startsWith(`patches/${created.patchId}/`)),
+          [Content.objectKey(created.patchId, created.versionId)]
+        );
+        const omitted = yield* publish("<p>no stores</p>", created.patchId, {
+          manifest: { ...Fixtures.manifest, name: manifest.name }
+        });
+        assert.strictEqual(omitted.schemaRevision, 2);
+        assert.deepStrictEqual(omitted.unused.stores, ["attachments", "images"]);
+        assert.deepStrictEqual(yield* store.service.getBytes(key), bytes);
+        const older = yield* publish("<p>older manifest</p>", created.patchId, { manifest });
+        assert.strictEqual(older.schemaRevision, 2);
+        assert.deepStrictEqual(older.provisioned.stores, []);
+        assert.deepStrictEqual(older.unused.stores, ["images"]);
+        assert.deepStrictEqual(yield* store.service.getBytes(key), bytes);
+
+        const expiredAt = (yield* Clock.currentTimeMillis) / 1_000 - 1;
+        yield* sql`UPDATE patches SET expires_at = to_timestamp(${expiredAt}) WHERE id = ${created.patchId}`;
+        yield* sweep;
+        assert.isTrue(Option.isNone(yield* service.find(created.patchId)));
+        assert.deepStrictEqual(
+          (yield* store.keys).filter((object) => object.startsWith(`patches/${created.patchId}/`)),
+          []
+        );
+        assert.deepStrictEqual(yield* store.service.getBytes(key), bytes);
+        assert.deepStrictEqual(
+          yield* databases.withCompany(uploader.company.id)(
+            Effect.flatMap(
+              SqlClient.SqlClient,
+              (companySql) =>
+                companySql`SELECT name, object_id AS "objectId" FROM patchy.files
+                WHERE patch_id = ${created.patchId}`
+            )
+          ),
+          [{ name: "kept.bin", objectId: "immutable-object" }]
+        );
+      })
+  );
+
   it.effect("serializes competing table changes and re-diffs after the content write", () =>
     Effect.gen(function* () {
       const manifest = {

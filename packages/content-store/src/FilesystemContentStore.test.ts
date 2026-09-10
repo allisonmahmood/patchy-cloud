@@ -30,6 +30,24 @@ it.layer(Layer.merge(storeInTempDir, NodePath.layer))("FilesystemContentStore", 
     })
   );
 
+  it.effect("preserves binary bytes and UTF-8 HTML through the same store", () =>
+    Effect.gen(function* () {
+      const service = yield* ContentStore.ContentStore;
+      const key = "files/abc/assets/binary";
+      const bytes = new Uint8Array([0, 255, 254, 128, 13, 10, 195, 169]);
+      yield* service.putBytes(key, bytes);
+      assert.deepStrictEqual(yield* service.getBytes(key), bytes);
+      yield* service.put("unicode.html", "\uFEFF<p>café 日本語</p>");
+      assert.strictEqual(yield* service.get("unicode.html"), "\uFEFF<p>café 日本語</p>");
+      yield* service.delete(key);
+      assert.strictEqual((yield* service.getBytes(key).pipe(Effect.flip))._tag, "ObjectNotFound");
+      assert.strictEqual(
+        (yield* service.putBytes("../escape", bytes).pipe(Effect.flip))._tag,
+        "InvalidObjectKey"
+      );
+    })
+  );
+
   it.effect("deletes idempotently and reports a missing object by its key", () =>
     Effect.gen(function* () {
       const service = yield* ContentStore.ContentStore;

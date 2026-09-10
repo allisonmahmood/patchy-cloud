@@ -209,8 +209,8 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
           );
           if (HttpServerResponse.isHttpServerResponse(payload)) return payload;
           if (manifest.tier > 0) return rejected("tier_mismatch", "Tier 1 is not served yet.");
-          if ([manifest.files, manifest.uses].some((entries) => Object.keys(entries).length > 0)) {
-            return rejected("invalid_manifest", "Files and uses are not provisioned yet.");
+          if (Object.keys(manifest.uses).length > 0) {
+            return rejected("invalid_manifest", "Uses are not provisioned yet.");
           }
           const validation = validateHtml(payload.html, { maxBytes: maxHtmlBytes });
           if (!validation.ok)

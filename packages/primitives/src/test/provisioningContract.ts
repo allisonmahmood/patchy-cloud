@@ -208,10 +208,83 @@ export const omissions = Effect.fn("ProvisioningContract.omissions")(function* (
         tables.provision(patchId, manifest({ notes: base }))
       );
       assert.strictEqual(reshared.schemaRevision, 4);
-      yield* databases.withPatchLock(patchId)(inventory.putStore({ patchId, name: "attachments" }));
-      const stores = yield* tables.diff(manifest({ notes: base }), yield* inventory.read(patchId));
-      assert.deepStrictEqual(stores.unused.stores, ["attachments"]);
-      assert.strictEqual(stores.schemaRevision, 4);
+    })
+  );
+});
+
+export const stores = Effect.fn("ProvisioningContract.stores")(function* (companyId: string) {
+  const databases = yield* CompanyDatabases.CompanyDatabases;
+  const tables = yield* Tables.Tables;
+  const inventory = yield* Inventory.Inventory;
+  const patchId = "store-additions";
+  const definition = { ...manifest({}), files: { attachments: {}, constructor: {} } };
+  yield* databases.ensureReady(companyId);
+  yield* databases.withCompany(companyId)(
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const initial = yield* databases.withPatchLock(patchId)(
+        tables.provision(patchId, definition)
+      );
+      assert.strictEqual(initial.schemaRevision, 1);
+      assert.deepStrictEqual(initial.provisioned, {
+        tables: [],
+        columns: [],
+        indexes: [],
+        stores: ["attachments", "constructor"]
+      });
+      yield* databases.withPatchLock(patchId)(
+        sql`INSERT INTO patchy.files
+          (patch_id, store, name, object_id, size, content_type, sha256)
+          VALUES (${patchId}, 'attachments', 'kept.txt', 'immutable-object', 4, 'text/plain', 'hash')`
+      );
+      const repeated = yield* databases.withPatchLock(patchId)(
+        tables.provision(patchId, definition)
+      );
+      assert.strictEqual(repeated.schemaRevision, 1);
+      assert.deepStrictEqual(repeated.provisioned.stores, []);
+      assert.deepStrictEqual(repeated.unused.stores, []);
+
+      const omitted = yield* databases.withPatchLock(patchId)(
+        tables.provision(patchId, manifest({}))
+      );
+      assert.strictEqual(omitted.schemaRevision, 1);
+      assert.deepStrictEqual(omitted.unused.stores, ["attachments", "constructor"]);
+      const snapshot = yield* inventory.read(patchId);
+      assert.isNotNull(snapshot);
+      assert.deepStrictEqual(Tables.inventoryManifest(snapshot!).files, definition.files);
+
+      const expanded = { ...definition, files: { ...definition.files, images: {} } };
+      const added = yield* databases.withPatchLock(patchId)(tables.provision(patchId, expanded));
+      assert.strictEqual(added.schemaRevision, 2);
+      assert.deepStrictEqual(added.provisioned.stores, ["images"]);
+      assert.deepStrictEqual(added.unused.stores, []);
+      const older = yield* databases.withPatchLock(patchId)(tables.provision(patchId, definition));
+      assert.strictEqual(older.schemaRevision, 2);
+      assert.deepStrictEqual(older.provisioned.stores, []);
+      assert.deepStrictEqual(older.unused.stores, ["images"]);
+      assert.deepStrictEqual(
+        yield* sql`SELECT name, object_id AS "objectId", size::int AS size
+          FROM patchy.files WHERE patch_id = ${patchId}`,
+        [{ name: "kept.txt", objectId: "immutable-object", size: 4 }]
+      );
+      const aborted = yield* databases
+        .withPatchLock(patchId)(
+          Effect.gen(function* () {
+            yield* tables.provision(patchId, {
+              ...expanded,
+              files: { ...expanded.files, aborted: {} }
+            });
+            return yield* Effect.fail("abort");
+          })
+        )
+        .pipe(Effect.flip);
+      assert.strictEqual(aborted, "abort");
+      const after = yield* inventory.read(patchId);
+      assert.strictEqual(after?.schemaRevision, 2);
+      assert.deepStrictEqual(
+        after?.stores.map((store) => store.name),
+        ["attachments", "constructor", "images"]
+      );
     })
   );
 });
@@ -369,10 +442,6 @@ export const refusals = Effect.fn("ProvisioningContract.refusals")(function* (co
         .pipe(Effect.flip);
       assert.include(multiple.message, "notes.title");
       assert.include(multiple.message, "notes.memo");
-      const files = yield* tables
-        .diff({ ...manifest({}), files: { attachments: {} } }, null)
-        .pipe(Effect.flip);
-      assert.include(files.message, "file stores are not supported");
     })
   );
 });
@@ -398,7 +467,10 @@ export const emptyAndRollback = Effect.fn("ProvisioningContract.emptyAndRollback
       const failed = yield* databases
         .withPatchLock("aborted-tables")(
           Effect.gen(function* () {
-            yield* tables.provision("aborted-tables", manifest({ notes: base }));
+            yield* tables.provision("aborted-tables", {
+              ...manifest({ notes: base }),
+              files: { attachments: {} }
+            });
             return yield* Effect.fail("abort");
           })
         )

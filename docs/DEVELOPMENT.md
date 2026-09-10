@@ -358,7 +358,7 @@ It also drives the login handoff through confirmation with an offline-signed
 session, completion, saved-login precedence, logout and seed fallback.
 The packed flow also reads the stored version's tier, release and server-stamped
 wire version. File mode synthesises a tier 0 manifest with empty `tables`, `files`
-and `uses`; higher tiers and resources are refused until their SDK tickets land.
+and `uses`; the API admits tables and file stores, while higher tiers and `uses` remain refused.
 
 `GET /api/release` is public. A new CLI publish checks its executing version
 against that release. Interrupted attempts live in the isolated `PATCHY_STATE_DIR`

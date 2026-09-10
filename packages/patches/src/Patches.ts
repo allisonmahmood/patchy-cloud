@@ -747,7 +747,10 @@ export const make = Effect.gen(function* () {
           AND name = ${input.manifest.name} AND current AND patch_id <> ${input.patchId}`;
       if (occupied.length > 0) return yield* new NameTaken({ name: input.manifest.name });
     }
-    if (Object.keys(input.manifest.tables).length > 0) {
+    if (
+      Object.keys(input.manifest.tables).length > 0 ||
+      Object.keys(input.manifest.files).length > 0
+    ) {
       yield* databases.ensureReady(input.companyId);
     }
     const { companyId, snapshot } =
@@ -799,14 +802,15 @@ export const make = Effect.gen(function* () {
   );
 
   const provision = Effect.fn("Patches.provision")(function* (input: RecordInput) {
-    const introducesTables = Object.keys(input.manifest.tables).length > 0;
-    if (input.intent === "create" && !introducesTables) {
+    const hasDefinitions =
+      Object.keys(input.manifest.tables).length > 0 || Object.keys(input.manifest.files).length > 0;
+    if (input.intent === "create" && !hasDefinitions) {
       return yield* tables.diff(input.manifest, null);
     }
     return yield* databases
       .withCompany(input.companyId)(
         Effect.gen(function* () {
-          if (!introducesTables && !(yield* inventoryStore.exists(input.patchId))) {
+          if (!hasDefinitions && !(yield* inventoryStore.exists(input.patchId))) {
             return yield* tables.diff(input.manifest, null);
           }
           return yield* databases.withPatchLock(input.patchId)(
@@ -820,7 +824,7 @@ export const make = Effect.gen(function* () {
       .pipe(
         Effect.catchTags({
           CompanyDatabaseNotReady: (error) =>
-            !introducesTables && error.status === null
+            !hasDefinitions && error.status === null
               ? tables.diff(input.manifest, null)
               : Effect.fail(error)
         })

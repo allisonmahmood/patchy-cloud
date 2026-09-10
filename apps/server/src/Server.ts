@@ -45,7 +45,7 @@ import {
   Patches,
   PatchesApi
 } from "@patchy/patches";
-import { Tables, TableOperations } from "@patchy/primitives";
+import { Tables, TableOperations, Files } from "@patchy/primitives";
 import { Pages, servingHeaders, TrustedProxies } from "@patchy/serving";
 import {
   Runtime,
@@ -92,7 +92,11 @@ const services = Layer.mergeAll(
   DeviceLogins.layer,
   OrphanSweep.layer,
   Layer.unwrap(
-    Effect.map(TableOperations.make, (handlers) => Runtime.layer({ me, ...handlers }))
+    Effect.gen(function* () {
+      const tables = yield* TableOperations.make;
+      const files = yield* Files.make;
+      return Runtime.layer({ me, ...tables, ...files });
+    })
   ).pipe(Layer.provide([LoadedVersions.layer, RuntimeLog.layer]))
 ).pipe(
   Layer.provideMerge(

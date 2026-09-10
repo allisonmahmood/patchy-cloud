@@ -30,25 +30,28 @@ export const make = Effect.gen(function* () {
     const resolved = path.resolve(root, key);
     const relative = path.relative(root, resolved);
     if (relative.startsWith("..") || path.isAbsolute(relative)) {
-      return yield* Effect.fail(new ContentStore.InvalidObjectKey({ key }));
+      return yield* new ContentStore.InvalidObjectKey({ key });
     }
     return resolved;
   });
 
-  const put = Effect.fn("FilesystemContentStore.put")(function* (key: string, html: string) {
+  const putBytes = Effect.fn("FilesystemContentStore.putBytes")(function* (
+    key: string,
+    bytes: Uint8Array
+  ) {
     const file = yield* resolveKey(key);
     yield* fs.makeDirectory(path.dirname(file), { recursive: true }).pipe(
-      Effect.andThen(fs.writeFileString(file, html)),
+      Effect.andThen(fs.writeFile(file, bytes)),
       Effect.mapError(
         (cause) => new ContentStore.StoreUnavailable({ operation: "put", key, cause })
       )
     );
   });
 
-  const get = Effect.fn("FilesystemContentStore.get")(function* (key: string) {
+  const getBytes = Effect.fn("FilesystemContentStore.getBytes")(function* (key: string) {
     const file = yield* resolveKey(key);
     return yield* fs
-      .readFileString(file)
+      .readFile(file)
       .pipe(
         Effect.mapError((cause) =>
           cause.reason._tag === "NotFound"
@@ -57,6 +60,11 @@ export const make = Effect.gen(function* () {
         )
       );
   });
+
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
+  const put = (key: string, html: string) => putBytes(key, encoder.encode(html));
+  const get = (key: string) => Effect.map(getBytes(key), (bytes) => decoder.decode(bytes));
 
   const remove = Effect.fn("FilesystemContentStore.delete")(function* (key: string) {
     const file = yield* resolveKey(key);
@@ -107,7 +115,7 @@ export const make = Effect.gen(function* () {
       })
     );
 
-  return ContentStore.ContentStore.of({ put, get, delete: remove, list });
+  return ContentStore.ContentStore.of({ put, get, putBytes, getBytes, delete: remove, list });
 });
 
 export const layer = Layer.effect(ContentStore.ContentStore, make).pipe(

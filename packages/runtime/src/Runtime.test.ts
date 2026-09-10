@@ -359,3 +359,75 @@ it.effect(
       )
     )
 );
+
+it.effect("raw uploads read bytes only after admission and a pending mutation log", () =>
+  Effect.gen(function* () {
+    const runtime = yield* Runtime.Runtime;
+    const sql = yield* SqlClient.SqlClient;
+    let reads = 0;
+    const readBytes = Effect.gen(function* () {
+      reads++;
+      assert.deepStrictEqual(yield* sql`SELECT op, resource, outcome FROM runtime_calls`, [
+        {
+          op: "files.put",
+          resource: "docs/data.bin",
+          outcome: "pending"
+        }
+      ]);
+      return new Uint8Array([0, 255]);
+    });
+    const input = envelope("files.put", {
+      store: "docs",
+      name: "data.bin",
+      contentType: "application/octet-stream"
+    });
+    const denied = yield* runtime.putFile(input, readBytes).pipe(
+      Effect.provideService(
+        HttpServerRequest.HttpServerRequest,
+        HttpServerRequest.fromWeb(
+          new Request(`${PUBLIC_BASE_URL}/api/runtime/files`, {
+            method: "PUT",
+            headers: { ...authenticatedHeaders(), origin: "https://foreign.invalid" }
+          })
+        )
+      ),
+      Effect.flip
+    );
+    assert.strictEqual(denied.code, "access_denied");
+    assert.strictEqual(reads, 0);
+    yield* runtime.putFile(input, readBytes).pipe(
+      Effect.provideService(
+        HttpServerRequest.HttpServerRequest,
+        HttpServerRequest.fromWeb(
+          new Request(`${PUBLIC_BASE_URL}/api/runtime/files`, {
+            method: "PUT",
+            headers: authenticatedHeaders()
+          })
+        )
+      )
+    );
+    assert.strictEqual(reads, 1);
+    assert.deepStrictEqual(yield* sql`SELECT op, resource, outcome FROM runtime_calls`, [
+      {
+        op: "files.put",
+        resource: "docs/data.bin",
+        outcome: "success"
+      }
+    ]);
+  }).pipe(
+    Effect.provide(
+      Fixtures.layer({
+        "files.put": {
+          kind: "mutation",
+          transport: "bytes-put",
+          resource: () => "docs/data.bin",
+          run: (_args, bytes) =>
+            Effect.sync(() => {
+              assert.deepStrictEqual(bytes, new Uint8Array([0, 255]));
+              return null;
+            })
+        }
+      })
+    )
+  )
+);

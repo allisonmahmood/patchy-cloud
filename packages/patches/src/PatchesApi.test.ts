@@ -35,7 +35,7 @@ import * as Fixtures from "./test/fixtures.js";
 const { admin, reader, sibling, uploader } = Fixtures.identities;
 
 const memoryStore = Layer.sync(ContentStore.ContentStore, () => {
-  const objects = new Map<string, { html: string; lastModified: number }>();
+  const objects = new Map<string, { bytes: Uint8Array; lastModified: number }>();
   return ContentStore.ContentStore.of({
     list: (prefix) =>
       Stream.suspend(() =>
@@ -46,14 +46,27 @@ const memoryStore = Layer.sync(ContentStore.ContentStore, () => {
         )
       ),
     put: Effect.fn(function* (key, html) {
-      objects.set(key, { html, lastModified: yield* Clock.currentTimeMillis });
+      objects.set(key, {
+        bytes: new TextEncoder().encode(html),
+        lastModified: yield* Clock.currentTimeMillis
+      });
     }),
     get: (key) =>
       Effect.suspend(() => {
-        const html = objects.get(key)?.html;
-        return html === undefined
+        const bytes = objects.get(key)?.bytes;
+        return bytes === undefined
           ? Effect.fail(new ContentStore.ObjectNotFound({ key }))
-          : Effect.succeed(html);
+          : Effect.succeed(new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes));
+      }),
+    putBytes: Effect.fn(function* (key, bytes) {
+      objects.set(key, { bytes: bytes.slice(), lastModified: yield* Clock.currentTimeMillis });
+    }),
+    getBytes: (key) =>
+      Effect.suspend(() => {
+        const bytes = objects.get(key)?.bytes;
+        return bytes === undefined
+          ? Effect.fail(new ContentStore.ObjectNotFound({ key }))
+          : Effect.succeed(bytes.slice());
       }),
     delete: (key) => Effect.sync(() => void objects.delete(key))
   });
@@ -413,6 +426,77 @@ const racingClients = Effect.fn("racingClients")(function* () {
 });
 
 it.layer(publishLayer)("publish attempts", (it) => {
+  it.effect(
+    "publishes store-only repos and retains omitted stores in the owner's cumulative inventory",
+    () =>
+      Effect.gen(function* () {
+        const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+        const other = yield* client.pipe(Effect.provide(Fixtures.as(reader)));
+        const manifest = {
+          ...Fixtures.manifest,
+          name: "inventory-files",
+          files: { attachments: {} }
+        };
+        const payload = publishRequest({ html: html("File store repo"), manifest });
+        const [created, response] = yield* owner.publish({
+          payload,
+          responseMode: "decoded-and-response"
+        });
+        assert.strictEqual(response.status, 201);
+        assert.strictEqual(created.schemaRevision, 1);
+        assert.deepStrictEqual(created.provisioned, {
+          tables: [],
+          columns: [],
+          indexes: [],
+          stores: ["attachments"]
+        });
+        const params = { patchId: created.patchId };
+        const baseline = yield* owner.inventory({ params });
+        assert.strictEqual(baseline.schemaRevision, 1);
+        assert.deepStrictEqual(baseline.tables, {});
+        assert.deepStrictEqual(baseline.files, manifest.files);
+        assert.deepStrictEqual(yield* other.inventory({ params }).pipe(Effect.flip), {
+          ok: false,
+          error: "Patch not found."
+        });
+        const replayed = yield* owner.publish({ payload, responseMode: "response-only" });
+        assert.strictEqual(yield* replayed.text, yield* response.text);
+        const omitted = yield* owner.publish({
+          payload: publishRequest({
+            patchId: created.patchId,
+            html: html("Omits file store"),
+            manifest: { ...Fixtures.manifest, name: manifest.name }
+          })
+        });
+        assert.strictEqual(omitted.schemaRevision, 1);
+        assert.deepStrictEqual(omitted.unused.stores, ["attachments"]);
+        assert.deepStrictEqual(yield* owner.inventory({ params }), baseline);
+        const restored = yield* owner.publish({
+          payload: publishRequest({
+            patchId: created.patchId,
+            html: html("Restores file store"),
+            manifest
+          })
+        });
+        assert.strictEqual(restored.schemaRevision, 1);
+        assert.deepStrictEqual(restored.provisioned.stores, []);
+        assert.deepStrictEqual(restored.unused.stores, []);
+        const store = yield* ContentStore.ContentStore;
+        const before = yield* Stream.runCollect(store.list("patches/"));
+        const refused = yield* owner.publish({
+          payload: publishRequest({
+            patchId: created.patchId,
+            html: html("Single file"),
+            metadata: { filename: "attachments.html" }
+          }),
+          responseMode: "response-only"
+        });
+        assert.strictEqual(refused.status, 422);
+        assert.include(yield* refused.json, { code: "has_primitives" });
+        assert.deepStrictEqual(yield* Stream.runCollect(store.list("patches/")), before);
+      })
+  );
+
   it.effect(
     "publishes tier-zero tables, replays their reports, and exposes only the owner's cumulative inventory",
     () =>
@@ -928,14 +1012,13 @@ it.layer(publishLayer)("publish attempts", (it) => {
     })
   );
 
-  it.effect("refuses unsupported tiers and unprovisioned resources before writing content", () =>
+  it.effect("refuses unsupported tiers and uses before writing content", () =>
     Effect.gen(function* () {
       const api = yield* client.pipe(Effect.provide(Fixtures.as(admin)));
       const patches = yield* Patches.Patches;
       const before = yield* patches.countLive(admin.user.id);
       const cases = [
         { manifest: { ...Fixtures.manifest, tier: 1 as const }, code: "tier_mismatch" },
-        { manifest: { ...Fixtures.manifest, files: { images: {} } }, code: "invalid_manifest" },
         {
           manifest: {
             ...Fixtures.manifest,

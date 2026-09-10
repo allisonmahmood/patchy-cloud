@@ -159,13 +159,13 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "and `publishKey` before limits or release validation: identical payloads return the " +
           "stored response and status, even after an upgrade; changed payloads answer 409 " +
           "`publish_key_conflict`. New attempts require the exact current release and manifest " +
-          "version from `GET /api/release`. Tier 0 may define tables, provisioned additively; " +
-          "higher tiers answer `tier_mismatch`, files and uses `invalid_manifest`. " +
+          "version from `GET /api/release`. Tier 0 may define tables and file stores, provisioned additively; " +
+          "higher tiers answer `tier_mismatch`, uses `invalid_manifest`. " +
           "Schema changes are checked before bytes and rechecked under the patch lock. " +
           "Preflight conservatively refuses new indexes with existing uncompressed key tuples " +
           "over 2,000 bytes, and added columns that expand existing rows over the row limit. " +
-          "`not_additive` names every refused object, change and fix. Omitted tables remain in " +
-          "the cumulative inventory and appear as `unused`; a required column cannot be omitted. " +
+          "`not_additive` names every refused object, change and fix. Omitted tables and stores remain in " +
+          "the cumulative inventory with their data and appear as `unused`; a required column cannot be omitted. " +
           "The schema revision advances only when provisioning changes something, never for a new bundle alone. " +
           "File mode (empty definitions and no repo name, or file metadata) onto cumulative inventory " +
           "answers `has_primitives`; an empty named repo manifest may omit all tables. " +
@@ -285,9 +285,10 @@ const runtimeFileContract =
   "`store` is a camelCase manifest-defined file store. Patch ids are twelve lowercase letters " +
   "or digits; version ids are `ver_` followed by 24 lowercase letters or digits. The loaded " +
   "manifest, never a client-supplied name, is the authority. Raw byte bodies are not JSON or " +
-  "base64; the byte limit is 20 MiB. These file routes are reserved: after the same admission " +
-  "they currently answer `invalid_request` on company versions or `not_available_on_public` " +
-  "on public versions, never a fake success. ";
+  "base64; the byte limit is 20 MiB (`PATCHY_RUNTIME_FILE_BYTES`), enforced against actual streamed " +
+  "bytes. Invalid names, undeclared stores and missing files answer `invalid_request`. Each PUT " +
+  "writes a fresh immutable object and changes the index only after the byte write succeeds. " +
+  "Files belong to the patch and store, never a version; rollback and version cleanup preserve them. ";
 
 export class RuntimeGroup extends HttpApiGroup.make("runtime", { topLevel: true })
   .add(
@@ -328,7 +329,13 @@ export class RuntimeGroup extends HttpApiGroup.make("runtime", { topLevel: true 
           "and invalid pagination `invalid_cursor`. Unknown operations answer `invalid_request`. " +
           "Failures are `{ ok: false, error, code, correlationId? }`; every table mutation is " +
           "logged before execution and logged failures carry their runtime-log correlation id. " +
-          "Table reads are not logged. Files and other unimplemented operation names remain refused."
+          "Table and file reads are not logged. `files.list { store, prefix?, limit?, cursor? }` " +
+          "returns `{ files: [{ name, size, contentType, updatedAt }], cursor }`, ordered by name " +
+          "with a literal prefix and a keyset cursor bound to patch, store and prefix. Pages default " +
+          "to 100, capped at 1,000 (`PATCHY_FILE_DEFAULT_PAGE`, `PATCHY_FILE_MAX_PAGE`). " +
+          "`files.delete { store, name }` removes only the index row and returns null idempotently. " +
+          "File mutations log store/name as their resource. `files.put` and `files.get` require the " +
+          "raw bytes routes; they are refused on this JSON route, never serialized as JSON/base64."
       )
     ),
     HttpApiEndpoint.put("putFile", "/runtime/files/:patchId/:versionId/:store/*", {
@@ -339,7 +346,7 @@ export class RuntimeGroup extends HttpApiGroup.make("runtime", { topLevel: true 
         "content-type": Schema.optionalKey(Schema.String)
       },
       payload: RuntimeBytes,
-      success: RuntimeBytes,
+      success: RuntimeSuccess,
       error: runtimeErrors
     }).annotateMerge(
       describe(
@@ -348,8 +355,8 @@ export class RuntimeGroup extends HttpApiGroup.make("runtime", { topLevel: true 
           "uploaded media type travels as `Content-Type`. Principal and wire travel only " +
           "in their required headers; the body contains only raw file bytes. " +
           runtimeFileContract +
-          "The declared byte response contract uses `application/octet-stream` as its default, " +
-          "with the actual media type supplied by the handler."
+          "An admitted PUT is logged before reading its body and answers `{ ok: true, value: null }` " +
+          "with `no-store`. A failed or oversized upload preserves the previous file."
       )
     ),
     HttpApiEndpoint.get("getFile", "/runtime/files/:patchId/:versionId/:store/*", {

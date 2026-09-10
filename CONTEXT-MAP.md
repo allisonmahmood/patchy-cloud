@@ -4,12 +4,12 @@ Patchy Cloud is one deployment: the hosting server on one side, the `patchy` CLI
 
 ## Contexts
 
-- [Patches](./packages/patches/CONTEXT.md) — `packages/patches`. Patches and immutable versions, company-scoped names, manifests and replay-safe publish keys, additive table provisioning at publish, owner inventory, user ownership, company/public sharing, owner deletion, retention and its sweep, the owner quota, release metadata, and the `patches` API group. Patch repos, higher-tier serving and retirement remain future work
+- [Patches](./packages/patches/CONTEXT.md) — `packages/patches`. Patches and immutable versions, company-scoped names, manifests and replay-safe publish keys, additive table and store provisioning at publish, owner inventory, user ownership, company/public sharing, owner deletion, retention and its sweep, the owner quota, release metadata, and the `patches` API group. Patch repos, higher-tier serving and retirement remain future work
 - [Serving](./packages/serving/CONTEXT.md) — `packages/serving`. Patch addresses and version/content URLs, tier 0 pages, the login door, serving guarantees, admitted visits and trusted-proxy attribution. Higher runtimes, the connect door and patch identity remain future work
 - [Companies](./packages/companies/CONTEXT.md) — `packages/companies`. Companies and handles, users and roles, create-or-join, invitations, the company page, deactivation and reactivation. Groups, verified domains, SSO, billing, suspension and the operator's surfaces remain future work
 - [Auth](./packages/auth/CONTEXT.md) — `packages/auth`. Clerk session verification and viewers, user-owned machine tokens, device login, identity, revocation and bearer parsing, the sign-in and sign-out pages, Your machines, the `auth` API group and the shared dev seed
-- [Runtime](./packages/runtime/CONTEXT.md) — `packages/runtime`. Browser-only operation admission, loaded-version binding, acting identity, wire versions, dispatch and the runtime log. Admits `me` and the table operations supplied by Primitives; files and integration handlers arrive with their capabilities
-- [Primitives](./packages/primitives/CONTEXT.md) — `packages/primitives`. Patch-owned table definitions, additive diff and provisioning, schema revisions, system columns, refs and bounded row operations over Postgres and PGlite. File stores and shared-table reads remain future work
+- [Runtime](./packages/runtime/CONTEXT.md) — `packages/runtime`. Browser-only operation admission, loaded-version binding, acting identity, wire versions, dispatch and the runtime log. Admits `me` and table/file operations supplied by Primitives, including live-authorized bytes routes; integration handlers arrive with their capabilities
+- [Primitives](./packages/primitives/CONTEXT.md) — `packages/primitives`. Patch-owned table and file-store definitions, one additive diff and provisioning, schema revisions, system columns, refs, bounded row operations and immutable file objects over Postgres and PGlite. Shared-table reads remain future work
 - [Integrations](./packages/integrations/CONTEXT.md) — no code yet. The company-scoped primitive that reaches outside systems: integration, connection and personal connection, connection handle, the typed client patch code is handed, the call log
 - [Publishing](./packages/cli/CONTEXT.md) — `packages/cli` and the bundled skill, the `patchy` CLI agents use to publish patches
 
@@ -37,7 +37,7 @@ Supporting packages rather than product contexts; their glossaries define only t
 - **Runtime → Auth, Limits, SQL**: admits the browser session as the acting identity, limits calls per viewer and owning patch, and records mutations and integration calls before execution
 - **Patches → Runtime**: supplies Runtime's loaded-version lookup: the manifest, effective sharing scope, owning company and server-stamped wire version
 - **Hosting → Runtime, Patches**: supplies the loaded-version layer and the operation handler map; Runtime does not import Patches
-- **Primitives → Company database, Runtime**: provisions tables under a patch lock and implements row operations under the admitted loaded-version binding
+- **Primitives → Company database, Runtime, Content store**: provisions tables and stores under a patch lock and implements row and file operations under the admitted loaded-version binding; file indexes point to immutable byte objects
 - **Patches → Primitives, Company database**: diffs before storing bytes, then provisions under the platform patch-row lock and returns the cumulative inventory to the owner
 - **Integrations → Runtime, Auth** (planned): implements integration operations as the admitted viewer
 - **Companies, Auth, Patches → SQL**: persist their own domain data in the shared Postgres database

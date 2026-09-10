@@ -33,6 +33,7 @@ export interface Plan extends Provisioned {
   readonly newTables: readonly string[];
   readonly newColumns: readonly { readonly table: string; readonly name: string }[];
   readonly newIndexes: readonly { readonly table: string; readonly name: string }[];
+  readonly newStores: readonly string[];
   readonly sharing: readonly string[];
 }
 
@@ -262,6 +263,7 @@ const diff = Effect.fn("Tables.diff")(function* (
   const newTables: string[] = [];
   const newColumns: Array<{ table: string; name: string }> = [];
   const newIndexes: Array<{ table: string; name: string }> = [];
+  const newStores: string[] = [];
   const sharing: string[] = [];
   const oldTables = new Map(snapshot?.tables.map((table) => [table.name, table]));
   const oldColumns = new Map(
@@ -270,17 +272,16 @@ const diff = Effect.fn("Tables.diff")(function* (
   const oldIndexes = new Map(
     snapshot?.indexes.map((index) => [`${index.table}.${index.name}`, index])
   );
+  const oldStores = new Set(snapshot?.stores.map((store) => store.name));
   const oldColumnCounts = new Map<string, number>();
   for (const column of snapshot?.columns ?? []) {
     oldColumnCounts.set(column.table, (oldColumnCounts.get(column.table) ?? 0) + 1);
   }
 
   for (const store of Object.keys(manifest.files)) {
-    changes.push({
-      object: store,
-      change: "file stores are not supported yet",
-      fix: "remove the file store definition"
-    });
+    if (oldStores.has(store)) continue;
+    newStores.push(store);
+    provisioned.stores.push(store);
   }
   for (const [table, definition] of Object.entries(manifest.tables)) {
     const oldTable = oldTables.get(table);
@@ -412,13 +413,16 @@ const diff = Effect.fn("Tables.diff")(function* (
     if (index.unique) warnings.push(`uniqueness on \`${index.table}.${index.name}\` still applies`);
   }
   for (const store of snapshot?.stores ?? []) {
+    if (Object.hasOwn(manifest.files, store.name)) continue;
     unused.stores.push(store.name);
     warnings.push(
       `\`${store.name}\` is no longer defined; its data is kept and this version cannot reach it.`
     );
   }
   if (changes.length > 0) return yield* new NotAdditive({ changes });
-  const changed = newTables.length + newColumns.length + newIndexes.length + sharing.length > 0;
+  const changed =
+    newTables.length + newColumns.length + newIndexes.length + newStores.length + sharing.length >
+    0;
   return {
     provisioned,
     unused,
@@ -427,6 +431,7 @@ const diff = Effect.fn("Tables.diff")(function* (
     newTables,
     newColumns,
     newIndexes,
+    newStores,
     sharing
   } satisfies Plan;
 });
@@ -537,6 +542,7 @@ export const make = Effect.gen(function* () {
         name: table,
         shared: manifest.tables[table]!.shared === true
       });
+    for (const name of plan.newStores) yield* inventory.putStore({ patchId, name });
     const schemaRevision = yield* inventory.bumpRevision(patchId);
     return {
       provisioned: plan.provisioned,

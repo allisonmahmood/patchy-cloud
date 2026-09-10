@@ -64,6 +64,14 @@ export class ContentStore extends Context.Service<
     readonly get: (
       key: string
     ) => Effect.Effect<string, InvalidObjectKey | ObjectNotFound | StoreUnavailable>;
+    /** Writes raw bytes without text encoding; file primitives use fresh immutable keys. */
+    readonly putBytes: (
+      key: string,
+      bytes: Uint8Array
+    ) => Effect.Effect<void, InvalidObjectKey | StoreUnavailable>;
+    readonly getBytes: (
+      key: string
+    ) => Effect.Effect<Uint8Array, InvalidObjectKey | ObjectNotFound | StoreUnavailable>;
     /** Removes the object; a key already empty is a success. */
     readonly delete: (key: string) => Effect.Effect<void, InvalidObjectKey | StoreUnavailable>;
     /** Lazily enumerates objects whose keys start with prefix; empty means all objects. */

@@ -41,7 +41,7 @@ const CSP =
   "frame-src 'self' about:; base-uri 'none'; form-action 'none'";
 
 const memoryStore = Layer.sync(ContentStore.ContentStore, () => {
-  const objects = new Map<string, { html: string; lastModified: number }>();
+  const objects = new Map<string, { bytes: Uint8Array; lastModified: number }>();
   return ContentStore.ContentStore.of({
     list: (prefix) =>
       Stream.suspend(() =>
@@ -52,14 +52,27 @@ const memoryStore = Layer.sync(ContentStore.ContentStore, () => {
         )
       ),
     put: Effect.fn(function* (key, html) {
-      objects.set(key, { html, lastModified: yield* Clock.currentTimeMillis });
+      objects.set(key, {
+        bytes: new TextEncoder().encode(html),
+        lastModified: yield* Clock.currentTimeMillis
+      });
     }),
     get: (key) =>
       Effect.suspend(() => {
-        const html = objects.get(key)?.html;
-        return html === undefined
+        const bytes = objects.get(key)?.bytes;
+        return bytes === undefined
           ? Effect.fail(new ContentStore.ObjectNotFound({ key }))
-          : Effect.succeed(html);
+          : Effect.succeed(new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes));
+      }),
+    putBytes: Effect.fn(function* (key, bytes) {
+      objects.set(key, { bytes: bytes.slice(), lastModified: yield* Clock.currentTimeMillis });
+    }),
+    getBytes: (key) =>
+      Effect.suspend(() => {
+        const bytes = objects.get(key)?.bytes;
+        return bytes === undefined
+          ? Effect.fail(new ContentStore.ObjectNotFound({ key }))
+          : Effect.succeed(bytes.slice());
       }),
     delete: (key) => Effect.sync(() => void objects.delete(key))
   });

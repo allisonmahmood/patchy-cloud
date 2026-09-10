@@ -1,6 +1,6 @@
 /**
  * The content store over an Azure Blob container: one block blob per object
- * key, served as HTML. The container is its own service (`BlobContainer`) so
+ * key, stored as inert bytes. The container is its own service (`BlobContainer`) so
  * the error mapping here can be exercised without an account.
  */
 import * as Effect from "effect/Effect";
@@ -13,10 +13,13 @@ import * as ContentStore from "./ContentStore.js";
 export const make = Effect.gen(function* () {
   const blobs = yield* BlobContainer.BlobContainer;
 
-  const put = Effect.fn("AzureContentStore.put")(function* (key: string, html: string) {
+  const putBytes = Effect.fn("AzureContentStore.putBytes")(function* (
+    key: string,
+    bytes: Uint8Array
+  ) {
     yield* ContentStore.checkKey(key);
     yield* blobs
-      .upload(key, html)
+      .upload(key, bytes)
       .pipe(
         Effect.mapError(
           (cause) => new ContentStore.StoreUnavailable({ operation: "put", key, cause })
@@ -24,7 +27,7 @@ export const make = Effect.gen(function* () {
       );
   });
 
-  const get = Effect.fn("AzureContentStore.get")(function* (key: string) {
+  const getBytes = Effect.fn("AzureContentStore.getBytes")(function* (key: string) {
     yield* ContentStore.checkKey(key);
     return yield* blobs
       .download(key)
@@ -36,6 +39,11 @@ export const make = Effect.gen(function* () {
         )
       );
   });
+
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
+  const put = (key: string, html: string) => putBytes(key, encoder.encode(html));
+  const get = (key: string) => Effect.map(getBytes(key), (bytes) => decoder.decode(bytes));
 
   const remove = Effect.fn("AzureContentStore.delete")(function* (key: string) {
     yield* ContentStore.checkKey(key);
@@ -63,7 +71,7 @@ export const make = Effect.gen(function* () {
       })
     );
 
-  return ContentStore.ContentStore.of({ put, get, delete: remove, list });
+  return ContentStore.ContentStore.of({ put, get, putBytes, getBytes, delete: remove, list });
 });
 
 export const layer = Layer.effect(ContentStore.ContentStore, make).pipe(

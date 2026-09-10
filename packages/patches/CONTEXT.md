@@ -33,7 +33,7 @@ The act that puts a patch up: a new version, live at once to everyone the patch 
 _Avoid_: deploy, upload (moving bytes, not publishing), release, promote
 
 **Primitive**:
-A capability the cloud provides because a patch declared the need, belonging either to that patch or to its company. Patch-owned tables are defined in the manifest and provisioned additively at publish; their language belongs to [Primitives](../primitives/CONTEXT.md).
+A capability the cloud provides because a patch declared the need, belonging either to that patch or to its company. Patch-owned tables and file stores are defined in the manifest and provisioned additively at publish; their language belongs to [Primitives](../primitives/CONTEXT.md).
 _Avoid_: resource, service, addon
 
 **Extension**:
