@@ -298,7 +298,8 @@ that defines it keeps reaching the same files.
 Names are 1–512 UTF-8 bytes, with `/`-separated nonempty segments and no `.` or
 `..` segments. Files are bounded to 20 MiB (`too_large`); list pages default
 to 100, at most 1,000, in name order with a literal prefix filter and a keyset
-cursor. Each put writes a fresh immutable object before changing the file-index
+cursor. Metadata pages share the 8 MiB runtime result bound, including the cursor.
+Each put writes a fresh immutable object before changing the file-index
 pointer; a failed byte write preserves the previous file. Concurrent replacements
 and deletion serialize, so an index row never points at a partially replaced
 object. Deletion removes the pointer, not the object; unreferenced objects are

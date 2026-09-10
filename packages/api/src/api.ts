@@ -332,7 +332,8 @@ export class RuntimeGroup extends HttpApiGroup.make("runtime", { topLevel: true 
           "Table and file reads are not logged. `files.list { store, prefix?, limit?, cursor? }` " +
           "returns `{ files: [{ name, size, contentType, updatedAt }], cursor }`, ordered by name " +
           "with a literal prefix and a keyset cursor bound to patch, store and prefix. Pages default " +
-          "to 100, capped at 1,000 (`PATCHY_FILE_DEFAULT_PAGE`, `PATCHY_FILE_MAX_PAGE`). " +
+          "to 100, capped at 1,000 (`PATCHY_FILE_DEFAULT_PAGE`, `PATCHY_FILE_MAX_PAGE`), with an " +
+          "8 MiB result cap (`PATCHY_RUNTIME_RESULT_BYTES`), including the cursor. " +
           "`files.delete { store, name }` removes only the index row and returns null idempotently. " +
           "File mutations log store/name as their resource. `files.put` and `files.get` require the " +
           "raw bytes routes; they are refused on this JSON route, never serialized as JSON/base64."

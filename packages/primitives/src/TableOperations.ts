@@ -19,6 +19,7 @@ import {
 } from "@patchy/api";
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
 import { Binding, Runtime } from "@patchy/runtime";
+import { boundedRows } from "./bounded-rows.js";
 
 export class TableNotDeclared extends Schema.TaggedError<TableNotDeclared>()("TableNotDeclared", {
   table: Schema.String
@@ -133,50 +134,6 @@ const isTimestamp = Schema.is(IsoTimestamp);
 const decodeRows = Schema.decodeUnknownSync(Schema.Array(TableRow));
 const queryRows = (sql: SqlClient.SqlClient, query: string, values: ReadonlyArray<unknown>) =>
   sql.unsafe(query, values).pipe(Effect.map(decodeRows));
-const decodeEnvelope = Schema.decodeUnknownSync(
-  Schema.Array(
-    Schema.Struct({
-      rows: Schema.Array(TableRow),
-      hasMore: Schema.Boolean,
-      exceeded: Schema.Boolean
-    })
-  )
-);
-// The database gates the payload, not the driver: PGlite materializes complete query results.
-// __position is assigned using the original SQL ordering, before projecting timestamps to text.
-const boundedRows = Effect.fn("TableOperations.boundedRows")(function* (
-  sql: SqlClient.SqlClient,
-  query: string,
-  values: ReadonlyArray<unknown>,
-  pageSize: number,
-  maxBytes: number
-) {
-  const page = `$${values.length + 1}`;
-  const budget = `$${values.length + 2}`;
-  const envelopes = yield* sql
-    .unsafe(
-      `WITH "__selected" AS MATERIALIZED (${query}),
-      "__encoded" AS MATERIALIZED (
-        SELECT "__position", (to_jsonb("__selected") - '__position')::text AS "__row"
-        FROM "__selected" WHERE "__position" <= ${page}
-      ),
-      "__budget" AS (
-        SELECT COALESCE(sum(octet_length("__row") + 1), 0) + 2 > ${budget} AS exceeded
-        FROM "__encoded"
-      )
-      SELECT COALESCE((
-        SELECT json_agg("__row"::json ORDER BY "__position")
-        FROM "__encoded" WHERE NOT "__budget".exceeded
-      ), '[]'::json) AS rows,
-      EXISTS (SELECT 1 FROM "__selected" WHERE "__position" > ${page}) AS "hasMore",
-      exceeded FROM "__budget"`,
-      [...values, pageSize, maxBytes]
-    )
-    .pipe(Effect.map(decodeEnvelope));
-  const envelope = envelopes[0]!;
-  if (envelope.exceeded) return yield* new Runtime.TooLarge({ maxBytes });
-  return envelope;
-});
 const cursorSchema = Schema.Struct({
   version: Schema.Literal(1),
   binding: Schema.String,

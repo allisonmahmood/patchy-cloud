@@ -40,6 +40,22 @@ it.layer(services)("Files / real Postgres and filesystem", (it) => {
     60_000
   );
 
+  it.effect("refuses metadata pages above the runtime result byte cap", () =>
+    Effect.gen(function* () {
+      const { put, binding } = yield* setup("filelistcaps");
+      yield* put("one", new Uint8Array([1]), "text/plain; note=" + "x".repeat(256));
+      const handlers = yield* Files.make.pipe(
+        Effect.provide(
+          ConfigProvider.layer(ConfigProvider.fromUnknown({ PATCHY_RUNTIME_RESULT_BYTES: "128" }))
+        )
+      );
+      const failure = yield* handlers["files.list"]
+        .run({ store: "docs" })
+        .pipe(Effect.provideService(Binding.Binding, binding), Effect.flip);
+      assert.strictEqual(failure.code, "too_large");
+    })
+  );
+
   it.effect("retains the previous pointer and bytes after an object-store write failure", () =>
     Effect.gen(function* () {
       const { put, get, binding } = yield* setup("filewritebad");

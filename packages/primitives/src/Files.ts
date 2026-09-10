@@ -18,6 +18,7 @@ import { CompanyDatabases } from "@patchy/company-database";
 import { ContentStore } from "@patchy/content-store";
 import { newInternalId } from "@patchy/core";
 import { Binding, Runtime } from "@patchy/runtime";
+import { boundedRows } from "./bounded-rows.js";
 
 export class InvalidCursor extends Schema.TaggedError<InvalidCursor>()("FileInvalidCursor", {
   store: Schema.String,
@@ -51,6 +52,7 @@ export class Busy extends Schema.TaggedError<Busy>()("FileBusy", {
 
 export const config = Config.all({
   fileBytes: Config.int("PATCHY_RUNTIME_FILE_BYTES").pipe(Config.withDefault(20 * 1024 * 1024)),
+  resultBytes: Config.int("PATCHY_RUNTIME_RESULT_BYTES").pipe(Config.withDefault(8 * 1024 * 1024)),
   defaultPage: Config.int("PATCHY_FILE_DEFAULT_PAGE").pipe(Config.withDefault(100)),
   maxPage: Config.int("PATCHY_FILE_MAX_PAGE").pipe(Config.withDefault(1000))
 });
@@ -95,26 +97,10 @@ const findFile = SqlSchema.findOneOption({
       FROM patchy.files WHERE patch_id = ${patchId} AND store = ${store} AND name = ${name}`
     )
 });
-const listFiles = SqlSchema.findAll({
-  Request: Schema.Struct({
-    patchId: Schema.String,
-    store: DefinitionName,
-    prefix: Schema.String,
-    after: Schema.String,
-    limit: Schema.Int
-  }),
-  Result: Schema.Struct({ ...FileMetadata.fields, size: Schema.NumberFromString }),
-  execute: ({ patchId, store, prefix, after, limit }) =>
-    Effect.flatMap(
-      SqlClient.SqlClient,
-      (sql) => sql`
-      SELECT name, size::text AS size, content_type AS "contentType",
-        to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "updatedAt"
-      FROM patchy.files WHERE patch_id = ${patchId} AND store = ${store}
-        AND starts_with(name, ${prefix}) AND name COLLATE "C" > ${after} COLLATE "C"
-      ORDER BY name COLLATE "C" LIMIT ${limit}`
-    )
-});
+const decodeFiles = Schema.decodeUnknownSync(Schema.Array(FileMetadata));
+const encodePage = Schema.encodeSync(
+  Schema.fromJsonString(runtimeOperations["files.list"].response)
+);
 
 export const make = Effect.gen(function* () {
   const databases = yield* CompanyDatabases.CompanyDatabases;
@@ -228,7 +214,7 @@ export const make = Effect.gen(function* () {
       output: runtimeOperations["files.list"].response
     },
     (args) =>
-      withStore(args.store, (_sql, patchId) =>
+      withStore(args.store, (sql, patchId) =>
         Effect.gen(function* () {
           const limit = args.limit ?? settings.defaultPage;
           if (limit > settings.maxPage) return yield* new PageLimit({ maxItems: settings.maxPage });
@@ -249,19 +235,27 @@ export const make = Effect.gen(function* () {
               return yield* new InvalidCursor({ store: args.store });
             after = cursor.after;
           }
-          const rows = yield* listFiles({
-            patchId,
-            store: args.store,
-            prefix,
-            after,
-            limit: limit + 1
-          }).pipe(Effect.catchTags({ SchemaError: Effect.die }));
-          const files = rows.slice(0, limit);
+          const { rows, hasMore } = yield* boundedRows(
+            sql,
+            `SELECT name, size, "contentType", "updatedAt",
+              row_number() OVER (ORDER BY name COLLATE "C") AS "__position"
+            FROM (
+              SELECT name, size, content_type AS "contentType",
+                to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "updatedAt"
+              FROM patchy.files WHERE patch_id = $1 AND store = $2
+                AND starts_with(name, $3) AND name COLLATE "C" > $4 COLLATE "C"
+              ORDER BY name COLLATE "C" LIMIT $5
+            ) AS selected`,
+            [patchId, args.store, prefix, after, limit + 1],
+            limit,
+            settings.resultBytes
+          );
+          const files = decodeFiles(rows);
           const last = files[files.length - 1];
-          return {
+          const result = {
             files,
             cursor:
-              rows.length > limit && last !== undefined
+              hasMore && last !== undefined
                 ? Buffer.from(
                     encodeCursor({
                       version: 1,
@@ -273,6 +267,9 @@ export const make = Effect.gen(function* () {
                   ).toString("base64url")
                 : null
           };
+          if (Buffer.byteLength(encodePage(result)) > settings.resultBytes)
+            return yield* new Runtime.TooLarge({ maxBytes: settings.resultBytes });
+          return result;
         })
       )
   );
