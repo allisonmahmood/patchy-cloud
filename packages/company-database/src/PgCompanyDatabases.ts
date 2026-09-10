@@ -112,12 +112,16 @@ export const adminLayer = Layer.effect(
 ).pipe(Layer.provide(Reactivity.layer));
 
 export const make = Effect.gen(function* () {
-  const platformPool = yield* SqlClient.SqlClient;
-  // Claims commit independently of the caller's patch-row transaction, using the same platform pool.
-  const platform = yield* SqlClient.make({
-    acquirer: platformPool.reserve,
-    compiler: PgClient.makeCompiler(),
-    spanAttributes: []
+  const platformPool = yield* PgClient.PgClient;
+  // Callers hold platform patch-row transactions. Placement work must never
+  // borrow from that pool: saturated callers would each wait for a second slot.
+  // Clone credentials/options, not connections, and keep claims independently committed.
+  const platform = yield* PgClient.make({
+    ...platformPool.config,
+    maxConnections: 2,
+    minConnections: 0,
+    idleTimeout: "60 seconds",
+    connectTimeout: "5 seconds"
   });
   const admin = yield* AdminClient;
   const settings = yield* CompanyDatabaseConfig;
@@ -284,14 +288,32 @@ export const make = Effect.gen(function* () {
             })
         )
       );
-      return { sql, permits: yield* Semaphore.make(4) };
+      return {
+        context: Context.make(SqlClient.SqlClient, sql).pipe(
+          Context.add(CompanyDatabases.CompanyConnection, sql)
+        ),
+        permits: yield* Semaphore.make(4)
+      };
     })
   });
 
   const withCompany: CompanyDatabases.CompanyDatabases["Service"]["withCompany"] =
     (companyId) => (effect) =>
       Effect.gen(function* () {
-        const placement = yield* claim(companyId);
+        const rows = yield* placements(companyId).pipe(
+          Effect.catchTags(dieOnSchemaError),
+          Effect.mapError(
+            (cause) =>
+              new CompanyDatabases.CompanyDatabaseError({ companyId, operation: "connect", cause })
+          )
+        );
+        const placement = rows[0];
+        if (placement?.status !== "ready") {
+          return yield* new CompanyDatabases.CompanyDatabaseNotReady({
+            companyId,
+            status: placement?.status ?? null
+          });
+        }
         const key = new PoolKey({
           companyId,
           serverId: placement.serverId,
@@ -313,13 +335,8 @@ export const make = Effect.gen(function* () {
                   RcMap.invalidate(registry, key).pipe(Effect.andThen(Effect.fail(error)))
               })
             );
-            const result = yield* Effect.gen(function* () {
-              // Admit the lease before provisioning: a full registry must not
-              // wait on CREATE DATABASE only to refuse the operation afterwards.
-              if (placement.status !== "ready") yield* ensureReady(companyId);
-              return yield* effect;
-            }).pipe(
-              Effect.provideService(SqlClient.SqlClient, entry.sql),
+            const result = yield* effect.pipe(
+              Effect.provideContext(entry.context),
               entry.permits.withPermitsIfAvailable(1)
             );
             if (Option.isNone(result)) {
@@ -338,8 +355,7 @@ export const make = Effect.gen(function* () {
     listReady: readyPlacements(undefined).pipe(
       Effect.catchTags(dieOnSchemaError),
       Effect.mapError(
-        (cause) =>
-          new CompanyDatabases.CompanyDatabaseError({ companyId: "*", operation: "list", cause })
+        (cause) => new CompanyDatabases.CompanyDatabaseError({ operation: "list", cause })
       )
     )
   });

@@ -9,6 +9,7 @@
  * brings Postgres from `DATABASE_URL` and a Node server on `PORT`; a test
  * brings a fresh database and `NodeHttpServer.layerTest`.
  */
+import * as Cause from "effect/Cause";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -98,17 +99,31 @@ const services = Layer.mergeAll(
 );
 
 /**
- * The expiry sweep, once on the way up — a restart is exactly when a backlog
- * is most likely — and then hourly. Nothing depends on the exact period: a
- * patch's clock decides when it expires, and this only decides how long the
- * dead row lingers afterwards. Forked in the server's scope, so shutdown
- * interrupts it.
+ * Each sweep runs once on the way up and then hourly in its own scoped fiber.
+ * A slow or defective orphan pass must not stop expiry. Contain pass failures
+ * inside each repeat so the next tick retries, but never swallow shutdown.
  */
-const sweeper = Layer.effectDiscard(
+export const sweeper = Layer.effectDiscard(
   Effect.gen(function* () {
-    yield* (yield* ExpirySweep.ExpirySweep).sweep;
-    yield* (yield* OrphanSweep.OrphanSweep).sweep;
-  }).pipe(Effect.repeat(Schedule.spaced("1 hour")), Effect.forkScoped)
+    const expiry = yield* ExpirySweep.ExpirySweep;
+    const orphan = yield* OrphanSweep.OrphanSweep;
+    for (const [name, sweep] of [
+      ["expiry", Effect.asVoid(expiry.sweep)],
+      ["orphan", Effect.asVoid(orphan.sweep)]
+    ] as const) {
+      yield* sweep.pipe(
+        Effect.catchCause((cause) =>
+          Cause.hasInterrupts(cause)
+            ? Effect.failCause(cause)
+            : Effect.logError("Background sweep pass failed.").pipe(
+                Effect.annotateLogs({ sweep: name })
+              )
+        ),
+        Effect.repeat(Schedule.spaced("1 hour")),
+        Effect.forkScoped
+      );
+    }
+  })
 );
 
 /** `/api/*`: the groups' handlers, bearer middleware on protected endpoints, and catch-all. */

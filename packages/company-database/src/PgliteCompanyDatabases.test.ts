@@ -41,6 +41,7 @@ it.layer(NodeFileSystem.layer)("PgliteCompanyDatabases", (it) => {
         const first = yield* Effect.gen(function* () {
           const databases = yield* CompanyDatabases.CompanyDatabases;
           const inventory = yield* Inventory.Inventory;
+          yield* databases.ensureReady("local-company");
           return yield* databases.withCompany("local-company")(
             databases.withPatchLock("persisted")(
               Effect.gen(function* () {
@@ -59,10 +60,11 @@ it.layer(NodeFileSystem.layer)("PgliteCompanyDatabases", (it) => {
         const reopened = yield* Effect.gen(function* () {
           const databases = yield* CompanyDatabases.CompanyDatabases;
           const inventory = yield* Inventory.Inventory;
+          yield* databases.ensureReady("local-company");
           const wrongCompany = yield* databases
             .withCompany("other-company")(inventory.read("persisted"))
             .pipe(Effect.flip);
-          assert.strictEqual(wrongCompany._tag, "CompanyDatabaseError");
+          assert.instanceOf(wrongCompany, CompanyDatabases.CompanyIdentityMismatch);
           return yield* databases.withCompany("local-company")(
             Effect.gen(function* () {
               const sql = yield* SqlClient.SqlClient;
@@ -84,9 +86,10 @@ it.layer(NodeFileSystem.layer)("PgliteCompanyDatabases", (it) => {
         }).pipe(
           Effect.provide(PgliteCompanyDatabases.layer({ companyId: "other-company", dataDir }))
         );
-        assert.strictEqual(rebound._tag, "CompanyDatabaseError");
-        if (rebound._tag === "CompanyDatabaseError") {
-          assert.instanceOf(rebound.cause, PgliteCompanyDatabases.CompanyIdentityMismatch);
+        assert.instanceOf(rebound, CompanyDatabases.CompanyIdentityMismatch);
+        if (rebound._tag === "CompanyIdentityMismatch") {
+          assert.strictEqual(rebound.expectedCompanyId, "local-company");
+          assert.strictEqual(rebound.actualCompanyId, "other-company");
         }
       }).pipe(Effect.scoped),
     30_000

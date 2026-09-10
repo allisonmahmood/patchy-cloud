@@ -14,6 +14,12 @@ import { quoteIdentifier } from "./Inventory.js";
 const DAY = 24 * 60 * 60 * 1_000;
 const BATCH_SIZE = 100;
 const isBusy = Schema.is(CompanyDatabases.Busy);
+const retryBusy = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  Effect.retry(effect, {
+    times: 1,
+    schedule: Schedule.spaced("61 seconds"),
+    while: isBusy
+  });
 
 class NamespaceRow extends Schema.Class<NamespaceRow>("OrphanNamespaceRow")({
   namespace: Schema.String
@@ -27,6 +33,10 @@ class FileReference extends Schema.Class<FileReference>("OrphanFileReference")({
   patchId: Schema.String,
   store: Schema.String,
   objectId: Schema.String
+}) {}
+
+class PatchOwner extends Schema.Class<PatchOwner>("OrphanPatchOwner")({
+  companyId: Schema.String
 }) {}
 
 export interface SweepResult {
@@ -52,9 +62,7 @@ export const make = Effect.gen(function* () {
   // Foreground leases remain fail-fast. Only this background caller waits for
   // retained idle pools to expire, once, without holding another company lease.
   const withCompany = <A, E, R>(companyId: string, effect: Effect.Effect<A, E, R>) =>
-    companies
-      .withCompany(companyId)(effect)
-      .pipe(Effect.retry({ times: 1, schedule: Schedule.spaced("61 seconds"), while: isBusy }));
+    companies.withCompany(companyId)(effect).pipe(retryBusy);
 
   const platformPatch = SqlSchema.findAll({
     Request: Schema.String,
@@ -63,12 +71,19 @@ export const make = Effect.gen(function* () {
       platform`SELECT EXISTS(SELECT 1 FROM patches WHERE id = ${patchId}) AS "exists"`
   });
 
-  // These queries resolve SqlClient at operation time, inside the company lease.
+  const lockPlatformPatch = SqlSchema.findAll({
+    Request: Schema.String,
+    Result: PatchOwner,
+    execute: (patchId) =>
+      platform`SELECT company_id AS "companyId" FROM patches WHERE id = ${patchId} FOR UPDATE`
+  });
+
+  // These queries resolve the owning company client inside the lease.
   const namespaces = SqlSchema.findAll({
     Request: Schema.String,
     Result: NamespaceRow,
     execute: Effect.fn(function* (after) {
-      const sql = yield* SqlClient.SqlClient;
+      const sql = yield* CompanyDatabases.CompanyConnection;
       return yield* sql`SELECT nspname AS namespace FROM pg_namespace
         WHERE left(nspname, 2) = 'p_' AND nspname > ${after}
         ORDER BY nspname LIMIT ${BATCH_SIZE}`;
@@ -83,7 +98,7 @@ export const make = Effect.gen(function* () {
     }),
     Result: ExistsRow,
     execute: Effect.fn(function* ({ namespace, patchId, cutoff }) {
-      const sql = yield* SqlClient.SqlClient;
+      const sql = yield* CompanyDatabases.CompanyConnection;
       return yield* sql`SELECT EXISTS(
         SELECT 1 FROM pg_namespace n
         LEFT JOIN patchy.patches p ON p.patch_id = ${patchId}
@@ -101,7 +116,7 @@ export const make = Effect.gen(function* () {
     const patchId = namespace.slice(2);
     return yield* companies.withPatchLock(patchId)(
       Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient;
+        const { sql } = yield* CompanyDatabases.PatchLock;
         const live = yield* platformPatch(patchId).pipe(
           Effect.catchTags({ SchemaError: Effect.die })
         );
@@ -141,7 +156,7 @@ export const make = Effect.gen(function* () {
     Request: Schema.Array(FileReference),
     Result: FileReference,
     execute: Effect.fn(function* (objects) {
-      const sql = yield* SqlClient.SqlClient;
+      const sql = yield* CompanyDatabases.CompanyConnection;
       return yield* sql`SELECT DISTINCT patch_id AS "patchId", store, object_id AS "objectId"
         FROM patchy.files WHERE ${sql.or(
           objects.map(
@@ -151,6 +166,44 @@ export const make = Effect.gen(function* () {
         )}`;
     })
   });
+
+  const reclaimFile = Effect.fn("OrphanSweep.reclaimFile")(
+    function* (key: string, reference: FileReference) {
+      return yield* platform.withTransaction(
+        Effect.gen(function* () {
+          const owners = yield* lockPlatformPatch(reference.patchId).pipe(
+            Effect.catchTags({ SchemaError: Effect.die })
+          );
+          if (owners.length === 0) {
+            // The batch already checked every ready company's index, fail-closed.
+            // An absent row cannot be locked: safety here depends on immutable
+            // object keys, never-reused patch IDs, and the one-day object grace
+            // exceeding a new publication's 60s deadline. A concurrent create
+            // cannot legitimately introduce a reference to this old object.
+            yield* store.delete(key);
+            return true;
+          }
+          return yield* companies.withCompany(owners[0]!.companyId)(
+            companies.withPatchLock(reference.patchId)(
+              Effect.gen(function* () {
+                // An existing patch can attach an old object after the batch
+                // scan. Serialize this final check and deletion with publishers,
+                // holding the platform row before the company patch lock.
+                const references = yield* fileReferences([reference]).pipe(
+                  Effect.catchTags({ SchemaError: Effect.die })
+                );
+                if (references.length !== 0) return false;
+                yield* store.delete(key);
+                return true;
+              })
+            )
+          );
+        })
+      );
+    },
+    // Release the platform row as well as the company lease before waiting.
+    retryBusy
+  );
 
   const sweep = Effect.gen(function* () {
     const result = { namespacesDeleted: 0, filesDeleted: 0, failed: 0 };
@@ -254,11 +307,11 @@ export const make = Effect.gen(function* () {
                 candidates.delete(`files/${row.patchId}/${row.store}/${row.objectId}`);
               if (candidates.size === 0) return;
             }
-            for (const key of candidates.keys()) {
-              yield* store.delete(key).pipe(
-                Effect.tap(() =>
+            for (const [key, reference] of candidates) {
+              yield* reclaimFile(key, reference).pipe(
+                Effect.tap((deleted) =>
                   Effect.sync(() => {
-                    result.filesDeleted += 1;
+                    if (deleted) result.filesDeleted += 1;
                   })
                 ),
                 Effect.catch((error) =>

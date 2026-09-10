@@ -23,7 +23,7 @@ pnpm install
 pnpm dev
 ```
 
-The runner starts embedded Postgres, applies the three baselines, seeds **Patchy Dev** and its admin's development machine token, and prints this worktree's API URL. In your browser, open that URL's `/join` page and click **Sign in**. Create or join a company when prompted. To use **Patchy Dev** as its admin instead, set the optional [`PATCHY_DEV_CLERK_USER_ID`](docs/DEVELOPMENT.md#seed) before starting.
+The runner starts embedded Postgres, applies all capability migrations, seeds **Patchy Dev** and its admin's development machine token, and prints this worktree's API URL. In your browser, open that URL's `/join` page and click **Sign in**. Create or join a company when prompted. To use **Patchy Dev** as its admin instead, set the optional [`PATCHY_DEV_CLERK_USER_ID`](docs/DEVELOPMENT.md#seed) before starting.
 
 Keep `PATCHY_API_TOKEN` unset so a saved login outranks the development seed, then log in the CLI:
 

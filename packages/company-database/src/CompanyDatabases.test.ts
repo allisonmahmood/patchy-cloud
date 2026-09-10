@@ -35,6 +35,94 @@ it.layer(Testing.layer())("CompanyDatabases", (it) => {
     inventoryContract("cmp_dev")
   );
 
+  it.effect("leases only ready databases without claiming or provisioning", () =>
+    Effect.gen(function* () {
+      yield* createCompany("lease-only");
+      const service = yield* CompanyDatabases.CompanyDatabases;
+      const platform = yield* SqlClient.SqlClient;
+      const absent = yield* service.withCompany("lease-only")(currentDatabase).pipe(Effect.flip);
+      assert.instanceOf(absent, CompanyDatabases.CompanyDatabaseNotReady);
+      if (absent._tag === "CompanyDatabaseNotReady") assert.isNull(absent.status);
+      assert.deepStrictEqual(
+        yield* platform`SELECT company_id FROM company_databases WHERE company_id = 'lease-only'`,
+        []
+      );
+      const claim = yield* service.claim("lease-only");
+      const claimed = yield* service.withCompany("lease-only")(currentDatabase).pipe(Effect.flip);
+      assert.instanceOf(claimed, CompanyDatabases.CompanyDatabaseNotReady);
+      if (claimed._tag === "CompanyDatabaseNotReady") assert.strictEqual(claimed.status, "claimed");
+      assert.deepStrictEqual(
+        yield* platform`SELECT datname FROM pg_database WHERE datname = ${claim.databaseName}`,
+        []
+      );
+      yield* service.ensureReady("lease-only");
+      assert.strictEqual(
+        yield* service.withCompany("lease-only")(currentDatabase),
+        claim.databaseName
+      );
+    })
+  );
+
+  it.effect(
+    "leases ready companies while every platform connection holds a patch-row transaction",
+    () =>
+      Effect.gen(function* () {
+        const platform = yield* SqlClient.SqlClient;
+        const service = yield* CompanyDatabases.CompanyDatabases;
+        const ready = yield* service.ensureReady("cmp_dev");
+        const startLeases = yield* Deferred.make<void>();
+        const releaseTransactions = yield* Deferred.make<void>();
+        const gates = yield* Effect.all(
+          Array.from({ length: 10 }, () =>
+            Effect.gen(function* () {
+              return {
+                locked: yield* Deferred.make<number>(),
+                completed: yield* Deferred.make<string>()
+              };
+            })
+          )
+        );
+        for (let index = 0; index < gates.length; index++) {
+          const patchId = `platform_saturation_${index}`;
+          yield* platform`INSERT INTO patches (id, company_id, owner_user_id, title, name, expires_at)
+          VALUES (${patchId}, 'cmp_dev', 'usr_dev', 'Pool saturation', ${`pool-${index}`}, '2040-01-01')`;
+        }
+        const fibers = yield* Effect.forEach(gates, (gate, index) =>
+          platform
+            .withTransaction(
+              Effect.gen(function* () {
+                const patchId = `platform_saturation_${index}`;
+                yield* platform`SELECT id FROM patches WHERE id = ${patchId} FOR UPDATE`;
+                const [row] = yield* platform<{ pid: number }>`SELECT pg_backend_pid() AS pid`;
+                yield* Deferred.succeed(gate.locked, row!.pid);
+                yield* Deferred.await(startLeases);
+                if (index < 9) {
+                  const result = yield* service
+                    .withCompany("cmp_dev")(currentDatabase)
+                    .pipe(Effect.catchTags({ Busy: () => Effect.succeed("busy") }));
+                  yield* Deferred.succeed(gate.completed, result);
+                }
+                yield* Deferred.await(releaseTransactions);
+              })
+            )
+            .pipe(Effect.forkScoped)
+        );
+        const pids = yield* Effect.forEach(gates, (gate) => Deferred.await(gate.locked));
+        assert.strictEqual(new Set(pids).size, 10);
+        yield* Deferred.succeed(startLeases, undefined);
+        // The tenth transaction is a cleanup escape hatch, not spare capacity:
+        // release it only after observing whether all nine leases can settle.
+        const completed = yield* Effect.forEach(gates.slice(0, 9), (gate) =>
+          Deferred.await(gate.completed)
+        ).pipe(Effect.timeout("2 seconds"), TestClock.withLive, Effect.exit);
+        yield* Deferred.succeed(releaseTransactions, undefined);
+        yield* Effect.forEach(fibers, Fiber.join);
+        if (Exit.isFailure(completed)) return yield* Effect.failCause(completed.cause);
+        assert.include(completed.value, ready.databaseName);
+        for (const result of completed.value) assert.include([ready.databaseName, "busy"], result);
+      }).pipe(Effect.scoped)
+  );
+
   it.effect("races independent registries against one committed claim", () =>
     Effect.gen(function* () {
       yield* createCompany("claim-race");
@@ -148,6 +236,7 @@ it.layer(Testing.layer())("CompanyDatabases", (it) => {
     Effect.gen(function* () {
       yield* createCompany("snapshot-race");
       const service = yield* CompanyDatabases.CompanyDatabases;
+      yield* service.ensureReady("snapshot-race");
       const inventory = yield* Inventory.Inventory;
       const platform = yield* SqlClient.SqlClient;
       yield* service.withCompany("snapshot-race")(
@@ -223,6 +312,7 @@ it.layer(Testing.layer())("CompanyDatabases", (it) => {
         .withTransaction(
           Effect.gen(function* () {
             yield* platform`UPDATE companies SET name = 'rolled back' WHERE id = 'outer-rollback'`;
+            yield* service.ensureReady("outer-rollback");
             yield* service.withCompany("outer-rollback")(
               service.withPatchLock("independent")(
                 Effect.gen(function* () {
@@ -256,6 +346,7 @@ it.layer(Testing.layer())("CompanyDatabases", (it) => {
     Effect.gen(function* () {
       yield* createCompany("patch-lock");
       const service = yield* CompanyDatabases.CompanyDatabases;
+      yield* service.ensureReady("patch-lock");
       const locked = yield* Deferred.make<number>();
       const release = yield* Deferred.make<void>();
       const waiting = yield* Deferred.make<number>();
@@ -315,6 +406,7 @@ it.layer(Testing.layer())("CompanyDatabases", (it) => {
     Effect.gen(function* () {
       yield* createCompany("operation-capacity");
       const service = yield* CompanyDatabases.CompanyDatabases;
+      yield* service.ensureReady("operation-capacity");
       const entered = yield* Effect.all(Array.from({ length: 4 }, () => Deferred.make<void>()));
       const fibers = yield* Effect.forEach(entered, (signal) =>
         service
@@ -328,7 +420,6 @@ it.layer(Testing.layer())("CompanyDatabases", (it) => {
         .withCompany("operation-capacity")(currentDatabase)
         .pipe(Effect.flip);
       assert.instanceOf(refused, CompanyDatabases.Busy);
-      if (refused._tag === "Busy") assert.strictEqual(refused.code, "busy");
       yield* Fiber.interrupt(fibers[0]!);
       assert.strictEqual(
         yield* service.withCompany("operation-capacity")(currentDatabase),
@@ -343,6 +434,7 @@ it.layer(Testing.layer())("CompanyDatabases", (it) => {
       Effect.gen(function* () {
         yield* createCompany("placement-version");
         const service = yield* CompanyDatabases.CompanyDatabases;
+        yield* service.ensureReady("placement-version");
         const platform = yield* SqlClient.SqlClient;
         const pid = Effect.flatMap(SqlClient.SqlClient, (sql) =>
           sql<{ pid: number }>`SELECT pg_backend_pid() AS pid`.pipe(
@@ -431,13 +523,14 @@ for (const [name, limits, resource] of [
         Effect.gen(function* () {
           yield* createCompany("capacity-second");
           const service = yield* CompanyDatabases.CompanyDatabases;
+          yield* service.ensureReady("cmp_dev");
+          yield* service.ensureReady("capacity-second");
           yield* service.withCompany("cmp_dev")(currentDatabase);
           const refused = yield* service
             .withCompany("capacity-second")(currentDatabase)
             .pipe(Effect.flip);
           assert.strictEqual(refused._tag, "Busy");
           if (refused._tag === "Busy") assert.strictEqual(refused.resource, resource);
-          assert.strictEqual((yield* service.claim("capacity-second")).status, "claimed");
           yield* TestClock.adjust("59 seconds");
           assert.strictEqual(
             (yield* service.withCompany("capacity-second")(currentDatabase).pipe(Effect.flip))._tag,

@@ -5,7 +5,7 @@ The shared metadata store and the schema changes its consumers own. Each capabil
 ## Language
 
 **Migration**:
-One schema step owned by a capability and applied once in the database's shared sequence. Companies owns baseline 1, Auth 2 and Patches 3; a refused batch advances none of them.
+One schema step owned by a capability and applied once in the database's shared sequence. Companies owns baseline 1, Auth 2, Patches 3, and Company database 5; Companies' invite-expiry step occupies 4. A refused batch advances none of them.
 _Avoid_: schema version, patch (that word is the product's), idempotent migration (they are not, by design)
 
 **Ledger**:

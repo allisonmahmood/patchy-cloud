@@ -1,4 +1,5 @@
 import * as PgliteClient from "@effect/sql-pglite/PgliteClient";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -8,15 +9,6 @@ import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import * as CompanyDatabases from "./CompanyDatabases.js";
 import * as Inventory from "./Inventory.js";
 
-export class CompanyIdentityMismatch extends Schema.TaggedError<CompanyIdentityMismatch>()(
-  "CompanyIdentityMismatch",
-  { expectedCompanyId: Schema.String, actualCompanyId: Schema.String }
-) {
-  override get message() {
-    return "This local database belongs to a different company. Use a separate development directory.";
-  }
-}
-
 export interface Options {
   readonly companyId: string;
   readonly dataDir: string;
@@ -25,6 +17,9 @@ export interface Options {
 /** The directory retains its company binding across clean close/reopen cycles. */
 export const make = Effect.fn("PgliteCompanyDatabases.make")(function* (options: Options) {
   const sql = yield* SqlClient.SqlClient;
+  const companyContext = Context.make(SqlClient.SqlClient, sql).pipe(
+    Context.add(CompanyDatabases.CompanyConnection, sql)
+  );
   yield* sql.unsafe('CREATE SCHEMA IF NOT EXISTS "patchy"');
   yield* sql.unsafe(`CREATE TABLE IF NOT EXISTS "patchy"."local_company" (
     "singleton" boolean PRIMARY KEY DEFAULT true CHECK ("singleton"),
@@ -47,10 +42,9 @@ export const make = Effect.fn("PgliteCompanyDatabases.make")(function* (options:
     expectedCompanyId: string
   ) {
     if (companyId !== expectedCompanyId) {
-      return yield* new CompanyDatabases.CompanyDatabaseError({
-        companyId,
-        operation: "claim",
-        cause: new CompanyIdentityMismatch({ expectedCompanyId, actualCompanyId: companyId })
+      return yield* new CompanyDatabases.CompanyIdentityMismatch({
+        expectedCompanyId,
+        actualCompanyId: companyId
       });
     }
   });
@@ -129,8 +123,22 @@ export const make = Effect.fn("PgliteCompanyDatabases.make")(function* (options:
   const withCompany: CompanyDatabases.CompanyDatabases["Service"]["withCompany"] =
     (companyId) => (effect) =>
       Effect.gen(function* () {
-        yield* ensureReady(companyId);
-        return yield* Effect.scoped(effect.pipe(Effect.provideService(SqlClient.SqlClient, sql)));
+        yield* checkIdentity(companyId, options.companyId);
+        const placement = yield* findPlacement(undefined).pipe(
+          Effect.catchTags({ SchemaError: Effect.die }),
+          Effect.mapError(
+            (cause) =>
+              new CompanyDatabases.CompanyDatabaseError({ companyId, operation: "connect", cause })
+          )
+        );
+        if (Option.isSome(placement)) yield* checkIdentity(companyId, placement.value.companyId);
+        if (Option.isNone(placement) || placement.value.status !== "ready") {
+          return yield* new CompanyDatabases.CompanyDatabaseNotReady({
+            companyId,
+            status: Option.isNone(placement) ? null : "claimed"
+          });
+        }
+        return yield* Effect.scoped(effect.pipe(Effect.provideContext(companyContext)));
       });
 
   const listReady = Effect.gen(function* () {

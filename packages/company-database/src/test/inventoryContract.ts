@@ -1,7 +1,10 @@
 import { assert } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import type { SqlError } from "effect/unstable/sql/SqlError";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import * as CompanyDatabases from "../CompanyDatabases.js";
 import * as Inventory from "../Inventory.js";
@@ -18,7 +21,16 @@ const readCodecs = SqlSchema.findOne({
 
 const readFile = SqlSchema.findOne({
   Request: Schema.String,
-  Result: Inventory.File,
+  Result: Schema.Struct({
+    patchId: Schema.String,
+    store: Schema.String,
+    name: Schema.String,
+    objectId: Schema.String,
+    size: Schema.String,
+    contentType: Schema.String,
+    sha256: Schema.String,
+    updatedAt: Schema.Date
+  }),
   execute: Effect.fn("Contract.readFile")(function* (patchId) {
     const sql = yield* SqlClient.SqlClient;
     return yield* sql`SELECT "patch_id" AS "patchId", "store", "name", "object_id" AS "objectId",
@@ -122,6 +134,46 @@ export const inventoryContract = Effect.fn("Contract.inventory")(function* (comp
       assert.deepStrictEqual(cumulative.createdAt, initial.createdAt);
       assert.deepStrictEqual(cumulative.tables[0]?.createdAt, initial.tables[0]?.createdAt);
 
+      const unlockedPatchId = "unlocked-new-patch";
+      const writes: ReadonlyArray<Effect.Effect<unknown, SqlError, CompanyDatabases.PatchLock>> = [
+        inventory.ensurePatch(unlockedPatchId),
+        inventory.putTable({ patchId, name: table, shared: true }),
+        inventory.putColumn({
+          patchId,
+          table,
+          name: "forbidden",
+          kind: "text",
+          optional: true,
+          defaultKind: null,
+          defaultValue: null
+        }),
+        inventory.putIndex({
+          patchId,
+          table,
+          name: "forbidden",
+          columns: ["body"],
+          unique: true
+        }),
+        inventory.putStore({ patchId, name: "forbidden" }),
+        inventory.bumpRevision(patchId)
+      ];
+      for (const write of writes) {
+        // Deliberately bypass the type boundary to cover callers without a lock.
+        // @ts-expect-error The company lease alone cannot authorize an inventory write.
+        const unlocked: Effect.Effect<unknown, SqlError> = write;
+        const missing = yield* unlocked.pipe(Effect.exit);
+        assert.isTrue(Exit.isFailure(missing) && Cause.hasDies(missing.cause));
+        const mismatched = yield* databases.withPatchLock("wrong-patch")(write).pipe(Effect.exit);
+        assert.isTrue(Exit.isFailure(mismatched) && Cause.hasDies(mismatched.cause));
+      }
+      assert.deepStrictEqual(yield* inventory.read(patchId), cumulative);
+      assert.strictEqual(yield* inventory.read(unlockedPatchId), null);
+      assert.deepStrictEqual(
+        yield* sql`SELECT nspname FROM pg_namespace
+      WHERE nspname = ${Inventory.namespace(unlockedPatchId)}`,
+        []
+      );
+
       const aborted = yield* databases
         .withPatchLock(patchId)(
           Effect.gen(function* () {
@@ -169,9 +221,11 @@ export const inventoryContract = Effect.fn("Contract.inventory")(function* (comp
         large: "9223372036854775807",
         day: "2024-02-29"
       });
-      yield* sql`INSERT INTO "patchy"."files"
+      yield* databases.withPatchLock(patchId)(
+        sql`INSERT INTO "patchy"."files"
       ("patch_id", "store", "name", "object_id", "size", "content_type", "sha256")
-      VALUES (${patchId}, 'documents', 'folder/report.txt', 'object-one', 42, 'text/plain', 'digest')`;
+      VALUES (${patchId}, 'documents', 'folder/report.txt', 'object-one', 42, 'text/plain', 'digest')`
+      );
       const file = yield* readFile(patchId);
       assert.strictEqual(file.name, "folder/report.txt");
       assert.strictEqual(file.size, "42");

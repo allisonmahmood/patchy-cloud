@@ -6,7 +6,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
-import { withPatchLock } from "./CompanyDatabases.js";
+import * as CompanyDatabases from "./CompanyDatabases.js";
 
 export class Patch extends Schema.Class<Patch>("Inventory.Patch")({
   patchId: Schema.String,
@@ -44,17 +44,6 @@ export class Store extends Schema.Class<Store>("Inventory.Store")({
   name: Schema.String
 }) {}
 
-export class File extends Schema.Class<File>("Inventory.File")({
-  patchId: Schema.String,
-  store: Schema.String,
-  name: Schema.String,
-  objectId: Schema.String,
-  size: Schema.String,
-  contentType: Schema.String,
-  sha256: Schema.String,
-  updatedAt: Schema.Date
-}) {}
-
 export class Snapshot extends Schema.Class<Snapshot>("Inventory.Snapshot")({
   ...Patch.fields,
   tables: Schema.Array(Table),
@@ -73,24 +62,27 @@ export const namespace = (patchId: string): string => `p_${patchId}`;
 /**
  * The lease supplies the company client per operation; capturing it here would
  * bind inventory to the platform database or another company's transaction.
- * @effect-expect-leaking SqlClient
+ * @effect-expect-leaking CompanyConnection
+ * @effect-expect-leaking PatchLock
  */
 export class Inventory extends Context.Service<
   Inventory,
   {
-    readonly ensurePatch: (patchId: string) => Effect.Effect<number, SqlError, SqlClient.SqlClient>;
+    readonly ensurePatch: (
+      patchId: string
+    ) => Effect.Effect<number, SqlError, CompanyDatabases.PatchLock>;
     readonly read: (
       patchId: string
-    ) => Effect.Effect<Snapshot | null, SqlError, SqlClient.SqlClient>;
+    ) => Effect.Effect<Snapshot | null, SqlError, CompanyDatabases.CompanyConnection>;
     readonly putTable: (
       row: Omit<Table, "createdAt">
-    ) => Effect.Effect<void, SqlError, SqlClient.SqlClient>;
-    readonly putColumn: (row: Column) => Effect.Effect<void, SqlError, SqlClient.SqlClient>;
-    readonly putIndex: (row: Index) => Effect.Effect<void, SqlError, SqlClient.SqlClient>;
-    readonly putStore: (row: Store) => Effect.Effect<void, SqlError, SqlClient.SqlClient>;
+    ) => Effect.Effect<void, SqlError, CompanyDatabases.PatchLock>;
+    readonly putColumn: (row: Column) => Effect.Effect<void, SqlError, CompanyDatabases.PatchLock>;
+    readonly putIndex: (row: Index) => Effect.Effect<void, SqlError, CompanyDatabases.PatchLock>;
+    readonly putStore: (row: Store) => Effect.Effect<void, SqlError, CompanyDatabases.PatchLock>;
     readonly bumpRevision: (
       patchId: string
-    ) => Effect.Effect<number, SqlError, SqlClient.SqlClient>;
+    ) => Effect.Effect<number, SqlError, CompanyDatabases.PatchLock>;
   }
 >()("@patchy/company-database/Inventory") {}
 
@@ -155,80 +147,86 @@ const incrementRevision = SqlSchema.findOne({
   })
 });
 
-// No client is captured here: each operation resolves the company's leased client,
-// and therefore participates in the caller's DDL transaction and patch lock.
-export const make = Effect.sync(() => {
-  const ensurePatch = Effect.fn("Inventory.ensurePatch")(function* (patchId: string) {
-    const sql = yield* SqlClient.SqlClient;
-    yield* sql.unsafe(`CREATE SCHEMA IF NOT EXISTS ${quoteIdentifier(namespace(patchId))}`);
-    yield* sql`INSERT INTO "patchy"."patches" ("patch_id") VALUES (${patchId})
+const lockedClient = Effect.fn("Inventory.lockedClient")(function* (patchId: string) {
+  const lock = yield* CompanyDatabases.PatchLock;
+  if (lock.patchId !== patchId) {
+    return yield* Effect.die(new Error("Inventory mutation requires a matching patch lock"));
+  }
+  return lock.sql;
+});
+
+const ensurePatch = Effect.fn("Inventory.ensurePatch")(function* (patchId: string) {
+  const sql = yield* lockedClient(patchId);
+  yield* sql.unsafe(`CREATE SCHEMA IF NOT EXISTS ${quoteIdentifier(namespace(patchId))}`);
+  yield* sql`INSERT INTO "patchy"."patches" ("patch_id") VALUES (${patchId})
       ON CONFLICT ("patch_id") DO NOTHING`;
-    const patch = yield* findPatch(patchId).pipe(Effect.catchTags({ SchemaError: Effect.die }));
-    return yield* Option.match(patch, {
-      onNone: () => Effect.die("Inventory patch disappeared during creation"),
-      onSome: (row) => Effect.succeed(row.schemaRevision)
-    });
-  });
-
-  // Readers take the same patch lock as writers so revision and resources cannot
-  // straddle a provisioning commit across the component queries.
-  const read = Effect.fn("Inventory.read")(
-    function* (patchId: string) {
-      const patch = yield* findPatch(patchId).pipe(Effect.catchTags({ SchemaError: Effect.die }));
-      if (Option.isNone(patch)) return null;
-      const tables = yield* findTables(patchId).pipe(Effect.catchTags({ SchemaError: Effect.die }));
-      const columns = yield* findColumns(patchId).pipe(
-        Effect.catchTags({ SchemaError: Effect.die })
-      );
-      const indexes = yield* findIndexes(patchId).pipe(
-        Effect.catchTags({ SchemaError: Effect.die })
-      );
-      const stores = yield* findStores(patchId).pipe(Effect.catchTags({ SchemaError: Effect.die }));
-      return new Snapshot({ ...patch.value, tables, columns, indexes, stores });
-    },
-    (effect, patchId) => withPatchLock(patchId)(effect)
+  const patch = yield* findPatch(patchId).pipe(
+    Effect.provideService(SqlClient.SqlClient, sql),
+    Effect.catchTags({ SchemaError: Effect.die })
   );
+  return yield* Option.match(patch, {
+    onNone: () => Effect.die("Inventory patch disappeared during creation"),
+    onSome: (row) => Effect.succeed(row.schemaRevision)
+  });
+});
 
-  const putTable = Effect.fn("Inventory.putTable")(function* (row: Omit<Table, "createdAt">) {
-    const sql = yield* SqlClient.SqlClient;
-    yield* sql`INSERT INTO "patchy"."tables" ("patch_id", "name", "shared")
+// Readers take the same patch lock as writers so revision and resources cannot
+// straddle a provisioning commit across the component queries.
+const read = Effect.fn("Inventory.read")(
+  function* (patchId: string) {
+    const patch = yield* findPatch(patchId).pipe(Effect.catchTags({ SchemaError: Effect.die }));
+    if (Option.isNone(patch)) return null;
+    const tables = yield* findTables(patchId).pipe(Effect.catchTags({ SchemaError: Effect.die }));
+    const columns = yield* findColumns(patchId).pipe(Effect.catchTags({ SchemaError: Effect.die }));
+    const indexes = yield* findIndexes(patchId).pipe(Effect.catchTags({ SchemaError: Effect.die }));
+    const stores = yield* findStores(patchId).pipe(Effect.catchTags({ SchemaError: Effect.die }));
+    return new Snapshot({ ...patch.value, tables, columns, indexes, stores });
+  },
+  (effect, patchId) => CompanyDatabases.withPatchLock(patchId)(effect)
+);
+
+const putTable = Effect.fn("Inventory.putTable")(function* (row: Omit<Table, "createdAt">) {
+  const sql = yield* lockedClient(row.patchId);
+  yield* sql`INSERT INTO "patchy"."tables" ("patch_id", "name", "shared")
       VALUES (${row.patchId}, ${row.name}, ${row.shared})
       ON CONFLICT ("patch_id", "name") DO UPDATE SET "shared" = EXCLUDED."shared"`;
-  });
+});
 
-  const putColumn = Effect.fn("Inventory.putColumn")(function* (row: Column) {
-    const sql = yield* SqlClient.SqlClient;
-    yield* sql`INSERT INTO "patchy"."columns"
+const putColumn = Effect.fn("Inventory.putColumn")(function* (row: Column) {
+  const sql = yield* lockedClient(row.patchId);
+  yield* sql`INSERT INTO "patchy"."columns"
       ("patch_id", "table", "name", "kind", "optional", "default_kind", "default_value")
       VALUES (${row.patchId}, ${row.table}, ${row.name}, ${row.kind}, ${row.optional},
         ${row.defaultKind}, ${encodeDefault(row.defaultValue)}::jsonb)
       ON CONFLICT ("patch_id", "table", "name") DO NOTHING`;
-  });
-
-  const putIndex = Effect.fn("Inventory.putIndex")(function* (row: Index) {
-    const sql = yield* SqlClient.SqlClient;
-    yield* sql`INSERT INTO "patchy"."indexes" ("patch_id", "table", "name", "columns", "unique")
-      VALUES (${row.patchId}, ${row.table}, ${row.name}, ${encodeColumns(row.columns)}::jsonb, ${row.unique})
-      ON CONFLICT ("patch_id", "table", "name") DO NOTHING`;
-  });
-
-  const putStore = Effect.fn("Inventory.putStore")(function* (row: Store) {
-    const sql = yield* SqlClient.SqlClient;
-    yield* sql`INSERT INTO "patchy"."stores" ("patch_id", "name") VALUES (${row.patchId}, ${row.name})
-      ON CONFLICT ("patch_id", "name") DO NOTHING`;
-  });
-
-  const bumpRevision = Effect.fn("Inventory.bumpRevision")(function* (patchId: string) {
-    const row = yield* incrementRevision(patchId).pipe(
-      Effect.catchTags({ SchemaError: Effect.die, NoSuchElementError: Effect.die })
-    );
-    return row.schemaRevision;
-  });
-
-  return Inventory.of({ ensurePatch, read, putTable, putColumn, putIndex, putStore, bumpRevision });
 });
 
-export const layer = Layer.effect(Inventory, make);
+const putIndex = Effect.fn("Inventory.putIndex")(function* (row: Index) {
+  const sql = yield* lockedClient(row.patchId);
+  yield* sql`INSERT INTO "patchy"."indexes" ("patch_id", "table", "name", "columns", "unique")
+      VALUES (${row.patchId}, ${row.table}, ${row.name}, ${encodeColumns(row.columns)}::jsonb, ${row.unique})
+      ON CONFLICT ("patch_id", "table", "name") DO NOTHING`;
+});
+
+const putStore = Effect.fn("Inventory.putStore")(function* (row: Store) {
+  const sql = yield* lockedClient(row.patchId);
+  yield* sql`INSERT INTO "patchy"."stores" ("patch_id", "name") VALUES (${row.patchId}, ${row.name})
+      ON CONFLICT ("patch_id", "name") DO NOTHING`;
+});
+
+const bumpRevision = Effect.fn("Inventory.bumpRevision")(function* (patchId: string) {
+  const sql = yield* lockedClient(patchId);
+  const row = yield* incrementRevision(patchId).pipe(
+    Effect.provideService(SqlClient.SqlClient, sql),
+    Effect.catchTags({ SchemaError: Effect.die, NoSuchElementError: Effect.die })
+  );
+  return row.schemaRevision;
+});
+
+export const layer = Layer.succeed(
+  Inventory,
+  Inventory.of({ ensurePatch, read, putTable, putColumn, putIndex, putStore, bumpRevision })
+);
 
 /** Shared bootstrap for PostgreSQL and PGlite; never submit multiple statements in one call. */
 export const initialize = Effect.gen(function* () {

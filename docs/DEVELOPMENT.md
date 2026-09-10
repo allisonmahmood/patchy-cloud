@@ -526,8 +526,9 @@ allowed to `CREATE DATABASE` and assign the data role as owner. The data URL is 
 template: its database path is replaced by the company's placement. Production
 uses separate logins; the embedded superuser is only for disposable local runs.
 `PATCHY_COMPANY_DB_MAX_BACKENDS` defaults to 200 retained company-pool slots per
-process. Budget this across replicas, plus platform/admin headroom, against the
-server limit. Admission exhaustion returns `busy`. The
+process. Budget this across replicas, plus ordinary platform connections, two
+independent placement connections, one admin connection, and temporary provisioning
+data connections, against the server limit. Company-pool admission exhaustion returns `busy`. The
 [company database ADR](adr/ADR-0009-one-postgres-database-per-company.md) owns the
 pool and lock contract; ordinary index creation can block writers.
 

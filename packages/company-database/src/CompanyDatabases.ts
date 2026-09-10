@@ -18,16 +18,36 @@ export class Busy extends Schema.TaggedError<Busy>()("Busy", {
   resource: Schema.String,
   limit: Schema.Int
 }) {
-  readonly code = "busy";
   override get message() {
     return `Company database ${this.resource} capacity (${this.limit}) is exhausted. Try again shortly.`;
+  }
+}
+
+export class CompanyDatabaseNotReady extends Schema.TaggedError<CompanyDatabaseNotReady>()(
+  "CompanyDatabaseNotReady",
+  {
+    companyId: Schema.String,
+    status: Schema.NullOr(Schema.Literal("claimed"))
+  }
+) {
+  override get message() {
+    return "Company database is not ready.";
+  }
+}
+
+export class CompanyIdentityMismatch extends Schema.TaggedError<CompanyIdentityMismatch>()(
+  "CompanyIdentityMismatch",
+  { expectedCompanyId: Schema.String, actualCompanyId: Schema.String }
+) {
+  override get message() {
+    return "This local database belongs to a different company. Use a separate development directory.";
   }
 }
 
 export class CompanyDatabaseError extends Schema.TaggedError<CompanyDatabaseError>()(
   "CompanyDatabaseError",
   {
-    companyId: Schema.String,
+    companyId: Schema.optional(Schema.String),
     operation: Schema.Literals([
       "claim",
       "create",
@@ -45,20 +65,41 @@ export class CompanyDatabaseError extends Schema.TaggedError<CompanyDatabaseErro
   }
 }
 
+export class CompanyConnection extends Context.Service<CompanyConnection, SqlClient.SqlClient>()(
+  "@patchy/company-database/CompanyDatabases/CompanyConnection"
+) {}
+
+export class PatchLock extends Context.Service<
+  PatchLock,
+  {
+    readonly patchId: string;
+    readonly sql: SqlClient.SqlClient;
+  }
+>()("@patchy/company-database/CompanyDatabases/PatchLock") {}
+
 export class CompanyDatabases extends Context.Service<
   CompanyDatabases,
   {
-    readonly claim: (companyId: string) => Effect.Effect<Placement, CompanyDatabaseError | Busy>;
+    readonly claim: (
+      companyId: string
+    ) => Effect.Effect<Placement, CompanyDatabaseError | CompanyIdentityMismatch | Busy>;
     readonly ensureReady: (
       companyId: string
-    ) => Effect.Effect<Placement, CompanyDatabaseError | Busy>;
+    ) => Effect.Effect<Placement, CompanyDatabaseError | CompanyIdentityMismatch | Busy>;
     readonly withCompany: (
       companyId: string
     ) => <A, E, R>(
       effect: Effect.Effect<A, E, R>
-    ) => Effect.Effect<A, E | CompanyDatabaseError | Busy, Exclude<R, SqlClient.SqlClient>>;
+    ) => Effect.Effect<
+      A,
+      E | CompanyDatabaseError | CompanyDatabaseNotReady | CompanyIdentityMismatch | Busy,
+      Exclude<R, CompanyConnection | SqlClient.SqlClient>
+    >;
     readonly withPatchLock: typeof withPatchLock;
-    readonly listReady: Effect.Effect<ReadonlyArray<Placement>, CompanyDatabaseError>;
+    readonly listReady: Effect.Effect<
+      ReadonlyArray<Placement>,
+      CompanyDatabaseError | CompanyIdentityMismatch
+    >;
   }
 >()("@patchy/company-database/CompanyDatabases") {}
 
@@ -78,11 +119,18 @@ export const withPatchLock =
   (patchId: string) =>
   <A, E, R>(
     effect: Effect.Effect<A, E, R>
-  ): Effect.Effect<A, E | SqlError, R | SqlClient.SqlClient> =>
-    Effect.flatMap(SqlClient.SqlClient, (sql) =>
+  ): Effect.Effect<
+    A,
+    E | SqlError,
+    Exclude<R, PatchLock | SqlClient.SqlClient> | CompanyConnection
+  > =>
+    Effect.flatMap(CompanyConnection, (sql) =>
       sql.withTransaction(
         sql`SELECT pg_advisory_xact_lock(${patchLockKey(patchId)}::bigint)`.pipe(
-          Effect.andThen(effect)
+          Effect.andThen(effect),
+          Effect.provideContext(
+            Context.make(PatchLock, { patchId, sql }).pipe(Context.add(SqlClient.SqlClient, sql))
+          )
         )
       )
     );
