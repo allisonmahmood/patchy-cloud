@@ -23,6 +23,7 @@ import * as ConnectionPages from "./ConnectionPages.js";
 import * as ConnectionStore from "./ConnectionStore.js";
 import * as CredentialKeys from "./CredentialKeys.js";
 import * as Source from "./postgres/Source.js";
+import * as SourceClient from "./postgres/SourceClient.js";
 import { Snapshot } from "./postgres/Snapshot.js";
 
 const env = clerkEnv();
@@ -62,7 +63,7 @@ const source = Layer.effect(
         Redacted.value(value) === unavailable ||
         Object.hasOwn(yield* Ref.get(blocked), settings.database)
       ) {
-        return yield* new Source.SourceUnavailable({
+        return yield* new SourceClient.SourceUnavailable({
           stage: "connect",
           cause: Redacted.make(new Error(`driver rejected ${Redacted.value(value)}`))
         });

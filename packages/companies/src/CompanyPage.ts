@@ -40,11 +40,6 @@ const decodeRole = Schema.decodeUnknownEffect(Schema.Struct({ role: Users.Role }
 
 export const styles = `
     .auth-card { width: min(800px, calc(100% - 32px)); }
-    .company-section { margin-top: 32px; }
-    .company-list { list-style: none; padding: 0; }
-    .company-row { padding: 20px 0; border-bottom: 1px solid var(--line-strong); overflow-wrap: anywhere; }
-    .company-row p { margin: 0 0 8px; }
-    .company-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
     .company-invite button { margin-top: 20px; }
 `;
 

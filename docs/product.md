@@ -392,10 +392,14 @@ A connection may be deleted only when no stored patch version declares it.
 
 ### Discovery and binding
 
-Discovery reads metadata, never company rows: tables and views, column types and
-nullability, primary and foreign keys, enum labels and named exclusions. Snapshots
-are bounded to 500 relations with 200 columns each. Each successful discovery
-stores a whole validated immutable snapshot with a new server-assigned revision;
+Discovery reads metadata, never company rows: tables (including foreign tables)
+and views, column types and nullability, primary and foreign keys, enum labels
+and named exclusions, including columns the supplied role cannot select.
+Snapshots are bounded to 500 relations with 200 columns each and 8 MiB total.
+At most 1,000 enums with 1,000 labels each are retained; columns that exceed those
+limits receive named exclusions rather than truncated enum labels. More than
+10,000 exclusions refuses discovery. Each successful discovery stores a whole
+validated immutable snapshot with a new server-assigned revision;
 a failure leaves the previous snapshot current. Snapshots are never deleted in v1.
 Discovery is attributed to the admin in the runtime log; its recent-calls UI
 arrives with query operations.

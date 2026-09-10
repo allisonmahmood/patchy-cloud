@@ -3,7 +3,6 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import type { RequireSession } from "@patchy/auth";
-import { CompanyPage } from "@patchy/companies";
 import { escapeAttribute, escapeHtml } from "@patchy/core";
 import * as ConnectionStore from "./ConnectionStore.js";
 
@@ -52,7 +51,8 @@ const results = {
 } as const;
 const isResult = Schema.is(Schema.Literals(Object.keys(results) as Array<keyof typeof results>));
 
-export const styles = `${CompanyPage.styles}
+export const styles = `
+    .auth-card { width: min(800px, calc(100% - 32px)); }
     .connection-details { margin: 20px 0; overflow-wrap: anywhere; }
     .connection-details dt { font-weight: 750; margin-top: 12px; }
     .connection-details dd { margin: 4px 0 0; }

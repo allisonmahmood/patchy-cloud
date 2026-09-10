@@ -39,7 +39,7 @@ export class Connection extends Schema.Class<Connection>("Connection")({
 
 export class ConnectionNotFound extends Schema.TaggedError<ConnectionNotFound>()(
   "ConnectionNotFound",
-  {}
+  { companyId: Schema.String, id: Schema.String, revision: Schema.optionalKey(Schema.Int) }
 ) {
   readonly code = "connection_not_found";
   readonly status = 404;
@@ -268,14 +268,15 @@ export const make = Effect.gen(function* () {
   const get = Effect.fn("ConnectionStore.get")(
     function* (companyId: string, id: string) {
       const found = yield* connectionRow({ companyId, id, locked: false });
-      if (Option.isNone(found)) return yield* new ConnectionNotFound({});
+      if (Option.isNone(found)) return yield* new ConnectionNotFound({ companyId, id });
       return found.value;
     },
     Effect.catchTags(safe("get"))
   );
   const stored = Effect.fn("ConnectionStore.stored")(function* (input: Identity) {
     const found = yield* storedRow({ ...input, locked: false });
-    if (Option.isNone(found)) return yield* new ConnectionNotFound({});
+    if (Option.isNone(found))
+      return yield* new ConnectionNotFound({ companyId: input.companyId, id: input.id });
     return found.value;
   });
   const lock = Effect.fn("ConnectionStore.lock")(function* (
@@ -283,7 +284,8 @@ export const make = Effect.gen(function* () {
     expected?: StoredConnection
   ) {
     const found = yield* connectionRow({ ...input, locked: true });
-    if (Option.isNone(found)) return yield* new ConnectionNotFound({});
+    if (Option.isNone(found))
+      return yield* new ConnectionNotFound({ companyId: input.companyId, id: input.id });
     if (
       expected !== undefined &&
       (found.value.credentialRevision !== expected.credentialRevision ||
@@ -346,7 +348,7 @@ export const make = Effect.gen(function* () {
   const snapshot = Effect.fn("ConnectionStore.snapshot")(
     function* (companyId: string, id: string, revision: number) {
       const found = yield* snapshotRow({ companyId, id, revision });
-      if (Option.isNone(found)) return yield* new ConnectionNotFound({});
+      if (Option.isNone(found)) return yield* new ConnectionNotFound({ companyId, id, revision });
       return found.value.snapshot;
     },
     Effect.catchTags(safe("snapshot"))
@@ -575,7 +577,7 @@ export const layerDev = (metadata: ReadonlyArray<DevConnection> = []) => {
           (item) => item.connection.companyId === companyId && item.connection.id === id
         );
         return item === undefined
-          ? Effect.fail(new ConnectionNotFound({}))
+          ? Effect.fail(new ConnectionNotFound({ companyId, id }))
           : Effect.succeed(item.connection);
       },
       snapshot: (companyId, id, revision) => {
@@ -584,7 +586,7 @@ export const layerDev = (metadata: ReadonlyArray<DevConnection> = []) => {
         );
         const snapshot = item?.snapshots.find((snapshot) => snapshot.revision === revision);
         return snapshot === undefined
-          ? Effect.fail(new ConnectionNotFound({}))
+          ? Effect.fail(new ConnectionNotFound({ companyId, id, revision }))
           : Effect.succeed(snapshot.snapshot);
       },
       resolve: (companyId, declaration) => {

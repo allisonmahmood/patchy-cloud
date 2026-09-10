@@ -84,6 +84,7 @@ export const Exclusion = Schema.Struct({
   relation: Name,
   column: Schema.optionalKey(Name),
   reason: Schema.Literals([
+    "access_denied",
     "relation_limit",
     "column_limit",
     "unsupported_type",

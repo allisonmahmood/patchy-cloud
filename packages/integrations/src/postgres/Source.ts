@@ -1,14 +1,13 @@
-// @effect-diagnostics nodeBuiltinImport:off -- DNS pinning, IP classification and certificate hostname checks require Node's network APIs.
-import { lookup } from "node:dns/promises";
-import { BlockList, isIP, Socket } from "node:net";
-import { checkServerIdentity } from "node:tls";
+// @effect-diagnostics nodeBuiltinImport:off -- Credential parsing distinguishes IP literals from hostnames.
+import { isIP } from "node:net";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import * as Pg from "pg";
 import * as Metadata from "./Snapshot.js";
+import * as SourceClient from "./SourceClient.js";
+import * as SourceNetwork from "./SourceNetwork.js";
 
 const SecretCause = Schema.Redacted(Schema.Unknown, { disallowJsonEncode: true });
 export class InvalidCredentials extends Schema.TaggedError<InvalidCredentials>()(
@@ -19,25 +18,6 @@ export class InvalidCredentials extends Schema.TaggedError<InvalidCredentials>()
   readonly status = 422;
   override get message() {
     return "Use a Postgres URL with only host, port, database, user, password and sslmode options.";
-  }
-}
-export class TlsRequired extends Schema.TaggedError<TlsRequired>()("TlsRequired", {
-  cause: Schema.optionalKey(SecretCause)
-}) {
-  readonly code = "tls_required";
-  readonly status = 422;
-  override get message() {
-    return "The database must support TLS with certificate and hostname verification; use sslmode=verify-full.";
-  }
-}
-export class PublicAddressRequired extends Schema.TaggedError<PublicAddressRequired>()(
-  "PublicAddressRequired",
-  {}
-) {
-  readonly code = "public_address_required";
-  readonly status = 422;
-  override get message() {
-    return "The database must be reachable from the internet over TLS.";
   }
 }
 export class SuperuserRefused extends Schema.TaggedError<SuperuserRefused>()(
@@ -70,19 +50,6 @@ export class CreateRoleRefused extends Schema.TaggedError<CreateRoleRefused>()(
     return "This role can create roles. Connect a role without CREATEROLE.";
   }
 }
-export class SourceUnavailable extends Schema.TaggedError<SourceUnavailable>()(
-  "SourceUnavailable",
-  {
-    stage: Schema.Literals(["dns", "connect", "query", "metadata"]),
-    cause: SecretCause
-  }
-) {
-  readonly code = "source_unavailable";
-  readonly status = 503;
-  override get message() {
-    return "The database could not be reached or inspected. Check the connection and the role's access.";
-  }
-}
 export class SourceTimeout extends Schema.TaggedError<SourceTimeout>()("SourceTimeout", {}) {
   readonly code = "timeout";
   readonly status = 504;
@@ -90,26 +57,13 @@ export class SourceTimeout extends Schema.TaggedError<SourceTimeout>()("SourceTi
     return "The database did not finish within the 15 second deadline.";
   }
 }
-export class DiscoveryTooLarge extends Schema.TaggedError<DiscoveryTooLarge>()(
-  "DiscoveryTooLarge",
-  {}
-) {
-  readonly code = "too_large";
-  readonly status = 422;
-  override get message() {
-    return "Discovery is limited to 500 relations, 200 columns per relation, 10,000 named exclusions and 8 MiB of metadata.";
-  }
-}
 export type SourceError =
   | InvalidCredentials
-  | TlsRequired
-  | PublicAddressRequired
+  | SourceClient.SourceError
   | SuperuserRefused
   | CreateDatabaseRefused
   | CreateRoleRefused
-  | SourceUnavailable
-  | SourceTimeout
-  | DiscoveryTooLarge;
+  | SourceTimeout;
 
 export const Credentials = Schema.Redacted(
   Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(16_384)),
@@ -120,16 +74,6 @@ export const Display = Schema.Struct({
   port: Schema.Int,
   database: Schema.String,
   role: Schema.String
-});
-const Settings = Schema.Struct({
-  host: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(253)),
-  port: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(65_535)),
-  database: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(63)),
-  role: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(63)),
-  password: Schema.Redacted(
-    Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(16_384)),
-    { disallowJsonEncode: true }
-  )
 });
 
 /** This is an administration source, not an operation handler or a platform database client. */
@@ -149,48 +93,11 @@ export class Source extends Context.Service<
   }
 >()("@patchy/integrations/postgres/Source") {}
 
-/** A scoped connection to the source; discovery tests can supply a real, isolated Postgres client. */
-export class SourceClient extends Context.Service<
-  SourceClient,
-  {
-    readonly query: (
-      statement: string,
-      parameters?: ReadonlyArray<unknown>
-    ) => Effect.Effect<ReadonlyArray<unknown>, SourceError>;
-  }
->()("@patchy/integrations/postgres/Source/SourceClient") {}
-
-/** Only DNS and socket creation are replaceable; admission and TLS remain in Source. */
-export class SourceNetwork extends Context.Service<
-  SourceNetwork,
-  {
-    readonly resolve: (
-      host: string
-    ) => Effect.Effect<ReadonlyArray<{ readonly address: string }>, SourceUnavailable>;
-    readonly socket: Effect.Effect<Socket>;
-  }
->()("@patchy/integrations/postgres/Source/SourceNetwork") {}
-
-const nativeNetwork = Layer.effect(
-  SourceNetwork,
-  Effect.sync(() =>
-    SourceNetwork.of({
-      resolve: Effect.fn("Postgres.lookup")((host: string) =>
-        Effect.tryPromise({
-          try: () => lookup(host, { all: true, verbatim: true }),
-          catch: (cause) => new SourceUnavailable({ stage: "dns", cause: Redacted.make(cause) })
-        })
-      ),
-      socket: Effect.sync(() => new Socket())
-    })
-  )
-);
-
 const decodeCredentials = Schema.decodeUnknownEffect(Credentials);
-const decodeSettings = Schema.decodeUnknownEffect(Settings);
+const decodeSettings = Schema.decodeUnknownEffect(SourceClient.Settings);
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const isInvalidCredentials = Schema.is(InvalidCredentials);
-const isTlsRequired = Schema.is(TlsRequired);
+const isTlsRequired = Schema.is(SourceClient.TlsRequired);
 
 export const parseCredentials = Effect.fn("Postgres.parseCredentials")(function* (
   credentials: Redacted.Redacted<string>
@@ -218,7 +125,7 @@ export const parseCredentials = Effect.fn("Postgres.parseCredentials")(function*
         options[key] = value;
       }
       if (options.sslmode !== undefined && options.sslmode !== "verify-full")
-        throw new TlsRequired({});
+        throw new SourceClient.TlsRequired({});
       let host = options.host ?? url.hostname;
       if (host.startsWith("[") && host.endsWith("]")) host = host.slice(1, -1);
       // Never let pg interpret a socket path, multiple hosts, or percent-encoded host options.
@@ -257,152 +164,6 @@ export const parseCredentials = Effect.fn("Postgres.parseCredentials")(function*
   );
 });
 
-const privateAddresses = new BlockList();
-for (const [address, prefix] of [
-  ["0.0.0.0", 8],
-  ["10.0.0.0", 8],
-  ["100.64.0.0", 10],
-  ["127.0.0.0", 8],
-  ["169.254.0.0", 16],
-  ["172.16.0.0", 12],
-  ["192.0.0.0", 24],
-  ["192.0.2.0", 24],
-  ["192.88.99.0", 24],
-  ["192.168.0.0", 16],
-  ["198.18.0.0", 15],
-  ["198.51.100.0", 24],
-  ["203.0.113.0", 24],
-  ["224.0.0.0", 4],
-  ["240.0.0.0", 4]
-] as const)
-  privateAddresses.addSubnet(address, prefix, "ipv4");
-// Azure's platform virtual address is neither RFC1918 nor link-local.
-privateAddresses.addAddress("168.63.129.16", "ipv4");
-const globalIpv6 = new BlockList();
-globalIpv6.addSubnet("2000::", 3, "ipv6");
-for (const [address, prefix] of [
-  ["2001::", 23],
-  ["2001:db8::", 32],
-  ["2002::", 16],
-  ["3fff::", 20]
-] as const) {
-  privateAddresses.addSubnet(address, prefix, "ipv6");
-}
-
-/** Allow global unicast only; mapped, compatible, NAT64 and other transition IPv6 are refused. */
-export const isPublicAddress = (address: string): boolean => {
-  const family = isIP(address);
-  if (family === 4) return !privateAddresses.check(address, "ipv4");
-  return (
-    family === 6 && globalIpv6.check(address, "ipv6") && !privateAddresses.check(address, "ipv6")
-  );
-};
-
-const resolve = Effect.fn("Postgres.resolve")(function* (host: string) {
-  const network = yield* SourceNetwork;
-  const addresses = isIP(host) !== 0 ? [{ address: host }] : yield* network.resolve(host);
-  if (addresses.length === 0 || addresses.some(({ address }) => !isPublicAddress(address))) {
-    return yield* new PublicAddressRequired({});
-  }
-  return addresses[0]!.address;
-});
-
-const tlsFailure = Schema.is(Schema.Struct({ code: Schema.String }));
-const open = Effect.fn("Postgres.open")(function* (settings: typeof Settings.Type) {
-  // No pool caches DNS. Each inspect/test/refresh/rotation resolves and validates anew.
-  const address = yield* resolve(settings.host);
-  const network = yield* SourceNetwork;
-  const socket = yield* Effect.acquireRelease(network.socket, (socket) =>
-    Effect.sync(() => {
-      socket.destroy();
-    })
-  );
-  const client = yield* Effect.acquireRelease(
-    Effect.sync(() => {
-      const client = new Pg.Client({
-        host: address,
-        port: settings.port,
-        stream: () => socket,
-        database: settings.database,
-        user: settings.role,
-        password: Redacted.value(settings.password),
-        ssl: {
-          rejectUnauthorized: true,
-          minVersion: "TLSv1.2",
-          ...(isIP(settings.host) === 0 ? { servername: settings.host } : {}),
-          checkServerIdentity: (_, certificate) => checkServerIdentity(settings.host, certificate)
-        },
-        connectionTimeoutMillis: 5_000,
-        statement_timeout: 10_000,
-        query_timeout: 10_000,
-        application_name: "patchy-discovery"
-      });
-      // An idle socket error must neither crash Node nor expose a driver diagnostic.
-      client.on("error", () => {});
-      return client;
-    }),
-    (client) =>
-      Effect.sync(() => {
-        // Closing the transport cancels all server work, including interrupted acquisition.
-        // There is no pooled session to reset and no finalizer waiting for a hung query.
-        client.connection.stream.destroy();
-        void client.end().catch(() => {});
-      })
-  );
-  yield* Effect.tryPromise({
-    try: () => client.connect(),
-    catch: (cause) => {
-      if (
-        (tlsFailure(cause) &&
-          /^(?:ERR_TLS_|CERT_|DEPTH_|SELF_SIGNED_|UNABLE_TO_|ERR_SSL_)/u.test(cause.code)) ||
-        (cause instanceof Error && cause.message === "The server does not support SSL connections")
-      ) {
-        return new TlsRequired({ cause: Redacted.make(cause) });
-      }
-      return new SourceUnavailable({ stage: "connect", cause: Redacted.make(cause) });
-    }
-  });
-  const query = Effect.fn("Postgres.query")(
-    (statement: string, parameters: ReadonlyArray<unknown> = []) =>
-      Effect.callback<ReadonlyArray<unknown>, SourceError>((resume) => {
-        const rows: Array<unknown> = [];
-        let bytes = 0;
-        let settled = false;
-        const query = new Pg.Query({
-          text: statement,
-          values: [...parameters],
-          queryMode: "extended"
-        } as Pg.QueryConfig);
-        query.on("row", (row: unknown) => {
-          if (settled) return;
-          bytes += Buffer.byteLength(encodeJson(row));
-          if (bytes > Metadata.MAX_SNAPSHOT_BYTES || rows.length >= 110_000) {
-            settled = true;
-            client.connection.stream.destroy();
-            resume(Effect.fail(new DiscoveryTooLarge({})));
-          } else rows.push(row);
-        });
-        query.on("error", (cause) => {
-          if (settled) return;
-          settled = true;
-          resume(
-            Effect.fail(new SourceUnavailable({ stage: "query", cause: Redacted.make(cause) }))
-          );
-        });
-        query.on("end", () => {
-          if (settled) return;
-          settled = true;
-          resume(Effect.succeed(rows));
-        });
-        client.query(query);
-        return Effect.sync(() => {
-          if (!settled) client.connection.stream.destroy();
-        });
-      })
-  );
-  return SourceClient.of({ query });
-});
-
 const Role = Schema.Struct({
   superuser: Schema.Boolean,
   createDatabase: Schema.Boolean,
@@ -412,12 +173,12 @@ const decodeRole = Schema.decodeUnknownEffect(
   Schema.Array(Role).check(Schema.isMinLength(1), Schema.isMaxLength(1))
 );
 export const checkRole = Effect.gen(function* () {
-  const client = yield* SourceClient;
+  const client = yield* SourceClient.SourceClient;
   const rows = yield* client.query(`SELECT rolsuper AS superuser, rolcreatedb AS "createDatabase",
     rolcreaterole AS "createRole" FROM pg_catalog.pg_roles WHERE rolname = CURRENT_USER`);
   const roles = yield* decodeRole(rows).pipe(
     Effect.mapError(
-      (cause) => new SourceUnavailable({ stage: "query", cause: Redacted.make(cause) })
+      (cause) => new SourceClient.SourceUnavailable({ stage: "query", cause: Redacted.make(cause) })
     )
   );
   const role = roles[0]!;
@@ -434,6 +195,7 @@ const CatalogRelation = Schema.Struct({
 });
 const CatalogColumn = Schema.Struct({
   ...Metadata.Column.fields,
+  selectable: Schema.Boolean,
   enumOid: Schema.NullOr(Schema.Int)
 });
 const CatalogDetails = Schema.Struct({
@@ -449,7 +211,8 @@ const metadataDecoder = <S extends Schema.Top & { readonly DecodingServices: nev
   return (value: unknown) =>
     decode(value).pipe(
       Effect.mapError(
-        (cause) => new SourceUnavailable({ stage: "metadata", cause: Redacted.make(cause) })
+        (cause) =>
+          new SourceClient.SourceUnavailable({ stage: "metadata", cause: Redacted.make(cause) })
       )
     );
 };
@@ -469,17 +232,17 @@ const decodeSnapshot = metadataDecoder(Metadata.Snapshot);
 
 /** Reads catalog metadata only. Caller owns a repeatable-read, read-only source transaction. */
 export const discover = Effect.gen(function* () {
-  const client = yield* SourceClient;
+  const client = yield* SourceClient.SourceClient;
   const all = yield* client.query(`SELECT c.oid::int, n.nspname AS schema, c.relname AS name,
     CASE WHEN c.relkind IN ('v', 'm') THEN 'view' ELSE 'table' END AS kind
     FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-    WHERE c.relkind IN ('r', 'p', 'v', 'm') AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+    WHERE c.relkind IN ('r', 'p', 'f', 'v', 'm') AND n.nspname NOT IN ('pg_catalog', 'information_schema')
       AND n.nspname NOT LIKE 'pg_toast%' AND n.nspname NOT LIKE 'pg_temp_%'
       AND pg_catalog.has_schema_privilege(n.oid, 'USAGE')
       AND (pg_catalog.has_table_privilege(c.oid, 'SELECT') OR pg_catalog.has_any_column_privilege(c.oid, 'SELECT'))
     ORDER BY n.nspname, c.relname LIMIT 10501`);
   if (all.length > Metadata.MAX_RELATIONS + Metadata.MAX_EXCLUSIONS)
-    return yield* new DiscoveryTooLarge({});
+    return yield* new SourceClient.DiscoveryTooLarge({});
   const catalog = yield* decodeRelations(all);
   const schemaNames = new Set(
     catalog.filter((relation) => relation.schema !== "public").map((relation) => relation.schema)
@@ -511,7 +274,8 @@ export const discover = Effect.gen(function* () {
       : yield* client.query(
           `SELECT c.oid::int,
     COALESCE((SELECT jsonb_agg(column_info ORDER BY ordinal) FROM (
-      SELECT a.attnum AS ordinal, jsonb_build_object('name', a.attname, 'nullable',
+      SELECT a.attnum AS ordinal, jsonb_build_object('name', a.attname,
+        'selectable', pg_catalog.has_column_privilege(c.oid, a.attnum, 'SELECT'), 'nullable',
         CASE WHEN c.relkind IN ('v', 'm') THEN true ELSE NOT (a.attnotnull OR base.domain_not_null) END,
         'type', jsonb_build_object('schema', original_ns.nspname, 'name', original.typname,
           'sql', pg_catalog.format_type(a.atttypid, a.atttypmod), 'baseSchema', base_ns.nspname,
@@ -531,7 +295,6 @@ export const discover = Effect.gen(function* () {
       JOIN pg_catalog.pg_namespace base_ns ON base_ns.oid = base.typnamespace
       LEFT JOIN pg_catalog.pg_type element ON element.oid = base.typelem
       WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
-        AND pg_catalog.has_column_privilege(c.oid, a.attnum, 'SELECT')
       ORDER BY a.attnum LIMIT 201
     ) columns), '[]'::jsonb) AS columns,
     (SELECT jsonb_build_object('name', k.conname, 'columns',
@@ -582,7 +345,10 @@ export const discover = Effect.gen(function* () {
   for (const relation of selected) {
     const detail = byOid.get(relation.oid);
     if (!detail)
-      return yield* new SourceUnavailable({ stage: "metadata", cause: Redacted.make(raw) });
+      return yield* new SourceClient.SourceUnavailable({
+        stage: "metadata",
+        cause: Redacted.make(raw)
+      });
     if (
       detail.columns.length > Metadata.MAX_COLUMNS ||
       detail.foreignKeys.length > Metadata.MAX_COLUMNS
@@ -596,11 +362,13 @@ export const discover = Effect.gen(function* () {
     }
     const columns: Array<typeof Metadata.Column.Type> = [];
     for (const column of detail.columns) {
-      const reason = !Metadata.supportedType(column.type)
-        ? "unsupported_type"
-        : column.enumOid !== null && !allowedEnumOids.has(column.enumOid)
-          ? "enum_limit"
-          : undefined;
+      const reason = !column.selectable
+        ? "access_denied"
+        : !Metadata.supportedType(column.type)
+          ? "unsupported_type"
+          : column.enumOid !== null && !allowedEnumOids.has(column.enumOid)
+            ? "enum_limit"
+            : undefined;
       if (reason)
         exclusions.push({
           schema: relation.schema,
@@ -632,25 +400,27 @@ export const discover = Effect.gen(function* () {
     exclusions.length > Metadata.MAX_EXCLUSIONS ||
     Buffer.byteLength(encodeJson(snapshot)) > Metadata.MAX_SNAPSHOT_BYTES
   ) {
-    return yield* new DiscoveryTooLarge({});
+    return yield* new SourceClient.DiscoveryTooLarge({});
   }
   return yield* decodeSnapshot(snapshot);
 });
 
 export const make = Effect.gen(function* () {
-  const network = yield* SourceNetwork;
+  const network = yield* SourceNetwork.SourceNetwork;
   const run = Effect.fn("Postgres.withSource")(
     function* <A>(
       credentials: Redacted.Redacted<string>,
-      work: Effect.Effect<A, SourceError, SourceClient>
+      work: Effect.Effect<A, SourceError, SourceClient.SourceClient>
     ) {
       const settings = yield* parseCredentials(credentials);
-      const client = yield* open(settings).pipe(Effect.provideService(SourceNetwork, network));
+      const client = yield* SourceClient.make(settings).pipe(
+        Effect.provideService(SourceNetwork.SourceNetwork, network)
+      );
       yield* client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
       yield* client.query("SET LOCAL statement_timeout = '10s'");
       yield* client.query("SET LOCAL search_path = pg_catalog");
-      yield* checkRole.pipe(Effect.provideService(SourceClient, client));
-      const value = yield* work.pipe(Effect.provideService(SourceClient, client));
+      yield* checkRole.pipe(Effect.provideService(SourceClient.SourceClient, client));
+      const value = yield* work.pipe(Effect.provideService(SourceClient.SourceClient, client));
       yield* client.query("ROLLBACK");
       const display = {
         host: settings.host,
@@ -675,4 +445,4 @@ export const make = Effect.gen(function* () {
   });
   return Source.of({ inspect, test });
 });
-export const layer = Layer.effect(Source, make).pipe(Layer.provide(nativeNetwork));
+export const layer = Layer.effect(Source, make).pipe(Layer.provide(SourceNetwork.layer));

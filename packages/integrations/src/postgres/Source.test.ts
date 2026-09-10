@@ -12,6 +12,8 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as Testing from "@patchy/sql/testing";
 import * as Source from "./Source.js";
+import * as SourceClient from "./SourceClient.js";
+import * as SourceNetwork from "./SourceNetwork.js";
 import { Snapshot } from "./Snapshot.js";
 
 it("refuses non-global addresses, including IPv6 aliases and transition ranges", () => {
@@ -39,9 +41,9 @@ it("refuses non-global addresses, including IPv6 aliases and transition ranges",
     "3fff::1",
     "not-an-ip"
   ])
-    assert.isFalse(Source.isPublicAddress(address), address);
-  assert.isTrue(Source.isPublicAddress("8.8.8.8"));
-  assert.isTrue(Source.isPublicAddress("2606:4700:4700::1111"));
+    assert.isFalse(SourceClient.isPublicAddress(address), address);
+  assert.isTrue(SourceClient.isPublicAddress("8.8.8.8"));
+  assert.isTrue(SourceClient.isPublicAddress("2606:4700:4700::1111"));
 });
 
 it.effect("refuses a real non-TLS Postgres server, pins DNS and rechecks on the next attempt", () =>
@@ -51,7 +53,7 @@ it.effect("refuses a real non-TLS Postgres server, pins DNS and rechecks on the 
     let sockets = 0;
     let pinned: unknown;
     const source = yield* Source.make.pipe(
-      Effect.provideService(Source.SourceNetwork, {
+      Effect.provideService(SourceNetwork.SourceNetwork, {
         resolve: () => Effect.sync(() => [{ address: ++lookups === 1 ? "8.8.8.8" : "127.0.0.1" }]),
         socket: Effect.sync(() => {
           sockets++;
@@ -68,10 +70,10 @@ it.effect("refuses a real non-TLS Postgres server, pins DNS and rechecks on the 
     );
     const credentials = Redacted.make("postgres://reader:secret@warehouse.example:6432/warehouse");
     const failure = yield* source.test(credentials).pipe(Effect.flip);
-    assert.instanceOf(failure, Source.TlsRequired);
+    assert.instanceOf(failure, SourceClient.TlsRequired);
     assert.deepStrictEqual(pinned, { port: 6432, host: "8.8.8.8" });
     const rebound = yield* source.test(credentials).pipe(Effect.flip);
-    assert.instanceOf(rebound, Source.PublicAddressRequired);
+    assert.instanceOf(rebound, SourceClient.PublicAddressRequired);
     assert.strictEqual(sockets, 1);
     assert.strictEqual(lookups, 2);
   })
@@ -82,7 +84,7 @@ it.effect("interrupts DNS at the service deadline without creating a socket afte
     const entered = yield* Deferred.make<void>();
     let sockets = 0;
     const source = yield* Source.make.pipe(
-      Effect.provideService(Source.SourceNetwork, {
+      Effect.provideService(SourceNetwork.SourceNetwork, {
         resolve: () => Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)),
         socket: Effect.sync(() => {
           sockets++;
@@ -106,7 +108,7 @@ it.effect("destroys an in-progress connection when its calling fiber is interrup
     const socket = new Socket();
     socket.connect = (() => socket) as typeof socket.connect;
     const source = yield* Source.make.pipe(
-      Effect.provideService(Source.SourceNetwork, {
+      Effect.provideService(SourceNetwork.SourceNetwork, {
         resolve: () => Effect.succeed([{ address: "8.8.8.8" }]),
         socket: Deferred.succeed(entered, undefined).pipe(Effect.as(socket))
       })
@@ -124,7 +126,7 @@ it.effect("rejects a mixed public/private DNS answer before any socket allocatio
   Effect.gen(function* () {
     let sockets = 0;
     const source = yield* Source.make.pipe(
-      Effect.provideService(Source.SourceNetwork, {
+      Effect.provideService(SourceNetwork.SourceNetwork, {
         resolve: () =>
           Effect.succeed([{ address: "8.8.8.8" }, { address: "::ffff:169.254.169.254" }]),
         socket: Effect.sync(() => {
@@ -136,7 +138,7 @@ it.effect("rejects a mixed public/private DNS answer before any socket allocatio
     const failure = yield* source
       .test(Redacted.make("postgres://reader:secret@warehouse.example/warehouse"))
       .pipe(Effect.flip);
-    assert.instanceOf(failure, Source.PublicAddressRequired);
+    assert.instanceOf(failure, SourceClient.PublicAddressRequired);
     assert.strictEqual(sockets, 0);
   })
 );
@@ -155,7 +157,7 @@ it.layer(Source.layer)("production Postgres admission", (it) => {
         const failure = yield* source
           .inspect(Redacted.make(`postgres://reader:secret@${host}/warehouse`))
           .pipe(Effect.flip);
-        assert.instanceOf(failure, Source.PublicAddressRequired);
+        assert.instanceOf(failure, SourceClient.PublicAddressRequired);
         assert.strictEqual(
           failure.message,
           "The database must be reachable from the internet over TLS."
@@ -171,7 +173,7 @@ it.layer(Source.layer)("production Postgres admission", (it) => {
         const failure = yield* source
           .test(Redacted.make(`postgres://reader:secret@example.com/warehouse?sslmode=${mode}`))
           .pipe(Effect.flip);
-        assert.instanceOf(failure, Source.TlsRequired);
+        assert.instanceOf(failure, SourceClient.TlsRequired);
       }
     })
   );
@@ -187,7 +189,7 @@ it.layer(Source.layer)("production Postgres admission", (it) => {
         assert.notInclude(representation, secret);
         assert.notInclude(representation, url);
       }
-      const lower = new Source.SourceUnavailable({
+      const lower = new SourceClient.SourceUnavailable({
         stage: "connect",
         cause: Redacted.make(new Error(url))
       });
@@ -227,70 +229,131 @@ it.effect("parses only supported URL fields and keeps the decoded password redac
 );
 
 const withSource = Effect.fn("test.withSource")(function* <A, E>(
-  work: Effect.Effect<A, E, Source.SourceClient>
+  work: Effect.Effect<A, E, SourceClient.SourceClient>
 ) {
   const sql = yield* SqlClient.SqlClient;
   return yield* work.pipe(
     Effect.provideService(
-      Source.SourceClient,
-      Source.SourceClient.of({
+      SourceClient.SourceClient,
+      SourceClient.SourceClient.of({
         query: (statement, parameters = []) =>
-          sql
-            .unsafe(statement, parameters)
-            .pipe(
-              Effect.mapError(
-                (cause) =>
-                  new Source.SourceUnavailable({ stage: "query", cause: Redacted.make(cause) })
-              )
+          sql.unsafe(statement, parameters).pipe(
+            Effect.mapError(
+              (cause) =>
+                new SourceClient.SourceUnavailable({
+                  stage: "query",
+                  cause: Redacted.make(cause)
+                })
             )
+          )
       })
     )
   );
 });
 
 it.layer(Testing.emptyLayer({}))("real Postgres discovery", (it) => {
-  it.effect("discovers ordered compound keys, enum labels, domains and nullable views", () =>
+  it.effect(
+    "discovers compound keys, enum labels, domains, foreign tables and nullable views",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql.unsafe("CREATE SCHEMA sales");
+        yield* sql.unsafe("CREATE TYPE sales.status AS ENUM ('new', 'in progress', 'done')");
+        yield* sql.unsafe("CREATE DOMAIN sales.required_name AS text NOT NULL");
+        yield* sql.unsafe("CREATE DOMAIN sales.nested_name AS sales.required_name");
+        yield* sql.unsafe(
+          "CREATE TABLE sales.accounts (tenant int, id int, name sales.nested_name, PRIMARY KEY (tenant, id))"
+        );
+        yield* sql.unsafe(
+          "CREATE TABLE sales.orders (id bigint PRIMARY KEY, tenant int, account int, status sales.status NOT NULL, states sales.status[], exotic point, CONSTRAINT owner FOREIGN KEY (tenant, account) REFERENCES sales.accounts (tenant, id))"
+        );
+        yield* sql.unsafe("CREATE VIEW sales.order_view AS SELECT id, status FROM sales.orders");
+        // No handler exists: discovery must inspect the catalog, never query foreign rows.
+        yield* sql.unsafe("CREATE FOREIGN DATA WRAPPER metadata_only");
+        yield* sql.unsafe("CREATE SERVER metadata_server FOREIGN DATA WRAPPER metadata_only");
+        yield* sql.unsafe(
+          "CREATE FOREIGN TABLE sales.remote_accounts (id bigint) SERVER metadata_server"
+        );
+        const snapshot = yield* sql.withTransaction(withSource(Source.discover));
+        const accounts = snapshot.relations.find(
+          (relation) => relation.schema === "sales" && relation.name === "accounts"
+        )!;
+        assert.deepStrictEqual(accounts.primaryKey?.columns, ["tenant", "id"]);
+        const domain = accounts.columns.find((column) => column.name === "name")!;
+        assert.strictEqual(domain.type.baseName, "text");
+        assert.isFalse(domain.nullable);
+        const remote = snapshot.relations.find((relation) => relation.name === "remote_accounts");
+        assert.strictEqual(remote?.kind, "table");
+        assert.deepStrictEqual(
+          remote?.columns.map((column) => column.name),
+          ["id"]
+        );
+        const orders = snapshot.relations.find((relation) => relation.name === "orders")!;
+        assert.deepStrictEqual(orders.foreignKeys, [
+          {
+            name: "owner",
+            columns: ["tenant", "account"],
+            target: { schema: "sales", relation: "accounts", columns: ["tenant", "id"] }
+          }
+        ]);
+        assert.deepStrictEqual(snapshot.enums, [
+          { schema: "sales", name: "status", labels: ["new", "in progress", "done"] }
+        ]);
+        assert.deepStrictEqual(snapshot.exclusions, [
+          { schema: "sales", relation: "orders", column: "exotic", reason: "unsupported_type" }
+        ]);
+        assert.isTrue(
+          snapshot.relations
+            .find((relation) => relation.name === "order_view")!
+            .columns.every((column) => column.nullable)
+        );
+        assert.isTrue(Schema.is(Snapshot)(snapshot));
+      })
+  );
+
+  it.effect("keeps foreign keys valid when their target column is not selectable", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* sql.unsafe("CREATE SCHEMA sales");
-      yield* sql.unsafe("CREATE TYPE sales.status AS ENUM ('new', 'in progress', 'done')");
-      yield* sql.unsafe("CREATE DOMAIN sales.required_name AS text NOT NULL");
-      yield* sql.unsafe("CREATE DOMAIN sales.nested_name AS sales.required_name");
-      yield* sql.unsafe(
-        "CREATE TABLE sales.accounts (tenant int, id int, name sales.nested_name, PRIMARY KEY (tenant, id))"
+      const databases = yield* sql<{ name: string }>`SELECT current_database() AS name`;
+      const role = `"${databases[0]!.name.replaceAll('"', '""')}_columns"`;
+      yield* sql.unsafe(`CREATE ROLE ${role}`);
+      yield* Effect.gen(function* () {
+        yield* sql.unsafe("CREATE SCHEMA partial_columns");
+        yield* sql.unsafe("CREATE TABLE partial_columns.parents (id int PRIMARY KEY, label text)");
+        yield* sql.unsafe(
+          "CREATE TABLE partial_columns.children (parent_id int REFERENCES partial_columns.parents(id))"
+        );
+        yield* sql.unsafe(`GRANT USAGE ON SCHEMA partial_columns TO ${role}`);
+        yield* sql.unsafe(`GRANT SELECT(label) ON partial_columns.parents TO ${role}`);
+        yield* sql.unsafe(`GRANT SELECT ON partial_columns.children TO ${role}`);
+        const snapshot = yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql.unsafe(`SET LOCAL ROLE ${role}`);
+            return yield* withSource(Source.discover);
+          })
+        );
+        assert.deepStrictEqual(
+          snapshot.relations
+            .find((relation) => relation.name === "parents")
+            ?.columns.map((column) => column.name),
+          ["label"]
+        );
+        assert.deepStrictEqual(
+          snapshot.relations.find((relation) => relation.name === "children")?.foreignKeys[0]
+            ?.target,
+          { schema: "partial_columns", relation: "parents", columns: ["id"] }
+        );
+        assert.includeDeepMembers(snapshot.exclusions, [
+          { schema: "partial_columns", relation: "parents", column: "id", reason: "access_denied" }
+        ]);
+      }).pipe(
+        Effect.ensuring(
+          Effect.gen(function* () {
+            yield* sql.unsafe(`DROP OWNED BY ${role}`);
+            yield* sql.unsafe(`DROP ROLE ${role}`);
+          }).pipe(Effect.orDie)
+        )
       );
-      yield* sql.unsafe(
-        "CREATE TABLE sales.orders (id bigint PRIMARY KEY, tenant int, account int, status sales.status NOT NULL, states sales.status[], exotic point, CONSTRAINT owner FOREIGN KEY (tenant, account) REFERENCES sales.accounts (tenant, id))"
-      );
-      yield* sql.unsafe("CREATE VIEW sales.order_view AS SELECT id, status FROM sales.orders");
-      const snapshot = yield* sql.withTransaction(withSource(Source.discover));
-      const accounts = snapshot.relations.find(
-        (relation) => relation.schema === "sales" && relation.name === "accounts"
-      )!;
-      assert.deepStrictEqual(accounts.primaryKey?.columns, ["tenant", "id"]);
-      const domain = accounts.columns.find((column) => column.name === "name")!;
-      assert.strictEqual(domain.type.baseName, "text");
-      assert.isFalse(domain.nullable);
-      const orders = snapshot.relations.find((relation) => relation.name === "orders")!;
-      assert.deepStrictEqual(orders.foreignKeys, [
-        {
-          name: "owner",
-          columns: ["tenant", "account"],
-          target: { schema: "sales", relation: "accounts", columns: ["tenant", "id"] }
-        }
-      ]);
-      assert.deepStrictEqual(snapshot.enums, [
-        { schema: "sales", name: "status", labels: ["new", "in progress", "done"] }
-      ]);
-      assert.deepStrictEqual(snapshot.exclusions, [
-        { schema: "sales", relation: "orders", column: "exotic", reason: "unsupported_type" }
-      ]);
-      assert.isTrue(
-        snapshot.relations
-          .find((relation) => relation.name === "order_view")!
-          .columns.every((column) => column.nullable)
-      );
-      assert.isTrue(Schema.is(Snapshot)(snapshot));
     })
   );
 

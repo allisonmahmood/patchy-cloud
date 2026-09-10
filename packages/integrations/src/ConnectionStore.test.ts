@@ -12,6 +12,7 @@ import * as ConnectionStore from "./ConnectionStore.js";
 import * as CredentialKeys from "./CredentialKeys.js";
 import { Snapshot } from "./postgres/Snapshot.js";
 import * as Source from "./postgres/Source.js";
+import * as SourceClient from "./postgres/SourceClient.js";
 
 const empty: typeof Snapshot.Type = { version: 1, relations: [], enums: [], exclusions: [] };
 const evolved: typeof Snapshot.Type = {
@@ -185,7 +186,7 @@ it.layer(fixture)("ConnectionStore", (it) => {
             ...source,
             inspect: () =>
               Effect.fail(
-                new Source.SourceUnavailable({
+                new SourceClient.SourceUnavailable({
                   stage: "metadata",
                   cause: Redacted.make(new Error("source diagnostic with secret"))
                 })
