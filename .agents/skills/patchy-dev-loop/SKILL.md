@@ -25,6 +25,10 @@ On a new checkout, follow the prerequisites and `pnpm install` in
 Before startup, follow its [Clerk keys](../../../docs/DEVELOPMENT.md#clerk-keys)
 recipe for the required developer-owned configuration; that section also owns
 optional JWT verification and local authorized-party settings.
+The runner creates the connection keyring in this worktree's `.local/dev/dev.env`
+and retains it across restarts. Follow DEVELOPMENT's **Connection credential
+keyring** section for rotation and connection checks; keep the file private and
+never print its values. It is separate from the shared Clerk configuration.
 
 To bind the seeded **Patchy Dev** admin to the person's Clerk development user,
 follow [Seed](../../../docs/DEVELOPMENT.md#seed) before their first sign-in.

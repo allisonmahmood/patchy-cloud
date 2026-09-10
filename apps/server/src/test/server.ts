@@ -33,6 +33,7 @@ export const server = (env: Record<string, string | undefined> = {}) =>
           PATCHY_PUBLIC_BASE_URL: "https://patchy.example",
           PATCHY_COMPANY_DB_ADMIN_URL: inject("postgres").adminUrl,
           PATCHY_COMPANY_DB_URL: inject("postgres").adminUrl,
+          PATCHY_CREDENTIAL_KEYS: `test:${Buffer.alloc(32, 1).toString("base64")}`,
           ...env
         })
       )

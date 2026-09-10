@@ -26,6 +26,7 @@
     "@patchy/company-database": "workspace:*",
     "@patchy/content-store": "workspace:*",
     "@patchy/core": "workspace:*",
+    "@patchy/integrations": "workspace:*",
     "@patchy/limits": "workspace:*",
     "@patchy/primitives": "workspace:*",
     "@patchy/runtime": "workspace:*",

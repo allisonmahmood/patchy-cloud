@@ -357,6 +357,8 @@ const sendPublish = Effect.fn("sendPublish")(function* (
                     error.code === "tier_mismatch" ||
                     error.code === "has_primitives" ||
                     error.code === "patch_not_openable" ||
+                    error.code === "connection_not_connected" ||
+                    error.code === "stale_generated" ||
                     error.code === "not_additive" ||
                     error.errors !== undefined)) ||
                   (error.status === 409 &&

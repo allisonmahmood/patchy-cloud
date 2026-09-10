@@ -12,6 +12,7 @@
     "@patchy/auth": "workspace:*",
     "@patchy/companies": "workspace:*",
     "@patchy/company-database": "workspace:*",
+    "@patchy/integrations": "workspace:*",
     "@patchy/patches": "workspace:*",
     "@patchy/runtime": "workspace:*",
     "@patchy/sql": "workspace:*",

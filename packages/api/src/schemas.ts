@@ -52,7 +52,9 @@ export const PublishRefused = failure(422, {
     "invalid_manifest",
     "tier_mismatch",
     "has_primitives",
-    "patch_not_openable"
+    "patch_not_openable",
+    "connection_not_connected",
+    "stale_generated"
   ])
 });
 export const NotAdditive = failure(422, {

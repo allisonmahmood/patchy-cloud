@@ -38,6 +38,7 @@ import {
 } from "@patchy/api";
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
 import { Tables } from "@patchy/primitives";
+import { ConnectionStore } from "@patchy/integrations";
 
 const encodeManifest = Schema.encodeSync(Schema.fromJsonString(Manifest));
 const encodePublishCreated = Schema.encodeSync(Schema.fromJsonString(PublishCreated));
@@ -219,7 +220,12 @@ export type DatabaseError =
   | CompanyDatabases.CompanyDatabaseNotReady
   | CompanyDatabases.CompanyIdentityMismatch;
 
-export type ResourceError = HasPrimitives | PatchNotOpenable | Tables.NotAdditive | DatabaseError;
+export type ResourceError =
+  | HasPrimitives
+  | PatchNotOpenable
+  | Tables.NotAdditive
+  | DatabaseError
+  | ConnectionStore.ResolveError;
 
 export interface PublishTarget {
   readonly intent: "create" | "update";
@@ -592,6 +598,7 @@ export const make = Effect.gen(function* () {
   const databases = yield* CompanyDatabases.CompanyDatabases;
   const inventoryStore = yield* Inventory.Inventory;
   const tables = yield* Tables.Tables;
+  const connections = yield* ConnectionStore.ConnectionStore;
 
   /** An instant on the Effect clock, as a value Postgres compares against `expires_at`. */
   const stamp = (millis: number) => sql`to_timestamp(${millis / 1_000})`;
@@ -815,7 +822,13 @@ export const make = Effect.gen(function* () {
     companyId: string
   ) {
     const warnings: string[] = [];
-    for (const declaration of Object.values(manifest.uses)) {
+    // Lock connections in stable order when called inside the publish transaction.
+    const declarations = Object.values(manifest.uses).sort((a, b) => a.id.localeCompare(b.id));
+    for (const declaration of declarations) {
+      if (declaration.kind === "postgres") {
+        yield* connections.resolve(companyId, declaration);
+        continue;
+      }
       if (declaration.kind !== "sharedTable") continue;
       if (declaration.id !== sharedTableId(declaration.patchId, declaration.table))
         return yield* new PatchNotOpenable({

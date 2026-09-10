@@ -3,8 +3,11 @@ import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
+import * as Result from "effect/Result";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
@@ -28,6 +31,7 @@ import {
 } from "@patchy/api";
 import { ContentStore } from "@patchy/content-store";
 import { Limits } from "@patchy/limits";
+import { ConnectionStore, PostgresSource } from "@patchy/integrations";
 import * as Content from "./Content.js";
 import * as Patches from "./Patches.js";
 import * as PatchesApi from "./PatchesApi.js";
@@ -1013,7 +1017,7 @@ it.layer(publishLayer)("publish attempts", (it) => {
     })
   );
 
-  it.effect("refuses unsupported tiers and uses before writing content", () =>
+  it.effect("refuses unsupported tiers and missing connections before writing content", () =>
     Effect.gen(function* () {
       const api = yield* client.pipe(Effect.provide(Fixtures.as(admin)));
       const patches = yield* Patches.Patches;
@@ -1027,7 +1031,7 @@ it.layer(publishLayer)("publish attempts", (it) => {
               sales: { kind: "postgres" as const, handle: "warehouse", id: "conn_1", revision: 1 }
             }
           },
-          code: "invalid_manifest"
+          code: "connection_not_connected"
         }
       ];
       for (const { manifest, code } of cases) {
@@ -1474,5 +1478,202 @@ it.layer(Layer.fresh(publishLayer))("shared table publishing", (it) => {
           sharedTableId(replacement.patchId, "contacts")
         );
       })
+  );
+});
+
+const sourceConnection = Effect.fn("test.sourceConnection")(function* (handle: string) {
+  const display = { host: "warehouse.example", port: 5432, database: "warehouse", role: "reader" };
+  const snapshot = { version: 1 as const, relations: [], enums: [], exclusions: [] };
+  // Substitute only the outside source; encryption, persistence and publishing remain real.
+  const connections = yield* ConnectionStore.make.pipe(
+    Effect.provideService(PostgresSource.Source, {
+      test: () => Effect.succeed(display),
+      inspect: () => Effect.succeed({ display, snapshot })
+    })
+  );
+  const connection = yield* connections.connect({
+    companyId: admin.company.id,
+    userId: admin.user.id,
+    handle,
+    description: "Publish contract source",
+    credentials: Redacted.make(
+      "postgresql://reader:private-test-password@warehouse.example/warehouse"
+    )
+  });
+  return {
+    connections,
+    connection,
+    snapshot,
+    identity: { companyId: admin.company.id, userId: admin.user.id, id: connection.id },
+    declaration: {
+      kind: "postgres" as const,
+      handle,
+      id: connection.id,
+      revision: connection.metadataRevision
+    }
+  };
+});
+
+it.layer(Layer.fresh(publishLayer))("Postgres declaration publishing", (it) => {
+  it.effect(
+    "binds an immutable connection snapshot and refuses new publishes after disconnect or discovery",
+    () =>
+      Effect.gen(function* () {
+        const { connections, connection, snapshot, identity, declaration } =
+          yield* sourceConnection("publish-warehouse");
+        const api = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+        const payload = publishRequest({
+          html: html("Warehouse report"),
+          manifest: { ...Fixtures.manifest, name: "warehouse-report", uses: { sales: declaration } }
+        });
+        const created = yield* api.publish({ payload });
+        const patches = yield* Patches.Patches;
+        const loaded = Option.getOrThrow(yield* patches.find(created.patchId));
+        assert.deepStrictEqual(loaded.version.manifest.uses.sales, declaration);
+        assert.deepStrictEqual(
+          yield* connections.snapshot(admin.company.id, connection.id, 1),
+          snapshot
+        );
+
+        yield* connections.disconnect(identity);
+        const objects = yield* ContentStore.ContentStore;
+        const before = yield* Stream.runCollect(objects.list("patches/"));
+        const refused = yield* api.publish({
+          payload: publishRequest({
+            ...payload,
+            patchId: created.patchId,
+            publishKey: crypto.randomUUID()
+          }),
+          responseMode: "response-only"
+        });
+        assert.strictEqual(refused.status, 422);
+        assert.include(yield* refused.json, { code: "connection_not_connected" });
+        assert.deepStrictEqual(yield* Stream.runCollect(objects.list("patches/")), before);
+        assert.deepStrictEqual(yield* api.publish({ payload }), created);
+
+        yield* connections.reconnect(identity);
+        const refreshed = yield* connections.refresh(identity);
+        const stale = yield* api.publish({
+          payload: publishRequest({
+            ...payload,
+            patchId: created.patchId,
+            publishKey: crypto.randomUUID()
+          }),
+          responseMode: "response-only"
+        });
+        assert.strictEqual(stale.status, 422);
+        assert.include(yield* stale.json, { code: "stale_generated" });
+        const ahead = yield* api.publish({
+          payload: publishRequest({
+            ...payload,
+            patchId: created.patchId,
+            publishKey: crypto.randomUUID(),
+            manifest: {
+              ...payload.manifest,
+              uses: { sales: { ...declaration, revision: refreshed.metadataRevision + 1 } }
+            }
+          }),
+          responseMode: "response-only"
+        });
+        assert.strictEqual(ahead.status, 422);
+        assert.include(yield* ahead.json, { code: "stale_generated" });
+        const updated = yield* api.publish({
+          payload: publishRequest({
+            ...payload,
+            patchId: created.patchId,
+            publishKey: crypto.randomUUID(),
+            manifest: {
+              ...payload.manifest,
+              uses: { sales: { ...declaration, revision: refreshed.metadataRevision } }
+            }
+          })
+        });
+        assert.strictEqual(updated.versionNumber, 2);
+        assert.deepStrictEqual(
+          Option.getOrThrow(yield* patches.find(created.patchId, 1)).version.manifest.uses.sales,
+          declaration
+        );
+        yield* api.publish({
+          payload: publishRequest({
+            html: html("No current declaration"),
+            patchId: created.patchId,
+            manifest: { ...Fixtures.manifest, name: "warehouse-report" }
+          })
+        });
+        assert.instanceOf(
+          yield* connections.delete(identity).pipe(Effect.flip),
+          ConnectionStore.ConnectionInUse
+        );
+      })
+  );
+
+  it.effect("serializes deletion against the transaction recording a declaring version", () =>
+    Effect.gen(function* () {
+      const { connections, identity, declaration } = yield* sourceConnection("locked-warehouse");
+      const sql = yield* SqlClient.SqlClient;
+      const content = yield* Content.Content;
+      const locked = yield* Deferred.make<number>();
+      const waiting = yield* Deferred.make<number>();
+      const release = yield* Deferred.make<void>();
+      const holder = yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* connections.resolve(identity.companyId, declaration);
+            const [row] = yield* sql<{ pid: number }>`SELECT pg_backend_pid() AS pid`;
+            yield* Deferred.succeed(locked, row!.pid);
+            yield* Deferred.await(release);
+            return yield* content.publish({
+              ...Fixtures.publishRecord(),
+              patchId: null,
+              companyId: admin.company.id,
+              ownerUserId: admin.user.id,
+              machineTokenId: admin.machine.id,
+              html: html("Locked connection"),
+              title: "Locked connection",
+              filename: null,
+              repoOrg: null,
+              repoName: null,
+              cliVersion: null,
+              gitBranch: null,
+              gitCommitSha: null,
+              sourceIp: null,
+              userAgent: null,
+              manifest: {
+                ...Fixtures.manifest,
+                name: "locked-connection",
+                uses: { sales: declaration }
+              }
+            });
+          })
+        )
+        .pipe(Effect.forkScoped);
+      const holderPid = yield* Deferred.await(locked);
+      const deletion = yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const [row] = yield* sql<{ pid: number }>`SELECT pg_backend_pid() AS pid`;
+            yield* Deferred.succeed(waiting, row!.pid);
+            return yield* connections.delete(identity);
+          })
+        )
+        .pipe(Effect.result, Effect.forkScoped);
+      yield* Effect.gen(function* () {
+        const deletionPid = yield* Deferred.await(waiting);
+        assert.notStrictEqual(deletionPid, holderPid);
+        yield* sql<{ waiting: boolean }>`
+          SELECT ${holderPid} = ANY(pg_blocking_pids(${deletionPid})) AS waiting
+        `.pipe(Effect.repeat({ until: (rows) => rows[0]!.waiting }));
+      }).pipe(Effect.ensuring(Deferred.succeed(release, undefined)));
+      const created = yield* Fiber.join(holder);
+      const refused = yield* Fiber.join(deletion);
+      assert.isTrue(Result.isFailure(refused));
+      if (Result.isFailure(refused))
+        assert.instanceOf(refused.failure, ConnectionStore.ConnectionInUse);
+      assert.deepStrictEqual(
+        Option.getOrThrow(yield* (yield* Patches.Patches).find(created.patchId)).version.manifest
+          .uses.sales,
+        declaration
+      );
+    }).pipe(Effect.scoped)
   );
 });

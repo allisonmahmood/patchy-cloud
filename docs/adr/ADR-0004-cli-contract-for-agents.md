@@ -156,10 +156,14 @@ Repo mode and refresh arrive in later SDK tickets.
 File publishing onto a patch with cumulative table or store inventory is
 `has_primitives` (422, exit 2, `rejected`), even if its current version omits
 those definitions. Publish that patch from its repo. `has_primitives`,
-`not_additive` and `patch_not_openable` clear the matching refused attempt;
+`not_additive`, `patch_not_openable`, `connection_not_connected` and
+`stale_generated` clear the matching refused attempt (422, exit 2);
 they retain their wire codes in the CLI's JSON failure document. A
 `patch_not_openable` refusal means a declared shared source is unavailable;
 correct the declaration or restore source access before starting a fresh attempt.
+A Postgres connection must still be connected with the generated snapshot revision.
+Reconnect it through `/company/connections` or regenerate the declaration before retrying.
+The connect and credential forms are browser-only; no CLI command accepts connection secrets.
 
 Every patch opens at `/<company>/<name>`; a version at `/<company>/<name>/~v/<n>`.
 `--name` sets or renames it using 3–32 lowercase letters, digits or hyphens, without

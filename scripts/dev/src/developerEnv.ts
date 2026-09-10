@@ -10,6 +10,21 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
+import { CredentialKeys } from "@patchy/integrations";
+
+/** A worktree-local keyring survives restarts without changing shared developer settings. */
+export const readCredentialKeys = Effect.fn("readCredentialKeys")(function* (file: string) {
+  const fs = yield* FileSystem.FileSystem;
+  if (!(yield* fs.exists(file))) {
+    const key = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64");
+    yield* fs.writeFileString(file, `PATCHY_CREDENTIAL_KEYS=dev:${key}\n`, {
+      flag: "wx",
+      mode: 0o600
+    });
+  }
+  const provider = ConfigProvider.fromDotEnvContents(yield* fs.readFileString(file));
+  return yield* CredentialKeys.config.pipe(Effect.provide(ConfigProvider.layer(provider)));
+});
 const DEVELOPER_ENV_NAMES = [
   "CLERK_PUBLISHABLE_KEY",
   "CLERK_SECRET_KEY",

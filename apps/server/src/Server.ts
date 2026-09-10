@@ -36,6 +36,13 @@ import {
   migrations as companyDatabaseMigrations
 } from "@patchy/company-database";
 import { AzureContentStore, BlobContainer, FilesystemContentStore } from "@patchy/content-store";
+import {
+  ConnectionPages,
+  ConnectionStore,
+  CredentialKeys,
+  PostgresSource,
+  migrations as integrationsMigrations
+} from "@patchy/integrations";
 import { Limits } from "@patchy/limits";
 import {
   Content,
@@ -78,7 +85,8 @@ const migrated = Layer.effectDiscard(
     ...authMigrations,
     ...patchesMigrations,
     ...companyDatabaseMigrations,
-    ...runtimeMigrations
+    ...runtimeMigrations,
+    ...integrationsMigrations
   })
 );
 
@@ -111,6 +119,11 @@ const services = Layer.mergeAll(
       Users.layer,
       Session.layer
     ).pipe(
+      Layer.provideMerge(
+        ConnectionStore.layer.pipe(
+          Layer.provide([CredentialKeys.layer, PostgresSource.layer, RuntimeLog.layer])
+        )
+      ),
       Layer.provideMerge(Tables.layer),
       Layer.provideMerge(Inventory.layer),
       Layer.provideMerge(PgCompanyDatabases.layer)
@@ -170,7 +183,7 @@ const middleware = HttpRouter.middleware(
 );
 
 /** The routes and middleware as one router application. */
-const app = Layer.mergeAll(api, Pages.layer, AuthPages.layer, middleware);
+const app = Layer.mergeAll(api, Pages.layer, AuthPages.layer, ConnectionPages.layer, middleware);
 
 /** The server: serving the app, sweeping, and closing both with the scope. */
 export const layer = Layer.mergeAll(

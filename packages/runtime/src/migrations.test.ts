@@ -7,6 +7,7 @@ import { migrations as authMigrations } from "../../auth/src/migrations.js";
 import { migrations as companiesMigrations } from "../../companies/src/migrations.js";
 import { migrations as companyDatabaseMigrations } from "../../company-database/src/migrations.js";
 import { migrations as patchesMigrations } from "../../patches/src/migrations.js";
+import { migrations as integrationsMigrations } from "../../integrations/src/migrations.js";
 import { migrations } from "./migrations.js";
 
 const previous: Migrations = {
@@ -18,15 +19,7 @@ const previous: Migrations = {
 const withRuntime: Migrations = { ...previous, ...migrations };
 const withIntegrations: Migrations = {
   ...withRuntime,
-  // Stand in for the capability that lands after Runtime, using a real table.
-  "0007_integrations_baseline": Effect.flatMap(
-    SqlClient.SqlClient,
-    (sql) => sql`
-      CREATE TABLE integration_connections (
-        id TEXT PRIMARY KEY,
-        company_id TEXT NOT NULL REFERENCES companies(id)
-      )`
-  )
+  ...integrationsMigrations
 };
 
 const company = Effect.flatMap(
@@ -39,8 +32,13 @@ const company = Effect.flatMap(
 const useMigratedTables = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`
-    INSERT INTO integration_connections (id, company_id)
-    VALUES ('connection_migration', 'cmp_migration')`;
+    INSERT INTO connections (
+      id, company_id, integration, handle, description, mode, status, display,
+      credentials, key_id, credential_revision, metadata, metadata_revision, created_by
+    ) VALUES (
+      'connection_migration', 'cmp_migration', 'postgres', 'warehouse', 'Migration check',
+      'company', 'disconnected', '{}', 'encrypted', 'test', 1, '{}', 1, 'usr_migration'
+    )`;
   yield* sql`
     INSERT INTO runtime_calls (id, company_id, user_id, credential_kind, op,
       connection_id, correlation_id)
@@ -54,7 +52,7 @@ const useMigratedTables = Effect.gen(function* () {
     SELECT c.name AS company, i.id AS connection, r.outcome,
       r.duration_ms AS duration, r.row_count AS rows
     FROM runtime_calls r
-    JOIN integration_connections i ON i.id = r.connection_id AND i.company_id = r.company_id
+    JOIN connections i ON i.id = r.connection_id AND i.company_id = r.company_id
     JOIN companies c ON c.id = i.company_id
     WHERE r.correlation_id = 'correlation_migration'`;
 });
