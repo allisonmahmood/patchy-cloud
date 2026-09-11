@@ -19,7 +19,6 @@ import { pageResponse, signOutForm, type Page } from "./page.js";
 
 const styles = `
     .auth-card { overflow-wrap: anywhere; }
-    .device-kicker { margin: 0 0 16px; color: var(--muted); font-size: .8rem; font-weight: 750; text-transform: uppercase; letter-spacing: .12em; }
     .device-lede { margin-bottom: 12px; }
     .auth-card .device-code { font-family: var(--font-mono); font-size: clamp(1.65rem, 7vw, 3rem); letter-spacing: .04em; white-space: nowrap; }
     .device-actions { display: flex; flex-wrap: wrap; gap: 12px; margin: 24px 0; }
@@ -70,7 +69,7 @@ const renderConfirm = Effect.fn("DevicePages.renderConfirm")(function* (
   return pageResponse(
     {
       title: "Device login",
-      heading: `<p class="device-kicker">Device login</p><p class="device-lede">Is this the code on your terminal?</p><h1 class="device-code">${escapeHtml(login.userCode)}</h1>`,
+      heading: `<p class="auth-kicker">Device login</p><p class="device-lede">Is this the code on your terminal?</p><h1 class="device-code">${escapeHtml(login.userCode)}</h1>`,
       styles,
       status: fields?.invalid ? 422 : 200,
       body: `${refreshed ? `<div class="note" role="status">${refreshNotice}</div>` : ""}<p>A terminal just ran <code>patchy login</code> and wants to publish at <strong>${escapeHtml(viewer.company.name)}</strong> as ${escapeHtml(viewer.user.name)} (<code>${escapeHtml(viewer.user.email)}</code>). If the code matches, name the machine and confirm. If you didn't run it, deny: nothing happens.</p>${fields?.invalid ? '<div class="note note-warn" role="alert" id="machine-name-error">Give the machine a name, up to 64 characters.</div>' : ""}<form method="post" action="/login/device"><input type="hidden" name="code" value="${escapeAttribute(login.userCode)}"><label for="machine-name">Machine name</label><input id="machine-name" name="machineName" value="${escapeAttribute(machineName)}" aria-required="true" autocomplete="off"${fields?.invalid ? ' aria-invalid="true" aria-describedby="machine-name-error"' : ""}>${login.oldMachineName === null ? "" : `<p class="auth-hint">Replaces the key named <code>${escapeHtml(login.oldMachineName)}</code>, which stops working once your terminal finishes logging in</p>`}<div class="device-actions"><button class="auth-action" type="submit" name="action" value="confirm">Confirm</button><button class="auth-action" type="submit" name="action" value="deny">Deny</button></div></form><p class="device-foot">The code expires in ${minutes} ${minutes === 1 ? "minute" : "minutes"}. The key it makes works for 90 days, or 30 days unused, and can be revoked any time on <a href="/machines">Your machines</a>.</p>`

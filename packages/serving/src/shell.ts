@@ -55,47 +55,54 @@ export function renderPatchWrapper(options: PatchPage): string {
 </html>`;
 }
 
+/** Reader-facing copy: what Patchy did, why, and what to do next, in the reader's words. */
 const notices = {
   session_expired: {
+    kicker: "Session ended",
     title: "Sign in to continue",
     message:
-      "Your session ended. Sign in to reopen this patch. Unanswered operations have not been retried.",
+      "Your session ended while this patch was open, so Patchy stopped it. Sign in to pick up where you left off. Anything still in progress was not retried.",
     signIn: true
   },
   principal_changed: {
+    kicker: "Account changed",
     title: "Your account changed",
     message:
-      "This patch stopped because your signed-in account changed. Sign in to reopen it with your current account. Unanswered operations have not been retried.",
+      "The account signed in to Patchy changed while this patch was open, so Patchy stopped it. Sign in to reopen it as your current account. Anything still in progress was not retried.",
     signIn: true
   },
   access_denied: {
-    title: "Access unavailable",
+    kicker: "Access changed",
+    title: "You no longer have access",
     message:
-      "You no longer have access to a resource this patch uses. This is an access restriction, not a problem with the patch.",
+      "Patchy stopped this patch because it uses something you can no longer access. This is an access change, not a problem with the patch.",
     signIn: false
   },
   not_available_on_public: {
+    kicker: "Public link",
     title: "Company data is unavailable here",
     message:
-      "A public patch cannot use company tables, files or connections, even when you are signed in.",
+      "This is the public link to the patch. A public patch cannot use company tables, files or connections, even when you are signed in.",
     signIn: false
   },
   shell_outdated: {
+    kicker: "Patch stopped",
     title: "This patch could not start",
     message:
-      "The shell and this bundle still disagree after refreshing. Contact the patch's owner. No operations have been retried.",
+      "This version of the patch and Patchy no longer agree, even after a refresh. Ask the patch's owner to rebuild and publish it. Nothing was retried.",
     signIn: false
   },
   bootstrap_failed: {
+    kicker: "Patch stopped",
     title: "This patch could not start",
-    message:
-      "The patch did not establish its secure connection to Patchy. Reopen its address to try again.",
+    message: "The patch did not connect to Patchy in time. Open its address again to retry.",
     signIn: false
   },
   needs_rebuild: {
+    kicker: "Patch unavailable",
     title: "This patch needs a rebuild",
     message:
-      "This version uses a retired runtime wire. Its owner needs to refresh, rebuild and publish the patch before it can run again.",
+      "This version was built for a runtime Patchy has retired. Its owner needs to refresh, rebuild and publish the patch before it opens again.",
     signIn: false
   }
 } as const;
@@ -110,6 +117,7 @@ export function renderShellNotice(code: ShellNotice, returnTo: string): string {
   const notice = notices[code];
   return htmlPage({
     title: notice.title,
-    body: `<main class="auth-card" data-notice="${code}"><div class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</div><h1>${escapeHtml(notice.title)}</h1><p>${escapeHtml(notice.message)}</p>${notice.signIn ? `<a class="auth-action" href="/login?return=${escapeAttribute(encodeURIComponent(returnTo))}">Sign in</a>` : ""}</main>`
+    styles: ".auth-card p:last-child { margin-bottom: 0; }",
+    body: `<main class="auth-card" data-notice="${code}"><div class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</div><p class="auth-kicker">${escapeHtml(notice.kicker)}</p><h1>${escapeHtml(notice.title)}</h1><p>${escapeHtml(notice.message)}</p>${notice.signIn ? `<a class="auth-action" href="/login?return=${escapeAttribute(encodeURIComponent(returnTo))}">Sign in</a>` : ""}</main>`
   });
 }
