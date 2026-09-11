@@ -75,6 +75,10 @@ A saved login therefore overrides **Dev Machine**.
 `pnpm patchy` runs from source without a build and discovers `.local/dev/env`
 upward from the working directory. Leave `--api-url` out locally: that flag
 bypasses discovery and its seed.
+Repo commands still honor `patchy.json.instance`: discovery or an effective
+override naming another instance fails with `instance_mismatch` before HTTP.
+Correct the override while retaining the binding. For local experiments,
+initialize a separate repo against the worktree's instance.
 
 For a fresh publish as the person, follow DEVELOPMENT's
 [first-publish browser setup](../../../docs/DEVELOPMENT.md#the-local-instance-pnpm-dev),
@@ -125,14 +129,15 @@ along with foreign-company, unenrolled and deactivated readers. Use that section
 expected responses, including the public-cache delay, rather than treating a successful publish as proof.
 For publish recovery, keep the isolated `PATCHY_STATE_DIR` and original owning user:
 a pending attempt is resent first after authenticating that owner, even if the file
-or current release changed. Replacement tokens for that user work; account switches
-are refused without sending saved content. Authentication and admission failures
-preserve the attempt. Exclusive creation of `attempt.json` selects one attempt;
-concurrent publishes resend the existing one after checking its original owner,
-including when they lose the creation race. Success or a definitive payload refusal
-clears only the matching publish key, so a stale response leaves a newer attempt
-intact. A killed process leaves the persisted attempt recoverable.
-New attempts check the executing CLI against the public `GET /api/release`.
+or current release changed. Repo attempts live in `.patchy/publish/`, survive a
+repo move, and preserve `patchy.json.instance` when applying the returned patch id.
+The target guard runs before recovery: correct a mismatching override rather
+than rebinding the repo. Replacement tokens for the original user work; account
+switches are refused before sending saved content.
+Follow [ADR-0004](../../../docs/adr/ADR-0004-cli-contract-for-agents.md) for atomic
+selection and definitive-refusal clearing. Exercise concurrent callers and a
+killed caller: recovery resends the winner, while a stale response must leave a
+newer attempt intact. New attempts check the CLI against `GET /api/release`.
 Production-domain Clerk handshake verification remains a separate live check.
 
 For a login change, follow the logout check in

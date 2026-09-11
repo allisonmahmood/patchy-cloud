@@ -3,9 +3,11 @@
  * resolution, in this order: `--api-url`, the `.local/dev/env` a `pnpm dev`
  * wrote in this worktree (searched upward from the working directory),
  * `PATCHY_API_URL`, the URL saved in the state dir's `config.json`, the local
- * default. The URL is the host key every other piece of state is filed under,
- * so it is normalised once here: trimmed, no trailing slash, and otherwise
- * exact — scheme and port differences are distinct instances by design.
+ * default. Repo commands bind to patchy.json first: an effective flag, dev env
+ * or environment override must match it, and saved config cannot override it.
+ * The URL is the host key every other piece of state is filed under, normalised
+ * here: trimmed, no trailing slash, and otherwise exact — scheme and port
+ * differences are distinct instances by design.
  */
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
@@ -18,7 +20,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import { LocalError } from "./CliError.js";
+import { InstanceMismatch, LocalError } from "./CliError.js";
 import * as State from "./State.js";
 
 export const DEFAULT_API_URL = "http://localhost:3000";
@@ -122,23 +124,20 @@ const decodeProject = Schema.decodeUnknownSync(
 );
 
 export const make = Effect.fn("Instance.make")(function* (cwd: string, project = false) {
-  const resolved = (apiUrl: string, source: Source, token = Option.none<Redacted.Redacted>()) =>
-    Instance.of({ apiUrl: normalizeApiUrl(apiUrl), source, token });
-
-  const flag = yield* ApiUrlFlag;
-  if (Option.isSome(flag)) return resolved(flag.value, "flag");
-
-  const dev = yield* devEnv(cwd);
-  if (Option.isSome(dev)) return resolved(dev.value.apiUrl, "dev-env", dev.value.token);
-
-  const env = yield* optionalEnv("PATCHY_API_URL");
-  if (Option.isSome(env)) return resolved(env.value, "env");
-
+  let repoInstance: string | undefined;
   if (project) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const file = path.join(cwd, "patchy.json");
-    if (yield* fs.exists(file).pipe(Effect.orElseSucceed(() => false))) {
+    if (
+      yield* fs
+        .exists(file)
+        .pipe(
+          Effect.mapError(
+            (cause) => new LocalError({ message: "Could not inspect patchy.json.", cause })
+          )
+        )
+    ) {
       const text = yield* fs
         .readFileString(file)
         .pipe(
@@ -151,15 +150,34 @@ export const make = Effect.fn("Instance.make")(function* (cwd: string, project =
         catch: (cause) =>
           new LocalError({ message: "patchy.json must contain an instance URL.", cause })
       });
-      return resolved(config.instance, "project");
+      repoInstance = config.instance;
     }
   }
 
+  const resolved = (apiUrl: string, source: Source, token = Option.none<Redacted.Redacted>()) => {
+    const normalized = normalizeApiUrl(apiUrl);
+    if (repoInstance !== undefined && normalizeApiUrl(repoInstance) !== normalized) {
+      return Effect.fail(InstanceMismatch.new({ stored: repoInstance, requested: apiUrl }));
+    }
+    return Effect.succeed(Instance.of({ apiUrl: normalized, source, token }));
+  };
+
+  const flag = yield* ApiUrlFlag;
+  if (Option.isSome(flag)) return yield* resolved(flag.value, "flag");
+
+  const dev = yield* devEnv(cwd);
+  if (Option.isSome(dev)) return yield* resolved(dev.value.apiUrl, "dev-env", dev.value.token);
+
+  const env = yield* optionalEnv("PATCHY_API_URL");
+  if (Option.isSome(env)) return yield* resolved(env.value, "env");
+
+  if (repoInstance !== undefined) return yield* resolved(repoInstance, "project");
+
   const state = yield* State.State;
   const saved = yield* state.readConfigUrl;
-  if (Option.isSome(saved)) return resolved(saved.value, "config");
+  if (Option.isSome(saved)) return yield* resolved(saved.value, "config");
 
-  return resolved(DEFAULT_API_URL, "default");
+  return yield* resolved(DEFAULT_API_URL, "default");
 });
 
 export const layer = (cwd: string, project = false) => Layer.effect(Instance, make(cwd, project));

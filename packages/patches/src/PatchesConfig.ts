@@ -2,6 +2,7 @@
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import { CURRENT_RELEASE } from "@patchy/api";
+import { DEFAULT_MAX_HTML_BYTES } from "@patchy/core";
 
 /** The build binds production to its package version; tests can model an upgraded instance. */
 export const release = Context.Reference<string>("@patchy/patches/Release", {
@@ -13,7 +14,7 @@ export const publicBaseUrl = Config.string("PATCHY_PUBLIC_BASE_URL");
 
 /** The largest tier 0 HTML document a publish may carry, in bytes. */
 export const maxHtmlBytes = Config.int("PATCHY_MAX_HTML_BYTES").pipe(
-  Config.withDefault(512 * 1024)
+  Config.withDefault(DEFAULT_MAX_HTML_BYTES)
 );
 
 /** Scripted bundles have their own cap; tier 0 retains its safe-HTML limit. */

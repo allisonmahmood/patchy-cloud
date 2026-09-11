@@ -371,8 +371,11 @@ patchy validate ./plan.html
 First recover any pending publish for this instance. Otherwise check the executing CLI release against `GET /api/release`, validate the file, and publish it with a tier 0 manifest and empty `tables`, `files` and `uses`. File mode never reads `patchy.json`. On success it prints the address, patch ID, tier, version number, provisioned and unused resources, and sharing scope. The JSON response includes `name`, `address`, `scope: "company" | "public"`, `tier`, `schemaRevision`, `provisioned`, `unused` and `warnings`. `publicUrl` equals `address`; the scope, not that field name, controls who may read it.
 
 Without a file, run from the patch repo root. The config supplies its name and
-tier; `patchy.json` supplies its instance and optional patch id. `--share` works
-in either mode; `--name`, `--patch` and `--new` are file-only.
+tier; `patchy.json` supplies its authoritative instance and optional patch id.
+A different effective `--api-url`, dev env or `PATCHY_API_URL` fails locally with
+`instance_mismatch`, naming both URLs before any HTTP request. Correct the
+override rather than removing the patch id or rebinding the repo.
+`--share` works in either mode; `--name`, `--patch` and `--new` are file-only.
 
 Repo publish first recovers `.patchy/publish/<instance-hash>/attempt/<key-hash>.json`.
 Otherwise it checks the exact pin, executing CLI and installed runtime against
@@ -380,17 +383,24 @@ the instance release; executes config; checks the generated release, manifest ve
 and declaration stamps in `patchy/_generated/index.json`; runs `tsc --noEmit`; builds
 with Vite; and checks the evident tier. Stale generation fails locally with
 `stale_generated` and “declarations changed; run `patchy refresh`”, before the build. Leftover
-files or external bundle dependencies fail loudly. Above 10 MiB the failure
-reports the largest contributors. `server/` requires unsupported tier 2; scripts
-require at least tier 1. A failed repo build never falls back to a static file.
+files or external resource dependencies fail loudly. Bundle inspection checks
+resource completeness: embed resources, inline scripts and styles, and remove
+CSS `@import`. It does not duplicate core's tier 0 safe-HTML policy or restrict
+hyperlinks: fragment, relative and external anchors have the same acceptance in
+both tiers, while the runtime sandbox still governs navigation.
+The local HTML cap is 512 KiB at tier 0 and 10 MiB at tier 1; either excess is
+`too_large`, with a largest-contributor report to guide reduction. `server/`
+requires unsupported tier 2; scripts require at least tier 1. A failed repo
+build never falls back to a static file.
 
 The complete request and owner are persisted in an atomically selected attempt
-directory before sending. Creates and updates apply the resolved instance and
-returned patch id to `patchy.json` before clearing; a conflicting existing identity
-retains the attempt. A moved repo recovers at its current root, even if its tree
-or release changed. Preserve `.patchy/publish/` until recovery succeeds; replacement
-credentials must belong to the original user. A decoded 413 clears the refused
-payload so a corrected request can be built.
+directory before sending. Creates and updates apply only the returned patch id
+to `patchy.json`, preserving the stored instance and its spelling. A conflicting
+existing patch id or a late instance edit refuses local application and retains
+the attempt. A moved repo recovers at its current root, even if its tree or
+release changed. Preserve `.patchy/publish/` until recovery succeeds; replacement
+credentials must belong to the original user. Restore an unintended target edit
+before retrying recovery; a result never rebinds the repo.
 Each successful invocation publishes or recovers exactly one version.
 
 ```sh
@@ -420,11 +430,20 @@ Every patch has an address at `/<company>/<name>` and numbered versions at `/<co
 
 Before sending, the CLI authenticates the publishing key and saves the whole request, a fresh `publishKey`, the owning user ID, the original file path and cache application context in its instance-scoped state directory. The next `publish` authenticates again and recovers that attempt **before** checking today's file, cache, flags or release. A replacement token for the same owner can recover it; a different user is refused locally without sending the saved content or deleting the attempt. A successful replay updates the original file's cache and exits without another version, even if you passed a different file or `--new`.
 
-Authentication failures, throttling, quota refusals, lost replies, server failures and failed cache writes keep the attempt recoverable. Only a definitive payload refusal clears it so you can correct the input and start a fresh attempt. Keep the state directory and sign in as the original owner when recovering; never discard an attempt merely because its result is unknown.
+Authentication failures, throttling, quota refusals, lost replies, server failures and failed cache writes keep the attempt recoverable. Only a definitive payload refusal clears it so you can correct the input and start a fresh attempt. The complete [definitive-refusal clearing list in ADR-0004](../../docs/adr/ADR-0004-cli-contract-for-agents.md#definitive-publish-refusals) covers decoded 413s, selected 422s (or 422s carrying validation `errors`), selected 409s and matching unavailable-update 404s. Other refusals retain it. Keep the state directory and sign in as the original owner when recovering; never discard an attempt merely because its result is unknown.
 
 Concurrent invocations through the same instance and state directory resend the same persisted attempt rather than replacing it or refusing contention. Each authenticates the attempt's original owner before sending, including an invocation that loses the race to create it. Killing a process leaves the attempt available for recovery. A response clears only its matching publish key, so a stale response cannot remove a newer attempt.
 
 The executing CLI must match the instance's release exactly. A local mismatch exits 1 with `kind: "local"` and `code: "release_mismatch"`; an instance-detected mismatch exits 2 with `kind: "rejected"` and the same code. The diagnostic names both releases. Install the exact package reported by `GET /api/release`; inside a patch repo, `patchy refresh` upgrades the pin and managed set. Repo publishing admits tier 0 and tier 1 with tables, stores, shared-table declarations and resolved Postgres connections. The local `patchy dev` runtime remains separate work (SDK #207).
+
+File publishing onto a patch with cumulative table or store inventory is still
+`has_primitives` (422, exit 2, `rejected`), even if its current version omits
+those definitions. Publish that patch from its repo, now supported by this CLI.
+For `patch_not_openable`, correct the shared-table declaration or restore source
+access. For `connection_not_connected`, an admin reconnects at
+`/company/connections`; `stale_generated` requires `pnpm patchy refresh`.
+Connection secrets belong only in the admin's browser connect/rotate form,
+never CLI arguments or an agent transcript.
 
 Without `--share`, a new patch defaults to `company` and an update preserves the patch's current scope. An explicit `--share company` or `--share public` sets it in either direction while publishing the new version:
 
@@ -502,8 +521,8 @@ warning after the local logout succeeds, never exit 3.
 
 Every command takes these, before or after the subcommand:
 
-- `--api-url <url>` — the instance to talk to, overriding every other source; see [precedence](#environment-variables).
-- `--json` — one result document on stdout. Login's three shapes and logout's shape are documented above; `auth set` prints `{ "ok": true, "instanceUrl" }`, `validate` prints `{ "ok": true, "warnings" }`, and `whoami`, `publish`, `share` and `delete` print the instance's response exactly as [`docs/API.md`](../../docs/API.md) describes it. Publish and share include `scope`. A failure is `{ "ok": false, "error", "kind", "code"? }` on stderr, stdout empty, with the exit code for `kind`. `code` is present when the instance supplies a refusal code, and for a local release mismatch. Stderr is otherwise empty; warnings belong in success documents. `status` prints JSON either way.
+- `--api-url <url>` — the highest-precedence instance override; for repo commands it must match the authoritative stored instance. See [precedence](#environment-variables).
+- `--json` — one result document on stdout. Login's three shapes and logout's shape are documented above; `auth set` prints `{ "ok": true, "instanceUrl" }`, `validate` prints `{ "ok": true, "warnings" }`, and `whoami`, `publish`, `share` and `delete` print the instance's response exactly as [`docs/API.md`](../../docs/API.md) describes it. Publish and share include `scope`. A failure is `{ "ok": false, "error", "kind", "code"? }` on stderr, stdout empty, with the exit code for `kind`. `code` preserves wire refusals and also identifies local repo checks: `instance_mismatch`, `release_mismatch`, `stale_generated`, `invalid_manifest`, `too_large` and `tier_mismatch`. Their meanings and remedies are in the [local-code contract](../../docs/adr/ADR-0004-cli-contract-for-agents.md#local-repo-refusal-codes). Local checks are exit 1, `local`; the same code on a wire refusal is exit 2, `rejected`. Other local failures may have no code. Stderr is otherwise empty; warnings belong in success documents. `status` prints JSON either way.
 
 Argument parse failures can print usage on stdout before the error, as
 ADR-0004 records. Check the exit code before parsing stdout as a success document.
@@ -524,18 +543,27 @@ ADR-0004 records. Check the exit code before parsing stdout as a success documen
 
 ## Environment variables
 
-- `PATCHY_API_URL` — API base URL. Overrides the stored config; overridden by `--api-url` and by a dev env. Default: `http://localhost:3000`.
+- `PATCHY_API_URL` — API base URL. Overrides saved CLI config; overridden by `--api-url` and by a dev env. An effective override must match a repo's stored instance. Default outside repo mode: `http://localhost:3000`.
 - `PATCHY_API_TOKEN` — machine token for authenticated commands such as `whoami`, `publish`, `share` and `delete`. It overrides every other token; `auth set` does not read it, and `logout` does not remove or revoke it. No configured key means a local error naming `patchy login`.
 - `PATCHY_STATE_DIR` — directory for the CLI's config, credentials, pending logins, patch cache and default style. Default: `~/.patchy`.
 
 Setting any of these to the empty string means the same thing as leaving it unset.
 
-The instance is resolved once per command, in this order: `--api-url`, then the `.local/dev/env` that `pnpm dev` writes in a worktree (searched upward from the working directory, with the token it seeded), then `PATCHY_API_URL`, then the saved `config.json`, then the default. A checkout with a running dev instance therefore publishes to it without any environment set, and can never publish to a remote instance by accident.
+For `init` and file-oriented commands, the instance is resolved once per command,
+in this order: `--api-url`, then the `.local/dev/env` that `pnpm dev` writes in a
+worktree (searched upward from the working directory, with the token it seeded),
+then `PATCHY_API_URL`, then saved `config.json`, then the default.
 
-Repo commands (`refresh`, `catalog`, `add`, `remove` and private generation) also
-read `patchy.json`: its instance comes after `PATCHY_API_URL` and before saved
-config, with source `project`. `init` and file-oriented commands keep the order
-above.
+Repo commands (`refresh`, `catalog`, `add`, `remove`, no-file `publish`,
+untargeted `share`/`delete` and private generation) treat the instance in
+`patchy.json` as authoritative. The effective override follows `--api-url` >
+dev env > `PATCHY_API_URL`; if present it must match the stored URL after
+normalization, otherwise `instance_mismatch` refuses before any HTTP request.
+Only the effective override is compared: ignored lower-precedence settings
+cannot cause a mismatch. With no override, the repo instance has source
+`project` and wins over saved config and the default. A matching override keeps
+its usual URL source and credential behavior; publishing never rewrites the
+stored instance. `init` and file mode do not read this repo binding.
 
 The dev seed is available only when the URL source is `dev-env`. An explicit
 `--api-url` selects `flag` even for the same URL: use a stored credential or

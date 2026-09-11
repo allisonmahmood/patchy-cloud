@@ -54,11 +54,26 @@ its code; no command exits on its own.
   Login's three success shapes and logout's shape are below. Warnings ride in the
   success document, never on stderr. Publish reports `name`, `address` and `scope`;
   `publicUrl` equals the address and remains on publish and share, not a promise of anonymous access.
-- Failure: stderr is `{ "ok": false, "error": "<the one-line message>", "kind": "local" | "rejected" | "unreachable", "code"?: "<wire refusal code>" }`,
+- Failure: stderr is `{ "ok": false, "error": "<the one-line message>", "kind": "local" | "rejected" | "unreachable", "code"?: "<structured refusal code>" }`,
   stdout is empty, the exit code follows `kind`. Preserve the instance's `code`
-  when present. A release mismatch detected before publishing is `local` with
-  `code: "release_mismatch"`; the instance's release refusal is `rejected`.
+  when present. Local checks also emit the codes below; the same code received
+  from the instance is `rejected` (exit 2), not `local` (exit 1).
 - Stderr under `--json` carries failures only.
+
+### Local repo refusal codes
+
+Branch on the exit code and `kind` first, then on `code` when present. These
+local repo checks use exit 1 and `kind: "local"`; not every local failure has a
+structured code (for example, compiler, bundle-completeness and local I/O errors).
+
+| `code`              | Meaning and remedy                                                                                                                                                                                                                                                                                                                                   |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `instance_mismatch` | The effective target differs from the repo's stored instance, or the stored instance changed before result application. The diagnostic names both URLs. Remove or correct the effective override to match the repo; restore an unintended late target edit before recovery. Never remove the patch id or rebind the instance to bypass this refusal. |
+| `release_mismatch`  | The repo pin, executing CLI or installed runtime differs from the instance release. Run `pnpm patchy refresh` in the repo; file mode installs the exact package from `GET /api/release`.                                                                                                                                                             |
+| `stale_generated`   | Generated release metadata or declaration stamps no longer match the config. Run `pnpm patchy refresh`.                                                                                                                                                                                                                                              |
+| `invalid_manifest`  | Config execution or manifest decoding failed. Fix `patchy.config.ts` and its imports/declarations before publishing.                                                                                                                                                                                                                                 |
+| `too_large`         | The HTML bundle exceeds its tier's local cap: 512 KiB at tier 0, 10 MiB at tier 1. Reduce the resources named in the largest-contributor report; size alone is not a tier mismatch.                                                                                                                                                                  |
+| `tier_mismatch`     | The evident capabilities do not fit the declared or supported tier. Remove unsupported server code/tier 2+, or use tier 1 for browser code; at tier 0 correct the reported core static-HTML policy violations.                                                                                                                                       |
 
 ### Login, logout and identity
 
@@ -216,20 +231,29 @@ the release before executing config. The generated index's release and manifest
 version must be current; declaration aliases, identities and resolved stamps must
 match `patchy/_generated/index.json`. Local `stale_generated` is exit 1:
 “declarations changed; run `patchy refresh`”. Then `tsc --noEmit`, Vite's single-file
-build and the evident tier check run. Residual files/dependencies, a bundle over
-10 MiB (with largest contributors), `server/`, or script under a tier 0 claim
-fail locally before persistence or publishing. Compiler/build failures name the
-stage and a local diagnostic command; raw tool output stays out of the failure
-envelope and successful JSON stdout.
+build and the evident tier check run. Residual files/dependencies, an oversized
+bundle (512 KiB at tier 0, 10 MiB at tier 1, both `too_large` with largest
+contributors), `server/`, or script under a tier 0 claim fail locally before
+persistence or publishing. Compiler/build failures name the stage and a local
+diagnostic command; raw tool output stays out of the failure envelope and
+successful JSON stdout.
+
+Bundle inspection is a resource-completeness gate, not a second safe-HTML
+security policy. Resource dependencies must be embedded, scripts and styles
+inline, and CSS `@import` is unsupported. Hyperlinks (fragment, relative and
+external) have identical acceptance at tiers 0 and 1: they are navigation, not
+missing bundle resources. The runtime sandbox still governs navigation.
+Core's shared safe-HTML policy owns tier 0 safety.
 
 Repo attempts live at `.patchy/publish/<instance-hash>/attempt/<key-hash>.json`,
 using the same atomic selection and key-addressed clearing as file mode.
 They store repo mode, not an absolute repo path: recovery applies and clears
 against the root holding the attempt, including after moving it. Both creates
-and updates record the resolved instance and returned patch id in `patchy.json`
-before clearing. An existing conflicting instance/patch pair is a local refusal
-that retains the attempt. Failed local application remains recoverable; retry
-returns that result without building or creating another version.
+and updates record only the returned patch id in `patchy.json` before clearing,
+preserving the stored instance spelling. An existing conflicting patch id or
+an instance changed before result application is a local refusal that retains
+the attempt; publishing never rebinds the repo. Failed local application remains
+recoverable; retry returns that result without building or creating another version.
 
 File publishing never reads `patchy.json`. The executing CLI must match
 `GET /api/release` exactly; a mismatch names both releases and `patchy refresh`.
@@ -238,10 +262,10 @@ each must be exact-current, not a compatible version range. Local dev starts
 remain separate work; refresh upgrades the pin and generated set.
 File publishing onto a patch with cumulative table or store inventory is
 `has_primitives` (422, exit 2, `rejected`), even if its current version omits
-those definitions. Publish that patch from its repo. `has_primitives`,
-`not_additive`, `patch_not_openable`, `connection_not_connected` and
-`stale_generated` clear the matching refused attempt (422, exit 2);
-they retain their wire codes in the CLI's JSON failure document. A
+those definitions. Publish that patch from its repo. The
+[definitive-refusal list](#definitive-publish-refusals) below specifies which
+wire responses clear the matching attempt; they retain any wire code in the
+CLI's JSON failure document. A
 `patch_not_openable` refusal means a declared shared source is unavailable;
 correct the declaration or restore source access before starting a fresh attempt.
 A Postgres connection must still be connected with the generated snapshot revision.
@@ -271,10 +295,29 @@ the attempt intact. Recovery precedes reading the file, validating new options o
 checking the release. Success updates the cache, clears only the matching publish key
 and prints the recovered result; no additional version is published.
 
-A decoded publish-route 413 and other definitive payload refusals clear only the
-matching publish key. Authentication, throttling and quota refusals do not establish
-its outcome; they preserve the attempt, as do unknown outcomes and failed local
-writes. Clearing unlinks only the key-addressed payload, then removes the slot only
+### Definitive publish refusals
+
+After decoding a publish-route refusal, these responses clear only its matching
+publish key (exit 2, `kind: "rejected"`), so the next publish builds a fresh attempt:
+
+- **413**, regardless of code: reduce the payload.
+- **422** with `release_mismatch`, `invalid_manifest`, `tier_mismatch`,
+  `has_primitives`, `patch_not_openable`, `connection_not_connected`,
+  `stale_generated` or `not_additive`, or any 422 carrying `errors`: repair the
+  reported release, manifest, tier, inventory, declaration or HTML validation
+  problem. File updates with inventory need repo publishing; non-additive
+  changes must preserve the cumulative inventory.
+- **409** with `publish_key_conflict` or `name_taken`: use a fresh attempt for
+  the corrected payload, or choose another name.
+- **404** on an update (the saved request has `patchId`) whose `error` is
+  exactly `"Patch not found."`: the target is unavailable. Repo mode requires
+  intentionally removing `patch` from `patchy.json` before a new create;
+  cached-file mode uses `--new`, and `--patch` remains update-only.
+
+Other responses, including authentication, throttling and quota refusals, do
+not establish the attempt's outcome and preserve it, as do unknown outcomes,
+undecodable responses and failed local writes. Local refusals do not discard
+an existing attempt. Clearing unlinks only the key-addressed payload, then removes the slot only
 if empty. Even if another sender installs K2 while a K1 response is clearing,
 K1 cannot unlink K2's file and an empty-directory removal cannot remove K2's
 nonempty slot. No separate lock or stale-lock recovery is needed. Killing a process
@@ -293,18 +336,27 @@ entries cannot be recalled.
 
 ### `--api-url`: a global flag feeding one `Instance` service
 
-Resolution order: `--api-url` > `.local/dev/env` (searched upward from the
-working directory) > `PATCHY_API_URL` > `~/.patchy/config.json` > the local
-default. For repo commands (`refresh`, `catalog`, `add`, `remove`, no-file
-`publish`, untargeted `share`/`delete` and private generation), `patchy.json`'s
-instance comes after `PATCHY_API_URL` and before saved config. `init` and
-file-oriented commands keep the order above. One service
-resolves the URL once per command and exposes its source (`flag` | `dev-env` |
-`env` | `project` | `config` | `default`); `status --json` reports its resolved
-URL and source, and `publish` prints "Publishing to <url> (target came from …)"
-in text mode. A worktree with a running `pnpm dev` instance is the one place
-an agent should never have to say where to publish, which is why the dev env
-outranks the environment variable.
+For `init` and file-oriented commands, resolution order is unchanged:
+`--api-url` > `.local/dev/env` (searched upward from the working directory) >
+`PATCHY_API_URL` > `~/.patchy/config.json` > the local default.
+
+For repo commands (`refresh`, `catalog`, `add`, `remove`, no-file `publish`,
+untargeted `share`/`delete` and private generation), the instance stored in
+`patchy.json` is authoritative. First select the effective override from
+`--api-url` > `.local/dev/env` > `PATCHY_API_URL`. If present, it must match the
+stored URL after normalization; a mismatch is `instance_mismatch` before any
+HTTP request, naming both targets. An ignored lower-precedence setting does
+not cause a mismatch. With no override, the repo instance wins over saved config
+and the default. A matching override retains its source and credential behavior:
+in particular, a matching flag still cannot borrow the dev-env seed.
+
+One service resolves the URL once per command and exposes its source (`flag` |
+`dev-env` | `env` | `project` | `config` | `default`); `status --json` reports its
+resolved URL and source, and `publish` prints "Publishing to <url> (target came
+from …)" in text mode. A worktree's dev env ordinarily selects its own instance
+ahead of environment or saved config, but cannot silently move a repo bound
+elsewhere. Correct the effective override rather than deleting the repo's patch
+id or changing its instance to get past the refusal.
 
 ### Signals
 

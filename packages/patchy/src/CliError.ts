@@ -54,11 +54,41 @@ export class ReleaseMismatch extends Schema.TaggedError<ReleaseMismatch>()("Rele
   }
 }
 
+/** Display the target without credentials, query parameters or fragments. */
+const instanceLabel = (value: string): string => {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return "<invalid instance URL>";
+    return `${url.protocol}//${url.host}${url.pathname.replace(/\/+$/, "")}`;
+  } catch {
+    return "<invalid instance URL>";
+  }
+};
+
+/** A repo's stored instance cannot be overridden or replaced by a publish result. */
+export class InstanceMismatch extends Schema.TaggedError<InstanceMismatch>()("InstanceMismatch", {
+  stored: Schema.String,
+  requested: Schema.String
+}) {
+  readonly kind = "local";
+  readonly code = "instance_mismatch";
+  static new(props: { readonly stored: string; readonly requested: string }) {
+    return new InstanceMismatch({
+      stored: instanceLabel(props.stored),
+      requested: instanceLabel(props.requested)
+    });
+  }
+  override get message() {
+    return `patchy.json is bound to ${this.stored}, but this command targets ${this.requested}. Use the same instance; publishing does not change the repo's instance.`;
+  }
+}
+
 export const CliError = Schema.Union([
   LocalError,
   RejectedError,
   UnreachableError,
-  ReleaseMismatch
+  ReleaseMismatch,
+  InstanceMismatch
 ]);
 export type CliError = typeof CliError.Type;
 export const isCliError = Schema.is(CliError);

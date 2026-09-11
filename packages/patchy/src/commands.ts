@@ -59,11 +59,13 @@ const run = <A, R>(handler: Effect.Effect<A, CliError, R>) =>
 
 /** Only repo commands read patchy.json; file-mode publish keeps its independent target. */
 const runProject = <A, R>(handler: Effect.Effect<A, CliError, R>) =>
-  Output.contract(handler).pipe(
-    Effect.provide(
-      Layer.provideMerge(
-        Layer.unwrap(Effect.map(Cwd, (cwd) => Instance.layer(cwd, true))),
-        State.layer
+  Output.contract(
+    handler.pipe(
+      Effect.provide(
+        Layer.provideMerge(
+          Layer.unwrap(Effect.map(Cwd, (cwd) => Instance.layer(cwd, true))),
+          State.layer
+        )
       )
     )
   );

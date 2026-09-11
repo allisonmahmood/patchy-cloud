@@ -2434,8 +2434,135 @@ describe("patchy delete target selection", () => {
 });
 
 describe("repo publish recovery", () => {
+  it.each(["flag", "dev-env", "env"])(
+    "refuses a foreign %s target before refreshing or publishing a bound repo",
+    async (source) => {
+      const stored = await stubInstance(projectHandler);
+      const foreign = await stubInstance(projectHandler);
+      const dir = projectTree(stored.url);
+      const file = path.join(dir, "patchy.json");
+      const original = JSON.stringify({
+        instance: stored.url,
+        patch: "abcdefghijkl",
+        authorField: 7
+      });
+      writeFileSync(file, original);
+      const pin = readFileSync(path.join(dir, "package.json"));
+      const options = {
+        cwd: dir,
+        stateDir: tempDir(),
+        env: { PATCHY_API_URL: foreign.url, PATCHY_API_TOKEN: "pp_owner" }
+      };
+      if (source === "dev-env") {
+        mkdirSync(path.join(dir, ".local/dev"), { recursive: true });
+        writeFileSync(
+          path.join(dir, ".local/dev/env"),
+          `PATCHY_API_URL=${foreign.url}\nPATCHY_API_TOKEN=dev-token\n`
+        );
+        options.env.PATCHY_API_URL = stored.url;
+      }
+      for (const command of ["refresh", "publish"]) {
+        const result = await runCli(
+          [command, "--json", ...(source === "flag" ? ["--api-url", foreign.url] : [])],
+          options
+        );
+        expect(result).toMatchObject({ status: 1, stdout: "" });
+        expect(JSON.parse(result.stderr)).toMatchObject({
+          ok: false,
+          kind: "local",
+          code: "instance_mismatch",
+          error: expect.stringContaining(stored.url)
+        });
+        expect(JSON.parse(result.stderr).error).toContain(foreign.url);
+        expect(readFileSync(file, "utf8")).toBe(original);
+        expect(readFileSync(path.join(dir, "package.json"))).toEqual(pin);
+      }
+      expect(stored.requests).toEqual([]);
+      expect(foreign.requests).toEqual([]);
+      expect(existsSync(path.join(dir, ".patchy/publish"))).toBe(false);
+    }
+  );
+
+  it.each([0, 1])(
+    "tier %s accepts shared navigation fixtures but refuses unbundled resources",
+    async (tier) => {
+      const instance = await stubInstance((request, respond, disconnect) => {
+        if (request.url === "/api/publish")
+          return respond(201, { ...publish(201, "abcdefghijkl", 1), tier });
+        projectHandler(request, respond, disconnect);
+      });
+      const dir = publishTree(instance.url);
+      const config = path.join(dir, "patchy.config.ts");
+      writeFileSync(config, readFileSync(config, "utf8").replace("tier: 1", `tier: ${tier}`));
+      const options = {
+        cwd: dir,
+        stateDir: tempDir(),
+        env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" }
+      };
+      expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
+      const fixtures = path.join(packageDir, "../core/fixtures/accept");
+      const entry = path.join(dir, "index.html");
+      writeFileSync(entry, readFileSync(path.join(fixtures, "portfolio.html")));
+      const accepted = await runCli(["publish", "--json"], options);
+      expect(accepted, accepted.stderr).toMatchObject({ status: 0, stderr: "" });
+      const sent = instance.requests.filter((request) => request.url === "/api/publish");
+      expect(sent).toHaveLength(1);
+      expect(sent[0]!.body).toMatchObject({ manifest: { tier } });
+      for (const href of ["https://example.com/case-study", "/reports", "reports/weekly", "#work"])
+        expect(JSON.stringify(sent[0]!.body)).toContain(href);
+
+      writeFileSync(entry, readFileSync(path.join(fixtures, "remote-image.html")));
+      const refused = await runCli(["publish", "--json"], options);
+      expect(refused).toMatchObject({ status: 1, stdout: "" });
+      expect(JSON.parse(refused.stderr)).toMatchObject({ ok: false, kind: "local" });
+      expect(instance.requests.filter((request) => request.url === "/api/publish")).toHaveLength(1);
+    },
+    30_000
+  );
+
+  it.each([
+    [0, 512 * 1024],
+    [1, 10 * 1024 * 1024]
+  ])(
+    "tier %s size refusals report too_large and the offending resource",
+    async (tier, cap) => {
+      const instance = await stubInstance((request, respond, disconnect) => {
+        if (request.url === "/api/publish")
+          return respond(201, { ...publish(201, "abcdefghijkl", 1), tier });
+        projectHandler(request, respond, disconnect);
+      });
+      const dir = publishTree(instance.url);
+      const config = path.join(dir, "patchy.config.ts");
+      writeFileSync(config, readFileSync(config, "utf8").replace("tier: 1", `tier: ${tier}`));
+      const options = {
+        cwd: dir,
+        stateDir: tempDir(),
+        env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" }
+      };
+      expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
+      const entry = path.join(dir, "index.html");
+      const oversizedImage = `data:image/png;base64,${"A".repeat(cap)}`;
+      writeFileSync(entry, validHtml.replace("</body>", `<img src="${oversizedImage}"></body>`));
+      const refused = await runCli(["publish", "--json"], options);
+      expect(refused).toMatchObject({ status: 1, stdout: "" });
+      const error = JSON.parse(refused.stderr);
+      expect(error).toMatchObject({ ok: false, kind: "local", code: "too_large" });
+      expect(error.error).toContain(`${cap} bytes`);
+      expect(error.error).toContain(`<img> src: ${Buffer.byteLength(oversizedImage)} bytes`);
+      expect(instance.requests.some((request) => request.url === "/api/publish")).toBe(false);
+      expect(existsSync(path.join(dir, ".patchy/publish"))).toBe(false);
+
+      writeFileSync(entry, validHtml);
+      const reduced = await runCli(["publish", "--json"], options);
+      expect(reduced, reduced.stderr).toMatchObject({ status: 0, stderr: "" });
+    },
+    30_000
+  );
+
   it.each([
     '<img src="blob:https://example.test/temporary">',
+    '<object data="blob:https://example.test/temporary"></object>',
+    `<iframe srcdoc="&lt;img src='blob:https://example.test/temporary'&gt;"></iframe>`,
     '<style>body { background-image: url("blob:https://example.test/temporary"); }</style>'
   ])("refuses document-local blob assets in built HTML: %s", async (asset) => {
     const instance = await stubInstance((request, respond, disconnect) => {
@@ -2749,7 +2876,7 @@ describe("repo publish recovery", () => {
   );
 
   it("recovers a moved create across owner refusal, failed identity write and release change", async () => {
-    let phase: "lost" | "other-owner" | "blocked-write" | "recover" = "lost";
+    let phase: "lost" | "other-owner" | "blocked-write" | "changed-binding" | "recover" = "lost";
     let currentRelease = CURRENT_RELEASE;
     const response = {
       ...publish(201, "abcdefghijkl", 1),
@@ -2774,6 +2901,11 @@ describe("repo publish recovery", () => {
             rmSync(path.join(dir, "patchy.json"));
             mkdirSync(path.join(dir, "patchy.json"));
           }
+          if (phase === "changed-binding")
+            writeFileSync(
+              path.join(dir, "patchy.json"),
+              JSON.stringify({ instance: "http://127.0.0.1:1", authorField: 7 })
+            );
           return respond(201, response);
         }
         respond(404, { ok: false, error: "Unexpected route" });
@@ -2817,16 +2949,45 @@ describe("repo publish recovery", () => {
     attemptPath = path.join(moved, ".patchy/publish", sha256(instance.url), "attempt");
     expect(existsSync(oldRoot)).toBe(false);
     phase = "recover";
+    const beforeMismatch = instance.requests.length;
+    const mismatched = await runCli(["publish", "--json"], options);
+    expect(mismatched).toMatchObject({ status: 1, stdout: "" });
+    expect(JSON.parse(mismatched.stderr)).toMatchObject({ code: "instance_mismatch" });
+    expect(instance.requests).toHaveLength(beforeMismatch);
+    expect(readFileSync(pendingFile(attemptPath), "utf8")).toBe(original);
+    expect(readJson(path.join(dir, "patchy.json"))).toEqual({
+      instance: "http://127.0.0.1:1",
+      authorField: 7
+    });
+    writeFileSync(
+      path.join(dir, "patchy.json"),
+      JSON.stringify({ instance: `${instance.url}/`, authorField: 7 })
+    );
+    phase = "changed-binding";
+    const changedDuringRequest = await runCli(["publish", "--json"], options);
+    expect(changedDuringRequest).toMatchObject({ status: 1, stdout: "" });
+    expect(JSON.parse(changedDuringRequest.stderr)).toMatchObject({ code: "instance_mismatch" });
+    expect(readFileSync(pendingFile(attemptPath), "utf8")).toBe(original);
+    expect(readJson(path.join(dir, "patchy.json"))).toEqual({
+      instance: "http://127.0.0.1:1",
+      authorField: 7
+    });
+    writeFileSync(
+      path.join(dir, "patchy.json"),
+      JSON.stringify({ instance: `${instance.url}/`, authorField: 7 })
+    );
+    phase = "recover";
     const recovered = await runCli(["publish", "--json"], options);
     expect(recovered).toMatchObject({ status: 0, stderr: "" });
     expect(JSON.parse(recovered.stdout)).toEqual(response);
     expect(readJson(path.join(dir, "patchy.json"))).toEqual({
-      instance: instance.url,
+      instance: `${instance.url}/`,
       authorField: 7,
       patch: response.patchId
     });
     expect(existsSync(attemptPath)).toBe(false);
     expect(instance.requests.filter((r) => r.url === "/api/publish").map((r) => r.body)).toEqual([
+      request,
       request,
       request,
       request

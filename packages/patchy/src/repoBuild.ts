@@ -1,5 +1,5 @@
 import { Manifest } from "@patchy/api";
-import { validateHtml } from "@patchy/core";
+import { DEFAULT_MAX_HTML_BYTES, validateHtml } from "@patchy/core";
 import * as CssTree from "css-tree";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -31,7 +31,7 @@ const maxBundleBytes = 10 * 1024 * 1024;
 
 const embedded = (value: string) => /^(?:data:|#)/i.test(value.trim());
 
-/** Inspect parsed HTML, including inert templates: they can become live after a client render. */
+/** Inventory built resources, including templates; core owns static HTML safety, not this check. */
 const inspectBundle = (html: string, tier: number) => {
   const dependencies = new Set<string>();
   const contributors: Array<{ name: string; bytes: number }> = [];
@@ -92,41 +92,29 @@ const inspectBundle = (html: string, tier: number) => {
   const walk = (node: parse5.DefaultTreeAdapterMap["node"]) => {
     if ("tagName" in node) {
       const tag = node.tagName;
-      if (["base", "iframe", "object", "embed", "applet"].includes(tag))
-        dependencies.add(`<${tag}> is unsupported`);
-      if (
-        tag === "meta" &&
-        node.attrs.some(
-          (attr) => attr.name === "http-equiv" && attr.value.trim().toLowerCase() === "refresh"
-        )
-      )
-        dependencies.add("<meta> refresh is unsupported");
       for (const attr of node.attrs) {
         const name = attr.name;
         const location = `<${tag}> ${attr.prefix ? `${attr.prefix}:` : ""}${name}`;
+        if (name === "srcdoc")
+          walk(parse5.parseFragment(attr.value, { scriptingEnabled: tier > 0 }));
         const value = attr.value.trim();
         if (name === "style") css(value, location, "declarationList");
         if (name === "srcset" || name === "imagesrcset") {
           if (!srcset(value)) dependencies.add(`${location} is not embedded`);
         }
-        if (name === "src" || name === "poster" || name === "background") {
+        if (
+          name === "src" ||
+          name === "poster" ||
+          name === "background" ||
+          (tag === "object" && name === "data")
+        ) {
           if (tag === "script" || !embedded(value)) dependencies.add(`${location} is not embedded`);
         }
         if (name === "href") {
           const navigation = tag === "a" || tag === "area";
-          if (
-            tag === "link" ||
-            tag === "script" ||
-            (!navigation && !embedded(value)) ||
-            (navigation && tier > 0 && !value.startsWith("#"))
-          )
+          if (tag === "link" || tag === "script" || (!navigation && !embedded(value)))
             dependencies.add(`${location} is unsupported`);
         }
-        if (
-          ["srcdoc", "ping", "manifest", "codebase", "archive"].includes(name) ||
-          ((name === "action" || name === "formaction") && value !== "")
-        )
-          dependencies.add(`${location} is unsupported`);
         if (/^data:/i.test(value))
           contributors.push({ name: location, bytes: Buffer.byteLength(value) });
       }
@@ -301,9 +289,10 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
       message: `The HTML bundle is not self-contained or uses unsupported external dependencies:\n- ${inspection.dependencies.join("\n- ")}\nInline resources in the HTML; use Patchy integrations instead of external dependencies.`
     });
   const bytes = Buffer.byteLength(html, "utf8");
-  if (bytes > maxBundleBytes)
+  const maxBytes = manifest.tier === 0 ? DEFAULT_MAX_HTML_BYTES : maxBundleBytes;
+  if (bytes > maxBytes)
     return yield* new LocalError({
-      message: `HTML bundle is ${bytes} bytes; maximum is ${maxBundleBytes} bytes (10 MiB). Largest contributors:\n${inspection.contributors.length ? inspection.contributors.map((entry) => `- ${entry.name}: ${entry.bytes} bytes`).join("\n") : `- HTML markup: ${bytes} bytes`}\nReduce these resources before publishing.`,
+      message: `HTML bundle is ${bytes} bytes; maximum for tier ${manifest.tier} is ${maxBytes} bytes. Largest contributors:\n${inspection.contributors.map((entry) => `- ${entry.name}: ${entry.bytes} bytes`).join("\n")}\nReduce these resources before publishing.`,
       code: "too_large"
     });
   const server = yield* fs.stat(path.join(cwd, "server")).pipe(
@@ -325,7 +314,7 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
       code: "tier_mismatch"
     });
   if (manifest.tier === 0) {
-    const validation = validateHtml(html);
+    const validation = validateHtml(html, { maxBytes });
     if (!validation.ok)
       return yield* new LocalError({
         message: `Tier 0 HTML failed the static-page policy. Browser code requires tier 1 in patchy.config.ts:\n- ${validation.errors.join("\n- ")}`,

@@ -8,7 +8,7 @@ import * as Schema from "effect/Schema";
 import * as Prompt from "effect/unstable/cli/Prompt";
 import { Catalog, DefinitionName, Generated, Manifest, PatchName } from "@patchy/api";
 import * as Api from "./Api.js";
-import { LocalError, RejectedError, UnreachableError } from "./CliError.js";
+import { InstanceMismatch, LocalError, RejectedError, UnreachableError } from "./CliError.js";
 import * as Instance from "./Instance.js";
 import * as Login from "./Login.js";
 import * as Output from "./Output.js";
@@ -108,7 +108,7 @@ export const readRepo = Effect.fn("Project.readRepo")(function* (cwd: string) {
   return yield* parse("Read patchy.json", () => decodeRepo(source));
 });
 
-/** Reapply a recovered instance/patch pair without replacing a different author-selected identity. */
+/** Reapply a returned patch id only while the repo retains its original instance binding. */
 export const recordPublish = Effect.fn("Project.recordPublish")(function* (
   cwd: string,
   patchId: string,
@@ -116,17 +116,19 @@ export const recordPublish = Effect.fn("Project.recordPublish")(function* (
 ) {
   const fs = yield* FileSystem.FileSystem;
   const repo = yield* readRepo(cwd);
-  if (repo.patch === patchId && Instance.normalizeApiUrl(repo.instance) === apiUrl) return;
+  if (Instance.normalizeApiUrl(repo.instance) !== Instance.normalizeApiUrl(apiUrl))
+    return yield* InstanceMismatch.new({ stored: repo.instance, requested: apiUrl });
+  if (repo.patch === patchId) return;
   if (repo.patch !== undefined)
     return yield* new LocalError({
       message:
-        "patchy.json now names a different instance or patch. Restore the original repo identity before recovering this publish; the attempt has been kept."
+        "patchy.json now names a different patch. Restore the original repo identity before recovering this publish; the attempt has been kept."
     });
   const destination = yield* localIO("Resolve patchy.json", () => safePath(cwd, "patchy.json"));
   yield* Effect.scoped(
     Effect.gen(function* () {
       const staged = yield* fs.makeTempFileScoped({ directory: cwd, prefix: ".patchy-publish-" });
-      yield* fs.writeFileString(staged, json({ ...repo, instance: apiUrl, patch: patchId }));
+      yield* fs.writeFileString(staged, json({ ...repo, patch: patchId }));
       yield* fs.rename(staged, destination);
     })
   ).pipe(

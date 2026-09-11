@@ -64,6 +64,12 @@ browser user in **Patchy Dev** can open that company patch.
 The [logout recipe](#device-login-through-the-cli) removes the saved credential,
 so the seed applies again.
 
+A repo's `patchy.json.instance` remains authoritative: the discovered dev env
+cannot override it. `instance_mismatch` names both targets and refuses before
+HTTP. Correct the effective override for that repo; keep its instance and patch
+id intact. For a local experiment, initialize a separate repo against this
+worktree's instance instead of rebinding an existing patch.
+
 For isolated login or logout checks, set `PATCHY_STATE_DIR` before every CLI
 command in that check, for example `export PATCHY_STATE_DIR="$PWD/.local/cli-check"`.
 The default is shared `~/.patchy`, with credentials, pending logins and patch
@@ -396,18 +402,24 @@ wire version. File mode synthesises a tier 0 manifest with empty `tables`, `file
 and `uses`; the API admits tier 0 and tier 1 manifests with tables, file stores, shared-table declarations and resolved Postgres declarations. Tier 1 bundles are stored raw and served in the sandbox; tiers 2 and above remain refused. Tier 0 keeps `PATCHY_MAX_HTML_BYTES` (512 KiB), tier 1 uses `PATCHY_MAX_BUNDLE_BYTES` (10 MiB), and the enclosing JSON request cap is three times the larger value.
 
 `GET /api/release` is public. A new CLI publish checks its executing version
-against that release. Interrupted attempts live in the isolated `PATCHY_STATE_DIR`
-and are recovered before any release or file check, after authenticating the same
-owning user. Rotating that user's token is safe; a different account is refused
-without sending the saved content. Authentication, throttling and quota failures
-retain the attempt. Exclusive creation of `attempt.json` selects one attempt; a
-concurrent CLI publish reads and resends it after checking its original owner,
-including when it loses the creation race. Success or a definitive payload refusal
-clears only the matching publish key, leaving a newer attempt untouched by a stale
-response. A killed process leaves the persisted attempt recoverable. Keep the state
-when retrying an unknown outcome; removing it loses the publish key.
+against that release. File attempts live in the isolated `PATCHY_STATE_DIR`;
+repo attempts live in the repo's `.patchy/publish/`. Keep them when retrying an
+unknown outcome: removing one loses its publish key. After the target guard,
+recovery authenticates the original owning user and resends the saved payload
+before release, file or build checks. Token rotation is safe; an account switch
+is refused before sending saved content. Authentication, throttling and quota
+failures retain the attempt.
+
+An atomic directory rename selects one key-addressed attempt. Concurrent callers
+recover the winner; success or a definitive refusal clears only that key, so a
+stale response cannot remove a newer attempt. A killed process leaves the
+selected attempt recoverable. Repo result application preserves the stored
+instance and applies only the patch id, including after moving the repo.
+[ADR-0004](adr/ADR-0004-cli-contract-for-agents.md) owns the selection protocol
+and definitive-refusal list.
+
 The dev runner imports only the separate seed entry, so it never
-installs that guard. The production-domain Clerk handshake is a separate live
+installs the loopback-only fetch guard. The production-domain Clerk handshake is a separate live
 verification, not part of these offline checks.
 The `async-exit-hook` dependency patch preserves failure exit codes when embedded
 Postgres shuts down; without it, a failed Vitest suite can exit successfully.

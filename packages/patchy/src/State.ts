@@ -78,6 +78,8 @@ export class PendingPublish extends Schema.Class<PendingPublish>("PendingPublish
 }) {}
 const decodePendingPublish = Schema.decodeUnknownEffect(PendingPublish);
 const encodePendingPublish = Schema.encodeUnknownEffect(PendingPublish);
+// Effect exposes ENOTEMPTY through its Node cause today. An unfamiliar wrapper fails closed
+// instead of treating an unknown filesystem failure as a harmless occupied-slot race.
 const isOccupiedDirectory = Schema.is(
   Schema.Struct({
     reason: Schema.Struct({
