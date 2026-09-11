@@ -55,6 +55,43 @@ it("caches blob URLs until replacement/deletion and revokes them on close", asyn
   expect(resolveObjectURL(third)).toBeUndefined();
 });
 
+it.each(["put", "delete", "close"] as const)(
+  "rejects an in-flight file URL invalidated by %s instead of returning revoked bytes",
+  async (action) => {
+    const config = defineConfig({ name: "notes", tier: 1, files: { images: files() } });
+    const read = Promise.withResolvers<{ bytes: Uint8Array<ArrayBuffer>; contentType: string }>();
+    let first = true;
+    const transport: Transport = {
+      call: async (op) => {
+        if (op !== "files.get") return null;
+        if (first) {
+          first = false;
+          return read.promise;
+        }
+        return { bytes: new Uint8Array([2]), contentType: "image/png" };
+      },
+      close() {}
+    };
+    const client = createClient<typeof config>(config, { transport, shared: {}, connections: {} });
+    const pending = client.files.images.url("a");
+    const rejected = expect(pending).rejects.toMatchObject({
+      code: action === "close" ? "unknown_outcome" : "invalid_request"
+    });
+    if (action === "close") client.close();
+    else if (action === "delete") await client.files.images.delete("a");
+    else await client.files.images.put("a", new Uint8Array([2]), { contentType: "image/png" });
+    read.resolve({ bytes: new Uint8Array([1]), contentType: "image/png" });
+    await rejected;
+    if (action === "put") {
+      const url = await client.files.images.url("a");
+      expect(new Uint8Array(await resolveObjectURL(url)!.arrayBuffer())).toEqual(
+        new Uint8Array([2])
+      );
+    }
+    client.close();
+  }
+);
+
 it("shares the supplied transport with generated aliases and exposes shared reads only", async () => {
   const sent: unknown[] = [];
   const call: Transport["call"] = async (op, args) => {
@@ -92,7 +129,7 @@ it("shares the supplied transport with generated aliases and exposes shared read
 });
 
 it("infers the owned facade and generated aliases without widening index, id, or write boundaries", () => {
-  const root = new URL("./", import.meta.url).pathname;
+  const root = new URL("../dist/", import.meta.url).pathname;
   const source = `import { createClient, createSharedTable, type Call, type ErrorCode, type Operation, type Me, type FileMetadata } from "patchy/client";
 import { defineConfig, table, t, files, postgres, sharedTable, type Id } from "patchy/config";
 type Equal<A, B> = [A] extends [B] ? [B] extends [A] ? true : false : false;
@@ -101,7 +138,8 @@ const operationsConform: Equal<Operation, ${Object.keys(runtimeOperations)
     .join(" | ")}> = true;
 const config = defineConfig({ name: "notes", tier: 1, tables: {
   notes: table({ title: t.text(), body: t.text().optional(), count: t.integer().default(0), parent: t.ref("notes").optional() }, { indexes: { byTitle: ["title"] } }),
-  people: table({ name: t.text() })
+  people: table({ name: t.text() }),
+  data: table({ required: t.json(), defaulted: t.json().default({}), optional: t.json().optional() })
 }, files: { images: files() }, uses: { team: sharedTable("source", "notes"), sales: postgres("warehouse") } });
 const shared = { team: (alias: string, call: Call) => createSharedTable<{ id: Id<"source/notes">; title: string }>(alias, call) };
 const connections = { sales: (alias: string, call: Call) => ({ count: async () => 42 }) };
@@ -116,6 +154,16 @@ async function use() {
   await client.tables.notes.list({ index: "byTitle", eq: { title: "ok" }, range: { column: "title", gte: "a" } });
   await client.tables.notes.list({ index: "parent", eq: { parent: id } });
   const count: number = await client.connections.sales.count();
+  await client.tables.data.insert({ required: { nested: null }, optional: null });
+  await client.tables.data.update("id" as Id<"data">, { defaulted: [null], optional: null });
+  // @ts-expect-error required JSON cannot be top-level null
+  client.tables.data.insert({ required: null });
+  // @ts-expect-error defaulted JSON cannot be top-level null
+  client.tables.data.insert({ required: {}, defaulted: null });
+  // @ts-expect-error required JSON cannot be cleared
+  client.tables.data.update("id" as Id<"data">, { required: null });
+  // @ts-expect-error defaulted JSON cannot be cleared
+  client.tables.data.update("id" as Id<"data">, { defaulted: null });
   // @ts-expect-error nonexistent owned table
   client.tables.unknown.get(id);
   // @ts-expect-error another table's ID
@@ -149,7 +197,10 @@ async function use() {
     moduleResolution: ts.ModuleResolutionKind.Bundler,
     types: [],
     lib: ["lib.es2022.d.ts", "lib.dom.d.ts"],
-    paths: { "patchy/client": [`${root}client.ts`], "patchy/config": [`${root}config.ts`] },
+    paths: {
+      "patchy/client": [`${root}client.d.ts`],
+      "patchy/config": [`${root}config.d.ts`]
+    },
     resolveJsonModule: true,
     skipLibCheck: true
   };

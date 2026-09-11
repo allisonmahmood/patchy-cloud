@@ -2,10 +2,10 @@ import { afterEach, expect, it, vi } from "vitest";
 import {
   createHttpTransport,
   createPortTransport,
-  createPostMessageTransport,
-  PatchyError
-} from "./client.js";
-import type { Port } from "./client.js";
+  createPostMessageTransport
+} from "./clientTransport.js";
+import { PatchyError } from "./client.js";
+import type { Port } from "./clientTransport.js";
 
 class FakePort extends EventTarget implements Port {
   readonly sent: Array<{ v: number; id: string; op: string; args: unknown; bytes?: ArrayBuffer }> =

@@ -63,17 +63,9 @@ const declaration = {
 
 it("compiles projected keys, keyless views, query shapes and discriminated known errors", () => {
   const generated = generate(declaration, snapshot);
+  const patchy = new URL("../../../patchy/dist/", import.meta.url).pathname;
   const files: Readonly<Record<string, string>> = {
     "/generated.ts": generated.client,
-    "/package.json": ts.sys.readFile(
-      new URL("../../../patchy/package.json", import.meta.url).pathname
-    )!,
-    ...Object.fromEntries(
-      ["client", "clientError", "clientTransport", "config", "release"].map((name) => [
-        `/${name}.ts`,
-        ts.sys.readFile(new URL(`../../../patchy/src/${name}.ts`, import.meta.url).pathname)!
-      ])
-    ),
     "/consumer.ts": `import { createClient, type ListError } from "./generated.js";
 import { isPatchyError } from "patchy/client";
 import { t } from "patchy/config";
@@ -162,7 +154,10 @@ function inspect(error: ListError) {
     target: ts.ScriptTarget.ES2022,
     module: ts.ModuleKind.ESNext,
     moduleResolution: ts.ModuleResolutionKind.Bundler,
-    paths: { "patchy/client": ["/client.ts"], "patchy/config": ["/config.ts"] },
+    paths: {
+      "patchy/client": [`${patchy}client.d.ts`],
+      "patchy/config": [`${patchy}config.d.ts`]
+    },
     resolveJsonModule: true,
     lib: ["lib.es2022.d.ts", "lib.dom.d.ts"],
     types: [],

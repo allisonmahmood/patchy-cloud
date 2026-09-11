@@ -22,7 +22,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "sdk", (handlers) =>
   })
 );
 
-/** SDK paths never fall through into company/patch admission, including retired releases. */
+/** Only the exact tarball path is reserved; `sdk` remains a valid company handle. */
 export const tarballLayer = HttpRouter.use((router) =>
   Effect.gen(function* () {
     const artifact = yield* Artifact.Artifact;
@@ -38,10 +38,5 @@ export const tarballLayer = HttpRouter.use((router) =>
         }
       })
     );
-    const missing = HttpServerResponse.empty({
-      status: 404,
-      headers: { "cache-control": "no-store" }
-    });
-    yield* router.add("*", "/sdk/*", missing);
   })
 );

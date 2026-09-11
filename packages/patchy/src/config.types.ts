@@ -1,6 +1,8 @@
 // Compile-only public contract checks: included in the package typecheck, never in its build entries.
-import { defineConfig, files, postgres, sharedTable, t, table } from "./config.js";
+import { defineConfig, executeConfig, files, postgres, sharedTable, t, table } from "./config.js";
 import type { Id, Insert, Row, Update } from "./config.js";
+import type { Manifest } from "@patchy/api";
+import type { ExecutedManifest } from "./executeConfig.js";
 
 type Equal<A, B> =
   (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
@@ -73,7 +75,11 @@ export type ConfigAssertions = [
   Assert<Equal<Note["createdAt"] | Note["updatedAt"], string>>,
   Assert<Equal<typeof config.tables.notes.indexes.byTitle.columns, readonly ["title"]>>,
   Assert<Equal<typeof config.tables.notes.indexes.byCount.unique, true>>,
-  Assert<Equal<typeof config.uses.sales.handle, "warehouse">>
+  Assert<Equal<typeof config.uses.sales.handle, "warehouse">>,
+  Assert<Equal<typeof executeConfig, (path: string) => Promise<ExecutedManifest>>>,
+  Assert<ExecutedManifest extends typeof Manifest.Type ? true : false>,
+  Assert<typeof Manifest.Type extends ExecutedManifest ? true : false>,
+  Assert<Equal<keyof ExecutedManifest, keyof typeof Manifest.Type>>
 ];
 
 // The function is never called: these are assignment checks, not runtime fixtures.
@@ -84,12 +90,17 @@ const boundaries = (noteId: Id<"notes">, userId: Id<"users">) => {
     score: 1.5,
     active: true,
     at: "2026-09-11T00:00:00Z",
-    data: {},
+    data: { nested: [null, 1] },
+    dataOptional: null,
+    dataDefault: { nested: null },
     parent: noteId
   };
   const update: Update<typeof config, "notes"> = {
     titleOptional: null,
     parentOptional: null,
+    data: { nested: [null] },
+    dataOptional: null,
+    dataDefault: [null, { nested: null }],
     activeDefault: true
   };
   // @ts-expect-error required fields remain required on insert
@@ -106,6 +117,22 @@ const boundaries = (noteId: Id<"notes">, userId: Id<"users">) => {
   const nullDefault: Update<typeof config, "notes"> = { titleDefault: null };
   // @ts-expect-error required values cannot be cleared
   const nullRequired: Update<typeof config, "notes"> = { title: null };
+  // @ts-expect-error required JSON cannot be inserted as top-level null
+  const nullJsonInsert: Insert<typeof config, "notes"> = { ...insert, data: null };
+  // @ts-expect-error defaulted JSON cannot be inserted as top-level null
+  const nullJsonDefaultInsert: Insert<typeof config, "notes"> = { ...insert, dataDefault: null };
+  // @ts-expect-error required JSON cannot be cleared by an update
+  const nullJsonUpdate: Update<typeof config, "notes"> = { data: null };
+  // @ts-expect-error defaulted JSON cannot be cleared by an update
+  const nullJsonDefaultUpdate: Update<typeof config, "notes"> = { dataDefault: null };
+  // @ts-expect-error required JSON cannot be inserted as undefined
+  const undefinedJsonInsert: Insert<typeof config, "notes"> = { ...insert, data: undefined };
+  // @ts-expect-error nested undefined is not JSON
+  const undefinedJsonUpdate: Update<typeof config, "notes"> = { data: { nested: undefined } };
+  // @ts-expect-error functions are not JSON insert values
+  const functionJsonInsert: Insert<typeof config, "notes"> = { ...insert, data: () => true };
+  // @ts-expect-error even optional JSON cannot contain functions
+  const functionJsonUpdate: Update<typeof config, "notes"> = { dataOptional: [() => true] };
   // @ts-expect-error references are branded by their target
   const wrongReference: Update<typeof config, "notes"> = { parent: userId };
   // @ts-expect-error raw strings are not table ids
@@ -138,6 +165,14 @@ const boundaries = (noteId: Id<"notes">, userId: Id<"users">) => {
     nullDefaultInsert,
     nullDefault,
     nullRequired,
+    nullJsonInsert,
+    nullJsonDefaultInsert,
+    nullJsonUpdate,
+    nullJsonDefaultUpdate,
+    undefinedJsonInsert,
+    undefinedJsonUpdate,
+    functionJsonInsert,
+    functionJsonUpdate,
     wrongReference,
     rawReference,
     unknownColumn

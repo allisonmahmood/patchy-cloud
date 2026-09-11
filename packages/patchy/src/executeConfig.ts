@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
-// A Node entrypoint owns process isolation; the browser-safe builders never import it.
+// The config entrypoint loads this Node-only process boundary only when execution is requested.
 import { fork } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
@@ -12,10 +12,25 @@ import {
   sharedTableId
 } from "@patchy/api";
 import * as Schema from "effect/Schema";
-import type { ColumnKind, Declaration, IndexDefinition } from "./config.js";
+import type { ColumnKind, Declaration, IndexDefinition, Json } from "./config.js";
 import { MANIFEST_VERSION, RELEASE } from "./release.js";
 
-/** The validated wire document, without exposing a schema library in the package's types. */
+/** Portable declaration types: bundling Effect's schema types leaks its type dependencies. */
+type ManifestColumn = {
+  [K in ColumnKind]: {
+    readonly kind: K;
+    readonly optional?: boolean;
+    readonly default?: K extends "json"
+      ? Json
+      : K extends "integer" | "number"
+        ? number
+        : K extends "boolean"
+          ? boolean
+          : string;
+  } & (K extends "ref" ? { readonly table: string } : unknown);
+}[ColumnKind];
+
+/** Dependency-free public data shape; config.types.ts checks equivalence to the API schema. */
 export interface ExecutedManifest {
   readonly manifestVersion: number;
   readonly release: string;
@@ -25,17 +40,7 @@ export interface ExecutedManifest {
     Record<
       string,
       {
-        readonly columns: Readonly<
-          Record<
-            string,
-            {
-              readonly kind: ColumnKind;
-              readonly table?: string;
-              readonly optional?: boolean;
-              readonly default?: unknown;
-            }
-          >
-        >;
+        readonly columns: Readonly<Record<string, ManifestColumn>>;
         readonly indexes: Readonly<Record<string, IndexDefinition>>;
         readonly shared?: boolean;
       }
@@ -128,33 +133,30 @@ export const executeConfig = async (path: string): Promise<ExecutedManifest> => 
   const absolutePath = resolve(path);
   const config = decodeConfig(await runConfig(absolutePath));
   const declarations = Object.entries(config.uses);
-  const uses: Record<string, Declaration & { readonly id: string; readonly revision: number }> = {};
+  const uses: Record<string, (typeof Manifest.Type)["uses"][string]> = {};
   if (declarations.length > 0) {
     const indexPath = resolve(dirname(absolutePath), "patchy/_generated/index.json");
     let index: typeof generatedIndexSchema.Type;
     try {
       index = decodeIndex(await readFile(indexPath, "utf8"));
     } catch (cause) {
-      throw new Error(`Cannot resolve config declarations from ${indexPath}; run patchy refresh.`, {
+      throw new Error(`Cannot resolve config declarations from ${indexPath}.`, {
         cause
       });
     }
     const stamps = new Map<string, (typeof generatedIndexSchema.Type)["uses"][number]>();
     for (const stamp of index.uses) {
-      if (stamps.has(stamp.alias))
-        throw new Error(`Duplicate generated stamp for ${stamp.alias}; run patchy refresh.`);
+      if (stamps.has(stamp.alias)) throw new Error(`Duplicate generated stamp for ${stamp.alias}.`);
       stamps.set(stamp.alias, stamp);
     }
     for (const [alias, declaration] of declarations) {
       const stamp = stamps.get(alias);
-      if (!stamp) throw new Error(`No generated stamp for ${alias}; run patchy refresh.`);
+      if (!stamp) throw new Error(`No generated stamp for ${alias}.`);
       if (
         declaration.kind === "sharedTable" &&
         stamp.id !== sharedTableId(declaration.patchId, declaration.table)
       ) {
-        throw new Error(
-          `The generated stamp for ${alias} names another shared table; run patchy refresh.`
-        );
+        throw new Error(`The generated stamp for ${alias} names another shared table.`);
       }
       uses[alias] = { ...declaration, id: stamp.id, revision: stamp.revision };
     }

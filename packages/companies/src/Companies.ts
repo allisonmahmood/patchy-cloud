@@ -15,7 +15,6 @@ export const Handle = Schema.String.check(Schema.isPattern(/^[a-z0-9][a-z0-9-]{1
 export const isHandle = Schema.is(Handle);
 export const RESERVED_HANDLES: ReadonlyArray<string> = [
   "api",
-  "sdk",
   "d",
   "admin",
   "patchy",

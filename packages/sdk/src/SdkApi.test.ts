@@ -13,6 +13,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import * as HttpApi from "effect/unstable/httpapi/HttpApi";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import { CURRENT_RELEASE, MANIFEST_VERSION, Release, SdkGroup, WIRE_VERSION } from "@patchy/api";
@@ -22,9 +23,18 @@ import * as SdkApi from "./SdkApi.js";
 const exec = promisify(execFile);
 const repo = fileURLToPath(new URL("../../../", import.meta.url));
 const decodeRelease = Schema.decodeUnknownEffect(Release);
-const routes = Layer.merge(
+const routes = Layer.mergeAll(
   HttpApiBuilder.layer(HttpApi.make("patchy").add(SdkGroup)).pipe(Layer.provide(SdkApi.layer)),
-  SdkApi.tarballLayer
+  SdkApi.tarballLayer,
+  HttpRouter.use((router) =>
+    Effect.gen(function* () {
+      // Serving's address pattern must remain reachable beside the actual tarball layer.
+      yield* router.add("GET", "/:company/:name/*", (request) =>
+        Effect.succeed(HttpServerResponse.text(`patch:${request.url}`))
+      );
+      yield* router.add("*", "/*", HttpServerResponse.text("other route", { status: 405 }));
+    })
+  )
 );
 const layer = HttpRouter.serve(routes, { disableLogger: true, disableListenLog: true }).pipe(
   Layer.provide(Artifact.layer),
@@ -101,6 +111,11 @@ it.layer(layer)("the packed SDK release", (it) => {
         const manifest = JSON.parse(installed);
         assert.strictEqual(manifest.name, "patchy");
         assert.strictEqual(manifest.version, release.release);
+        assert.deepStrictEqual(Object.keys(manifest.exports).sort(), [
+          "./client",
+          "./config",
+          "./dev"
+        ]);
         const cli = yield* Effect.tryPromise(() =>
           exec(
             process.execPath,
@@ -128,11 +143,15 @@ export default defineConfig({ name: "packed-config", tier: 0, tables: {
               "--input-type=module",
               "-e",
               `
-import { executeConfig } from "patchy/executeConfig";
+import { executeConfig } from "patchy/config";
 import { createClient, PatchyError } from "patchy/client";
+import * as client from "patchy/client";
 import * as dev from "patchy/dev";
 const manifest = await executeConfig(${JSON.stringify(path.join(dir, "patchy.config.ts"))});
 if (typeof createClient !== "function" || typeof PatchyError !== "function") throw new Error("Missing client exports");
+for (const name of ["createHttpTransport", "createPortTransport", "createPostMessageTransport"]) {
+  if (name in client) throw new Error("Internal transport is public: " + name);
+}
 console.log(JSON.stringify(manifest));
 `
             ],
@@ -147,8 +166,14 @@ console.log(JSON.stringify(manifest));
 import config from "./patchy.config.js";
 import type { Insert, Row, Update } from "patchy/config";
 import { createClient, PatchyError } from "patchy/client";
-import { executeConfig } from "patchy/executeConfig";
+import { executeConfig } from "patchy/config";
 import * as dev from "patchy/dev";
+// @ts-expect-error HTTP transport is internal, not a frame API.
+import { createHttpTransport } from "patchy/client";
+// @ts-expect-error Port transport is internal until the broker owns its public surface.
+import { createPortTransport } from "patchy/client";
+// @ts-expect-error postMessage transport construction is internal.
+import { createPostMessageTransport } from "patchy/client";
 const inserted: Insert<typeof config, "notes"> = { title: "Saved" };
 const changed: Update<typeof config, "notes"> = { title: "Changed" };
 const at: Row<typeof config, "notes">["at"] = "2026-09-11T00:00:00.000Z";
@@ -184,25 +209,17 @@ void [inserted, changed, at, createClient, PatchyError, executeConfig, dev];
     { timeout: 60_000 }
   );
 
-  it.effect("does not redirect old, unknown or malformed SDK paths into sign-in", () =>
+  it.effect("preserves company patch addresses and leaves non-GET requests to other routes", () =>
     Effect.gen(function* () {
       const client = yield* HttpClient.HttpClient;
-      for (const url of [
-        "/sdk/patchy-9.9.9.tgz",
-        "/sdk/patchy-0.0.0.tgz",
-        "/sdk/patchy.tgz",
-        "/sdk/unknown/path",
-        "/sdk"
-      ]) {
+      for (const url of ["/sdk/team-notes", "/sdk/team-notes/~v/1", "/other/team-notes"]) {
         const response = yield* client.get(url);
-        assert.strictEqual(response.status, 404, url);
-        assert.strictEqual(response.headers["cache-control"], "no-store", url);
-        assert.isUndefined(response.headers.location, url);
-        assert.isUndefined(response.headers["set-cookie"], url);
+        assert.strictEqual(response.status, 200, url);
+        assert.strictEqual(yield* response.text, `patch:${url}`);
       }
       const wrongMethod = yield* client.post(`/sdk/patchy-${CURRENT_RELEASE}.tgz`);
-      assert.strictEqual(wrongMethod.status, 404);
-      assert.isUndefined(wrongMethod.headers.location);
+      assert.strictEqual(wrongMethod.status, 405);
+      assert.strictEqual(yield* wrongMethod.text, "other route");
     })
   );
 });

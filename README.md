@@ -55,7 +55,7 @@ A Turborepo monorepo managed with pnpm. [AGENTS.md](AGENTS.md) is the guide to w
 - `packages/api` — the wire contract: schemas, the `HttpApi`, the derived client (`@patchy/api`).
 - `packages/companies` — companies, users, roles, invites and membership lifecycle (`@patchy/companies`).
 - `packages/auth` — browser sessions, the shared login door, device login, machine tokens, Your machines, bearer identity, revocation, the shared development seed and the `auth` API group (`@patchy/auth`).
-- `packages/patches` — user-owned patches and versions, replay-safe publishing and sharing, release metadata, retention and the expiry sweep, owner-only deletion, and the `patches` API group (`@patchy/patches`).
+- `packages/patches` — user-owned patches and versions, replay-safe publishing and sharing, retention and the expiry sweep, owner-only deletion, and the `patches` API group (`@patchy/patches`).
 - `packages/serving` — the page routes and login door integration, sharing-aware CSP and caching, and the trusted-proxy schema (`@patchy/serving`).
 - `packages/runtime` — browser-only admission, loaded-version binding, operation dispatch and the attributed runtime log (`@patchy/runtime`).
 - `packages/primitives` — additive table/store provisioning, schema revisions, bounded owned-table operations, read-only shared-table operations and immutable file operations over Postgres and PGlite (`@patchy/primitives`).

@@ -126,7 +126,7 @@ Responses:
 
 ### `GET /api/release`
 
-The current tooling release and its manifest and wire versions. Unauthenticated. GET /sdk/patchy-<release>.tgz serves this release's tarball without authentication with Cache-Control: public, max-age=31536000, immutable; integrity is its sha512 Subresource Integrity digest. Discovery is no-store; unknown SDK paths return no-store 404.
+The current tooling release and its manifest and wire versions. Unauthenticated. GET /sdk/patchy-<release>.tgz serves this release's tarball without authentication with Cache-Control: public, max-age=31536000, immutable; integrity is its sha512 Subresource Integrity digest. Discovery is no-store; only the exact GET tarball path is reserved.
 
 Responses:
 

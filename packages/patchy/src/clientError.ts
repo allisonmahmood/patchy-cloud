@@ -99,19 +99,3 @@ export type BoundaryError = Errors<
   | "too_many_requests"
   | "busy"
 >;
-export type TableGetError = BoundaryError | Errors<"table_not_declared">;
-export type TableGetManyError = TableGetError;
-export type TableListError = TableGetError | Errors<"invalid_cursor">;
-export type TableInsertError = TableGetError | Errors<"invalid_row" | "unique_violation">;
-export type TableInsertManyError = TableInsertError;
-export type TableUpdateError = TableInsertError | Errors<"row_not_found">;
-export type TableDeleteError = TableGetError;
-export type SharedGetError = TableGetError;
-export type SharedGetManyError = SharedGetError;
-export type SharedListError = TableListError;
-export type FileGetError = BoundaryError | Errors<"row_not_found" | "table_not_declared">;
-export type FilePutError = BoundaryError | Errors<"table_not_declared">;
-export type FileListError = FilePutError | Errors<"invalid_cursor">;
-export type FileDeleteError = FilePutError;
-export type FileUrlError = FileGetError;
-export type MeError = BoundaryError;

@@ -15,7 +15,7 @@ const distDir = path.join(packageDir, "dist");
 const packageJson = JSON.parse(await readFile(path.join(packageDir, "package.json"), "utf8"));
 const rootSkillsDir = path.join(repoRoot, "skills");
 const packageSkillsDir = path.join(packageDir, "skills");
-const publicEntries = ["config", "client", "dev", "executeConfig", "generateClient"];
+const publicEntries = ["config", "client", "dev"];
 
 const literals = async (file) => {
   const source = ts.createSourceFile(
@@ -76,11 +76,13 @@ await esbuild.build({
   entryPoints: ["config", "client"].map((name) => path.join(packageDir, `src/${name}.ts`)),
   outdir: distDir,
   platform: "browser",
-  target: "es2022"
+  target: "es2022",
+  // Config builders stay lightweight; executeConfig loads the separate Node bundle on demand.
+  external: ["./executeConfig.js"]
 });
 await esbuild.build({
   ...common,
-  entryPoints: ["dev", "executeConfig", "executeConfigChild", "generateClient"].map((name) =>
+  entryPoints: ["dev", "executeConfig", "executeConfigChild"].map((name) =>
     path.join(packageDir, `src/${name}.ts`)
   ),
   outdir: distDir,
@@ -92,7 +94,7 @@ const declarations = await rollup({
   input: Object.fromEntries(
     publicEntries.map((name) => [name, path.join(packageDir, `src/${name}.ts`)])
   ),
-  plugins: [dts({ tsconfig: path.join(packageDir, "tsconfig.build.json"), respectExternal: false })]
+  plugins: [dts({ tsconfig: path.join(packageDir, "tsconfig.build.json") })]
 });
 try {
   await declarations.write({

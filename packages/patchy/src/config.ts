@@ -1,4 +1,4 @@
-/** Code-first definitions. This entry point has no runtime dependencies. */
+/** Code-first definitions. Builders do not load the Node-only config executor. */
 declare const idBrand: unique symbol;
 export type Id<Table extends string> = string & { readonly [idBrand]: Table };
 export type ColumnKind = "text" | "integer" | "number" | "boolean" | "timestamp" | "json" | "ref";
@@ -13,7 +13,7 @@ type Value<K extends ColumnKind, Target extends string> = K extends "ref"
       : K extends "json"
         ? unknown
         : string;
-type DefaultValue<K extends ColumnKind, Target extends string> = K extends "json"
+type WriteValue<K extends ColumnKind, Target extends string> = K extends "json"
   ? Exclude<Json, null>
   : Value<K, Target>;
 
@@ -38,7 +38,7 @@ export class Column<
 
   default(
     this: Column<K, false, false, Target>,
-    value: DefaultValue<K, Target>
+    value: WriteValue<K, Target>
   ): Column<K, false, true, Target> {
     if (this.isOptional) throw new Error("An optional column cannot have a default.");
     if (value === null || value === undefined)
@@ -146,10 +146,19 @@ export const defineConfig = <
   uses: (config.uses ?? {}) as Uses
 });
 
+/** A static import would load Node-only modules for every builder caller. */
+export const executeConfig = async (path: string) =>
+  (await import("./executeConfig.js")).executeConfig(path);
+
 export type ColumnValue<C extends Column> =
   Value<C["kind"], NonNullable<C["table"]>> | (C["isOptional"] extends true ? null : never);
 type TableColumns<C extends Config, Name extends keyof C["tables"]> = C["tables"][Name]["columns"];
-type Writable<C extends Columns> = { -readonly [Name in keyof C]: ColumnValue<C[Name]> };
+type Readable<C extends Columns> = { -readonly [Name in keyof C]: ColumnValue<C[Name]> };
+type Writable<C extends Columns> = {
+  -readonly [Name in keyof C]:
+    | WriteValue<C[Name]["kind"], NonNullable<C[Name]["table"]>>
+    | (C[Name]["isOptional"] extends true ? null : never);
+};
 type SystemInput = { readonly [Name in SystemColumn]?: never };
 type RequiredColumns<C extends Columns> = {
   [Name in keyof C]: C[Name]["isOptional"] extends false
@@ -159,7 +168,7 @@ type RequiredColumns<C extends Columns> = {
     : never;
 }[keyof C];
 
-export type Row<C extends Config, Name extends keyof C["tables"] & string> = Writable<
+export type Row<C extends Config, Name extends keyof C["tables"] & string> = Readable<
   TableColumns<C, Name>
 > & {
   readonly id: Id<Name>;

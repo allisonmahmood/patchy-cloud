@@ -7,19 +7,7 @@ import {
 } from "./clientTransport.js";
 import { PatchyError } from "./clientError.js";
 export * from "./clientError.js";
-export {
-  createHttpTransport,
-  createPortTransport,
-  createPostMessageTransport
-} from "./clientTransport.js";
-export type {
-  Call,
-  Me,
-  Operation,
-  Port,
-  Transport,
-  HttpTransportOptions
-} from "./clientTransport.js";
+export type { Call, Me, Operation, Transport } from "./clientTransport.js";
 
 export interface Page<R> {
   readonly rows: readonly R[];
@@ -214,9 +202,14 @@ export function createClient<
           let value = cache.get(name);
           if (value) return value;
           value = get(name).then(({ bytes, contentType }) => {
-            const url = URL.createObjectURL(new Blob([bytes], { type: contentType }));
-            if (closed || cache.get(name) !== value) URL.revokeObjectURL(url);
-            return url;
+            if (closed) throw new PatchyError("unknown_outcome", "The client is closed.", {});
+            if (cache.get(name) !== value)
+              throw new PatchyError(
+                "invalid_request",
+                "The file changed before its URL was available. Request it again.",
+                { store, name }
+              );
+            return URL.createObjectURL(new Blob([bytes], { type: contentType }));
           });
           cache.set(name, value);
           void value.catch(() => {

@@ -144,7 +144,7 @@ grants remain future work.
 
 ### Addresses
 
-Every patch has an address at `/<company>/<patch>`, for every tier and sharing scope. A numbered version opens at `/<company>/<patch>/~v/<n>`. A trailing route belongs to the patch at tier 1 and above and is ignored at tier 0; every segment starting with `~` belongs to Patchy. A company handle alone is not a page. The former `/d/*` routes are gone, not redirects; `d` remains a reserved company handle. `sdk` is reserved for unauthenticated package distribution.
+Every patch has an address at `/<company>/<patch>`, for every tier and sharing scope. A numbered version opens at `/<company>/<patch>/~v/<n>`. A trailing route belongs to the patch at tier 1 and above and is ignored at tier 0; every segment starting with `~` belongs to Patchy. A company handle alone is not a page. The former `/d/*` routes are gone, not redirects; `d` remains a reserved company handle.
 
 A patch's **name** follows the company handle's grammar: 3–32 lowercase letters, digits or hyphens, no leading or trailing hyphen. Names share one per-company namespace, alongside future user and group handles. An explicit manifest name or file-mode `--name` must be free on create and rename alike (`name_taken`); without `--name`, file publishing normalises the filename and adds `-2`, `-3`, and so on when needed. Republishing a file preserves its name unless explicitly renamed. Renaming leaves a 308 redirect from the old name until another patch takes it; that claim removes the former redirect for good. Deleting a patch frees all its names. The patch's identity remains its id, never its name.
 

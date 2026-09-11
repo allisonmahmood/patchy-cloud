@@ -38,9 +38,8 @@ const lost = () =>
 
 export function createPortTransport(
   port: Port,
-  options: { readonly timeoutMs?: number; readonly wire?: number } = {}
+  options: { readonly timeoutMs?: number } = {}
 ): Transport {
-  const wire = options.wire ?? WIRE_VERSION;
   const timeoutMs = options.timeoutMs ?? 35_000;
   let sequence = 0;
   let closed = false;
@@ -59,7 +58,7 @@ export function createPortTransport(
     if (typeof value.id !== "string") return;
     const request = pending.get(value.id);
     if (!request) return;
-    if (value.v !== wire || (value.kind !== "result" && value.kind !== "error")) return;
+    if (value.v !== WIRE_VERSION || (value.kind !== "result" && value.kind !== "error")) return;
     clearTimeout(request.timer);
     pending.delete(value.id);
     if (value.kind === "error") {
@@ -111,7 +110,7 @@ export function createPortTransport(
             : bytes.slice().buffer;
       try {
         port.postMessage({
-          v: wire,
+          v: WIRE_VERSION,
           id,
           op,
           args,
@@ -204,12 +203,10 @@ export interface HttpTransportOptions {
   readonly patchId: string;
   readonly versionId: string;
   readonly fetch?: typeof fetch;
-  readonly wire?: number;
 }
 /** Test adapter only. Production bundles reach HTTP exclusively through the shell's broker. */
 export function createHttpTransport(options: HttpTransportOptions): Transport {
   const fetcher = options.fetch ?? globalThis.fetch;
-  const wire = options.wire ?? WIRE_VERSION;
   const origin = new URL(options.baseUrl).origin;
   const controller = new AbortController();
   let identity: Promise<Me | null> | undefined;
@@ -221,7 +218,7 @@ export function createHttpTransport(options: HttpTransportOptions): Transport {
   ): Promise<unknown> => {
     if (controller.signal.aborted) throw lost();
     const headers = new Headers({
-      "X-Patchy-Wire": String(wire),
+      "X-Patchy-Wire": String(WIRE_VERSION),
       "X-Patchy-Principal": JSON.stringify(principal),
       Origin: origin,
       "Sec-Fetch-Site": "same-origin"
@@ -246,7 +243,7 @@ export function createHttpTransport(options: HttpTransportOptions): Transport {
         patchId: options.patchId,
         versionId: options.versionId,
         principal,
-        wire,
+        wire: WIRE_VERSION,
         op,
         args
       });

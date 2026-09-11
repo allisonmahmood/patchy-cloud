@@ -42,14 +42,6 @@
     "./dev": {
       "types": "./dist/dev.d.ts",
       "import": "./dist/dev.js"
-    },
-    "./executeConfig": {
-      "types": "./dist/executeConfig.d.ts",
-      "import": "./dist/executeConfig.js"
-    },
-    "./generateClient": {
-      "types": "./dist/generateClient.d.ts",
-      "import": "./dist/generateClient.js"
     }
   },
   "files": [

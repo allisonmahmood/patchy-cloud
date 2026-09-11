@@ -20,13 +20,12 @@ const markdown = (value: string): string =>
 
 const prelude = `// Generated from an immutable Postgres snapshot. Browser-only; transport is supplied by the host.
 import { PatchyError, decodeError } from "patchy/client";
-import type { Call, ErrorDetails, Errors } from "patchy/client";
+import type { Call, ErrorDetails, Errors, BoundaryError as ClientBoundaryError } from "patchy/client";
 import type { Column } from "patchy/config";
 export type Json = null | boolean | number | string | readonly Json[] | { readonly [key: string]: Json };
 export type Parameter = null | boolean | number | string | readonly (null | boolean | number | string)[];
-export type ErrorCode = "connection_not_declared" | "access_denied" | "invalid_request" | "timeout" | "too_large" | "source_unavailable" | "relation_unknown" | "invalid_query" | "shape_mismatch" | "invalid_cursor" | "offset_exhausted" | "session_expired" | "principal_changed" | "not_available_on_public" | "shell_outdated" | "unknown_outcome" | "rate_limited" | "too_many_requests" | "busy";
-export type { ErrorDetails, Errors, RelationIdentifier, ShapeMismatchDetails } from "patchy/client";
-export type BoundaryError = Errors<Exclude<ErrorCode, "relation_unknown" | "invalid_query" | "shape_mismatch" | "invalid_cursor" | "offset_exhausted">>;
+export type { ErrorCode, ErrorDetails, Errors, RelationIdentifier, ShapeMismatchDetails } from "patchy/client";
+export type BoundaryError = ClientBoundaryError | Errors<"connection_not_declared">;
 // These unions describe known Patchy refusals, not checked or exhaustive TypeScript throws.
 export type GetError = BoundaryError | Errors<"relation_unknown" | "invalid_query" | "shape_mismatch">;
 export type GetManyError = GetError;
