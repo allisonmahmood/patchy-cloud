@@ -67,7 +67,8 @@ export class PendingPublish extends Schema.Class<PendingPublish>("PendingPublish
   request: PublishRequest,
   ownerUserId: Schema.NonEmptyString,
   file: Schema.String,
-  explicitPatch: Schema.Boolean
+  explicitPatch: Schema.Boolean,
+  repo: Schema.optionalKey(Schema.String)
 }) {}
 const decodePendingPublish = Schema.decodeUnknownEffect(PendingPublish);
 const encodePendingPublish = Schema.encodeUnknownEffect(PendingPublish);
@@ -152,14 +153,17 @@ export class State extends Context.Service<
     /** Exclusively persists a candidate or returns the attempt another invocation already saved. */
     readonly lockPublish: (
       apiUrl: string,
-      attempt: PendingPublish
+      attempt: PendingPublish,
+      repo?: string
     ) => Effect.Effect<PendingPublish, LocalError>;
     readonly readPendingPublish: (
-      apiUrl: string
+      apiUrl: string,
+      repo?: string
     ) => Effect.Effect<Option.Option<PendingPublish>, LocalError>;
     readonly forgetPendingPublish: (
       apiUrl: string,
-      publishKey: string
+      publishKey: string,
+      repo?: string
     ) => Effect.Effect<void, LocalError>;
     readonly readCachedPatch: (
       apiUrl: string,
@@ -199,7 +203,13 @@ export const make = Effect.gen(function* () {
   // new patch at a new URL instead of updating the one it remembers.
   const retiredPatchesPath = path.join(dir, "drafts.json");
   const stylePath = path.join(dir, "style.md");
-  const publishPath = (apiUrl: string) => path.join(dir, "publish", sha256(apiUrl), "attempt.json");
+  const publishPath = (apiUrl: string, repo?: string) =>
+    path.join(
+      repo === undefined ? dir : path.join(repo, ".patchy"),
+      "publish",
+      sha256(apiUrl),
+      "attempt.json"
+    );
 
   const credentialErrors: HostKeyedErrors = {
     unreadable:
@@ -325,8 +335,11 @@ export const make = Effect.gen(function* () {
     yield* writeJson(file, { hosts: remaining });
   });
 
-  const readPendingPublish = Effect.fn("State.readPendingPublish")(function* (apiUrl: string) {
-    const file = publishPath(apiUrl);
+  const readPendingPublish = Effect.fn("State.readPendingPublish")(function* (
+    apiUrl: string,
+    repo?: string
+  ) {
+    const file = publishPath(apiUrl, repo);
     const invalid = `Pending publish is invalid: ${file}. Keep the file until the publish outcome is resolved.`;
     const document = yield* readDocument(file, {
       unreadable: `Pending publish could not be read: ${file}. Check permissions.`,
@@ -338,14 +351,15 @@ export const make = Effect.gen(function* () {
 
   const lockPublish = Effect.fn("State.lockPublish")(function* (
     apiUrl: string,
-    attempt: PendingPublish
+    attempt: PendingPublish,
+    repo?: string
   ) {
     // Constructors do not validate: never persist a request recovery cannot decode.
     const encoded = yield* entry(
       encodePendingPublish(attempt),
       "Publish request is invalid. Check the patch ID and publish options."
     );
-    const file = publishPath(apiUrl);
+    const file = publishPath(apiUrl, repo);
     const created = yield* Effect.gen(function* () {
       yield* fs.makeDirectory(dir, { recursive: true, mode: 0o700 });
       yield* fs.makeDirectory(path.dirname(file), { recursive: true, mode: 0o700 });
@@ -367,7 +381,7 @@ export const make = Effect.gen(function* () {
       )
     );
     if (created) return attempt;
-    const pending = yield* readPendingPublish(apiUrl);
+    const pending = yield* readPendingPublish(apiUrl, repo);
     if (Option.isSome(pending)) return pending.value;
     return yield* new LocalError({
       message:
@@ -432,11 +446,11 @@ export const make = Effect.gen(function* () {
     forgetPendingLogin: (apiUrl) => forgetHost(deviceLoginPath, readLoginFile, apiUrl),
     lockPublish,
     readPendingPublish,
-    forgetPendingPublish: (apiUrl, publishKey) =>
+    forgetPendingPublish: (apiUrl, publishKey, repo) =>
       Effect.gen(function* () {
-        const pending = yield* readPendingPublish(apiUrl);
+        const pending = yield* readPendingPublish(apiUrl, repo);
         if (Option.isNone(pending) || pending.value.request.publishKey !== publishKey) return;
-        yield* fs.remove(publishPath(apiUrl), { force: true }).pipe(
+        yield* fs.remove(publishPath(apiUrl, repo), { force: true }).pipe(
           Effect.mapError(
             (cause) =>
               new LocalError({

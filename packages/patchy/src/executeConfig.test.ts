@@ -14,7 +14,7 @@ const builders = new URL("./config.ts", import.meta.url).href;
 const encodeManifest = Schema.encodeSync(Manifest);
 const decodeManifest = Schema.decodeUnknownSync(Manifest);
 const directories: string[] = [];
-const fixture = async (source: string, index?: unknown) => {
+const fixture = async (source: string, index: unknown = { uses: [] }) => {
   const directory = await mkdtemp(join(tmpdir(), "patchy-config-"));
   directories.push(directory);
   const path = join(directory, "patchy.config.ts");
@@ -56,8 +56,29 @@ describe("executeConfig", () => {
     `,
       {
         uses: [
-          { alias: "sales", id: "connection-real", revision: 7 },
-          { alias: "contacts", id: "abcdefghijkl/contacts", revision: 12 }
+          {
+            alias: "sales",
+            id: "connection-real",
+            revision: 7,
+            declaration: {
+              kind: "postgres",
+              handle: "warehouse",
+              id: "connection-real",
+              revision: 7
+            }
+          },
+          {
+            alias: "contacts",
+            id: "abcdefghijkl/contacts",
+            revision: 12,
+            declaration: {
+              kind: "sharedTable",
+              patchId: "abcdefghijkl",
+              table: "contacts",
+              id: "abcdefghijkl/contacts",
+              revision: 12
+            }
+          }
         ]
       }
     );
@@ -148,28 +169,63 @@ describe("executeConfig", () => {
   });
 
   it.each([
-    { uses: [] },
-    { uses: [{ alias: "sales", id: "real", revision: -1 }] },
     {
-      uses: [
-        { alias: "sales", id: "first", revision: 1 },
-        { alias: "sales", id: "second", revision: 2 }
+      label: "removed alias",
+      config: "{}",
+      stamps: [{ alias: "sales", id: "real", revision: 1 }]
+    },
+    {
+      label: "rebound postgres handle",
+      config: '{ sales: postgres("other") }',
+      stamps: [{ alias: "sales", id: "real", revision: 1 }]
+    },
+    {
+      label: "ambiguous alias",
+      config: '{ sales: postgres("warehouse") }',
+      stamps: [
+        { alias: "sales", id: "real", revision: 1 },
+        { alias: "sales", id: "real", revision: 1 }
       ]
+    },
+    {
+      label: "inconsistent revision",
+      config: '{ sales: postgres("warehouse") }',
+      stamps: [{ alias: "sales", id: "real", revision: 2 }]
     }
-  ])("rejects absent, invalid and ambiguous generated stamps: %j", async (index) => {
+  ])("refuses $label without borrowing stale generated authority", async ({ config, stamps }) => {
     const path = await fixture(
-      'export default defineConfig({ name: "bad-stamps", tier: 1, uses: { sales: postgres("warehouse") } });',
-      index
+      `export default defineConfig({ name: "changed-uses", tier: 1, uses: ${config} });`,
+      {
+        uses: stamps.map((stamp) => ({
+          ...stamp,
+          declaration: { kind: "postgres", handle: "warehouse", id: "real", revision: 1 }
+        }))
+      }
     );
-    await expect(executeConfig(path)).rejects.toThrow();
+    await expect(executeConfig(path)).rejects.toMatchObject({ code: "stale_generated" });
   });
 
   it("does not rebind a changed shared declaration to its old generated identity", async () => {
     const path = await fixture(
       'export default defineConfig({ name: "changed-shared", tier: 1, uses: { contacts: sharedTable("abcdefghijkl", "contacts") } });',
-      { uses: [{ alias: "contacts", id: "abcdefghijkl/other", revision: 1 }] }
+      {
+        uses: [
+          {
+            alias: "contacts",
+            id: "abcdefghijkl/other",
+            revision: 1,
+            declaration: {
+              kind: "sharedTable",
+              patchId: "abcdefghijkl",
+              table: "other",
+              id: "abcdefghijkl/other",
+              revision: 1
+            }
+          }
+        ]
+      }
     );
-    await expect(executeConfig(path)).rejects.toThrow();
+    await expect(executeConfig(path)).rejects.toMatchObject({ code: "stale_generated" });
   });
 
   it("evaluates staged edits with relative imports without replacing the author's config", async () => {

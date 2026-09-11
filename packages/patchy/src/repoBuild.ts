@@ -1,0 +1,328 @@
+import { Manifest } from "@patchy/api";
+import { validateHtml } from "@patchy/core";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import type * as Redacted from "effect/Redacted";
+import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import * as ChildProcess from "effect/unstable/process/ChildProcess";
+import * as parse5 from "parse5";
+import * as Api from "./Api.js";
+import * as Instance from "./Instance.js";
+import { LocalError, ReleaseMismatch } from "./CliError.js";
+import { executeConfig, StaleGenerated } from "./executeConfig.js";
+import { checkRelease } from "./ReleaseCheck.js";
+import { RELEASE } from "./release.js";
+
+const decodePackage = Schema.decodeUnknownSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      devDependencies: Schema.Struct({ patchy: Schema.String })
+    })
+  )
+);
+const decodeRuntime = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.String));
+const decodeManifest = Schema.decodeUnknownSync(Manifest);
+const encodeManifest = Schema.encodeSync(Schema.fromJsonString(Manifest));
+const isLocalError = Schema.is(LocalError);
+const maxBundleBytes = 10 * 1024 * 1024;
+
+const run = Effect.fn("repoBuild.run")(function* (cwd: string, args: readonly string[]) {
+  return yield* Effect.scoped(
+    Effect.gen(function* () {
+      const child = yield* ChildProcess.make(process.execPath, args, {
+        cwd,
+        extendEnv: true,
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe"
+      });
+      const [stdout, stderr, code] = yield* Effect.all(
+        [
+          Stream.mkString(Stream.decodeText(child.stdout)),
+          Stream.mkString(Stream.decodeText(child.stderr)),
+          child.exitCode
+        ],
+        { concurrency: "unbounded" }
+      );
+      return { stdout, stderr, code };
+    })
+  ).pipe(
+    Effect.mapError(
+      (cause) =>
+        new LocalError({
+          message:
+            "Could not start the repo's installed tooling. Run `patchy refresh` and check the local Node installation.",
+          cause
+        })
+    )
+  );
+});
+
+const embedded = (value: string) => /^(?:data:|blob:|#)/i.test(value.trim());
+const decodeCss = (css: string) =>
+  css
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\\([\da-f]{1,6}\s?|[^\r\n\f])/gi, (_, escape: string) =>
+      /^[\da-f]/i.test(escape)
+        ? String.fromCodePoint(Math.min(parseInt(escape.trim(), 16), 0x10ffff))
+        : escape
+    );
+
+/** Inspect parsed HTML, including inert templates: they can become live after a client render. */
+const inspectBundle = (html: string, tier: number) => {
+  const dependencies = new Set<string>();
+  const contributors: Array<{ name: string; bytes: number }> = [];
+  const css = (source: string, location: string) => {
+    const decoded = decodeCss(source);
+    if (/@import\b/i.test(decoded)) dependencies.add(`${location}: CSS @import`);
+    for (const match of decoded.matchAll(/url\(\s*(?:"([^"]*)"|'([^']*)'|([^)]*))\s*\)/gi)) {
+      if (!embedded(match[1] ?? match[2] ?? match[3] ?? ""))
+        dependencies.add(`${location}: external CSS url()`);
+    }
+  };
+  const srcset = (value: string) => {
+    // URL tokens may contain commas (notably data URLs); descriptors end at the next comma.
+    let rest = value.trimStart();
+    while (rest) {
+      const token = /^\S+/.exec(rest)?.[0] ?? "";
+      if (!embedded(token.replace(/,+$/, ""))) return false;
+      rest = rest.slice(token.length).trimStart();
+      if (!token.endsWith(",")) {
+        const comma = rest.indexOf(",");
+        rest = comma < 0 ? "" : rest.slice(comma + 1).trimStart();
+      }
+    }
+    return true;
+  };
+  const walk = (node: parse5.DefaultTreeAdapterMap["node"]) => {
+    if ("tagName" in node) {
+      const tag = node.tagName;
+      if (["base", "iframe", "object", "embed", "applet"].includes(tag))
+        dependencies.add(`<${tag}> is unsupported`);
+      if (
+        tag === "meta" &&
+        node.attrs.some(
+          (attr) => attr.name === "http-equiv" && attr.value.trim().toLowerCase() === "refresh"
+        )
+      )
+        dependencies.add("<meta> refresh is unsupported");
+      for (const attr of node.attrs) {
+        const name = attr.name;
+        const location = `<${tag}> ${attr.prefix ? `${attr.prefix}:` : ""}${name}`;
+        const value = attr.value.trim();
+        if (name === "style") css(value, location);
+        if (name === "srcset" || name === "imagesrcset") {
+          if (!srcset(value)) dependencies.add(`${location} is not embedded`);
+        }
+        if (name === "src" || name === "poster" || name === "background") {
+          if (tag === "script" || !embedded(value)) dependencies.add(`${location} is not embedded`);
+        }
+        if (name === "href") {
+          const navigation = tag === "a" || tag === "area";
+          if (
+            tag === "link" ||
+            tag === "script" ||
+            (!navigation && !embedded(value)) ||
+            (navigation && tier > 0 && !value.startsWith("#"))
+          )
+            dependencies.add(`${location} is unsupported`);
+        }
+        if (
+          ["srcdoc", "ping", "manifest", "codebase", "archive"].includes(name) ||
+          ((name === "action" || name === "formaction") && value !== "")
+        )
+          dependencies.add(`${location} is unsupported`);
+        if (/^data:/i.test(value))
+          contributors.push({ name: location, bytes: Buffer.byteLength(value) });
+      }
+      if (tag === "script" || tag === "style") {
+        const text = node.childNodes.map((child) => ("value" in child ? child.value : "")).join("");
+        contributors.push({ name: `inline <${tag}>`, bytes: Buffer.byteLength(text) });
+        if (tag === "style") css(text, "<style>");
+      }
+      if ("content" in node) walk(node.content);
+    }
+    if ("childNodes" in node) for (const child of node.childNodes) walk(child);
+  };
+  walk(parse5.parse(html));
+  contributors.push({
+    name: "HTML markup and text",
+    bytes: Math.max(
+      0,
+      Buffer.byteLength(html) - contributors.reduce((total, entry) => total + entry.bytes, 0)
+    )
+  });
+  return {
+    dependencies: [...dependencies],
+    contributors: contributors.sort((a, b) => b.bytes - a.bytes).slice(0, 5)
+  };
+};
+
+/** Recovery belongs to the caller and must finish before this starts any fresh work. */
+export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
+  cwd: string,
+  token: Redacted.Redacted
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const instance = yield* Instance.Instance;
+  const client = yield* Api.client(token);
+  const release = yield* client
+    .release()
+    .pipe(Effect.catch((error) => Api.classify(error, "Could not read the instance release.")));
+  const packageText = yield* fs.readFileString(path.join(cwd, "package.json")).pipe(
+    Effect.mapError(
+      (cause) =>
+        new LocalError({
+          message: "Run this command inside a patch repo created with `patchy init`.",
+          cause
+        })
+    )
+  );
+  const pkg = yield* Effect.try({
+    try: () => decodePackage(packageText),
+    catch: (cause) =>
+      new LocalError({
+        message: "package.json must pin patchy as a devDependency. Run `patchy refresh`.",
+        code: "release_mismatch",
+        cause
+      })
+  });
+  const tarball = new URL(release.package.tarball, `${instance.apiUrl}/`).href;
+  const pin = pkg.devDependencies.patchy;
+  if (pin !== tarball)
+    return yield* new ReleaseMismatch({
+      component: "pin",
+      loaded: /patchy-([^/]+)\.tgz(?:[?#].*)?$/.exec(pin)?.[1] ?? pin,
+      current: release.release
+    });
+  yield* checkRelease(release.release, { cli: RELEASE });
+  const runtime = yield* run(cwd, [
+    "--input-type=module",
+    "--eval",
+    'import { RELEASE } from "patchy/dev"; process.stdout.write(JSON.stringify(RELEASE));'
+  ]);
+  if (runtime.code !== 0)
+    return yield* new LocalError({
+      message: "Could not load the repo's installed Patchy runtime. Run `patchy refresh`.",
+      code: "release_mismatch"
+    });
+  const loadedRuntime = yield* Effect.try({
+    try: () => decodeRuntime(runtime.stdout),
+    catch: (cause) =>
+      new LocalError({
+        message: "The installed Patchy runtime did not report its release. Run `patchy refresh`.",
+        code: "release_mismatch",
+        cause
+      })
+  });
+  yield* checkRelease(release.release, { cli: RELEASE, runtime: loadedRuntime });
+  const manifest = yield* Effect.tryPromise({
+    try: async () => decodeManifest(await executeConfig(path.join(cwd, "patchy.config.ts"))),
+    catch: (cause) =>
+      new LocalError({
+        message:
+          cause instanceof StaleGenerated
+            ? cause.message
+            : `Could not execute patchy.config.ts: ${cause instanceof Error ? cause.message : "check the config and its imports"}`,
+        code: cause instanceof StaleGenerated ? cause.code : "invalid_manifest",
+        cause
+      })
+  });
+  // Definitions can change without generation; only index.json owns declaration stamps.
+  yield* fs
+    .writeFileString(
+      path.join(cwd, "patchy/_generated/manifest.json"),
+      `${encodeManifest(manifest)}\n`
+    )
+    .pipe(
+      Effect.mapError(
+        (cause) =>
+          new LocalError({
+            message: "Could not update patchy/_generated/manifest.json for the current config.",
+            cause
+          })
+      )
+    );
+  const typecheck = yield* run(cwd, [
+    path.join(cwd, "node_modules/typescript/bin/tsc"),
+    "--noEmit"
+  ]);
+  if (typecheck.code !== 0)
+    return yield* new LocalError({
+      message: `Typecheck failed. Fix the errors from \`tsc --noEmit\` before publishing:\n${typecheck.stdout}${typecheck.stderr}`
+    });
+  const html = yield* Effect.scoped(
+    Effect.gen(function* () {
+      const output = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-publish-" });
+      const build = yield* run(cwd, [
+        path.join(cwd, "node_modules/vite/bin/vite.js"),
+        "build",
+        "--outDir",
+        output,
+        "--emptyOutDir"
+      ]);
+      if (build.code !== 0)
+        return yield* new LocalError({
+          message: `Vite build failed. Fix the repo's single-file build before publishing:\n${build.stdout}${build.stderr}`
+        });
+      const entries = yield* fs.readDirectory(output, { recursive: true });
+      const files: string[] = [];
+      for (const entry of entries) {
+        const info = yield* fs.stat(path.join(output, entry));
+        if (info.type !== "Directory") files.push(entry);
+      }
+      if (files.length !== 1 || files[0] !== "index.html")
+        return yield* new LocalError({
+          message: `Vite must emit only index.html; found ${files.length ? files.join(", ") : "no HTML output"}. Inline every asset with vite-plugin-singlefile; remove public files, sourcemaps and extra entrypoints.`
+        });
+      return yield* fs.readFileString(path.join(output, "index.html"));
+    })
+  ).pipe(
+    Effect.mapError((cause) =>
+      isLocalError(cause)
+        ? cause
+        : new LocalError({
+            message: "Could not read the Vite build output.",
+            cause
+          })
+    )
+  );
+  const inspection = inspectBundle(html, manifest.tier);
+  if (inspection.dependencies.length)
+    return yield* new LocalError({
+      message: `The HTML bundle is not self-contained or uses unsupported external dependencies:\n- ${inspection.dependencies.join("\n- ")}\nInline resources in the HTML; use Patchy integrations instead of external dependencies.`
+    });
+  const bytes = Buffer.byteLength(html, "utf8");
+  if (bytes > maxBundleBytes)
+    return yield* new LocalError({
+      message: `HTML bundle is ${bytes} bytes; maximum is ${maxBundleBytes} bytes (10 MiB). Largest contributors:\n${inspection.contributors.length ? inspection.contributors.map((entry) => `- ${entry.name}: ${entry.bytes} bytes`).join("\n") : `- HTML markup: ${bytes} bytes`}\nReduce these resources before publishing.`,
+      code: "too_large"
+    });
+  const server = yield* fs
+    .exists(path.join(cwd, "server"))
+    .pipe(
+      Effect.mapError(
+        (cause) =>
+          new LocalError({ message: "Could not inspect server/ for the evident tier.", cause })
+      )
+    );
+  if (server || manifest.tier >= 2)
+    return yield* new LocalError({
+      message: server
+        ? "server/ requires tier 2, which is not served yet. Remove server code before publishing."
+        : "Tier 2 and above are not served yet.",
+      code: "tier_mismatch"
+    });
+  if (manifest.tier === 0) {
+    const validation = validateHtml(html);
+    if (!validation.ok)
+      return yield* new LocalError({
+        message: `Tier 0 HTML failed the static-page policy. Browser code requires tier 1 in patchy.config.ts:\n- ${validation.errors.join("\n- ")}`,
+        code: "tier_mismatch"
+      });
+  }
+  return { manifest, html };
+});

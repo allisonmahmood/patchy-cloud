@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -154,6 +154,12 @@ export default defineConfig({ name: "packed-config", tier: 0, tables: {
 }, files: {}, uses: {} });
 `
           )
+        );
+        yield* Effect.promise(() =>
+          mkdir(path.join(dir, "patchy/_generated"), { recursive: true })
+        );
+        yield* Effect.promise(() =>
+          writeFile(path.join(dir, "patchy/_generated/index.json"), '{"uses":[]}')
         );
         const execution = yield* Effect.tryPromise(() =>
           exec(

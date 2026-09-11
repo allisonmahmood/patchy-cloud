@@ -1,6 +1,6 @@
 # patchy
 
-One package for [Patchy Cloud](https://github.com/allisonmahmood/patchy-cloud): the `patchy` CLI, `patchy/config` builders, `patchy/client` browser client and a reserved `patchy/dev` entrypoint. The CLI initializes patch repos, manages their declarations and generated files, publishes static HTML patches, changes sharing and takes patches down. Every publish carries a machine token; new patches are company-scoped by default and open through a colleague's signed-in browser. Choose public explicitly to let anyone with the link open a patch. A machine token never opens a patch's view URL.
+One package for [Patchy Cloud](https://github.com/allisonmahmood/patchy-cloud): the `patchy` CLI, `patchy/config` builders, `patchy/client` browser client and a reserved `patchy/dev` entrypoint. The CLI initializes patch repos, manages their declarations and generated files, publishes tier 0 and tier 1 repos or static HTML files, changes sharing and takes patches down. Every publish carries a machine token; new patches are company-scoped by default and open through a colleague's signed-in browser. Choose public explicitly to let anyone with the link read the current version.
 
 An agent is the primary driver, so the CLI promises a contract an agent can branch on without reading prose: an [exit code that says who has to act](#exit-codes), `--json` on every command, and one resolution of which instance is being targeted. The contract is [ADR-0004](../../docs/adr/ADR-0004-cli-contract-for-agents.md).
 
@@ -64,12 +64,13 @@ not accept null; updates are partial. Other kinds are `integer`, `number` and
 `json` (read as `unknown`). Refs are branded row ids, not foreign keys.
 
 `executeConfig(path)` from `patchy/config` runs the config in a child
-process and returns a validated manifest. Declarations require real stamps in
-the sibling `patchy/_generated/index.json`, shaped as
-`{ "uses": [{ "alias": "sales", "id": "<resolved-id>", "revision": 1 }] }`.
-Missing, ambiguous or invalid stamps fail locally; the server never executes
-config. `executeConfig(path, { resolve: false })` instead returns an unresolved
-generation manifest; `generate` supplies the ids and revisions for the CLI to stamp.
+process and returns a validated manifest. It requires the sibling generated
+`patchy/_generated/index.json`, even when `uses` is empty. Each stamp records
+`alias`, resolved `id`, `revision`, and its resolved `declaration` (including
+`kind` and the authored handle or source patch/table). Missing, duplicate,
+removed or rebound declarations fail locally with `stale_generated`; run
+`patchy refresh`. The server never executes config. The CLI's generation path
+executes without resolution, then stamps the instance's returned ids and revisions.
 Config files use
 Node's native TypeScript loader, including explicit `.ts` extensions for local
 TypeScript imports.
@@ -107,8 +108,7 @@ sent. A `Blob` is read into a new buffer for transfer, leaving the blob usable.
 The internal generated `client.ts` template imports the config's **type** and
 `manifest.json`'s **value**. The package's browser graph has no Node, Effect or
 PGlite runtime. The hosted tier 1 shell supplies the broker. `patchy/dev`
-reserves its entrypoint; the local dev runtime and repo publishing remain
-separate work from repo generation.
+reserves its entrypoint; the local dev runtime remains separate work.
 
 ## Commands
 
@@ -170,9 +170,8 @@ fixtures/                     postgres-<handle>.sql and shared-<alias>.sql stubs
 `AGENTS.md` is written once, says install already ran, points at the generated
 index, and says to test with `patchy dev`. The repo typechecks without added setup,
 and `pnpm patchy --help` runs its pinned copy. **The local dev runtime is not
-implemented by these commands**; the hosted broker does not supply a local
-runtime or enable repo publishing. Do not replace a missing local runtime with
-production data access.
+implemented by these commands**; repo publishing targets the hosted runtime.
+Do not replace a missing local runtime with production data access.
 
 Managed writes are exactly the package pin, `patchy/_generated/`,
 `.agents/skills/patchy-*/`, missing fixture stubs, the lockfile through install,
@@ -367,9 +366,30 @@ Validate an HTML file locally without publishing. Exits non-zero if validation f
 patchy validate ./plan.html
 ```
 
-### `patchy publish <file> [--name <name>] [--share company|public] [--patch <patch-id>] [--new] [--api-url <url>]`
+### `patchy publish [file] [--name <name>] [--share company|public] [--patch <patch-id>] [--new] [--api-url <url>]`
 
 First recover any pending publish for this instance. Otherwise check the executing CLI release against `GET /api/release`, validate the file, and publish it with a tier 0 manifest and empty `tables`, `files` and `uses`. File mode never reads `patchy.json`. On success it prints the address, patch ID, tier, version number, provisioned and unused resources, and sharing scope. The JSON response includes `name`, `address`, `scope: "company" | "public"`, `tier`, `schemaRevision`, `provisioned`, `unused` and `warnings`. `publicUrl` equals `address`; the scope, not that field name, controls who may read it.
+
+Without a file, run from the patch repo root. The config supplies its name and
+tier; `patchy.json` supplies its instance and optional patch id. `--share` works
+in either mode; `--name`, `--patch` and `--new` are file-only.
+
+Repo publish first recovers `.patchy/publish/<instance-hash>/attempt.json`.
+Otherwise it checks the exact pin, executing CLI and installed runtime against
+the instance release; executes config; compares declaration identities and stamps
+with `patchy/_generated/index.json`; runs `tsc --noEmit`; builds with Vite; and
+checks the evident tier. Changed declarations fail locally with `stale_generated`
+and “declarations changed; run `patchy refresh`”, before the build. Leftover
+files or external bundle dependencies fail loudly. Above 10 MiB the failure
+reports the largest contributors. `server/` requires unsupported tier 2; scripts
+require at least tier 1. A failed repo build never falls back to a static file.
+
+The complete request and owner are persisted with exclusive `wx` before sending.
+On a create, the returned patch id is written into `patchy.json` before clearing
+the saved attempt. A lost response or failed id write recovers the original
+create, even if the tree or release changed. Preserve `.patchy/publish/` until
+recovery succeeds; replacement credentials must belong to the original user.
+Each successful invocation publishes or recovers exactly one version.
 
 ```sh
 patchy publish ./plan.html
@@ -380,8 +400,14 @@ patchy publish ./plan.html
 # Patch ID: k7f2m9x1a3b8
 # Tier: 0
 # Version: 1
-# Provisioned: {"tables":[],"columns":[],"indexes":[],"stores":[]}
-# Unused: {"tables":[],"columns":[],"indexes":[],"stores":[]}
+# Provisioned tables: none.
+# Provisioned columns: none.
+# Provisioned indexes: none.
+# Provisioned stores: none.
+# Unused tables: none.
+# Unused columns: none.
+# Unused indexes: none.
+# Unused stores: none.
 ```
 
 Credential selection is deterministic: `PATCHY_API_TOKEN` wins, then the token stored for the resolved instance, then the token seeded beside a dev-env URL. A login therefore outranks the seed. With no key, publish exits 1 (`local`), `Run: patchy login`. A rejected credential is reported as-is; the CLI never starts a login or obtains a replacement on your behalf.
@@ -396,7 +422,7 @@ Authentication failures, throttling, quota refusals, lost replies, server failur
 
 Concurrent invocations through the same instance and state directory resend the same persisted attempt rather than replacing it or refusing contention. Each authenticates the attempt's original owner before sending, including an invocation that loses the race to create it. Killing a process leaves the attempt available for recovery. A response clears only its matching publish key, so a stale response cannot remove a newer attempt.
 
-The executing CLI must match the instance's release exactly. A local mismatch exits 1 with `kind: "local"` and `code: "release_mismatch"`; an instance-detected mismatch exits 2 with `kind: "rejected"` and the same code. The diagnostic names both releases. Install the exact package reported by `GET /api/release`; inside a patch repo, `patchy refresh` upgrades the pin and refreshes the managed set. File-mode `publish` still sends HTML files only. Repo publishing and the local `patchy dev` runtime remain separate work (SDK #207). The API admits tier 0 and tier 1 manifests with tables, file stores, shared-table declarations and resolved Postgres connections; tiers 2 and above remain refused. Tier 0 follows the safe-HTML policy; tier 1 bundles run in the hosted sandbox. File publishing onto a patch with cumulative inventory returns `has_primitives` (422, exit 2): that patch requires repo publishing, which is not available in this CLI yet. `has_primitives`, `not_additive`, `patch_not_openable`, `connection_not_connected` and `stale_generated` are definitive payload refusals; the matching attempt is cleared. Restore shared-source access, reconnect the connection, or regenerate its snapshot stamp before publishing a fresh attempt. Connection secrets are accepted only in the admin's browser at `/company/connections`, never by a CLI command.
+The executing CLI must match the instance's release exactly. A local mismatch exits 1 with `kind: "local"` and `code: "release_mismatch"`; an instance-detected mismatch exits 2 with `kind: "rejected"` and the same code. The diagnostic names both releases. Install the exact package reported by `GET /api/release`; inside a patch repo, `patchy refresh` upgrades the pin and managed set. Repo publishing admits tier 0 and tier 1 with tables, stores, shared-table declarations and resolved Postgres connections. The local `patchy dev` runtime remains separate work (SDK #207).
 
 Without `--share`, a new patch defaults to `company` and an update preserves the patch's current scope. An explicit `--share company` or `--share public` sets it in either direction while publishing the new version:
 
@@ -409,6 +435,9 @@ patchy publish ./plan.html --share company # updates content, takes it back insi
 ### `patchy share <file> <company|public>` or `patchy share --patch <patch-id> <company|public>`
 
 Change an existing patch's sharing without publishing a version. Name the file it was published from to use the CLI's per-instance cache, or pass `--patch <patch-id>`; one or the other, not both. Only the owner user can change sharing, through any of their machine tokens. Company membership or an admin role alone does not grant that right.
+
+From a published repo, `patchy share company|public` uses `patchy.json` without
+a file or `--patch`. An unpublished repo is a local refusal.
 
 ```sh
 patchy share ./plan.html public
@@ -428,6 +457,10 @@ Only the current version of a public patch is public; older versions stay behind
 ### `patchy delete <file> | --patch <patch-id>`
 
 Delete a patch. Irreversible: the origin stops serving it at once, so confirm with the user first. A still-fresh public cache entry may remain for up to 60 seconds, and downloaded copies cannot be recalled. Name the file the patch was published from and the CLI finds the patch in its cache, or pass `--patch <patch-id>` to name it outright; one or the other, not both. On success the cache forgets the patch, so a later publish from that file creates a new one.
+
+From a published repo, `patchy delete` uses `patchy.json` without an argument.
+The id remains there: a later publish is refused with 404 and tells you to remove
+`patch` from `patchy.json` before intentionally creating a new patch.
 
 ```sh
 patchy delete ./plan.html

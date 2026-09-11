@@ -192,22 +192,45 @@ instance. `init` with no key is a local error before creating a repo, including
 in non-interactive execution. Pass `--purpose` for unattended initialization.
 No install or generation progress leaks into JSON stdout.
 
-The tree teaches “test with `patchy dev`”, but the local runtime, broker and
-repo publishing remain separate work. Initialization is not a claim that a
-standalone Vite preview can execute declared capabilities.
+The tree teaches “test with `patchy dev`”, but that local runtime remains separate
+work. Repo publishing builds for the hosted broker; a standalone Vite preview
+cannot execute declared capabilities.
 
 ### Publishing and sharing commands
 
 | command                                                                                  | behaviour                                                                                                                                                                                                                              | `--json`                                                                                                               |
 | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | `patchy publish <file> [--name <name>] [--share company\|public] [--patch <id>] [--new]` | Synthesises a tier 0 manifest and publishes the file. A new patch defaults to `company`; an update preserves its scope without the flag. `--patch` only updates; `--new` bypasses the file cache to create.                            | The publish wire response, including `name`, `address`, `scope`, `tier`, `schemaRevision`, `provisioned` and `unused`. |
+| `patchy publish [--share company\|public]`                                               | Publishes the repo at tier 0 or 1, using the config name and `patchy.json` id. Recovers its saved attempt first; otherwise checks release, declarations, types, bundle and tier before sending.                                        | The same publish wire response.                                                                                        |
 | `patchy share <file> <company\|public>` or `patchy share --patch <id> <company\|public>` | Changes sharing without publishing a version. Select the file's cached patch or an explicit id, exactly one, as `delete` does. Only the owner may change it; an unavailable or unowned patch answers 404. With no key, exit 1 `local`. | `{ ok: true, patchId, scope, publicUrl }`.                                                                             |
+
+Inside a repo, `patchy share company|public` and `patchy delete` use the id in
+`patchy.json`; an unpublished repo is a local refusal. Delete leaves that id in
+place. Publishing to a deleted patch returns 404 (exit 2), with the instruction
+to remove `patch` from `patchy.json` before intentionally creating another patch.
+`--name`, `--patch` and `--new` belong to file mode; repo identity comes from its
+config and `patchy.json`, and file mode is never a fallback for a failed repo build.
+
+Repo publish checks the exact pin, executing CLI and installed runtime against
+the release before executing config. Declaration aliases, identities and resolved
+stamps must match `patchy/_generated/index.json`; local `stale_generated` is exit 1:
+“declarations changed; run `patchy refresh`”. Then `tsc --noEmit`, Vite's single-file
+build and the evident tier check run. Residual files/dependencies, a bundle over
+10 MiB (with largest contributors), `server/`, or script under a tier 0 claim
+fail locally before persistence or publishing. Compiler/build diagnostics go to
+the failure envelope, never successful JSON stdout.
+
+Repo attempts live at `.patchy/publish/<instance-hash>/attempt.json`, using the
+same exclusive creation, owner check and key-checked clearing as file mode.
+A create writes its returned id into `patchy.json` before clearing the attempt.
+Failed local application keeps the original create recoverable; retry returns
+that result and exits without building or creating another version.
 
 File publishing never reads `patchy.json`. The executing CLI must match
 `GET /api/release` exactly; a mismatch names both releases and `patchy refresh`.
-The same check accepts the repo pin and loaded runtime release for repo publishing
-and dev starts; each must be exact-current, not a compatible version range.
-Repo publishing and dev starts arrive separately; refresh is available now.
+Repo publishing also checks the repo pin and installed runtime release;
+each must be exact-current, not a compatible version range. Local dev starts
+remain separate work; refresh upgrades the pin and generated set.
 File publishing onto a patch with cumulative table or store inventory is
 `has_primitives` (422, exit 2, `rejected`), even if its current version omits
 those definitions. Publish that patch from its repo. `has_primitives`,
@@ -262,9 +285,10 @@ entries cannot be recalled.
 
 Resolution order: `--api-url` > `.local/dev/env` (searched upward from the
 working directory) > `PATCHY_API_URL` > `~/.patchy/config.json` > the local
-default. For repo commands (`refresh`, `catalog`, `add`, `remove` and private
-generation), `patchy.json`'s instance comes after `PATCHY_API_URL` and before
-saved config. `init` and file-oriented commands keep the order above. One service
+default. For repo commands (`refresh`, `catalog`, `add`, `remove`, no-file
+`publish`, untargeted `share`/`delete` and private generation), `patchy.json`'s
+instance comes after `PATCHY_API_URL` and before saved config. `init` and
+file-oriented commands keep the order above. One service
 resolves the URL once per command and exposes its source (`flag` | `dev-env` |
 `env` | `project` | `config` | `default`); `status --json` reports its resolved
 URL and source, and `publish` prints "Publishing to <url> (target came from …)"

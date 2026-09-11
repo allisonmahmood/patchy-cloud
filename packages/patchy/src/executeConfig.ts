@@ -83,6 +83,7 @@ const generatedIndexSchema = Schema.Struct({
     Schema.Struct({
       alias: Schema.String,
       id: PostgresDeclaration.fields.id,
+      declaration: Schema.Union([PostgresDeclaration, SharedTableDeclaration]),
       revision: PostgresDeclaration.fields.revision
     })
   )
@@ -95,6 +96,13 @@ const childMessageSchema = Schema.Union([
   Schema.Struct({ ok: Schema.Literal(false), message: Schema.String })
 ]);
 const decodeMessage = Schema.decodeUnknownSync(childMessageSchema);
+
+export class StaleGenerated extends Error {
+  readonly code = "stale_generated";
+  constructor(options?: ErrorOptions) {
+    super("declarations changed; run `patchy refresh`", options);
+  }
+}
 
 const runConfig = (path: string): Promise<unknown> => {
   const { promise, resolve: accept, reject } = Promise.withResolvers<unknown>();
@@ -166,32 +174,40 @@ export async function executeConfig(
   }
   const declarations = Object.entries(config.uses);
   const uses: Record<string, (typeof Manifest.Type)["uses"][string]> = {};
-  if (declarations.length > 0) {
-    const indexPath = resolve(dirname(absolutePath), "patchy/_generated/index.json");
-    let index: typeof generatedIndexSchema.Type;
-    try {
-      index = decodeIndex(await readFile(indexPath, "utf8"));
-    } catch (cause) {
-      throw new Error(`Cannot resolve config declarations from ${indexPath}.`, {
-        cause
-      });
-    }
-    const stamps = new Map<string, (typeof generatedIndexSchema.Type)["uses"][number]>();
-    for (const stamp of index.uses) {
-      if (stamps.has(stamp.alias)) throw new Error(`Duplicate generated stamp for ${stamp.alias}.`);
-      stamps.set(stamp.alias, stamp);
-    }
-    for (const [alias, declaration] of declarations) {
-      const stamp = stamps.get(alias);
-      if (!stamp) throw new Error(`No generated stamp for ${alias}.`);
-      if (
-        declaration.kind === "sharedTable" &&
-        stamp.id !== sharedTableId(declaration.patchId, declaration.table)
-      ) {
-        throw new Error(`The generated stamp for ${alias} names another shared table.`);
-      }
-      uses[alias] = { ...declaration, id: stamp.id, revision: stamp.revision };
-    }
+  const indexPath = resolve(dirname(absolutePath), "patchy/_generated/index.json");
+  let index: typeof generatedIndexSchema.Type;
+  try {
+    index = decodeIndex(await readFile(indexPath, "utf8"));
+  } catch (cause) {
+    throw new StaleGenerated({ cause });
+  }
+  const stamps = new Map<string, (typeof generatedIndexSchema.Type)["uses"][number]>();
+  for (const stamp of index.uses) {
+    if (
+      stamps.has(stamp.alias) ||
+      stamp.id !== stamp.declaration.id ||
+      stamp.revision !== stamp.declaration.revision
+    )
+      throw new StaleGenerated();
+    stamps.set(stamp.alias, stamp);
+  }
+  if (stamps.size !== declarations.length) throw new StaleGenerated();
+  for (const [alias, declaration] of declarations) {
+    const stamp = stamps.get(alias);
+    if (!stamp) throw new StaleGenerated();
+    const generated = stamp.declaration;
+    if (
+      declaration.kind !== generated.kind ||
+      (declaration.kind === "postgres" &&
+        (generated.kind !== "postgres" || declaration.handle !== generated.handle)) ||
+      (declaration.kind === "sharedTable" &&
+        (generated.kind !== "sharedTable" ||
+          declaration.patchId !== generated.patchId ||
+          declaration.table !== generated.table ||
+          stamp.id !== sharedTableId(declaration.patchId, declaration.table)))
+    )
+      throw new StaleGenerated();
+    uses[alias] = { ...declaration, id: stamp.id, revision: stamp.revision };
   }
   return decodeManifest({ ...config, uses, manifestVersion: MANIFEST_VERSION, release: RELEASE });
 }

@@ -62,6 +62,7 @@
     "@patchy/auth": "workspace:*",
     "@patchy/core": "workspace:*",
     "effect": "catalog:",
+    "parse5": "catalog:",
     "typescript": "^6.0.3",
     "vite-plugin-singlefile": "^2.3.0",
     "vitest": "^4.1.11"

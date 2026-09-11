@@ -3,6 +3,7 @@ import { assert, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -626,6 +627,157 @@ it.layer(
     })
   );
 
+  it.effect("rolls back interrupted company DDL and retries the same publish key", () =>
+    Effect.gen(function* () {
+      const manifest = {
+        ...Fixtures.manifest,
+        name: "interrupted-company-ddl",
+        tables: { notes: { columns: { title: { kind: "text" as const } }, indexes: {} } }
+      };
+      const created = yield* publish("<p>original</p>", null, { manifest });
+      const service = yield* patches;
+      const baseline = yield* service.inventory(created.patchId, uploader.user.id);
+      const databases = yield* CompanyDatabases.CompanyDatabases;
+      const staged = yield* Deferred.make<void>();
+      const withPatchLock: CompanyDatabases.CompanyDatabases["Service"]["withPatchLock"] =
+        (patchId) => (effect) =>
+          databases.withPatchLock(patchId)(
+            effect.pipe(
+              Effect.tap(() =>
+                Deferred.succeed(staged, undefined).pipe(Effect.andThen(Effect.never))
+              )
+            )
+          );
+      const interrupted = Layer.effect(Content.Content, Content.make).pipe(
+        Layer.provide(
+          Layer.effect(Patches.Patches, Patches.make).pipe(
+            Layer.provide(
+              Layer.succeed(CompanyDatabases.CompanyDatabases, { ...databases, withPatchLock })
+            )
+          )
+        )
+      );
+      const attempt = {
+        publishKey: crypto.randomUUID(),
+        manifest: {
+          ...manifest,
+          tables: {
+            notes: {
+              ...manifest.tables.notes,
+              columns: {
+                ...manifest.tables.notes.columns,
+                label: { kind: "text" as const, optional: true }
+              }
+            }
+          },
+          files: { attachments: {} }
+        }
+      };
+      const before = yield* store.keys;
+      const publication = yield* publish("<p>interrupted</p>", created.patchId, attempt).pipe(
+        Effect.provide(interrupted),
+        Effect.forkScoped
+      );
+      yield* Deferred.await(staged);
+      yield* Fiber.interrupt(publication);
+      const abandoned = (yield* store.keys).filter((key) => !before.includes(key));
+      assert.strictEqual(abandoned.length, 1);
+      assert.deepStrictEqual(yield* service.inventory(created.patchId, uploader.user.id), baseline);
+      assert.isTrue(Option.isNone(yield* service.replay(uploader.user.id, attempt.publishKey)));
+      assert.strictEqual(
+        Option.getOrThrow(yield* service.find(created.patchId)).version.id,
+        created.versionId
+      );
+      yield* databases.withCompany(uploader.company.id)(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          assert.deepStrictEqual(
+            yield* sql`SELECT column_name FROM information_schema.columns
+              WHERE table_schema = ${Inventory.namespace(created.patchId)}
+                AND table_name = 'notes' AND column_name = 'label'`,
+            []
+          );
+        })
+      );
+      yield* TestClock.adjust(Patches.PENDING_OBJECT_LEASE);
+      yield* sweep;
+      assert.isFalse((yield* store.keys).includes(abandoned[0]!));
+      assert.strictEqual(
+        yield* store.service.get(Content.objectKey(created.patchId, created.versionId)),
+        "<p>original</p>"
+      );
+      const retried = yield* publish("<p>interrupted</p>", created.patchId, attempt);
+      assert.strictEqual(retried.versionNumber, 2);
+      assert.strictEqual(retried.schemaRevision, 2);
+      assert.deepStrictEqual(retried.provisioned.columns, ["notes.label"]);
+      assert.deepStrictEqual(retried.provisioned.stores, ["attachments"]);
+    })
+  );
+
+  it.effect("expires a platform transaction at 60 seconds and releases its patch row lock", () =>
+    Effect.gen(function* () {
+      const created = yield* publish("<p>original</p>");
+      const sql = yield* SqlClient.SqlClient;
+      const staged = yield* Deferred.make<void>();
+      const withTransaction: SqlClient.SqlClient["withTransaction"] = (effect) =>
+        sql.withTransaction(
+          effect.pipe(
+            Effect.tap((result) =>
+              typeof result === "object" && result !== null && "responseBody" in result
+                ? Deferred.succeed(staged, undefined).pipe(Effect.andThen(Effect.never))
+                : Effect.void
+            )
+          )
+        );
+      const heldSql = new Proxy(sql, {
+        get: (target, property, receiver) =>
+          property === "withTransaction" ? withTransaction : Reflect.get(target, property, receiver)
+      });
+      const held = Layer.effect(Content.Content, Content.make).pipe(
+        Layer.provide(
+          Layer.effect(Patches.Patches, Patches.make).pipe(
+            Layer.provide(Layer.succeed(SqlClient.SqlClient, heldSql))
+          )
+        )
+      );
+      const attempt = { publishKey: crypto.randomUUID() };
+      const publication = yield* publish("<p>deadline</p>", created.patchId, attempt).pipe(
+        Effect.provide(held),
+        Effect.exit,
+        Effect.forkScoped
+      );
+      yield* Deferred.await(staged);
+      const waiting = yield* Deferred.make<number>();
+      const observer = yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const [backend] = yield* sql<{ pid: number }>`SELECT pg_backend_pid() AS pid`;
+            yield* Deferred.succeed(waiting, backend!.pid);
+            return yield* sql<{ versionId: string }>`
+            SELECT current_version_id AS "versionId" FROM patches
+            WHERE id = ${created.patchId} FOR UPDATE`;
+          })
+        )
+        .pipe(Effect.forkScoped);
+      const pid = yield* Deferred.await(waiting);
+      yield* sql<{ waiting: boolean }>`SELECT EXISTS (
+        SELECT 1 FROM pg_stat_activity WHERE pid = ${pid} AND wait_event_type = 'Lock'
+      ) AS waiting`.pipe(Effect.repeat({ until: (rows) => rows[0]!.waiting }));
+      yield* TestClock.adjust("59 seconds");
+      assert.isUndefined(publication.pollUnsafe());
+      yield* TestClock.adjust("1 second");
+      assert.isTrue(Exit.isFailure(yield* Fiber.join(publication)));
+      assert.deepStrictEqual(yield* Fiber.join(observer), [{ versionId: created.versionId }]);
+      const service = yield* patches;
+      assert.isTrue(Option.isNone(yield* service.replay(uploader.user.id, attempt.publishKey)));
+      yield* TestClock.adjust(Patches.PENDING_OBJECT_LEASE);
+      yield* sweep;
+      const retried = yield* publish("<p>deadline</p>", created.patchId, attempt);
+      assert.strictEqual(retried.patchId, created.patchId);
+      assert.strictEqual(retried.versionNumber, 2);
+    })
+  );
+
   it.effect(
     "recovers company-committed DDL after platform rollback even without version history",
     () =>
@@ -687,8 +839,10 @@ it.layer(
         name: "orphan-table-repo",
         tables: { notes: { columns: {}, indexes: {} } }
       };
+      const publishKey = crypto.randomUUID();
       const failed = yield* publish("<p>orphan</p>", null, {
         manifest,
+        publishKey,
         machineTokenId: "missing-token"
       }).pipe(Effect.flip);
       assert.strictEqual(failed._tag, "SqlError");
@@ -703,6 +857,18 @@ it.layer(
       assert.deepStrictEqual(
         orphan!.tables.map((table) => table.name),
         ["notes"]
+      );
+      const service = yield* patches;
+      assert.isTrue(Option.isNone(yield* service.replay(uploader.user.id, publishKey)));
+      const beforeRetry = yield* service.countLive(uploader.user.id);
+      const retried = yield* publish("<p>orphan</p>", null, { manifest, publishKey });
+      assert.notStrictEqual(retried.patchId, patchId);
+      assert.strictEqual(retried.versionNumber, 1);
+      assert.deepStrictEqual(retried.provisioned.tables, ["notes"]);
+      assert.strictEqual(yield* service.countLive(uploader.user.id), beforeRetry + 1);
+      assert.strictEqual(
+        Option.getOrThrow(yield* service.replay(uploader.user.id, publishKey)).response.patchId,
+        retried.patchId
       );
     })
   );
@@ -762,13 +928,22 @@ it.layer(
   it.effect("writes nothing when the store refuses the object", () =>
     Effect.gen(function* () {
       const created = yield* publish("<p>original</p>");
-      const failed = yield* publish("<p>lost</p>", created.patchId).pipe(
+      const attempt = { publishKey: crypto.randomUUID() };
+      const before = yield* store.keys;
+      const failed = yield* publish("<p>lost</p>", created.patchId, attempt).pipe(
         over(putFails),
         Effect.flip
       );
       assert.strictEqual(failed._tag, "StoreUnavailable");
       const current = Option.getOrThrow(yield* (yield* patches).find(created.patchId));
       assert.strictEqual(yield* (yield* content).read(current.version), "<p>original</p>");
+      assert.deepStrictEqual(yield* store.keys, before);
+      assert.isTrue(
+        Option.isNone(yield* (yield* patches).replay(uploader.user.id, attempt.publishKey))
+      );
+      const retried = yield* publish("<p>lost</p>", created.patchId, attempt);
+      assert.strictEqual(retried.patchId, created.patchId);
+      assert.strictEqual(retried.versionNumber, 2);
     })
   );
 
