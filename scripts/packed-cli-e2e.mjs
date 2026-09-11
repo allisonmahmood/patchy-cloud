@@ -3088,7 +3088,7 @@ function assertPublicViewer(viewer, { patchId, versionNumber, html }) {
   assert.equal(
     viewer.response.headers.get("content-security-policy"),
     "default-src 'none'; style-src 'unsafe-inline'; img-src https: data:; " +
-      "frame-src 'self' about:; base-uri 'none'; form-action 'none'"
+      "frame-src 'self' about:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
   );
   assert.equal(viewer.response.headers.get("referrer-policy"), "no-referrer");
   assert.equal(viewer.response.headers.get("x-content-type-options"), "nosniff");
