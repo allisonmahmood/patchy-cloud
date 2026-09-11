@@ -11,7 +11,9 @@ The decision implements [SDK spec §10](https://github.com/allisonmahmood/patchy
 
 ## Containment and authority
 
-The content response's CSP is `sandbox allow-scripts allow-modals; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src blob: data:; font-src blob: data:; media-src blob: data:; connect-src 'none'`. Permissions-Policy denies camera, microphone and geolocation. The shell's `frame-src 'self'` contains script-initiated navigation and redirect egress; the iframe and HTTP sandbox must both grant a capability. Runtime file retrieval remains an attachment with a script-free sandbox CSP, never an executable uploaded document on the host.
+The content response's CSP is `sandbox allow-scripts allow-modals; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src blob: data:; font-src blob: data:; media-src blob: data:; connect-src 'none'; frame-ancestors 'self'`. Permissions-Policy denies camera, microphone and geolocation. The shell's `frame-src 'self'` contains script-initiated navigation and redirect egress; the iframe and HTTP sandbox must both grant a capability. Runtime file retrieval remains an attachment with a script-free sandbox CSP, never an executable uploaded document on the host.
+
+Both static and scripted `/~content` responses allow only same-origin ancestors so the shell can frame them. Shells and first-party pages use `frame-ancestors 'none'`: they cannot themselves be embedded, even by a same-origin page.
 
 The shell installs its load handler before navigating the frame. It transfers one MessageChannel to that document, with the URL nonce echoed in `ready { wire, nonce }`. A second load closes the port. Replies use the port, never the frame's WindowProxy, so a replacement document inherits neither pending replies nor authority. Bootstrap is bounded. There is no retry of an operation whose result was lost.
 

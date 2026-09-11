@@ -197,7 +197,7 @@ it.layer(layer)("pages", (it) => {
           assert.strictEqual(response.headers["referrer-policy"], "no-referrer");
           assert.strictEqual(
             response.headers["content-security-policy"],
-            content ? `sandbox; ${CSP}` : `${CSP}; frame-ancestors 'none'`
+            content ? `sandbox; ${CSP}; frame-ancestors 'self'` : `${CSP}; frame-ancestors 'none'`
           );
           assert.strictEqual(response.headers["cache-control"], "public, max-age=60");
           assert.strictEqual(response.headers["x-content-type-options"], "nosniff");
@@ -243,7 +243,7 @@ it.layer(layer)("pages", (it) => {
         const scriptedHistory = yield* get(`/~content/${patchId}/${olderVersionId}`);
         assert.strictEqual(
           scriptedHistory.headers["content-security-policy"],
-          "sandbox allow-scripts allow-modals; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src blob: data:; font-src blob: data:; media-src blob: data:; connect-src 'none'"
+          "sandbox allow-scripts allow-modals; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src blob: data:; font-src blob: data:; media-src blob: data:; connect-src 'none'; frame-ancestors 'self'"
         );
         assert.strictEqual(
           scriptedHistory.headers["permissions-policy"],

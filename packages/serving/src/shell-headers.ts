@@ -18,7 +18,7 @@ const STATIC_DOCUMENT_SECURITY_POLICY = [
 export const PATCH_CONTENT_SECURITY_POLICY = `${STATIC_DOCUMENT_SECURITY_POLICY}; frame-ancestors 'none'`;
 
 /** Both the HTTP policy and iframe sandbox must grant a capability. */
-export const STATIC_CONTENT_SECURITY_POLICY = `sandbox; ${STATIC_DOCUMENT_SECURITY_POLICY}`;
+export const STATIC_CONTENT_SECURITY_POLICY = `sandbox; ${STATIC_DOCUMENT_SECURITY_POLICY}; frame-ancestors 'self'`;
 export const SCRIPTED_CONTENT_SECURITY_POLICY = [
   "sandbox allow-scripts allow-modals",
   "default-src 'none'",
@@ -27,7 +27,8 @@ export const SCRIPTED_CONTENT_SECURITY_POLICY = [
   "img-src blob: data:",
   "font-src blob: data:",
   "media-src blob: data:",
-  "connect-src 'none'"
+  "connect-src 'none'",
+  "frame-ancestors 'self'"
 ].join("; ");
 
 /** frame-src is egress containment even for script-initiated child navigation. */

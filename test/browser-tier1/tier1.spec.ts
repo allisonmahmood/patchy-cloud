@@ -559,6 +559,8 @@ test("cross-site simple POST refusal, response CSP and one terminal stale public
   for (const path of [content!, "/~content/missing/missing", "/~tier1/redirect"]) {
     const response = await context.request.get(instance.origin + path, { maxRedirects: 0 });
     expect(response.headers()["content-security-policy"]).toContain("sandbox");
+    if (path.startsWith("/~content/"))
+      expect(response.headers()["content-security-policy"]).toContain("frame-ancestors 'self'");
   }
   const htmlResponse = await context.request.get(instance.origin + content!);
   expect(htmlResponse.headers()["content-security-policy"]).toContain("connect-src 'none'");
@@ -575,20 +577,26 @@ test("cross-site simple POST refusal, response CSP and one terminal stale public
   );
   const unicodeFrame = await open(page, unicode);
   await expect(unicodeFrame.locator("h1")).toHaveText(unicodeTitle);
-  for (const parent of [`${instance.origin}/~tier1/embed`, `${instance.foreignOrigin}/embed`]) {
+  const unicodeContent = new URL(
+    (await page.locator("#patch").getAttribute("src"))!,
+    instance.origin
+  ).href;
+  for (const [parent, target] of [
+    [`${instance.origin}/~tier1/embed`, unicode.address],
+    [`${instance.foreignOrigin}/embed`, unicode.address],
+    [`${instance.foreignOrigin}/embed`, unicodeContent]
+  ] as const) {
     // A CSP-denied frame may expose only a failed navigation, not a response event.
-    const framed = page.waitForEvent(
-      "requestfailed",
-      (request) => request.url() === unicode.address
-    );
-    await page.goto(`${parent}?target=${encodeURIComponent(unicode.address)}`);
+    const framed = page.waitForEvent("requestfailed", (request) => request.url() === target);
+    await page.goto(`${parent}?target=${encodeURIComponent(target)}`);
     await framed;
-    expect(page.frames().map((child) => child.url())).not.toContain(unicode.address);
+    expect(page.frames().map((child) => child.url())).not.toContain(target);
   }
   await instance.session(context, "none");
   const denied = await context.request.get(instance.origin + content!);
   expect(denied.status()).toBe(401);
   expect(denied.headers()["content-security-policy"]).toContain("sandbox");
+  expect(denied.headers()["content-security-policy"]).toContain("frame-ancestors 'self'");
 
   await instance.session(context);
   const attack = await context.newPage();
