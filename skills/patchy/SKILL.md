@@ -1,15 +1,12 @@
 ---
 name: patchy
-description: Publish content as a polished, shareable HTML page on a Patchy Cloud instance, read a Patchy page, and run Patchy Cloud's onboarding. Use when the user says "patchy", "publish this with patchy", "patchy page", asks to read a Patchy link, "walk me through Patchy Cloud's onboarding", or asks for a "shareable HTML page".
+description: Publish a static HTML page on Patchy Cloud, start a patch repo with init, read a Patchy link, or run onboarding. Use when the user asks to publish with Patchy, build a Patchy tool, open a patch, or set up Patchy.
 ---
 
 # Patchy
 
-Use this skill when the user wants a plan, proposal, architecture note, briefing, visual
-mockup, or report as a shareable web page.
-
-The static-page publishing flow is inspired by Postplan, the static HTML draft publishing
-tool created by Theo — credit him for the original agent-friendly posting pattern.
+Use this global skill to publish a static page, start a tool's patch repo, read a
+patch, or sign the machine in. Inside a patch repo, its project skills govern building.
 
 ## Onboarding
 
@@ -18,6 +15,40 @@ Patchy Cloud's onboarding or asks to redo their Patchy setup.
 That reference owns the whole flow —
 the one style question, the welcome patch, the probe's key names, and the words to say to
 the user, which are the source of truth for user-facing copy anywhere in this skill.
+
+## Building a tool
+
+When the user wants a tool with its own rows, files or company connections,
+start a patch repo rather than putting JavaScript into a static-file publish.
+Use the instance-installed CLI described under Publishing, settle the instance
+and identity, and complete the login handoff below if needed. Then run:
+
+```bash
+patchy init ./team-tool --tier 1 --purpose "The user's purpose for this tool" --json
+```
+
+Use the user's actual purpose and chosen directory. Initialization authenticates
+first; without a key it exits 1 with `Run: patchy login`, not a half-created repo.
+It installs the pinned package and generates client, context, fixture stubs and
+project skills; it refuses a second initialization there. Do not reinstall.
+
+Inside that repo read `AGENTS.md`, `.agents/skills/patchy-loop/SKILL.md` and
+`patchy/_generated/index.json`, then use `pnpm patchy`, the pinned copy.
+The project skills teach tables, files and declarations in Patchy's own terms.
+`pnpm patchy catalog` shows usable connections and shared tables; `--all` also
+shows offered integrations and state. `pnpm patchy add postgres/<handle> --as <alias>`
+or `pnpm patchy add shared-table <patchId>/<table> --as <alias>` adds a declaration
+and generates its client, context, fixture stub and skill. `pnpm patchy remove <alias>`
+reverses it while leaving its fixture. `pnpm patchy refresh` updates the pin,
+generated files and present skills transactionally; never manually edit
+`patchy/_generated/` or managed project skills.
+
+Generation and typechecking are available; the local `patchy dev` runtime,
+browser broker and repo publishing are separate work. Do not claim a working
+local runtime from a successful init, and never substitute production data.
+Use invented local fixture inserts. Every readable row is available to whoever
+can open the patch; tier 1 has no outbound access or client storage. The project
+skills carry the complete runtime limits and the local-only workflow.
 
 ## Good fits
 
@@ -28,9 +59,10 @@ the user, which are the source of truth for user-facing copy anywhere in this sk
 - polished reports
 - quick visual previews of agent-generated work
 
-Keep secrets, private URLs, local filesystem paths, production documentation of record, interactive
-apps, forms, and JavaScript off any published page. Publish only material the intended
-audience may read: the user's company by default, anyone with the link only by explicit choice.
+For the static-page flow, keep secrets, private URLs, local filesystem paths,
+production documentation of record, interactive apps, forms and JavaScript off
+the published page. Publish only material the intended audience may read: the
+user's company by default, anyone with the link only by explicit choice.
 
 ## Publishing
 
@@ -101,7 +133,7 @@ the chosen instance and follow the handoff. Resolve an overriding
    Name the user, company and machine it reports. A successful login does not
    override `PATCHY_API_TOKEN`; completion reports that override in `warnings`.
    Relay any warning and resolve an unintended identity before publishing.
-   Then publish:
+   Then resume the requested operation: `init` for a tool, or validate and publish a static page:
 
 ```bash
 patchy validate './plan.html' && patchy publish './plan.html' --json
@@ -154,7 +186,7 @@ browser sign-out is a separate control on **Your machines**.
   that user's pages; if an environment key overrides it, resolve that override.
 - A new publish checks the executing CLI against `GET /api/release`, then validates the file.
   A `release_mismatch` names both releases: install the exact package reported
-  by that endpoint using the integrity check above. `patchy refresh` is not implemented yet.
+  by that endpoint using the integrity check above. Inside a patch repo, use `pnpm patchy refresh`.
   File mode synthesises a tier 0 manifest with no resources; higher tiers remain refused.
   If the instance returns `has_primitives`, this patch has cumulative resources:
   this CLI cannot publish it yet. Do not replace it with a file; an omitted table

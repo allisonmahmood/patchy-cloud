@@ -41,6 +41,7 @@ import * as Output from "./Output.js";
 import * as State from "./State.js";
 import { RELEASE, MANIFEST_VERSION } from "./release.js";
 import { checkRelease } from "./ReleaseCheck.js";
+import * as Project from "./Project.js";
 
 /** The working directory the entrypoint started in; where the dev-env walk begins. */
 export class Cwd extends Context.Service<Cwd, string>()("patchy/commands/Cwd") {}
@@ -54,6 +55,17 @@ const local = Layer.provideMerge(
 /** Every handler runs under the output contract with `Instance` and `State` resolved. */
 const run = <A, R>(handler: Effect.Effect<A, CliError, R>) =>
   Output.contract(handler).pipe(Effect.provide(local));
+
+/** Only repo commands read patchy.json; file-mode publish keeps its independent target. */
+const runProject = <A, R>(handler: Effect.Effect<A, CliError, R>) =>
+  Output.contract(handler).pipe(
+    Effect.provide(
+      Layer.provideMerge(
+        Layer.unwrap(Effect.map(Cwd, (cwd) => Instance.layer(cwd, true))),
+        State.layer
+      )
+    )
+  );
 
 const encodeIdentity = Schema.encodeSync(Identity);
 // A create is 201, an update 200; the wire names them separately.
@@ -654,10 +666,127 @@ const del = Command.make(
   )
 );
 
+// --- patch repos ------------------------------------------------------------
+
+const init = Command.make(
+  "init",
+  {
+    dir: Argument.string("dir").pipe(Argument.optional),
+    tier: Flag.choice("tier", ["0", "1"]).pipe(Flag.withDefault("1")),
+    purpose: Flag.string("purpose").pipe(Flag.optional)
+  },
+  (options) =>
+    runProject(
+      Effect.gen(function* () {
+        const token = yield* requiredToken();
+        yield* Project.init(
+          yield* Cwd,
+          token,
+          options.dir,
+          options.tier === "0" ? 0 : 1,
+          options.purpose
+        );
+      })
+    )
+).pipe(
+  Command.withDescription(
+    "Create a patch repo, install its pinned release and generate its client and skills."
+  )
+);
+
+const refresh = Command.make("refresh", {}, () =>
+  runProject(
+    Effect.gen(function* () {
+      const token = yield* requiredToken();
+      yield* Project.refresh(yield* Cwd, token);
+    })
+  )
+).pipe(
+  Command.withDescription(
+    "Upgrade the pinned release and refresh the managed files as one transaction."
+  )
+);
+
+const catalog = Command.make(
+  "catalog",
+  { all: Flag.boolean("all").pipe(Flag.withDefault(false)) },
+  (options) =>
+    runProject(
+      Effect.gen(function* () {
+        yield* Project.catalog(yield* requiredToken(), options.all);
+      })
+    )
+).pipe(Command.withDescription("List connected integrations and shared tables you can open."));
+
+const add = Command.make(
+  "add",
+  {
+    integration: Argument.string("integration"),
+    target: Argument.string("target").pipe(Argument.optional),
+    as: Flag.string("as").pipe(Flag.optional)
+  },
+  (options) =>
+    runProject(
+      Effect.gen(function* () {
+        const token = yield* requiredToken();
+        yield* Project.add(yield* Cwd, token, options.integration, options.target, options.as);
+      })
+    )
+).pipe(
+  Command.withDescription(
+    "Add a Postgres connection or shared-table declaration and generate its files."
+  )
+);
+
+const remove = Command.make("remove", { alias: Argument.string("alias") }, (options) =>
+  runProject(
+    Effect.gen(function* () {
+      const token = yield* requiredToken();
+      yield* Project.refresh(yield* Cwd, token, { kind: "remove", alias: options.alias });
+    })
+  )
+).pipe(
+  Command.withDescription(
+    "Remove a declaration and its unused integration skill, preserving its fixture."
+  )
+);
+
+const generateProject = Command.make(
+  "__generate",
+  {
+    release: Flag.string("release"),
+    skills: Flag.string("skills"),
+    change: Flag.string("change").pipe(Flag.optional)
+  },
+  (options) =>
+    runProject(
+      Effect.gen(function* () {
+        const token = yield* requiredToken();
+        yield* Project.generate(yield* Cwd, token, options.release, options.skills, options.change);
+      })
+    )
+).pipe(Command.unlisted);
+
 // --- the tree ---------------------------------------------------------------
 
 export const root = Command.make("patchy").pipe(
-  Command.withDescription("Publish static HTML patches to a Patchy Cloud instance."),
-  Command.withSubcommands([login, logout, auth, whoami, status, validate, publish, share, del]),
+  Command.withDescription("Build patch repos and publish patches to a Patchy Cloud instance."),
+  Command.withSubcommands([
+    login,
+    logout,
+    auth,
+    whoami,
+    status,
+    validate,
+    publish,
+    share,
+    del,
+    init,
+    refresh,
+    catalog,
+    add,
+    remove,
+    generateProject
+  ]),
   Command.withGlobalFlags([Output.JsonFlag, Instance.ApiUrlFlag])
 );

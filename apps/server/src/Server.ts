@@ -63,7 +63,7 @@ import {
   me,
   migrations as runtimeMigrations
 } from "@patchy/runtime";
-import { Artifact, SdkApi } from "@patchy/sdk";
+import { Artifact, Generation, SdkApi } from "@patchy/sdk";
 import { migrate } from "@patchy/sql";
 import * as ApiGuard from "./ApiGuard.js";
 
@@ -99,6 +99,7 @@ const migrated = Layer.effectDiscard(
  */
 const services = Layer.mergeAll(
   Artifact.layer,
+  Generation.layer,
   Content.layer,
   ExpirySweep.layer,
   DeviceLogins.layer,

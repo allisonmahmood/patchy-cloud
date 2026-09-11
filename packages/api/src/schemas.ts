@@ -315,6 +315,79 @@ export const Manifest = Schema.Struct({
   uses: definitions(Schema.Union([PostgresDeclaration, SharedTableDeclaration]))
 }).annotate({ parseOptions: { onExcessProperty: "error" } });
 
+/** Generation resolves declarations; existing stamps are hints, never authority. */
+export const GenerationManifest = Schema.Struct({
+  ...Manifest.fields,
+  uses: definitions(
+    Schema.Union([
+      Schema.Struct({
+        ...PostgresDeclaration.fields,
+        id: Schema.optionalKey(NonEmptyText),
+        revision: Schema.optionalKey(Revision)
+      }),
+      Schema.Struct({
+        ...SharedTableDeclaration.fields,
+        id: Schema.optionalKey(NonEmptyText),
+        revision: Schema.optionalKey(Revision)
+      })
+    ])
+  )
+}).annotate({ parseOptions: { onExcessProperty: "error" } });
+
+export const Catalog = Schema.Struct({
+  connections: Schema.Array(
+    Schema.Struct({
+      id: Schema.String,
+      handle: Schema.String,
+      integration: Schema.Literal("postgres"),
+      description: Schema.String,
+      status: Schema.Literals(["connected", "disconnected"])
+    })
+  ),
+  sharedTables: Schema.Array(
+    Schema.Struct({
+      patchId: PatchId,
+      name: Schema.String,
+      table: DefinitionName,
+      schemaRevision: Revision
+    })
+  ),
+  offered: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({ integration: Schema.Literal("postgres"), connected: Schema.Boolean })
+    )
+  )
+});
+
+export const GenerateRequest = Schema.Struct({
+  release: NonEmptyText,
+  manifest: GenerationManifest,
+  patchId: Schema.optionalKey(PatchId),
+  skills: Schema.Array(NonEmptyText)
+});
+
+/** Portable relative paths only; the CLI additionally rejects filesystem symlinks. */
+export const isManagedOutputPath = (path: string): boolean => {
+  if (!/^[a-zA-Z0-9_./-]+$/.test(path)) return false;
+  if (path.split("/").some((part) => part === "" || part === "." || part === "..")) return false;
+  if (path === "patchy/_generated/manifest.json") return false;
+  return (
+    path.startsWith("patchy/_generated/") ||
+    /^\.agents\/skills\/patchy-[a-z0-9-]+\/SKILL\.md$/.test(path) ||
+    /^fixtures\/(?:postgres-[a-z0-9-]+|shared-[a-z][a-zA-Z0-9]*)\.sql$/.test(path)
+  );
+};
+export const Generated = Schema.Struct({
+  ok: Schema.Literal(true),
+  files: Schema.Array(
+    Schema.Struct({
+      path: Schema.String.check(Schema.makeFilter(isManagedOutputPath)),
+      contents: Schema.String
+    })
+  ),
+  uses: Schema.Array(Schema.Struct({ alias: DefinitionName, id: NonEmptyText, revision: Revision }))
+});
+
 /** Cumulative definitions, independent of the currently served version. */
 export class PatchInventory extends Schema.Class<PatchInventory>("PatchInventory")({
   schemaRevision: Revision,

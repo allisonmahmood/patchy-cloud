@@ -1,8 +1,8 @@
 # Skill wiring
 
-How the `patchy` agent skill reaches agents in this checkout and in the packed CLI.
+How the global `patchy` skill and release-bound project skills reach agents.
 
-`skills/patchy/SKILL.md` and its `references/` directory are the authoritative bundle. The checkout links `.claude/skills/patchy` → `.agents/skills/patchy` → `skills/patchy`, so edits through either agent path reach the same source. Edit that source, not a generated package copy.
+`skills/patchy/SKILL.md` and its `references/` directory are the authoritative **global skill** bundle: the entry door for sign-in, static-file publishing and `patchy init`. Inside a patch repo the project skills govern building. The checkout links `.claude/skills/patchy` → `.agents/skills/patchy` → `skills/patchy`, so edits through either agent path reach the same source. Edit that source, not a generated package copy.
 
 The package build (`scripts/build-patchy-package.mjs`) copies `skills/` wholesale to `packages/patchy/skills/`. The package's `files` list includes that directory; the packed `patchy` package therefore carries the publishing skill and its onboarding, welcome-page and style references beside the executable. Both `build` and `prepack` regenerate this copy.
 
@@ -18,5 +18,26 @@ integrity; the unauthenticated tarball route is immutable. After installation,
 the global skill lives at `node_modules/patchy/skills/patchy/SKILL.md`.
 
 Bundling a skill and wiring it into this checkout do not publish it to a skill
-directory or start onboarding; onboarding runs only when the user asks. Project
-skill distribution belongs to the later catalog/generate ticket.
+directory or start onboarding; onboarding runs only when the user asks.
+
+## Project skills
+
+`packages/sdk/skills/<name>/SKILL.md` is the sole source for the five project
+skills. The SDK's authenticated `POST /api/sdk/generate` serves their contents
+with the requested current release, alongside the generated client and declaration
+context. They are not hand-copied into patch projects or sourced from the global
+skill's package copy.
+
+- Core, installed by `init`: `patchy-loop`, `patchy-tables`, `patchy-files`.
+- Declaration-driven: `patchy-postgres`, `patchy-shared-tables`.
+
+The CLI writes them under `.agents/skills/patchy-*/` in the patch repo and lists
+their paths in `patchy/_generated/index.json`. `AGENTS.md` points agents at those
+skills and the index; `CLAUDE.md` imports `AGENTS.md`.
+
+Presence is sticky: `refresh` re-fetches every present skill and adds any implied
+by the config, never deleting one on its own. A present skill no longer offered
+by the release fails refresh rather than silently retaining stale instructions.
+`remove` may remove a declaration's skill when no declaration of that kind remains.
+Edit canonical SDK sources here; in a patch repo change definitions or declarations
+and run `pnpm patchy refresh`, never edit managed skill copies.

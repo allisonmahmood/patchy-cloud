@@ -44,13 +44,20 @@ Open the returned URL in the same signed-in browser. **Company scope is the defa
 
 `pnpm patchy` runs from source and discovers this worktree's instance automatically. `pnpm dev stop` shuts it down. The complete runner and login recipes are in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md), and the CLI's commands and contract are in [packages/patchy/README.md](packages/patchy/README.md).
 
+To start a patch repo, run `pnpm patchy init ./team-tool --purpose "Track our team's work"`.
+Initialization installs the pinned package and generates the client, context and project skills.
+Inside that repo use `pnpm patchy catalog`, `add`, `remove` and `refresh`; see the
+[project commands](packages/patchy/README.md#patch-repo-commands) for their contracts.
+The repo is ready to typecheck. The local `patchy dev` runtime, browser broker and
+repo publishing are separate work, not enabled by initialization.
+
 ## Repository layout
 
 A Turborepo monorepo managed with pnpm. [AGENTS.md](AGENTS.md) is the guide to working in it, for people and agents alike.
 
 - `apps/server` — the Effect HTTP server: wires the capability packages into one layer, guards `/api/*`, and listens (`@patchy/server`).
-- `packages/patchy` — `patchy`, one package for the command-line publisher, config builders, browser client and dev-runtime entrypoint.
-- `packages/sdk` — current release metadata and immutable `patchy` tarball distribution (`@patchy/sdk`).
+- `packages/patchy` — `patchy`, one package for the CLI, config builders, browser client and reserved dev-runtime entrypoint; initializes patch repos, refreshes managed files and edits declarations.
+- `packages/sdk` — current release and immutable tarball distribution, authenticated catalog and generation, and canonical project skills under `skills/` (`@patchy/sdk`).
 - `packages/core` — shared HTML validation, hashing, ID helpers, and the first-party page shell (`@patchy/core`).
 - `packages/api` — the wire contract: schemas, the `HttpApi`, the derived client (`@patchy/api`).
 - `packages/companies` — companies, users, roles, invites and membership lifecycle (`@patchy/companies`).

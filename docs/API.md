@@ -132,6 +132,35 @@ Responses:
 
 - `200` [Release](#release)
 
+### `GET /api/sdk/catalog`
+
+Company metadata only: connected Postgres connections and live same-company shared tables. With all=true, include disconnected connections and every offered integration's connected state. Never returns credentials or business rows. Responses are private, no-store.
+
+Responses:
+
+- `200` { connections: { id: string, handle: string, integration: "postgres", description: string, status: "connected" | "disconnected" }[], sharedTables: { patchId: string, name: string, table: string, schemaRevision: integer }[], offered?: { integration: "postgres", connected: boolean }[] }
+- `400` { ok: false, error: string }
+- `401` { ok: false, error: "Missing or invalid API token." }
+- `404` { ok: false, error: string }
+- `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
+- `503` { ok: false, error: string, code: "busy" | "source_unavailable" }
+
+### `POST /api/sdk/generate`
+
+Resolve declarations against current company metadata and return finished managed files and uses stamps. Requires the exact current release. Refuses connection_not_connected, patch_not_openable and release_mismatch. Present skills are sticky; an unknown present skill refuses generation. Includes core and implied skills, typed clients, contexts and fixture stubs, never manifest.json, credentials or business rows.
+
+Request body: { release: string, manifest: { manifestVersion: integer, release: string, name?: string, tier: 0 | 1 | 2 | 3, tables: { [key: string]: { columns: { [key: string]: { kind: "text", optional?: boolean, default?: string } | { kind: "integer", optional?: boolean, default?: integer } | { kind: "number", optional?: boolean, default?: number } | { kind: "boolean", optional?: boolean, default?: boolean } | { kind: "timestamp", optional?: boolean, default?: "now" | string } | { kind: "json", optional?: boolean, default?: unknown } | { kind: "ref", table: string, optional?: boolean, default?: string } }, indexes: { [key: string]: { columns: string[], unique?: boolean } }, shared?: boolean } }, files: { [key: string]: {} }, uses: { [key: string]: { kind: "postgres", handle: string, id?: string, revision?: integer } | { kind: "sharedTable", patchId: string, table: string, id?: string, revision?: integer } } }, patchId?: string, skills: string[] }
+
+Responses:
+
+- `200` { ok: true, files: { path: string, contents: string }[], uses: { alias: string, id: string, revision: integer }[] }
+- `400` { ok: false, error: string }
+- `401` { ok: false, error: "Missing or invalid API token." }
+- `404` { ok: false, error: string }
+- `422` { ok: false, error: string, code: "release_mismatch" | "invalid_manifest" | "tier_mismatch" | "has_primitives" | "patch_not_openable" | "connection_not_connected" | "stale_generated" }
+- `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
+- `503` { ok: false, error: string, code: "busy" | "source_unavailable" }
+
 ## runtime
 
 ### `POST /api/runtime/call`

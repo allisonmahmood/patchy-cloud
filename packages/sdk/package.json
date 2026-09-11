@@ -4,7 +4,7 @@
   "private": true,
   "license": "UNLICENSED",
   "type": "module",
-  "description": "The instance's SDK distribution: current release discovery and immutable package artifacts.",
+  "description": "Company SDK catalog, managed project generation, skills and immutable release artifacts.",
   "exports": {
     ".": {
       "development": "./src/index.ts",
@@ -14,7 +14,8 @@
   },
   "files": [
     "dist",
-    "artifacts"
+    "artifacts",
+    "skills"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json && node ../../scripts/copy-sdk-artifact.mjs",
@@ -23,6 +24,8 @@
   },
   "dependencies": {
     "@patchy/api": "workspace:*",
+    "@patchy/integrations": "workspace:*",
+    "@patchy/patches": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {

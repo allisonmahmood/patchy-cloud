@@ -15,7 +15,9 @@ import {
   Identity,
   CURRENT_RELEASE,
   MANIFEST_VERSION,
-  WIRE_VERSION
+  WIRE_VERSION,
+  refuse,
+  Unauthorized
 } from "@patchy/api";
 import { DEV_SEED } from "@patchy/auth/seed";
 import * as CompanyTesting from "@patchy/company-database/testing";
@@ -139,9 +141,9 @@ export const authorization = Layer.succeed(
         const token = request.headers.authorization?.replace(/^Bearer /, "");
         const identity = Object.values(identities).find((it) => it.machine.id === token);
         if (identity === undefined) {
-          return yield* Effect.fail({
-            ok: false as const,
-            error: "Missing or invalid API token." as const
+          return refuse(Unauthorized, {
+            ok: false,
+            error: "Missing or invalid API token."
           });
         }
         return yield* Effect.provideService(httpEffect, CurrentIdentity, identity);

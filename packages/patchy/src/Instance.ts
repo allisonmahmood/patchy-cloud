@@ -17,12 +17,14 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
+import * as Schema from "effect/Schema";
+import { LocalError } from "./CliError.js";
 import * as State from "./State.js";
 
 export const DEFAULT_API_URL = "http://localhost:3000";
 
 /** Which link of the chain answered; `status --json` reports it and `publish` names it. */
-export type Source = "flag" | "dev-env" | "env" | "config" | "default";
+export type Source = "flag" | "dev-env" | "env" | "project" | "config" | "default";
 
 /** How a source reads in a sentence: "target came from …". */
 export const describeSource = (source: Source): string =>
@@ -30,6 +32,7 @@ export const describeSource = (source: Source): string =>
     flag: "--api-url",
     "dev-env": ".local/dev/env",
     env: "PATCHY_API_URL",
+    project: "patchy.json",
     config: "the saved config",
     default: "the built-in default"
   })[source];
@@ -110,7 +113,15 @@ export const devEnv = Effect.fn("devEnv")(function* (cwd: string) {
   }
 });
 
-export const make = Effect.fn("Instance.make")(function* (cwd: string) {
+const decodeProject = Schema.decodeUnknownSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      instance: Schema.String
+    })
+  )
+);
+
+export const make = Effect.fn("Instance.make")(function* (cwd: string, project = false) {
   const resolved = (apiUrl: string, source: Source, token = Option.none<Redacted.Redacted>()) =>
     Instance.of({ apiUrl: normalizeApiUrl(apiUrl), source, token });
 
@@ -123,6 +134,27 @@ export const make = Effect.fn("Instance.make")(function* (cwd: string) {
   const env = yield* optionalEnv("PATCHY_API_URL");
   if (Option.isSome(env)) return resolved(env.value, "env");
 
+  if (project) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const file = path.join(cwd, "patchy.json");
+    if (yield* fs.exists(file).pipe(Effect.orElseSucceed(() => false))) {
+      const text = yield* fs
+        .readFileString(file)
+        .pipe(
+          Effect.mapError(
+            (cause) => new LocalError({ message: "Could not read patchy.json.", cause })
+          )
+        );
+      const config = yield* Effect.try({
+        try: () => decodeProject(text),
+        catch: (cause) =>
+          new LocalError({ message: "patchy.json must contain an instance URL.", cause })
+      });
+      return resolved(config.instance, "project");
+    }
+  }
+
   const state = yield* State.State;
   const saved = yield* state.readConfigUrl;
   if (Option.isSome(saved)) return resolved(saved.value, "config");
@@ -130,4 +162,4 @@ export const make = Effect.fn("Instance.make")(function* (cwd: string) {
   return resolved(DEFAULT_API_URL, "default");
 });
 
-export const layer = (cwd: string) => Layer.effect(Instance, make(cwd));
+export const layer = (cwd: string, project = false) => Layer.effect(Instance, make(cwd, project));

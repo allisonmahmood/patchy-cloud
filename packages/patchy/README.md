@@ -1,6 +1,6 @@
 # patchy
 
-One package for [Patchy Cloud](https://github.com/allisonmahmood/patchy-cloud): the `patchy` CLI, `patchy/config` builders, `patchy/client` browser client and a reserved `patchy/dev` entrypoint. The CLI publishes static HTML patches, changes their sharing and takes them down again. Every publish carries a machine token; new patches are company-scoped by default and open through a colleague's signed-in browser. Choose public explicitly to let anyone with the link open a patch. A machine token never opens a patch's view URL.
+One package for [Patchy Cloud](https://github.com/allisonmahmood/patchy-cloud): the `patchy` CLI, `patchy/config` builders, `patchy/client` browser client and a reserved `patchy/dev` entrypoint. The CLI initializes patch repos, manages their declarations and generated files, publishes static HTML patches, changes sharing and takes patches down. Every publish carries a machine token; new patches are company-scoped by default and open through a colleague's signed-in browser. Choose public explicitly to let anyone with the link open a patch. A machine token never opens a patch's view URL.
 
 An agent is the primary driver, so the CLI promises a contract an agent can branch on without reading prose: an [exit code that says who has to act](#exit-codes), `--json` on every command, and one resolution of which instance is being targeted. The contract is [ADR-0004](../../docs/adr/ADR-0004-cli-contract-for-agents.md).
 
@@ -68,7 +68,9 @@ process and returns a validated manifest. Declarations require real stamps in
 the sibling `patchy/_generated/index.json`, shaped as
 `{ "uses": [{ "alias": "sales", "id": "<resolved-id>", "revision": 1 }] }`.
 Missing, ambiguous or invalid stamps fail locally; the server never executes
-config. Generation and refresh commands are not available yet. Config files use
+config. `executeConfig(path, { resolve: false })` instead returns an unresolved
+generation manifest; `generate` supplies the ids and revisions for the CLI to stamp.
+Config files use
 Node's native TypeScript loader, including explicit `.ts` extensions for local
 TypeScript imports.
 
@@ -81,10 +83,86 @@ runtime directly.
 
 The internal generated `client.ts` template imports the config's **type** and
 `manifest.json`'s **value**. The package's browser graph has no Node, Effect or
-PGlite runtime. `patchy/dev` reserves its entrypoint; repo commands, the broker
-and local dev runtime arrive in their own SDK tickets.
+PGlite runtime. `patchy/dev` reserves its entrypoint; the broker, local dev
+runtime and repo publishing remain separate work from repo generation.
 
 ## Commands
+
+### Patch repo commands
+
+Use the instance-installed CLI outside a repo and the pinned `pnpm patchy` inside.
+The private package is not available as `npx patchy@latest` yet; use the
+instance's release tarball as described above.
+
+| command                                                                                                     | behaviour                                                                                                                                                                                                                                                                | `--json` success                                                                    |
+| ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| `patchy init [dir] [--tier 0\|1] [--purpose <text>]`                                                        | Authenticates first, prints instance and identity, asks purpose when interactive, installs the pinned release and generates a new repo. Tier 1 is the default; an initialized target is refused.                                                                         | `{ ok, dir, release, tier, generated, skills, installed }`                          |
+| `patchy refresh`                                                                                            | Refreshes the managed set as one release-bound transaction, installing and re-executing a new CLI if the pin changes.                                                                                                                                                    | `{ ok, release: { from, to }, changed: { pin, generated, skills, fixtures } }`      |
+| `patchy catalog [--all]`                                                                                    | Lists connected connections and shared tables the caller can open, with copy-ready `add` and `uses` lines. `--all` includes offered integrations and state; normal text ends with a reminder about it.                                                                   | Catalog wire response: `{ connections, sharedTables, offered? }` (no `ok` wrapper). |
+| `patchy add postgres/<handle> [--as <alias>]` or `patchy add shared-table <patchId>/<table> [--as <alias>]` | Inserts one literal declaration into `uses` by TypeScript AST without changing imports, then generates client, context, missing fixture and skill. An uneditable block fails naming its exact source line and the exact declaration line to add yourself before refresh. | `{ ok, alias, declaration, generated, skills }`                                     |
+| `patchy remove <alias>`                                                                                     | Reverses the declaration and generated output; removes its declaration skill when no declaration of that kind remains. Leaves the fixture and says so.                                                                                                                   | `{ ok, alias, removed }`                                                            |
+
+`patchy add postgres` selects the sole connected Postgres connection; with several
+it lists copy-ready choices and stops. With none, it names `/company/connections`.
+The default Postgres alias camel-cases the handle's hyphens; a shared-table alias
+defaults to its table name. `--as` overrides either.
+
+Initialization requires an empty or new target directory and an existing parent.
+Without `--purpose`, it asks only at an interactive human terminal; agent, JSON
+and non-terminal invocations must supply the flag:
+
+```sh
+patchy init ./team-notes --tier 1 --purpose "Track our team's notes" --json
+# Inside ./team-notes:
+pnpm patchy catalog
+pnpm patchy add postgres/warehouse --as sales
+pnpm patchy refresh --json
+pnpm typecheck
+pnpm patchy remove sales --json
+```
+
+Use actual handles and patch ids from the catalog. Connection setup and reconnection
+belong to an admin's browser at `/company/connections`; no CLI command accepts a
+connection string. A shared source must be openable; restore its access with its
+owner or correct the declaration. With no publishing key, non-interactive init
+exits 1 with `Run: patchy login` before laying down files. A company with no
+connections still gets the core skills and empty `uses`.
+
+The generated repo includes:
+
+```text
+patchy.config.ts              definitions and uses declarations
+patchy.json                   instance; optional patch id, never credentials
+package.json, pnpm-lock.yaml   pinned package; install already ran
+index.html, src/main.ts        starter insert/list through the generated client
+vite.config.ts, tsconfig.json  single-file build, pinned server.host, typechecking
+AGENTS.md, CLAUDE.md            purpose, layout, skills, index; @AGENTS.md
+patchy/_generated/             README, index, client, manifest, declaration context
+.agents/skills/patchy-*/       core and declaration-driven project skills
+fixtures/                     postgres-<handle>.sql and shared-<alias>.sql stubs
+.gitignore                    excludes .patchy/, node_modules/, dist/
+```
+
+`AGENTS.md` is written once, says install already ran, points at the generated
+index, and says to test with `patchy dev`. The repo typechecks without added setup,
+and `pnpm patchy --help` runs its pinned copy. **The local dev runtime is not
+implemented by these commands**; generation does not enable the broker or repo
+publishing. Do not replace a missing local runtime with production data access.
+
+Managed writes are exactly the package pin, `patchy/_generated/`,
+`.agents/skills/patchy-*/`, missing fixture stubs, the lockfile through install,
+and one `uses` edit for add/remove. The CLI writes `manifest.json` from local
+config execution; the server never returns that file. Server paths are checked
+against the managed roots. Existing fixtures, app source and agent instructions
+are not overwritten. Deleting `.patchy/` destroys local rows and files.
+
+Refresh fetches one release, updates and installs the pin if needed, re-execs
+that CLI before executing config, requests generation, then stages and activates
+the set. Failure leaves the old managed set intact. Skills are sticky: refresh
+re-fetches every present skill and adds any the config implies, but never deletes
+one on its own. A present skill no longer offered by the release fails refresh.
+Edit definitions, declarations and invented fixtures; never hand-edit generated
+clients, stamps or project skills.
 
 ### `patchy login [--complete [code]] [--wait <seconds>]`
 

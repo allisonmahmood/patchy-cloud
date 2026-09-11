@@ -52,6 +52,11 @@ export interface ExecutedManifest {
   >;
 }
 
+/** Generation resolves declarations on the instance, before there can be local stamps. */
+export type UnresolvedManifest = Omit<ExecutedManifest, "uses"> & {
+  readonly uses: Readonly<Record<string, Declaration>>;
+};
+
 const configSchema = Schema.Struct({
   name: PatchName,
   tier: Manifest.fields.tier,
@@ -128,10 +133,21 @@ const runConfig = (path: string): Promise<unknown> => {
   return promise;
 };
 
-/** Executes only local code, then resolves declarations from generated stamps and validates the API manifest. */
-export const executeConfig = async (path: string): Promise<ExecutedManifest> => {
+/** Executes local config; publishing requires stamps, while generation requests resolve them remotely. */
+export function executeConfig(path: string): Promise<ExecutedManifest>;
+export function executeConfig(
+  path: string,
+  options: { readonly resolve: false }
+): Promise<UnresolvedManifest>;
+export async function executeConfig(
+  path: string,
+  options?: { readonly resolve: false }
+): Promise<ExecutedManifest | UnresolvedManifest> {
   const absolutePath = resolve(path);
   const config = decodeConfig(await runConfig(absolutePath));
+  if (options?.resolve === false) {
+    return { ...config, manifestVersion: MANIFEST_VERSION, release: RELEASE };
+  }
   const declarations = Object.entries(config.uses);
   const uses: Record<string, (typeof Manifest.Type)["uses"][string]> = {};
   if (declarations.length > 0) {
@@ -162,4 +178,4 @@ export const executeConfig = async (path: string): Promise<ExecutedManifest> => 
     }
   }
   return decodeManifest({ ...config, uses, manifestVersion: MANIFEST_VERSION, release: RELEASE });
-};
+}

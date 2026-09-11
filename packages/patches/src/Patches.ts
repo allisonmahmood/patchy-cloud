@@ -322,6 +322,15 @@ export class Patches extends Context.Service<
       table: string,
       companyId: string
     ) => Effect.Effect<SharedTable, PatchNotOpenable | DatabaseError | SqlError>;
+    readonly sharedTables: (companyId: string) => Effect.Effect<
+      ReadonlyArray<{
+        readonly patchId: string;
+        readonly name: string;
+        readonly table: string;
+        readonly schemaRevision: number;
+      }>,
+      DatabaseError | SqlError
+    >;
     /** Durably reserves a fresh object key before any bytes can be written. */
     readonly prepareObject: (objectKey: string) => Effect.Effect<void, SqlError>;
     /**
@@ -640,6 +649,18 @@ export const make = Effect.gen(function* () {
         AND ${notExpired(stamp(nowMillis))}`
   });
 
+  const sharedSources = SqlSchema.findAll({
+    Request: Schema.Struct({ companyId: Schema.String, nowMillis: Schema.Number }),
+    Result: Schema.Struct({ patchId: Schema.String, name: Schema.String }),
+    execute: ({ companyId, nowMillis }) => sql`
+      SELECT patches.id AS "patchId", patches.name
+      FROM patches JOIN patch_versions ON patch_versions.id = patches.current_version_id
+        AND patch_versions.patch_id = patches.id
+      WHERE patches.company_id = ${companyId} AND patches.deleted_at IS NULL
+        AND patches.disabled_at IS NULL AND ${notExpired(stamp(nowMillis))}
+      ORDER BY patches.name, patches.id`
+  });
+
   const findVersionByNumber = SqlSchema.findOneOption({
     Request: Schema.Struct({ patchId: Schema.String, versionNumber: Schema.Number }),
     Result: VersionRow,
@@ -816,6 +837,21 @@ export const make = Effect.gen(function* () {
       definition: Tables.inventoryManifest(snapshot).tables[table]!
     } satisfies SharedTable;
   });
+
+  const sharedTables = Effect.fn("Patches.sharedTables")(function* (companyId: string) {
+    const sources = yield* sharedSources({ companyId, nowMillis: yield* Clock.currentTimeMillis });
+    const result: Array<{ patchId: string; name: string; table: string; schemaRevision: number }> =
+      [];
+    for (const source of sources) {
+      const snapshot = yield* readInventory(companyId, source.patchId);
+      if (snapshot === null) continue;
+      for (const table of snapshot.tables) {
+        if (table.shared)
+          result.push({ ...source, table: table.name, schemaRevision: snapshot.schemaRevision });
+      }
+    }
+    return result;
+  }, Effect.catchTags(dieOnSchemaError));
 
   const resolveDeclarations = Effect.fn("Patches.resolveDeclarations")(function* (
     manifest: typeof Manifest.Type,
@@ -1275,6 +1311,7 @@ export const make = Effect.gen(function* () {
     preflight,
     inventory,
     sharedTable,
+    sharedTables,
     prepareObject,
     claimObjects,
     completeObject,

@@ -3,22 +3,85 @@ import * as Schema from "effect/Schema";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
-import { PatchyApi, Release } from "@patchy/api";
+import {
+  Catalog,
+  CurrentIdentity,
+  Generated,
+  PatchyApi,
+  PublishRefused,
+  PublishUnavailable,
+  Release,
+  refuse
+} from "@patchy/api";
 import * as Artifact from "./Artifact.js";
+import * as Generation from "./Generation.js";
 
 const encodeRelease = Schema.encodeSync(Release);
+const encodeCatalog = Schema.encodeSync(Catalog);
+const encodeGenerated = Schema.encodeSync(Generated);
+const noStore = { headers: { "cache-control": "private, no-store" } };
+const rejected = (error: Generation.GenerationRefused) =>
+  Effect.succeed(
+    refuse(PublishRefused, { ok: false, code: error.code, error: error.message }, noStore.headers)
+  );
 
 /** Release discovery has no bearer middleware: installing the package precedes sign-in. */
 export const layer = HttpApiBuilder.group(PatchyApi, "sdk", (handlers) =>
   Effect.gen(function* () {
     const artifact = yield* Artifact.Artifact;
-    return handlers.handle("release", () =>
-      Effect.succeed(
-        HttpServerResponse.jsonUnsafe(encodeRelease(artifact.release), {
-          headers: { "cache-control": "no-store" }
+    const generation = yield* Generation.Generation;
+    return handlers
+      .handle("release", () =>
+        Effect.succeed(
+          HttpServerResponse.jsonUnsafe(encodeRelease(artifact.release), {
+            headers: { "cache-control": "no-store" }
+          })
+        )
+      )
+      .handle("catalog", ({ query }) =>
+        Effect.gen(function* () {
+          const identity = yield* CurrentIdentity;
+          const result = yield* generation.catalog(identity.company.id, query.all ?? false).pipe(
+            Effect.catchTags({
+              GenerationUnavailable: (error) =>
+                Effect.succeed(
+                  refuse(
+                    PublishUnavailable,
+                    { ok: false, code: "source_unavailable", error: error.message },
+                    noStore.headers
+                  )
+                )
+            })
+          );
+          return HttpServerResponse.isHttpServerResponse(result)
+            ? result
+            : HttpServerResponse.jsonUnsafe(encodeCatalog(result), noStore);
         })
       )
-    );
+      .handle("generate", ({ payload }) =>
+        Effect.gen(function* () {
+          const identity = yield* CurrentIdentity;
+          const result = yield* generation.generate(identity.company.id, payload).pipe(
+            Effect.catchTags({
+              SdkReleaseMismatch: rejected,
+              InvalidGeneration: rejected,
+              SdkConnectionNotConnected: rejected,
+              SdkPatchNotOpenable: rejected,
+              GenerationUnavailable: (error) =>
+                Effect.succeed(
+                  refuse(
+                    PublishUnavailable,
+                    { ok: false, code: "source_unavailable", error: error.message },
+                    noStore.headers
+                  )
+                )
+            })
+          );
+          return HttpServerResponse.isHttpServerResponse(result)
+            ? result
+            : HttpServerResponse.jsonUnsafe(encodeGenerated(result), noStore);
+        })
+      );
   })
 );
 
