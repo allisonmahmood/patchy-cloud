@@ -104,3 +104,45 @@ document.querySelector("#route-next")!.addEventListener("click", async () => {
 document.querySelector("#download")!.addEventListener("click", () => {
   void harness.call("download", { store: "assets", name: "active.html" });
 });
+
+const copy = Object.assign(document.createElement("button"), {
+  id: "copy",
+  textContent: "Copy text"
+});
+const copyStatus = Object.assign(document.createElement("p"), { id: "copy-status" });
+const pastedCopy = Object.assign(document.createElement("textarea"), { id: "pasted-copy" });
+document.body.append(copy, copyStatus, pastedCopy);
+// Negative probe without browser automation's implicit user gesture.
+void navigator.clipboard.writeText("Unactivated clipboard probe").then(
+  () => {
+    copyStatus.textContent = "Unexpected automatic copy";
+  },
+  () => {
+    copyStatus.textContent = "Copy unavailable";
+  }
+);
+copy.addEventListener("click", async () => {
+  copyStatus.textContent = "Copying";
+  try {
+    const text = "Patchy clipboard acceptance";
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // Chromium refuses async clipboard permission for opaque origins. The user-triggered
+      // copy event remains available without giving the frame clipboard-read authority.
+      const onCopy = (event: ClipboardEvent) => {
+        event.clipboardData?.setData("text/plain", text);
+        event.preventDefault();
+      };
+      document.addEventListener("copy", onCopy);
+      try {
+        if (!document.execCommand("copy")) throw new Error("Clipboard write unavailable");
+      } finally {
+        document.removeEventListener("copy", onCopy);
+      }
+    }
+    copyStatus.textContent = "Copied";
+  } catch (error) {
+    copyStatus.textContent = `Copy unavailable: ${error instanceof Error ? error.message : String(error)}`;
+  }
+});

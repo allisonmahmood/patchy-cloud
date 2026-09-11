@@ -23,6 +23,12 @@ The first runtime call is `me` with a null principal; its user id is pinned for 
 
 The route bridge keeps history in the shell, refuses Patchy-reserved segments, and notifies the document on back/forward. File images use frame-local blob URLs. Downloads are owned by the shell. Popups, external links, direct fetches, client storage, workers and device access are not patch capabilities. Printing remains available through `allow-modals`.
 
+The scripted frame delegates `clipboard-write *` because its origin is opaque,
+without delegating clipboard read. Copying is user-triggered and has a visible
+failure path. Chromium can still deny the async clipboard API for that origin;
+a user-triggered copy event is the compatibility path. Both engines are checked
+by copying and pasting the actual text, not just observing a resolved promise.
+
 An old shell with a supported bundle gets one cache-bypassing refresh. A repeated mismatch stops visibly rather than looping. A stored version whose wire has retired gets the first-party needs-rebuild door; a tooling release change alone never retires a deployed bundle.
 
 `@patchy/serving/shell` exports rendering, the prebuilt broker script and CSP constants without Auth or platform infrastructure, so the local runtime can serve the same boundary. Session markup is injected by the host. The broker is bundled from the shared API schemas at build time, not compiled per request.

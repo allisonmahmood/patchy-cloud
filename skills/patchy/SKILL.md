@@ -275,6 +275,9 @@ downloads come from the shell. The patch has no outbound fetch, popups,
 `target=_blank`, top navigation, in-frame downloads, localStorage, IndexedDB,
 cookies, workers, camera, microphone, geolocation or external links. Clipboard
 writes must be user-triggered and show a visible failure when unavailable.
+Async clipboard permission can still be denied for an opaque frame. A user-triggered
+`copy` event via `document.execCommand("copy")` is a compatibility fallback; if both
+paths fail, show selectable text and a visible error rather than claiming success.
 A public tier 1 patch renders signed out, but `me` is null and company-data
 operations show `not_available_on_public`, even for a signed-in reader.
 

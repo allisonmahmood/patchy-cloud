@@ -44,6 +44,7 @@ export function renderPatchWrapper(options: PatchPage): string {
 <body>
   <iframe id="patch" class="patch-frame" title="${title}"
     sandbox="${scripted ? "allow-scripts allow-modals" : ""}" referrerpolicy="no-referrer"
+    ${scripted ? 'allow="clipboard-write *"' : ""}
     ${
       scripted
         ? `data-patch-id="${escapeAttribute(options.patch.id)}" data-version-id="${escapeAttribute(options.version.id)}" data-wire="${options.version.wireVersion}" data-nonce="${escapeAttribute(options.nonce)}" data-base="${escapeAttribute(options.base)}" data-route="${escapeAttribute(options.route ?? "/")}" data-content-src="${escapeAttribute(content)}"`

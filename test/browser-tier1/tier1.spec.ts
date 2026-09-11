@@ -14,6 +14,7 @@ test("route bridge, real client file URL, shell download, isolation and 2,000-ro
   const frame = await open(page, patch, "/items/2?filter=active");
   await expect(frame.locator("#identity")).toHaveText("usr_dev");
   await expect(frame.locator("#route")).toHaveText("/items/2");
+  await expect(frame.locator("#copy-status")).toHaveText("Copy unavailable");
   await frame.getByRole("button", { name: "Next route" }).click();
   await expect(page).toHaveURL(`${patch.address}/items/3?filter=active`);
   await page.goBack();
@@ -59,6 +60,11 @@ test("route bridge, real client file URL, shell download, isolation and 2,000-ro
   const file = await download;
   expect(file.suggestedFilename()).toBe("active.html");
   expect(await readFile((await file.path())!, "utf8")).toContain("<p>download bytes</p>");
+
+  await frame.getByRole("button", { name: "Copy text" }).click();
+  await expect(frame.locator("#copy-status")).toHaveText("Copied");
+  await frame.locator("#pasted-copy").press("Control+V");
+  await expect(frame.locator("#pasted-copy")).toHaveValue("Patchy clipboard acceptance");
 
   const escaped = await frame.evaluate(async () => {
     let storage = "allowed";

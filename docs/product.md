@@ -149,6 +149,8 @@ Code runs in the viewer's browser and acts **as the viewer**. It never holds a c
 The shell binds one document, patch and version through a nonce-checked message
 channel. The sandbox permits scripts and printing, not outbound fetches, popups,
 external links, top navigation, client storage, workers, or device access.
+Clipboard write is delegated, not clipboard read; copying must be user-triggered
+and show a visible failure when the browser refuses it.
 Routes and downloads belong to the shell; own-file images use frame-local blob
 URLs. Access loss is a first-party notice the patch cannot hide. Session expiry
 or account changes stop the patch and require a whole-page reload after sign-in;

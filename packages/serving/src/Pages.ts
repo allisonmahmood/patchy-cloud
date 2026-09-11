@@ -24,6 +24,7 @@ import { renderPatchWrapper, renderShellNotice, isShellNotice, brokerScript } fr
 import {
   NO_REFERRER_POLICY,
   SCRIPTED_SHELL_SECURITY_POLICY,
+  PATCH_CONTENT_SECURITY_POLICY,
   PATCH_ROBOTS_TAG,
   PUBLIC_PATCH_CACHE_CONTROL,
   PRIVATE_PATCH_CACHE_CONTROL,
@@ -46,6 +47,10 @@ const patchUrlHeaders = {
   "content-security-policy": SCRIPTED_SHELL_SECURITY_POLICY,
   "referrer-policy": NO_REFERRER_POLICY,
   "cache-control": PRIVATE_PATCH_CACHE_CONTROL
+};
+const noticeHeaders = {
+  ...patchUrlHeaders,
+  "content-security-policy": PATCH_CONTENT_SECURITY_POLICY
 };
 
 const servePatch = Effect.fn("Pages.servePatch")(function* (kind: "address" | "content") {
@@ -114,7 +119,7 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (kind: "address" | "c
       HttpServerResponse.text(renderShellNotice("needs_rebuild", request.url), {
         contentType: "text/html",
         status: 409,
-        headers: patchUrlHeaders
+        headers: noticeHeaders
       }),
       isPublic ? [] : cookies
     );
@@ -238,7 +243,7 @@ const otherPages = HttpRouter.use((router) =>
         const returnTo = returnPath(url.searchParams.get("return"), publicBaseUrl) ?? "/";
         return HttpServerResponse.text(renderShellNotice(code, returnTo), {
           contentType: "text/html",
-          headers: patchUrlHeaders
+          headers: noticeHeaders
         });
       })
     );

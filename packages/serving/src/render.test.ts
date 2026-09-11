@@ -151,6 +151,7 @@ describe("renderPatchWrapper", () => {
       route: "/items/first"
     });
     expect(html).toContain('sandbox="allow-scripts allow-modals"');
+    expect(html).toContain('allow="clipboard-write *"');
     expect(html).toContain(
       `data-content-src="/~content/${patch.id}/${version.id}?n=document-nonce"`
     );
