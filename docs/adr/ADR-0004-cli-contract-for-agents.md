@@ -262,9 +262,12 @@ entries cannot be recalled.
 
 Resolution order: `--api-url` > `.local/dev/env` (searched upward from the
 working directory) > `PATCHY_API_URL` > `~/.patchy/config.json` > the local
-default. One service resolves it once per command and exposes the URL and its
-source (`flag` | `dev-env` | `env` | `config` | `default`); `status --json`
-reports both, and `publish` prints "Publishing to <url> (target came from …)"
+default. For repo commands (`refresh`, `catalog`, `add`, `remove` and private
+generation), `patchy.json`'s instance comes after `PATCHY_API_URL` and before
+saved config. `init` and file-oriented commands keep the order above. One service
+resolves the URL once per command and exposes its source (`flag` | `dev-env` |
+`env` | `project` | `config` | `default`); `status --json` reports its resolved
+URL and source, and `publish` prints "Publishing to <url> (target came from …)"
 in text mode. A worktree with a running `pnpm dev` instance is the one place
 an agent should never have to say where to publish, which is why the dev env
 outranks the environment variable.

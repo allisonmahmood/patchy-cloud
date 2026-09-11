@@ -1,9 +1,21 @@
+import * as Schema from "effect/Schema";
 import ts from "typescript";
 import type { Declaration } from "./config.js";
 
 export type UsesChange =
   | { readonly kind: "add"; readonly alias: string; readonly declaration: Declaration }
   | { readonly kind: "remove"; readonly alias: string };
+
+export class UsesEditRefused extends Schema.TaggedError<UsesEditRefused>()("UsesEditRefused", {
+  line: Schema.Int,
+  reason: Schema.String,
+  sourceLine: Schema.String,
+  instruction: Schema.String
+}) {
+  override get message() {
+    return `Cannot edit patchy.config.ts:${this.line}: ${this.reason}\n${this.sourceLine}\n${this.instruction}`;
+  }
+}
 
 /** Edit only the literal uses object; leave imports and the rest of the user's config untouched. */
 export function editUses(source: string, change: UsesChange): string {
@@ -21,9 +33,7 @@ export function editUses(source: string, change: UsesChange): string {
       change.kind === "add"
         ? `Add this line to uses, then run patchy refresh:\n${JSON.stringify(change.alias)}: ${JSON.stringify(change.declaration)},`
         : `Remove the ${JSON.stringify(change.alias)} declaration from uses, then run patchy refresh.`;
-    throw new Error(
-      `Cannot edit patchy.config.ts:${line + 1}: ${reason}\n${exact}\n${instruction}`
-    );
+    throw new UsesEditRefused({ line: line + 1, reason, sourceLine: exact, instruction });
   };
   const unwrap = (node: ts.Expression): ts.Expression => {
     while (

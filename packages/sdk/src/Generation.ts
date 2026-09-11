@@ -27,15 +27,31 @@ export class ReleaseMismatch extends Schema.TaggedError<ReleaseMismatch>()("SdkR
     return `Release ${this.release} does not match ${CURRENT_RELEASE}. Run: patchy refresh`;
   }
 }
-export class InvalidGeneration extends Schema.TaggedError<InvalidGeneration>()(
-  "InvalidGeneration",
-  {
-    resource: Schema.String
-  }
+export class UnsupportedManifestVersion extends Schema.TaggedError<UnsupportedManifestVersion>()(
+  "UnsupportedManifestVersion",
+  { version: Schema.Int }
 ) {
   readonly code = "invalid_manifest" as const;
   override get message() {
-    return `Generation refused: ${this.resource}.`;
+    return `Generation refused: manifest version ${this.version} is not supported.`;
+  }
+}
+export class UnknownProjectSkill extends Schema.TaggedError<UnknownProjectSkill>()(
+  "UnknownProjectSkill",
+  { skill: Schema.String.check(Schema.isMaxLength(128)) }
+) {
+  readonly code = "invalid_manifest" as const;
+  override get message() {
+    return `Generation refused: present skill ${JSON.stringify(this.skill)} is not offered by this release.`;
+  }
+}
+export class UnsafeGeneratedPath extends Schema.TaggedError<UnsafeGeneratedPath>()(
+  "UnsafeGeneratedPath",
+  { path: Schema.String }
+) {
+  readonly code = "invalid_manifest" as const;
+  override get message() {
+    return "Generation refused: an output path is outside the managed project set.";
   }
 }
 export class ConnectionNotConnected extends Schema.TaggedError<ConnectionNotConnected>()(
@@ -52,16 +68,23 @@ export class ConnectionNotConnected extends Schema.TaggedError<ConnectionNotConn
 export class PatchNotOpenable extends Schema.TaggedError<PatchNotOpenable>()(
   "SdkPatchNotOpenable",
   {
-    resource: Schema.String
+    patchId: Schema.String,
+    table: Schema.optionalKey(Schema.String),
+    cause: Schema.optionalKey(Schema.Defect())
   }
 ) {
   readonly code = "patch_not_openable" as const;
   override get message() {
-    return `Patch or shared table ${this.resource} is not openable. Ask its owner or an administrator at /company.`;
+    return `Patch or shared table ${this.patchId}${this.table === undefined ? "" : `/${this.table}`} is not openable. Ask its owner or an administrator at /company.`;
   }
 }
 export type GenerationRefused =
-  ReleaseMismatch | InvalidGeneration | ConnectionNotConnected | PatchNotOpenable;
+  | ReleaseMismatch
+  | UnsupportedManifestVersion
+  | UnknownProjectSkill
+  | UnsafeGeneratedPath
+  | ConnectionNotConnected
+  | PatchNotOpenable;
 export class GenerationUnavailable extends Schema.TaggedError<GenerationUnavailable>()(
   "GenerationUnavailable",
   {
@@ -90,7 +113,6 @@ const coreSkills = ["patchy-loop", "patchy-tables", "patchy-files"];
 const knownSkills = [...coreSkills, "patchy-postgres", "patchy-shared-tables"];
 const root = "patchy/_generated";
 const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
-const unavailable = (cause: unknown) => new GenerationUnavailable({ cause });
 const isPatchNotOpenable = Schema.is(PatchNotOpenable);
 const quote = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 const columnType = (
@@ -140,8 +162,12 @@ export const make = Effect.gen(function* () {
   const patches = yield* Patches.Patches;
   const fs = yield* FileSystem.FileSystem;
   const catalog = Effect.fn("Generation.catalog")(function* (companyId: string, all: boolean) {
-    const connected = yield* connections.list(companyId).pipe(Effect.mapError(unavailable));
-    const sharedTables = yield* patches.sharedTables(companyId).pipe(Effect.mapError(unavailable));
+    const connected = yield* connections
+      .list(companyId)
+      .pipe(Effect.mapError((cause) => new GenerationUnavailable({ cause })));
+    const sharedTables = yield* patches
+      .sharedTables(companyId)
+      .pipe(Effect.mapError((cause) => new GenerationUnavailable({ cause })));
     return {
       connections: connected
         .filter((entry) => all || entry.status === "connected")
@@ -174,20 +200,18 @@ export const make = Effect.gen(function* () {
         release: request.release !== CURRENT_RELEASE ? request.release : request.manifest.release
       });
     if (request.manifest.manifestVersion !== MANIFEST_VERSION)
-      return yield* new InvalidGeneration({
-        resource: `manifest version ${request.manifest.manifestVersion} is not supported`
-      });
+      return yield* new UnsupportedManifestVersion({ version: request.manifest.manifestVersion });
     const skills = new Set([...coreSkills, ...request.skills]);
     for (const skill of skills) {
       if (!knownSkills.includes(skill))
-        return yield* new InvalidGeneration({
-          resource: `present skill ${skill} is not offered by this release`
-        });
+        return yield* new UnknownProjectSkill({ skill: skill.slice(0, 128) });
     }
     if (request.patchId !== undefined) {
-      const existing = yield* patches.find(request.patchId).pipe(Effect.mapError(unavailable));
+      const existing = yield* patches
+        .find(request.patchId)
+        .pipe(Effect.mapError((cause) => new GenerationUnavailable({ cause })));
       if (Option.isNone(existing) || existing.value.patch.companyId !== companyId)
-        return yield* new PatchNotOpenable({ resource: request.patchId });
+        return yield* new PatchNotOpenable({ patchId: request.patchId });
     }
     const files = new Map<string, string>();
     const uses: Array<
@@ -211,7 +235,9 @@ export const make = Effect.gen(function* () {
     const available = Object.values(request.manifest.uses).some(
       (entry) => entry.kind === "postgres"
     )
-      ? yield* connections.list(companyId).pipe(Effect.mapError(unavailable))
+      ? yield* connections
+          .list(companyId)
+          .pipe(Effect.mapError((cause) => new GenerationUnavailable({ cause })))
       : [];
     for (const [alias, declaration] of Object.entries(request.manifest.uses)) {
       const context = `${root}/context/${alias}.md`;
@@ -230,7 +256,7 @@ export const make = Effect.gen(function* () {
         };
         const snapshot = yield* connections
           .snapshot(companyId, resolved.id, resolved.revision)
-          .pipe(Effect.mapError(unavailable));
+          .pipe(Effect.mapError((cause) => new GenerationUnavailable({ cause })));
         const output = Postgres.postgres.generate(
           { ...resolved, description: connection.description },
           snapshot
@@ -256,12 +282,18 @@ export const make = Effect.gen(function* () {
           .sharedTable(declaration.patchId, declaration.table, companyId)
           .pipe(
             Effect.catchTags({
-              PatchNotOpenable: () =>
+              PatchNotOpenable: (cause) =>
                 Effect.fail(
-                  new PatchNotOpenable({ resource: `${declaration.patchId}/${declaration.table}` })
+                  new PatchNotOpenable({
+                    patchId: declaration.patchId,
+                    table: declaration.table,
+                    cause
+                  })
                 )
             }),
-            Effect.mapError((cause) => (isPatchNotOpenable(cause) ? cause : unavailable(cause)))
+            Effect.mapError((cause) =>
+              isPatchNotOpenable(cause) ? cause : new GenerationUnavailable({ cause })
+            )
           );
         const fixture = `fixtures/shared-${alias}.sql`;
         const resolved = { ...declaration, id: source.id, revision: source.schemaRevision };
@@ -323,7 +355,7 @@ export const make = Effect.gen(function* () {
       const path = `.agents/skills/${name}/SKILL.md`;
       const contents = yield* fs
         .readFileString(fileURLToPath(new URL(`../skills/${name}/SKILL.md`, import.meta.url)))
-        .pipe(Effect.mapError(unavailable));
+        .pipe(Effect.mapError((cause) => new GenerationUnavailable({ cause })));
       files.set(path, contents);
       skillFiles.push({ name, path });
     }
@@ -344,8 +376,7 @@ export const make = Effect.gen(function* () {
       })
     );
     for (const path of files.keys()) {
-      if (!isManagedOutputPath(path))
-        return yield* new InvalidGeneration({ resource: `unsafe generated path ${path}` });
+      if (!isManagedOutputPath(path)) return yield* new UnsafeGeneratedPath({ path });
     }
     return {
       ok: true as const,

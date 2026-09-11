@@ -64,7 +64,9 @@ export const layer = HttpApiBuilder.group(PatchyApi, "sdk", (handlers) =>
           const result = yield* generation.generate(identity.company.id, payload).pipe(
             Effect.catchTags({
               SdkReleaseMismatch: rejected,
-              InvalidGeneration: rejected,
+              UnsupportedManifestVersion: rejected,
+              UnknownProjectSkill: rejected,
+              UnsafeGeneratedPath: rejected,
               SdkConnectionNotConnected: rejected,
               SdkPatchNotOpenable: rejected,
               GenerationUnavailable: (error) =>

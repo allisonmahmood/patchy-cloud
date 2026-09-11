@@ -74,14 +74,15 @@ export class ManagedProject {
   ) {}
 
   static async begin(root: string): Promise<ManagedProject> {
-    const lock = await safePath(root, ".patchy-refresh-lock");
+    const local = await safePath(root, ".patchy");
+    await fs.mkdir(local, { recursive: true });
+    const lock = await safePath(root, ".patchy/refresh-lock");
     await fs.mkdir(lock);
     let temporary: string | undefined;
     try {
-      temporary = await fs.mkdtemp(path.join(root, ".patchy-refresh-"));
+      temporary = await fs.mkdtemp(path.join(local, "refresh-"));
       const transaction = new ManagedProject(root, temporary);
       for (const name of [
-        "package.json",
         "pnpm-lock.yaml",
         "patchy.config.ts",
         "patchy/_generated",
@@ -123,12 +124,29 @@ export class ManagedProject {
     }
   }
 
-  async write(name: "package.json" | "patchy.config.ts", contents: string): Promise<void> {
-    await fs.writeFile(await safePath(this.root, name), contents);
+  async write(
+    name: "package.json" | "patchy.config.ts",
+    contents: string,
+    expectedContents?: string
+  ): Promise<void> {
+    const target = await safePath(this.root, name);
+    if (expectedContents !== undefined && (await fs.readFile(target, "utf8")) !== expectedContents)
+      throw new Error(`${name} changed during refresh; retry with the current file.`);
+    const alreadyOwned = this.snapshots.has(name);
+    await this.snapshot(name);
+    if (
+      expectedContents !== undefined &&
+      (await fs.readFile(target, "utf8")) !== expectedContents
+    ) {
+      if (!alreadyOwned) this.snapshots.delete(name);
+      throw new Error(`${name} changed during refresh; retry with the current file.`);
+    }
+    await fs.writeFile(target, contents);
   }
 
   /** Preserve the old installation too: rolling back a pin without its executable is not rollback. */
   async prepareInstall(): Promise<void> {
+    await this.snapshot("package.json");
     const modules = await safePath(this.root, "node_modules");
     this.hadModules = Boolean(await info(modules));
     if (this.hadModules) await fs.rename(modules, path.join(this.temporary, "node_modules"));
@@ -230,7 +248,7 @@ export class ManagedProject {
       }
       await fs.rm(this.temporary, { recursive: true, force: true });
     } finally {
-      await fs.rmdir(path.join(this.root, ".patchy-refresh-lock"));
+      await fs.rmdir(path.join(this.root, ".patchy/refresh-lock"));
     }
   }
 }

@@ -468,6 +468,11 @@ Setting any of these to the empty string means the same thing as leaving it unse
 
 The instance is resolved once per command, in this order: `--api-url`, then the `.local/dev/env` that `pnpm dev` writes in a worktree (searched upward from the working directory, with the token it seeded), then `PATCHY_API_URL`, then the saved `config.json`, then the default. A checkout with a running dev instance therefore publishes to it without any environment set, and can never publish to a remote instance by accident.
 
+Repo commands (`refresh`, `catalog`, `add`, `remove` and private generation) also
+read `patchy.json`: its instance comes after `PATCHY_API_URL` and before saved
+config, with source `project`. `init` and file-oriented commands keep the order
+above.
+
 The dev seed is available only when the URL source is `dev-env`. An explicit
 `--api-url` selects `flag` even for the same URL: use a stored credential or
 `PATCHY_API_TOKEN` then, rather than expecting the dev-env token to follow the flag.

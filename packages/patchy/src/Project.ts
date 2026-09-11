@@ -8,17 +8,18 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as Prompt from "effect/unstable/cli/Prompt";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import { Catalog, Generated, Manifest, PatchName } from "@patchy/api";
+import ts from "typescript";
+import { Catalog, DefinitionName, Generated, Manifest, PatchName } from "@patchy/api";
 import * as Api from "./Api.js";
 import { LocalError, RejectedError, UnreachableError } from "./CliError.js";
 import * as Instance from "./Instance.js";
 import * as Login from "./Login.js";
 import * as Output from "./Output.js";
 import { executeConfig } from "./executeConfig.js";
-import { editUses } from "./editUses.js";
+import { editUses, UsesEditRefused } from "./editUses.js";
 import type { Declaration } from "./config.js";
 import { ManagedProject, presentSkills, safePath } from "./ManagedProject.js";
-import { coreSkills, starterFiles } from "./initProject.js";
+import { activateStarter, starterFiles } from "./initProject.js";
 import { RELEASE } from "./release.js";
 
 const repoSchema = Schema.Struct({
@@ -62,27 +63,67 @@ const decodeChild = Schema.decodeUnknownSync(Schema.fromJsonString(childSchema))
 const decodeFailure = Schema.decodeUnknownOption(Schema.fromJsonString(failureSchema));
 const encodeCatalog = Schema.encodeSync(Catalog);
 const decodeName = Schema.decodeUnknownSync(PatchName);
+const isDefinitionName = Schema.is(DefinitionName);
+const isUsesEditRefused = Schema.is(UsesEditRefused);
 const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
 type Change = typeof changeSchema.Type;
+
+const connectionAlias = (handle: string): string => {
+  const alias = handle.replace(/-+([a-z0-9])/g, (_, char: string) => char.toUpperCase());
+  return /^[0-9]/.test(alias) ? `connection${alias}` : alias;
+};
+
+/** Replace the effective pin literal, leaving all other package bytes untouched. */
+const editPackagePin = (source: string, pin: string): string => {
+  const file = ts.parseJsonText("package.json", source);
+  const statement = file.statements[0];
+  let node: ts.Expression | undefined =
+    statement && ts.isExpressionStatement(statement) ? statement.expression : undefined;
+  for (const key of ["devDependencies", "patchy"]) {
+    if (!node || !ts.isObjectLiteralExpression(node))
+      throw new Error("Expected package.json devDependencies.patchy to be a string literal.");
+    let value: ts.Expression | undefined;
+    for (const property of node.properties) {
+      if (
+        ts.isPropertyAssignment(property) &&
+        ts.isStringLiteral(property.name) &&
+        property.name.text === key
+      )
+        value = property.initializer;
+    }
+    // JSON decoding uses the last occurrence when an object repeats a key.
+    node = value;
+  }
+  if (!node || !ts.isStringLiteral(node))
+    throw new Error("Expected package.json devDependencies.patchy to be a string literal.");
+  return source.slice(0, node.getStart(file)) + Output.toJson(pin) + source.slice(node.end);
+};
 
 const localIO = <A>(operation: string, run: () => Promise<A>) =>
   Effect.tryPromise({
     try: run,
-    catch: (cause) =>
-      new LocalError({
-        message: `${operation}: ${cause instanceof Error ? cause.message : String(cause)}`,
-        cause
-      })
+    catch: (cause) => new LocalError({ message: `${operation} failed.`, cause })
   });
 const parse = <A>(operation: string, run: () => A) =>
   Effect.try({
     try: run,
-    catch: (cause) =>
-      new LocalError({
-        message: `${operation}: ${cause instanceof Error ? cause.message : String(cause)}`,
-        cause
-      })
+    catch: (cause) => new LocalError({ message: `${operation} failed.`, cause })
   });
+
+const installedFailure = (stderr: string, instanceUrl: string, fallback: string) => {
+  const failure = decodeFailure(stderr.trim());
+  if (Option.isNone(failure)) return new LocalError({ message: fallback });
+  const error = failure.value;
+  const fields = { message: error.error, ...(error.code ? { code: error.code } : {}) };
+  switch (error.kind) {
+    case "rejected":
+      return new RejectedError(fields);
+    case "unreachable":
+      return new UnreachableError({ ...fields, instanceUrl });
+    case "local":
+      return new LocalError(fields);
+  }
+};
 
 const processResult = Effect.fn("Project.processResult")(function* (
   cwd: string,
@@ -154,9 +195,7 @@ export const catalog = Effect.fn("Project.catalog")(function* (
     .pipe(Effect.catch((error) => refusal(error, "Could not read the catalog.")));
   const lines: string[] = [];
   for (const connection of result.connections) {
-    const alias = connection.handle.replace(/-([a-z0-9])/g, (_, char: string) =>
-      char.toUpperCase()
-    );
+    const alias = connectionAlias(connection.handle);
     lines.push(
       `${connection.integration}/${connection.handle} — ${connection.description} (${connection.status})`,
       `  patchy add ${connection.integration}/${connection.handle}`,
@@ -214,7 +253,14 @@ export const generate = Effect.fn("Project.generate")(function* (
           (cause) => new LocalError({ message: "Could not read patchy.config.ts.", cause })
         )
       );
-    const edited = yield* parse("Cannot edit patchy.config.ts", () => editUses(source, change));
+    const edited = yield* Effect.try({
+      try: () => editUses(source, change),
+      catch: (cause) =>
+        new LocalError({
+          message: isUsesEditRefused(cause) ? cause.message : "Could not edit patchy.config.ts.",
+          cause
+        })
+    });
     yield* fs
       .writeFileString(configPath, edited)
       .pipe(
@@ -234,10 +280,6 @@ export const generate = Effect.fn("Project.generate")(function* (
     if (skills.includes(skill)) removedSkills.push(skill);
     skills = skills.filter((name) => name !== skill);
   }
-  const implied = Object.values(manifest.uses).map((declaration) =>
-    declaration.kind === "postgres" ? "patchy-postgres" : "patchy-shared-tables"
-  );
-  skills = [...new Set([...coreSkills, ...skills, ...implied])];
   const repoText = yield* fs
     .readFileString(path.join(cwd, "patchy.json"))
     .pipe(
@@ -282,41 +324,44 @@ export const refresh = Effect.fn("Project.refresh")(function* (
   const release = yield* client
     .release()
     .pipe(Effect.catch((error) => Api.classify(error, "Could not read the instance release.")));
-  const packagePath = yield* localIO("Read package path", () => safePath(cwd, "package.json"));
-  const source = yield* fs.readFileString(packagePath).pipe(
-    Effect.mapError(
-      (cause) =>
-        new LocalError({
-          message: "Run this command inside a patch repo created with patchy init.",
-          cause
-        })
-    )
-  );
-  const pkg = yield* parse("Read package.json", () => decodePackage(source));
-  const dependencies = yield* parse("Read package devDependencies", () =>
-    decodeDependencies(pkg.devDependencies)
-  );
-  const previousPin = dependencies.patchy;
-  if (!previousPin)
-    return yield* new LocalError({ message: "package.json must pin patchy as a devDependency." });
   const tarball = new URL(release.package.tarball, `${instance.apiUrl}/`).href;
-  const pinChanged = previousPin !== tarball;
-  const from = /patchy-([^/]+)\.tgz(?:[?#].*)?$/.exec(previousPin)?.[1] ?? previousPin;
-  const skills = yield* localIO("Read project skills", () => presentSkills(cwd));
   const executable = path.join(cwd, "node_modules/patchy/dist/index.js");
-  const needsInstall =
-    pinChanged || !(yield* fs.exists(executable).pipe(Effect.orElseSucceed(() => false)));
-  const changed = yield* Effect.acquireUseRelease(
+  const { changed, from, pinChanged } = yield* Effect.acquireUseRelease(
     localIO("Begin project transaction", () => ManagedProject.begin(cwd)),
     (transaction) =>
       Effect.gen(function* () {
-        if (pinChanged)
+        const packagePath = yield* localIO("Read package path", () =>
+          safePath(cwd, "package.json")
+        );
+        const source = yield* fs.readFileString(packagePath).pipe(
+          Effect.mapError(
+            (cause) =>
+              new LocalError({
+                message: "Run this command inside a patch repo created with patchy init.",
+                cause
+              })
+          )
+        );
+        const pkg = yield* parse("Read package.json", () => decodePackage(source));
+        const dependencies = yield* parse("Read package devDependencies", () =>
+          decodeDependencies(pkg.devDependencies)
+        );
+        const previousPin = dependencies.patchy;
+        if (!previousPin)
+          return yield* new LocalError({
+            message: "package.json must pin patchy as a devDependency."
+          });
+        const pinChanged = previousPin !== tarball;
+        const from = /patchy-([^/]+)\.tgz(?:[?#].*)?$/.exec(previousPin)?.[1] ?? previousPin;
+        const skills = yield* localIO("Read project skills", () => presentSkills(cwd));
+        const needsInstall =
+          pinChanged || !(yield* fs.exists(executable).pipe(Effect.orElseSucceed(() => false)));
+        if (pinChanged) {
+          const edited = yield* parse("Update package pin", () => editPackagePin(source, tarball));
           yield* localIO("Update package pin", () =>
-            transaction.write(
-              "package.json",
-              json({ ...pkg, devDependencies: { ...dependencies, patchy: tarball } })
-            )
+            transaction.write("package.json", edited, source)
           );
+        }
         if (needsInstall) {
           yield* localIO("Preserve previous installation", () => transaction.prepareInstall()).pipe(
             Effect.uninterruptible
@@ -338,36 +383,19 @@ export const refresh = Effect.fn("Project.refresh")(function* (
         const child = yield* processResult(cwd, process.execPath, args, {
           PATCHY_API_TOKEN: Redacted.value(token)
         });
-        if (child.code !== 0) {
-          const failure = decodeFailure(child.stderr.trim());
-          if (Option.isSome(failure)) {
-            const error = failure.value;
-            return yield* error.kind === "rejected"
-              ? new RejectedError({
-                  message: error.error,
-                  ...(error.code ? { code: error.code } : {})
-                })
-              : error.kind === "unreachable"
-                ? new UnreachableError({
-                    instanceUrl: instance.apiUrl,
-                    message: error.error,
-                    ...(error.code ? { code: error.code } : {})
-                  })
-                : new LocalError({
-                    message: error.error,
-                    ...(error.code ? { code: error.code } : {})
-                  });
-          }
-          return yield* new LocalError({
-            message: `Installed CLI generation failed (exit ${child.code}); the previous project set is preserved.`
-          });
-        }
+        if (child.code !== 0)
+          return yield* installedFailure(
+            child.stderr,
+            instance.apiUrl,
+            `Installed CLI generation failed (exit ${child.code}); the previous project set is preserved.`
+          );
         const result = yield* parse("Read installed CLI generation", () =>
           decodeChild(child.stdout)
         );
-        return yield* localIO("Activate generated files", () =>
+        const changed = yield* localIO("Activate generated files", () =>
           transaction.activate(result.generated.files, json(result.manifest), result.removedSkills)
         ).pipe(Effect.uninterruptible);
+        return { changed, from, pinChanged };
       }),
     (transaction, exit) =>
       localIO("Restore project transaction", () => transaction.finish(Exit.isSuccess(exit))).pipe(
@@ -413,6 +441,11 @@ export const add = Effect.fn("Project.add")(function* (
   target: Option.Option<string>,
   as: Option.Option<string>
 ) {
+  if (Option.isSome(as) && !isDefinitionName(as.value))
+    return yield* new LocalError({
+      message:
+        "--as must be a camelCase alias starting with a lowercase letter, containing only letters and digits, and at most 63 characters. For example: --as salesDb"
+    });
   const client = yield* Api.client(token);
   const available = yield* client
     .catalog({ query: { all: false } })
@@ -440,9 +473,7 @@ export const add = Effect.fn("Project.add")(function* (
         message: `Choose a Postgres connection:\n${connections.map((connection) => `  patchy add postgres/${connection.handle} — ${connection.description}`).join("\n")}`
       });
     declaration = { kind: "postgres", handle: connections[0]!.handle };
-    defaultAlias = declaration.handle.replace(/-([a-z0-9])/g, (_, char: string) =>
-      char.toUpperCase()
-    );
+    defaultAlias = connectionAlias(declaration.handle);
   } else if (integration === "shared-table") {
     const parts = Option.isSome(target) ? target.value.split("/") : [];
     if (parts.length !== 2 || !parts[0] || !parts[1])
@@ -570,13 +601,6 @@ export const init = Effect.fn("Project.init")(function* (
               )
             );
         }
-        yield* fs
-          .makeDirectory(path.join(staging, "fixtures"))
-          .pipe(
-            Effect.mapError(
-              (cause) => new LocalError({ message: "Could not create fixtures/.", cause })
-            )
-          );
         yield* install(staging);
         const child = yield* processResult(
           staging,
@@ -587,35 +611,19 @@ export const init = Effect.fn("Project.init")(function* (
             "--release",
             release.release,
             "--skills",
-            Output.toJson(coreSkills),
+            "[]",
             "--api-url",
             instance.apiUrl,
             "--json"
           ],
           { PATCHY_API_TOKEN: Redacted.value(token) }
         );
-        if (child.code !== 0) {
-          const failure = decodeFailure(child.stderr.trim());
-          if (Option.isSome(failure)) {
-            const error = failure.value;
-            return yield* error.kind === "rejected"
-              ? new RejectedError({
-                  message: error.error,
-                  ...(error.code ? { code: error.code } : {})
-                })
-              : error.kind === "unreachable"
-                ? new UnreachableError({
-                    instanceUrl: instance.apiUrl,
-                    message: error.error,
-                    ...(error.code ? { code: error.code } : {})
-                  })
-                : new LocalError({
-                    message: error.error,
-                    ...(error.code ? { code: error.code } : {})
-                  });
-          }
-          return yield* new LocalError({ message: "Installed CLI generation failed." });
-        }
+        if (child.code !== 0)
+          return yield* installedFailure(
+            child.stderr,
+            instance.apiUrl,
+            "Installed CLI generation failed."
+          );
         const result = yield* parse("Read installed CLI generation", () =>
           decodeChild(child.stdout)
         );
@@ -630,15 +638,8 @@ export const init = Effect.fn("Project.init")(function* (
               transaction.finish(Exit.isSuccess(exit))
             ).pipe(Effect.orDie)
         );
-        // Rename only a complete tree. A concurrent non-empty destination is never removed.
-        yield* fs.rename(staging, dir).pipe(
-          Effect.mapError(
-            (cause) =>
-              new LocalError({
-                message: `Could not activate ${dir}; any existing destination was preserved.`,
-                cause
-              })
-          )
+        yield* localIO("Activate the completed project", () => activateStarter(staging, dir)).pipe(
+          Effect.uninterruptible
         );
         yield* Output.report(
           {

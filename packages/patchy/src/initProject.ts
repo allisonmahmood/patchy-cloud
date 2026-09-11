@@ -1,4 +1,8 @@
-export const coreSkills = ["patchy-loop", "patchy-tables", "patchy-files"];
+// @effect-diagnostics nodeBuiltinImport:off
+// Activation needs lstat (without following links) and exclusive hard links for installed files.
+import type { Stats } from "node:fs";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
 
 /** Starter sources contain company configuration, never the authenticated person's identity. */
 export function starterFiles(options: {
@@ -12,6 +16,7 @@ export function starterFiles(options: {
   const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
   return {
     "patchy.json": json({ instance }),
+    "fixtures/.gitkeep": "",
     "package.json": json({
       name,
       private: true,
@@ -52,4 +57,96 @@ export function starterFiles(options: {
     "CLAUDE.md": "@AGENTS.md\n",
     ".gitignore": ".patchy/\nnode_modules/\ndist/\n"
   };
+}
+
+interface StarterEntry {
+  readonly target: string;
+  readonly stat: Stats;
+  readonly parent?: StarterEntry;
+}
+
+async function entryInfo(target: string): Promise<Stats | undefined> {
+  try {
+    return await fs.lstat(target);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return undefined;
+    throw error;
+  }
+}
+
+async function unchanged(entry: StarterEntry): Promise<boolean> {
+  if (entry.parent && !(await unchanged(entry.parent))) return false;
+  const current = await entryInfo(entry.target);
+  return (
+    current !== undefined &&
+    current.dev === entry.stat.dev &&
+    current.ino === entry.stat.ino &&
+    current.mode === entry.stat.mode &&
+    (entry.stat.isDirectory() ||
+      (current.mtimeMs === entry.stat.mtimeMs && current.size === entry.stat.size))
+  );
+}
+
+/** Activate a complete sibling stage without replacing an existing working directory. */
+export async function activateStarter(staging: string, destination: string): Promise<void> {
+  const existing = await entryInfo(destination);
+  if (!existing) {
+    await fs.rename(staging, destination);
+    return;
+  }
+  if (!existing.isDirectory() || (await fs.readdir(destination)).length > 0)
+    throw new Error(`Refusing to initialize an existing tree: ${destination}`);
+
+  const created: StarterEntry[] = [];
+  async function populate(source: string, parent: StarterEntry): Promise<void> {
+    for (const name of await fs.readdir(source)) {
+      const from = path.join(source, name);
+      const target = path.join(parent.target, name);
+      const stat = await fs.lstat(from);
+      if (!(await unchanged(parent)))
+        throw new Error(`The init directory changed during activation: ${parent.target}`);
+      let installed: Stats;
+      if (stat.isDirectory()) {
+        await fs.mkdir(target, { mode: stat.mode & 0o7777 });
+        installed = await fs.lstat(target);
+      } else if (stat.isFile()) {
+        // The stage is on the same filesystem; retaining its inode avoids copying node_modules.
+        await fs.link(from, target);
+        installed = stat;
+      } else if (stat.isSymbolicLink()) {
+        await fs.symlink(await fs.readlink(from), target);
+        installed = await fs.lstat(target);
+      } else {
+        throw new Error(`Unsupported starter entry: ${from}`);
+      }
+      const entry = { target, stat: installed, parent };
+      created.push(entry);
+      if (stat.isDirectory()) await populate(from, entry);
+    }
+  }
+
+  try {
+    await populate(staging, { target: destination, stat: existing });
+  } catch (cause) {
+    const failures: unknown[] = [];
+    for (let index = created.length - 1; index >= 0; index--) {
+      const entry = created[index]!;
+      try {
+        if (!(await unchanged(entry))) continue;
+        // Never recursively remove: author additions and edits must survive rollback.
+        if (entry.stat.isDirectory()) await fs.rmdir(entry.target);
+        else await fs.unlink(entry.target);
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code !== "ENOENT" && code !== "ENOTDIR" && code !== "ENOTEMPTY" && code !== "EEXIST")
+          failures.push(error);
+      }
+    }
+    if (failures.length > 0)
+      throw new AggregateError([cause, ...failures], "Starter activation rollback failed.", {
+        cause
+      });
+    throw cause;
+  }
 }
