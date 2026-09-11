@@ -4,12 +4,14 @@
  * shapes, the token never in argv or output, and the state dir's fail-closed
  * files. What the commands do between those edges is the commands' own tests.
  */
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
+  realpathSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -17,14 +19,24 @@ import {
 } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 import * as Schema from "effect/Schema";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { sha256 } from "@patchy/core";
-import { CURRENT_RELEASE, MANIFEST_VERSION, PublishRequest, WIRE_VERSION } from "@patchy/api";
+import {
+  CURRENT_RELEASE,
+  GenerateRequest,
+  MANIFEST_VERSION,
+  PublishRequest,
+  WIRE_VERSION
+} from "@patchy/api";
+import { generateClient } from "../../sdk/src/generateClient.js";
+import { generate as generatePostgres } from "../../integrations/src/postgres/Generate.js";
 
 const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const cliPath = path.join(packageDir, "dist/index.js");
@@ -60,7 +72,11 @@ type Handler = (
 ) => void;
 
 /** A stub instance: every request recorded, answered by `handler`. */
-const stubInstance = async (handler: Handler, release = () => CURRENT_RELEASE) => {
+const stubInstance = async (
+  handler: Handler,
+  release = () => CURRENT_RELEASE,
+  tarball?: Buffer
+) => {
   const requests: Recorded[] = [];
   const server = createServer((request: IncomingMessage, response: ServerResponse) => {
     const chunks: Buffer[] = [];
@@ -78,6 +94,11 @@ const stubInstance = async (handler: Handler, release = () => CURRENT_RELEASE) =
         response.writeHead(status, { "content-type": "application/json" });
         response.end(JSON.stringify(body));
       };
+      if (recorded.url === "/sdk/patchy.tgz" && tarball) {
+        response.writeHead(200, { "content-type": "application/octet-stream" });
+        response.end(tarball);
+        return;
+      }
       if (recorded.url === "/api/release") {
         respond(200, {
           release: release(),
@@ -193,6 +214,233 @@ const requestBarrier = () => {
           throw new Error(`CLI exited before request barrier: ${result.stderr}`);
         })
       ])
+  };
+};
+
+const exec = promisify(execFile);
+const require = createRequire(import.meta.url);
+const decodeGenerateRequest = Schema.decodeUnknownSync(GenerateRequest);
+const decodePackageFixture = Schema.decodeUnknownSync(
+  Schema.Struct({
+    name: Schema.String,
+    version: Schema.String,
+    dependencies: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+    optionalDependencies: Schema.optionalKey(Schema.Record(Schema.String, Schema.String))
+  }),
+  { onExcessProperty: "preserve" }
+);
+const coreProjectSkills = ["patchy-files", "patchy-loop", "patchy-tables"];
+const projectConfig =
+  'import { defineConfig, table, t } from "patchy/config";\n\n' +
+  'export default defineConfig({ name: "cli-project", tier: 1,\n' +
+  "  tables: { notes: table({ title: t.text() }) }, files: {},\n" +
+  "  uses: {}\n});\n";
+const projectCatalog = {
+  connections: [
+    {
+      id: "conn-sales",
+      handle: "sales-db",
+      integration: "postgres",
+      description: "Synthetic sales database",
+      status: "connected"
+    }
+  ],
+  sharedTables: [{ patchId: "abcdefghijkl", name: "directory", table: "people", schemaRevision: 1 }]
+};
+
+/** Only the instance metadata is stubbed: these are the shipped client generators. */
+const generateProjectResponse = (body: unknown) => {
+  const { manifest } = decodeGenerateRequest(body);
+  const files: Array<{ path: string; contents: string }> = [];
+  const uses: Array<{ alias: string; id: string; revision: number }> = [];
+  const connections: Record<string, string> = {};
+  const skills = new Set(coreProjectSkills);
+  for (const [alias, declaration] of Object.entries(manifest.uses)) {
+    if (declaration.kind !== "postgres") throw new Error("Unexpected fixture declaration.");
+    const stamp = { ...declaration, id: "conn-sales", revision: 1 };
+    const generated = generatePostgres(stamp, {
+      version: 1,
+      relations: [],
+      enums: [],
+      exclusions: []
+    });
+    files.push(
+      { path: `patchy/_generated/uses/${alias}.ts`, contents: generated.client },
+      { path: `patchy/_generated/context/${alias}.md`, contents: generated.context },
+      { path: `fixtures/postgres-${declaration.handle}.sql`, contents: generated.fixture }
+    );
+    connections[alias] = `./uses/${alias}.js`;
+    uses.push({ alias, id: stamp.id, revision: stamp.revision });
+    skills.add("patchy-postgres");
+  }
+  files.push(
+    { path: "patchy/_generated/client.ts", contents: generateClient({ connections }) },
+    {
+      path: "patchy/_generated/index.json",
+      contents: JSON.stringify({ release: CURRENT_RELEASE, uses, skills: [...skills].sort() })
+    }
+  );
+  for (const skill of [...skills].sort())
+    files.push({
+      path: `.agents/skills/${skill}/SKILL.md`,
+      contents: readFileSync(path.join(packageDir, "../sdk/skills", skill, "SKILL.md"), "utf8")
+    });
+  return { ok: true, files, uses };
+};
+
+const projectHandler: Handler = (request, respond) => {
+  if (request.url === "/api/me") return respond(200, identity);
+  if (request.url.startsWith("/api/sdk/catalog"))
+    return respond(200, {
+      ...projectCatalog,
+      ...(request.url.includes("all=true")
+        ? { offered: [{ integration: "postgres", connected: true }] }
+        : {})
+    });
+  if (request.url === "/api/sdk/generate")
+    return respond(200, generateProjectResponse(request.body));
+  respond(404, { ok: false, error: "Unexpected fixture route." });
+};
+
+const projectTree = (instance: string, source = projectConfig) => {
+  const dir = tempDir();
+  writeFileSync(path.join(dir, "patchy.json"), JSON.stringify({ instance }));
+  writeFileSync(path.join(dir, "patchy.config.ts"), source);
+  writeFileSync(
+    path.join(dir, "package.json"),
+    JSON.stringify({
+      name: "cli-project",
+      private: true,
+      type: "module",
+      devDependencies: { patchy: `${instance}/sdk/patchy.tgz` }
+    }) + "\n"
+  );
+  mkdirSync(path.join(dir, "node_modules"));
+  symlinkSync(packageDir, path.join(dir, "node_modules/patchy"), "dir");
+  return dir;
+};
+
+const treeBytes = (root: string): Record<string, Buffer> => {
+  const files: Record<string, Buffer> = {};
+  const visit = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const file = path.join(dir, entry.name);
+      if (entry.isDirectory()) visit(file);
+      else if (entry.isFile()) files[path.relative(root, file)] = readFileSync(file);
+    }
+  };
+  visit(root);
+  return files;
+};
+
+/**
+ * A loopback-only npm registry, packed from this checkout's actual dependencies.
+ * No dependency, compiler, generated client or install executable is substituted.
+ */
+const localPackageRegistry = async () => {
+  const dir = tempDir();
+  const packages = new Map<
+    string,
+    { manifest: Record<string, unknown>; version: string; tarball: string }
+  >();
+  const seen = new Set<string>();
+  const resolvePackage = (name: string, from: string): string => {
+    const resolver = createRequire(from);
+    try {
+      return resolver.resolve(`${name}/package.json`);
+    } catch {
+      let current = path.dirname(resolver.resolve(name));
+      while (current !== path.dirname(current)) {
+        const candidate = path.join(current, "package.json");
+        if (existsSync(candidate)) {
+          const pkg = readJson(candidate);
+          if (pkg !== null && typeof pkg === "object" && "name" in pkg && pkg.name === name)
+            return candidate;
+        }
+        current = path.dirname(current);
+      }
+      throw new Error(`The offline CLI fixture needs the real installed package ${name}.`);
+    }
+  };
+  const pack = async (file: string): Promise<void> => {
+    file = realpathSync(file);
+    if (seen.has(file)) return;
+    seen.add(file);
+    const manifest = decodePackageFixture(readJson(file));
+    const tarball = path.join(dir, `${seen.size}.tgz`);
+    packages.set(`${manifest.name}@${manifest.version}`, {
+      manifest,
+      version: manifest.version,
+      tarball
+    });
+    await exec("tar", [
+      "-czf",
+      tarball,
+      "--exclude=node_modules",
+      "--transform=s,^\\.,package,",
+      "-C",
+      path.dirname(file),
+      "."
+    ]);
+    for (const name of Object.keys(manifest.dependencies ?? {}))
+      await pack(resolvePackage(name, file));
+    for (const name of Object.keys(manifest.optionalDependencies ?? {})) {
+      let optional: string;
+      try {
+        optional = resolvePackage(name, file);
+      } catch {
+        continue; // Other platforms' optional binaries are not installed in this checkout.
+      }
+      await pack(optional);
+    }
+  };
+  for (const name of ["typescript", "vite-plugin-singlefile", "@types/node"])
+    await pack(resolvePackage(name, import.meta.url));
+  await pack(resolvePackage("vite", require.resolve("vitest/package.json")));
+  const server = createServer((request, response) => {
+    const name = decodeURIComponent((request.url ?? "/").slice(1));
+    const archive = [...packages.values()].find(
+      (entry) => name === `tarballs/${path.basename(entry.tarball)}`
+    );
+    if (archive) {
+      response.writeHead(200, { "content-type": "application/octet-stream" });
+      response.end(readFileSync(archive.tarball));
+      return;
+    }
+    const versions = [...packages.values()].filter((entry) => entry.manifest.name === name);
+    response.setHeader("content-type", "application/json");
+    if (!versions.length) {
+      response.writeHead(404);
+      response.end(JSON.stringify({ error: "Package is not in the offline fixture." }));
+      return;
+    }
+    response.end(
+      JSON.stringify({
+        name,
+        "dist-tags": { latest: versions[0]!.version },
+        versions: Object.fromEntries(
+          versions.map((entry) => [
+            entry.version,
+            {
+              ...entry.manifest,
+              dist: { tarball: `${url}/tarballs/${path.basename(entry.tarball)}` }
+            }
+          ])
+        )
+      })
+    );
+  });
+  servers.push(server);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as AddressInfo;
+  const url = `http://127.0.0.1:${port}`;
+  return {
+    npm_config_registry: url,
+    npm_config_store_dir: path.join(dir, "store"),
+    npm_config_cache: path.join(dir, "cache"),
+    npm_config_optional: "false",
+    npm_config_auto_install_peers: "false",
+    npm_config_update_notifier: "false"
   };
 };
 
@@ -1769,24 +2017,6 @@ describe("patchy delete", async () => {
     expect(gone.stderr).toBe(
       `Patch abcdefghijkl is unavailable for deletion: it is not on ${instance.url}, or this publishing key does not own it.\n`
     );
-
-    // Neither target and both targets are told what to pass, in different words.
-    const neither = await runCli(["delete"], { stateDir: dir, env });
-    expect(neither.status).toBe(1);
-    expect(neither.stderr).toBe(
-      "Pass the file the patch was published from, or --patch <patch-id>.\n"
-    );
-    const both = await runCli(["delete", file, "--patch", "abcdefghijkl"], { stateDir: dir, env });
-    expect(both.status).toBe(1);
-    expect(both.stderr).toBe(
-      "Pass the file the patch was published from, or --patch <patch-id>, not both.\n"
-    );
-
-    // With no key the deletion is refused locally.
-    const keyless = await runCli(["delete", "--patch", "abcdefghijkl", "--api-url", instance.url]);
-    expect(keyless.status).toBe(1);
-    expect(keyless.stderr).toContain("Run: patchy login");
-    expect(instance.requests).toHaveLength(8);
   });
 });
 
@@ -1835,5 +2065,338 @@ describe("patchy status", async () => {
     const unreadable = await runCli(["status"], { stateDir: dir });
     expect(unreadable.status).toBe(0);
     expect(JSON.parse(unreadable.stdout)).toMatchObject({ hasToken: false, tokenSource: null });
+  });
+});
+
+describe("patch-repo commands", () => {
+  const env = { PATCHY_API_TOKEN: "pp_project" };
+
+  it.each([
+    ["init", "--purpose", "Synthetic notes"],
+    ["refresh"],
+    ["catalog"],
+    ["add", "postgres/sales-db"],
+    ["remove", "salesDb"]
+  ])("refuses %s without a key before making a request", async (...args) => {
+    const instance = await stubInstance(projectHandler);
+    const dir = projectTree(instance.url);
+    const result = await runCli([...args, "--api-url", instance.url, "--json"], { cwd: dir });
+    expect(result).toMatchObject({ status: 1, stdout: "" });
+    expect(JSON.parse(result.stderr)).toMatchObject({ ok: false, kind: "local" });
+    expect(JSON.parse(result.stderr).error).toContain("Run: patchy login");
+    expect(instance.requests).toEqual([]);
+  });
+
+  it("returns the catalog document, including offered integrations under --all", async () => {
+    const instance = await stubInstance(projectHandler);
+    const result = await runCli(["catalog", "--all", "--api-url", instance.url, "--json"], {
+      env
+    });
+    expect(result).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(result.stdout)).toEqual({
+      ...projectCatalog,
+      offered: [{ integration: "postgres", connected: true }]
+    });
+  });
+
+  it("refreshes the generated client and reports the managed changes as JSON", async () => {
+    const instance = await stubInstance(projectHandler);
+    const dir = projectTree(instance.url);
+    mkdirSync(path.join(dir, "patchy/_generated"), { recursive: true });
+    writeFileSync(path.join(dir, "patchy/_generated/obsolete.ts"), "old generated surface\n");
+    const result = await runCli(["refresh", "--json"], { cwd: dir, env });
+    expect(result).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(result.stdout)).toEqual({
+      ok: true,
+      release: { from: `${instance.url}/sdk/patchy.tgz`, to: CURRENT_RELEASE },
+      changed: {
+        pin: false,
+        generated: expect.arrayContaining([
+          "patchy/_generated/client.ts",
+          "patchy/_generated/index.json",
+          "patchy/_generated/manifest.json",
+          "patchy/_generated/obsolete.ts"
+        ]),
+        skills: coreProjectSkills,
+        fixtures: []
+      }
+    });
+    expect(readJson(path.join(dir, "patchy/_generated/manifest.json"))).toMatchObject({
+      release: CURRENT_RELEASE,
+      tier: 1,
+      tables: { notes: { columns: { title: { kind: "text" } } } },
+      uses: {}
+    });
+    expect(existsSync(path.join(dir, "patchy/_generated/obsolete.ts"))).toBe(false);
+    expect(readFileSync(path.join(dir, "patchy.config.ts"), "utf8")).toBe(projectConfig);
+  });
+
+  it("adds a declaration through the real config and client generators without overwriting fixtures", async () => {
+    const instance = await stubInstance(projectHandler);
+    const dir = projectTree(instance.url);
+    mkdirSync(path.join(dir, "fixtures"));
+    const fixture = "-- Builder-owned synthetic rows.\n";
+    writeFileSync(path.join(dir, "fixtures/postgres-sales-db.sql"), fixture);
+    const result = await runCli(["add", "postgres/sales-db", "--json"], { cwd: dir, env });
+    expect(result).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(result.stdout)).toEqual({
+      ok: true,
+      alias: "salesDb",
+      declaration: { kind: "postgres", handle: "sales-db" },
+      generated: expect.arrayContaining([
+        "patchy/_generated/client.ts",
+        "patchy/_generated/manifest.json",
+        "patchy/_generated/uses/salesDb.ts",
+        "patchy/_generated/context/salesDb.md"
+      ]),
+      skills: [...coreProjectSkills, "patchy-postgres"].sort()
+    });
+    expect(readJson(path.join(dir, "patchy/_generated/manifest.json"))).toMatchObject({
+      uses: {
+        salesDb: { kind: "postgres", handle: "sales-db", id: "conn-sales", revision: 1 }
+      }
+    });
+    expect(readFileSync(path.join(dir, "fixtures/postgres-sales-db.sql"), "utf8")).toBe(fixture);
+  });
+
+  it("removes the declaration, generated surface and last integration skill, but keeps its fixture", async () => {
+    const instance = await stubInstance(projectHandler);
+    const source = projectConfig.replace(
+      "uses: {}",
+      'uses: { salesDb: { kind: "postgres", handle: "sales-db" } }'
+    );
+    const dir = projectTree(instance.url, source);
+    for (const name of ["patchy/_generated/uses", ".agents/skills/patchy-postgres", "fixtures"])
+      mkdirSync(path.join(dir, name), { recursive: true });
+    writeFileSync(path.join(dir, "patchy/_generated/uses/salesDb.ts"), "old generated surface");
+    writeFileSync(path.join(dir, ".agents/skills/patchy-postgres/SKILL.md"), "old project skill");
+    const fixture = "-- Builder-owned synthetic rows.\n";
+    writeFileSync(path.join(dir, "fixtures/postgres-sales-db.sql"), fixture);
+    const result = await runCli(["remove", "salesDb", "--json"], { cwd: dir, env });
+    expect(result).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(result.stdout)).toEqual({
+      ok: true,
+      alias: "salesDb",
+      removed: ["salesDb"]
+    });
+    expect(readJson(path.join(dir, "patchy/_generated/manifest.json"))).toMatchObject({ uses: {} });
+    expect(existsSync(path.join(dir, "patchy/_generated/uses/salesDb.ts"))).toBe(false);
+    expect(existsSync(path.join(dir, ".agents/skills/patchy-postgres"))).toBe(false);
+    expect(readFileSync(path.join(dir, "fixtures/postgres-sales-db.sql"), "utf8")).toBe(fixture);
+  });
+
+  it("refuses add on a spread with its exact source line and copy-ready insertion", async () => {
+    const instance = await stubInstance(projectHandler);
+    const source =
+      'import { defineConfig } from "patchy/config";\n' +
+      "const existing = {};\n" +
+      'export default defineConfig({ name: "cli-project", tier: 1, tables: {}, files: {},\n' +
+      "  uses: {\n" +
+      "    ...existing // Builder-owned declarations.\n" +
+      "  }\n});\n";
+    const dir = projectTree(instance.url, source);
+    const result = await runCli(["add", "postgres/sales-db", "--json"], { cwd: dir, env });
+    expect(result).toMatchObject({ status: 1, stdout: "" });
+    const failure = JSON.parse(result.stderr);
+    expect(failure).toMatchObject({ ok: false, kind: "local" });
+    expect(failure.error).toContain("patchy.config.ts:5:");
+    expect(failure.error.split("\n")).toContain("    ...existing // Builder-owned declarations.");
+    expect(failure.error).toContain('"salesDb": {"kind":"postgres","handle":"sales-db"},');
+    expect(failure.error).toContain("patchy refresh");
+    expect(readFileSync(path.join(dir, "patchy.config.ts"), "utf8")).toBe(source);
+    expect(instance.requests.some((request) => request.url === "/api/sdk/generate")).toBe(false);
+  });
+
+  it.each([false, true])(
+    "preserves generated bytes and concurrent author edits after refused refresh (pin changes: %s)",
+    async (pinChanges) => {
+      const barrier = requestBarrier();
+      const tarball = readFileSync(
+        path.join(packageDir, `artifacts/patchy-${CURRENT_RELEASE}.tgz`)
+      );
+      const instance = await stubInstance(
+        (request, respond, disconnect) => {
+          if (request.url === "/api/sdk/generate")
+            return barrier.handler(request, respond, disconnect);
+          projectHandler(request, respond, disconnect);
+        },
+        () => CURRENT_RELEASE,
+        tarball
+      );
+      const dir = projectTree(instance.url);
+      const originalPin = `${instance.url}/sdk/${pinChanges ? "previous.tgz" : "patchy.tgz"}`;
+      const originalPackage = {
+        name: "cli-project",
+        private: true,
+        type: "module",
+        devDependencies: { patchy: originalPin }
+      };
+      writeFileSync(path.join(dir, "package.json"), JSON.stringify(originalPackage) + "\n");
+      mkdirSync(path.join(dir, "patchy/_generated/uses"), { recursive: true });
+      writeFileSync(path.join(dir, "patchy/_generated/client.ts"), "previous generated client\n");
+      writeFileSync(
+        path.join(dir, "patchy/_generated/uses/previous.ts"),
+        Buffer.from([0, 255, 10])
+      );
+      const generatedBefore = treeBytes(path.join(dir, "patchy/_generated"));
+      const running = runCli(["refresh", "--json"], {
+        cwd: dir,
+        env: {
+          ...env,
+          npm_config_registry: instance.url,
+          npm_config_store_dir: path.join(tempDir(), "store"),
+          npm_config_cache: path.join(tempDir(), "cache"),
+          npm_config_update_notifier: "false"
+        }
+      });
+      const held = await barrier.wait(running);
+      const authoredConfig = `${projectConfig}\n// A new author edit while generation is pending.\n`;
+      writeFileSync(path.join(dir, "patchy.config.ts"), authoredConfig);
+      const authoredPackage = {
+        ...originalPackage,
+        scripts: { typecheck: "tsc --noEmit", notes: "echo builder-owned" },
+        description: "An author edit made after the release pin changed",
+        devDependencies: { patchy: `${instance.url}/sdk/patchy.tgz` }
+      };
+      writeFileSync(
+        path.join(dir, "package.json"),
+        JSON.stringify(authoredPackage, null, 2) + "\n"
+      );
+      held.respond(422, {
+        ok: false,
+        error: "Source access was revoked.",
+        code: "patch_not_openable"
+      });
+      const result = await running;
+      expect(result).toMatchObject({ status: 2, stdout: "" });
+      expect(JSON.parse(result.stderr)).toMatchObject({
+        ok: false,
+        kind: "rejected",
+        code: "patch_not_openable"
+      });
+      expect(treeBytes(path.join(dir, "patchy/_generated"))).toEqual(generatedBefore);
+      expect(readFileSync(path.join(dir, "patchy.config.ts"), "utf8")).toBe(authoredConfig);
+      expect(readJson(path.join(dir, "package.json"))).toEqual({
+        ...authoredPackage,
+        devDependencies: { patchy: originalPin }
+      });
+    }
+  );
+
+  it.each([
+    {
+      args: ["init", "new-project", "--purpose", "Synthetic notes"],
+      route: "/api/me",
+      status: 401,
+      exit: 2,
+      kind: "rejected"
+    },
+    { args: ["catalog"], route: "/api/sdk/catalog", status: 403, exit: 2, kind: "rejected" },
+    {
+      args: ["add", "postgres/sales-db"],
+      route: "/api/sdk/catalog",
+      status: 503,
+      exit: 3,
+      kind: "unreachable"
+    },
+    {
+      args: ["remove", "salesDb"],
+      route: "/api/sdk/generate",
+      status: 0,
+      exit: 3,
+      kind: "unreachable"
+    }
+  ])("reports $kind on $args's actual $route path", async ({ args, route, status, exit, kind }) => {
+    const instance = await stubInstance((request, respond, disconnect) => {
+      if (request.url.split("?")[0] === route) {
+        if (status === 0) return disconnect();
+        return respond(status, { ok: false, error: "Instance refused the request." });
+      }
+      projectHandler(request, respond, disconnect);
+    });
+    const dir = projectTree(
+      instance.url,
+      projectConfig.replace(
+        "uses: {}",
+        'uses: { salesDb: { kind: "postgres", handle: "sales-db" } }'
+      )
+    );
+    const result = await runCli([...args, "--api-url", instance.url, "--json"], { cwd: dir, env });
+    expect(result).toMatchObject({ status: exit, stdout: "" });
+    expect(JSON.parse(result.stderr)).toMatchObject({ ok: false, kind });
+    expect(instance.requests.some((request) => request.url.split("?")[0] === route)).toBe(true);
+  });
+
+  it("initializes an unchanged typechecking tree offline and refuses to initialize it again", async () => {
+    const registry = await localPackageRegistry();
+    const instance = await stubInstance(
+      projectHandler,
+      () => CURRENT_RELEASE,
+      readFileSync(path.join(packageDir, `artifacts/patchy-${CURRENT_RELEASE}.tgz`))
+    );
+    const parent = tempDir();
+    const stateDir = tempDir();
+    // Init targets the remembered instance, not the parent project's binding.
+    writeFileSync(path.join(parent, "patchy.json"), '{"instance":"http://127.0.0.1:1"}\n');
+    writeFileSync(path.join(stateDir, "config.json"), JSON.stringify({ apiUrl: instance.url }));
+    const dir = path.join(parent, "notes-project");
+    const options = { cwd: parent, stateDir, env: { ...env, ...registry } };
+    const args = ["init", "notes-project", "--purpose", "Synthetic notes for CLI tests", "--json"];
+    const result = await runCli(args, options);
+    expect(result).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(result.stdout)).toEqual({
+      ok: true,
+      dir,
+      release: CURRENT_RELEASE,
+      tier: 1,
+      generated: expect.arrayContaining([
+        "patchy/_generated/client.ts",
+        "patchy/_generated/index.json",
+        "patchy/_generated/manifest.json"
+      ]),
+      skills: coreProjectSkills,
+      installed: true
+    });
+    const authoredPaths = [
+      "patchy.config.ts",
+      "package.json",
+      "tsconfig.json",
+      "vite.config.ts",
+      "src/main.ts",
+      "index.html",
+      "AGENTS.md",
+      "CLAUDE.md"
+    ];
+    const before = Object.fromEntries(
+      authoredPaths.map((name) => [name, readFileSync(path.join(dir, name))])
+    );
+    const generatedBefore = treeBytes(path.join(dir, "patchy/_generated"));
+    await exec("pnpm", ["typecheck"], {
+      cwd: dir,
+      env: { PATH: process.env.PATH, HOME: stateDir, ...registry }
+    });
+    expect(readJson(path.join(dir, "patchy.json"))).toEqual({ instance: instance.url });
+    const repeated = await runCli(args, options);
+    expect(repeated).toMatchObject({ status: 1, stdout: "" });
+    expect(JSON.parse(repeated.stderr)).toMatchObject({ ok: false, kind: "local" });
+    expect(treeBytes(path.join(dir, "patchy/_generated"))).toEqual(generatedBefore);
+    for (const name of authoredPaths)
+      expect(readFileSync(path.join(dir, name))).toEqual(before[name]);
+  }, 30_000); // Real package archive creation, isolated pnpm installation and tsc, not CLI startup.
+});
+
+describe("patchy delete target selection", () => {
+  it.each([false, true])("refuses an ambiguous target locally (both: %s)", async (both) => {
+    const dir = tempDir();
+    const file = htmlFile(dir, "page.html", validHtml);
+    const result = await runCli(
+      ["delete", ...(both ? [file, "--patch", "abcdefghijkl"] : []), "--json"],
+      {
+        stateDir: dir,
+        env: { PATCHY_API_TOKEN: "pp_owner" }
+      }
+    );
+    expect(result).toMatchObject({ status: 1, stdout: "" });
+    expect(JSON.parse(result.stderr)).toMatchObject({ ok: false, kind: "local" });
   });
 });

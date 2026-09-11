@@ -1,12 +1,13 @@
 // @effect-diagnostics nodeBuiltinImport:off
 // Temporary config repos exercise the actual Node child-process boundary.
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Manifest } from "@patchy/api";
 import * as Schema from "effect/Schema";
 import { afterEach, describe, expect, it } from "vitest";
 import { executeConfig } from "./config.js";
+import * as ConfigExecution from "./executeConfig.js";
 import { MANIFEST_VERSION, RELEASE } from "./release.js";
 
 const builders = new URL("./config.ts", import.meta.url).href;
@@ -169,5 +170,25 @@ describe("executeConfig", () => {
       { uses: [{ alias: "contacts", id: "abcdefghijkl/other", revision: 1 }] }
     );
     await expect(executeConfig(path)).rejects.toThrow();
+  });
+
+  it("evaluates staged edits with relative imports without replacing the author's config", async () => {
+    const path = await fixture('export default defineConfig({ name: "original-name", tier: 1 });');
+    const original = await readFile(path, "utf8");
+    await writeFile(join(path, "..", "name.ts"), 'export const name = "staged-name";');
+    const source = `import { name } from "./name.ts";\n${original.replace('"original-name"', "name")}`;
+    const manifest = await ConfigExecution.executeConfig(path, { resolve: false, source });
+    expect(manifest.name).toBe("staged-name");
+    expect(await readFile(path, "utf8")).toBe(original);
+    await expect(
+      ConfigExecution.executeConfig(path, {
+        resolve: false,
+        source: `${source}\nthrow new Error("staged config refused");`
+      })
+    ).rejects.toThrow("staged config refused");
+    expect(await readFile(path, "utf8")).toBe(original);
+    expect(
+      (await readdir(join(path, ".."))).filter((name) => name.startsWith(".patchy-config-"))
+    ).toEqual([]);
   });
 });

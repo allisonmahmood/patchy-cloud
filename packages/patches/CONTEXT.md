@@ -1,6 +1,6 @@
 # Patches
 
-What the company holds and how it is published: patches and versions, user ownership, sharing, visits, retention and owner quotas. The vocabulary also names future patch repos, tiers, primitives and retirement; their product decisions live in [the product](../../docs/product.md#patches).
+What the company holds and how it is published: patches and versions, user ownership, sharing, visits, retention and owner quotas. The vocabulary also names patch repos, tiers, primitives and future retirement; their product decisions live in [the product](../../docs/product.md#patches).
 
 ## Language
 
@@ -25,7 +25,7 @@ Who may open a patch: `company` means signed-in colleagues in its company; `publ
 _Avoid_: visibility, token scope (a publishing key does not grant reading access)
 
 **Patch repo**:
-The future working copy of exactly one patch: its file tree, id, declared tier and base config. Its creation and publishing rules live in [the product](../../docs/product.md#what-a-patch-is-made-of).
+The local working copy of exactly one patch: its file tree, id, declared tier and base config. Its creation and publishing rules live in [the product](../../docs/product.md#what-a-patch-is-made-of).
 _Avoid_: project, workspace, source (a repo holds the source; it is also the unit)
 
 **Publish**:

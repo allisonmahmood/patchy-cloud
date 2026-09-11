@@ -3,6 +3,8 @@
 import type { Stats } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { isManagedOutputPath } from "@patchy/api";
+import { safePath } from "./ManagedProject.js";
 
 /** Starter sources contain company configuration, never the authenticated person's identity. */
 export function starterFiles(options: {
@@ -59,10 +61,45 @@ export function starterFiles(options: {
   };
 }
 
+/** The caller discards the entire init stage on failure; no nested transaction is needed. */
+export async function writeInitialGeneration(
+  staging: string,
+  files: readonly { path: string; contents: string }[],
+  manifest: string
+): Promise<{ generated: string[]; skills: string[]; fixtures: string[] }> {
+  const names = new Set<string>();
+  for (const file of files) {
+    if (!isManagedOutputPath(file.path) || names.has(file.path))
+      throw new Error(`Invalid or duplicate generated path: ${file.path}`);
+    names.add(file.path);
+  }
+  const generated: string[] = [];
+  const skills: string[] = [];
+  const fixtures: string[] = [];
+  for (const file of [...files, { path: "patchy/_generated/manifest.json", contents: manifest }]) {
+    const target = await safePath(staging, file.path);
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    try {
+      await fs.writeFile(target, file.contents, { flag: "wx" });
+    } catch (error) {
+      if (
+        file.path.startsWith("fixtures/") &&
+        (error as NodeJS.ErrnoException).code === "EEXIST" &&
+        (await fs.lstat(target)).isFile()
+      )
+        continue;
+      throw error;
+    }
+    if (file.path.startsWith("fixtures/")) fixtures.push(file.path);
+    else if (file.path.startsWith(".agents/")) skills.push(file.path.split("/")[2]!);
+    else generated.push(file.path);
+  }
+  return { generated, skills: skills.sort(), fixtures };
+}
+
 interface StarterEntry {
   readonly target: string;
   readonly stat: Stats;
-  readonly parent?: StarterEntry;
 }
 
 async function entryInfo(target: string): Promise<Stats | undefined> {
@@ -75,37 +112,23 @@ async function entryInfo(target: string): Promise<Stats | undefined> {
   }
 }
 
-async function unchanged(entry: StarterEntry): Promise<boolean> {
-  if (entry.parent && !(await unchanged(entry.parent))) return false;
-  const current = await entryInfo(entry.target);
-  return (
-    current !== undefined &&
-    current.dev === entry.stat.dev &&
-    current.ino === entry.stat.ino &&
-    current.mode === entry.stat.mode &&
-    (entry.stat.isDirectory() ||
-      (current.mtimeMs === entry.stat.mtimeMs && current.size === entry.stat.size))
-  );
-}
-
 /** Activate a complete sibling stage without replacing an existing working directory. */
 export async function activateStarter(staging: string, destination: string): Promise<void> {
   const existing = await entryInfo(destination);
-  if (!existing) {
-    await fs.rename(staging, destination);
-    return;
-  }
-  if (!existing.isDirectory() || (await fs.readdir(destination)).length > 0)
+  if (existing && (!existing.isDirectory() || (await fs.readdir(destination)).length > 0))
     throw new Error(`Refusing to initialize an existing tree: ${destination}`);
 
   const created: StarterEntry[] = [];
-  async function populate(source: string, parent: StarterEntry): Promise<void> {
+  if (!existing) {
+    // mkdir is exclusive: a target created after the initial check must not be replaced.
+    await fs.mkdir(destination);
+    created.push({ target: destination, stat: await fs.lstat(destination) });
+  }
+  async function populate(source: string, directory: string): Promise<void> {
     for (const name of await fs.readdir(source)) {
       const from = path.join(source, name);
-      const target = path.join(parent.target, name);
+      const target = path.join(directory, name);
       const stat = await fs.lstat(from);
-      if (!(await unchanged(parent)))
-        throw new Error(`The init directory changed during activation: ${parent.target}`);
       let installed: Stats;
       if (stat.isDirectory()) {
         await fs.mkdir(target, { mode: stat.mode & 0o7777 });
@@ -120,21 +143,21 @@ export async function activateStarter(staging: string, destination: string): Pro
       } else {
         throw new Error(`Unsupported starter entry: ${from}`);
       }
-      const entry = { target, stat: installed, parent };
-      created.push(entry);
-      if (stat.isDirectory()) await populate(from, entry);
+      created.push({ target, stat: installed });
+      if (stat.isDirectory()) await populate(from, target);
     }
   }
 
   try {
-    await populate(staging, { target: destination, stat: existing });
+    await populate(staging, destination);
   } catch (cause) {
     const failures: unknown[] = [];
     for (let index = created.length - 1; index >= 0; index--) {
       const entry = created[index]!;
       try {
-        if (!(await unchanged(entry))) continue;
-        // Never recursively remove: author additions and edits must survive rollback.
+        const current = await entryInfo(entry.target);
+        // Delete only our inodes, and only empty directories; caller replacements/additions survive.
+        if (!current || current.dev !== entry.stat.dev || current.ino !== entry.stat.ino) continue;
         if (entry.stat.isDirectory()) await fs.rmdir(entry.target);
         else await fs.unlink(entry.target);
       } catch (error) {

@@ -1,8 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off — Node's file-URL conversion locates packaged release skills.
-import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { fileURLToPath } from "node:url";
@@ -16,6 +14,7 @@ import {
   type TableDefinition
 } from "@patchy/api";
 import { ConnectionStore, Postgres } from "@patchy/integrations";
+import type { CompanyDatabases } from "@patchy/company-database";
 import { Patches } from "@patchy/patches";
 import { generateClient } from "./generateClient.js";
 
@@ -88,32 +87,26 @@ export type GenerationRefused =
 export class GenerationUnavailable extends Schema.TaggedError<GenerationUnavailable>()(
   "GenerationUnavailable",
   {
+    stage: Schema.Literals([
+      "connection-list",
+      "shared-table-list",
+      "connection-snapshot",
+      "shared-table",
+      "release-skill"
+    ]),
+    resource: Schema.String.check(Schema.isMaxLength(256)),
     cause: Schema.Defect()
   }
 ) {
   override get message() {
-    return "Project generation metadata or release files are unavailable.";
+    return `Project generation ${this.stage} is unavailable for ${JSON.stringify(this.resource)}.`;
   }
 }
-export class Generation extends Context.Service<
-  Generation,
-  {
-    readonly catalog: (
-      companyId: string,
-      all: boolean
-    ) => Effect.Effect<typeof Catalog.Type, GenerationUnavailable>;
-    readonly generate: (
-      companyId: string,
-      request: typeof GenerateRequest.Type
-    ) => Effect.Effect<typeof Generated.Type, GenerationRefused | GenerationUnavailable>;
-  }
->()("@patchy/sdk/Generation") {}
 
 const coreSkills = ["patchy-loop", "patchy-tables", "patchy-files"];
 const knownSkills = [...coreSkills, "patchy-postgres", "patchy-shared-tables"];
 const root = "patchy/_generated";
 const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
-const isPatchNotOpenable = Schema.is(PatchNotOpenable);
 const quote = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 const columnType = (
   column: (typeof TableDefinition.Type)["columns"][string],
@@ -157,233 +150,299 @@ export function createClient(alias: string, call: Call) { return createSharedTab
 const definitionContext = (title: string, definition: unknown) =>
   `# ${title}\n\nThis is generated metadata, never business rows. Edit patchy.config.ts for owned definitions, then run patchy refresh.\n\n\`\`\`json\n${json(definition)}\`\`\`\n`;
 
-export const make = Effect.gen(function* () {
+export const catalog = Effect.fn("Generation.catalog")(function* (
+  companyId: string,
+  all: boolean
+): Effect.fn.Return<
+  typeof Catalog.Type,
+  CompanyDatabases.Busy | GenerationUnavailable,
+  ConnectionStore.ConnectionStore | Patches.Patches
+> {
+  const connections = yield* ConnectionStore.ConnectionStore;
+  const patches = yield* Patches.Patches;
+  const connected = yield* connections.list(companyId).pipe(
+    Effect.mapError(
+      (cause) =>
+        new GenerationUnavailable({
+          stage: "connection-list",
+          resource: companyId.slice(0, 256),
+          cause
+        })
+    )
+  );
+  const sharedTables = yield* patches.sharedTables(companyId).pipe(
+    Effect.catchTags({
+      SqlError: Effect.die,
+      CompanyIdentityMismatch: Effect.die,
+      CompanyDatabaseError: (cause) =>
+        Effect.fail(
+          new GenerationUnavailable({
+            stage: "shared-table-list",
+            resource: companyId.slice(0, 256),
+            cause
+          })
+        ),
+      CompanyDatabaseNotReady: (cause) =>
+        Effect.fail(
+          new GenerationUnavailable({
+            stage: "shared-table-list",
+            resource: companyId.slice(0, 256),
+            cause
+          })
+        )
+    })
+  );
+  return {
+    connections: connected
+      .filter((entry) => all || entry.status === "connected")
+      .map(({ id, handle, integration, description, status }) => ({
+        id,
+        handle,
+        integration,
+        description,
+        status
+      })),
+    sharedTables,
+    ...(all
+      ? {
+          offered: [
+            {
+              integration: "postgres" as const,
+              connected: connected.some((entry) => entry.status === "connected")
+            }
+          ]
+        }
+      : {})
+  } satisfies typeof Catalog.Type;
+});
+export const generate = Effect.fn("Generation.generate")(function* (
+  companyId: string,
+  request: typeof GenerateRequest.Type
+): Effect.fn.Return<
+  typeof Generated.Type,
+  GenerationRefused | CompanyDatabases.Busy | GenerationUnavailable,
+  ConnectionStore.ConnectionStore | Patches.Patches | FileSystem.FileSystem
+> {
   const connections = yield* ConnectionStore.ConnectionStore;
   const patches = yield* Patches.Patches;
   const fs = yield* FileSystem.FileSystem;
-  const catalog = Effect.fn("Generation.catalog")(function* (companyId: string, all: boolean) {
-    const connected = yield* connections
-      .list(companyId)
-      .pipe(Effect.mapError((cause) => new GenerationUnavailable({ cause })));
-    const sharedTables = yield* patches
-      .sharedTables(companyId)
-      .pipe(Effect.mapError((cause) => new GenerationUnavailable({ cause })));
-    return {
-      connections: connected
-        .filter((entry) => all || entry.status === "connected")
-        .map(({ id, handle, integration, description, status }) => ({
-          id,
-          handle,
-          integration,
-          description,
-          status
-        })),
-      sharedTables,
-      ...(all
-        ? {
-            offered: [
-              {
-                integration: "postgres" as const,
-                connected: connected.some((entry) => entry.status === "connected")
-              }
-            ]
-          }
-        : {})
-    } satisfies typeof Catalog.Type;
-  });
-  const generate = Effect.fn("Generation.generate")(function* (
-    companyId: string,
-    request: typeof GenerateRequest.Type
-  ) {
-    if (request.release !== CURRENT_RELEASE || request.manifest.release !== CURRENT_RELEASE)
-      return yield* new ReleaseMismatch({
-        release: request.release !== CURRENT_RELEASE ? request.release : request.manifest.release
-      });
-    if (request.manifest.manifestVersion !== MANIFEST_VERSION)
-      return yield* new UnsupportedManifestVersion({ version: request.manifest.manifestVersion });
-    const skills = new Set([...coreSkills, ...request.skills]);
-    for (const skill of skills) {
-      if (!knownSkills.includes(skill))
-        return yield* new UnknownProjectSkill({ skill: skill.slice(0, 128) });
-    }
-    if (request.patchId !== undefined) {
-      const existing = yield* patches
-        .find(request.patchId)
-        .pipe(Effect.mapError((cause) => new GenerationUnavailable({ cause })));
-      if (Option.isNone(existing) || existing.value.patch.companyId !== companyId)
-        return yield* new PatchNotOpenable({ patchId: request.patchId });
-    }
-    const files = new Map<string, string>();
-    const uses: Array<
-      (typeof Generated.Type)["uses"][number] & {
-        declaration: (typeof GenerateRequest.Type)["manifest"]["uses"][string];
-        skill: string;
-        context: string;
-        client: string;
-        fixture: string;
-      }
-    > = [];
-    const declarations: Array<{
-      kind: "table" | "files";
-      name: string;
-      definition: unknown;
+  if (request.release !== CURRENT_RELEASE || request.manifest.release !== CURRENT_RELEASE)
+    return yield* new ReleaseMismatch({
+      release: request.release !== CURRENT_RELEASE ? request.release : request.manifest.release
+    });
+  if (request.manifest.manifestVersion !== MANIFEST_VERSION)
+    return yield* new UnsupportedManifestVersion({ version: request.manifest.manifestVersion });
+  const skills = new Set([...coreSkills, ...request.skills]);
+  for (const skill of skills) {
+    if (!knownSkills.includes(skill))
+      return yield* new UnknownProjectSkill({ skill: skill.slice(0, 128) });
+  }
+  if (request.patchId !== undefined) {
+    const existing = yield* patches
+      .find(request.patchId)
+      .pipe(Effect.catchTags({ SqlError: Effect.die }));
+    if (Option.isNone(existing) || existing.value.patch.companyId !== companyId)
+      return yield* new PatchNotOpenable({ patchId: request.patchId });
+  }
+  const files = new Map<string, string>();
+  const uses: Array<
+    (typeof Generated.Type)["uses"][number] & {
+      declaration: (typeof GenerateRequest.Type)["manifest"]["uses"][string];
       skill: string;
       context: string;
-    }> = [];
-    const shared: Record<string, string> = Object.create(null);
-    const factories: Record<string, string> = Object.create(null);
-    const available = Object.values(request.manifest.uses).some(
-      (entry) => entry.kind === "postgres"
-    )
-      ? yield* connections
-          .list(companyId)
-          .pipe(Effect.mapError((cause) => new GenerationUnavailable({ cause })))
-      : [];
-    for (const [alias, declaration] of Object.entries(request.manifest.uses)) {
-      const context = `${root}/context/${alias}.md`;
-      const client = `${root}/uses/${alias}.ts`;
-      if (declaration.kind === "postgres") {
-        const connection = available.find(
-          (entry) => entry.handle === declaration.handle && entry.status === "connected"
+      client: string;
+      fixture: string;
+    }
+  > = [];
+  const declarations: Array<{
+    kind: "table" | "files";
+    name: string;
+    definition: unknown;
+    skill: string;
+    context: string;
+  }> = [];
+  const shared: Record<string, string> = Object.create(null);
+  const factories: Record<string, string> = Object.create(null);
+  const available = Object.values(request.manifest.uses).some((entry) => entry.kind === "postgres")
+    ? yield* connections.list(companyId).pipe(
+        Effect.mapError(
+          (cause) =>
+            new GenerationUnavailable({
+              stage: "connection-list",
+              resource: companyId.slice(0, 256),
+              cause
+            })
+        )
+      )
+    : [];
+  for (const [alias, declaration] of Object.entries(request.manifest.uses)) {
+    const context = `${root}/context/${alias}.md`;
+    const client = `${root}/uses/${alias}.ts`;
+    if (declaration.kind === "postgres") {
+      const connection = available.find(
+        (entry) => entry.handle === declaration.handle && entry.status === "connected"
+      );
+      if (connection === undefined)
+        return yield* new ConnectionNotConnected({ handle: declaration.handle });
+      const resolved = {
+        kind: "postgres" as const,
+        handle: connection.handle,
+        id: connection.id,
+        revision: connection.metadataRevision
+      };
+      const snapshot = yield* connections.snapshot(companyId, resolved.id, resolved.revision).pipe(
+        Effect.mapError(
+          (cause) =>
+            new GenerationUnavailable({
+              stage: "connection-snapshot",
+              resource: `${resolved.id}@${resolved.revision}`.slice(0, 256),
+              cause
+            })
+        )
+      );
+      const output = Postgres.postgres.generate(
+        { ...resolved, description: connection.description },
+        snapshot
+      );
+      const fixture = `fixtures/postgres-${connection.handle}.sql`;
+      files.set(client, output.client);
+      files.set(context, output.context);
+      files.set(fixture, output.fixture);
+      factories[alias] = `./uses/${alias}.js`;
+      skills.add("patchy-postgres");
+      uses.push({
+        alias,
+        id: resolved.id,
+        revision: resolved.revision,
+        declaration: resolved,
+        skill: ".agents/skills/patchy-postgres/SKILL.md",
+        context,
+        client,
+        fixture
+      });
+    } else {
+      const source = yield* patches
+        .sharedTable(declaration.patchId, declaration.table, companyId)
+        .pipe(
+          Effect.catchTags({
+            SqlError: Effect.die,
+            CompanyIdentityMismatch: Effect.die,
+            CompanyDatabaseError: (cause) =>
+              Effect.fail(
+                new GenerationUnavailable({
+                  stage: "shared-table",
+                  resource: `${declaration.patchId}/${declaration.table}`.slice(0, 256),
+                  cause
+                })
+              ),
+            CompanyDatabaseNotReady: (cause) =>
+              Effect.fail(
+                new GenerationUnavailable({
+                  stage: "shared-table",
+                  resource: `${declaration.patchId}/${declaration.table}`.slice(0, 256),
+                  cause
+                })
+              ),
+            PatchNotOpenable: (cause) =>
+              Effect.fail(
+                new PatchNotOpenable({
+                  patchId: declaration.patchId,
+                  table: declaration.table,
+                  cause
+                })
+              )
+          })
         );
-        if (connection === undefined)
-          return yield* new ConnectionNotConnected({ handle: declaration.handle });
-        const resolved = {
-          kind: "postgres" as const,
-          handle: connection.handle,
-          id: connection.id,
-          revision: connection.metadataRevision
-        };
-        const snapshot = yield* connections
-          .snapshot(companyId, resolved.id, resolved.revision)
-          .pipe(Effect.mapError((cause) => new GenerationUnavailable({ cause })));
-        const output = Postgres.postgres.generate(
-          { ...resolved, description: connection.description },
-          snapshot
-        );
-        const fixture = `fixtures/postgres-${connection.handle}.sql`;
-        files.set(client, output.client);
-        files.set(context, output.context);
-        files.set(fixture, output.fixture);
-        factories[alias] = `./uses/${alias}.js`;
-        skills.add("patchy-postgres");
-        uses.push({
-          alias,
-          id: resolved.id,
-          revision: resolved.revision,
-          declaration: resolved,
-          skill: ".agents/skills/patchy-postgres/SKILL.md",
-          context,
-          client,
-          fixture
-        });
-      } else {
-        const source = yield* patches
-          .sharedTable(declaration.patchId, declaration.table, companyId)
-          .pipe(
-            Effect.catchTags({
-              PatchNotOpenable: (cause) =>
-                Effect.fail(
-                  new PatchNotOpenable({
-                    patchId: declaration.patchId,
-                    table: declaration.table,
-                    cause
-                  })
-                )
-            }),
-            Effect.mapError((cause) =>
-              isPatchNotOpenable(cause) ? cause : new GenerationUnavailable({ cause })
-            )
-          );
-        const fixture = `fixtures/shared-${alias}.sql`;
-        const resolved = { ...declaration, id: source.id, revision: source.schemaRevision };
-        files.set(client, sharedClient(source));
-        files.set(
-          context,
-          definitionContext(`Shared table ${alias}`, { ...source, fixture }) +
-            "\nRead-only: get, getMany and indexed list. Sharing and source access are checked live.\n"
-        );
-        files.set(
-          fixture,
-          `-- Agent-authored synthetic rows for ${source.id}; no production rows are fetched.\n-- Local table: ${quote(`p_${source.patchId}`)}.${quote(source.table)}\n-- System columns: id text, createdAt timestamptz, updatedAt timestamptz.\n${Object.entries(
-            source.definition.columns
+      const fixture = `fixtures/shared-${alias}.sql`;
+      const resolved = { ...declaration, id: source.id, revision: source.schemaRevision };
+      files.set(client, sharedClient(source));
+      files.set(
+        context,
+        definitionContext(`Shared table ${alias}`, { ...source, fixture }) +
+          "\nRead-only: get, getMany and indexed list. Sharing and source access are checked live.\n"
+      );
+      files.set(
+        fixture,
+        `-- Agent-authored synthetic rows for ${source.id}; no production rows are fetched.\n-- Local table: ${quote(`p_${source.patchId}`)}.${quote(source.table)}\n-- System columns: id text, createdAt timestamptz, updatedAt timestamptz.\n${Object.entries(
+          source.definition.columns
+        )
+          .map(
+            ([name, column]) =>
+              `-- ${quote(name)}: ${column.kind}${column.optional ? " nullable" : " required"}${Object.hasOwn(column, "default") ? ` default ${JSON.stringify(column.default)}` : ""}`
           )
-            .map(
-              ([name, column]) =>
-                `-- ${quote(name)}: ${column.kind}${column.optional ? " nullable" : " required"}${Object.hasOwn(column, "default") ? ` default ${JSON.stringify(column.default)}` : ""}`
-            )
-            .join("\n")}\n-- Write INSERT statements into the quoted local table above.\n`
-        );
-        shared[alias] = `./uses/${alias}.js`;
-        skills.add("patchy-shared-tables");
-        uses.push({
-          alias,
-          id: source.id,
-          revision: source.schemaRevision,
-          declaration: resolved,
-          skill: ".agents/skills/patchy-shared-tables/SKILL.md",
-          context,
-          client,
-          fixture
-        });
-      }
-    }
-    for (const [name, definition] of Object.entries(request.manifest.tables)) {
-      const context = `${root}/context/table-${name}.md`;
-      files.set(context, definitionContext(`Owned table ${name}`, definition));
-      declarations.push({
-        kind: "table",
-        name,
-        definition,
-        skill: ".agents/skills/patchy-tables/SKILL.md",
-        context
+          .join("\n")}\n-- Write INSERT statements into the quoted local table above.\n`
+      );
+      shared[alias] = `./uses/${alias}.js`;
+      skills.add("patchy-shared-tables");
+      uses.push({
+        alias,
+        id: source.id,
+        revision: source.schemaRevision,
+        declaration: resolved,
+        skill: ".agents/skills/patchy-shared-tables/SKILL.md",
+        context,
+        client,
+        fixture
       });
     }
-    for (const [name, definition] of Object.entries(request.manifest.files)) {
-      const context = `${root}/context/files-${name}.md`;
-      files.set(context, definitionContext(`File store ${name}`, definition));
-      declarations.push({
-        kind: "files",
-        name,
-        definition,
-        skill: ".agents/skills/patchy-files/SKILL.md",
-        context
-      });
-    }
-    const skillFiles = [];
-    for (const name of [...skills].sort()) {
-      const path = `.agents/skills/${name}/SKILL.md`;
-      const contents = yield* fs
-        .readFileString(fileURLToPath(new URL(`../skills/${name}/SKILL.md`, import.meta.url)))
-        .pipe(Effect.mapError((cause) => new GenerationUnavailable({ cause })));
-      files.set(path, contents);
-      skillFiles.push({ name, path });
-    }
-    files.set(`${root}/client.ts`, generateClient({ shared, connections: factories }));
-    files.set(
-      `${root}/README.md`,
-      "# Generated Patchy files\n\nDo not edit this directory. Edit patchy.config.ts, then run patchy refresh. Import patchy from ./client.js; index.json lists definitions, declarations, revision stamps, skills and contexts. manifest.json is written locally by the CLI, never by the server.\n\nInstall already ran during patchy init. Test with patchy dev. Fixtures contain synthetic local data only. Deleting .patchy/ destroys local rows and files; it does not delete company data.\n"
-    );
-    files.set(
-      `${root}/index.json`,
-      json({
-        release: CURRENT_RELEASE,
-        manifestVersion: MANIFEST_VERSION,
-        ...(request.patchId ? { patchId: request.patchId } : {}),
-        declarations,
-        uses,
-        skills: skillFiles
-      })
-    );
-    for (const path of files.keys()) {
-      if (!isManagedOutputPath(path)) return yield* new UnsafeGeneratedPath({ path });
-    }
-    return {
-      ok: true as const,
-      files: [...files].map(([path, contents]) => ({ path, contents })),
-      uses: uses.map(({ alias, id, revision }) => ({ alias, id, revision }))
-    };
-  });
-  return Generation.of({ catalog, generate });
+  }
+  for (const [name, definition] of Object.entries(request.manifest.tables)) {
+    const context = `${root}/context/table-${name}.md`;
+    files.set(context, definitionContext(`Owned table ${name}`, definition));
+    declarations.push({
+      kind: "table",
+      name,
+      definition,
+      skill: ".agents/skills/patchy-tables/SKILL.md",
+      context
+    });
+  }
+  for (const [name, definition] of Object.entries(request.manifest.files)) {
+    const context = `${root}/context/files-${name}.md`;
+    files.set(context, definitionContext(`File store ${name}`, definition));
+    declarations.push({
+      kind: "files",
+      name,
+      definition,
+      skill: ".agents/skills/patchy-files/SKILL.md",
+      context
+    });
+  }
+  const skillFiles = [];
+  for (const name of [...skills].sort()) {
+    const path = `.agents/skills/${name}/SKILL.md`;
+    const contents = yield* fs
+      .readFileString(fileURLToPath(new URL(`../skills/${name}/SKILL.md`, import.meta.url)))
+      .pipe(
+        Effect.mapError(
+          (cause) => new GenerationUnavailable({ stage: "release-skill", resource: path, cause })
+        )
+      );
+    files.set(path, contents);
+    skillFiles.push({ name, path });
+  }
+  files.set(`${root}/client.ts`, generateClient({ shared, connections: factories }));
+  files.set(
+    `${root}/README.md`,
+    "# Generated Patchy files\n\nDo not edit this directory. Edit patchy.config.ts, then run patchy refresh. Import patchy from ./client.js; index.json lists definitions, declarations, revision stamps, skills and contexts. manifest.json is written locally by the CLI, never by the server.\n\nInstall already ran during patchy init. Test with patchy dev. Fixtures contain synthetic local data only. Deleting .patchy/ destroys local rows and files; it does not delete company data.\n"
+  );
+  files.set(
+    `${root}/index.json`,
+    json({
+      release: CURRENT_RELEASE,
+      manifestVersion: MANIFEST_VERSION,
+      ...(request.patchId ? { patchId: request.patchId } : {}),
+      declarations,
+      uses,
+      skills: skillFiles
+    })
+  );
+  for (const path of files.keys()) {
+    if (!isManagedOutputPath(path)) return yield* new UnsafeGeneratedPath({ path });
+  }
+  return {
+    ok: true as const,
+    files: [...files].map(([path, contents]) => ({ path, contents })),
+    uses: uses.map(({ alias, id, revision }) => ({ alias, id, revision }))
+  };
 });
-export const layer = Layer.effect(Generation, make);

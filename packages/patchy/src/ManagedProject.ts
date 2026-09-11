@@ -3,6 +3,18 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { isManagedOutputPath } from "@patchy/api";
+import * as Schema from "effect/Schema";
+
+export const ConfigEdit = Schema.Struct({ before: Schema.String, after: Schema.String });
+
+export class ProjectChanged extends Schema.TaggedError<ProjectChanged>()("ProjectChanged", {
+  file: Schema.Literals(["package.json", "patchy.config.ts"])
+}) {
+  override get message() {
+    return `${this.file} changed during generation. Its author edits were preserved; retry with the current file.`;
+  }
+}
+export const isProjectChanged = Schema.is(ProjectChanged);
 
 export interface ManagedFile {
   readonly path: string;
@@ -65,6 +77,9 @@ async function treeFiles(root: string, prefix = ""): Promise<Map<string, Buffer>
 /** A repo-local backup and staged set. Only this object owns rollback and activation. */
 export class ManagedProject {
   private readonly snapshots = new Map<string, boolean>();
+  private readonly mutated = new Set<string>();
+  private readonly createdFixtures = new Map<string, string>();
+  private pinEdit: { written: string; previousLiteral: string } | undefined;
   private readonly createdDirs = new Set<string>();
   private installed = false;
   private hadModules = false;
@@ -81,15 +96,7 @@ export class ManagedProject {
     let temporary: string | undefined;
     try {
       temporary = await fs.mkdtemp(path.join(local, "refresh-"));
-      const transaction = new ManagedProject(root, temporary);
-      for (const name of [
-        "pnpm-lock.yaml",
-        "patchy.config.ts",
-        "patchy/_generated",
-        ...(await presentSkills(root)).map((skill) => `.agents/skills/${skill}`)
-      ])
-        await transaction.snapshot(name);
-      return transaction;
+      return new ManagedProject(root, temporary);
     } catch (error) {
       if (temporary) await fs.rm(temporary, { recursive: true, force: true });
       await fs.rmdir(lock);
@@ -124,29 +131,43 @@ export class ManagedProject {
     }
   }
 
-  async write(
-    name: "package.json" | "patchy.config.ts",
-    contents: string,
-    expectedContents?: string
-  ): Promise<void> {
-    const target = await safePath(this.root, name);
-    if (expectedContents !== undefined && (await fs.readFile(target, "utf8")) !== expectedContents)
-      throw new Error(`${name} changed during refresh; retry with the current file.`);
-    const alreadyOwned = this.snapshots.has(name);
-    await this.snapshot(name);
-    if (
-      expectedContents !== undefined &&
-      (await fs.readFile(target, "utf8")) !== expectedContents
-    ) {
-      if (!alreadyOwned) this.snapshots.delete(name);
-      throw new Error(`${name} changed during refresh; retry with the current file.`);
-    }
-    await fs.writeFile(target, contents);
+  /** Only the pin is ours; later package scripts, dependencies and formatting remain the author's. */
+  async setPin(expected: string, pin: string): Promise<void> {
+    // Keep the TypeScript parser out of commands that never edit package pins.
+    const { patchPackagePin } = await import("./packagePin.js");
+    const target = await safePath(this.root, "package.json");
+    const source = await fs.readFile(target, "utf8");
+    const edited = patchPackagePin(source, expected, JSON.stringify(pin));
+    if (!edited) throw new ProjectChanged({ file: "package.json" });
+    await this.replacePackage(edited.contents);
+    this.pinEdit = { written: pin, previousLiteral: edited.previousLiteral };
+  }
+
+  private async replacePackage(contents: string): Promise<void> {
+    const target = await safePath(this.root, "package.json");
+    const staged = path.join(this.temporary, "package.json");
+    await fs.writeFile(staged, contents, { mode: (await fs.stat(target)).mode });
+    await fs.rename(staged, target);
+  }
+
+  private async restorePin(): Promise<void> {
+    if (!this.pinEdit) return;
+    // Rollback is the same lazy compiler boundary as the forward pin edit.
+    const { patchPackagePin } = await import("./packagePin.js");
+    const target = await safePath(this.root, "package.json");
+    if (!(await info(target))?.isFile()) return;
+    const edited = patchPackagePin(
+      await fs.readFile(target, "utf8"),
+      this.pinEdit.written,
+      this.pinEdit.previousLiteral
+    );
+    if (edited) await this.replacePackage(edited.contents);
   }
 
   /** Preserve the old installation too: rolling back a pin without its executable is not rollback. */
   async prepareInstall(): Promise<void> {
-    await this.snapshot("package.json");
+    await this.snapshot("pnpm-lock.yaml");
+    this.mutated.add("pnpm-lock.yaml");
     const modules = await safePath(this.root, "node_modules");
     this.hadModules = Boolean(await info(modules));
     if (this.hadModules) await fs.rename(modules, path.join(this.temporary, "node_modules"));
@@ -156,7 +177,8 @@ export class ManagedProject {
   async activate(
     files: readonly ManagedFile[],
     manifest: string,
-    removedSkills: readonly string[] = []
+    removedSkills: readonly string[] = [],
+    configEdit?: typeof ConfigEdit.Type
   ) {
     const names = new Set<string>();
     for (const name of removedSkills)
@@ -167,6 +189,14 @@ export class ManagedProject {
       names.add(file.path);
       await safePath(this.root, file.path);
     }
+    const configPath = configEdit ? await safePath(this.root, "patchy.config.ts") : undefined;
+    if (configEdit && configPath) {
+      if ((await fs.readFile(configPath, "utf8")) !== configEdit.before)
+        throw new ProjectChanged({ file: "patchy.config.ts" });
+      await fs.writeFile(path.join(this.temporary, "config.ts"), configEdit.after, {
+        mode: (await fs.stat(configPath)).mode
+      });
+    }
     const staged = [...files, { path: "patchy/_generated/manifest.json", contents: manifest }];
     const roots = new Set([
       "patchy/_generated",
@@ -175,7 +205,7 @@ export class ManagedProject {
         .map((file) => file.path.split("/").slice(0, 3).join("/")),
       ...removedSkills.map((name) => `.agents/skills/${name}`)
     ]);
-    const fixtures: string[] = [];
+    const fixtures: ManagedFile[] = [];
     for (const root of roots) await this.snapshot(root);
     for (const file of staged) {
       if (file.path.startsWith("fixtures/")) {
@@ -184,7 +214,7 @@ export class ManagedProject {
           if (!existing.isFile()) throw new Error(`Fixture is not a regular file: ${file.path}`);
           continue;
         }
-        fixtures.push(file.path);
+        fixtures.push(file);
       }
       const target = path.join(this.temporary, "stage", file.path);
       await fs.mkdir(path.dirname(target), { recursive: true });
@@ -204,12 +234,13 @@ export class ManagedProject {
       if (root === "patchy/_generated") generated.push(...changed.map((name) => `${root}/${name}`));
       else if (changed.length > 0) skills.push(root.split("/")[2]!);
       await this.parents(root);
+      this.mutated.add(root);
       await fs.rm(target, { recursive: true, force: true });
       const source = path.join(this.temporary, "stage", root);
       if (await info(source)) await fs.rename(source, target);
       // Identical contents are not reported as changes, even when their managed root is activated.
     }
-    for (const fixture of fixtures) {
+    for (const { path: fixture, contents } of fixtures) {
       await this.parents(fixture);
       // Exclusive creation: never overwrite a fixture authored while generation was running.
       await fs.copyFile(
@@ -217,15 +248,22 @@ export class ManagedProject {
         await safePath(this.root, fixture),
         fs.constants.COPYFILE_EXCL
       );
-      this.snapshots.set(fixture, false);
+      this.createdFixtures.set(fixture, contents);
     }
-    return { generated, skills: skills.sort(), fixtures };
+    // Source is the final activation. No failed generation ever needs to roll it back.
+    if (configEdit && configPath) {
+      if ((await fs.readFile(configPath, "utf8")) !== configEdit.before)
+        throw new ProjectChanged({ file: "patchy.config.ts" });
+      await fs.rename(path.join(this.temporary, "config.ts"), configPath);
+    }
+    return { generated, skills: skills.sort(), fixtures: fixtures.map((file) => file.path) };
   }
 
   async finish(success: boolean): Promise<void> {
     try {
       if (!success) {
         for (const [name, existed] of this.snapshots) {
+          if (!this.mutated.has(name)) continue;
           const target = await safePath(this.root, name);
           await fs.rm(target, { recursive: true, force: true });
           if (existed) {
@@ -240,6 +278,12 @@ export class ManagedProject {
           const modules = await safePath(this.root, "node_modules");
           await fs.rm(modules, { recursive: true, force: true });
           if (this.hadModules) await fs.rename(path.join(this.temporary, "node_modules"), modules);
+        }
+        await this.restorePin();
+        for (const [name, contents] of this.createdFixtures) {
+          const target = await safePath(this.root, name);
+          if ((await info(target))?.isFile() && (await fs.readFile(target, "utf8")) === contents)
+            await fs.unlink(target);
         }
         for (const dir of [...this.createdDirs].reverse())
           await fs.rmdir(path.join(this.root, dir)).catch((error: NodeJS.ErrnoException) => {

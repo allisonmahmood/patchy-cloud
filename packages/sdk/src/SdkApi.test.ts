@@ -8,19 +8,27 @@ import { promisify } from "node:util";
 import { assert, it } from "@effect/vitest";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as PlatformError from "effect/PlatformError";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import * as HttpApi from "effect/unstable/httpapi/HttpApi";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
+import * as HttpApiTest from "effect/unstable/httpapi/HttpApiTest";
 import { CURRENT_RELEASE, MANIFEST_VERSION, Release, SdkGroup, WIRE_VERSION } from "@patchy/api";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlError from "effect/unstable/sql/SqlError";
 import { Catalog, Generated, isManagedOutputPath } from "@patchy/api";
 import { Patches } from "@patchy/patches";
+import { ConnectionStore } from "@patchy/integrations";
 import * as Fixtures from "../../patches/src/test/fixtures.js";
 import * as Generation from "./Generation.js";
 import * as CompanyDatabases from "../../company-database/src/CompanyDatabases.js";
@@ -47,12 +55,8 @@ const routes = Layer.mergeAll(
   )
 );
 const layer = HttpRouter.serve(routes, { disableLogger: true, disableListenLog: true }).pipe(
-  Layer.provide(Artifact.layer),
-  Layer.provideMerge(
-    Generation.layer.pipe(
-      Layer.provideMerge(Patches.layer.pipe(Layer.provideMerge(Fixtures.database)))
-    )
-  ),
+  Layer.provideMerge(Artifact.layer),
+  Layer.provideMerge(Patches.layer.pipe(Layer.provideMerge(Fixtures.database))),
   Layer.provideMerge(NodeHttpServer.layerTest),
   Layer.provide(
     ConfigProvider.layer(
@@ -246,6 +250,44 @@ const generateRequest = (manifest = Fixtures.manifest, skills: string[] = []) =>
   release: CURRENT_RELEASE,
   manifest,
   skills
+});
+const sdkOver = <A, E, R>(dependencies: Layer.Layer<A, E, R>) =>
+  HttpApiTest.groups(HttpApi.make("patchy").add(SdkGroup), ["sdk"]).pipe(
+    Effect.provide(Fixtures.as(identity)),
+    Effect.provide(
+      SdkApi.layer.pipe(Layer.provide(dependencies), Layer.provide(Fixtures.authorization))
+    ),
+    // Each in-memory API needs its own mutable router, not the live suite's memoized router.
+    Effect.provideServiceEffect(Layer.CurrentMemoMap, Layer.makeMemoMap)
+  );
+
+const failureSource = Effect.fn("sdk.failureSource")(function* (patchId: string) {
+  yield* Fixtures.record({
+    ...Fixtures.publishRecord(),
+    manifest: { ...Fixtures.manifest, name: patchId },
+    intent: "create",
+    patchId,
+    companyId: identity.company.id,
+    ownerUserId: identity.user.id,
+    versionId: `${patchId}-version`,
+    machineTokenId: identity.machine.id,
+    title: "SDK failure source",
+    objectKey: `patches/${patchId}/versions/1.html`,
+    contentHash: patchId,
+    fileSize: 1,
+    filename: null,
+    repoOrg: null,
+    repoName: null,
+    cliVersion: null,
+    gitBranch: null,
+    gitCommitSha: null,
+    sourceIp: null,
+    userAgent: null
+  });
+  return generateRequest({
+    ...Fixtures.manifest,
+    uses: { contacts: { kind: "sharedTable", patchId, table: "contacts" } }
+  });
 });
 
 it.layer(layer)("SDK company generation", (it) => {
@@ -509,6 +551,269 @@ it.layer(layer)("SDK company generation", (it) => {
       );
       assert.strictEqual(refused.status, 422);
       assert.include(yield* refused.json, { code: "patch_not_openable" });
+      const error = yield* Generation.generate(identity.company.id, {
+        ...generateRequest(),
+        manifest: {
+          ...Fixtures.manifest,
+          uses: { contacts: { kind: "sharedTable", patchId, table: "contacts" } }
+        }
+      }).pipe(Effect.flip);
+      assert.instanceOf(error, Generation.PatchNotOpenable);
+      if (error._tag === "SdkPatchNotOpenable")
+        assert.instanceOf(error.cause, Patches.PatchNotOpenable);
     })
+  );
+
+  it.effect("keeps company capacity and unavailable metadata distinct on both SDK routes", () =>
+    Effect.gen(function* () {
+      const payload = yield* failureSource("sdkfailure01");
+      const companies = yield* CompanyDatabases.CompanyDatabases;
+      const busy = new CompanyDatabases.Busy({ resource: "company operations", limit: 4 });
+      const failed = new CompanyDatabases.CompanyDatabaseError({
+        companyId: identity.company.id,
+        operation: "connect",
+        cause: new Error(`secret-provider-diagnostic-${"x".repeat(4096)}`)
+      });
+      const notReady = new CompanyDatabases.CompanyDatabaseNotReady({
+        companyId: identity.company.id,
+        status: "claimed"
+      });
+      for (const cause of [busy, failed, notReady]) {
+        const dependencies = Patches.layer.pipe(
+          Layer.provide(
+            Layer.succeed(CompanyDatabases.CompanyDatabases, {
+              ...companies,
+              withCompany: () => () => Effect.fail(cause)
+            })
+          ),
+          Layer.fresh
+        );
+        for (const [stage, resource, operation] of [
+          [
+            "shared-table-list",
+            identity.company.id,
+            Generation.catalog(identity.company.id, false)
+          ],
+          [
+            "shared-table",
+            "sdkfailure01/contacts",
+            Generation.generate(identity.company.id, payload)
+          ]
+        ] as const) {
+          const error = yield* operation.pipe(Effect.provide(dependencies), Effect.flip);
+          if (cause === busy) assert.strictEqual(error, busy);
+          else {
+            assert.instanceOf(error, Generation.GenerationUnavailable);
+            if (error._tag === "GenerationUnavailable") {
+              assert.strictEqual(error.cause, cause);
+              assert.strictEqual(error.stage, stage);
+              assert.strictEqual(error.resource, resource);
+              assert.notInclude(error.message, "secret-provider-diagnostic");
+              assert.isBelow(error.message.length, 512);
+            }
+          }
+        }
+        const api = yield* sdkOver(dependencies);
+        for (const response of [
+          yield* api.catalog({ query: {}, responseMode: "response-only" }),
+          yield* api.generate({ payload, responseMode: "response-only" })
+        ]) {
+          assert.strictEqual(response.status, 503);
+          assert.strictEqual(response.headers["cache-control"], "private, no-store");
+          assert.include(yield* response.json, {
+            ok: false,
+            code: cause === busy ? "busy" : "source_unavailable"
+          });
+          assert.notInclude(yield* response.text, "secret-provider-diagnostic");
+        }
+      }
+    })
+  );
+
+  it.effect(
+    "treats SQL and company identity failures as defects rather than unavailable sources",
+    () =>
+      Effect.gen(function* () {
+        const patches = yield* Patches.Patches;
+        const sqlError = new SqlError.SqlError({
+          reason: new SqlError.ConnectionError({ cause: new Error("private SQL diagnostics") })
+        });
+        const dependencies = Layer.succeed(Patches.Patches, {
+          ...patches,
+          find: () => Effect.fail(sqlError),
+          sharedTables: () => Effect.fail(sqlError),
+          sharedTable: () => Effect.fail(sqlError)
+        });
+        for (const operation of [
+          Generation.catalog(identity.company.id, false),
+          Generation.generate(identity.company.id, {
+            ...generateRequest(),
+            patchId: "sdksqlfail01"
+          }),
+          Generation.generate(
+            identity.company.id,
+            generateRequest({
+              ...Fixtures.manifest,
+              uses: {
+                contacts: { kind: "sharedTable", patchId: "sdksqlfail01", table: "contacts" }
+              }
+            })
+          )
+        ]) {
+          const exit = yield* operation.pipe(Effect.provide(dependencies), Effect.exit);
+          assert.isTrue(Exit.isFailure(exit));
+          if (Exit.isFailure(exit)) {
+            assert.isTrue(Cause.hasDies(exit.cause));
+            assert.strictEqual(Cause.squash(exit.cause), sqlError);
+          }
+        }
+        const payload = yield* failureSource("sdkidentity1");
+        const companies = yield* CompanyDatabases.CompanyDatabases;
+        const mismatch = new CompanyDatabases.CompanyIdentityMismatch({
+          expectedCompanyId: identity.company.id,
+          actualCompanyId: "another-company"
+        });
+        const isolated = Patches.layer.pipe(
+          Layer.provide(
+            Layer.succeed(CompanyDatabases.CompanyDatabases, {
+              ...companies,
+              withCompany: () => () => Effect.fail(mismatch)
+            })
+          ),
+          Layer.fresh
+        );
+        for (const operation of [
+          Generation.catalog(identity.company.id, false),
+          Generation.generate(identity.company.id, payload)
+        ]) {
+          const exit = yield* operation.pipe(Effect.provide(isolated), Effect.exit);
+          assert.isTrue(Exit.isFailure(exit));
+          if (Exit.isFailure(exit)) {
+            assert.isTrue(Cause.hasDies(exit.cause));
+            assert.strictEqual(Cause.squash(exit.cause), mismatch);
+          }
+        }
+      })
+  );
+
+  it.effect("bounds connection-list diagnostics without unwrapping the storage failure", () =>
+    Effect.gen(function* () {
+      const connections = yield* ConnectionStore.ConnectionStore;
+      const cause = new ConnectionStore.ConnectionStorageFailed({
+        operation: "list",
+        cause: Redacted.make(new Error(`private-connection-diagnostic-${"x".repeat(4096)}`))
+      });
+      const dependencies = Layer.succeed(ConnectionStore.ConnectionStore, {
+        ...connections,
+        list: () => Effect.fail(cause)
+      });
+      const payload = generateRequest({
+        ...Fixtures.manifest,
+        uses: { sales: { kind: "postgres", handle: "warehouse" } }
+      });
+      for (const operation of [
+        Generation.catalog(identity.company.id, false),
+        Generation.generate(identity.company.id, payload)
+      ]) {
+        const error = yield* operation.pipe(Effect.provide(dependencies), Effect.flip);
+        assert.instanceOf(error, Generation.GenerationUnavailable);
+        if (error._tag === "GenerationUnavailable") {
+          assert.strictEqual(error.cause, cause);
+          assert.strictEqual(error.stage, "connection-list");
+          assert.strictEqual(error.resource, identity.company.id);
+        }
+      }
+      const api = yield* sdkOver(dependencies);
+      for (const response of [
+        yield* api.catalog({ query: {}, responseMode: "response-only" }),
+        yield* api.generate({ payload, responseMode: "response-only" })
+      ]) {
+        assert.strictEqual(response.status, 503);
+        assert.include(yield* response.json, { ok: false, code: "source_unavailable" });
+        const body = yield* response.text;
+        assert.include(body, "connection-list");
+        assert.notInclude(body, "private-connection-diagnostic");
+        assert.isBelow(body.length, 512);
+      }
+    })
+  );
+
+  it.effect("names the selected connection revision when its metadata snapshot is missing", () =>
+    Effect.gen(function* () {
+      const dependencies = ConnectionStore.layerDev([
+        {
+          connection: new ConnectionStore.Connection({
+            id: "sdk-missing-snapshot",
+            companyId: identity.company.id,
+            integration: "postgres",
+            handle: "warehouse",
+            description: "Metadata-only fixture",
+            mode: "company",
+            status: "connected",
+            display: { host: "db.example.com", port: 5432, database: "sales", role: "reader" },
+            credentialRevision: 1,
+            metadataRevision: 7,
+            lastTestedAt: null,
+            lastDiscoveredAt: null,
+            createdBy: identity.user.id
+          }),
+          snapshots: []
+        }
+      ]);
+      const payload = generateRequest({
+        ...Fixtures.manifest,
+        uses: { sales: { kind: "postgres", handle: "warehouse" } }
+      });
+      const error = yield* Generation.generate(identity.company.id, payload).pipe(
+        Effect.provide(dependencies),
+        Effect.flip
+      );
+      assert.instanceOf(error, Generation.GenerationUnavailable);
+      if (error._tag === "GenerationUnavailable") {
+        assert.instanceOf(error.cause, ConnectionStore.ConnectionNotFound);
+        assert.strictEqual(error.stage, "connection-snapshot");
+        assert.strictEqual(error.resource, "sdk-missing-snapshot@7");
+      }
+      const api = yield* sdkOver(dependencies);
+      const response = yield* api.generate({ payload, responseMode: "response-only" });
+      assert.strictEqual(response.status, 503);
+      assert.include(yield* response.json, { ok: false, code: "source_unavailable" });
+      assert.include(yield* response.text, "sdk-missing-snapshot@7");
+    })
+  );
+
+  it.effect(
+    "identifies the release skill when packaged file reads fail without leaking paths",
+    () =>
+      Effect.gen(function* () {
+        const cause = PlatformError.systemError({
+          _tag: "PermissionDenied",
+          module: "FileSystem",
+          method: "readFileString",
+          pathOrDescriptor: `/private/server-location/${"x".repeat(4096)}`
+        });
+        const dependencies = FileSystem.layerNoop({ readFileString: () => Effect.fail(cause) });
+        const error = yield* Generation.generate(identity.company.id, generateRequest()).pipe(
+          Effect.provide(dependencies),
+          Effect.flip
+        );
+        assert.instanceOf(error, Generation.GenerationUnavailable);
+        if (error._tag === "GenerationUnavailable") {
+          assert.strictEqual(error.cause, cause);
+          assert.strictEqual(error.stage, "release-skill");
+          assert.strictEqual(error.resource, ".agents/skills/patchy-files/SKILL.md");
+        }
+        const api = yield* sdkOver(dependencies);
+        const response = yield* api.generate({
+          payload: generateRequest(),
+          responseMode: "response-only"
+        });
+        assert.strictEqual(response.status, 503);
+        assert.include(yield* response.json, { ok: false, code: "source_unavailable" });
+        const body = yield* response.text;
+        assert.include(body, ".agents/skills/patchy-files/SKILL.md");
+        assert.notInclude(body, "/private/server-location");
+        assert.isBelow(body.length, 512);
+      })
   );
 });

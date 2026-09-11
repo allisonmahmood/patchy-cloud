@@ -676,7 +676,7 @@ const init = Command.make(
     purpose: Flag.string("purpose").pipe(Flag.optional)
   },
   (options) =>
-    runProject(
+    run(
       Effect.gen(function* () {
         const token = yield* requiredToken();
         yield* Project.init(

@@ -1,9 +1,13 @@
 import * as Effect from "effect/Effect";
+import type * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import type * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
 import * as Schema from "effect/Schema";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import {
+  type Authorization,
   Catalog,
   CurrentIdentity,
   Generated,
@@ -13,6 +17,8 @@ import {
   Release,
   refuse
 } from "@patchy/api";
+import type { ConnectionStore } from "@patchy/integrations";
+import type { Patches } from "@patchy/patches";
 import * as Artifact from "./Artifact.js";
 import * as Generation from "./Generation.js";
 
@@ -26,10 +32,17 @@ const rejected = (error: Generation.GenerationRefused) =>
   );
 
 /** Release discovery has no bearer middleware: installing the package precedes sign-in. */
-export const layer = HttpApiBuilder.group(PatchyApi, "sdk", (handlers) =>
+export const layer: Layer.Layer<
+  HttpApiGroup.Service<"patchy", "sdk">,
+  never,
+  | Artifact.Artifact
+  | Authorization
+  | ConnectionStore.ConnectionStore
+  | Patches.Patches
+  | FileSystem.FileSystem
+> = HttpApiBuilder.group(PatchyApi, "sdk", (handlers) =>
   Effect.gen(function* () {
     const artifact = yield* Artifact.Artifact;
-    const generation = yield* Generation.Generation;
     return handlers
       .handle("release", () =>
         Effect.succeed(
@@ -41,8 +54,16 @@ export const layer = HttpApiBuilder.group(PatchyApi, "sdk", (handlers) =>
       .handle("catalog", ({ query }) =>
         Effect.gen(function* () {
           const identity = yield* CurrentIdentity;
-          const result = yield* generation.catalog(identity.company.id, query.all ?? false).pipe(
+          const result = yield* Generation.catalog(identity.company.id, query.all ?? false).pipe(
             Effect.catchTags({
+              Busy: (error) =>
+                Effect.succeed(
+                  refuse(
+                    PublishUnavailable,
+                    { ok: false, code: "busy", error: error.message },
+                    noStore.headers
+                  )
+                ),
               GenerationUnavailable: (error) =>
                 Effect.succeed(
                   refuse(
@@ -61,8 +82,16 @@ export const layer = HttpApiBuilder.group(PatchyApi, "sdk", (handlers) =>
       .handle("generate", ({ payload }) =>
         Effect.gen(function* () {
           const identity = yield* CurrentIdentity;
-          const result = yield* generation.generate(identity.company.id, payload).pipe(
+          const result = yield* Generation.generate(identity.company.id, payload).pipe(
             Effect.catchTags({
+              Busy: (error) =>
+                Effect.succeed(
+                  refuse(
+                    PublishUnavailable,
+                    { ok: false, code: "busy", error: error.message },
+                    noStore.headers
+                  )
+                ),
               SdkReleaseMismatch: rejected,
               UnsupportedManifestVersion: rejected,
               UnknownProjectSkill: rejected,
@@ -85,6 +114,12 @@ export const layer = HttpApiBuilder.group(PatchyApi, "sdk", (handlers) =>
         })
       );
   })
+).pipe(
+  HttpRouter.provideRequest(
+    Layer.effectContext(
+      Effect.context<ConnectionStore.ConnectionStore | Patches.Patches | FileSystem.FileSystem>()
+    )
+  )
 );
 
 /** Only the exact tarball path is reserved; `sdk` remains a valid company handle. */

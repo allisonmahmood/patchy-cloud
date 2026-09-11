@@ -17,6 +17,8 @@ export class UsesEditRefused extends Schema.TaggedError<UsesEditRefused>()("Uses
   }
 }
 
+export const isUsesEditRefused = Schema.is(UsesEditRefused);
+
 /** Edit only the literal uses object; leave imports and the rest of the user's config untouched. */
 export function editUses(source: string, change: UsesChange): string {
   const file = ts.createSourceFile(
