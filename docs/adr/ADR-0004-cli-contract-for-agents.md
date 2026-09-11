@@ -217,8 +217,9 @@ stamps must match `patchy/_generated/index.json`; local `stale_generated` is exi
 “declarations changed; run `patchy refresh`”. Then `tsc --noEmit`, Vite's single-file
 build and the evident tier check run. Residual files/dependencies, a bundle over
 10 MiB (with largest contributors), `server/`, or script under a tier 0 claim
-fail locally before persistence or publishing. Compiler/build diagnostics go to
-the failure envelope, never successful JSON stdout.
+fail locally before persistence or publishing. Compiler/build failures name the
+stage and a local diagnostic command; raw tool output stays out of the failure
+envelope and successful JSON stdout.
 
 Repo attempts live at `.patchy/publish/<instance-hash>/attempt.json`, using the
 same exclusive creation, owner check and key-checked clearing as file mode.

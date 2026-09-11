@@ -5,9 +5,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import * as Stream from "effect/Stream";
 import * as Prompt from "effect/unstable/cli/Prompt";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import { Catalog, DefinitionName, Generated, Manifest, PatchName } from "@patchy/api";
 import * as Api from "./Api.js";
 import { LocalError, RejectedError, UnreachableError } from "./CliError.js";
@@ -25,6 +23,7 @@ import {
 } from "./ManagedProject.js";
 import { activateStarter, starterFiles, writeInitialGeneration } from "./initProject.js";
 import { RELEASE } from "./release.js";
+import { processResult } from "./processResult.js";
 
 const repoSchema = Schema.Struct({
   instance: Schema.String,
@@ -155,37 +154,6 @@ const installedFailure = (stderr: string, instanceUrl: string, fallback: string)
       return new LocalError(fields);
   }
 };
-
-const processResult = Effect.fn("Project.processResult")(function* (
-  cwd: string,
-  command: string,
-  args: readonly string[],
-  env?: Record<string, string>
-) {
-  return yield* Effect.scoped(
-    Effect.gen(function* () {
-      const child = yield* ChildProcess.make(command, args, {
-        cwd,
-        env,
-        extendEnv: true,
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "pipe"
-      });
-      const [stdout, stderr, code] = yield* Effect.all(
-        [
-          Stream.mkString(Stream.decodeText(child.stdout)),
-          Stream.mkString(Stream.decodeText(child.stderr)),
-          child.exitCode
-        ],
-        { concurrency: "unbounded" }
-      );
-      return { stdout, stderr, code };
-    })
-  ).pipe(
-    Effect.mapError((cause) => new LocalError({ message: `Could not run ${command}.`, cause }))
-  );
-});
 
 const install = Effect.fn("Project.install")(function* (cwd: string) {
   const result = yield* processResult(cwd, "pnpm", [

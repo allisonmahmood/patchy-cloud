@@ -5,8 +5,6 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import type * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import * as Stream from "effect/Stream";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as parse5 from "parse5";
 import * as Api from "./Api.js";
 import * as Instance from "./Instance.js";
@@ -14,6 +12,7 @@ import { LocalError, ReleaseMismatch } from "./CliError.js";
 import { executeConfig, StaleGenerated } from "./executeConfig.js";
 import { checkRelease } from "./ReleaseCheck.js";
 import { RELEASE } from "./release.js";
+import { processResult } from "./processResult.js";
 
 const decodePackage = Schema.decodeUnknownSync(
   Schema.fromJsonString(
@@ -28,39 +27,7 @@ const encodeManifest = Schema.encodeSync(Schema.fromJsonString(Manifest));
 const isLocalError = Schema.is(LocalError);
 const maxBundleBytes = 10 * 1024 * 1024;
 
-const run = Effect.fn("repoBuild.run")(function* (cwd: string, args: readonly string[]) {
-  return yield* Effect.scoped(
-    Effect.gen(function* () {
-      const child = yield* ChildProcess.make(process.execPath, args, {
-        cwd,
-        extendEnv: true,
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "pipe"
-      });
-      const [stdout, stderr, code] = yield* Effect.all(
-        [
-          Stream.mkString(Stream.decodeText(child.stdout)),
-          Stream.mkString(Stream.decodeText(child.stderr)),
-          child.exitCode
-        ],
-        { concurrency: "unbounded" }
-      );
-      return { stdout, stderr, code };
-    })
-  ).pipe(
-    Effect.mapError(
-      (cause) =>
-        new LocalError({
-          message:
-            "Could not start the repo's installed tooling. Run `patchy refresh` and check the local Node installation.",
-          cause
-        })
-    )
-  );
-});
-
-const embedded = (value: string) => /^(?:data:|blob:|#)/i.test(value.trim());
+const embedded = (value: string) => /^(?:data:|#)/i.test(value.trim());
 const decodeCss = (css: string) =>
   css
     .replace(/\/\*[\s\S]*?\*\//g, "")
@@ -199,7 +166,7 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
       current: release.release
     });
   yield* checkRelease(release.release, { cli: RELEASE });
-  const runtime = yield* run(cwd, [
+  const runtime = yield* processResult(cwd, process.execPath, [
     "--input-type=module",
     "--eval",
     'import { RELEASE } from "patchy/dev"; process.stdout.write(JSON.stringify(RELEASE));'
@@ -225,8 +192,8 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
       new LocalError({
         message:
           cause instanceof StaleGenerated
-            ? cause.message
-            : `Could not execute patchy.config.ts: ${cause instanceof Error ? cause.message : "check the config and its imports"}`,
+            ? "declarations changed; run `patchy refresh`"
+            : "Could not execute patchy.config.ts. Check the config and its imports.",
         code: cause instanceof StaleGenerated ? cause.code : "invalid_manifest",
         cause
       })
@@ -246,18 +213,20 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
           })
       )
     );
-  const typecheck = yield* run(cwd, [
+  const typecheck = yield* processResult(cwd, process.execPath, [
     path.join(cwd, "node_modules/typescript/bin/tsc"),
     "--noEmit"
   ]);
   if (typecheck.code !== 0)
     return yield* new LocalError({
-      message: `Typecheck failed. Fix the errors from \`tsc --noEmit\` before publishing:\n${typecheck.stdout}${typecheck.stderr}`
+      message:
+        "Typecheck failed. Run `pnpm exec tsc --noEmit` and fix the errors before publishing.",
+      cause: typecheck
     });
   const html = yield* Effect.scoped(
     Effect.gen(function* () {
       const output = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-publish-" });
-      const build = yield* run(cwd, [
+      const build = yield* processResult(cwd, process.execPath, [
         path.join(cwd, "node_modules/vite/bin/vite.js"),
         "build",
         "--outDir",
@@ -266,7 +235,9 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
       ]);
       if (build.code !== 0)
         return yield* new LocalError({
-          message: `Vite build failed. Fix the repo's single-file build before publishing:\n${build.stdout}${build.stderr}`
+          message:
+            "Vite build failed. Run `pnpm exec vite build` and fix the single-file build before publishing.",
+          cause: build
         });
       const entries = yield* fs.readDirectory(output, { recursive: true });
       const files: string[] = [];
@@ -301,14 +272,16 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
       message: `HTML bundle is ${bytes} bytes; maximum is ${maxBundleBytes} bytes (10 MiB). Largest contributors:\n${inspection.contributors.length ? inspection.contributors.map((entry) => `- ${entry.name}: ${entry.bytes} bytes`).join("\n") : `- HTML markup: ${bytes} bytes`}\nReduce these resources before publishing.`,
       code: "too_large"
     });
-  const server = yield* fs
-    .exists(path.join(cwd, "server"))
-    .pipe(
-      Effect.mapError(
-        (cause) =>
-          new LocalError({ message: "Could not inspect server/ for the evident tier.", cause })
-      )
-    );
+  const server = yield* fs.stat(path.join(cwd, "server")).pipe(
+    Effect.map((info) => info.type === "Directory"),
+    Effect.catchTag("PlatformError", (cause) =>
+      cause.reason._tag === "NotFound" ? Effect.succeed(false) : Effect.fail(cause)
+    ),
+    Effect.mapError(
+      (cause) =>
+        new LocalError({ message: "Could not inspect server/ for the evident tier.", cause })
+    )
+  );
   if (server || manifest.tier >= 2)
     return yield* new LocalError({
       message: server

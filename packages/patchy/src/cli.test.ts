@@ -2423,6 +2423,76 @@ describe("patchy delete target selection", () => {
 });
 
 describe("repo publish recovery", () => {
+  it.each([
+    '<img src="blob:https://example.test/temporary">',
+    '<style>body { background-image: url("blob:https://example.test/temporary"); }</style>'
+  ])("refuses document-local blob assets in built HTML: %s", async (asset) => {
+    const instance = await stubInstance((request, respond, disconnect) => {
+      if (request.url === "/api/publish") return respond(201, publish(201, "abcdefghijkl", 1));
+      projectHandler(request, respond, disconnect);
+    });
+    const dir = publishTree(instance.url);
+    const options = {
+      cwd: dir,
+      stateDir: tempDir(),
+      env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" }
+    };
+    expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
+    const entry = path.join(dir, "index.html");
+    writeFileSync(entry, readFileSync(entry, "utf8").replace("</body>", `${asset}</body>`));
+    const result = await runCli(["publish", "--json"], options);
+    expect(result).toMatchObject({ status: 1, stdout: "" });
+    expect(instance.requests.some((request) => request.url === "/api/publish")).toBe(false);
+  });
+
+  it("infers server code from a directory, not a same-named regular file", async () => {
+    const instance = await stubInstance((request, respond, disconnect) => {
+      if (request.url === "/api/publish") return respond(201, publish(201, "abcdefghijkl", 1));
+      projectHandler(request, respond, disconnect);
+    });
+    const dir = publishTree(instance.url);
+    const options = {
+      cwd: dir,
+      stateDir: tempDir(),
+      env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" }
+    };
+    expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
+    const server = path.join(dir, "server");
+    writeFileSync(server, "Documentation, not a server bundle.");
+    const published = await runCli(["publish", "--json"], options);
+    expect(published, published.stderr).toMatchObject({ status: 0, stderr: "" });
+    rmSync(server);
+    mkdirSync(server);
+    const refused = await runCli(["publish", "--json"], options);
+    expect(refused).toMatchObject({ status: 1, stdout: "" });
+    expect(JSON.parse(refused.stderr)).toMatchObject({ code: "tier_mismatch" });
+    expect(instance.requests.filter((request) => request.url === "/api/publish")).toHaveLength(1);
+  });
+
+  it.each([
+    ["patchy.config.ts", 'throw new Error("private-diagnostic-marker");'],
+    ["src/main.ts", 'import { value } from "private-diagnostic-marker"; console.log(value);'],
+    ["vite.config.ts", 'throw new Error("private-diagnostic-marker"); export default {};']
+  ])("keeps %s failure diagnostics out of the public envelope", async (file, source) => {
+    const instance = await stubInstance(projectHandler);
+    const dir = publishTree(instance.url);
+    const options = {
+      cwd: dir,
+      stateDir: tempDir(),
+      env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" }
+    };
+    expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
+    writeFileSync(path.join(dir, file), source);
+    const result = await runCli(["publish", "--json"], options);
+    expect(result).toMatchObject({ status: 1, stdout: "" });
+    expect(JSON.parse(result.stderr)).toMatchObject({ ok: false, kind: "local" });
+    expect(result.stderr).not.toContain("private-diagnostic-marker");
+    expect(instance.requests.some((request) => request.url === "/api/publish")).toBe(false);
+    expect(
+      existsSync(path.join(dir, ".patchy/publish", sha256(instance.url), "attempt.json"))
+    ).toBe(false);
+  });
+
   it("builds once and recovers a lost create across owner refusal, failed identity write and release change", async () => {
     let phase: "lost" | "other-owner" | "blocked-write" | "recover" = "lost";
     let currentRelease = CURRENT_RELEASE;
