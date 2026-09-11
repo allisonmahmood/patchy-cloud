@@ -81,7 +81,9 @@ export default tseslint.config(
       "scripts/test-clerk.ts",
       "playwright.clerk.config.ts",
       "test/browser/fixtures.ts",
-      "test/browser/instance.ts"
+      "test/browser/instance.ts",
+      "test/browser-tier1/instance.ts",
+      "test/browser-tier1/setup.ts"
     ],
     rules: {
       "no-restricted-properties": "off"

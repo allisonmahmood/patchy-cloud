@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import { CURRENT_RELEASE, MANIFEST_VERSION, WIRE_VERSION } from "@patchy/api";
 import { DEV_SEED } from "@patchy/auth/seed";
 import type { Patches } from "@patchy/patches";
-import { renderHome, renderPatchWrapper } from "./render.js";
+import { sessionScripts } from "@patchy/auth";
+import { renderHome } from "./render.js";
+import { renderPatchWrapper, renderShellNotice } from "./shell.js";
 
 describe("renderHome", () => {
   it("keeps markup in the configured instance URL inert in the login instructions", () => {
@@ -12,6 +14,22 @@ describe("renderHome", () => {
 
     expect(html).not.toContain("<img");
     expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
+  });
+});
+
+describe("renderShellNotice", () => {
+  it("preserves a deep return address without allowing it to become notice markup", () => {
+    const returnTo = '/acme/tool/items/2?filter="><img src=x onerror=alert(1)>&q=ready#last';
+    const html = renderShellNotice("principal_changed", returnTo);
+    expect(html).not.toContain("<img");
+    const href = html.match(/href="(\/login\?return=[^"]+)"/)?.[1];
+    expect(new URL(href!, "https://patchy.example").searchParams.get("return")).toBe(returnTo);
+  });
+
+  it("cannot turn access revocation into a reload or patch-controlled continuation", () => {
+    const html = renderShellNotice("access_denied", "/acme/tool?reload=1");
+    expect(html).not.toMatch(/<(a|form|iframe|script)\b/);
+    expect(html).not.toContain("/acme/tool");
   });
 });
 
@@ -89,17 +107,15 @@ describe("renderPatchWrapper", () => {
   });
 
   it("adds only session scripts outside a company patch's escaped sandbox", () => {
-    const html = renderPatchWrapper(
-      {
-        patch: { ...patch, scope: "company", title: "<b>Company</b>" },
-        version,
-        html: '<p title="a&b">Private</p><script>alert(1)</script>'
-      },
-      {
+    const html = renderPatchWrapper({
+      patch: { ...patch, title: "<b>Company</b>" },
+      version,
+      html: '<p title="a&b">Private</p><script>alert(1)</script>',
+      head: sessionScripts({
         frontendApiHost: "clerk.example.test",
         publishableKey: "pk_test_example"
-      }
-    );
+      })
+    });
     expect(
       [...html.matchAll(/<script\b[^>]*src="([^"]+)"[^>]*><\/script>/g)].map((match) => match[1])
     ).toEqual([
@@ -123,5 +139,25 @@ describe("renderPatchWrapper", () => {
     expect(html).toContain("<title>&lt;b&gt;Q3&lt;/b&gt; &amp; beyond</title>");
     expect(html).toContain('title="&lt;b&gt;Q3&lt;/b&gt; &amp; beyond"');
     expect(html).not.toContain("<b>Q3</b>");
+  });
+
+  it("keeps a scripted historical version bound to its own content and route", () => {
+    const html = renderPatchWrapper({
+      patch,
+      version: { ...version, tier: 1 },
+      html: "<script>window.secret = 1</script>",
+      nonce: "document-nonce",
+      base: "/acme/report/~v/2",
+      route: "/items/first"
+    });
+    expect(html).toContain('sandbox="allow-scripts allow-modals"');
+    expect(html).toContain(
+      `data-content-src="/~content/${patch.id}/${version.id}?n=document-nonce"`
+    );
+    expect(html).toContain('data-route="/items/first"');
+    expect(html).toContain('data-base="/acme/report/~v/2"');
+    expect(html).toContain('src="/~shell/broker.js"');
+    expect(html).not.toContain("srcdoc=");
+    expect(html).not.toContain("window.secret");
   });
 });

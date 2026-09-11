@@ -5,15 +5,15 @@ What the company holds and how it is published: patches and versions, user owner
 ## Language
 
 **Patch**:
-A built unit in a company's cloud, owned by one user and published as immutable versions. Shared with the company by default or made public on purpose; the current runtime serves it as a tier 0 static page.
-_Avoid_: draft, page (how a tier 0 patch is served, not what it is), app (one possible patch), document (the HTML a version holds)
+A built unit in a company's cloud, owned by one user and published as immutable versions. Shared with the company by default or made public on purpose; served as a tier 0 static page or tier 1 browser tool.
+_Avoid_: draft, page (how a patch is served, not what it is), app (one possible patch), document (the HTML a version holds)
 
 **Name**:
 The human-readable label unique within a company's patch namespace, forming the patch's address rather than its identity. Renaming keeps the former name as a redirect until another patch takes it; deleting the patch frees its names.
 _Avoid_: id (the stable identity), title (the document's display text), slug
 
 **Tier**:
-Where a patch's code runs, not who may open it or what pricing plan it uses. Tier 0 is static; the higher-runtime vocabulary and future declarations are recorded in [the product](../../docs/product.md#runtime-tiers).
+Where a patch's code runs, not who may open it or what pricing plan it uses. Tier 0 is static; tier 1 runs in the reader's browser. Higher-runtime vocabulary is recorded in [the product](../../docs/product.md#runtime-tiers).
 _Avoid_: runtime (the thing a tier names), level, plan (tiers are capability, not pricing)
 
 **Owner**:
@@ -73,7 +73,7 @@ The owner-scoped identity of one publish attempt. Resending its unchanged payloa
 _Avoid_: patch id, machine token, version id
 
 **Bundle**:
-The self-contained HTML content of one version, paired with its manifest. A tier 0 bundle obeys the safe-HTML policy.
+The self-contained HTML content of one version, paired with its manifest. A tier 0 bundle obeys the safe-HTML policy; a tier 1 bundle retains its scripts and runs only inside the sandbox.
 _Avoid_: source tree, manifest, patch (the entity that holds versions)
 
 **Retention clock**:

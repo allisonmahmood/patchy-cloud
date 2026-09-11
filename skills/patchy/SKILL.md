@@ -43,8 +43,8 @@ reverses it while leaving its fixture. `pnpm patchy refresh` updates the pin,
 generated files and present skills transactionally; never manually edit
 `patchy/_generated/` or managed project skills.
 
-Generation and typechecking are available; the local `patchy dev` runtime,
-browser broker and repo publishing are separate work. Do not claim a working
+Generation, typechecking and hosted tier 1 serving are available; the local
+`patchy dev` runtime and repo publishing are separate work. Do not claim a working
 local runtime from a successful init, and never substitute production data.
 Use invented local fixture inserts. Every readable row is available to whoever
 can open the patch; tier 1 has no outbound access or client storage. The project
@@ -187,7 +187,7 @@ browser sign-out is a separate control on **Your machines**.
 - A new publish checks the executing CLI against `GET /api/release`, then validates the file.
   A `release_mismatch` names both releases: install the exact package reported
   by that endpoint using the integrity check above. Inside a patch repo, use `pnpm patchy refresh`.
-  File mode synthesises a tier 0 manifest with no resources; higher tiers remain refused.
+  File mode synthesises a tier 0 manifest with no resources. The API also admits raw tier 1 bundles; repo-mode CLI publishing is separate work.
   If the instance returns `has_primitives`, this patch has cumulative resources:
   this CLI cannot publish it yet. Do not replace it with a file; an omitted table
   still counts as inventory.
@@ -267,6 +267,23 @@ never opens a patch page. Old names may redirect with 308; follow the destinatio
 same browser access. `/~content/<patchId>/<versionId>` is internal, not a sharing link;
 the former `/d/*` URLs are gone. If browser access is unavailable, say so and ask
 the user to open the link or supply the content.
+
+Tier 1 pages run inside the sandboxed frame. Use the browser to read and interact
+with that frame, not the outer shell's HTML or the internal content URL. Deep
+links and back/forward use the route bridge. Own-file images use blob URLs and
+downloads come from the shell. The patch has no outbound fetch, popups,
+`target=_blank`, top navigation, in-frame downloads, localStorage, IndexedDB,
+cookies, workers, camera, microphone, geolocation or external links. Clipboard
+writes must be user-triggered and show a visible failure when unavailable.
+A public tier 1 patch renders signed out, but `me` is null and company-data
+operations show `not_available_on_public`, even for a signed-in reader.
+
+Runtime notices belong to Patchy, not the uploaded document. `session_expired`
+and `principal_changed` require the notice's Sign in link and a whole-page reload;
+never replay an unanswered write. `access_denied` has no reload offer: report the
+access restriction. A needs-rebuild door requires the owner to refresh, rebuild
+and publish. A shell mismatch refreshes once automatically; a terminal mismatch
+is a visible failure to report, not an invitation to keep refreshing.
 
 When a page refuses access, report the refusal rather than treating its HTML as the patch:
 

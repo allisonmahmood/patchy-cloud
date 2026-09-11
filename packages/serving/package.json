@@ -10,17 +10,23 @@
       "development": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./shell": {
+      "development": "./src/shell.ts",
+      "types": "./dist/shell.d.ts",
+      "import": "./dist/shell.js"
     }
   },
   "files": [
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "build": "node ../../scripts/build-serving-broker.mjs && tsc -p tsconfig.json",
+    "test": "node ../../scripts/build-serving-broker.mjs && vitest run",
+    "typecheck": "node ../../scripts/build-serving-broker.mjs && tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@patchy/api": "workspace:*",
     "@patchy/auth": "workspace:*",
     "@patchy/companies": "workspace:*",
     "@patchy/core": "workspace:*",
@@ -31,7 +37,6 @@
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
     "@patchy/analytics": "workspace:*",
-    "@patchy/api": "workspace:*",
     "@patchy/company-database": "workspace:*",
     "@patchy/content-store": "workspace:*",
     "@patchy/integrations": "workspace:*",

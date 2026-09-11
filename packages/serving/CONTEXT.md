@@ -13,12 +13,32 @@ The internal, non-redirecting location of one version's bytes, protected by the 
 _Avoid_: address (the reader-facing location), download link, public URL
 
 **Serving guarantee**:
-A fixed promise about how a published patch reaches its reader: pages are **share-a-link-never-be-found** (kept out of search results, with no other measure against discovery); readers are **unwatched by the patch** (the patch runs no script; a company page's shell runs only Patchy's own session script, never analytics); patch URLs are **open to machines** that may open them, never bot-blocked or challenged; and caching is **keyed to sharing**, a minute at most for the current public version at its latest and version URLs, and never for a doored page. Only the current version of a public patch is public; older versions stay behind the company door. Access checks belong to the host, not the patch, and public cache windows expire without relying on a CDN purge.
-_Avoid_: bot protection (authorized agents may open pages), unlisted as a synonym for private (sharing scope controls access), privacy (the host checks access; the guarantee is that the patch cannot watch its reader)
+A tier-scoped promise about a published patch. At tier 0, **the patch cannot watch you**: its document runs no script. At tier 1, **a patch acts as you, only through Patchy, and never holds your login. What you do inside it can be saved in its own tables, which your colleagues can read, and every write is logged for your company's admins. It reaches outside systems only through your company's integrations.** A public shell runs only Patchy's own shell script, never analytics; a company shell also maintains the session. At every tier, pages are kept out of search results, open to machines that may open them, and cached by sharing: at most a minute for the current public version, never for a doored page. Older versions stay behind the company door.
+_Avoid_: bot protection (authorized agents may open pages), unlisted as a synonym for private (sharing controls access), anonymous as a promise about company pages (the host admits the viewer)
 
 **Page**:
-A patch as a reader receives it: the uploaded document in a script-free sandboxed frame, with no chrome or first-party link out. A public page's shell runs no script; a company page's shell keeps the reader's session fresh without giving the patch access to it.
+A patch as a reader receives it: its document in a sandboxed frame and the surrounding shell. Tier 0 is script-free; tier 1 runs browser code without direct network or credential access. The frame fills the page without chrome; first-party doors and notices belong to Patchy, not to the patch.
 _Avoid_: viewer (the [Auth](../auth/CONTEXT.md) identity, not the page), wrapper (the frame and its surrounding shell together make the page)
+
+**Shell**:
+The trusted page surrounding one loaded patch version. It owns the reader's address and, at tier 1, the broker; a company shell also keeps the session fresh. A historical page uses the selected version's tier.
+_Avoid_: patch (the untrusted content it contains), viewer (the person opening it)
+
+**Broker**:
+The shell's gate between one patch document and Patchy. It binds requests to the loaded version and the initially admitted principal, never gives patch code a credential, and never lends a replacement document the old document's authority.
+_Avoid_: proxy URL (patches request operations, not arbitrary destinations), SDK (the client speaks to the broker)
+
+**Envelope**:
+One correlated request or reply between a patch document and its broker, carrying the bundle's wire version and operation data. It is a message contract, not permission to choose a patch, version or principal.
+_Avoid_: transport version (there is only the runtime wire), binding (the host's trusted context)
+
+**Route bridge**:
+The agreement by which a patch chooses its local route while the shell owns the address bar and browser history. Patchy-reserved address segments are never patch routes.
+_Avoid_: redirect (changes which page is loaded), content URL (the version's internal bytes location)
+
+**Needs-rebuild door**:
+The first-party refusal shown when a stored version's runtime wire has retired. Reopening or signing in does not repair it; its owner must rebuild and publish.
+_Avoid_: release mismatch (tooling freshness, not a deployed wire), session expiry
 
 **Trusted proxy**:
 A network whose forwarded client address the host trusts when attributing requests. An untrusted direct peer speaks only for its own address, never for an address it supplied in a header.

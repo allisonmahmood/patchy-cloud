@@ -140,6 +140,8 @@ export const layer = HttpApiBuilder.group(PatchyApi, "runtime", (handlers) =>
         headers: {
           ...noStore,
           "x-content-type-options": "nosniff",
+          // Active uploads are bytes, never a same-origin executable document.
+          "content-security-policy": "sandbox; default-src 'none'; frame-src 'none'",
           "content-disposition": "attachment"
         }
       });

@@ -76,7 +76,7 @@ it("binds bootstrap to the parent and URL nonce and closes pending calls on page
   const parent = {};
   const frame = Object.assign(new EventTarget(), {
     parent,
-    location: { href: "https://instance/~content/p/v?nonce=document-one" }
+    location: { href: "https://instance/~content/p/v?n=document-one" }
   });
   const transport = createPostMessageTransport({ window: frame as unknown as Window });
   const port = new FakePort();

@@ -137,7 +137,7 @@ export function createPostMessageTransport(
   if (!frame || frame.parent === frame) {
     reject(new PatchyError("shell_outdated", "This client must run inside the Patchy shell.", {}));
   } else {
-    const nonce = new URL(frame.location.href).searchParams.get("nonce");
+    const nonce = new URL(frame.location.href).searchParams.get("n");
     const timer = setTimeout(() => {
       removeBootstrap();
       reject(
