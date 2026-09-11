@@ -75,16 +75,40 @@ Node's native TypeScript loader, including explicit `.ts` extensions for local
 TypeScript imports.
 
 The browser entrypoint exposes owned tables, file stores, read-only shared
-tables, generated connections and `me()`. File `url(name)` returns a cached
-frame-local blob URL, never a public object URL. All runtime failures use
-`PatchyError` and `isPatchyError(error, code)`. HTTP and port transport constructors
-remain internal, not public client exports; patch frames must not fetch the
-runtime directly.
+tables, generated connections, `me()` and `route`. It uses the hosted shell's
+document-bound port; patch frames must not fetch the runtime directly. HTTP and
+port transport constructors remain internal, not public client exports. All
+runtime failures use `PatchyError` and `isPatchyError(error, code)`; a lost reply
+is `unknown_outcome`, never an automatic replay.
+
+`client.route.get(): Promise<string>` reads the patch-relative path, including
+the initial deep link. `client.route.set(path): Promise<null>` asks the shell to
+push a new path without navigating the frame. Paths start with `/` and must not
+contain a query, fragment, traversal or another origin. Routing works on both
+company and public patches. `client.route.subscribe(listener)` returns an
+unsubscribe function; listeners receive the initial route, acknowledged sets
+and browser back/forward changes. Notifications are asynchronous; unsubscribe
+and `client.close()` stop them, including notifications queued before cleanup.
+
+File `url(name)` returns a cached frame-local blob URL, never a public object URL.
+`client.files.attachments.download(name): Promise<null>` instead asks the outer
+shell to start a browser download; resolution acknowledges that request, not
+that the user saved the file. File operations on public patches reject with
+`not_available_on_public`, which application code can catch without ending the
+shell session.
+
+`put(name, bytes, { contentType })` transfers ownership when given an
+`ArrayBuffer` or a `Uint8Array` covering its entire `ArrayBuffer`: sending it
+detaches the caller's buffer, even if the operation later fails. Copy it first
+if it must remain usable. A subview is copied into an isolated buffer containing
+only its selected bytes; unrelated backing bytes remain attached and are never
+sent. A `Blob` is read into a new buffer for transfer, leaving the blob usable.
 
 The internal generated `client.ts` template imports the config's **type** and
 `manifest.json`'s **value**. The package's browser graph has no Node, Effect or
-PGlite runtime. `patchy/dev` reserves its entrypoint; the broker, local dev
-runtime and repo publishing remain separate work from repo generation.
+PGlite runtime. The hosted tier 1 shell supplies the broker. `patchy/dev`
+reserves its entrypoint; the local dev runtime and repo publishing remain
+separate work from repo generation.
 
 ## Commands
 
@@ -146,8 +170,9 @@ fixtures/                     postgres-<handle>.sql and shared-<alias>.sql stubs
 `AGENTS.md` is written once, says install already ran, points at the generated
 index, and says to test with `patchy dev`. The repo typechecks without added setup,
 and `pnpm patchy --help` runs its pinned copy. **The local dev runtime is not
-implemented by these commands**; generation does not enable the broker or repo
-publishing. Do not replace a missing local runtime with production data access.
+implemented by these commands**; the hosted broker does not supply a local
+runtime or enable repo publishing. Do not replace a missing local runtime with
+production data access.
 
 Managed writes are exactly the package pin, `patchy/_generated/`,
 `.agents/skills/patchy-*/`, missing fixture stubs, the lockfile through install,
@@ -371,7 +396,7 @@ Authentication failures, throttling, quota refusals, lost replies, server failur
 
 Concurrent invocations through the same instance and state directory resend the same persisted attempt rather than replacing it or refusing contention. Each authenticates the attempt's original owner before sending, including an invocation that loses the race to create it. Killing a process leaves the attempt available for recovery. A response clears only its matching publish key, so a stale response cannot remove a newer attempt.
 
-The executing CLI must match the instance's release exactly. A local mismatch exits 1 with `kind: "local"` and `code: "release_mismatch"`; an instance-detected mismatch exits 2 with `kind: "rejected"` and the same code. The diagnostic names both releases. Install the exact package reported by `GET /api/release`; inside a patch repo, `patchy refresh` upgrades the pin and refreshes the managed set. File-mode `publish` still sends HTML files only. Repo publishing and the local `patchy dev` runtime remain separate work (SDK #207). The API also admits tier 0 table and file-store manifests with shared-table and resolved Postgres declarations; higher tiers remain refused. File publishing onto a patch with cumulative inventory returns `has_primitives` (422, exit 2): that patch requires repo publishing, which is not available in this CLI yet. `has_primitives`, `not_additive`, `patch_not_openable`, `connection_not_connected` and `stale_generated` are definitive payload refusals; the matching attempt is cleared. Restore shared-source access, reconnect the connection, or regenerate its snapshot stamp before publishing a fresh attempt. Connection secrets are accepted only in the admin's browser at `/company/connections`, never by a CLI command.
+The executing CLI must match the instance's release exactly. A local mismatch exits 1 with `kind: "local"` and `code: "release_mismatch"`; an instance-detected mismatch exits 2 with `kind: "rejected"` and the same code. The diagnostic names both releases. Install the exact package reported by `GET /api/release`; inside a patch repo, `patchy refresh` upgrades the pin and refreshes the managed set. File-mode `publish` still sends HTML files only. Repo publishing and the local `patchy dev` runtime remain separate work (SDK #207). The API admits tier 0 and tier 1 manifests with tables, file stores, shared-table declarations and resolved Postgres connections; tiers 2 and above remain refused. Tier 0 follows the safe-HTML policy; tier 1 bundles run in the hosted sandbox. File publishing onto a patch with cumulative inventory returns `has_primitives` (422, exit 2): that patch requires repo publishing, which is not available in this CLI yet. `has_primitives`, `not_additive`, `patch_not_openable`, `connection_not_connected` and `stale_generated` are definitive payload refusals; the matching attempt is cleared. Restore shared-source access, reconnect the connection, or regenerate its snapshot stamp before publishing a fresh attempt. Connection secrets are accepted only in the admin's browser at `/company/connections`, never by a CLI command.
 
 Without `--share`, a new patch defaults to `company` and an update preserves the patch's current scope. An explicit `--share company` or `--share public` sets it in either direction while publishing the new version:
 

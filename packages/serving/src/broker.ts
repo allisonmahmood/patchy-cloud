@@ -1,14 +1,21 @@
 /// <reference lib="dom" />
 // @effect-diagnostics globalTimers:off globalFetch:off
 // This browser entry owns platform I/O; it never creates an Effect runtime.
-import { RuntimeRequest, RuntimeFailure, runtimeOperations, WIRE_VERSION } from "@patchy/api";
+import {
+  RuntimeRequest,
+  RuntimeFailure,
+  runtimeOperations,
+  runtimeBodyLimit,
+  runtimeByteLimits,
+  WIRE_VERSION
+} from "@patchy/api";
 import type { RuntimeCode, RuntimeMe, RuntimePrincipal } from "@patchy/api";
 import * as Schema from "effect/Schema";
 
 const KiB = 1024;
 const MiB = 1024 * KiB;
 const MAX_HELD = 64 * MiB;
-const MAX_FILE = 20 * MiB;
+const MAX_FILE = runtimeByteLimits.fileBytes;
 const MAX_PENDING = 32;
 const decodeRequest = Schema.decodeUnknownSync(RuntimeRequest);
 const decodeFailure = Schema.decodeUnknownSync(RuntimeFailure);
@@ -38,14 +45,6 @@ const lost = () =>
     "unknown_outcome",
     "The runtime reply was lost; this operation has not been retried."
   );
-const bodyLimit = (op: string) =>
-  op === "tables.insert" || op === "tables.update"
-    ? MiB + 64 * KiB
-    : op === "tables.insertMany"
-      ? 8 * MiB + 64 * KiB
-      : op.startsWith("postgres.")
-        ? 256 * KiB
-        : 64 * KiB;
 
 /** Bound work before JSON.stringify or recursive Schema decoding touches hostile structured clones. */
 function jsonBytes(value: unknown, limit: number): number {
@@ -214,8 +213,7 @@ function mount(frame: HTMLIFrameElement): void {
     else if (
       error.code === "session_expired" ||
       error.code === "principal_changed" ||
-      error.code === "access_denied" ||
-      error.code === "not_available_on_public"
+      error.code === "access_denied"
     )
       notice(error.code);
   };
@@ -300,12 +298,15 @@ function mount(frame: HTMLIFrameElement): void {
         init.method = "POST";
         headers.set("Content-Type", "application/json");
         const body = { patchId, versionId, principal, wire, op, args };
-        jsonBytes(body, bodyLimit(op));
+        jsonBytes(body, runtimeBodyLimit(op));
         init.body = JSON.stringify(body);
       }
       const response = await fetch(url, init);
       if (closed) throw lost();
-      const data = await readBody(response, op === "files.get" && response.ok ? MAX_FILE : 8 * MiB);
+      const data = await readBody(
+        response,
+        op === "files.get" && response.ok ? MAX_FILE : runtimeByteLimits.resultBytes
+      );
       responseBytes = data.byteLength;
       if (op === "files.get" && response.ok) {
         const heldBytes = responseBytes;
@@ -422,7 +423,7 @@ function mount(frame: HTMLIFrameElement): void {
         throw invalid();
       const bytes = payload as ArrayBuffer | undefined;
       if (bytes && bytes.byteLength > MAX_FILE) throw tooLarge(MAX_FILE);
-      const size = jsonBytes({ v: message.v, id, op, args: message.args }, bodyLimit(op));
+      const size = jsonBytes({ v: message.v, id, op, args: message.args }, runtimeBodyLimit(op));
       const requestBytes = size * 3 + (bytes?.byteLength ?? 0);
       reserve(requestBytes);
       reserved = requestBytes;
@@ -444,11 +445,6 @@ function mount(frame: HTMLIFrameElement): void {
       if (closed) return;
       let reply: Reply;
       if (op === "route.set") {
-        if (me === null)
-          throw new Refusal(
-            "not_available_on_public",
-            "Runtime operations are not available on a public patch."
-          );
         const next = new URL(location.href);
         next.pathname = base + path!;
         history.pushState(null, "", next);
@@ -461,10 +457,9 @@ function mount(frame: HTMLIFrameElement): void {
         // Blob storage is a second held copy until the transferred response buffer is released.
         reserve(reply.bytes.byteLength);
         const file = request!.args as { name: string };
-        const content = reply.value as { contentType: string };
         let url: string;
         try {
-          url = URL.createObjectURL(new Blob([reply.bytes], { type: content.contentType }));
+          url = URL.createObjectURL(new Blob([reply.bytes], { type: "application/octet-stream" }));
         } catch (error) {
           release(reply.bytes.byteLength);
           throw error;

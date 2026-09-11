@@ -33,7 +33,7 @@ One correlated request or reply between a patch document and its broker, carryin
 _Avoid_: transport version (there is only the runtime wire), binding (the host's trusted context)
 
 **Route bridge**:
-The agreement by which a patch chooses its local route while the shell owns the address bar and browser history. Patchy-reserved address segments are never patch routes.
+The agreement by which a patch chooses its local route while the shell owns the address bar and browser history. The shipped client exposes get/set/subscribe; public patches retain this browser-only capability. Patchy-reserved address segments are never patch routes.
 _Avoid_: redirect (changes which page is loaded), content URL (the version's internal bytes location)
 
 **Needs-rebuild door**:

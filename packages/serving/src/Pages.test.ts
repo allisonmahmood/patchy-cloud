@@ -197,7 +197,7 @@ it.layer(layer)("pages", (it) => {
           assert.strictEqual(response.headers["referrer-policy"], "no-referrer");
           assert.strictEqual(
             response.headers["content-security-policy"],
-            content ? `sandbox; ${CSP}` : CSP
+            content ? `sandbox; ${CSP}` : `${CSP}; frame-ancestors 'none'`
           );
           assert.strictEqual(response.headers["cache-control"], "public, max-age=60");
           assert.strictEqual(response.headers["x-content-type-options"], "nosniff");
@@ -206,6 +206,7 @@ it.layer(layer)("pages", (it) => {
           const body = yield* response.text;
           assert.include(body, "Serving Guarantees");
           if (content) {
+            assert.strictEqual(response.headers["content-type"], "text/html; charset=utf-8");
             assert.strictEqual(
               body,
               "<!doctype html><html><head><title>Serving Guarantees</title></head><body><h1>Serving Guarantees</h1></body></html>"
@@ -471,6 +472,26 @@ const send = Effect.fn(function* (path: string, options: RequestInit = {}) {
 });
 
 it.layer(services)("pages in memory", (it) => {
+  it.effect("serves UTF-8 content without requiring a meta tag or changing its BOM", () =>
+    Effect.gen(function* () {
+      const { patchId, versionId } = yield* publish("Unicode content", "public");
+      const store = yield* ContentStore.ContentStore;
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE patch_versions SET tier = 1 WHERE id = ${versionId}`;
+      for (const bom of ["", "\uFEFF"]) {
+        const html = `${bom}<!doctype html><html><body><p>café — 日本語</p></body></html>`;
+        yield* store.put(Content.objectKey(patchId, versionId), html);
+        const response = yield* send(`/~content/${patchId}/${versionId}`);
+        assert.strictEqual(response.status, 200);
+        assert.strictEqual(response.headers.get("content-type"), "text/html; charset=utf-8");
+        assert.deepStrictEqual(
+          new Uint8Array(yield* Effect.promise(() => response.arrayBuffer())),
+          new TextEncoder().encode(html)
+        );
+      }
+    })
+  );
+
   it.effect("keeps storage faults behind admission without disclosing a private patch", () =>
     Effect.gen(function* () {
       const { patchId, versionId, path } = yield* publish("Missing private bytes");
@@ -540,6 +561,10 @@ it.layer(services)("pages in memory", (it) => {
         const login = yield* send(`/login?return=${encodeURIComponent(path)}`);
         assert.strictEqual(door.status, 401);
         assert.strictEqual(door.headers.get("cache-control"), "private, no-store");
+        assert.strictEqual(
+          door.headers.get("content-security-policy"),
+          login.headers.get("content-security-policy")
+        );
         assert.isNull(door.headers.get("location"));
         assert.isNull(door.headers.get("www-authenticate"));
         const body = yield* Effect.promise(() => door.text());
@@ -649,14 +674,17 @@ it.layer(services)("pages in memory", (it) => {
             assert.include(body, "&lt;h1&gt;Sharing boundary&lt;/h1&gt;");
             if (scope === "public") {
               assert.strictEqual(response.headers.get("cache-control"), "public, max-age=60");
-              assert.strictEqual(response.headers.get("content-security-policy"), CSP);
+              assert.strictEqual(
+                response.headers.get("content-security-policy"),
+                `${CSP}; frame-ancestors 'none'`
+              );
               assert.notInclude(body, "<script");
               assert.deepStrictEqual(response.headers.getSetCookie(), []);
             } else {
               assert.strictEqual(response.headers.get("cache-control"), "private, no-store");
               assert.strictEqual(
                 response.headers.get("content-security-policy"),
-                `${CSP}; script-src 'self' https://${FRONTEND_API_HOST}; connect-src https://${FRONTEND_API_HOST}`
+                `${CSP}; frame-ancestors 'none'; script-src 'self' https://${FRONTEND_API_HOST}; connect-src https://${FRONTEND_API_HOST}`
               );
               assert.include(
                 body,

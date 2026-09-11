@@ -6,7 +6,7 @@ export const NO_STORE_CACHE_CONTROL = "no-store";
 export const PUBLIC_PATCH_CACHE_CONTROL = "public, max-age=60";
 export const PRIVATE_PATCH_CACHE_CONTROL = "private, no-store";
 
-export const PATCH_CONTENT_SECURITY_POLICY = [
+const STATIC_DOCUMENT_SECURITY_POLICY = [
   "default-src 'none'",
   "style-src 'unsafe-inline'",
   "img-src https: data:",
@@ -15,8 +15,10 @@ export const PATCH_CONTENT_SECURITY_POLICY = [
   "form-action 'none'"
 ].join("; ");
 
+export const PATCH_CONTENT_SECURITY_POLICY = `${STATIC_DOCUMENT_SECURITY_POLICY}; frame-ancestors 'none'`;
+
 /** Both the HTTP policy and iframe sandbox must grant a capability. */
-export const STATIC_CONTENT_SECURITY_POLICY = `sandbox; ${PATCH_CONTENT_SECURITY_POLICY}`;
+export const STATIC_CONTENT_SECURITY_POLICY = `sandbox; ${STATIC_DOCUMENT_SECURITY_POLICY}`;
 export const SCRIPTED_CONTENT_SECURITY_POLICY = [
   "sandbox allow-scripts allow-modals",
   "default-src 'none'",
@@ -36,7 +38,8 @@ export const SCRIPTED_SHELL_SECURITY_POLICY = [
   "script-src 'self'",
   "connect-src 'self'",
   "base-uri 'none'",
-  "form-action 'none'"
+  "form-action 'none'",
+  "frame-ancestors 'none'"
 ].join("; ");
 
 export function contentSecurityPolicy(tier: number): string {

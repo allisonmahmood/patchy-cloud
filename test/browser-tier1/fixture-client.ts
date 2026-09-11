@@ -1,12 +1,10 @@
 import { createClient } from "patchy/client";
-import { WIRE_VERSION } from "../../packages/patchy/src/release.js";
 
 export interface FixtureWindow extends Window {
   harness: {
     ready: boolean;
-    route: string;
+    readonly client: typeof client;
     replies: Array<{ id?: string; kind?: string; error?: { code: string }; value?: unknown }>;
-    call(op: string, args?: unknown): Promise<unknown>;
     raw(value: unknown, transfer?: Transferable[]): void;
     image(): Promise<void>;
     printRows(): void;
@@ -15,21 +13,14 @@ export interface FixtureWindow extends Window {
 
 const host = window as unknown as FixtureWindow;
 let port: MessagePort;
-let serial = 0;
-const pending = new Map<string, { resolve(value: unknown): void; reject(error: unknown): void }>();
 const harness: FixtureWindow["harness"] = {
   ready: false,
-  route: "",
+  get client() {
+    return client;
+  },
   replies: [],
   raw(value, transfer = []) {
     port.postMessage(value, transfer);
-  },
-  call(op, args = {}) {
-    const id = `probe-${++serial}`;
-    const request = Promise.withResolvers<unknown>();
-    pending.set(id, request);
-    port.postMessage({ v: WIRE_VERSION, id, op, args });
-    return request.promise;
   },
   async image() {
     const canvas = document.createElement("canvas");
@@ -66,20 +57,8 @@ window.addEventListener("message", (event) => {
   if (event.source !== parent || event.data?.kind !== "bootstrap" || event.ports.length !== 1)
     return;
   port = event.ports[0]!;
-  harness.route = event.data.route;
-  document.querySelector("#route")!.textContent = harness.route;
   port.addEventListener("message", (message) => {
-    if (message.data?.event === "route") {
-      harness.route = message.data.data.path;
-      document.querySelector("#route")!.textContent = harness.route;
-      return;
-    }
     harness.replies.push(message.data);
-    const waiter = pending.get(message.data?.id);
-    if (!waiter) return;
-    pending.delete(message.data.id);
-    if (message.data.kind === "result") waiter.resolve(message.data.value);
-    else waiter.reject(message.data.error);
   });
   port.start();
 });
@@ -87,6 +66,9 @@ const client = createClient(
   { tables: { rows: {} }, files: { assets: {} }, uses: {} },
   { shared: {}, connections: {} }
 );
+client.route.subscribe((path) => {
+  document.querySelector("#route")!.textContent = path;
+});
 void client.me().then(
   (me) => {
     harness.ready = true;
@@ -97,12 +79,10 @@ void client.me().then(
   }
 );
 document.querySelector("#route-next")!.addEventListener("click", async () => {
-  await harness.call("route.set", { path: "/items/3" });
-  harness.route = "/items/3";
-  document.querySelector("#route")!.textContent = harness.route;
+  await client.route.set("/items/3");
 });
 document.querySelector("#download")!.addEventListener("click", () => {
-  void harness.call("download", { store: "assets", name: "active.html" });
+  void client.files.assets!.download("active.html");
 });
 
 const copy = Object.assign(document.createElement("button"), {

@@ -23,7 +23,6 @@ import { renderHome, renderNotFound } from "./render.js";
 import { renderPatchWrapper, renderShellNotice, isShellNotice, brokerScript } from "./shell.js";
 import {
   NO_REFERRER_POLICY,
-  SCRIPTED_SHELL_SECURITY_POLICY,
   PATCH_CONTENT_SECURITY_POLICY,
   PATCH_ROBOTS_TAG,
   PUBLIC_PATCH_CACHE_CONTROL,
@@ -44,7 +43,6 @@ export const notFound = HttpServerResponse.html(renderNotFound()).pipe(
  */
 const patchUrlHeaders = {
   "x-robots-tag": PATCH_ROBOTS_TAG,
-  "content-security-policy": SCRIPTED_SHELL_SECURITY_POLICY,
   "referrer-policy": NO_REFERRER_POLICY,
   "cache-control": PRIVATE_PATCH_CACHE_CONTROL
 };
@@ -154,7 +152,7 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (kind: "address" | "c
     })
   );
 
-  const response = HttpServerResponse.html(
+  const response = HttpServerResponse.text(
     kind === "content"
       ? html
       : renderPatchWrapper({
@@ -168,7 +166,8 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (kind: "address" | "c
                 route: selection.route
               }
             : {})
-        })
+        }),
+    { contentType: kind === "content" ? "text/html; charset=utf-8" : "text/html" }
   ).pipe(
     HttpServerResponse.setHeaders({
       ...patchUrlHeaders,

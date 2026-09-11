@@ -7,7 +7,7 @@ import {
 } from "./clientTransport.js";
 import { PatchyError } from "./clientError.js";
 export * from "./clientError.js";
-export type { Call, Me, Operation, Transport } from "./clientTransport.js";
+export type { Call, Me, Operation, Route, Transport } from "./clientTransport.js";
 
 export interface Page<R> {
   readonly rows: readonly R[];
@@ -87,6 +87,7 @@ export interface FileStore {
     options: { readonly contentType: string }
   ): Promise<null>;
   get(name: string): Promise<Uint8Array>;
+  download(name: string): Promise<null>;
   list(options?: FileListOptions): Promise<FilePage>;
   delete(name: string): Promise<null>;
   url(name: string): Promise<string>;
@@ -108,6 +109,7 @@ export interface Client<
   readonly files: { readonly [N in keyof C["files"]]: FileStore };
   readonly shared: FactoryResults<S>;
   readonly connections: FactoryResults<P>;
+  readonly route: Transport["route"];
   me(): Promise<Me | null>;
   close(): void;
 }
@@ -190,6 +192,7 @@ export function createClient<
           return null;
         },
         get: async (name) => (await get(name)).bytes,
+        download: (name) => call("download", { store, name }) as Promise<null>,
         list: (args = {}) => call("files.list", { ...args, store }) as Promise<FilePage>,
         delete: async (name) => {
           await call("files.delete", { store, name });
@@ -240,6 +243,7 @@ export function createClient<
     files,
     shared: instantiate(options.shared, "sharedTable"),
     connections: instantiate(options.connections, "postgres"),
+    route: transport.route,
     me: () => (identity ??= call("me", {}) as Promise<Me | null>),
     close: () => {
       if (closed) return;

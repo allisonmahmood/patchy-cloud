@@ -16,12 +16,18 @@ The content response's CSP is `sandbox allow-scripts allow-modals; default-src '
 The shell installs its load handler before navigating the frame. It transfers one MessageChannel to that document, with the URL nonce echoed in `ready { wire, nonce }`. A second load closes the port. Replies use the port, never the frame's WindowProxy, so a replacement document inherits neither pending replies nor authority. Bootstrap is bounded. There is no retry of an operation whose result was lost.
 
 The envelope is `{ v, id, op, args, bytes? }`; replies are `{ v, id, kind: "result" | "error", value | error, bytes? }`. The bundle declares the wire, not a separate transport version. Own-property dispatch and the API operation schemas validate requests before forwarding; the server independently admits them. The broker binds ids and principal, sends the two `X-Patchy-*` headers and same-origin credentials, and carries files over bytes routes with ArrayBuffer transfers. Per-operation limits, 32 outstanding requests and 64 MiB held bytes bound a frame's work.
+Owned upload buffers transfer through the shipped `patchy/client` transport and
+detach; subviews copy only their selected bytes. Request byte defaults and
+operation classification are shared API definitions, also used by Runtime.
 
 The first runtime call is `me` with a null principal; its user id is pinned for later calls. Public `me` is null and public company-data operations fail even for signed-in readers. A changed or expired session stops the patch and asks for sign-in followed by a whole-page reload. Access loss is a first-party notice without a reload offer; validation errors belong to patch code. Already-admitted work retains its original attribution; a missing reply remains an unknown outcome.
+Only `access_denied`, `session_expired` and `principal_changed` are access-class
+stopping notices. `not_available_on_public` is an ordinary patch-visible refusal,
+and public patches retain their browser-owned route bridge.
 
 ## Browser-owned behavior and compatibility
 
-The route bridge keeps history in the shell, refuses Patchy-reserved segments, and notifies the document on back/forward. File images use frame-local blob URLs. Downloads are owned by the shell. Popups, external links, direct fetches, client storage, workers and device access are not patch capabilities. Printing remains available through `allow-modals`.
+The route bridge keeps history in the shell, refuses Patchy-reserved segments, and notifies the document on back/forward. The shipped client exposes route get/set/subscribe and file download. File images use frame-local blob URLs with their stored media types; shell-owned downloads always use `application/octet-stream` so uploaded active content never becomes a same-origin document. Popups, external links, direct fetches, client storage, workers and device access are not patch capabilities. Printing remains available through `allow-modals`.
 
 The scripted frame delegates `clipboard-write *` because its origin is opaque,
 without delegating clipboard read. Copying is user-triggered and has a visible

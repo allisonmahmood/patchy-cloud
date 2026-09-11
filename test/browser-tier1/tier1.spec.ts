@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import type { FixtureWindow } from "./fixture-client.js";
-import { test, expect, open, call, fire, notice } from "./fixtures.js";
+import { test, expect, open, notice } from "./fixtures.js";
 import { printFirefoxFrame } from "./firefox-print.js";
 import { printChromiumFrame } from "./chromium-print.js";
 
@@ -24,9 +24,7 @@ test("route bridge, real client file URL, shell download, isolation and 2,000-ro
   expect(
     await frame.evaluate(async () => {
       try {
-        await (window as unknown as FixtureWindow).harness.call("route.set", {
-          path: "/~content/escape"
-        });
+        await (window as unknown as FixtureWindow).harness.client.route.set("/~content/escape");
         return "accepted";
       } catch (error) {
         return error && typeof error === "object" && "code" in error ? error.code : "unexpected";
@@ -34,11 +32,17 @@ test("route bridge, real client file URL, shell download, isolation and 2,000-ro
     })
   ).toBe("invalid_request");
   expect(page.url()).toBe(`${patch.address}/items/3?filter=active`);
-  const row = (await call(frame, "tables.insert", {
-    table: "rows",
-    row: { label: "written through the real runtime" }
-  })) as { id: string; label: string };
-  expect(await call(frame, "tables.get", { table: "rows", id: row.id })).toMatchObject({
+  const row = await frame.evaluate(() =>
+    (window as unknown as FixtureWindow).harness.client.tables.rows!.insert({
+      label: "written through the real runtime"
+    })
+  );
+  expect(
+    await frame.evaluate(
+      (id) => (window as unknown as FixtureWindow).harness.client.tables.rows!.get(id),
+      row.id
+    )
+  ).toMatchObject({
     id: row.id,
     label: row.label
   });
@@ -47,6 +51,14 @@ test("route bridge, real client file URL, shell download, isolation and 2,000-ro
     [patch.patchId]
   );
   expect(logged.rows).toEqual([{ user_id: "usr_dev", outcome: "success" }]);
+
+  const transferred = await frame.evaluate(async () => {
+    const files = (window as unknown as FixtureWindow).harness.client.files.assets!;
+    const bytes = new Uint8Array([0, 10, 20, 255]);
+    await files.put("transferred.bin", bytes, { contentType: "application/octet-stream" });
+    return { remaining: bytes.byteLength, stored: Array.from(await files.get("transferred.bin")) };
+  });
+  expect(transferred).toEqual({ remaining: 0, stored: [0, 10, 20, 255] });
 
   await frame.evaluate(() => (window as unknown as FixtureWindow).harness.image());
   expect(
@@ -60,6 +72,25 @@ test("route bridge, real client file URL, shell download, isolation and 2,000-ro
   const file = await download;
   expect(file.suggestedFilename()).toBe("active.html");
   expect(await readFile((await file.path())!, "utf8")).toContain("<p>download bytes</p>");
+
+  // Simulate a UA ignoring the download hint: active uploaded HTML must still download,
+  // never become a same-origin shell document.
+  await page.evaluate(() =>
+    document.addEventListener(
+      "click",
+      (event) => {
+        if (event.target instanceof HTMLAnchorElement && event.target.href.startsWith("blob:"))
+          event.target.removeAttribute("download");
+      },
+      { capture: true, once: true }
+    )
+  );
+  const forcedDownload = page.waitForEvent("download");
+  await frame.getByRole("button", { name: "Download file" }).click();
+  expect(await readFile((await (await forcedDownload).path())!, "utf8")).toContain(
+    "<p>download bytes</p>"
+  );
+  expect(page.url()).toBe(`${patch.address}/items/3?filter=active`);
 
   await frame.getByRole("button", { name: "Copy text" }).click();
   await expect(frame.locator("#copy-status")).toHaveText("Copied");
@@ -153,10 +184,12 @@ test("hostile navigation, pending real reads/writes, malformed, oversized and du
     await company.query(`LOCK TABLE ${table} IN ACCESS EXCLUSIVE MODE`);
     const marker = `pending-${op}`;
     const before = instance.runtimeRequests.length;
-    await fire(
-      frame,
-      op,
-      op === "tables.list" ? { table: "rows" } : { table: "rows", row: { label: marker } }
+    await frame.evaluate(
+      ({ op, marker }) => {
+        const rows = (window as unknown as FixtureWindow).harness.client.tables.rows!;
+        void (op === "tables.list" ? rows.list() : rows.insert({ label: marker })).catch(() => {});
+      },
+      { op, marker }
     );
     await expect
       .poll(async () => {
@@ -384,7 +417,7 @@ test("hostile navigation, pending real reads/writes, malformed, oversized and du
   ).toBeLessThanOrEqual(1);
 });
 
-test("real sessions: login door, logout, expiry, account switch, revocation and public notices", async ({
+test("real sessions: login door, logout, expiry, account switch, revocation and public errors", async ({
   page,
   context,
   instance
@@ -400,13 +433,24 @@ test("real sessions: login door, logout, expiry, account switch, revocation and 
     await instance.session(context);
     const frame = await open(page, patch, "/items/2?return=this");
     await instance.session(context, user);
-    await fire(frame, "tables.list", { table: "rows" });
+    await frame.evaluate(() => {
+      void (window as unknown as FixtureWindow).harness.client.tables.rows!.list().catch(() => {});
+    });
     await notice(page, user === "colleague" ? "principal_changed" : "session_expired");
     const login = page.getByRole("link", { name: "Sign in", exact: true });
     const target = new URL((await login.getAttribute("href"))!, instance.origin);
     expect(target.pathname).toBe("/login");
     expect(new URL(target.searchParams.get("return")!, instance.origin).href).toBe(
       `${patch.address}/items/2?return=this`
+    );
+    // Complete the real return/enrollment hop with a newly issued offline session.
+    await instance.session(context, user === "colleague" ? "colleague" : "owner");
+    await page.goto(
+      `${instance.origin}/join?return=${encodeURIComponent(target.searchParams.get("return")!)}`
+    );
+    await expect(page).toHaveURL(`${patch.address}/items/2?return=this`);
+    await expect(page.frameLocator("#patch").locator("#identity")).toHaveText(
+      user === "colleague" ? "usr_colleague" : "usr_dev"
     );
   }
   await instance.session(context);
@@ -421,20 +465,73 @@ test("real sessions: login door, logout, expiry, account switch, revocation and 
   });
   await instance.platform.query("UPDATE users SET deactivated_at=now() WHERE id='usr_dev'");
   try {
-    await fire(frame, "tables.list", { table: "rows" });
+    await frame.evaluate(() => {
+      void (window as unknown as FixtureWindow).harness.client.tables.rows!.list().catch(() => {});
+    });
     await notice(page, "access_denied");
     await expect(page.getByRole("link", { name: /reload|sign in/i })).toHaveCount(0);
+
+    const door = await page.goto(patch.address);
+    expect(door?.status()).toBe(403);
+    const policy = door!.headers()["content-security-policy"]!;
+    expect(policy).toContain("form-action 'self'");
+    expect(policy).toContain("https://clerk.patchy.invalid");
+    expect(policy).toContain("frame-ancestors 'none'");
+    expect(door!.headers()["referrer-policy"]).toBe("same-origin");
+    let signOut: { method: string; origin: string | undefined } | undefined;
+    // Stop before the external provider: prove the real browser can submit the Auth form.
+    // AuthPages.socket.test covers the handler's revocation/303/cookie-clearing contract offline.
+    await context.route("**/logout", async (route) => {
+      signOut = { method: route.request().method(), origin: route.request().headers()["origin"] };
+      await route.abort();
+    });
+    try {
+      await page
+        .getByRole("button", { name: "Sign out", exact: true })
+        .click({ noWaitAfter: true });
+      await expect.poll(() => signOut).toEqual({ method: "POST", origin: instance.origin });
+    } finally {
+      await context.unroute("**/logout");
+    }
   } finally {
     await instance.platform.query("UPDATE users SET deactivated_at=NULL WHERE id='usr_dev'");
   }
   const publicPatch = await instance.publish("public");
-  await instance.session(context, "none");
-  const anonymous = await open(page, publicPatch);
-  await expect(anonymous.locator("#identity")).toHaveText("anonymous");
-  expect(await call(anonymous, "me")).toBeNull();
-  await fire(anonymous, "tables.list", { table: "rows" });
-  await notice(page, "not_available_on_public");
-  await expect(page.getByRole("link", { name: /reload|sign in/i })).toHaveCount(0);
+  for (const user of ["none", "owner"] as const) {
+    await instance.session(context, user);
+    const anonymous = await open(page, publicPatch, "/items/2?filter=public");
+    await expect(anonymous.locator("#identity")).toHaveText("anonymous");
+    expect(
+      await anonymous.evaluate(() => (window as unknown as FixtureWindow).harness.client.me())
+    ).toBeNull();
+    expect(
+      await anonymous.evaluate(() =>
+        (window as unknown as FixtureWindow).harness.client.route.get()
+      )
+    ).toBe("/items/2");
+    await anonymous.getByRole("button", { name: "Next route" }).click();
+    await expect(page).toHaveURL(`${publicPatch.address}/items/3?filter=public`);
+    await page.goBack();
+    await expect(anonymous.locator("#route")).toHaveText("/items/2");
+    await page.goForward();
+    await expect(anonymous.locator("#route")).toHaveText("/items/3");
+    expect(
+      await anonymous.evaluate(async () => {
+        try {
+          await (window as unknown as FixtureWindow).harness.client.tables.rows!.list();
+          return "accepted";
+        } catch (error) {
+          return error && typeof error === "object" && "code" in error ? error.code : "unexpected";
+        }
+      })
+    ).toBe("not_available_on_public");
+    await expect(page).toHaveURL(`${publicPatch.address}/items/3?filter=public`);
+    await expect(anonymous.locator("#identity")).toHaveText("anonymous");
+    await anonymous.evaluate(() =>
+      (window as unknown as FixtureWindow).harness.client.route.set("/still-open")
+    );
+    await expect(page).toHaveURL(`${publicPatch.address}/still-open?filter=public`);
+  }
 });
 
 test("cross-site simple POST refusal, response CSP and one terminal stale public refresh", async ({
@@ -466,8 +563,28 @@ test("cross-site simple POST refusal, response CSP and one terminal stale public
   const htmlResponse = await context.request.get(instance.origin + content!);
   expect(htmlResponse.headers()["content-security-policy"]).toContain("connect-src 'none'");
   expect(htmlResponse.headers()["permissions-policy"]).toContain("camera=()");
+  expect(htmlResponse.headers()["content-type"]).toBe("text/html; charset=utf-8");
   const shellResponse = await context.request.get(patch.address);
   expect(shellResponse.headers()["content-security-policy"]).toContain("frame-src 'self'");
+  expect(shellResponse.headers()["content-security-policy"]).toContain("frame-ancestors 'none'");
+
+  const unicodeTitle = "Olá — 東京";
+  const unicode = await instance.publish(
+    "public",
+    instance.html.replace("<h1>Tier one acceptance</h1>", `<h1>${unicodeTitle}</h1>`)
+  );
+  const unicodeFrame = await open(page, unicode);
+  await expect(unicodeFrame.locator("h1")).toHaveText(unicodeTitle);
+  for (const parent of [`${instance.origin}/~tier1/embed`, `${instance.foreignOrigin}/embed`]) {
+    // A CSP-denied frame may expose only a failed navigation, not a response event.
+    const framed = page.waitForEvent(
+      "requestfailed",
+      (request) => request.url() === unicode.address
+    );
+    await page.goto(`${parent}?target=${encodeURIComponent(unicode.address)}`);
+    await framed;
+    expect(page.frames().map((child) => child.url())).not.toContain(unicode.address);
+  }
   await instance.session(context, "none");
   const denied = await context.request.get(instance.origin + content!);
   expect(denied.status()).toBe(401);

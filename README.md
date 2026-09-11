@@ -48,8 +48,8 @@ To start a patch repo, run `pnpm patchy init ./team-tool --purpose "Track our te
 Initialization installs the pinned package and generates the client, context and project skills.
 Inside that repo use `pnpm patchy catalog`, `add`, `remove` and `refresh`; see the
 [project commands](packages/patchy/README.md#patch-repo-commands) for their contracts.
-The repo is ready to typecheck. The local `patchy dev` runtime, browser broker and
-repo publishing are separate work, not enabled by initialization.
+The repo is ready to typecheck, and hosted tier 1 patches use the sandboxed browser broker.
+The local `patchy dev` runtime and repo publishing are separate work, not enabled by initialization.
 
 ## Repository layout
 

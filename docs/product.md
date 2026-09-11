@@ -151,6 +151,8 @@ channel. The sandbox permits scripts and printing, not outbound fetches, popups,
 external links, top navigation, client storage, workers, or device access.
 Clipboard write is delegated, not clipboard read; copying must be user-triggered
 and show a visible failure when the browser refuses it.
+Public company-data refusals remain errors for patch code to display, not stopping
+notices; public patches can still change routes and use back/forward.
 Routes and downloads belong to the shell; own-file images use frame-local blob
 URLs. Access loss is a first-party notice the patch cannot hide. Session expiry
 or account changes stop the patch and require a whole-page reload after sign-in;
@@ -437,7 +439,7 @@ and the viewer's current company access. Raw GET requires same-origin fetch
 metadata; PUT requires the exact Origin; both require wire and principal
 headers. HTML and SVG stay bytes, never a navigable page. File mutations log
 the store and name, not their body; reads are not logged. Frame-local blob URLs
-and ArrayBuffer transfer arrive with the browser broker.
+and ownership-transferring ArrayBuffers are available through the browser broker.
 
 ## Integrations
 

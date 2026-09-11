@@ -12,6 +12,7 @@ import type { BrowserContext } from "@playwright/test";
 import { clerkEnv, signedInCookies, signSession } from "../../packages/auth/src/testing.js";
 import { WIRE_VERSION } from "../../packages/patchy/src/release.js";
 import { PG_FLAGS, PG_PASSWORD, PG_USER } from "../../scripts/dev/src/postgres.js";
+import { escapeAttribute } from "../../packages/core/src/html.js";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const seed = { companyId: "cmp_dev", userId: "usr_dev", token: "patchy-dev-token" };
@@ -45,6 +46,8 @@ export interface Instance {
   company(): Promise<Client>;
   close(): Promise<void>;
 }
+const embeddingPage = (url: string) =>
+  `<!doctype html><h1>Embedding probe</h1><iframe id="embedded" src="${escapeAttribute(new URL(url, "http://localhost").searchParams.get("target") ?? "")}"></iframe>`;
 async function listen(server: Server): Promise<number> {
   const ready = Promise.withResolvers<void>();
   server.once("error", ready.reject);
@@ -129,6 +132,11 @@ export async function startInstance(): Promise<Instance> {
     const foreignRequests: string[] = [];
     foreign = createServer((request, response) => {
       foreignRequests.push(request.url ?? "/");
+      if (request.url?.startsWith("/embed?")) {
+        response.writeHead(200, { "content-type": "text/html" });
+        response.end(embeddingPage(request.url));
+        return;
+      }
       if (request.url === "/204") {
         response.writeHead(204).end();
         return;
@@ -142,6 +150,11 @@ export async function startInstance(): Promise<Instance> {
     });
     const foreignOrigin = `http://localhost:${await listen(foreign)}`;
     proxy = createServer((request, response) => {
+      if (request.url?.startsWith("/~tier1/embed?")) {
+        response.writeHead(200, { "content-type": "text/html", "cache-control": "no-store" });
+        response.end(embeddingPage(request.url));
+        return;
+      }
       if (request.url?.startsWith("/~tier1/")) {
         const headers = {
           "content-security-policy":

@@ -270,16 +270,18 @@ the user to open the link or supply the content.
 
 Tier 1 pages run inside the sandboxed frame. Use the browser to read and interact
 with that frame, not the outer shell's HTML or the internal content URL. Deep
-links and back/forward use the route bridge. Own-file images use blob URLs and
-downloads come from the shell. The patch has no outbound fetch, popups,
+links and back/forward use `client.route.get()`, `set(path)` and `subscribe(listener)`,
+including on public patches. Own-file images use blob URLs and downloads use
+`client.files.<store>.download(name)`. The patch has no outbound fetch, popups,
 `target=_blank`, top navigation, in-frame downloads, localStorage, IndexedDB,
 cookies, workers, camera, microphone, geolocation or external links. Clipboard
 writes must be user-triggered and show a visible failure when unavailable.
 Async clipboard permission can still be denied for an opaque frame. A user-triggered
 `copy` event via `document.execCommand("copy")` is a compatibility fallback; if both
 paths fail, show selectable text and a visible error rather than claiming success.
-A public tier 1 patch renders signed out, but `me` is null and company-data
-operations show `not_available_on_public`, even for a signed-in reader.
+A public tier 1 patch renders signed out: `me` is null, and company-data operations
+reject with `not_available_on_public`, even for a signed-in reader. Patch code handles
+that error; it does not replace the page or disable local routing.
 
 Runtime notices belong to Patchy, not the uploaded document. `session_expired`
 and `principal_changed` require the notice's Sign in link and a whole-page reload;

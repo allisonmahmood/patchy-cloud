@@ -38,20 +38,6 @@ export async function open(page: Page, patch: Published, suffix = ""): Promise<F
   expect(await frame.evaluate(() => (window as unknown as FixtureWindow).harness.ready)).toBe(true);
   return frame;
 }
-export async function call(frame: Frame, op: string, args: unknown = {}) {
-  return frame.evaluate(
-    ({ op, args }) => (window as unknown as FixtureWindow).harness.call(op, args),
-    { op, args }
-  );
-}
-export async function fire(frame: Frame, op: string, args: unknown = {}) {
-  await frame.evaluate(
-    ({ op, args }) => {
-      void (window as unknown as FixtureWindow).harness.call(op, args).catch(() => {});
-    },
-    { op, args }
-  );
-}
 export async function notice(page: Page, code: string) {
   await expect(page).toHaveURL(new RegExp(`/~shell/notice/${code}\\?`));
   await expect(page.locator("iframe")).toHaveCount(0);

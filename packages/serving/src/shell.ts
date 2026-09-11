@@ -78,13 +78,6 @@ const notices = {
       "Patchy stopped this patch because it uses something you can no longer access. This is an access change, not a problem with the patch.",
     signIn: false
   },
-  not_available_on_public: {
-    kicker: "Public link",
-    title: "Company data is unavailable here",
-    message:
-      "This is the public link to the patch. A public patch cannot use company tables, files or connections, even when you are signed in.",
-    signIn: false
-  },
   shell_outdated: {
     kicker: "Patch stopped",
     title: "This patch could not start",
