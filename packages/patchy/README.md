@@ -374,21 +374,23 @@ Without a file, run from the patch repo root. The config supplies its name and
 tier; `patchy.json` supplies its instance and optional patch id. `--share` works
 in either mode; `--name`, `--patch` and `--new` are file-only.
 
-Repo publish first recovers `.patchy/publish/<instance-hash>/attempt.json`.
+Repo publish first recovers `.patchy/publish/<instance-hash>/attempt/<key-hash>.json`.
 Otherwise it checks the exact pin, executing CLI and installed runtime against
-the instance release; executes config; compares declaration identities and stamps
-with `patchy/_generated/index.json`; runs `tsc --noEmit`; builds with Vite; and
-checks the evident tier. Changed declarations fail locally with `stale_generated`
-and “declarations changed; run `patchy refresh`”, before the build. Leftover
+the instance release; executes config; checks the generated release, manifest version
+and declaration stamps in `patchy/_generated/index.json`; runs `tsc --noEmit`; builds
+with Vite; and checks the evident tier. Stale generation fails locally with
+`stale_generated` and “declarations changed; run `patchy refresh`”, before the build. Leftover
 files or external bundle dependencies fail loudly. Above 10 MiB the failure
 reports the largest contributors. `server/` requires unsupported tier 2; scripts
 require at least tier 1. A failed repo build never falls back to a static file.
 
-The complete request and owner are persisted with exclusive `wx` before sending.
-On a create, the returned patch id is written into `patchy.json` before clearing
-the saved attempt. A lost response or failed id write recovers the original
-create, even if the tree or release changed. Preserve `.patchy/publish/` until
-recovery succeeds; replacement credentials must belong to the original user.
+The complete request and owner are persisted in an atomically selected attempt
+directory before sending. Creates and updates apply the resolved instance and
+returned patch id to `patchy.json` before clearing; a conflicting existing identity
+retains the attempt. A moved repo recovers at its current root, even if its tree
+or release changed. Preserve `.patchy/publish/` until recovery succeeds; replacement
+credentials must belong to the original user. A decoded 413 clears the refused
+payload so a corrected request can be built.
 Each successful invocation publishes or recovers exactly one version.
 
 ```sh
@@ -546,7 +548,7 @@ The CLI stores state under `~/.patchy` (or `PATCHY_STATE_DIR`):
 - `config.json` — the saved API base URL.
 - `credentials.json` — saved machine tokens, keyed by instance, with `source: "login"` or `"auth-set"`. A login entry also carries `machine: { id, name }`. On Unix, every save creates or repairs this file to owner-only (`0600`) permissions.
 - `device-login.json` — one pending login per instance: private device code, user code, both verification URLs, polling interval and expiry. Owner-only (`0600`); cleared for that instance on completion or logout.
-- `publish/<instance-hash>/attempt.json` — the pending publish request, original owner ID and file/cache context for that instance, with no machine credential. The hash is SHA-256 of the resolved API URL. Schema-encoded before exclusive creation (`wx`), owner-only (`0600`) under private directories (`0700`), and persisted before sending. If it already exists, the CLI reads and resends that attempt instead of overwriting it. Cleared only for the matching publish key after applying success to the cache or settling a definitive payload refusal.
+- `publish/<instance-hash>/attempt/<key-hash>.json` — the pending publish request, original owner ID and application target, without a machine credential. Both hashes are SHA-256: the resolved API URL and publish key respectively. The owner-only payload (`0600`) is written with `wx` in a private directory (`0700`), then the complete directory atomically claims the attempt slot. An occupied slot is read and replayed, never overwritten. Settlement unlinks only that key's file and removes only an empty slot, so a stale response cannot clear a newer attempt. Repo mode uses the same layout under the repo's `.patchy/` without needing the global state directory.
 - `patches.json` — the patch cache, keyed by instance and then by absolute file path, so later publishes from the same path update the same patch and `share` or `delete` can find it from the path. A successful `delete` drops every entry that pointed at the patch.
 - `style.md` — the default style, owned and written by the agent skill. The CLI never reads its contents; `status` reports only whether it exists.
 

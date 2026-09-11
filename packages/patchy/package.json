@@ -61,6 +61,8 @@
     "@patchy/api": "workspace:*",
     "@patchy/auth": "workspace:*",
     "@patchy/core": "workspace:*",
+    "@types/css-tree": "^3.2.0",
+    "css-tree": "^3.2.1",
     "effect": "catalog:",
     "parse5": "catalog:",
     "typescript": "^6.0.3",

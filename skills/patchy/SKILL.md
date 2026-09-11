@@ -204,13 +204,17 @@ browser sign-out is a separate control on **Your machines**.
   repo publish keeps it under `.patchy/publish/`. Rerun `publish`
   with the same instance, state and owning user: it authenticates that user before
   resending the saved content, then applies the original result without another version.
+  After moving a repo with its `.patchy/`, recover from its new root. Creates and
+  updates restore the resolved instance/patch pair; a conflicting saved pair must
+  be corrected before recovery can clear.
   A replacement token for the same user works; another account is refused locally.
   Authentication, rate-limit and quota failures retain the attempt. Preserve the state
-  directory until recovery succeeds, including after a killed process. Exclusive
-  creation of `attempt.json` selects the attempt; concurrent publishes resend the
-  existing one after checking its original owner, even if they lose the creation race.
-  Success or a definitive payload refusal clears only the matching publish key,
-  so a stale response leaves a newer attempt intact.
+  directory until recovery succeeds, including after a killed process. Atomic
+  selection of the nonempty `attempt/` directory chooses one complete request;
+  concurrent publishes resend it after checking its original owner.
+  Success or a definitive payload refusal unlinks only that publish key's file,
+  so a stale response leaves a newer attempt intact. A decoded publish-route 413
+  is definitive: reduce the payload and publish a corrected request.
   `patch_not_openable` is definitive (exit 2): correct the shared-table declaration
   or restore source access before publishing a fresh attempt.
   `connection_not_connected` and `stale_generated` are also definitive (exit 2).

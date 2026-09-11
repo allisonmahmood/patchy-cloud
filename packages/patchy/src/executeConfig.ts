@@ -79,6 +79,8 @@ const configSchema = Schema.Struct({
   )
 });
 const generatedIndexSchema = Schema.Struct({
+  release: Schema.Literal(RELEASE),
+  manifestVersion: Schema.Literal(MANIFEST_VERSION),
   uses: Schema.Array(
     Schema.Struct({
       alias: Schema.String,

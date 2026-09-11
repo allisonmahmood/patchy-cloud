@@ -61,7 +61,7 @@ The per-instance record linking a local file to the patch it produced, so republ
 _Avoid_: upload history, manifest
 
 **Pending publish**:
-A complete publish attempt whose outcome or local application is not yet settled, shared by concurrent invocations for one instance and owning user. Its original publish key, content and file or repo identity remain the recovery target, and only credentials for that same owner may resend it. A create is settled locally only once its returned patch identity has been recorded.
+A complete publish attempt whose outcome or local application is not yet settled, shared by concurrent invocations for one instance and owning user. Its original publish key, content and patch identity remain the recovery target, and only credentials for that same owner may resend it. Moving a repo does not change that target. A publish is settled locally only once its returned instance and patch identity have been recorded.
 _Avoid_: queued publish, upload history
 
 **Publish key**:

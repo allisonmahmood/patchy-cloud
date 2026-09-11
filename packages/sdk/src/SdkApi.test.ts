@@ -159,7 +159,14 @@ export default defineConfig({ name: "packed-config", tier: 0, tables: {
           mkdir(path.join(dir, "patchy/_generated"), { recursive: true })
         );
         yield* Effect.promise(() =>
-          writeFile(path.join(dir, "patchy/_generated/index.json"), '{"uses":[]}')
+          writeFile(
+            path.join(dir, "patchy/_generated/index.json"),
+            JSON.stringify({
+              release: release.release,
+              manifestVersion: release.manifestVersion,
+              uses: []
+            })
+          )
         );
         const execution = yield* Effect.tryPromise(() =>
           exec(

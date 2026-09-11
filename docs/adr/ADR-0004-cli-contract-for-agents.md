@@ -212,8 +212,9 @@ to remove `patch` from `patchy.json` before intentionally creating another patch
 config and `patchy.json`, and file mode is never a fallback for a failed repo build.
 
 Repo publish checks the exact pin, executing CLI and installed runtime against
-the release before executing config. Declaration aliases, identities and resolved
-stamps must match `patchy/_generated/index.json`; local `stale_generated` is exit 1:
+the release before executing config. The generated index's release and manifest
+version must be current; declaration aliases, identities and resolved stamps must
+match `patchy/_generated/index.json`. Local `stale_generated` is exit 1:
 “declarations changed; run `patchy refresh`”. Then `tsc --noEmit`, Vite's single-file
 build and the evident tier check run. Residual files/dependencies, a bundle over
 10 MiB (with largest contributors), `server/`, or script under a tier 0 claim
@@ -221,11 +222,14 @@ fail locally before persistence or publishing. Compiler/build failures name the
 stage and a local diagnostic command; raw tool output stays out of the failure
 envelope and successful JSON stdout.
 
-Repo attempts live at `.patchy/publish/<instance-hash>/attempt.json`, using the
-same exclusive creation, owner check and key-checked clearing as file mode.
-A create writes its returned id into `patchy.json` before clearing the attempt.
-Failed local application keeps the original create recoverable; retry returns
-that result and exits without building or creating another version.
+Repo attempts live at `.patchy/publish/<instance-hash>/attempt/<key-hash>.json`,
+using the same atomic selection and key-addressed clearing as file mode.
+They store repo mode, not an absolute repo path: recovery applies and clears
+against the root holding the attempt, including after moving it. Both creates
+and updates record the resolved instance and returned patch id in `patchy.json`
+before clearing. An existing conflicting instance/patch pair is a local refusal
+that retains the attempt. Failed local application remains recoverable; retry
+returns that result without building or creating another version.
 
 File publishing never reads `patchy.json`. The executing CLI must match
 `GET /api/release` exactly; a mismatch names both releases and `patchy refresh`.
@@ -254,11 +258,12 @@ the filename, normalises it, falls back to `patch` when unusable, and adds `-2`,
 a 308 redirect until another patch takes the old name; deleting frees every name.
 The id or cached file, never the name, selects which patch is updated.
 
-Before a request, the CLI authenticates the publishing key and schema-encodes the complete
-attempt (publish key, request body, owner user ID and file-cache target), then exclusively
-creates `attempt.json` with `wx` under its instance-scoped state directory. An existing
-file is read, never overwritten: concurrent invocations resend that same attempt.
-The selected attempt's owner is checked even after losing exclusive creation.
+Before a request, the CLI authenticates the publishing key and schema-encodes the
+complete attempt (publish key, request body, owner user ID and application target).
+It writes `<sha256(publishKey)>.json` with `wx` in a private staging directory, then
+atomically renames the nonempty directory into the instance's `attempt/` slot.
+An occupied nonempty slot cannot be replaced: concurrent invocations read and
+resend its attempt, checking its owner even after losing the rename race.
 On the next `publish`, the CLI authenticates again and
 requires the original owner before sending any saved content. Replacement machine
 tokens for that same owner work; a different owner is a local refusal and leaves
@@ -266,10 +271,14 @@ the attempt intact. Recovery precedes reading the file, validating new options o
 checking the release. Success updates the cache, clears only the matching publish key
 and prints the recovered result; no additional version is published.
 
-A definitive payload refusal clears only the matching publish key. Authentication,
-throttling and quota refusals do not establish its outcome; they preserve the attempt,
-as do unknown outcomes and failed cache writes. Killing a process leaves the persisted
-attempt available for recovery. A stale response cannot clear a newer attempt.
+A decoded publish-route 413 and other definitive payload refusals clear only the
+matching publish key. Authentication, throttling and quota refusals do not establish
+its outcome; they preserve the attempt, as do unknown outcomes and failed local
+writes. Clearing unlinks only the key-addressed payload, then removes the slot only
+if empty. Even if another sender installs K2 while a K1 response is clearing,
+K1 cannot unlink K2's file and an empty-directory removal cannot remove K2's
+nonempty slot. No separate lock or stale-lock recovery is needed. Killing a process
+leaves any selected attempt recoverable; an unselected staging directory is never sent.
 
 The server stores the response under a publish key unique to the owning user.
 An identical retry returns that response even after the current release changes;

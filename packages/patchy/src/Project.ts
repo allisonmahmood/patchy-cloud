@@ -108,24 +108,25 @@ export const readRepo = Effect.fn("Project.readRepo")(function* (cwd: string) {
   return yield* parse("Read patchy.json", () => decodeRepo(source));
 });
 
-/** Apply a recovered create without replacing a different patch selected by the author. */
+/** Reapply a recovered instance/patch pair without replacing a different author-selected identity. */
 export const recordPublish = Effect.fn("Project.recordPublish")(function* (
   cwd: string,
-  patchId: string
+  patchId: string,
+  apiUrl: string
 ) {
   const fs = yield* FileSystem.FileSystem;
   const repo = yield* readRepo(cwd);
-  if (repo.patch === patchId) return;
+  if (repo.patch === patchId && Instance.normalizeApiUrl(repo.instance) === apiUrl) return;
   if (repo.patch !== undefined)
     return yield* new LocalError({
       message:
-        "patchy.json now names a different patch. Restore the original repo identity before recovering this publish; the attempt has been kept."
+        "patchy.json now names a different instance or patch. Restore the original repo identity before recovering this publish; the attempt has been kept."
     });
   const destination = yield* localIO("Resolve patchy.json", () => safePath(cwd, "patchy.json"));
   yield* Effect.scoped(
     Effect.gen(function* () {
       const staged = yield* fs.makeTempFileScoped({ directory: cwd, prefix: ".patchy-publish-" });
-      yield* fs.writeFileString(staged, json({ ...repo, patch: patchId }));
+      yield* fs.writeFileString(staged, json({ ...repo, instance: apiUrl, patch: patchId }));
       yield* fs.rename(staged, destination);
     })
   ).pipe(

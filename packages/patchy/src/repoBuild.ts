@@ -1,5 +1,6 @@
 import { Manifest } from "@patchy/api";
 import { validateHtml } from "@patchy/core";
+import * as CssTree from "css-tree";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -10,6 +11,7 @@ import * as Api from "./Api.js";
 import * as Instance from "./Instance.js";
 import { LocalError, ReleaseMismatch } from "./CliError.js";
 import { executeConfig, StaleGenerated } from "./executeConfig.js";
+import { safePath } from "./ManagedProject.js";
 import { checkRelease } from "./ReleaseCheck.js";
 import { RELEASE } from "./release.js";
 import { processResult } from "./processResult.js";
@@ -28,26 +30,50 @@ const isLocalError = Schema.is(LocalError);
 const maxBundleBytes = 10 * 1024 * 1024;
 
 const embedded = (value: string) => /^(?:data:|#)/i.test(value.trim());
-const decodeCss = (css: string) =>
-  css
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/\\([\da-f]{1,6}\s?|[^\r\n\f])/gi, (_, escape: string) =>
-      /^[\da-f]/i.test(escape)
-        ? String.fromCodePoint(Math.min(parseInt(escape.trim(), 16), 0x10ffff))
-        : escape
-    );
 
 /** Inspect parsed HTML, including inert templates: they can become live after a client render. */
 const inspectBundle = (html: string, tier: number) => {
   const dependencies = new Set<string>();
   const contributors: Array<{ name: string; bytes: number }> = [];
-  const css = (source: string, location: string) => {
-    const decoded = decodeCss(source);
-    if (/@import\b/i.test(decoded)) dependencies.add(`${location}: CSS @import`);
-    for (const match of decoded.matchAll(/url\(\s*(?:"([^"]*)"|'([^']*)'|([^)]*))\s*\)/gi)) {
-      if (!embedded(match[1] ?? match[2] ?? match[3] ?? ""))
-        dependencies.add(`${location}: external CSS url()`);
+  const css = (source: string, location: string, context: "stylesheet" | "declarationList") => {
+    // CSSTree preserves escaped identifiers, but only a literal url name gets URL tokenization.
+    // Normalize that token alone so quoted/unquoted embedded URLs keep their CSS semantics.
+    let normalized = "";
+    let copied = 0;
+    if (source.includes("\\")) {
+      CssTree.tokenize(source, (type, start, end) => {
+        if (type !== CssTree.tokenTypes.Function) return;
+        const name = source.slice(start, end - 1);
+        if (!name.includes("\\") || CssTree.ident.decode(name).toLowerCase() !== "url") return;
+        normalized += `${source.slice(copied, start)}url(`;
+        copied = end;
+      });
     }
+    const ast = CssTree.parse(copied ? normalized + source.slice(copied) : source, {
+      context,
+      parseCustomProperty: true,
+      onParseError(error) {
+        throw error;
+      }
+    });
+    CssTree.walk(ast, (node) => {
+      // Unparsed syntax must never conceal a resource, including in custom properties.
+      if (node.type === "Raw") dependencies.add(`${location}: unsupported CSS syntax`);
+      if (node.type === "Atrule" && CssTree.ident.decode(node.name).toLowerCase() === "import")
+        dependencies.add(`${location}: CSS @import`);
+      if (node.type === "Url" && !embedded(node.value))
+        dependencies.add(`${location}: external CSS url()`);
+      if (node.type === "Function") {
+        const name = CssTree.ident.decode(node.name).toLowerCase();
+        if (name === "image-set" || name === "-webkit-image-set") {
+          // Only direct strings are image candidates; type("image/png") is a descriptor.
+          for (const child of node.children) {
+            if (child.type === "String" && !embedded(child.value))
+              dependencies.add(`${location}: external CSS image-set()`);
+          }
+        }
+      }
+    });
   };
   const srcset = (value: string) => {
     // URL tokens may contain commas (notably data URLs); descriptors end at the next comma.
@@ -79,7 +105,7 @@ const inspectBundle = (html: string, tier: number) => {
         const name = attr.name;
         const location = `<${tag}> ${attr.prefix ? `${attr.prefix}:` : ""}${name}`;
         const value = attr.value.trim();
-        if (name === "style") css(value, location);
+        if (name === "style") css(value, location, "declarationList");
         if (name === "srcset" || name === "imagesrcset") {
           if (!srcset(value)) dependencies.add(`${location} is not embedded`);
         }
@@ -107,13 +133,13 @@ const inspectBundle = (html: string, tier: number) => {
       if (tag === "script" || tag === "style") {
         const text = node.childNodes.map((child) => ("value" in child ? child.value : "")).join("");
         contributors.push({ name: `inline <${tag}>`, bytes: Buffer.byteLength(text) });
-        if (tag === "style") css(text, "<style>");
+        if (tag === "style") css(text, "<style>", "stylesheet");
       }
       if ("content" in node) walk(node.content);
     }
     if ("childNodes" in node) for (const child of node.childNodes) walk(child);
   };
-  walk(parse5.parse(html));
+  walk(parse5.parse(html, { scriptingEnabled: tier > 0 }));
   contributors.push({
     name: "HTML markup and text",
     bytes: Math.max(
@@ -199,20 +225,20 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
       })
   });
   // Definitions can change without generation; only index.json owns declaration stamps.
-  yield* fs
-    .writeFileString(
-      path.join(cwd, "patchy/_generated/manifest.json"),
-      `${encodeManifest(manifest)}\n`
+  const destination = yield* Effect.tryPromise({
+    try: () => safePath(cwd, "patchy/_generated/manifest.json"),
+    catch: (cause) =>
+      new LocalError({ message: "Could not resolve the managed manifest path.", cause })
+  });
+  yield* fs.writeFileString(destination, `${encodeManifest(manifest)}\n`).pipe(
+    Effect.mapError(
+      (cause) =>
+        new LocalError({
+          message: "Could not update patchy/_generated/manifest.json for the current config.",
+          cause
+        })
     )
-    .pipe(
-      Effect.mapError(
-        (cause) =>
-          new LocalError({
-            message: "Could not update patchy/_generated/manifest.json for the current config.",
-            cause
-          })
-      )
-    );
+  );
   const typecheck = yield* processResult(cwd, process.execPath, [
     path.join(cwd, "node_modules/typescript/bin/tsc"),
     "--noEmit"
@@ -261,7 +287,15 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
           })
     )
   );
-  const inspection = inspectBundle(html, manifest.tier);
+  const inspection = yield* Effect.try({
+    try: () => inspectBundle(html, manifest.tier),
+    catch: (cause) =>
+      new LocalError({
+        message:
+          "Could not inspect the HTML bundle. Use valid, supported CSS with embedded resources.",
+        cause
+      })
+  });
   if (inspection.dependencies.length)
     return yield* new LocalError({
       message: `The HTML bundle is not self-contained or uses unsupported external dependencies:\n- ${inspection.dependencies.join("\n- ")}\nInline resources in the HTML; use Patchy integrations instead of external dependencies.`
@@ -274,9 +308,10 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
     });
   const server = yield* fs.stat(path.join(cwd, "server")).pipe(
     Effect.map((info) => info.type === "Directory"),
-    Effect.catchTag("PlatformError", (cause) =>
-      cause.reason._tag === "NotFound" ? Effect.succeed(false) : Effect.fail(cause)
-    ),
+    Effect.catchTags({
+      PlatformError: (cause) =>
+        cause.reason._tag === "NotFound" ? Effect.succeed(false) : Effect.fail(cause)
+    }),
     Effect.mapError(
       (cause) =>
         new LocalError({ message: "Could not inspect server/ for the evident tier.", cause })
