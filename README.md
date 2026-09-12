@@ -18,7 +18,7 @@ This repository is a full-history copy of [PatchPage](https://github.com/allison
 
 ## Try it
 
-Use Node 22.18+ and the pnpm version in `package.json`. Before starting, load your **Clerk development keys** into the developer-owned `dev.env` as described in [Development: Clerk keys](docs/DEVELOPMENT.md#clerk-keys); shell exports alone do not configure the dev server.
+Use Node 22.22.0+ and the pnpm version in `package.json`. Before starting, load your **Clerk development keys** into the developer-owned `dev.env` as described in [Development: Clerk keys](docs/DEVELOPMENT.md#clerk-keys); shell exports alone do not configure the dev server.
 
 ```sh
 pnpm install
