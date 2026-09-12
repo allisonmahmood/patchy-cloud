@@ -1764,7 +1764,7 @@ describe("patchy publish", async () => {
       hasToken: true,
       tokenSource: null
     });
-  });
+  }, 30_000); // Six real CLI processes exercise the complete credential-precedence sequence.
 
   it("checks identity before release and HTML, and does not retry a refused key", async () => {
     const instance = await stubInstance((request, respond) =>
