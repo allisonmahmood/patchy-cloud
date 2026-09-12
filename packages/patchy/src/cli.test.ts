@@ -2746,7 +2746,7 @@ describe("repo publish recovery", () => {
     expect(refused).toMatchObject({ status: 1, stdout: "" });
     expect(JSON.parse(refused.stderr)).toMatchObject({ code: "tier_mismatch" });
     expect(instance.requests.filter((request) => request.url === "/api/publish")).toHaveLength(1);
-  });
+  }, 10_000); // Includes a refresh and two real TypeScript/Vite builds.
 
   it.each([
     ["patchy.config.ts", 'throw new Error("private-diagnostic-marker");'],
@@ -2872,7 +2872,8 @@ describe("repo publish recovery", () => {
       if (decoded) expect(requests[1]!.body).not.toEqual(requests[0]!.body);
       else expect(requests[1]!.body).toEqual(requests[0]!.body);
       expect(existsSync(attemptPath)).toBe(false);
-    }
+    },
+    10_000 // A definitive refusal requires a second full build; an unknown reply replays.
   );
 
   it("recovers a moved create across owner refusal, failed identity write and release change", async () => {
