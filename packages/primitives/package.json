@@ -4,7 +4,7 @@
   "private": true,
   "license": "UNLICENSED",
   "type": "module",
-  "description": "Additive company tables and their runtime operations.",
+  "description": "Additive company tables, file stores and their runtime operations.",
   "exports": {
     ".": {
       "development": "./src/index.ts",
@@ -23,12 +23,17 @@
   "dependencies": {
     "@patchy/api": "workspace:*",
     "@patchy/company-database": "workspace:*",
+    "@patchy/content-store": "workspace:*",
+    "@patchy/core": "workspace:*",
     "@patchy/runtime": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
+    "@patchy/auth": "workspace:*",
+    "@patchy/companies": "workspace:*",
+    "@patchy/limits": "workspace:*",
     "vitest": "^4.1.11"
   }
 }

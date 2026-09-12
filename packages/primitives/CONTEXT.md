@@ -17,7 +17,7 @@ A compatible extension of the cumulative definitions that preserves existing row
 _Avoid_: migration (destructive changes are not offered), replacement, synchronization
 
 **Schema revision**:
-The patch's cumulative definition revision, advanced only when provisioning changes its tables. It is independent of a published version and the runtime wire version.
+The patch's cumulative definition revision, advanced only when provisioning changes its tables or adds file stores. It is independent of a published version and the runtime wire version.
 _Avoid_: version number, release
 
 **System column**:
@@ -33,5 +33,5 @@ A source patch's table made available for other patches to declare and read, nev
 _Avoid_: public table, copied table
 
 **File store**:
-A named, patch-owned home for files. File operations and provisioning arrive with [#199](https://github.com/allisonmahmood/patchy-cloud/issues/199).
+A named, patch-owned home for files shared by admitted company viewers. Its files persist independently of published versions; omitting the store leaves them intact and older versions that define it retain access.
 _Avoid_: bucket, content store (the infrastructure holding bytes)

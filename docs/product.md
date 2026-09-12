@@ -2,7 +2,7 @@
 
 The product, written down where agents read it. Each section is the resolution of one decision on the [foundation map](https://github.com/allisonmahmood/patchy-cloud/issues/5); the glossaries in each `CONTEXT.md` carry the words, this file carries the shape.
 
-**Built today:** tier 0 HTML patches with manifests, release checks and replay-safe publishing; additive patch-owned tables and browser-runtime table operations; names and company addresses; user ownership and company/public sharing; Clerk sign-in; create-or-join and company administration; machine login, logout and revocation. Higher-tier serving and its browser broker, patch repos, the portal, narrower sharing, integrations, billing and company lifecycle remain the intended product shape below, not available features.
+**Built today:** tier 0 HTML patches with manifests, release checks and replay-safe publishing; additive patch-owned tables and file stores with browser-runtime operations; names and company addresses; user ownership and company/public sharing; Clerk sign-in; create-or-join and company administration; machine login, logout and revocation. Higher-tier serving and its browser broker, patch repos, the portal, narrower sharing, integrations, billing and company lifecycle remain the intended product shape below, not available features.
 
 ## Patches
 
@@ -24,7 +24,7 @@ Ownership: a patch belongs to a **user** in a company. The user holds a machine 
 
 ### Versions and publishing
 
-**Publish** is the act; each new publish is an immutable **version**, and the patch serves the version its pointer names. There is no working copy in the cloud and no unpublished patch — the working copy is local, and the act that creates a patch is the act that makes it live. `patchy publish <file>` synthesises a tier 0 **manifest** and sends one HTML **bundle**. Each version records its tier, release, manifest version, server-stamped wire version and schema revision. The publish API accepts tier 0 manifests with table definitions; file stores, `uses` and higher tiers remain refused. File-mode publishing onto a patch with cumulative inventory is refused with `has_primitives`; that patch must be published from its repo. Moving the pointer back through rollback is future work.
+**Publish** is the act; each new publish is an immutable **version**, and the patch serves the version its pointer names. There is no working copy in the cloud and no unpublished patch — the working copy is local, and the act that creates a patch is the act that makes it live. `patchy publish <file>` synthesises a tier 0 **manifest** and sends one HTML **bundle**. Each version records its tier, release, manifest version, server-stamped wire version and schema revision. The publish API accepts tier 0 manifests with table and file-store definitions; `uses` and higher tiers remain refused. File-mode publishing onto a patch with cumulative inventory is refused with `has_primitives`; that patch must be published from its repo. Moving the pointer back through rollback is future work.
 
 A **publish key** identifies one attempt for its owning user. The CLI exclusively creates `attempt.json` with the complete request and owner before sending and recovers it first on the next publish, using a current token for that same user. Concurrent CLI processes resend the existing attempt rather than overwriting it; even a process that loses the creation race must authenticate its original owner. An account switch cannot resend another user's saved content. Killing a process leaves the persisted attempt recoverable, and clearing only the matching publish key prevents a stale response from removing a newer attempt. Repeating the same request returns the stored response without a new version, even after the instance's release changes; reusing the key with a different payload is a conflict. New publishes require an exact-current CLI release.
 
@@ -66,12 +66,12 @@ The published document runs no script, so the patch cannot watch the reader or r
 
 Code runs in the viewer's browser and acts **as the viewer**. It never holds a credential: not the Clerk session, not an integration token, not another patch's storage. It learns who the viewer is as claims, and it reaches everything else — the patch's primitives (its tables, its files) and the company's integrations — through Patchy, which performs the call as the viewer within the viewer's own permissions. A tier 1 patch can therefore never do more than the person using it could do themselves. Nothing leaves the browser except through Patchy: there is no direct outbound to third-party APIs, credentialed or not — reaching outside systems is what integrations are for.
 
-The runtime operation path admits `me` and the seven table operations. A company
-version returns its active viewer and company; a current public version returns
-null for `me` and refuses table access, even to a signed-in viewer. Requests are
-bound to the loaded version and cannot switch acting users mid-page. Runtime
-records every table mutation before execution. The broker and higher-tier
-serving, file operations and integration operations remain future work.
+The runtime operation path admits `me`, seven table operations and four file
+operations. A company version returns its active viewer and company; a current
+public version returns null for `me` and refuses table and file access, even to
+a signed-in viewer. Requests are bound to the loaded version and cannot switch
+acting users mid-page. Runtime records every table and file mutation before
+execution. The broker, higher-tier serving and integrations remain future work.
 
 What tier 1 cannot do is anything the viewer's browser is not there to do: no pre-processing before the data reaches the page, no work on behalf of one viewer visible to another. Save a photo to file storage and it is saved; that is the whole story.
 
@@ -198,7 +198,7 @@ A machine token is **the user's**, shared by every agent using that machine's sa
 ## Primitives
 
 A patch's **tables** live in its own namespace inside one Postgres database per
-company. The first publish introducing tables provisions that database lazily;
+company. The first publish introducing tables or file stores provisions that database lazily;
 a primitive-free patch does not require one. The manifest defines what one
 version uses, while the company's cumulative **inventory** records everything
 provisioned for the patch. The owner can fetch that metadata and its schema
@@ -237,7 +237,7 @@ last-write-wins, with no cross-table transaction or mutation replay key.
 
 ### Additive publishing
 
-Publish may add tables, optional or defaulted columns, and non-unique indexes.
+Publish may add tables, file stores, optional or defaulted columns, and non-unique indexes.
 New constant defaults fill existing rows; `now` fills existing rows at publish
 time and future inserts at their own time. Unique indexes are allowed only
 when their table is created: their null and case behavior is Postgres's.
@@ -257,8 +257,8 @@ platform patch-row lock, company transaction with DDL and inventory, then the
 version and active pointer. A failed platform commit can leave compatible
 resources behind; retry uses that inventory rather than undoing the resources.
 
-Nothing is physically dropped. Omitted tables, optional/defaulted columns and
-indexes remain with their data and are reported as **unused**. A required
+Nothing is physically dropped. Omitted tables, stores, optional/defaulted columns
+and indexes remain with their data and are reported as **unused**. A required
 column cannot be omitted from a table still defined by the manifest. An omitted
 default keeps filling new rows and an omitted unique index keeps enforcing.
 A rename is an addition beside an unused old table, reported as:
@@ -271,7 +271,7 @@ tables. An unavailable company database is not evidence of empty inventory:
 that update refuses rather than risking a file-mode overwrite.
 
 The inventory's **schema revision** advances only when its table definitions
-change, not on every version. The inventory's `shared` flag changes only when
+change or a store is added, not on every version or file write. The inventory's `shared` flag changes only when
 a publish defines that table with a different flag; omission does not revoke
 sharing and rolling back a version will not restore it.
 
@@ -283,9 +283,37 @@ mutation is attributed in the runtime log before execution; reads are not
 logged. A public version grants no access to company rows. Older manifests
 remain usable after additive changes, including inserts omitting newer columns.
 
-Shared tables will give other declaring patches read-only access; file stores
-will give a patch a named home for bytes. Neither cross-patch declarations nor
-file stores are admitted yet.
+Shared tables will give other declaring patches read-only access; cross-patch
+declarations are not admitted yet.
+
+### Files
+
+A **file store** is a named definition in the manifest, provisioned by the same
+additive diff as tables. It is not a bucket or a published version. Omission
+reports an unused store without deleting its files; an older loaded version
+that defines it keeps reaching the same files.
+
+`put` replaces one name, `get` returns its bytes, `list` returns pages of
+`{ name, size, contentType, updatedAt }` with a cursor, and `delete` is idempotent.
+Names are 1–512 UTF-8 bytes, with `/`-separated nonempty segments and no `.` or
+`..` segments. Files are bounded to 20 MiB (`too_large`); list pages default
+to 100, at most 1,000, in name order with a literal prefix filter and a keyset
+cursor. Metadata pages share the 8 MiB runtime result bound, including the cursor.
+Each put writes a fresh immutable object before changing the file-index
+pointer; a failed byte write preserves the previous file. Concurrent replacements
+and deletion serialize per patch/store/name, so an index row never points at a
+partially replaced object. Blob transfers do not hold database locks or company
+leases; unrelated names remain independent. Deletion removes the pointer, not the object; unreferenced objects are
+swept after a day. Rollback and version cleanup never own stored files.
+
+Bytes live under `files/<patchId>/<store>/<objectId>`, never a version key.
+Nothing under that storage prefix is served as a public URL. Runtime retrieval
+is authorized live and `no-store`, with the loaded version's store definition
+and the viewer's current company access. Raw GET requires same-origin fetch
+metadata; PUT requires the exact Origin; both require wire and principal
+headers. HTML and SVG stay bytes, never a navigable page. File mutations log
+the store and name, not their body; reads are not logged. Frame-local blob URLs
+and ArrayBuffer transfer arrive with the browser broker.
 
 ## Integrations
 

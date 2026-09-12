@@ -212,10 +212,12 @@ export interface PublishPreflight extends PublishTarget {
   readonly filename: string | null;
 }
 
+const hasOwnedDefinitions = (manifest: typeof Manifest.Type) =>
+  Object.keys(manifest.tables).length > 0 || Object.keys(manifest.files).length > 0;
+
 /** File requests may carry --name; empty named repo manifests are not file requests. */
 const isFileMode = (input: PublishPreflight) =>
-  Object.keys(input.manifest.tables).length === 0 &&
-  Object.keys(input.manifest.files).length === 0 &&
+  !hasOwnedDefinitions(input.manifest) &&
   Object.keys(input.manifest.uses).length === 0 &&
   (input.manifest.name === undefined || input.filename !== null);
 
@@ -747,7 +749,7 @@ export const make = Effect.gen(function* () {
           AND name = ${input.manifest.name} AND current AND patch_id <> ${input.patchId}`;
       if (occupied.length > 0) return yield* new NameTaken({ name: input.manifest.name });
     }
-    if (Object.keys(input.manifest.tables).length > 0) {
+    if (hasOwnedDefinitions(input.manifest)) {
       yield* databases.ensureReady(input.companyId);
     }
     const { companyId, snapshot } =
@@ -799,14 +801,14 @@ export const make = Effect.gen(function* () {
   );
 
   const provision = Effect.fn("Patches.provision")(function* (input: RecordInput) {
-    const introducesTables = Object.keys(input.manifest.tables).length > 0;
-    if (input.intent === "create" && !introducesTables) {
+    const hasDefinitions = hasOwnedDefinitions(input.manifest);
+    if (input.intent === "create" && !hasDefinitions) {
       return yield* tables.diff(input.manifest, null);
     }
     return yield* databases
       .withCompany(input.companyId)(
         Effect.gen(function* () {
-          if (!introducesTables && !(yield* inventoryStore.exists(input.patchId))) {
+          if (!hasDefinitions && !(yield* inventoryStore.exists(input.patchId))) {
             return yield* tables.diff(input.manifest, null);
           }
           return yield* databases.withPatchLock(input.patchId)(
@@ -820,7 +822,7 @@ export const make = Effect.gen(function* () {
       .pipe(
         Effect.catchTags({
           CompanyDatabaseNotReady: (error) =>
-            !introducesTables && error.status === null
+            !hasDefinitions && error.status === null
               ? tables.diff(input.manifest, null)
               : Effect.fail(error)
         })

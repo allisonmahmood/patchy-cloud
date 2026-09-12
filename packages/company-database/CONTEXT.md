@@ -21,8 +21,12 @@ The cumulative record of resources provisioned for a patch, including its schema
 _Avoid_: active manifest, catalog snapshot
 
 **Patch lock**:
-The exclusive right to change one patch's company resources in a transaction. It complements the platform patch-row lock rather than replacing it.
+The exclusive right to change a patch's resource definitions. It complements the platform patch-row lock rather than replacing it; ordinary file-content operations do not take it.
 _Avoid_: publish lock, company lock
+
+**File lock**:
+The exclusive right to change the file-index entry for one patch, store and name. It does not exclude operations on unrelated file names or cover the transfer of file contents.
+_Avoid_: patch lock, company lock
 
 **Provisioning login**:
 The operator credential allowed to create company databases and establish their ownership and permissions. It is distinct from the data login used for ordinary company operations.

@@ -41,8 +41,8 @@ export const connectionString = Config.option(Config.redacted("AZURE_STORAGE_CON
 export class BlobContainer extends Context.Service<
   BlobContainer,
   {
-    readonly upload: (key: string, html: string) => Effect.Effect<void, BlobRequestFailed>;
-    readonly download: (key: string) => Effect.Effect<string, BlobRequestFailed>;
+    readonly upload: (key: string, bytes: Uint8Array) => Effect.Effect<void, BlobRequestFailed>;
+    readonly download: (key: string) => Effect.Effect<Uint8Array, BlobRequestFailed>;
     readonly deleteIfExists: (key: string) => Effect.Effect<void, BlobRequestFailed>;
     readonly list: (prefix: string) => Stream.Stream<StoredObject, BlobRequestFailed>;
   }
@@ -71,12 +71,12 @@ export const make = Effect.gen(function* () {
   const client = service.getContainerClient(name);
 
   return BlobContainer.of({
-    upload: (key, html) =>
+    upload: (key, bytes) =>
       Effect.tryPromise({
         try: () =>
-          client.getBlockBlobClient(key).upload(html, Buffer.byteLength(html, "utf8"), {
+          client.getBlockBlobClient(key).upload(bytes, bytes.byteLength, {
             blobHTTPHeaders: {
-              blobContentType: "text/html; charset=utf-8",
+              blobContentType: "application/octet-stream",
               blobCacheControl: "no-store"
             }
           }),
@@ -91,9 +91,9 @@ export const make = Effect.gen(function* () {
           }
           const chunks: Buffer[] = [];
           for await (const chunk of response.readableStreamBody) {
-            chunks.push(Buffer.from(chunk));
+            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
           }
-          return Buffer.concat(chunks).toString("utf8");
+          return Buffer.concat(chunks);
         },
         catch: failed("download")
       }),

@@ -175,6 +175,7 @@ export const make = Effect.fn("PgliteCompanyDatabases.make")(function* (options:
     ensureReady,
     withCompany,
     withPatchLock: CompanyDatabases.withPatchLock,
+    withFileLock: CompanyDatabases.withFileLock,
     listReady
   });
 });

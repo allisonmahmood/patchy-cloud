@@ -68,3 +68,51 @@ it.layer(
     })
   );
 });
+
+it.effect("preserves binary objects and UTF-8 text through the Azure adapter", () =>
+  Effect.gen(function* () {
+    const objects = new Map<string, Uint8Array>();
+    const container = Layer.succeed(BlobContainer.BlobContainer, {
+      upload: (key, bytes) =>
+        Effect.sync(() => {
+          objects.set(key, bytes.slice());
+        }),
+      download: (key) =>
+        Effect.suspend(() => {
+          const bytes = objects.get(key);
+          return bytes === undefined
+            ? Effect.fail(
+                new BlobContainer.BlobRequestFailed({
+                  operation: "download",
+                  statusCode: Option.some(404),
+                  cause: new Error("Object does not exist")
+                })
+              )
+            : Effect.succeed(bytes.slice());
+        }),
+      deleteIfExists: (key) =>
+        Effect.sync(() => {
+          objects.delete(key);
+        }),
+      list: (prefix) =>
+        Stream.fromIterable(
+          Array.from(objects.keys())
+            .filter((key) => key.startsWith(prefix))
+            .map((key) => ({ key, lastModified: 0 }))
+        )
+    });
+    const service = yield* AzureContentStore.make.pipe(Effect.provide(container));
+    const binary = new Uint8Array([0, 255, 128, 192, 10]);
+    yield* service.putBytes("files/patch/docs/obj", binary);
+    assert.deepStrictEqual(yield* service.getBytes("files/patch/docs/obj"), binary);
+    const html = "\uFEFF<h1>こんにちは — café</h1>";
+    yield* service.put("versions/page.html", html);
+    assert.strictEqual(yield* service.get("versions/page.html"), html);
+    assert.deepStrictEqual(
+      yield* service.getBytes("versions/page.html"),
+      new TextEncoder().encode(html)
+    );
+    yield* service.putBytes("versions/bytes.html", new TextEncoder().encode(html));
+    assert.strictEqual(yield* service.get("versions/bytes.html"), html);
+  })
+);

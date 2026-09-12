@@ -1,9 +1,55 @@
 /** The browser runtime wire; operation schemas are shared by the shell and server. */
 import * as Schema from "effect/Schema";
 import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
-import { DefinitionName, Identity, PatchId } from "./schemas.js";
+import { DefinitionName, Identity, IsoTimestamp, PatchId, PostgresText } from "./schemas.js";
 
 const NonEmptyText = Schema.String.check(Schema.isMinLength(1));
+const textEncoder = new TextEncoder();
+
+/** Shared by operation arguments and the decoded wildcard route parameter. */
+export const FileName = PostgresText.check(
+  Schema.makeFilter(
+    (value) =>
+      (textEncoder.encode(value).byteLength <= 512 &&
+        value
+          .split("/")
+          .every((segment) => segment !== "" && segment !== "." && segment !== "..")) ||
+      "File names must be 1–512 bytes with no empty, . or .. segments."
+  )
+);
+export const FileContentType = Schema.String.check(
+  Schema.makeFilter(
+    (value) =>
+      /^[a-zA-Z0-9!#$%&'*+.^_`|~-]+\/[a-zA-Z0-9!#$%&'*+.^_`|~-]+(?:;[\x20-\x7e]+)?$/.test(value) ||
+      "Content-Type must be a media type without control characters."
+  )
+);
+export const FileMetadata = Schema.Struct({
+  name: FileName,
+  size: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  contentType: FileContentType,
+  updatedAt: IsoTimestamp
+});
+export const FilePage = Schema.Struct({
+  files: Schema.Array(FileMetadata),
+  cursor: Schema.NullOr(Schema.String)
+});
+/** A capability result, transferred as raw bytes by HTTP and ArrayBuffer by the broker. */
+export const FileBody = Schema.Struct({ bytes: Schema.Uint8Array, contentType: FileContentType });
+export type FileBody = typeof FileBody.Type;
+export const FileList = Schema.Struct({
+  store: DefinitionName,
+  prefix: Schema.optionalKey(
+    PostgresText.check(
+      Schema.makeFilter(
+        (value) =>
+          textEncoder.encode(value).byteLength <= 512 || "File prefixes are at most 512 bytes."
+      )
+    )
+  ),
+  limit: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThan(0))),
+  cursor: Schema.optionalKey(NonEmptyText)
+});
 
 /** Version ids use core's newInternalId("ver") grammar. */
 export const RuntimeVersionId = Schema.String.check(
@@ -49,7 +95,7 @@ export const TablePage = Schema.Struct({
   cursor: Schema.NullOr(Schema.String)
 });
 
-/** Only implemented operations belong here; names such as files.get are not admitted yet. */
+/** Byte operations carry their bytes outside the JSON arguments. */
 export const runtimeOperations = {
   me: {
     request: Schema.Struct({
@@ -108,6 +154,35 @@ export const runtimeOperations = {
     request: Schema.Struct({
       op: Schema.Literal("tables.delete"),
       args: Schema.Struct({ table: DefinitionName, id: NonEmptyText })
+    }),
+    response: Schema.Null,
+    kind: "mutation"
+  },
+  "files.put": {
+    request: Schema.Struct({
+      op: Schema.Literal("files.put"),
+      args: Schema.Struct({ store: DefinitionName, name: FileName, contentType: FileContentType })
+    }),
+    response: Schema.Null,
+    kind: "mutation"
+  },
+  "files.get": {
+    request: Schema.Struct({
+      op: Schema.Literal("files.get"),
+      args: Schema.Struct({ store: DefinitionName, name: FileName })
+    }),
+    response: FileBody,
+    kind: "read"
+  },
+  "files.list": {
+    request: Schema.Struct({ op: Schema.Literal("files.list"), args: FileList }),
+    response: FilePage,
+    kind: "read"
+  },
+  "files.delete": {
+    request: Schema.Struct({
+      op: Schema.Literal("files.delete"),
+      args: Schema.Struct({ store: DefinitionName, name: FileName })
     }),
     response: Schema.Null,
     kind: "mutation"
@@ -197,25 +272,12 @@ export const RuntimeReply = Schema.Union([RuntimeSuccess, RuntimeFailure]).annot
 });
 export type RuntimeReply = typeof RuntimeReply.Type;
 
-const textEncoder = new TextEncoder();
-
 /** Decode after admission; route params themselves stay permissive for runtime-shaped refusals. */
 export const RuntimeFileParams = Schema.Struct({
   patchId: PatchId,
   versionId: RuntimeVersionId,
-  store: Schema.String.check(
-    Schema.makeFilter((value) => /^[a-z][a-zA-Z0-9]*$/.test(value) || "Invalid file store name.")
-  ),
-  name: Schema.String.check(
-    Schema.makeFilter(
-      (value) =>
-        (textEncoder.encode(value).byteLength <= 512 &&
-          value
-            .split("/")
-            .every((segment) => segment !== "" && segment !== "." && segment !== "..")) ||
-        "File names must be 1–512 bytes with no empty, . or .. segments."
-    )
-  )
+  store: DefinitionName,
+  name: FileName
 });
 export type RuntimeFileParams = typeof RuntimeFileParams.Type;
 

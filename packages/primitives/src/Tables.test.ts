@@ -14,7 +14,8 @@ import {
   indexKeyLimit,
   omissions,
   refusals,
-  rowExpansionLimit
+  rowExpansionLimit,
+  stores
 } from "./test/provisioningContract.js";
 
 const postgres = Tables.layer.pipe(Layer.provideMerge(CompanyTesting.layer()));
@@ -46,6 +47,11 @@ for (const [name, layer] of [
     it.effect(
       "keeps omitted data, defaults and uniqueness, and changes sharing only when defined",
       () => omissions("cmp_dev"),
+      30_000
+    );
+    it.effect(
+      "provisions stores additively, keeps omitted file pointers, and rolls back failed changes",
+      () => stores("cmp_dev"),
       30_000
     );
     it.effect(
