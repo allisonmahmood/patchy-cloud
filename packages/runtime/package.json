@@ -10,6 +10,16 @@
       "development": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./core": {
+      "development": "./src/core.ts",
+      "types": "./dist/core.d.ts",
+      "import": "./dist/core.js"
+    },
+    "./dev": {
+      "development": "./src/dev.ts",
+      "types": "./dist/dev.d.ts",
+      "import": "./dist/dev.js"
     }
   },
   "files": [

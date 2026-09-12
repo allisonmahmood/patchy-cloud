@@ -8,7 +8,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as Dev from "./Dev.js";
 import * as Execution from "./Execution.js";
 import { nativeType, quoteIdentifier } from "./Mapping.js";
-import type { ColumnType, Snapshot } from "./Snapshot.js";
+import type { ColumnType, Snapshot } from "@patchy/api/postgres-snapshot";
 
 const native = (baseName: string): typeof ColumnType.Type => ({
   schema: "pg_catalog",

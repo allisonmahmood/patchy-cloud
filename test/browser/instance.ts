@@ -214,11 +214,11 @@ export async function startInstance(clerkUserId: string): Promise<BrowserInstanc
     await checked(pnpmCommand, [...pnpmPrefix, "--filter", "patchy", "build"], repoRoot, buildEnv);
     stage = "packing CLI";
     const packed = await checked(
-      pnpmCommand,
+      process.execPath,
       [
-        ...pnpmPrefix,
+        path.join(repoRoot, "node_modules/npm/bin/npm-cli.js"),
         "pack",
-        "--config.ignore-scripts=true",
+        "--ignore-scripts",
         "--json",
         "--pack-destination",
         packDir
@@ -227,7 +227,10 @@ export async function startInstance(clerkUserId: string): Promise<BrowserInstanc
       buildEnv
     );
     const parsed: unknown = JSON.parse(packed.stdout);
-    const packs: unknown[] = Array.isArray(parsed) ? parsed : [parsed];
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed))
+      throw new Error("npm pack returned invalid metadata.");
+    // The pinned npm 12 packer keys its result by package name.
+    const packs: unknown[] = Object.values(parsed);
     const tarballs = (await readdir(packDir)).filter((file) => file.endsWith(".tgz"));
     const pack = packs[0];
     if (
@@ -239,7 +242,7 @@ export async function startInstance(clerkUserId: string): Promise<BrowserInstanc
       typeof pack.filename !== "string" ||
       path.basename(pack.filename) !== tarballs[0]
     ) {
-      throw new Error("pnpm pack did not produce one exact CLI tarball.");
+      throw new Error("npm pack did not produce one exact CLI tarball.");
     }
     stage = "installing packed CLI";
     await writeFile(path.join(consumerDir, "package.json"), '{"private":true}\n');

@@ -192,8 +192,9 @@ Only these files are managed: the pin, `patchy/_generated/`,
 `.agents/skills/patchy-*/`, missing fixture stubs, the lockfile through install,
 and one `uses` edit for add/remove. Existing fixtures belong to the builder.
 The CLI executes config locally and writes `manifest.json`; generation receives
-the manifest and returns finished files plus resolved ids and revision stamps,
-never that manifest file. Both sides constrain output paths to the managed roots.
+the manifest and returns finished files, resolved ids/revision stamps and typed
+declaration metadata, never that manifest file. Both sides constrain output paths
+to the managed roots; declaration snapshots are not generated repo files.
 
 Project skill presence is sticky: refresh updates every present skill and adds
 config-implied ones without deleting skills. A present skill no longer offered
@@ -207,9 +208,50 @@ instance. `init` with no key is a local error before creating a repo, including
 in non-interactive execution. Pass `--purpose` for unattended initialization.
 No install or generation progress leaks into JSON stdout.
 
-The tree teaches “test with `patchy dev`”, but that local runtime remains separate
-work. Repo publishing builds for the hosted broker; a standalone Vite preview
-cannot execute declared capabilities.
+### Local patch runtime
+
+`patchy dev [--foreground]` is a repo command, distinct from the cloud worktree's
+`pnpm dev`. A healthy existing session is returned before credentials or a release
+check. A new start checks pin, CLI and installed runtime, authenticates `/api/me`,
+fetches published inventory and declaration metadata, regenerates, provisions
+local PGlite, then starts Vite build-watch and the production shell.
+No production rows/bytes, Clerk, connection keyring or runtime log store are used.
+The same dispatcher admits calls and bytes routes without logging dev calls.
+Tier 0 retains its production shell policy with only the trusted local reload
+script and polling endpoint added; its content remains script-free.
+
+| command                 | success document                                                    |
+| ----------------------- | ------------------------------------------------------------------- |
+| `dev`, `dev status`     | `{ ok, healthy: true, url, logPath, stop, pid, release, identity }` |
+| `dev stop`, `dev reset` | `{ ok, healthy: false, reset }`                                     |
+| `dev logs`              | `{ ok, log, text }`                                                 |
+
+Start exits 0 only after the first valid bundle and runtime are healthy.
+The readiness/status document includes the release checked at session start and
+the complete authenticated `/api/me` identity (user, company, role and machine).
+Both are persisted in the daemon record, so healthy starts and status report
+the original session without consulting the instance or resolving credentials,
+including after logout or a release upgrade. `stop` is the executable, repo-pinned
+`pnpm patchy dev stop --api-url ...` command for that session's instance.
+Status without a healthy session is local exit 1 with `code: "not_running"`.
+Missing fixtures and local provisioning failures are exit 1; `not_additive`
+retains the real provisioner's message and code. Instance refusals and transport
+failures retain the ordinary exit ladder.
+Foreground prints readiness, waits and streams logs in text mode; under `--json`
+it prints only readiness, leaving logs available through `dev logs --json`.
+Interruption stops a foreground session only when that invocation started it.
+
+State is `.patchy/dev/<instance-hash>/`, bound to the canonical repo path and
+instance. A nonce-authenticated health response and PID birth time establish
+daemon identity; a stale record cannot signal a different process. Incomplete or
+malformed records are refused and left untouched, never reconstructed from the
+current login. Start/stop/reset are serialized by a key-addressed nonempty-directory
+owner record.
+Reset stops, wipes all disposable local state, and does not start a new session.
+The next start fetches the published inventory from the server; there is no local
+baseline fallback. Before first publish, schema changes recreate local data; afterwards
+the published inventory supplies the additive baseline. A standalone Vite preview
+does not execute declared capabilities.
 
 ### Publishing and sharing commands
 
@@ -258,8 +300,8 @@ recoverable; retry returns that result without building or creating another vers
 File publishing never reads `patchy.json`. The executing CLI must match
 `GET /api/release` exactly; a mismatch names both releases and `patchy refresh`.
 Repo publishing also checks the repo pin and installed runtime release;
-each must be exact-current, not a compatible version range. Local dev starts
-remain separate work; refresh upgrades the pin and generated set.
+each must be exact-current, not a compatible version range. New dev starts use
+the same release check; refresh upgrades the pin and generated set.
 File publishing onto a patch with cumulative table or store inventory is
 `has_primitives` (422, exit 2, `rejected`), even if its current version omits
 those definitions. Publish that patch from its repo. The
@@ -340,15 +382,16 @@ For `init` and file-oriented commands, resolution order is unchanged:
 `--api-url` > `.local/dev/env` (searched upward from the working directory) >
 `PATCHY_API_URL` > `~/.patchy/config.json` > the local default.
 
-For repo commands (`refresh`, `catalog`, `add`, `remove`, no-file `publish`,
-untargeted `share`/`delete` and private generation), the instance stored in
-`patchy.json` is authoritative. First select the effective override from
-`--api-url` > `.local/dev/env` > `PATCHY_API_URL`. If present, it must match the
-stored URL after normalization; a mismatch is `instance_mismatch` before any
-HTTP request, naming both targets. An ignored lower-precedence setting does
-not cause a mismatch. With no override, the repo instance wins over saved config
-and the default. A matching override retains its source and credential behavior:
-in particular, a matching flag still cannot borrow the dev-env seed.
+For repo commands (`dev` and its subcommands, `refresh`, `catalog`, `add`,
+`remove`, no-file `publish`, untargeted `share`/`delete` and private generation),
+the instance stored in `patchy.json` is authoritative. First select the effective
+override from `--api-url` > `.local/dev/env` > `PATCHY_API_URL`. If present, it must
+match the stored URL after normalization; a mismatch is `instance_mismatch`
+before any HTTP request, naming both targets. An ignored lower-precedence
+setting does not cause a mismatch. With no override, the repo instance wins over
+saved config and the default. A matching override retains its source and
+credential behavior: in particular, a matching flag still cannot borrow the
+dev-env seed.
 
 One service resolves the URL once per command and exposes its source (`flag` |
 `dev-env` | `env` | `project` | `config` | `default`); `status --json` reports its

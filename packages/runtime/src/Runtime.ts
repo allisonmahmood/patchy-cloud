@@ -1,14 +1,11 @@
 import * as Cause from "effect/Cause";
-import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import {
   RuntimePrincipal,
   runtimeBodyLimit,
@@ -18,12 +15,10 @@ import {
   type RuntimeEnvelope,
   type FileBody
 } from "@patchy/api";
-import { RequireSession, Session } from "@patchy/auth";
 import { newInternalId } from "@patchy/core";
 import { Limits } from "@patchy/limits";
 import * as Binding from "./Binding.js";
 import * as LoadedVersions from "./LoadedVersions.js";
-import * as RuntimeLog from "./RuntimeLog.js";
 
 const diagnostics = {
   cause: Schema.optionalKey(Schema.Defect()),
@@ -294,27 +289,38 @@ export class Runtime extends Context.Service<
   }
 >()("@patchy/runtime/Runtime") {}
 
-type Dependencies =
-  | LoadedVersions.LoadedVersions
-  | Limits.Limits
-  | RuntimeLog.RuntimeLog
-  | Exclude<Effect.Services<typeof RequireSession.resolveViewer>, RequireSession.SignedIn>;
+export interface Execution {
+  readonly input: typeof RuntimeEnvelope.Type;
+  readonly operation: Handler;
+  readonly binding: Binding.Binding["Service"];
+  readonly deadlineMs: number;
+}
+
+/** Environment adapters choose identity and recording; admission and execution stay shared. */
+export interface Options {
+  readonly origin: string;
+  readonly identity: Effect.Effect<
+    NonNullable<Binding.Binding["Service"]["identity"]>,
+    RuntimeError,
+    HttpServerRequest.HttpServerRequest
+  >;
+  readonly record?: <A>(
+    execution: Execution,
+    run: Effect.Effect<A, RuntimeError, HttpServerRequest.HttpServerRequest>
+  ) => Effect.Effect<Exit.Exit<A, RuntimeError>, RuntimeError, HttpServerRequest.HttpServerRequest>;
+}
+
+type Dependencies = LoadedVersions.LoadedVersions | Limits.Limits;
 
 export const make = (
-  handlers: Readonly<Record<string, Handler>>
+  handlers: Readonly<Record<string, Handler>>,
+  options: Options
 ): Effect.Effect<Runtime["Service"], Config.ConfigError, Dependencies> =>
   Effect.gen(function* () {
     const versions = yield* LoadedVersions.LoadedVersions;
     const limits = yield* Limits.Limits;
-    const log = yield* RuntimeLog.RuntimeLog;
-    const session = yield* Session.Session;
-    // Capture Auth's viewer resolver requirements, without importing its Companies dependencies.
-    const viewerContext =
-      yield* Effect.context<
-        Exclude<Effect.Services<typeof RequireSession.resolveViewer>, RequireSession.SignedIn>
-      >();
     const settings = yield* config;
-    const origin = new URL(session.publicBaseUrl).origin;
+    const origin = options.origin;
     const bodyLimit = (op: string) => runtimeBodyLimit(op, settings);
 
     const dispatch = <A>(
@@ -370,24 +376,8 @@ export const make = (
         if (version.scope === "public") {
           if (input.op !== "me") return yield* new PublicUnavailable({});
         } else {
-          const admission = yield* RequireSession.admission.pipe(
-            Effect.provideService(Session.Session, session),
-            Effect.mapError((cause) => new SessionExpired({ cause }))
-          );
-          if (HttpServerResponse.isHttpServerResponse(admission.result))
-            return yield* new SessionExpired({});
-          const viewer = yield* RequireSession.resolveViewer.pipe(
-            Effect.provideContext(viewerContext),
-            Effect.provideService(RequireSession.SignedIn, admission.result),
-            Effect.mapError((cause) => new SourceUnavailable({ cause }))
-          );
-          if (
-            viewer === null ||
-            HttpServerResponse.isHttpServerResponse(viewer) ||
-            viewer.company.id !== version.companyId
-          )
-            return yield* new AccessDenied({});
-          identity = { user: viewer.user, company: viewer.company, admin: viewer.role === "admin" };
+          identity = yield* options.identity;
+          if (identity.company.id !== version.companyId) return yield* new AccessDenied({});
         }
         const binding = Binding.Binding.of({
           ...version,
@@ -435,63 +425,37 @@ export const make = (
           return yield* run(operation);
         }).pipe(Effect.provideService(Binding.Binding, binding));
         if (operation.kind === "read") return yield* execute;
-        const started = yield* Clock.currentTimeMillis;
         const deadlineMs =
           operation.kind === "mutation"
             ? settings.mutationDeadlineMs
             : settings.integrationDeadlineMs;
-        yield* log
-          .begin({
-            companyId: binding.companyId,
-            patchId: binding.patchId,
-            versionId: binding.versionId,
-            userId: identity!.user.id,
-            credentialKind: "session",
-            op: input.op,
-            resource: operation.resource?.(input.args) ?? null,
-            connectionId: operation.connectionId?.(input.args, binding) ?? null,
-            ...(operation.sql === undefined ? {} : { sql: operation.sql(input.args) }),
-            correlationId: binding.correlationId,
-            deadlineMs
-          })
-          .pipe(Effect.mapError((cause) => new SourceUnavailable({ cause })));
-        const result = yield* Effect.exit(
-          integration
-            ? execute.pipe(
-                Effect.timeoutOrElse({
-                  duration: deadlineMs,
-                  orElse: () => Effect.fail(new Timeout({ deadlineMs }))
-                })
-              )
-            : execute
-        );
+        const runWithDeadline = integration
+          ? execute.pipe(
+              Effect.timeoutOrElse({
+                duration: deadlineMs,
+                orElse: () => Effect.fail(new Timeout({ deadlineMs }))
+              })
+            )
+          : execute;
+        const result = yield* options.record === undefined
+          ? Effect.exit(runWithDeadline)
+          : options.record({ input, operation, binding, deadlineMs }, runWithDeadline);
         // Interruption includes a lost client or process shutdown: do not claim the write failed.
         if (Exit.isFailure(result) && Cause.hasInterrupts(result.cause))
           return yield* Effect.failCause(result.cause);
         const failure = Exit.isFailure(result)
           ? Cause.findErrorOption(result.cause)
           : Option.none<RuntimeError>();
-        yield* log
-          .finish({
-            correlationId: binding.correlationId,
-            outcome: Exit.isSuccess(result) ? "success" : "failure",
-            outcomeCode: Exit.isSuccess(result)
-              ? null
-              : Option.isSome(failure)
-                ? failure.value.code
-                : "source_unavailable",
-            durationMs: (yield* Clock.currentTimeMillis) - started,
-            rowCount: Exit.isSuccess(result) ? (operation.rowCount?.(result.value) ?? null) : null
-          })
-          .pipe(
-            Effect.mapError(
-              (cause) => new UnknownOutcome({ cause, correlationId: binding.correlationId })
-            )
-          );
         if (Exit.isFailure(result)) {
-          return yield* Option.isSome(failure)
-            ? Effect.fail(Object.assign(failure.value, { correlationId: binding.correlationId }))
-            : new SourceUnavailable({ cause: result.cause, correlationId: binding.correlationId });
+          if (Option.isSome(failure)) {
+            if (options.record !== undefined)
+              Object.assign(failure.value, { correlationId: binding.correlationId });
+            return yield* Effect.fail(failure.value);
+          }
+          return yield* new SourceUnavailable({
+            cause: result.cause,
+            ...(options.record === undefined ? {} : { correlationId: binding.correlationId })
+          });
         }
         return result.value;
       });
@@ -522,7 +486,3 @@ export const make = (
       fileBytes: settings.fileBytes
     });
   });
-
-export const layer = (
-  handlers: Readonly<Record<string, Handler>>
-): Layer.Layer<Runtime, Config.ConfigError, Dependencies> => Layer.effect(Runtime, make(handlers));

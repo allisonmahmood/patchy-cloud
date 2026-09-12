@@ -141,8 +141,8 @@ const inspectBundle = (html: string, tier: number) => {
   };
 };
 
-/** Recovery belongs to the caller and must finish before this starts any fresh work. */
-export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
+/** New publish and dev sessions must agree with the instance before executing config. */
+export const checkRepoRelease = Effect.fn("checkRepoRelease")(function* (
   cwd: string,
   token: Redacted.Redacted
 ) {
@@ -200,6 +200,16 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
       })
   });
   yield* checkRelease(release.release, { cli: RELEASE, runtime: loadedRuntime });
+});
+
+/** Recovery belongs to the caller and must finish before this starts any fresh work. */
+export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
+  cwd: string,
+  token: Redacted.Redacted
+) {
+  yield* checkRepoRelease(cwd, token);
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const manifest = yield* Effect.tryPromise({
     try: async () => decodeManifest(await executeConfig(path.join(cwd, "patchy.config.ts"))),
     catch: (cause) =>
@@ -275,6 +285,18 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
           })
     )
   );
+  yield* validateRepoBundle(cwd, manifest, html);
+  return { manifest, html };
+});
+
+/** Publish and watched dev builds enforce the same artifact and tier contract. */
+export const validateRepoBundle = Effect.fn("validateRepoBundle")(function* (
+  cwd: string,
+  manifest: typeof Manifest.Type,
+  html: string
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const inspection = yield* Effect.try({
     try: () => inspectBundle(html, manifest.tier),
     catch: (cause) =>
@@ -321,5 +343,4 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
         code: "tier_mismatch"
       });
   }
-  return { manifest, html };
 });

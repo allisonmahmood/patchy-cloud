@@ -1,5 +1,6 @@
 export { defineIntegration, operation } from "./definition.js";
 export * as ConnectionStore from "./ConnectionStore.js";
+export * as SqlConnectionStore from "./SqlConnectionStore.js";
 export * as CredentialKeys from "./CredentialKeys.js";
 export * as ConnectionPage from "./ConnectionPage.js";
 export * as ConnectionPages from "./ConnectionPages.js";

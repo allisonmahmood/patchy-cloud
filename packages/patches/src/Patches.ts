@@ -33,6 +33,7 @@ import {
   PublishCreated,
   PublishUpdated,
   SharingScope,
+  type SharedTableDeclaration,
   TableDefinition,
   sharedTableId
 } from "@patchy/api";
@@ -212,6 +213,8 @@ export interface SharedTable {
   readonly table: string;
   readonly schemaRevision: number;
   readonly definition: typeof TableDefinition.Type;
+  readonly tables: Readonly<Record<string, typeof TableDefinition.Type>>;
+  readonly uses: Readonly<Record<string, typeof SharedTableDeclaration.Type>>;
 }
 
 export type DatabaseError =
@@ -829,12 +832,28 @@ export const make = Effect.gen(function* () {
     const snapshot = yield* readInventory(companyId, patchId);
     if (snapshot === null || !snapshot.tables.some((entry) => entry.name === table && entry.shared))
       return yield* new PatchNotOpenable({ patchId, table });
+    const definitions = Tables.inventoryManifest(snapshot).tables;
+    const tables: Record<string, typeof TableDefinition.Type> = Object.create(null);
+    const pending = [table];
+    while (pending.length > 0) {
+      const name = pending.pop()!;
+      if (Object.hasOwn(tables, name)) continue;
+      const definition = definitions[name]!;
+      tables[name] = definition;
+      for (const column of Object.values(definition.columns)) {
+        if (column.kind !== "ref") continue;
+        if (Object.hasOwn(definitions, column.table)) pending.push(column.table);
+      }
+    }
+    const uses = Tables.inventoryReferences(tables);
     return {
       id: sharedTableId(patchId, table),
       patchId,
       table,
       schemaRevision: snapshot.schemaRevision,
-      definition: Tables.inventoryManifest(snapshot).tables[table]!
+      definition: tables[table]!,
+      tables,
+      uses
     } satisfies SharedTable;
   });
 

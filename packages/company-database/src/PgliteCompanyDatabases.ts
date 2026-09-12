@@ -182,7 +182,11 @@ export const make = Effect.fn("PgliteCompanyDatabases.make")(function* (options:
 
 /** One PGlite connection; its driver serializes transactions, not production races. */
 export const layer = (options: Options) =>
-  Layer.effect(CompanyDatabases.CompanyDatabases, make(options)).pipe(
+  Layer.merge(
+    Layer.effect(CompanyDatabases.CompanyDatabases, make(options)),
+    Layer.effect(PgliteClient.PgliteClient, PgliteClient.PgliteClient)
+  ).pipe(
+    // Expose the native fixture handle, never replace an enclosing platform SqlClient.
     Layer.provide(
       PgliteClient.layer({
         dataDir: options.dataDir,

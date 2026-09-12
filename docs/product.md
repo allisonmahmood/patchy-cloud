@@ -2,7 +2,7 @@
 
 The product, written down where agents read it. Each section is the resolution of one decision on the [foundation map](https://github.com/allisonmahmood/patchy-cloud/issues/5); the glossaries in each `CONTEXT.md` carry the words, this file carries the shape.
 
-**Built today:** tier 0 HTML pages and tier 1 sandboxed browser patches with manifests, release checks and replay-safe file and repo publishing; the document-bound shell broker, route bridge and access notices; additive patch-owned tables and file stores with browser-runtime operations, read-only shared-table declarations, and company Postgres connections with immutable schema snapshots, constrained reads, generated relation clients and local fixtures; patch-repo initialization, catalog, declaration editing, transactional refresh and release-bound project skills; names and company addresses; user ownership and company/public sharing; Clerk sign-in; create-or-join and company administration; machine login, logout and revocation. Hosted runtimes, the local patch dev runtime, the portal, narrower sharing, billing and company lifecycle remain intended, not available features.
+**Built today:** tier 0 HTML pages and tier 1 sandboxed browser patches with manifests, release checks and replay-safe file and repo publishing; the document-bound shell broker, route bridge and access notices; additive patch-owned tables and file stores with browser-runtime operations, read-only shared-table declarations, and company Postgres connections with immutable schema snapshots, constrained reads, generated relation clients and local fixtures; patch-repo initialization, catalog, declaration editing, transactional refresh, release-bound project skills and the local PGlite dev runtime; names and company addresses; user ownership and company/public sharing; Clerk sign-in; create-or-join and company administration; machine login, logout and revocation. Hosted runtimes, the portal, narrower sharing, billing and company lifecycle remain intended, not available features.
 
 ## Patches
 
@@ -31,7 +31,7 @@ A **publish key** identifies one attempt for its owning user. The CLI exclusivel
 ### The package and its release
 
 `patchy` is one private npm package containing the CLI, config builders and browser
-client, with a reserved dev-runtime entrypoint. Its version is the **release**.
+client and local dev runtime. Its version is the **release**.
 The instance distributes its immutable tarball and reports the matching SHA-512
 integrity through `GET /api/release`. New file publishes require the exact-current
 CLI; repo publishing also checks its package pin and installed runtime before
@@ -44,8 +44,8 @@ config; execution happens in a local child process, producing the existing
 manifest rather than sending executable config to the server. The browser client
 uses the broker's document-bound port and one `PatchyError`; lost replies never
 cause a mutation replay. Repo generation supplies this client surface and the
-hosted shell provides its broker. The local dev runtime remains separate work;
-initialization alone does not publish a patch.
+same shell provides its broker locally and in the cloud. Initialization alone
+does not publish a patch.
 
 ### Building a patch
 
@@ -61,7 +61,27 @@ repo. A company without connections gets the core skills and empty declarations.
 `patchy.json` records the instance and optional patch id, never personal credentials.
 Write-once `AGENTS.md` records purpose, layout, skill paths, “test with `patchy dev`”
 and the generated-index pointer; `CLAUDE.md` imports it. The local dev runtime
-that completes that instruction is separate work, not a production-data shortcut.
+uses real handlers over local data, never a production-data shortcut.
+
+`patchy dev` checks the pin, CLI and runtime against the instance release, then
+authenticates a new session as the machine token's user. It refreshes declarations
+and pulls the published inventory when the repo has an id. It provisions the same
+table/store definitions over PGlite and serves the production shell, sandbox,
+CSP and broker. Vite builds the same single-file artifact as publish; a completed
+build replaces the bundle atomically and reloads the whole shell at its current
+route. Config and fixture changes take effect on the next stop/start.
+
+The daemon is detached and idempotent, returning one local page URL only when
+healthy, with its log path and stop command. `dev status`, `stop`, `logs` and
+`reset` also accept `--json`; `--foreground` stays attached with logs.
+State lives under `.patchy/dev/`, scoped to repo and instance; process identity
+includes birth time, so a stale PID cannot stop a different process.
+Reset stops and wipes disposable local state without changing published resources;
+the next start fetches the published inventory again.
+Before the first publish every schema change recreates local data. Afterwards,
+the published inventory determines additive changes and refusals, not the last
+local config; compatible additions preserve rows. Dev calls are not logged,
+and neither the connection keyring nor the runtime log store is loaded.
 
 From the repo root, `patchy publish` recovers any saved attempt first. For a new
 attempt it checks the release, executes config, compares generated declaration
@@ -600,9 +620,11 @@ to write. The generated stub lists tables and columns; views are synthetic table
 whose rows do not recompute. A relation the local source cannot represent is
 excluded from both surfaces and named. Raw SQL using a feature PGlite lacks
 fails locally with its reason. Fixtures establish operation parity, not production
-data, privilege or volume guarantees. Catalog, refresh and patch-repo tooling
-remain the following SDK tickets; the integration's pure generation and fixture
-binding are available for those consumers.
+data, privilege or volume guarantees. `patchy dev` composes that binding with the
+same runtime dispatcher and generated client. Shared-table declarations load
+`fixtures/shared-<alias>.sql` into a local copy of the source's generated inventory
+definition. Every declared fixture is required; generation never silently
+replaces a missing file during a dev start.
 
 ### The edges
 

@@ -9,8 +9,10 @@ import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as ConnectionStore from "./ConnectionStore.js";
+import * as SqlConnectionStore from "./SqlConnectionStore.js";
+import * as ConnectionStoreDev from "./ConnectionStoreDev.js";
 import * as CredentialKeys from "./CredentialKeys.js";
-import { Snapshot } from "./postgres/Snapshot.js";
+import { Snapshot } from "@patchy/api/postgres-snapshot";
 import * as Source from "./postgres/Source.js";
 import * as SourceClient from "./postgres/SourceClient.js";
 
@@ -51,7 +53,7 @@ const source = Source.Source.of({
     return { display: { host, port, database, role }, snapshot: empty };
   })
 });
-const fixture = ConnectionStore.layer.pipe(
+const fixture = SqlConnectionStore.layer.pipe(
   Layer.provideMerge(
     Layer.mergeAll(
       CredentialKeys.layerFromKeys(Redacted.make(`old:${oldKey}`)),
@@ -206,7 +208,7 @@ it.layer(fixture)("ConnectionStore", (it) => {
         const sql = yield* SqlClient.SqlClient;
         const connected = yield* store.connect(input("snapshot-history"));
         const target = identity(connected);
-        const changed = yield* ConnectionStore.make.pipe(
+        const changed = yield* SqlConnectionStore.make.pipe(
           Effect.provideService(Source.Source, {
             ...source,
             inspect: (credentials) =>
@@ -231,7 +233,7 @@ it.layer(fixture)("ConnectionStore", (it) => {
           ))._tag,
           "SqlError"
         );
-        const failed = yield* ConnectionStore.make.pipe(
+        const failed = yield* SqlConnectionStore.make.pipe(
           Effect.provideService(Source.Source, {
             ...source,
             inspect: () =>
@@ -272,7 +274,7 @@ it.layer(fixture)("ConnectionStore", (it) => {
     Effect.gen(function* () {
       const store = yield* ConnectionStore.ConnectionStore;
       const connected = yield* store.connect(input("invalid-snapshot"));
-      const invalid = yield* ConnectionStore.make.pipe(
+      const invalid = yield* SqlConnectionStore.make.pipe(
         Effect.provideService(Source.Source, {
           ...source,
           inspect: (credentials) =>
@@ -307,7 +309,7 @@ it.layer(fixture)("ConnectionStore", (it) => {
         const store = yield* ConnectionStore.ConnectionStore;
         const sql = yield* SqlClient.SqlClient;
         const connected = yield* store.connect(input("old-key-row"));
-        const restarted = yield* ConnectionStore.make.pipe(
+        const restarted = yield* SqlConnectionStore.make.pipe(
           Effect.provide(CredentialKeys.layerFromKeys(Redacted.make(`new:${newKey},old:${oldKey}`)))
         );
         const tested = yield* restarted.test(identity(connected));
@@ -322,7 +324,7 @@ it.layer(fixture)("ConnectionStore", (it) => {
           yield* sql`SELECT key_id FROM connections WHERE id = ${connected.id}`,
           [{ key_id: "new" }]
         );
-        const currentOnly = yield* ConnectionStore.make.pipe(
+        const currentOnly = yield* SqlConnectionStore.make.pipe(
           Effect.provide(CredentialKeys.layerFromKeys(Redacted.make(`new:${newKey}`)))
         );
         assert.strictEqual((yield* currentOnly.test(identity(connected))).id, connected.id);
@@ -402,7 +404,7 @@ it.layer(fixture)("ConnectionStore", (it) => {
         const connected = yield* store.connect(input("concurrent-refresh"));
         const entered = yield* Deferred.make<void>();
         const resume = yield* Deferred.make<void>();
-        const slow = yield* ConnectionStore.make.pipe(
+        const slow = yield* SqlConnectionStore.make.pipe(
           Effect.provideService(Source.Source, {
             ...source,
             inspect: Effect.fn("SlowSource.inspect")(function* (credentials) {
@@ -485,7 +487,7 @@ it.effect("dev holds metadata alone and explicitly refuses every administration 
       }
     }).pipe(
       Effect.provide(
-        ConnectionStore.layerDev([
+        ConnectionStoreDev.layer([
           {
             connection,
             snapshots: [

@@ -14,7 +14,7 @@ import * as Testing from "@patchy/sql/testing";
 import * as Source from "./Source.js";
 import * as SourceClient from "./SourceClient.js";
 import * as SourceNetwork from "./SourceNetwork.js";
-import { Snapshot } from "./Snapshot.js";
+import { Snapshot } from "@patchy/api/postgres-snapshot";
 
 it("refuses non-global addresses, including IPv6 aliases and transition ranges", () => {
   for (const address of [

@@ -9,8 +9,7 @@ import {
   surface,
   typeMapping
 } from "./Mapping.js";
-import { Snapshot } from "./Snapshot.js";
-import type { ColumnType } from "./Snapshot.js";
+import { Snapshot, type ColumnType } from "@patchy/api/postgres-snapshot";
 
 const type = (baseName: string): typeof ColumnType.Type => ({
   schema: "pg_catalog",

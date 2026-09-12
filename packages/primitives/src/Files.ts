@@ -17,7 +17,7 @@ import {
 import { CompanyDatabases } from "@patchy/company-database";
 import { ContentStore } from "@patchy/content-store";
 import { newInternalId } from "@patchy/core";
-import { Binding, Runtime } from "@patchy/runtime";
+import { Binding, Runtime } from "@patchy/runtime/core";
 import { boundedRows } from "./bounded-rows.js";
 
 export class InvalidCursor extends Schema.TaggedError<InvalidCursor>()("FileInvalidCursor", {

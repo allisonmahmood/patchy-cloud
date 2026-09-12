@@ -69,5 +69,5 @@ The local implementation of an integration's supported operations, using synthet
 _Avoid_: Mock integration, production proxy
 
 **Fixture**:
-Agent-authored synthetic rows for a declared connection's local shape. A view fixture holds explicit rows rather than recomputing from its source tables.
+Agent-authored synthetic rows for a declared connection or shared table's local shape. A view fixture holds explicit rows rather than recomputing from its source tables. Fixtures establish local behavior, not production data, privilege or volume guarantees.
 _Avoid_: Sample of production, mock response

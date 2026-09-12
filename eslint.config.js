@@ -6,8 +6,15 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    // `.claude/` holds agent worktrees: full copies of the repo that type-aware linting must not load.
-    ignores: ["**/dist/**", "**/coverage/**", "**/node_modules/**", "**/.turbo/**", ".claude/**"]
+    // Agent worktrees and disposable patch repos are not this workspace's TypeScript projects.
+    ignores: [
+      "**/dist/**",
+      "**/coverage/**",
+      "**/node_modules/**",
+      "**/.turbo/**",
+      ".claude/**",
+      ".local/**"
+    ]
   },
   {
     files: ["**/*.{ts,mts,cts,tsx}"],
@@ -39,8 +46,8 @@ export default tseslint.config(
   },
   {
     files: ["packages/patchy/src/**/*.{ts,mts,cts,tsx}"],
-    // Integration fixtures share Auth's dev seed; shipped CLI code stays wire-only.
-    ignores: ["**/*.test.ts"],
+    // Shipped CLI code is wire-only; the three local-runtime composition modules use explicit dev surfaces.
+    ignores: ["**/*.test.ts", "packages/patchy/src/dev{Preparation,Resources,Server}.ts"],
     rules: {
       "no-restricted-imports": [
         "error",
@@ -54,6 +61,28 @@ export default tseslint.config(
               regex: "(?!^\\.\\./package\\.json$)(^|/)\\.\\.(/|$)",
               message:
                 "CLI imports may not traverse parent directories except for their own package metadata."
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    files: ["packages/patchy/src/dev{Preparation,Resources,Server}.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              regex:
+                "^@patchy/(?!(api|core|company-database/dev|content-store|integrations/dev|primitives|runtime/core|runtime/dev|limits|serving/shell)$)",
+              message:
+                "The local runtime may compose only explicit local capability surfaces, never production auth or credential wiring."
+            },
+            {
+              regex: "(?!^\\.\\./package\\.json$)(^|/)\\.\\.(/|$)",
+              message: "Local runtime imports may not traverse parent directories."
             }
           ]
         }

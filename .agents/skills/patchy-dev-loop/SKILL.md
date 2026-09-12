@@ -20,6 +20,30 @@ Clerk users and sends real invitation mail. It needs Chromium and its system
 dependencies. `pnpm test` and the packed CLI e2e remain offline; `pnpm test:all`
 does not include the live tiers.
 
+## Patch repos and the local runtime
+
+For a patch repo against this checkout, follow DEVELOPMENT's **A patch repo
+against this worktree** recipe. Initialize under `.local/` after the cloud is
+healthy; this keeps instance discovery scoped here. `init` installs the release,
+so run the pinned `pnpm patchy dev --json` without reinstalling.
+Open its `url` and exercise the real generated client through the local shell:
+insert/list, file upload/`url(name)`, and declared Postgres/shared fixtures as applicable.
+Done means the observed local result, not an ordinary Vite preview or a cloud read.
+
+`patchy dev` is detached and idempotent; its `status`, `stop`, `logs` and `reset`
+subcommands accept `--json`. Config and fixture edits require stop/start; code
+builds reload the whole shell at its current route. Reset wipes disposable local
+state and leaves the runtime stopped; the next start fetches the published inventory
+again. Missing fixtures name the file to author. Dev calls are not logged and load
+no keyring/log store.
+
+For worktree runtime edits, DEVELOPMENT gives the source-CLI invocation from inside
+the patch repo. For a packed-release check, restart the cloud and follow DEVELOPMENT's
+fresh repo **and isolated pnpm store/cache** recipe. A new repo alone can still
+receive an older same-version tarball from the cache. After initialization, do
+not reinstall as part of the agent's laid-down-tree exercise.
+Stop every patch runtime you started before stopping the worktree's cloud instance.
+
 ## 1. Start
 
 On a new checkout, follow the prerequisites and `pnpm install` in

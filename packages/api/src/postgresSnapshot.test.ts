@@ -1,6 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
-import { Snapshot } from "./Snapshot.js";
+import { Snapshot } from "./postgresSnapshot.js";
 
 const isSnapshot = Schema.is(Snapshot);
 const text = {

@@ -13,6 +13,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as Pg from "pg";
 import { inject } from "vitest";
 import * as ConnectionStore from "../ConnectionStore.js";
+import * as ConnectionStoreDev from "../ConnectionStoreDev.js";
 import * as Execution from "./Execution.js";
 import * as SourceClient from "./SourceClient.js";
 
@@ -160,7 +161,7 @@ const setup = Effect.fn("test.executionSetup")(function* (limits: Partial<Execut
     );
   }).pipe(
     Effect.provide(
-      ConnectionStore.layerDev([
+      ConnectionStoreDev.layer([
         {
           connection,
           snapshots: [

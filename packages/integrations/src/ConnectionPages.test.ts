@@ -21,10 +21,11 @@ import { RuntimeLog } from "@patchy/runtime";
 import * as Testing from "@patchy/sql/testing";
 import * as ConnectionPages from "./ConnectionPages.js";
 import * as ConnectionStore from "./ConnectionStore.js";
+import * as SqlConnectionStore from "./SqlConnectionStore.js";
 import * as CredentialKeys from "./CredentialKeys.js";
 import * as Source from "./postgres/Source.js";
 import * as SourceClient from "./postgres/SourceClient.js";
-import { Snapshot } from "./postgres/Snapshot.js";
+import { Snapshot } from "@patchy/api/postgres-snapshot";
 
 const env = clerkEnv();
 const base = env.PATCHY_PUBLIC_BASE_URL!;
@@ -96,7 +97,7 @@ const services = Layer.mergeAll(
   Companies.layer,
   Users.layer,
   HttpServer.layerServices,
-  ConnectionStore.layer
+  SqlConnectionStore.layer
 ).pipe(
   Layer.provideMerge(RuntimeLog.layer),
   Layer.provideMerge(source),

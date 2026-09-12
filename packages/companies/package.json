@@ -6,6 +6,11 @@
   "type": "module",
   "description": "Companies, users, roles and invitations, with their baseline migration.",
   "exports": {
+    "./Companies": {
+      "development": "./src/Companies.ts",
+      "types": "./dist/Companies.d.ts",
+      "import": "./dist/Companies.js"
+    },
     ".": {
       "development": "./src/index.ts",
       "types": "./dist/index.d.ts",

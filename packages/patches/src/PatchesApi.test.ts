@@ -32,7 +32,7 @@ import {
 } from "@patchy/api";
 import { ContentStore } from "@patchy/content-store";
 import { Limits } from "@patchy/limits";
-import { ConnectionStore, PostgresSource } from "@patchy/integrations";
+import { ConnectionStore, SqlConnectionStore, PostgresSource } from "@patchy/integrations";
 import * as Content from "./Content.js";
 import * as Patches from "./Patches.js";
 import * as PatchesApi from "./PatchesApi.js";
@@ -1669,7 +1669,7 @@ const sourceConnection = Effect.fn("test.sourceConnection")(function* (handle: s
   const display = { host: "warehouse.example", port: 5432, database: "warehouse", role: "reader" };
   const snapshot = { version: 1 as const, relations: [], enums: [], exclusions: [] };
   // Substitute only the outside source; encryption, persistence and publishing remain real.
-  const connections = yield* ConnectionStore.make.pipe(
+  const connections = yield* SqlConnectionStore.make.pipe(
     Effect.provideService(PostgresSource.Source, {
       test: () => Effect.succeed(display),
       inspect: () => Effect.succeed({ display, snapshot })
