@@ -17,9 +17,11 @@ recipe for discarding a deployed database's migration history.
 
 ## Decision
 
-Postgres is the only store. The JSON driver, the `PatchyDb` port and its
-contract suite are deleted; capability packages query `@effect/sql-pg` through
-`SqlSchema` directly, and every rule exists once, in SQL.
+Postgres is the platform store. The JSON driver, the `PatchyDb` port and its
+contract suite are deleted; capability packages query a `SqlClient` through
+`SqlSchema`, and every rule exists once, in SQL. Company resources additionally
+use the local PGlite adapter described in [ADR-0009](./ADR-0009-one-postgres-database-per-company.md);
+that adapter is for patch development, not a second platform storage model.
 
 1. **One baseline per owner.** The pre-deployment history was rewritten
    rather than carried forward: Companies owns baseline 1
@@ -41,8 +43,9 @@ into the query as `to_timestamp(...)`, so a test still winds time.
 the runner is the path that provides one locally. A local metadata file is not
 an alternative server mode.
 
-**A future migration has one database target.** Schema changes and any required
-data backfill are Postgres steps, with no JSON transform to maintain beside them.
+**Migrations target their owning database.** Platform metadata migrations run
+through the platform ledger. Company inventory initialization runs in each
+company database; both drivers execute its same PostgreSQL statements.
 
 The pre-deployment name backfill requested by #195 is a seed operation, not an
 upgrade of an existing schema: the rewritten baseline already contains the name

@@ -2,6 +2,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import * as AzureContentStore from "./AzureContentStore.js";
 import * as BlobContainer from "./BlobContainer.js";
 import * as ContentStore from "./ContentStore.js";
@@ -26,7 +27,8 @@ const failingContainer = Layer.succeed(
             })
           : down("download")
       ),
-    deleteIfExists: () => Effect.fail(down("deleteIfExists"))
+    deleteIfExists: () => Effect.fail(down("deleteIfExists")),
+    list: () => Stream.fail(down("list"))
   })
 );
 
@@ -45,7 +47,8 @@ it.layer(
       const failures = [
         yield* service.put("a.html", "<h1>hi</h1>").pipe(Effect.flip),
         yield* service.get("a.html").pipe(Effect.flip),
-        yield* service.delete("a.html").pipe(Effect.flip)
+        yield* service.delete("a.html").pipe(Effect.flip),
+        yield* service.list("files/").pipe(Stream.runCollect, Effect.flip)
       ];
       assert.deepStrictEqual(
         failures.map((failure) =>
@@ -56,7 +59,8 @@ it.layer(
         [
           ["put", "a.html", down("upload")],
           ["get", "a.html", down("download")],
-          ["delete", "a.html", down("deleteIfExists")]
+          ["delete", "a.html", down("deleteIfExists")],
+          ["list", "files/", down("list")]
         ]
       );
       // Refused before the container is asked, so an outage never masks it.

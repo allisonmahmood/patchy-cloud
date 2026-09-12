@@ -2,8 +2,8 @@
 
 The `@effect/sql-pg` client layer, Effect's Migrator over the capability packages' migration records, and the migrated-database test layer. No tables live here; see `CONTEXT.md` for the migration and ledger contract.
 
-- `layer` — `PgClient` from `DATABASE_URL` (a `Redacted` `Config`). `layerFromUrl` is the same client on a URL already in hand. A `prepare: false` switch for Neon's transaction-mode pooler is reserved here, not built: the `pg`-backed client in this RC has no such option, so it lands with the deployment work.
-- `migrate({ ...companies, ...auth, ...patches })` — runs every pending step in one transaction and answers with what it applied. The record keys are `<id>_<name>`; a multi-statement DDL string runs through `sql.unsafe`.
+- `layer` — `PgClient` from `DATABASE_URL` (a `Redacted` `Config`). `layerFromUrl` is the same client on a URL already in hand. Connections are direct: the pinned adapter's cancellation does not work through PgBouncer's transaction pooling; see [ADR-0009](../../docs/adr/ADR-0009-one-postgres-database-per-company.md).
+- `migrate({ ...companies, ...auth, ...patches, ...companyDatabase })` — runs every pending platform step in one transaction and answers with what it applied. The record keys are `<id>_<name>`; existing platform migrations use multi-statement DDL. Company inventory initialization is separate and emits one statement per call so the same SQL runs over Postgres and PGlite.
 - `@patchy/sql/testing` — `layer()` clones the shared seeded template for an `it.layer` block and drops the clone when the layer closes. `emptyLayer(migrations)` creates an empty database for SQL's own migrator tests.
 
 ## Decoding rows

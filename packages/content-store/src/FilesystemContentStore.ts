@@ -3,12 +3,15 @@
  * relative to a root the key may never escape. What `pnpm dev` and the tests
  * run on.
  */
+// @effect-diagnostics nodeBuiltinImport:off -- Effect has no incremental directory iterator; opendir bounds listing memory.
 import { NodeFileSystem, NodePath } from "@effect/platform-node";
+import { opendir, stat } from "node:fs/promises";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Stream from "effect/Stream";
 import * as ContentStore from "./ContentStore.js";
 
 /** Where the objects land. */
@@ -66,7 +69,45 @@ export const make = Effect.gen(function* () {
       );
   });
 
-  return ContentStore.ContentStore.of({ put, get, delete: remove });
+  const list = (prefix: string) =>
+    Stream.unwrap(
+      Effect.gen(function* () {
+        if (prefix !== "") yield* resolveKey(prefix);
+        // opendir is incremental; readDirectory would materialise entire directories.
+        async function* walk(
+          directory: string,
+          parent: string
+        ): AsyncGenerator<ContentStore.StoredObject> {
+          const entries = await opendir(directory);
+          for await (const entry of entries) {
+            const key = parent + entry.name;
+            const file = path.join(directory, entry.name);
+            if (entry.isDirectory() && (prefix.startsWith(key + "/") || key.startsWith(prefix))) {
+              yield* walk(file, key + "/");
+            } else if (entry.isFile() && key.startsWith(prefix)) {
+              yield { key, lastModified: (await stat(file)).mtimeMs };
+            }
+          }
+        }
+        const exists = yield* fs
+          .exists(root)
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new ContentStore.StoreUnavailable({ operation: "list", key: prefix, cause })
+            )
+          );
+        return exists
+          ? Stream.fromAsyncIterable(
+              walk(root, ""),
+              (cause) =>
+                new ContentStore.StoreUnavailable({ operation: "list", key: prefix, cause })
+            )
+          : Stream.empty;
+      })
+    );
+
+  return ContentStore.ContentStore.of({ put, get, delete: remove, list });
 });
 
 export const layer = Layer.effect(ContentStore.ContentStore, make).pipe(

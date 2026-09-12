@@ -1,14 +1,14 @@
 /**
- * The content store: the platform's object store for a patch's bytes, one
- * HTML object per patch version under a key the patch records. Two layers
- * implement it — `FilesystemContentStore` for dev and tests,
- * `AzureContentStore` for production — chosen by the server's wiring, never
- * by an operator setting. "Storage" is reserved for the later per-patch file
- * primitive; this package is not that.
+ * The content store: the platform's object store for patch bytes. HTML lives
+ * under version keys; immutable file objects live under files/. Two layers
+ * implement it — FilesystemContentStore for dev and tests and AzureContentStore
+ * for production. Object listing is infrastructure for orphan reclamation,
+ * not the file primitive's indexed, authorised list operation.
  */
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import type * as Stream from "effect/Stream";
 
 /** The key names no object: empty, or one that would leave the store's root. */
 export class InvalidObjectKey extends Schema.TaggedError<InvalidObjectKey>()("InvalidObjectKey", {
@@ -33,7 +33,7 @@ export class ObjectNotFound extends Schema.TaggedError<ObjectNotFound>()("Object
  * refused. The driver's own error rides as `cause`.
  */
 export class StoreUnavailable extends Schema.TaggedError<StoreUnavailable>()("StoreUnavailable", {
-  operation: Schema.Literals(["put", "get", "delete"]),
+  operation: Schema.Literals(["put", "get", "delete", "list"]),
   key: Schema.String,
   cause: Schema.Defect()
 }) {
@@ -45,6 +45,12 @@ export class StoreUnavailable extends Schema.TaggedError<StoreUnavailable>()("St
 /** What every layer refuses before touching its backend: an empty key, or one with a NUL in it. */
 export const checkKey = (key: string): Effect.Effect<void, InvalidObjectKey> =>
   key.length === 0 || key.includes("\0") ? Effect.fail(new InvalidObjectKey({ key })) : Effect.void;
+
+export interface StoredObject {
+  readonly key: string;
+  /** Last modification time in milliseconds since the Unix epoch. */
+  readonly lastModified: number;
+}
 
 export class ContentStore extends Context.Service<
   ContentStore,
@@ -60,5 +66,9 @@ export class ContentStore extends Context.Service<
     ) => Effect.Effect<string, InvalidObjectKey | ObjectNotFound | StoreUnavailable>;
     /** Removes the object; a key already empty is a success. */
     readonly delete: (key: string) => Effect.Effect<void, InvalidObjectKey | StoreUnavailable>;
+    /** Lazily enumerates objects whose keys start with prefix; empty means all objects. */
+    readonly list: (
+      prefix: string
+    ) => Stream.Stream<StoredObject, InvalidObjectKey | StoreUnavailable>;
   }
 >()("@patchy/content-store/ContentStore") {}

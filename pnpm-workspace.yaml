@@ -10,6 +10,7 @@ catalog:
   effect: 4.0.0-rc.112
   "@effect/platform-node": 4.0.0-rc.112
   "@effect/sql-pg": 4.0.0-rc.112
+  "@effect/sql-pglite": 4.0.0-rc.112
   "@effect/vitest": 4.0.0-rc.112
   "@effect/language-service": 0.87.2
 # Wait one day before resolving new releases so compromised versions have time to be removed.
@@ -33,6 +34,7 @@ overrides:
   effect: "catalog:"
   "@effect/platform-node": "catalog:"
   "@effect/sql-pg": "catalog:"
+  "@effect/sql-pglite": "catalog:"
   "@effect/vitest": "catalog:"
   "@effect/language-service": "catalog:"
 # embedded-postgres's beforeExit hook must preserve Vitest failures, not exit 0.

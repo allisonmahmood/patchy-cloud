@@ -105,7 +105,7 @@ State lives in `<worktree>/.local/dev/` (gitignored):
 
 - `plan.json` — the resolved plan, including the pids once running. `status`
   and `stop` act only on what is recorded here.
-- `env` — `PATCHY_API_URL`, `PATCHY_API_TOKEN`, `DATABASE_URL`.
+- `env` — `PATCHY_API_URL`, `PATCHY_API_TOKEN`, `DATABASE_URL`, `PATCHY_COMPANY_DB_ADMIN_URL`, `PATCHY_COMPANY_DB_URL`.
 - `dev.log` — every line from every process, each prefixed `[dev]`,
   `[postgres]` or `[server]`.
 - `postgres/` — the cluster's data directory; `storage/` — published HTML.
@@ -130,9 +130,10 @@ from its Clerk dashboard into the same file as `KEY=value` entries. Keep the
 file private and keep secret values out of terminal output, chat and git.
 Use development keys, not the dedicated CI application's keys.
 
-Both Clerk keys are required at server startup. The runner supplies the other
-two required variables, `DATABASE_URL` and `PATCHY_PUBLIC_BASE_URL`, from its
-worktree plan; values for either in `dev.env` are ignored.
+Both Clerk keys are required at server startup. The runner supplies
+`DATABASE_URL`, `PATCHY_COMPANY_DB_ADMIN_URL`, `PATCHY_COMPANY_DB_URL` and
+`PATCHY_PUBLIC_BASE_URL` from its worktree plan; values for them in `dev.env`
+are ignored. Both company-database URLs use the embedded Postgres superuser.
 
 `CLERK_JWT_KEY` optionally supplies Clerk's PEM public key to avoid the JWKS
 fetch during session-token verification. In `dev.env`, enclose the complete
@@ -479,11 +480,21 @@ scope holding Postgres and the server, so either exiting — or `stop`'s
 SIGTERM — tears the other down. Migrations run through Effect's Migrator in
 `packages/sql`: Companies owns `0001_companies_baseline`, Auth owns
 `0002_auth_baseline`, and Patches owns `0003_patches_baseline`. Companies also
-owns `0004_invites_expiry`, which adds and backfills invitation expiry. The three
+owns `0004_invites_expiry`, which adds and backfills invitation expiry.
+Company database owns `0005_company_database_baseline`; the 0004 number requested
+by #196 was already occupied, so its existing ledger entry is preserved. The three
 migrator spreads are `apps/server/src/Server.ts`,
 `scripts/dev/src/supervisor.ts` and `test/postgres.ts`; server tests clone the
 template without passing migrations. Packed and live browser servers migrate
 through the server's existing spread rather than maintaining another one.
+
+Company databases are created lazily, not in the seed or template.
+`@patchy/company-database/testing` layers use the embedded cluster's provisioning
+login and drop their company databases after closing the scoped pools. The
+company-database suites exercise concurrency on real Postgres and shared
+inventory behavior over a directory-backed PGlite layer. PGlite's one connection
+does not establish multi-session locking correctness; its local state is
+recreatable, with fsync off and normalized `int8`/`DATE` codecs.
 
 ## Running the server by hand
 
@@ -497,16 +508,29 @@ origin:
 
 ```sh
 DATABASE_URL=postgres://... PATCHY_PUBLIC_BASE_URL=http://localhost:3000 \
+  PATCHY_COMPANY_DB_ADMIN_URL=postgres://... PATCHY_COMPANY_DB_URL=postgres://... \
   PATCHY_STORAGE_DIR=.local/manual-storage pnpm --filter @patchy/server dev
 ```
 
-All four variables are required: `DATABASE_URL`, `CLERK_PUBLISHABLE_KEY`,
-`CLERK_SECRET_KEY` and `PATCHY_PUBLIC_BASE_URL`. None has a default; startup
+All six variables are required: `DATABASE_URL`, `CLERK_PUBLISHABLE_KEY`,
+`CLERK_SECRET_KEY`, `PATCHY_PUBLIC_BASE_URL`, `PATCHY_COMPANY_DB_ADMIN_URL`
+and `PATCHY_COMPANY_DB_URL`. None has a default; startup
 refuses a missing variable and names it. `PATCHY_PUBLIC_BASE_URL` must be an
 HTTP(S) origin, without credentials, a path, query or fragment, and must match
 the URL used in the browser; it is Clerk's single origin authority.
 `PORT` defaults to 3000; set it and the public origin together if changing ports.
 The optional Clerk settings have the same rules as [above](#clerk-keys).
+
+The company admin URL targets a maintenance database with a provisioning login
+allowed to `CREATE DATABASE` and assign the data role as owner. The data URL is a
+template: its database path is replaced by the company's placement. Production
+uses separate logins; the embedded superuser is only for disposable local runs.
+`PATCHY_COMPANY_DB_MAX_BACKENDS` defaults to 200 retained company-pool slots per
+process. Budget this across replicas, plus ordinary platform connections, two
+independent placement connections, one admin connection, and temporary provisioning
+data connections, against the server limit. Company-pool admission exhaustion returns `busy`. The
+[company database ADR](adr/ADR-0009-one-postgres-database-per-company.md) owns the
+pool and lock contract; ordinary index creation can block writers.
 
 Startup migrates but creates no credential. For normal use, sign in at `/join`,
 create or join a company, then run `pnpm patchy login --api-url <origin>` and

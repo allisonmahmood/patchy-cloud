@@ -1,6 +1,6 @@
 # Hosting
 
-The process that brings Patchy Cloud's capabilities together: the API guard, protected API routes, first-party and patch pages, and the expiry sweep. Company membership belongs to [Companies](../../packages/companies/CONTEXT.md), caller identity to [Auth](../../packages/auth/CONTEXT.md), patch ownership and retention to [Patches](../../packages/patches/CONTEXT.md), and page admission and guarantees to [Serving](../../packages/serving/CONTEXT.md).
+The process that brings Patchy Cloud's capabilities together: the API guard, protected API routes, first-party and patch pages, and the expiry and company-resource orphan sweeps. Company membership belongs to [Companies](../../packages/companies/CONTEXT.md), caller identity to [Auth](../../packages/auth/CONTEXT.md), patch ownership and retention to [Patches](../../packages/patches/CONTEXT.md), resource inventory and reclamation to [Company database](../../packages/company-database/CONTEXT.md), and page admission and guarantees to [Serving](../../packages/serving/CONTEXT.md).
 
 ## Language
 

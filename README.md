@@ -23,7 +23,7 @@ pnpm install
 pnpm dev
 ```
 
-The runner starts embedded Postgres, applies the three baselines, seeds **Patchy Dev** and its admin's development machine token, and prints this worktree's API URL. In your browser, open that URL's `/join` page and click **Sign in**. Create or join a company when prompted. To use **Patchy Dev** as its admin instead, set the optional [`PATCHY_DEV_CLERK_USER_ID`](docs/DEVELOPMENT.md#seed) before starting.
+The runner starts embedded Postgres, applies all capability migrations, seeds **Patchy Dev** and its admin's development machine token, and prints this worktree's API URL. In your browser, open that URL's `/join` page and click **Sign in**. Create or join a company when prompted. To use **Patchy Dev** as its admin instead, set the optional [`PATCHY_DEV_CLERK_USER_ID`](docs/DEVELOPMENT.md#seed) before starting.
 
 Keep `PATCHY_API_TOKEN` unset so a saved login outranks the development seed, then log in the CLI:
 
@@ -58,6 +58,7 @@ A Turborepo monorepo managed with pnpm. [AGENTS.md](AGENTS.md) is the guide to w
 - `packages/serving` — the page routes and login door integration, sharing-aware CSP and caching, and the trusted-proxy schema (`@patchy/serving`).
 - `packages/content-store` — the object store for a patch's bytes, with filesystem and Azure Blob layers (`@patchy/content-store`).
 - `packages/sql`, `packages/analytics`, `packages/limits` — the Postgres client and Migrator, the event service, the rate limiter.
+- `packages/company-database` — company placements, lazy Postgres databases, bounded pools, transactional patch locks, cumulative inventory and the PGlite development layer.
 - `skills/patchy` — the agent skill that teaches an assistant to produce safe static HTML and publish it.
 - `examples/plan.html` — a Patchy-styled starter patch.
 

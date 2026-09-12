@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { assert, it } from "@effect/vitest";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import * as HttpClient from "effect/unstable/http/HttpClient";
@@ -38,12 +40,22 @@ const CSP =
   "frame-src 'self' about:; base-uri 'none'; form-action 'none'";
 
 const memoryStore = Layer.sync(ContentStore.ContentStore, () => {
-  const objects = new Map<string, string>();
+  const objects = new Map<string, { html: string; lastModified: number }>();
   return ContentStore.ContentStore.of({
-    put: (key, html) => Effect.sync(() => void objects.set(key, html)),
+    list: (prefix) =>
+      Stream.suspend(() =>
+        Stream.fromIterable(
+          [...objects]
+            .filter(([key]) => key.startsWith(prefix))
+            .map(([key, object]) => ({ key, lastModified: object.lastModified }))
+        )
+      ),
+    put: Effect.fn(function* (key, html) {
+      objects.set(key, { html, lastModified: yield* Clock.currentTimeMillis });
+    }),
     get: (key) =>
       Effect.suspend(() => {
-        const html = objects.get(key);
+        const html = objects.get(key)?.html;
         return html === undefined
           ? Effect.fail(new ContentStore.ObjectNotFound({ key }))
           : Effect.succeed(html);

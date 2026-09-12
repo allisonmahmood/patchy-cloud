@@ -1,10 +1,12 @@
 import { assert, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlError from "effect/unstable/sql/SqlError";
@@ -22,16 +24,27 @@ const { uploader } = Fixtures.identities;
  * its target between preflight and recording. Faults come from alternate layers.
  */
 const memoryStore = (() => {
-  const objects = Ref.makeUnsafe(new Map<string, string>());
+  const objects = Ref.makeUnsafe(new Map<string, { html: string; lastModified: number }>());
   const control = { afterPut: Effect.void as Effect.Effect<void> };
   const service = ContentStore.ContentStore.of({
-    put: (key, html) =>
-      Ref.update(objects, (map) => new Map(map).set(key, html)).pipe(
-        Effect.andThen(() => control.afterPut)
+    list: (prefix) =>
+      Stream.unwrap(
+        Effect.map(Ref.get(objects), (map) =>
+          Stream.fromIterable(
+            [...map]
+              .filter(([key]) => key.startsWith(prefix))
+              .map(([key, object]) => ({ key, lastModified: object.lastModified }))
+          )
+        )
       ),
+    put: Effect.fn(function* (key, html) {
+      const lastModified = yield* Clock.currentTimeMillis;
+      yield* Ref.update(objects, (map) => new Map(map).set(key, { html, lastModified }));
+      yield* control.afterPut;
+    }),
     get: (key) =>
       Effect.flatMap(Ref.get(objects), (map) => {
-        const html = map.get(key);
+        const html = map.get(key)?.html;
         return html === undefined
           ? Effect.fail(new ContentStore.ObjectNotFound({ key }))
           : Effect.succeed(html);
