@@ -5,6 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as TestClock from "effect/testing/TestClock";
 import * as TestConsole from "effect/testing/TestConsole";
 import * as HttpClient from "effect/unstable/http/HttpClient";
@@ -33,7 +34,19 @@ const makeLoginHarness = (client: HttpClient.HttpClient, credentialSaveDelay = 0
   ]);
   const fs = FileSystem.layerNoop({
     exists: (file) => Effect.succeed(files.has(file)),
-    readFileString: (file) => Effect.succeed(files.get(file)!),
+    readFileString: (file) => {
+      const contents = files.get(file);
+      return contents === undefined
+        ? Effect.fail(
+            PlatformError.systemError({
+              _tag: "NotFound",
+              module: "FileSystem",
+              method: "readFileString",
+              pathOrDescriptor: file
+            })
+          )
+        : Effect.succeed(contents);
+    },
     makeDirectory: () => Effect.void,
     writeFileString: (file, value) =>
       Effect.sync(() => {

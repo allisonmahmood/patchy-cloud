@@ -2,7 +2,7 @@
 
 The product, written down where agents read it. Each section is the resolution of one decision on the [foundation map](https://github.com/allisonmahmood/patchy-cloud/issues/5); the glossaries in each `CONTEXT.md` carry the words, this file carries the shape.
 
-**Built today:** tier 0 HTML patches; user ownership and company/public sharing; Clerk sign-in; create-or-join and company administration; machine login, logout and revocation. Higher runtimes, patch repos, the portal, narrower sharing, addresses, integrations, billing and company lifecycle remain the intended product shape below, not available features.
+**Built today:** tier 0 HTML patches with manifests, release checks and replay-safe publishing; user ownership and company/public sharing; Clerk sign-in; create-or-join and company administration; machine login, logout and revocation. Higher runtimes, patch repos, the portal, narrower sharing, addresses, integrations, billing and company lifecycle remain the intended product shape below, not available features.
 
 ## Patches
 
@@ -10,7 +10,7 @@ A **patch** is the unit of what people build and deploy on Patchy Cloud — anyt
 
 ### What a patch is made of
 
-A patch is a **file tree**. The folder it is built in is the **patch repo**: the tree plus its id, its declared **tier**, and base config. Today's single HTML upload is a one-file tree with no repo; from tier 1 up, the CLI initialises the repo with the SDK and the parts the patch needs to run, and a person or their agent builds inside it. One repo is the working copy of exactly one patch: publishing from it updates that patch, cloning it elsewhere still publishes to the same patch, and the first publish from a repo with no id creates the patch and writes the id back.
+A patch is a **file tree**. The folder it is built in is the **patch repo**: the tree plus its id, its declared **tier**, and base config. Today's single HTML publish is a one-file tree with no repo; from tier 1 up, the CLI initialises the repo with the SDK and the parts the patch needs to run, and a person or their agent builds inside it. One repo is the working copy of exactly one patch: publishing from it updates that patch, cloning it elsewhere still publishes to the same patch, and the first publish from a repo with no id creates the patch and writes the id back.
 
 A patch has exactly one tier, declared in its repo. The structure of the tree says what the code is trying to do — client code, server code, and from tier 3 work that runs with no viewer present — so the cloud checks the declared tier against the tree and refuses a publish that claims less than the tree does. A patch is never two tiers at once.
 
@@ -24,17 +24,19 @@ Ownership: a patch belongs to a **user** in a company. The user holds a machine 
 
 ### Versions and publishing
 
-**Publish** is the act; every publish is a new immutable **version**, and the patch serves the version its pointer names. There is no working copy in the cloud and no unpublished patch — the working copy is local, and the act that creates a patch is the act that makes it live. Today another upload advances the pointer; moving it back through rollback is future work.
+**Publish** is the act; each new publish is an immutable **version**, and the patch serves the version its pointer names. There is no working copy in the cloud and no unpublished patch — the working copy is local, and the act that creates a patch is the act that makes it live. `patchy publish <file>` synthesises a tier 0 **manifest** and sends one HTML **bundle**. Each version records its tier, release, manifest version, server-stamped wire version and schema revision. Today only empty `tables`, `files` and `uses` are admitted. Moving the pointer back through rollback is future work.
+
+A **publish key** identifies one attempt for its owning user. The CLI exclusively creates `attempt.json` with the complete request and owner before sending and recovers it first on the next publish, using a current token for that same user. Concurrent CLI processes resend the existing attempt rather than overwriting it; even a process that loses the creation race must authenticate its original owner. An account switch cannot resend another user's saved content. Killing a process leaves the persisted attempt recoverable, and clearing only the matching publish key prevents a stale response from removing a newer attempt. Repeating the same request returns the stored response without a new version, even after the instance's release changes; reusing the key with a different payload is a conflict. New publishes require an exact-current CLI release.
 
 ### Sharing and finding
 
-A published patch is shared with **everyone in the company** by default, or made **public** on purpose: anyone with the link, without a login. Today its owner chooses either scope with `patchy upload <file> --share company|public` or changes an existing patch with `patchy share <file> company|public` (or `patchy share --patch <id> company|public`); an upload without `--share` preserves an existing patch's scope. Only the owner changes sharing. Narrower scopes — the owner plus named users, or one group — remain future work; who may open, and who may change, a patch is spelled out under [Identity and access](#access-to-a-patch).
+A published patch is shared with **everyone in the company** by default, or made **public** on purpose: anyone with the link, without a login. Today its owner chooses either scope with `patchy publish <file> --share company|public` or changes an existing patch with `patchy share <file> company|public` (or `patchy share --patch <id> company|public`); a publish without `--share` preserves an existing patch's scope. Only the owner changes sharing. Narrower scopes — the owner plus named users, or one group — remain future work; who may open, and who may change, a patch is spelled out under [Identity and access](#access-to-a-patch).
 
 The future way to find a patch is a portal of everything you have access to; today a person shares its link. A patch's identity is its **id**, so two sales dashboards made by two salespeople never collide; the planned human-readable address follows its sharing scope (see [Addresses](#addresses)).
 
 ### Updating, retiring, deleting
 
-Updating is publishing again. Today each upload gives the patch 90 days of retention; a visit in its final 30 days moves expiry to 30 days out, never shorter and never reviving an expired patch. Revoking or replacing a machine token does not stop those top-ups. Expiry stops serving and updates, then the sweep removes the patch and its content. Today's owner **delete** stops serving immediately, with no restore action; its stored content remains until expiry and the sweep.
+Updating is publishing again. Today each publish gives the patch 90 days of retention; a visit in its final 30 days moves expiry to 30 days out, never shorter and never reviving an expired patch. Revoking or replacing a machine token does not stop those top-ups. Expiry stops serving and updates, then the sweep removes the patch and its content. Today's owner **delete** stops serving immediately, with no restore action; its stored content remains until expiry and the sweep.
 
 The intended company model removes automatic expiry in [the expiry-removal effort](https://github.com/allisonmahmood/patchy-cloud/issues/93). Its two exits will be **retire**, which takes a patch off its address and keeps it restorable by its owner, and **delete**, which removes it for good after a recovery window. Retirement and the recovery window are not built yet.
 
@@ -58,7 +60,7 @@ A patch may be set **public** — anyone with the link, no login — at any tier
 
 ### Tier 0 — static
 
-The uploaded document runs no script, so the patch cannot watch the reader or reach anything. The [serving guarantees](../packages/serving/CONTEXT.md) distinguish it from the shell: the patch remains in its script-free sandbox; a public shell runs no script, while a company shell runs only Patchy's own session script — Clerk's headless client and Patchy's external initializer — never analytics. Only the current version of a public patch is public; older versions stay behind the company door. Caching is keyed to sharing: a minute at most for the current public version at its latest and version URLs, never for a doored page. Pages stay open to any agent that may open them, never bot-blocked; an agent reads a company page through its user's signed-in browser, not a machine token. The host knows who opened a company page in order to let them in. The promise is _the patch cannot watch you_, not _nobody knows you were here_.
+The published document runs no script, so the patch cannot watch the reader or reach anything. The [serving guarantees](../packages/serving/CONTEXT.md) distinguish it from the shell: the patch remains in its script-free sandbox; a public shell runs no script, while a company shell runs only Patchy's own session script — Clerk's headless client and Patchy's external initializer — never analytics. Only the current version of a public patch is public; older versions stay behind the company door. Caching is keyed to sharing: a minute at most for the current public version at its latest and version URLs, never for a doored page. Pages stay open to any agent that may open them, never bot-blocked; an agent reads a company page through its user's signed-in browser, not a machine token. The host knows who opened a company page in order to let them in. The promise is _the patch cannot watch you_, not _nobody knows you were here_.
 
 ### Tier 1 — browser
 
@@ -172,7 +174,7 @@ A machine token is **the user's**, shared by every agent using that machine's sa
 
 **Your machines** is the page that lists a user's live tokens by name, creation, last use and expiry, revokes one or all, and signs the browser out. Deactivating a user revokes every token and ends their access on the next request; ending access in open tier 1 and tier 2 patches comes with those runtimes. CI will hold a user-owned token set through `PATCHY_API_TOKEN` when that flow is built; Your machines offers no create or rename action today. There is no company-owned or non-human token kind, so everything published has a human owner. Company-owned tokens for CI that is nobody's come back when someone needs them.
 
-**First publish is login, then upload.** Machine logout forgets its saved login even if revocation cannot complete; it does not sign the browser out. Browser sign-out remains available before company membership and after deactivation. Commands, credential precedence and output are defined in [the CLI contract](./adr/ADR-0004-cli-contract-for-agents.md).
+**First publish is login, then publish.** Machine logout forgets its saved login even if revocation cannot complete; it does not sign the browser out. Browser sign-out remains available before company membership and after deactivation. Commands, credential precedence and output are defined in [the CLI contract](./adr/ADR-0004-cli-contract-for-agents.md).
 
 ### Who's who
 

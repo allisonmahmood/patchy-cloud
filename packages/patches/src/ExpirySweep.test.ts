@@ -29,9 +29,10 @@ const filesystem = FilesystemContentStore.layer.pipe(
   Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ PATCHY_STORAGE_DIR: rootDir })))
 );
 
-const upload = (title: string) =>
+const publish = (title: string) =>
   Effect.flatMap(Content.Content, (content) =>
-    content.upload({
+    content.publish({
+      ...Fixtures.publishRecord(),
       patchId: null,
       companyId: uploader.company.id,
       ownerUserId: uploader.user.id,
@@ -69,9 +70,9 @@ it.layer(
       const patches = yield* Patches.Patches;
       const files = yield* FileSystem.FileSystem;
       yield* TestClock.setTime(Date.UTC(2026, 0, 1));
-      const abandoned = yield* upload("Abandoned");
+      const abandoned = yield* publish("Abandoned");
       yield* TestClock.adjust(80 * DAY);
-      const fresh = yield* upload("Fresh");
+      const fresh = yield* publish("Fresh");
 
       // Start at the retention anchor: expiry is strictly after it.
       yield* TestClock.adjust(10 * DAY);
@@ -119,9 +120,10 @@ it.layer(
     })
   );
 
-  it.effect("counts an object it could not delete once the record is already gone", () =>
+  it.effect("retries object deletion after the expired patch record is gone", () =>
     Effect.gen(function* () {
       const patches = yield* Patches.Patches;
+      const objects = yield* ContentStore.ContentStore;
       const failing = Layer.succeed(
         ContentStore.ContentStore,
         ContentStore.ContentStore.of({
@@ -136,7 +138,8 @@ it.layer(
       yield* TestClock.setTime(Date.UTC(2027, 0, 1));
       // Whatever the block's earlier patches left behind goes first, with a store that works.
       yield* sweep;
-      yield* upload("Orphaned");
+      const orphaned = yield* publish("Orphaned");
+      const key = Content.objectKey(orphaned.patchId, orphaned.versionId);
       yield* TestClock.adjust(91 * DAY);
 
       // A fresh sweep over the failing store: `ExpirySweep.layer` itself is memoised by the block.
@@ -149,13 +152,17 @@ it.layer(
       );
       assert.deepStrictEqual(result, { deleted: 1, skipped: 0, failed: 0, orphanedObjects: 1 });
       assert.strictEqual(yield* patches.countLive(uploader.user.id), 0);
-      // The record went, so no later run finds it: storage to reclaim by hand.
+      assert.isTrue(Option.isNone(yield* patches.find(orphaned.patchId)));
+      assert.strictEqual(yield* objects.get(key), "<p>Orphaned</p>");
+      // Its durable intent survives the lost version row and the failed delete.
       assert.deepStrictEqual(yield* sweep, {
         deleted: 0,
         skipped: 0,
         failed: 0,
         orphanedObjects: 0
       });
+      assert.strictEqual((yield* objects.get(key).pipe(Effect.flip))._tag, "ObjectNotFound");
+      assert.deepStrictEqual(yield* patches.claimObjects(100), []);
     })
   );
 });

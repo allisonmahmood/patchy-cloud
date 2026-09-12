@@ -26,7 +26,7 @@ _Avoid_: project, workspace, source (a repo holds the source; it is also the uni
 
 **Publish**:
 The act that puts a patch up: a new version, live at once to everyone the patch is shared with. There is no unpublished patch or working copy in the cloud.
-_Avoid_: deploy, upload (the wire route, not the act), release, promote
+_Avoid_: deploy, upload (moving bytes, not publishing), release, promote
 
 **Primitive**:
 A capability the cloud provides because a patch declared the need, belonging either to that patch or to its company. The future provision and ownership rules live in [the product](../../docs/product.md#integrations).
@@ -45,15 +45,27 @@ The owner's removal of a patch from service, with no restore action. Stored cont
 _Avoid_: destroy, purge
 
 **Version**:
-One immutable publication of a patch: its content, the machine token that published it and where it came from. Numbered from 1 per patch; revocation does not erase provenance, and changing sharing does not change the content a version URL names.
+One immutable publication of a patch: its bundle, manifest, release and contract versions, the machine token that published it and where it came from. Numbered from 1 per patch; revocation does not erase provenance, and changing sharing does not change the content a version URL names.
 _Avoid_: revision, upload (the act, not the record)
 
-**Upload contract**:
-The promise that a successful publish leaves both a version and its content, while a refused publish leaves neither. An uncertain outcome preserves content rather than risk losing a committed page.
+**Publish contract**:
+The promise that a successful publish leaves both a version and its content, while a refused publish leaves no version and content from failed or refused attempts is durably queued for reclamation. An uncertain outcome preserves committed content while unreferenced bytes are eventually reclaimed; retrying the same attempt returns its original result, even when the instance's current release has changed.
 _Avoid_: two-phase commit, saga
 
+**Manifest**:
+The serializable description of one version's release, tier, owned tables and file stores, and declared connections and shared tables. It describes the patch's contract rather than executing its source.
+_Avoid_: config (the source from which a manifest is produced), inventory (the cumulative provisioned definitions)
+
+**Publish key**:
+The owner-scoped identity of one publish attempt. Resending its unchanged payload recovers the original result; a changed payload under the same key is a conflict, not another version.
+_Avoid_: patch id, machine token, version id
+
+**Bundle**:
+The self-contained HTML content of one version, paired with its manifest. A tier 0 bundle obeys the safe-HTML policy.
+_Avoid_: source tree, manifest, patch (the entity that holds versions)
+
 **Retention clock**:
-The expiry anchor every patch carries: an upload resets it to 90 days out, and a visit with less than 30 days left moves it to 30 days out, never shorter or back from expiry. Revoking a machine token does not change this clock.
+The expiry anchor every patch carries: a publish resets it to 90 days out, and a visit with less than 30 days left moves it to 30 days out, never shorter or back from expiry. Revoking a machine token does not change this clock.
 _Avoid_: TTL, lease
 
 **Patch expiry**:
@@ -61,7 +73,7 @@ The consequence of the retention clock running out: the patch stops serving and 
 _Avoid_: soft delete, archival, retention (that is the clock; expiry is the consequence)
 
 **Expiry sweep**:
-The removal of expired patches, their versions and stored content. It ends their storage cost and their contribution to the owner's quota.
+The removal of expired patches, their versions and stored content, together with unreferenced content left by failed or refused publishes, ending that storage cost and expired patches' contribution to the owner's quota. Content awaiting removal stays durably queued until removal succeeds.
 _Avoid_: cleanup job, garbage collection, reaper, purge
 
 **Visit**:

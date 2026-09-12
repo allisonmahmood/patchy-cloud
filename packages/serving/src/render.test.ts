@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { CURRENT_RELEASE, MANIFEST_VERSION, WIRE_VERSION } from "@patchy/api";
 import { DEV_SEED } from "@patchy/auth/seed";
 import type { Patches } from "@patchy/patches";
 import { renderHome, renderPatchWrapper } from "./render.js";
@@ -35,6 +36,21 @@ describe("renderPatchWrapper", () => {
     id: "ver_1",
     patchId: patch.id,
     versionNumber: 2,
+    tier: 0,
+    release: CURRENT_RELEASE,
+    manifestVersion: MANIFEST_VERSION,
+    wireVersion: WIRE_VERSION,
+    schemaRevision: 0,
+    manifest: {
+      manifestVersion: MANIFEST_VERSION,
+      release: CURRENT_RELEASE,
+      tier: 0,
+      tables: {},
+      files: {},
+      uses: {}
+    },
+    publishKey: "render-fixture",
+    payloadDigest: "render-fixture",
     objectKey: "patches/patch12345ab/2.html",
     contentHash: "hash",
     fileSize: 12,

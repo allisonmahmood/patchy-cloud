@@ -1,5 +1,4 @@
-// Bundles the CLI into one file, Effect and the workspace packages included: a
-// packed CLI has no node_modules to resolve them from. The skill ships beside it.
+// Bundle JavaScript dependencies so the tarball installs without registry access or scripts.
 import { access, chmod, copyFile, cp, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,7 +14,6 @@ const packageSkillsDir = path.join(cliDir, "skills");
 const rootPatchySkill = path.join(rootSkillsDir, "patchy/SKILL.md");
 
 await rm(distDir, { recursive: true, force: true });
-
 await esbuild.build({
   entryPoints: [path.join(cliDir, "src/index.ts")],
   outfile,

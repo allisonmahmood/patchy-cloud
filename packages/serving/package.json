@@ -31,6 +31,7 @@
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
     "@patchy/analytics": "workspace:*",
+    "@patchy/api": "workspace:*",
     "@patchy/content-store": "workspace:*",
     "@patchy/limits": "workspace:*",
     "@patchy/sql": "workspace:*",

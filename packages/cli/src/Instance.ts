@@ -21,7 +21,7 @@ import * as State from "./State.js";
 
 export const DEFAULT_API_URL = "http://localhost:3000";
 
-/** Which link of the chain answered; `status --json` reports it and `upload` names it. */
+/** Which link of the chain answered; `status --json` reports it and `publish` names it. */
 export type Source = "flag" | "dev-env" | "env" | "config" | "default";
 
 /** How a source reads in a sentence: "target came from …". */

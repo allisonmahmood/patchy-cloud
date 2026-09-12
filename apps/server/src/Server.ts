@@ -47,7 +47,7 @@ export const port = Config.int("PORT").pipe(Config.withDefault(3000));
 /**
  * Where a patch's bytes go is wiring, not a setting: Azure Blob when its
  * container is configured, the local filesystem otherwise. An incomplete
- * Azure configuration fails startup here rather than the first upload.
+ * Azure configuration fails startup here rather than the first publish.
  */
 const contentStore = Layer.unwrap(
   Effect.map(Config.option(BlobContainer.container), (container) =>
@@ -97,7 +97,7 @@ const sweeper = Layer.effectDiscard(
 
 /** `/api/*`: the groups' handlers, bearer middleware on protected endpoints, and catch-all. */
 const api = Layer.mergeAll(HttpApiBuilder.layer(PatchyApi), ApiGuard.notFound).pipe(
-  Layer.provide([AuthApi.layer, PatchesApi.layer]),
+  Layer.provide([AuthApi.layer, PatchesApi.layer, PatchesApi.releaseLayer]),
   Layer.provide(Authorization.layer)
 );
 

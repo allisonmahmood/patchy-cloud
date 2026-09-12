@@ -5,8 +5,11 @@ import * as Schema from "effect/Schema";
 import { liveClient, liveSettings } from "../../packages/auth/live/fixtures.js";
 import { startInstance, type BrowserInstance } from "./instance.js";
 
-const decodeUpload = Schema.decodeUnknownSync(
+const decodePublish = Schema.decodeUnknownSync(
   Schema.Struct({ publicUrl: Schema.String, scope: Schema.Literal("company") })
+);
+const decodeRelease = Schema.decodeUnknownSync(
+  Schema.Struct({ release: Schema.String, manifestVersion: Schema.Int })
 );
 const settings = liveSettings(process.env);
 
@@ -56,6 +59,9 @@ export const test = base.extend<object, { live: Live }>({
       try {
         // The instance builds workspace packages before this seed entry exists on a clean checkout.
         const { DEV_SEED } = await import("@patchy/auth/seed");
+        const releaseResponse = await fetch(`${instance.origin}/api/release`);
+        expect(releaseResponse.status).toBe(200);
+        const { release, manifestVersion } = decodeRelease(await releaseResponse.json());
         // SDK endpoint is POST /v1/testing_tokens. Keep the token in memory, never in artifacts.
         const testingToken = await client.testingTokens.createTestingToken();
         const frontendHost = Buffer.from(
@@ -78,21 +84,30 @@ export const test = base.extend<object, { live: Live }>({
           );
           return context;
         };
-        const upload = await fetch(`${instance.origin}/api/uploads`, {
+        const publish = await fetch(`${instance.origin}/api/publish`, {
           method: "POST",
           headers: {
             authorization: `Bearer ${DEV_SEED.token}`,
             "content-type": "application/json"
           },
           body: JSON.stringify({
-            title: "Live company patch",
+            manifest: {
+              manifestVersion,
+              release,
+              tier: 0,
+              tables: {},
+              files: {},
+              uses: {}
+            },
+            publishKey: crypto.randomUUID(),
+            metadata: {},
             html: "<!doctype html><html><head><title>Live company patch</title></head><body><h1>Company-only browser fixture</h1></body></html>",
             scope: "company"
           }),
           signal: AbortSignal.timeout(15_000)
         });
-        expect(upload.status).toBe(201);
-        const { publicUrl: patchUrl } = decodeUpload(await upload.json());
+        expect(publish.status).toBe(201);
+        const { publicUrl: patchUrl } = decodePublish(await publish.json());
         const seededPage = await (await newContext()).newPage();
         await use({
           ...instance,

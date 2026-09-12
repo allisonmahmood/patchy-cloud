@@ -34,7 +34,7 @@ audience may read: the user's company by default, anyone with the link only by e
 
 ## Publishing
 
-The `patchy` CLI uploads one safe static HTML document and returns its view URL.
+The `patchy` CLI publishes one safe static HTML document and returns its view URL.
 New patches default to company scope; use `--share public` only when the user wants
 anyone with the link to read the page.
 
@@ -42,7 +42,7 @@ Requires Node.js 22 or newer, and the `patchy` CLI on `PATH` — built from the
 patchy-cloud repo with `pnpm --filter @patchy/cli build`, then symlinked from
 `packages/cli/dist/index.js` as `patchy` into a directory on `PATH`.
 
-Settle the instance and available key before login or upload:
+Settle the instance and available key before login or publish:
 
 ```bash
 patchy status --json
@@ -86,15 +86,15 @@ the chosen instance and follow the handoff. Resolve an overriding
    same instance before publishing, including when a key was already available.
    Name the user, company and machine it reports. A successful login does not
    override `PATCHY_API_TOKEN`; completion reports that override in `warnings`.
-   Relay any warning and resolve an unintended identity before uploading.
+   Relay any warning and resolve an unintended identity before publishing.
    Then publish:
 
 ```bash
-patchy validate './plan.html' && patchy upload './plan.html' --json
+patchy validate './plan.html' && patchy publish './plan.html' --json
 ```
 
 Skip login only when `whoami` already identifies the intended publisher, then
-validate and upload. A person running `patchy login` at a real terminal with no
+validate and publish. A person running `patchy login` at a real terminal with no
 agent variables and no `--json` gets the handoff but waits in one command;
 an agent always uses the two-step flow.
 `--api-url <url>` on login saves the instance choice and stays in `next`.
@@ -123,14 +123,14 @@ browser sign-out is a separate control on **Your machines**.
   a `pnpm dev` wrote in this checkout, the `PATCHY_API_URL` environment variable,
   or the saved config — in that order. With none of those set the CLI tries
   `http://localhost:3000`, which only works if a server is running locally. Settle the
-  instance before uploading — `status --json` says which one is resolved and where that
-  came from, and `upload` prints it before publishing.
-- Upload, share, delete and whoami require a publishing key. With no key, they exit
+  instance before publishing — `status --json` says which one is resolved and where that
+  came from, and `publish` prints it before publishing.
+- Publish, share, delete and whoami require a publishing key. With no key, they exit
   `1` (`local`), `Run: patchy login`; follow the login handoff above, then retry the
   original command. A local-state error needs the named repair first; `status`
   can report no key when a credential file is unreadable or malformed.
   No command starts a login on the caller's behalf.
-- Upload, share, delete, whoami and `status` use the same credential chain:
+- Publish, share, delete, whoami and `status` use the same credential chain:
   `PATCHY_API_TOKEN`, then the key stored for this instance (`login` or `auth-set`),
   then the dev env's seeded key.
   A login outranks the seed; an environment key overrides both.
@@ -138,11 +138,23 @@ browser sign-out is a separate control on **Your machines**.
   `--api-url` does not carry it along, even when the URL is the same.
 - A rejected key is a hard error. Log in again as the same user to keep editing
   that user's pages; if an environment key overrides it, resolve that override.
-- Local validation runs before upload.
-- Re-uploading the same local file updates the patch it already created on that instance
+- A new publish checks the executing CLI against `GET /api/release`, then validates the file.
+  A `release_mismatch` names both releases and `patchy refresh`; repo tooling arrives later.
+  File mode synthesises a tier 0 manifest; higher tiers and resources are not admitted yet.
+- An interrupted publish keeps the complete attempt under the state dir. Rerun `publish`
+  with the same instance, state and owning user: it authenticates that user before
+  resending the saved content, then applies the original result without another version.
+  A replacement token for the same user works; another account is refused locally.
+  Authentication, rate-limit and quota failures retain the attempt. Preserve the state
+  directory until recovery succeeds, including after a killed process. Exclusive
+  creation of `attempt.json` selects the attempt; concurrent publishes resend the
+  existing one after checking its original owner, even if they lose the creation race.
+  Success or a definitive payload refusal clears only the matching publish key,
+  so a stale response leaves a newer attempt intact.
+- Republishing the same local file updates the patch it already created on that instance
   and preserves its sharing scope unless `--share company` or `--share public` is supplied.
   Pass `--new` to force a fresh patch, or `--patch` to update a known patch only.
-- Set sharing during upload with `patchy upload './plan.html' --share public` or
+- Set sharing during publish with `patchy publish './plan.html' --share public` or
   `--share company`. Change it without publishing a version with
   `patchy share './plan.html' public` or `patchy share './plan.html' company`;
   `patchy share --patch <id> public` (or `company`) selects an id instead of the cached
@@ -171,9 +183,12 @@ browser sign-out is a separate control on **Your machines**.
   target, a quota), `3` means there was no usable answer (network, a 5xx) — try later
   or contact Patchy about the unavailable instance. `130` is an interruption.
 - Every command takes `--json`: one JSON document on stdout on success, `{ "ok": false,
-"error", "kind" }` on stderr on failure, where `kind` is `local`, `rejected` or
-  `unreachable` and matches the exit code. `upload --json` prints the instance's response
-  as it is on the wire (`patchId`, `publicUrl`, `scope`, `versionNumber`, `warnings`, …).
+"error", "kind", "code"? }` on stderr on failure, where `kind` is `local`, `rejected` or
+  `unreachable` and matches the exit code. Branch on `code` when present: a local
+  `release_mismatch` is `local`, the instance's is `rejected`.
+  `publish --json` prints the instance's response as it is on the wire
+  (`patchId`, `publicUrl`, `scope`, `tier`, `versionNumber`, `schemaRevision`,
+  `provisioned`, `unused`, `warnings`, …).
   `share --json` prints `{ "ok": true, "patchId", "scope", "publicUrl" }`.
   Stderr carries failures only.
   `delete --json` prints `{ "ok": true }`. Prefer it when the URL or the patch id is going
@@ -247,7 +262,7 @@ Blocked or unsafe:
    restrained technical report, that means clear sections, tables, and diagrams where
    they clarify the work.
 3. Run `validate` until it passes.
-4. Upload with `--json` so the response gives the actual scope; set `--share` only for
+4. Publish with `--json` so the response gives the actual scope; set `--share` only for
    an explicit sharing choice. With no key, finish the login handoff above before retrying.
 5. Return `publicUrl` and announce who can open it from the returned `scope`, as above.
 

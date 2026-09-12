@@ -69,17 +69,17 @@ Proceed only after `pnpm patchy whoami` names the person's chosen machine, user
 and company; **Dev Machine** is the seed, not evidence of a personal login.
 
 ```sh
-pnpm patchy upload examples/plan.html --json
+pnpm patchy publish examples/plan.html --json
 ```
 
-Open the uploaded URL in that same signed-in browser.
+Open the published URL in that same signed-in browser.
 
 A seed-only CLI check can skip login: `pnpm patchy whoami` names **Dev Machine**
-and uploads belong to the seeded admin. Its company pages can only be read by
+and publishes belong to the seeded admin. Its company pages can only be read by
 a browser user in **Patchy Dev**; a different signed-in company gets 404.
 
 New patches default to company scope; use the returned `scope` to interpret
-`publicUrl`. Before reusing a cached upload after a reset or identity switch,
+`publicUrl`. Before reusing a cached publish after a reset or identity switch,
 read [Reading a published patch](../../../docs/DEVELOPMENT.md#reading-a-published-patch)
 for when `--new` is needed. Login does not transfer ownership of a seed's patch.
 
@@ -102,11 +102,21 @@ to exercise the shell's session refresh.
 
 For serving, access-control or sharing changes, follow
 [Reading a published patch](../../../docs/DEVELOPMENT.md#reading-a-published-patch):
-exercise both CLI sharing transitions and a new upload on a public patch. Check
+exercise both CLI sharing transitions and a new publish on a public patch. Check
 that only the current version is public at its latest and version URLs and older
 versions keep the company door. Check status, cache headers, cookies and CSP,
 along with foreign-company, unenrolled and deactivated readers. Use that section's
-expected responses, including the public-cache delay, rather than treating a successful upload as proof.
+expected responses, including the public-cache delay, rather than treating a successful publish as proof.
+For publish recovery, keep the isolated `PATCHY_STATE_DIR` and original owning user:
+a pending attempt is resent first after authenticating that owner, even if the file
+or current release changed. Replacement tokens for that user work; account switches
+are refused without sending saved content. Authentication and admission failures
+preserve the attempt. Exclusive creation of `attempt.json` selects one attempt;
+concurrent publishes resend the existing one after checking its original owner,
+including when they lose the creation race. Success or a definitive payload refusal
+clears only the matching publish key, so a stale response leaves a newer attempt
+intact. A killed process leaves the persisted attempt recoverable.
+New attempts check the executing CLI against the public `GET /api/release`.
 Production-domain Clerk handshake verification remains a separate live check.
 
 For a login change, follow the logout check in
@@ -137,12 +147,12 @@ The server is not watched. Every server or package change needs a restart:
 pnpm dev stop && pnpm dev
 ```
 
-Uploads and the database survive the restart.
+Published content and the database survive the restart.
 
-`pnpm dev reset` wipes `.local/dev/` (every upload, the database, the log) and
+`pnpm dev reset` wipes `.local/dev/` (published content, the database, the log) and
 starts fresh with the same seeded token, selecting available ports again.
-Use it for disposable data when the three-baseline migration ledger changed
-shape or the data is suspect. Earlier uploads are then missing: an active
+Use it for disposable data when a baseline, including `0003_patches_baseline`,
+changes shape or the data is suspect. Earlier patches are then missing: an active
 signed-in reader gets 404, while a cookie-free fetch still gets the same 401
 door. The CLI's state directory is separate and survives a dev reset.
 

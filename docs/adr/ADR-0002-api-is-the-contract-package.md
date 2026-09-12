@@ -20,13 +20,16 @@ in the shared kernel, or in a package both consumers depend on.
 The wire contract is its own package, `@patchy/api`, beside neither context.
 
 1. **One schema per wire shape, and only there.** Every body the server accepts
-   or sends on `/api/*` is a `Schema.Class` (or, for refusals, a plain
-   `Schema.Struct`) in `packages/api/src/schemas.ts`. The server encodes its
+   or sends on `/api/*` is described by `Schema.Class` or `Schema.Struct`
+   in `packages/api/src/schemas.ts`. The server encodes its
    responses and decodes its request bodies through them; the CLI decodes what it
    reads through them; `docs/API.md` is rendered from them and a test fails when
    the file drifts. A shape that exists in one place cannot disagree with itself.
-2. **The `HttpApi` lives with the schemas.** `PatchyApi` — two groups, `auth`
-   and `patches`, the bearer middleware _definition_, the derived
+   A publish success is encoded once when its version is recorded. Both the
+   initial response and later replays return the stored JSONB representation;
+   a replay never applies today's schema to a historical response.
+2. **The `HttpApi` lives with the schemas.** `PatchyApi` — the `auth`, `patches`
+   and public `release` groups, the bearer middleware _definition_, the derived
    `HttpApiClient` — is the whole of the package. It imports only `@patchy/core`
    and Effect, and no server or CLI code. Each capability package implements its
    own group; none defines one.
@@ -52,8 +55,8 @@ description annotations on the endpoints, which is where an agent reading the
 `HttpApi` finds it too.
 
 **`--json` is uniform.** Command success is one stdout document; `whoami`,
-`upload`, `share` and `delete` expose the wire shape. Failure is one stderr
-document containing `{ ok: false, error, kind }`. The full CLI contract,
+`publish`, `share` and `delete` expose the wire shape. Failure is one stderr
+document containing `{ ok: false, error, kind, code? }`. The full CLI contract,
 including parse failures and login's receipts, is [ADR-0004](./ADR-0004-cli-contract-for-agents.md).
 
 ## Alternatives considered

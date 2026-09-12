@@ -1,7 +1,7 @@
 /**
  * The patches capability's schema: id 3 of the global migration sequence
- * (`packages/sql/CONTEXT.md`), the baseline for `patches` and
- * `patch_versions`. Companies holds 1 and Auth holds 2.
+ * (`packages/sql/CONTEXT.md`), the baseline for `patches`, `patch_versions`
+ * and their pending objects. Companies holds 1 and Auth holds 2.
  */
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -14,8 +14,8 @@ export const migrations: Migrations = {
   // A patch is the runtime-agnostic record: who holds it, what it is called,
   // which version serves, and the clocks that decide whether it is up —
   // the retention anchor (`expires_at`), and the deleted / disabled stamps
-  // that take it out of service. A version is one upload: the object key its
-  // bytes sit under, and where the upload came from.
+  // that take it out of service. A version is one publication: its bundle,
+  // manifest, contract versions and replay record.
   "0003_patches_baseline": ddl(`
     CREATE TABLE patches (
       id TEXT PRIMARY KEY,
@@ -48,12 +48,32 @@ export const migrations: Migrations = {
       git_branch TEXT,
       git_commit_sha TEXT,
       original_filename TEXT,
+      owner_user_id TEXT NOT NULL REFERENCES users(id),
+      tier INTEGER NOT NULL CHECK (tier BETWEEN 0 AND 3),
+      release TEXT NOT NULL,
+      manifest_version INTEGER NOT NULL,
+      wire_version INTEGER NOT NULL,
+      schema_revision INTEGER NOT NULL,
+      manifest JSONB NOT NULL,
+      publish_key TEXT NOT NULL,
+      payload_digest TEXT NOT NULL,
+      publish_response JSONB NOT NULL,
+      publish_status INTEGER NOT NULL CHECK (publish_status IN (200, 201)),
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       UNIQUE (patch_id, version_number)
     );
 
+    CREATE TABLE pending_patch_objects (
+      object_key TEXT PRIMARY KEY,
+      expires_at TIMESTAMPTZ NOT NULL,
+      claimed BOOLEAN NOT NULL DEFAULT false
+    );
+    CREATE INDEX pending_patch_objects_expiry_idx ON pending_patch_objects(expires_at);
+    CREATE UNIQUE INDEX patch_versions_object_key_idx ON patch_versions(object_key);
+
     CREATE INDEX patches_company_id_idx ON patches(company_id);
     CREATE INDEX patches_owner_user_id_idx ON patches(owner_user_id);
     CREATE INDEX patch_versions_patch_id_idx ON patch_versions(patch_id);
+    CREATE UNIQUE INDEX patch_versions_owner_publish_key_idx ON patch_versions(owner_user_id, publish_key);
   `)
 };

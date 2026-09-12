@@ -1,7 +1,7 @@
 {
   "name": "@patchy/cli",
   "version": "0.0.1",
-  "description": "Upload static HTML pages to a Patchy Cloud instance.",
+  "description": "Publish static HTML pages to a Patchy Cloud instance.",
   "type": "module",
   "private": true,
   "license": "UNLICENSED",

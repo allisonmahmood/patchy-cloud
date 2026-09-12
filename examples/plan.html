@@ -594,12 +594,12 @@
           Requires the <code>patchy</code> CLI on Node.js 22 or newer. Select your instance, then
           run <code>patchy login --json</code>. Show its URL and code to the person: they sign in,
           join or create a company if needed, check the code, name the machine and confirm. Run the
-          returned completion command before validating or uploading.
+          returned completion command before validating or publishing.
         </p>
         <div
           class="flow"
           role="img"
-          aria-label="Flow: Write, log in, verify, validate, upload, review"
+          aria-label="Flow: Write, log in, verify, validate, publish, review"
         >
           <span class="node">Write HTML</span>
           <span class="arrow" aria-hidden="true">&rarr;</span>
@@ -609,7 +609,7 @@
           <span class="arrow" aria-hidden="true">&rarr;</span>
           <span class="node">Validate</span>
           <span class="arrow" aria-hidden="true">&rarr;</span>
-          <span class="node">Upload</span>
+          <span class="node">Publish</span>
           <span class="arrow" aria-hidden="true">&rarr;</span>
           <span class="node is-accent">Share Link</span>
         </div>
@@ -620,7 +620,7 @@ patchy login --json
 patchy login --complete &lt;userCode&gt;
 patchy whoami &amp;&amp;
   patchy validate ./plan.html &amp;&amp;
-  patchy upload ./plan.html
+  patchy publish ./plan.html
 # Only when the page is intended for anyone with the link:
 patchy share ./plan.html public
 # Bring it back inside:
@@ -636,10 +636,10 @@ patchy share ./plan.html company</code></pre>
               <span class="pill pill-done">Required</span>
             </h3>
             <p>
-              Every upload requires a machine token acting as its user. The API answers 401 for a
+              Every publish requires a machine token acting as its user. The API answers 401 for a
               missing or invalid token; the CLI with no key exits 1 and says to run
               <code>patchy login</code>. Only the owner can update, share or delete a patch.
-              Uploading the same known file updates its cached patch unless <code>--new</code> is
+              Publishing the same known file updates its cached patch unless <code>--new</code> is
               passed.
             </p>
           </article>
@@ -656,12 +656,12 @@ patchy share ./plan.html company</code></pre>
             </thead>
             <tbody>
               <tr>
-                <td>Authenticated upload</td>
+                <td>Authenticated publish</td>
                 <td>Machine token required</td>
                 <td>Create new patches or update patches owned by the user.</td>
               </tr>
               <tr>
-                <td>Upload without a token</td>
+                <td>Publish without a token</td>
                 <td>CLI asks for login; API answers 401</td>
                 <td>Run patchy login, confirm in your browser, then complete the login.</td>
               </tr>
@@ -675,7 +675,7 @@ patchy share ./plan.html company</code></pre>
               <tr>
                 <td>Page</td>
                 <td>Sandboxed frame</td>
-                <td>The uploaded document is isolated from the Patchy Cloud shell.</td>
+                <td>The published document is isolated from the Patchy Cloud shell.</td>
               </tr>
             </tbody>
           </table>
@@ -689,7 +689,7 @@ patchy share ./plan.html company</code></pre>
             <span class="num">2</span> Safe, portable HTML <span class="pill pill-done">Ready</span>
           </h3>
           <p>
-            Each upload is one complete HTML document with inline CSS and no JavaScript, forms,
+            Each publish is one complete HTML document with inline CSS and no JavaScript, forms,
             iframes, external fonts, or external design assets.
           </p>
           <ul class="check">

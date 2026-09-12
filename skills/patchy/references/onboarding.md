@@ -84,7 +84,7 @@ answered the choice in most cases:
 - `instanceSource` is `config` — a saved choice. Confirm it in passing ("your pages go to
   `pages.example.com` — each gets its own shareable link") and move on.
 - `instanceSource` is `dev-env` — the local dev instance of this checkout, not a deployed
-  company instance; say so and move on. The upload's scope still determines readership.
+  company instance; say so and move on. The publish's scope still determines readership.
 - `instanceSource` is `env` or `flag` — chosen for this session only. Say so, and offer to
   save that choice with `login --api-url <url>` if step 3 needs a login.
 - `instanceSource` is `default` — nothing has been chosen. Ask, once: which address should
@@ -92,7 +92,7 @@ answered the choice in most cases:
   and, before publishing, a completed login or an available publishing key.
 
 Use the actual URL, never a placeholder. Carry an explicit `--api-url` choice
-on login, completion, `whoami`, upload, share and logout. Login saves that choice
+on login, completion, `whoami`, publish, share and logout. Login saves that choice
 and retains the flag in `next`; keep using the flag when overriding a worktree
 or environment-selected instance, since either outranks saved config. The dev
 seed is available only with `instanceSource: "dev-env"`, not through an explicit
@@ -139,11 +139,11 @@ Write `welcome.html` from `welcome-patch.html` in this directory, restyled to th
 look — the structure and copy are the deliverable, the styling is theirs — then:
 
 ```bash
-patchy validate './welcome.html' && patchy upload './welcome.html' --json
+patchy validate './welcome.html' && patchy publish './welcome.html' --json
 ```
 
-Uploading never starts a login or creates a key. If it says `Run: patchy login`,
-finish the handoff above and retry this upload.
+Publishing never starts a login or creates a key. If it says `Run: patchy login`,
+finish the handoff above and retry this publish.
 
 A new welcome patch defaults to `company`. Redoing onboarding updates the cached patch
 and preserves its current scope; pass `--share company` or `--share public` only when

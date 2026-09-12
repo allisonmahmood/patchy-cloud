@@ -6,9 +6,10 @@
 import * as Effect from "effect/Effect";
 import type * as Redacted from "effect/Redacted";
 import type { SchemaError } from "effect/Schema";
+import * as HttpClient from "effect/unstable/http/HttpClient";
 import type * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpApiMiddleware from "effect/unstable/httpapi/HttpApiMiddleware";
-import { Authorization, authorizationClient, makeClient } from "@patchy/api";
+import { Authorization, authorizationClient, makeClient, type PublishRequest } from "@patchy/api";
 import { LocalError, RejectedError, UnreachableError } from "./CliError.js";
 import * as Instance from "./Instance.js";
 
@@ -25,11 +26,36 @@ export const client = (token?: Redacted.Redacted) =>
     );
   });
 
+/** Capture status before the generated client decodes it away, scoped to this one request. */
+export const publish = Effect.fn("Api.publish")(function* (
+  token: Redacted.Redacted,
+  payload: PublishRequest
+) {
+  const http = yield* HttpClient.HttpClient;
+  let status: number | undefined;
+  const api = yield* client(token).pipe(
+    Effect.provideService(
+      HttpClient.HttpClient,
+      HttpClient.tap(http, (response) =>
+        Effect.sync(() => {
+          status = response.status;
+        })
+      )
+    )
+  );
+  return yield* api
+    .publish({ payload })
+    .pipe(Effect.mapError((error) => (isRefusal(error) ? { ...error, status } : error)));
+});
+
 /** What any refusal on the wire looks like: `{ ok: false, error }`, or the 422's `errors`. */
 export interface Refusal {
   readonly ok: false;
   readonly error?: string;
   readonly errors?: ReadonlyArray<string>;
+  readonly code?: string;
+  /** Internal only: the publish transport observed this before wire decoding. */
+  readonly status?: number | undefined;
 }
 
 export type ClientFailure = Refusal | HttpClientError.HttpClientError | SchemaError;
@@ -55,7 +81,10 @@ export const classify = (
   Effect.gen(function* () {
     const { apiUrl } = yield* Instance.Instance;
     if (isRefusal(error)) {
-      return yield* new RejectedError({ message: refusalMessage(error, fallback) });
+      return yield* new RejectedError({
+        message: refusalMessage(error, fallback),
+        ...(error.code === undefined ? {} : { code: error.code })
+      });
     }
     if (error._tag === "SchemaError") {
       return yield* new UnreachableError({

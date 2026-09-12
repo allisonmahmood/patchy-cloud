@@ -4,6 +4,7 @@
  * the socket, `SqlClient` at the database, and `TestClock` — which
  * `it.layer` brings — reaches every fiber the server forks.
  */
+import { randomUUID } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -14,6 +15,7 @@ import * as Layer from "effect/Layer";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import { CURRENT_RELEASE, MANIFEST_VERSION } from "@patchy/api";
 import { clerkEnv } from "@patchy/auth/testing";
 import * as Testing from "@patchy/sql/testing";
 import * as Server from "../Server.js";
@@ -45,10 +47,24 @@ export const answer = (response: HttpClientResponse.HttpClientResponse) =>
 export const html = (title: string) =>
   `<!doctype html><html><head><title>${title}</title></head><body><p>${title}</p></body></html>`;
 
-export const upload = (token: string, body: unknown) =>
+export const publishBody = (body: Record<string, unknown>) => ({
+  manifest: {
+    manifestVersion: MANIFEST_VERSION,
+    release: CURRENT_RELEASE,
+    tier: 0,
+    tables: {},
+    files: {},
+    uses: {}
+  },
+  publishKey: randomUUID(),
+  metadata: {},
+  ...body
+});
+
+export const publish = (token: string, body: Record<string, unknown>) =>
   send(
-    HttpClientRequest.post("/api/uploads").pipe(
+    HttpClientRequest.post("/api/publish").pipe(
       HttpClientRequest.bearerToken(token),
-      HttpClientRequest.bodyJsonUnsafe(body)
+      HttpClientRequest.bodyJsonUnsafe(publishBody(body))
     )
   );

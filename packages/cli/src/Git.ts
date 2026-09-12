@@ -1,7 +1,7 @@
 /**
  * Where a document came from, as far as `git` will say: the remote's org and
  * repo, the branch and the commit. Every field is `null` when there is no
- * repo, no remote or no git; nothing here can fail an upload.
+ * repo, no remote or no git; nothing here can fail a publish.
  */
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";

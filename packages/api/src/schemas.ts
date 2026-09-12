@@ -9,6 +9,10 @@ import * as Schema from "effect/Schema";
 import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
 import { isPatchId } from "@patchy/core";
 
+export const CURRENT_RELEASE = "0.0.1";
+export const MANIFEST_VERSION = 1;
+export const WIRE_VERSION = 1;
+
 /** A patch's public id: twelve lowercase letters or digits. */
 export const PatchId = Schema.String.check(
   Schema.makeFilter((value: string) => isPatchId(value) || "Invalid patch ID.", {
@@ -40,6 +44,10 @@ export const Unauthorized = Schema.Struct({
 export const NotFound = failure(404, {});
 export const Conflict = failure(409, {});
 export const PayloadTooLarge = failure(413, {});
+export const PublishKeyConflict = failure(409, { code: Schema.Literal("publish_key_conflict") });
+export const PublishRefused = failure(422, {
+  code: Schema.Literals(["release_mismatch", "invalid_manifest", "tier_mismatch"])
+});
 export const RequestTargetTooLong = failure(414, {});
 
 /** A per-minute bucket ran dry; `Retry-After` carries the same number of seconds. */
@@ -131,8 +139,120 @@ export const DeviceLoginGone = failure(410, {
 /** Who may open a patch: signed-in company members, or anyone with the link. */
 export const SharingScope = Schema.Literals(["company", "public"]);
 
+const NonEmptyText = Schema.String.check(Schema.isMinLength(1));
+const Revision = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
+const definitionName = /^[a-z][a-zA-Z0-9]*$/;
+const definitions = <S extends Schema.Top>(value: S) =>
+  Schema.Record(Schema.String, value).check(
+    Schema.makeFilter(
+      (record) =>
+        Object.keys(record).every((name) => definitionName.test(name)) ||
+        "Definition names must be camelCase."
+    )
+  );
+const modifiers = { optional: Schema.optionalKey(Schema.Boolean) };
+const column = <const K extends string, S extends Schema.Top>(kind: K, value: S) =>
+  Schema.Struct({
+    kind: Schema.Literal(kind),
+    ...modifiers,
+    default: Schema.optionalKey(value)
+  });
+
+/** Serializable definitions; no uploaded code is ever executed by the server. */
+export const ColumnDefinition = Schema.Union([
+  column("text", Schema.String),
+  column("integer", Schema.Int),
+  column("number", Schema.Number.check(Schema.isFinite())),
+  column("boolean", Schema.Boolean),
+  column(
+    "timestamp",
+    Schema.String.check(
+      Schema.makeFilter(
+        (value) =>
+          value === "now" ||
+          (!Number.isNaN(Date.parse(value)) && value.includes("T")) ||
+          "Expected an ISO timestamp or now."
+      )
+    )
+  ),
+  column("json", Schema.Json),
+  Schema.Struct({
+    kind: Schema.Literal("ref"),
+    table: NonEmptyText,
+    ...modifiers,
+    default: Schema.optionalKey(Schema.String)
+  })
+]).check(
+  Schema.makeFilter(
+    (column) =>
+      !(column.optional === true && Object.hasOwn(column, "default")) ||
+      "A defaulted column cannot be optional."
+  )
+);
+export const IndexDefinition = Schema.Struct({
+  columns: Schema.Array(NonEmptyText).check(Schema.isMinLength(1)),
+  unique: Schema.optionalKey(Schema.Boolean)
+});
+export const TableDefinition = Schema.Struct({
+  columns: definitions(ColumnDefinition).check(
+    Schema.makeFilter(
+      (columns) =>
+        !["id", "createdAt", "updatedAt"].some((name) => name in columns) ||
+        "System columns are reserved."
+    )
+  ),
+  indexes: definitions(IndexDefinition),
+  shared: Schema.optionalKey(Schema.Boolean)
+}).check(
+  Schema.makeFilter(
+    (table) =>
+      Object.values(table.indexes).every((index) =>
+        index.columns.every(
+          (name) => name in table.columns || ["id", "createdAt", "updatedAt"].includes(name)
+        )
+      ) || "An index names an unknown column."
+  )
+);
+export const FileStoreDefinition = Schema.Record(Schema.String, Schema.Never);
+export const PostgresDeclaration = Schema.Struct({
+  kind: Schema.Literal("postgres"),
+  handle: NonEmptyText,
+  id: NonEmptyText,
+  revision: Revision
+});
+export const SharedTableDeclaration = Schema.Struct({
+  kind: Schema.Literal("sharedTable"),
+  patchId: PatchId,
+  table: NonEmptyText,
+  id: NonEmptyText,
+  revision: Revision
+});
+export const Manifest = Schema.Struct({
+  manifestVersion: Schema.Int.check(Schema.isGreaterThan(0)),
+  release: NonEmptyText,
+  name: Schema.optionalKey(
+    Schema.String.check(
+      Schema.makeFilter(
+        (value) => /^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$/.test(value) || "Invalid patch name."
+      )
+    )
+  ),
+  tier: Schema.Literals([0, 1, 2, 3]),
+  tables: definitions(TableDefinition),
+  files: definitions(FileStoreDefinition),
+  uses: definitions(Schema.Union([PostgresDeclaration, SharedTableDeclaration]))
+}).annotate({ parseOptions: { onExcessProperty: "error" } });
+
+/** Integrity is absent until the instance has a real package artifact to hash. */
+export class Release extends Schema.Class<Release>("Release")({
+  release: NonEmptyText,
+  package: Schema.Struct({ tarball: Schema.String, integrity: Schema.NullOr(Schema.String) }),
+  manifestVersion: Schema.Int,
+  wireVersion: Schema.Int
+}) {}
+
 /** What the CLI knows about where a document came from. Every field is optional. */
-export class UploadMetadata extends Schema.Class<UploadMetadata>("UploadMetadata")({
+export class PublishMetadata extends Schema.Class<PublishMetadata>("PublishMetadata")({
   repoOrg: OptionalText,
   repoName: OptionalText,
   gitBranch: OptionalText,
@@ -141,16 +261,23 @@ export class UploadMetadata extends Schema.Class<UploadMetadata>("UploadMetadata
   fileSha256: OptionalText
 }) {}
 
-/** `POST /api/uploads`: with a `patchId` it updates that patch, without one it creates. */
-export class UploadRequest extends Schema.Class<UploadRequest>("UploadRequest")({
+/** One durable attempt, resent unchanged after a lost acknowledgement. */
+export class PublishRequest extends Schema.Class<PublishRequest>("PublishRequest")({
+  manifest: Manifest,
   html: Schema.String,
-  filename: OptionalText,
-  patchId: Schema.optionalKey(Schema.NullOr(PatchId)),
+  patchId: Schema.optionalKey(PatchId),
   scope: Schema.optionalKey(SharingScope),
-  metadata: Schema.optionalKey(UploadMetadata)
+  publishKey: NonEmptyText,
+  metadata: PublishMetadata
 }) {}
 
-const uploadFields = {
+export const ProvisioningReport = Schema.Struct({
+  tables: Schema.Array(Schema.String),
+  columns: Schema.Array(Schema.String),
+  indexes: Schema.Array(Schema.String),
+  stores: Schema.Array(Schema.String)
+});
+const publishFields = {
   ok: Schema.Literal(true),
   patchId: PatchId,
   versionId: Schema.String,
@@ -158,15 +285,17 @@ const uploadFields = {
   title: Schema.String,
   publicUrl: Schema.String,
   scope: SharingScope,
+  tier: Schema.Int,
+  schemaRevision: Schema.Int,
+  provisioned: ProvisioningReport,
+  unused: ProvisioningReport,
   warnings: Schema.Array(Schema.String)
 };
 
-/** A create: 201, and the patch is new. */
-export class UploadCreated extends Schema.Class<UploadCreated>("UploadCreated")(uploadFields, {
+export class PublishCreated extends Schema.Class<PublishCreated>("PublishCreated")(publishFields, {
   httpApiStatus: 201
 }) {}
-/** An update: 200, and `versionNumber` moved. */
-export class UploadUpdated extends Schema.Class<UploadUpdated>("UploadUpdated")(uploadFields) {}
+export class PublishUpdated extends Schema.Class<PublishUpdated>("PublishUpdated")(publishFields) {}
 
 /** Change an owned patch's sharing without publishing a version. */
 export class ShareRequest extends Schema.Class<ShareRequest>("ShareRequest")({

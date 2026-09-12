@@ -18,7 +18,7 @@ export function renderHome(options: { publicBaseUrl: string }): string {
           <h1>Static pages for your company.</h1>
           <p class="lede">Publish one validated HTML file and send your colleagues its link. Sign in once to open your company's patches.</p>
           <div class="meta">
-            <span class="pill pill-progress">Upload auth</span>
+            <span class="pill pill-progress">Publish auth</span>
             <span class="pill pill-done">Sandboxed view</span>
             <span>Endpoint: <code>${publicBaseUrl}</code></span>
           </div>
@@ -36,14 +36,14 @@ patchy login --api-url ${shellPublicBaseUrl} --json</code></pre>
           <pre><code>patchy login --complete &lt;userCode&gt; --api-url ${shellPublicBaseUrl} --json
 patchy whoami --api-url ${shellPublicBaseUrl} --json
 patchy validate './plan.html' &amp;&amp;
-  patchy upload './plan.html' --api-url ${shellPublicBaseUrl} --json</code></pre>
-          <p>Open the upload's URL in that same signed-in browser. Company sharing is the default; choose <code>--share public</code> only when anyone with the link should be able to read it.</p>
+  patchy publish './plan.html' --api-url ${shellPublicBaseUrl} --json</code></pre>
+          <p>Open the returned URL in that same signed-in browser. Company sharing is the default; choose <code>--share public</code> only when anyone with the link should be able to read it.</p>
         </section>
 
         <section class="grid">
           <article class="task">
             <h3><span class="num">1</span> Safe artifact <span class="pill pill-done">Validated</span></h3>
-            <p>Patch uploads reject scripts, forms, frames, unsafe URL schemes, and other constructs that do not belong in a static review document.</p>
+            <p>Tier 0 publishing rejects scripts, forms, frames, unsafe URL schemes, and other constructs that do not belong in a static review document.</p>
           </article>
           <article class="task">
             <h3><span class="num">2</span> Company link <span class="pill pill-progress">Sign-in required</span></h3>

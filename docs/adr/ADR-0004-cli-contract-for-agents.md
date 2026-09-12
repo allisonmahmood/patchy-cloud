@@ -43,16 +43,16 @@ its code; no command exits on its own.
 
 ### `--json`: a global flag on every command
 
-- Success: stdout is exactly one JSON document. For `whoami`, `upload`, `share` and
+- Success: stdout is exactly one JSON document. For `whoami`, `publish`, `share` and
   `delete` it is the wire shape from `@patchy/api`; `validate` prints `{ ok, warnings }`,
   `auth set` `{ ok, instanceUrl }`, `status` its report (its only format).
   Login's three success shapes and logout's shape are below. Warnings ride in the
-  success document, never on stderr. Upload and share report `scope`; the field name
+  success document, never on stderr. Publish and share report `scope`; the field name
   `publicUrl` alone does not imply anonymous access.
-- Failure: stderr is `{ "ok": false, "error": "<the one-line message>", "kind": "local" | "rejected" | "unreachable" }`,
-  stdout is empty, the exit code follows `kind`. The same shape as the
-  server's 401 body, plus `kind`. No `code` field until an agent flow branches
-  on one.
+- Failure: stderr is `{ "ok": false, "error": "<the one-line message>", "kind": "local" | "rejected" | "unreachable", "code"?: "<wire refusal code>" }`,
+  stdout is empty, the exit code follows `kind`. Preserve the instance's `code`
+  when present. A release mismatch detected before publishing is `local` with
+  `code: "release_mismatch"`; the instance's release refusal is `rejected`.
 - Stderr under `--json` carries failures only.
 
 ### Login, logout and identity
@@ -122,7 +122,7 @@ is not its to remove; in a worktree it says _This worktree's dev instance still 
 with its seeded key_. JSON carries these in `warnings`, with `revoked`
 reporting whether the deleted key was successfully revoked or already invalid.
 
-`upload`, `delete`, `share` and `whoami` with no key exit 1 (`local`),
+`publish`, `delete`, `share` and `whoami` with no key exit 1 (`local`),
 `Run: patchy login`. No command starts a login on the caller's behalf.
 
 ### One credential chain
@@ -145,10 +145,35 @@ key appears in the handoff or command output.
 
 ### Publishing and sharing commands
 
-| command                                                                                  | behaviour                                                                                                                                                                                                                                                                                               | `--json`                                     |
-| ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| `patchy upload <file> [--share company\|public] …`                                       | A new patch defaults to `company`; an update preserves its scope without the flag, and an explicit flag sets it either way. Text output names the scope and who can open the link.                                                                                                                      | The upload wire response, including `scope`. |
-| `patchy share <file> <company\|public>` or `patchy share --patch <id> <company\|public>` | Changes sharing without publishing a version. Select the file's cached patch or an explicit id, exactly one, as `delete` does. Only the owner may change it; an unavailable or unowned patch answers 404. Text output names who can open the link. With no key, exit 1 `local`, like upload and delete. | `{ ok: true, patchId, scope, publicUrl }`.   |
+| command                                                                                  | behaviour                                                                                                                                                                                                                              | `--json`                                                                                            |
+| ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `patchy publish <file> [--share company\|public] [--patch <id>] [--new]`                 | Synthesises a tier 0 manifest and publishes the file. A new patch defaults to `company`; an update preserves its scope without the flag. `--patch` only updates; `--new` bypasses the file cache to create.                            | The publish wire response, including `scope`, `tier`, `schemaRevision`, `provisioned` and `unused`. |
+| `patchy share <file> <company\|public>` or `patchy share --patch <id> <company\|public>` | Changes sharing without publishing a version. Select the file's cached patch or an explicit id, exactly one, as `delete` does. Only the owner may change it; an unavailable or unowned patch answers 404. With no key, exit 1 `local`. | `{ ok: true, patchId, scope, publicUrl }`.                                                          |
+
+File publishing never reads `patchy.json`. The executing CLI must match
+`GET /api/release` exactly; a mismatch names both releases and `patchy refresh`.
+Repo mode and refresh arrive in later SDK tickets.
+
+Before a request, the CLI authenticates the publishing key and schema-encodes the complete
+attempt (publish key, request body, owner user ID and file-cache target), then exclusively
+creates `attempt.json` with `wx` under its instance-scoped state directory. An existing
+file is read, never overwritten: concurrent invocations resend that same attempt.
+The selected attempt's owner is checked even after losing exclusive creation.
+On the next `publish`, the CLI authenticates again and
+requires the original owner before sending any saved content. Replacement machine
+tokens for that same owner work; a different owner is a local refusal and leaves
+the attempt intact. Recovery precedes reading the file, validating new options or
+checking the release. Success updates the cache, clears only the matching publish key
+and prints the recovered result; no additional version is published.
+
+A definitive payload refusal clears only the matching publish key. Authentication,
+throttling and quota refusals do not establish its outcome; they preserve the attempt,
+as do unknown outcomes and failed cache writes. Killing a process leaves the persisted
+attempt available for recovery. A stale response cannot clear a newer attempt.
+
+The server stores the response under a publish key unique to the owning user.
+An identical retry returns that response even after the current release changes;
+a different payload with the same key is `publish_key_conflict` (409).
 
 Only the current version of a public patch is public; older versions stay behind
 the company door and are read through the user's signed-in browser. The current
@@ -163,7 +188,7 @@ Resolution order: `--api-url` > `.local/dev/env` (searched upward from the
 working directory) > `PATCHY_API_URL` > `~/.patchy/config.json` > the local
 default. One service resolves it once per command and exposes the URL and its
 source (`flag` | `dev-env` | `env` | `config` | `default`); `status --json`
-reports both, and `upload` prints "Publishing to <url> (target came from …)"
+reports both, and `publish` prints "Publishing to <url> (target came from …)"
 in text mode. A worktree with a running `pnpm dev` instance is the one place
 an agent should never have to say where to publish, which is why the dev env
 outranks the environment variable.
@@ -205,5 +230,5 @@ under `--json` should treat a non-zero exit as "stdout is not the document".
   at a glance whether the mistake is theirs, the instance's, or the network's.
 - **`128+n` for signals.** Rejected: Effect's interruption already gives one
   code for both signals, and nothing branches on which one.
-- **A `code` field in the JSON failure.** Deferred until a flow branches on it;
-  `kind` and the exit code carry the same information today.
+- **Branching on refusal prose.** Rejected: `code` identifies machine-actionable
+  refusals independently of the human message; `kind` still identifies who acts.

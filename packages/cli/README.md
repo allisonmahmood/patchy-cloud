@@ -1,6 +1,6 @@
 # @patchy/cli
 
-Command-line uploader for [Patchy Cloud](https://github.com/allisonmahmood/patchy-cloud). It sends static HTML patches to a Patchy Cloud instance, changes their sharing and takes them down again. Every upload carries a machine token; new patches are company-scoped by default and open through a colleague's signed-in browser. Choose public explicitly to let anyone with the link open a patch. A machine token never opens a patch's view URL.
+Command-line publisher for [Patchy Cloud](https://github.com/allisonmahmood/patchy-cloud). It sends static HTML patches to a Patchy Cloud instance, changes their sharing and takes them down again. Every publish carries a machine token; new patches are company-scoped by default and open through a colleague's signed-in browser. Choose public explicitly to let anyone with the link open a patch. A machine token never opens a patch's view URL.
 
 An agent is the primary driver, so the CLI promises a contract an agent can branch on without reading prose: an [exit code that says who has to act](#exit-codes), `--json` on every command, and one resolution of which instance is being targeted. The contract is [ADR-0004](../../docs/adr/ADR-0004-cli-contract-for-agents.md).
 
@@ -17,10 +17,12 @@ node packages/cli/dist/index.js login --api-url https://pages.example.com
 
 The build puts an executable at `packages/cli/dist/index.js`. Create a symlink named `patchy` to that executable in a directory on your `PATH`; adding `dist` alone exposes `index.js`, not `patchy`. Alternatively, replace `patchy` in the commands below and in login's returned `next` command with `node /absolute/path/to/packages/cli/dist/index.js`.
 
-First run is `patchy login`, then `patchy upload ./plan.html`. A person at a real
+The CLI is a JavaScript bundle. The packed CLI installs offline without running install scripts.
+
+First run is `patchy login`, then `patchy publish ./plan.html`. A person at a real
 terminal confirms in their browser while login waits. An agent receives a URL,
 code and next command, relays them to the person, and runs that next command
-after the handoff; it never opens a browser. Uploading the same file again
+after the handoff; it never opens a browser. Publishing the same file again
 updates the same patch. Inside a `pnpm dev` worktree, the seeded key works
 without a login, and a saved login takes precedence over that seed.
 
@@ -35,7 +37,7 @@ An agent rerun with a pending login polls once rather than creating another code
 The original URL and code remain valid until answered or expired.
 `--api-url <url>` also saves the instance choice. The returned `next` retains
 that flag, since a worktree's dev env or `PATCHY_API_URL` outranks saved config.
-Keep the flag on later uploads when overriding those sources.
+Keep the flag on later publishes when overriding those sources.
 
 ```sh
 patchy login --api-url https://pages.example.com --json
@@ -43,7 +45,7 @@ patchy login --api-url https://pages.example.com --json
 patchy login --complete XXXX-XXXX --api-url 'https://pages.example.com' --json
 # Continue only when status is "logged_in"; then check the publishing identity:
 patchy whoami --api-url https://pages.example.com --json
-patchy upload ./plan.html --api-url https://pages.example.com --json
+patchy publish ./plan.html --api-url https://pages.example.com --json
 ```
 
 Use the returned code, not the placeholder. The person opens the URL in their
@@ -64,7 +66,7 @@ the environment or the dev seed are not named as predecessors.
 
 Before publishing, `whoami` verifies which user, company and machine the
 credential chain actually selects. In particular, `PATCHY_API_TOKEN` still
-overrides a successful saved login; resolve an unintended override before uploading.
+overrides a successful saved login; resolve an unintended override before publishing.
 
 Login blocks only when stdin is a terminal, `--json` is absent, and none of
 `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, `CURSOR_AGENT`, `CODEX_SANDBOX`,
@@ -190,7 +192,7 @@ malformed JSON, an unreadable file, or an invalid entry for this instance — ar
 reported as `hasToken: false` rather than raised as an error. An environment key
 still wins without reading that file. Otherwise, the commands that spend a key
 fail closed on it: follow their local-state error rather than repeatedly trying
-login or uploading. The probe leaves stored credentials untouched.
+login or publishing. The probe leaves stored credentials untouched.
 
 This is a picture of local availability, not proof that the instance will accept
 a key. Use `whoami` for that. A false result also does not prove no key exists:
@@ -198,41 +200,52 @@ one may be in a file the probe could not read.
 
 ### `patchy validate <file>`
 
-Validate an HTML file locally without uploading. Exits non-zero if validation fails; prints warnings otherwise.
+Validate an HTML file locally without publishing. Exits non-zero if validation fails; prints warnings otherwise.
 
 ```sh
 patchy validate ./plan.html
 ```
 
-### `patchy upload <file> [--share company|public] [--patch <patch-id>] [--new] [--api-url <url>]`
+### `patchy publish <file> [--share company|public] [--patch <patch-id>] [--new] [--api-url <url>]`
 
-Validate the file, then upload it. On success it prints the view URL, the patch ID, the version number and the sharing scope with who can open the link, after a line naming the instance and where that choice came from. The JSON response includes `scope: "company" | "public"`. Its URL field remains `publicUrl`; the scope, not that field name, controls who may read it.
+First recover any pending publish for this instance. Otherwise check the executing CLI release against `GET /api/release`, validate the file, and publish it with a tier 0 manifest and empty `tables`, `files` and `uses`. File mode never reads `patchy.json`. On success it prints the view URL, patch ID, tier, version number, provisioned and unused resources, and sharing scope. The JSON response includes `scope: "company" | "public"`, `tier`, `schemaRevision`, `provisioned`, `unused` and `warnings`. Its URL field remains `publicUrl`; the scope, not that field name, controls who may read it.
 
 ```sh
-patchy upload ./plan.html
+patchy publish ./plan.html
 # Publishing to https://pages.example.com (target came from the saved config).
-# Uploaded patch
+# Published patch
 # URL: https://pages.example.com/d/k7f2m9x1a3b8
 # Scope: company (signed-in colleagues in your company)
 # Patch ID: k7f2m9x1a3b8
+# Tier: 0
 # Version: 1
+# Provisioned: {"tables":[],"columns":[],"indexes":[],"stores":[]}
+# Unused: {"tables":[],"columns":[],"indexes":[],"stores":[]}
 ```
 
-Credential selection is deterministic: `PATCHY_API_TOKEN` wins, then the token stored for the resolved instance, then the token seeded beside a dev-env URL. A login therefore outranks the seed. With no key, upload exits 1 (`local`), `Run: patchy login`. A rejected credential is reported as-is; the CLI never starts a login or obtains a replacement on your behalf.
+Credential selection is deterministic: `PATCHY_API_TOKEN` wins, then the token stored for the resolved instance, then the token seeded beside a dev-env URL. A login therefore outranks the seed. With no key, publish exits 1 (`local`), `Run: patchy login`. A rejected credential is reported as-is; the CLI never starts a login or obtains a replacement on your behalf.
 
-Uploading a previously seen file updates the same patch. If it is unavailable, the upload fails; pass `--new` to create a new patch with a server-generated ID. `--patch <patch-id>` is update-only for an active patch owned by your user, through any of that user's machine tokens. Unknown, unavailable and unowned targets fail with the same generic error.
+Publishing a previously seen file updates the same patch. If it is unavailable, the publish fails; pass `--new` to create a new patch with a server-generated ID. `--patch <patch-id>` is update-only for an active patch owned by your user, through any of that user's machine tokens. Unknown, unavailable and unowned targets fail with the same generic error.
+
+Before sending, the CLI authenticates the publishing key and saves the whole request, a fresh `publishKey`, the owning user ID, the original file path and cache application context in its instance-scoped state directory. The next `publish` authenticates again and recovers that attempt **before** checking today's file, cache, flags or release. A replacement token for the same owner can recover it; a different user is refused locally without sending the saved content or deleting the attempt. A successful replay updates the original file's cache and exits without another version, even if you passed a different file or `--new`.
+
+Authentication failures, throttling, quota refusals, lost replies, server failures and failed cache writes keep the attempt recoverable. Only a definitive payload refusal clears it so you can correct the input and start a fresh attempt. Keep the state directory and sign in as the original owner when recovering; never discard an attempt merely because its result is unknown.
+
+Concurrent invocations through the same instance and state directory resend the same persisted attempt rather than replacing it or refusing contention. Each authenticates the attempt's original owner before sending, including an invocation that loses the race to create it. Killing a process leaves the attempt available for recovery. A response clears only its matching publish key, so a stale response cannot remove a newer attempt.
+
+The executing CLI must match the instance's release exactly. A local mismatch exits 1 with `kind: "local"` and `code: "release_mismatch"`; an instance-detected mismatch exits 2 with `kind: "rejected"` and the same code. The diagnostic names both releases and directs you to `patchy refresh`. File publishing is the only publish mode currently served; resource-bearing manifests and higher tiers are refused by the instance.
 
 Without `--share`, a new patch defaults to `company` and an update preserves the patch's current scope. An explicit `--share company` or `--share public` sets it in either direction while publishing the new version:
 
 ```sh
-patchy upload ./plan.html --share public --json
-patchy upload ./plan.html                 # updates content, stays public
-patchy upload ./plan.html --share company # updates content, takes it back inside
+patchy publish ./plan.html --share public --json
+patchy publish ./plan.html                 # updates content, stays public
+patchy publish ./plan.html --share company # updates content, takes it back inside
 ```
 
 ### `patchy share <file> <company|public>` or `patchy share --patch <patch-id> <company|public>`
 
-Change an existing patch's sharing without uploading a version. Name the file it was uploaded from to use the CLI's per-instance cache, or pass `--patch <patch-id>`; one or the other, not both. Only the owner user can change sharing, through any of their machine tokens. Company membership or an admin role alone does not grant that right.
+Change an existing patch's sharing without publishing a version. Name the file it was published from to use the CLI's per-instance cache, or pass `--patch <patch-id>`; one or the other, not both. Only the owner user can change sharing, through any of their machine tokens. Company membership or an admin role alone does not grant that right.
 
 ```sh
 patchy share ./plan.html public
@@ -245,13 +258,13 @@ patchy share --patch k7f2m9x1a3b8 company --json
 # {"ok":true,"patchId":"k7f2m9x1a3b8","scope":"company","publicUrl":"https://pages.example.com/d/k7f2m9x1a3b8"}
 ```
 
-Share uses the same credential chain as upload. With no key it exits 1 (`local`), `Run: patchy login`; a missing cached file target is also `local`. An unavailable or unowned patch answers 404 (`rejected`, exit 2), including under `--json`.
+Share uses the same credential chain as publish. With no key it exits 1 (`local`), `Run: patchy login`; a missing cached file target is also `local`. An unavailable or unowned patch answers 404 (`rejected`, exit 2), including under `--json`.
 
 Only the current version of a public patch is public; older versions stay behind the company door. Read company pages through the user's signed-in browser. The current public version has `Cache-Control: public, max-age=60` at both `/d/<id>` and `/d/<id>/v/<current n>`. Older versions, and all versions after changing to company, have origin responses of `private, no-store` and answer 401 to a cookie-free fetch. A previously cached public copy may remain reachable for up to 60 seconds; already downloaded copies cannot be recalled.
 
 ### `patchy delete <file> | --patch <patch-id>`
 
-Delete a patch. Irreversible: the origin stops serving it at once, so confirm with the user first. A still-fresh public cache entry may remain for up to 60 seconds, and downloaded copies cannot be recalled. Name the file the patch was uploaded from and the CLI finds the patch in its cache, or pass `--patch <patch-id>` to name it outright; one or the other, not both. On success the cache forgets the patch, so a later upload from that file creates a new one.
+Delete a patch. Irreversible: the origin stops serving it at once, so confirm with the user first. A still-fresh public cache entry may remain for up to 60 seconds, and downloaded copies cannot be recalled. Name the file the patch was published from and the CLI finds the patch in its cache, or pass `--patch <patch-id>` to name it outright; one or the other, not both. On success the cache forgets the patch, so a later publish from that file creates a new one.
 
 ```sh
 patchy delete ./plan.html
@@ -260,7 +273,7 @@ patchy delete ./plan.html
 # Patch ID: k7f2m9x1a3b8
 ```
 
-Delete uses the same credential chain as upload. Any machine token for the owner user can delete the patch. With no key it exits 1 (`local`), `Run: patchy login`; a missing or unowned patch is `rejected`, and the cache keeps its entry until the instance says yes.
+Delete uses the same credential chain as publish. Any machine token for the owner user can delete the patch. With no key it exits 1 (`local`), `Run: patchy login`; a missing or unowned patch is `rejected`, and the cache keeps its entry until the instance says yes.
 
 ## Exit codes
 
@@ -292,7 +305,7 @@ warning after the local logout succeeds, never exit 3.
 Every command takes these, before or after the subcommand:
 
 - `--api-url <url>` — the instance to talk to, overriding every other source; see [precedence](#environment-variables).
-- `--json` — one result document on stdout. Login's three shapes and logout's shape are documented above; `auth set` prints `{ "ok": true, "instanceUrl" }`, `validate` prints `{ "ok": true, "warnings" }`, and `whoami`, `upload`, `share` and `delete` print the instance's response exactly as [`docs/API.md`](../../docs/API.md) describes it. Upload and share include `scope`. A failure is `{ "ok": false, "error", "kind" }` on stderr, stdout empty, with the exit code for `kind`. Stderr is otherwise empty; warnings belong in success documents. `status` prints JSON either way.
+- `--json` — one result document on stdout. Login's three shapes and logout's shape are documented above; `auth set` prints `{ "ok": true, "instanceUrl" }`, `validate` prints `{ "ok": true, "warnings" }`, and `whoami`, `publish`, `share` and `delete` print the instance's response exactly as [`docs/API.md`](../../docs/API.md) describes it. Publish and share include `scope`. A failure is `{ "ok": false, "error", "kind", "code"? }` on stderr, stdout empty, with the exit code for `kind`. `code` is present when the instance supplies a refusal code, and for a local release mismatch. Stderr is otherwise empty; warnings belong in success documents. `status` prints JSON either way.
 
 Argument parse failures can print usage on stdout before the error, as
 ADR-0004 records. Check the exit code before parsing stdout as a success document.
@@ -302,15 +315,15 @@ ADR-0004 records. Check the exit code before parsing stdout as a success documen
 - `--complete [code]` — on `login`, finish the pending device login; an optional code must match the saved one.
 - `--wait <seconds>` — on `login --complete`, poll for up to this long (default 60); zero polls once and returns immediately if still pending.
 - `--token-stdin` — on `auth set`, read exactly one non-empty token from redirected stdin. This is the explicit automation path and is rejected when stdin is a terminal.
-- `--share company|public` — on `upload`, explicitly set who may read the patch. Without it, creates default to company and updates preserve scope.
-- `--new` — on `upload`, always create a new patch with a server-generated ID instead of updating the one previously uploaded from this path. It cannot be combined with `--patch`.
-- `--patch <patch-id>` — on `upload`, update a specific existing patch. This is update-only and never creates a new patch. It cannot be combined with `--new`.
-- `--patch <patch-id>` — on `share` and `delete`, name the patch outright instead of finding it from the file it was uploaded from. It cannot be combined with a file argument.
+- `--share company|public` — on `publish`, explicitly set who may read the patch. Without it, creates default to company and updates preserve scope.
+- `--new` — on `publish`, always create a new patch with a server-generated ID instead of updating the one previously published from this path. It cannot be combined with `--patch`.
+- `--patch <patch-id>` — on `publish`, update a specific existing patch. This is update-only and never creates a new patch. It cannot be combined with `--new`.
+- `--patch <patch-id>` — on `share` and `delete`, name the patch outright instead of finding it from the file it was published from. It cannot be combined with a file argument.
 
 ## Environment variables
 
 - `PATCHY_API_URL` — API base URL. Overrides the stored config; overridden by `--api-url` and by a dev env. Default: `http://localhost:3000`.
-- `PATCHY_API_TOKEN` — machine token for authenticated commands such as `whoami`, `upload`, `share` and `delete`. It overrides every other token; `auth set` does not read it, and `logout` does not remove or revoke it. No configured key means a local error naming `patchy login`.
+- `PATCHY_API_TOKEN` — machine token for authenticated commands such as `whoami`, `publish`, `share` and `delete`. It overrides every other token; `auth set` does not read it, and `logout` does not remove or revoke it. No configured key means a local error naming `patchy login`.
 - `PATCHY_STATE_DIR` — directory for the CLI's config, credentials, pending logins, patch cache and default style. Default: `~/.patchy`.
 
 Setting any of these to the empty string means the same thing as leaving it unset.
@@ -328,7 +341,8 @@ The CLI stores state under `~/.patchy` (or `PATCHY_STATE_DIR`):
 - `config.json` — the saved API base URL.
 - `credentials.json` — saved machine tokens, keyed by instance, with `source: "login"` or `"auth-set"`. A login entry also carries `machine: { id, name }`. On Unix, every save creates or repairs this file to owner-only (`0600`) permissions.
 - `device-login.json` — one pending login per instance: private device code, user code, both verification URLs, polling interval and expiry. Owner-only (`0600`); cleared for that instance on completion or logout.
-- `patches.json` — the patch cache, keyed by instance and then by absolute file path, so later uploads from the same path update the same patch and `share` or `delete` can find it from the path. A successful `delete` drops every entry that pointed at the patch.
+- `publish/<instance-hash>/attempt.json` — the pending publish request, original owner ID and file/cache context for that instance, with no machine credential. The hash is SHA-256 of the resolved API URL. Schema-encoded before exclusive creation (`wx`), owner-only (`0600`) under private directories (`0700`), and persisted before sending. If it already exists, the CLI reads and resends that attempt instead of overwriting it. Cleared only for the matching publish key after applying success to the cache or settling a definitive payload refusal.
+- `patches.json` — the patch cache, keyed by instance and then by absolute file path, so later publishes from the same path update the same patch and `share` or `delete` can find it from the path. A successful `delete` drops every entry that pointed at the patch.
 - `style.md` — the default style, owned and written by the agent skill. The CLI never reads its contents; `status` reports only whether it exists.
 
 Credentials, pending logins and the patch cache are keyed by the resolved API base URL after trimming whitespace and trailing slashes. The remaining string must match exactly: different schemes, hosts or ports are separate entries by design.
