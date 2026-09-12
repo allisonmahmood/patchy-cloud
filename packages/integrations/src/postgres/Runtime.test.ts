@@ -16,12 +16,13 @@ import { DEV_SEED } from "@patchy/auth/seed";
 import { clerkEnv, PUBLIC_BASE_URL, signedInCookies } from "@patchy/auth/testing";
 import { Companies, Users } from "@patchy/companies";
 import { Limits } from "@patchy/limits";
-import { LoadedVersions, Runtime, RuntimeApi, RuntimeLog } from "@patchy/runtime";
+import { LoadedVersions, RuntimeProduction, RuntimeApi, RuntimeLog } from "@patchy/runtime";
 import * as Testing from "@patchy/sql/testing";
 import * as ConnectionStore from "../ConnectionStore.js";
+import * as ConnectionStoreDev from "../ConnectionStoreDev.js";
 import * as Dev from "./Dev.js";
 import * as Operations from "./Operations.js";
-import type { Snapshot } from "./Snapshot.js";
+import type { Snapshot } from "@patchy/api/postgres-snapshot";
 
 const declaration = {
   kind: "postgres" as const,
@@ -138,7 +139,7 @@ it.layer(services)("declared Postgres over the runtime wire", (it) => {
           }).pipe(
             Effect.provide(
               Layer.mergeAll(RuntimeApi.layer, HttpServer.layerServices).pipe(
-                Layer.provide(Runtime.layer(handlers))
+                Layer.provide(RuntimeProduction.layer(handlers))
               )
             )
           );
@@ -229,7 +230,7 @@ it.layer(services)("declared Postgres over the runtime wire", (it) => {
           Effect.provide(
             Layer.mergeAll(
               Dev.dev(snapshot, { root, connectionId: declaration.id, handle: declaration.handle }),
-              ConnectionStore.layerDev([{ connection, snapshots: [{ revision: 1, snapshot }] }])
+              ConnectionStoreDev.layer([{ connection, snapshots: [{ revision: 1, snapshot }] }])
             )
           )
         );

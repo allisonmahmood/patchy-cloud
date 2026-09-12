@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import {
   Catalog,
   CURRENT_RELEASE,
+  type DeclarationMetadata,
   Generated,
   GenerateRequest,
   MANIFEST_VERSION,
@@ -262,6 +263,13 @@ export const generate = Effect.fn("Generation.generate")(function* (
     context: string;
   }> = [];
   const shared: Record<string, string> = Object.create(null);
+  const metadata: {
+    postgres: Record<string, (typeof DeclarationMetadata.Type)["postgres"][string]>;
+    shared: Record<string, (typeof DeclarationMetadata.Type)["shared"][string]>;
+  } = {
+    postgres: Object.create(null),
+    shared: Object.create(null)
+  };
   const factories: Record<string, string> = Object.create(null);
   const available = Object.values(request.manifest.uses).some((entry) => entry.kind === "postgres")
     ? yield* connections.list(companyId).pipe(
@@ -300,6 +308,7 @@ export const generate = Effect.fn("Generation.generate")(function* (
             })
         )
       );
+      metadata.postgres[alias] = { declaration: resolved, snapshot };
       const output = Postgres.postgres.generate(
         { ...resolved, description: connection.description },
         snapshot
@@ -355,6 +364,11 @@ export const generate = Effect.fn("Generation.generate")(function* (
         );
       const fixture = `fixtures/shared-${alias}.sql`;
       const resolved = { ...declaration, id: source.id, revision: source.schemaRevision };
+      metadata.shared[alias] = {
+        declaration: resolved,
+        tables: source.tables,
+        uses: source.uses
+      };
       files.set(client, sharedClient(source));
       files.set(
         context,
@@ -443,6 +457,7 @@ export const generate = Effect.fn("Generation.generate")(function* (
   return {
     ok: true as const,
     files: [...files].map(([path, contents]) => ({ path, contents })),
+    metadata,
     uses: uses.map(({ alias, id, revision }) => ({ alias, id, revision }))
   };
 });

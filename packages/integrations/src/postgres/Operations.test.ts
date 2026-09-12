@@ -15,9 +15,10 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import * as ConnectionStore from "../ConnectionStore.js";
+import * as ConnectionStoreDev from "../ConnectionStoreDev.js";
 import * as Execution from "./Execution.js";
 import * as Operations from "./Operations.js";
-import type { Column, Snapshot } from "./Snapshot.js";
+import type { Column, Snapshot } from "@patchy/api/postgres-snapshot";
 
 const column = (name: string, baseName: string, nullable = false): typeof Column.Type => ({
   name,
@@ -246,7 +247,7 @@ const setup = Effect.fn("test.postgresOperations.setup")(function* () {
   });
   const store = yield* ConnectionStore.ConnectionStore.pipe(
     Effect.provide(
-      ConnectionStore.layerDev([
+      ConnectionStoreDev.layer([
         {
           connection,
           snapshots: [

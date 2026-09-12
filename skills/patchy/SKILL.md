@@ -60,8 +60,17 @@ Bundle inspection requires embedded resources and inline scripts/styles;
 CSS `@import` is unsupported. It is a resource-completeness check, while core's
 safe-HTML policy owns tier 0 safety. Fragment, relative and external anchors
 have identical acceptance in both tiers; the runtime sandbox still governs
-navigation. The local `patchy dev` runtime remains separate work; never
-substitute production data for local fixtures.
+navigation.
+
+Before publishing, run `pnpm patchy dev --json` and exercise the local shell at
+its returned `url`; it uses real handlers over local PGlite.
+`dev status`, `stop`, `logs` and `reset` all accept `--json`. Reset stops and
+wipes disposable local state; it does not change published resources. Start again
+afterwards to fetch the published inventory. Code rebuilds reload the whole shell
+at its current route. Config and fixture changes need a stop/start. New dev starts
+check the release, authenticate as the machine's user and regenerate declarations;
+existing sessions are not killed
+by a release. Use `--foreground` to stay attached with logs.
 Use invented local fixture inserts. Every readable row is available to whoever
 can open the patch; tier 1 has no outbound access or client storage. The project
 skills carry the complete runtime limits and the local-only workflow.

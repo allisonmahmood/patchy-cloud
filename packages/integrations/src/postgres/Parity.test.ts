@@ -12,6 +12,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as Pg from "pg";
 import { inject } from "vitest";
 import * as ConnectionStore from "../ConnectionStore.js";
+import * as ConnectionStoreDev from "../ConnectionStoreDev.js";
 import * as Dev from "./Dev.js";
 import * as Execution from "./Execution.js";
 import { generate } from "./Generate.js";
@@ -150,7 +151,7 @@ it.layer(Layer.mergeAll(Testing.emptyLayer({}), NodeFileSystem.layer, NodePath.l
           assert.include(generated.context, "unsupported_type");
           const store = yield* ConnectionStore.ConnectionStore.pipe(
             Effect.provide(
-              ConnectionStore.layerDev([
+              ConnectionStoreDev.layer([
                 { connection, snapshots: [{ revision: declaration.revision, snapshot }] }
               ])
             )

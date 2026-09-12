@@ -20,7 +20,7 @@ import {
   TableRow
 } from "@patchy/api";
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
-import { Binding, LoadedVersions, Runtime } from "@patchy/runtime";
+import { Binding, LoadedVersions, Runtime } from "@patchy/runtime/core";
 import { boundedRows } from "./bounded-rows.js";
 import { inventoryManifest } from "./Tables.js";
 

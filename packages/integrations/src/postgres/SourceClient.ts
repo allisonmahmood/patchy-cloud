@@ -6,7 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Pg from "pg";
-import * as Metadata from "./Snapshot.js";
+import { MAX_SNAPSHOT_BYTES } from "@patchy/api/postgres-snapshot";
 import * as SourceNetwork from "./SourceNetwork.js";
 
 const SecretCause = Schema.Redacted(Schema.Unknown, { disallowJsonEncode: true });
@@ -283,7 +283,7 @@ export const make = Effect.fn("Postgres.sourceClient")(function* (settings: type
         query.on("row", (row: unknown) => {
           if (settled) return;
           bytes += Buffer.byteLength(encodeJson(row));
-          if (bytes > Metadata.MAX_SNAPSHOT_BYTES || rows.length >= 110_000) {
+          if (bytes > MAX_SNAPSHOT_BYTES || rows.length >= 110_000) {
             settled = true;
             client.connection.stream.destroy();
             resume(Effect.fail(new DiscoveryTooLarge({})));

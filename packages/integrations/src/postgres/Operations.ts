@@ -11,7 +11,7 @@ import {
   PostgresRows
 } from "@patchy/api";
 import type { PostgresDeclaration } from "@patchy/api";
-import { Binding, Runtime } from "@patchy/runtime";
+import { Binding, Runtime } from "@patchy/runtime/core";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
@@ -27,7 +27,7 @@ import {
   surface,
   typeMapping
 } from "./Mapping.js";
-import type { Column, Relation, Snapshot } from "./Snapshot.js";
+import type { Column, Relation, Snapshot } from "@patchy/api/postgres-snapshot";
 
 export class ConnectionNotDeclared extends Schema.TaggedError<ConnectionNotDeclared>()(
   "PostgresConnectionNotDeclared",

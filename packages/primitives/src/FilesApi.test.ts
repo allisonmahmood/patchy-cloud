@@ -19,7 +19,7 @@ import { clerkEnv, PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy
 import { Companies, Users } from "@patchy/companies";
 import { ContentStore } from "@patchy/content-store";
 import { Limits } from "@patchy/limits";
-import { LoadedVersions, Runtime, RuntimeApi, RuntimeLog, me } from "@patchy/runtime";
+import { LoadedVersions, RuntimeProduction, RuntimeApi, RuntimeLog, me } from "@patchy/runtime";
 import * as Files from "./Files.js";
 import { companyId, manifest, services, setup, versionId } from "./test/files.js";
 
@@ -50,7 +50,7 @@ const dependencies = Layer.mergeAll(
   Companies.layer
 ).pipe(Layer.provideMerge(services));
 const runtime = Layer.unwrap(
-  Effect.map(Files.make, (files) => Runtime.layer({ me, ...files }))
+  Effect.map(Files.make, (files) => RuntimeProduction.layer({ me, ...files }))
 ).pipe(Layer.provideMerge(dependencies));
 const apiDefinition = HttpApi.make("patchy").add(RuntimeGroup);
 const apiLayer = RuntimeApi.layer.pipe(Layer.provideMerge(runtime));

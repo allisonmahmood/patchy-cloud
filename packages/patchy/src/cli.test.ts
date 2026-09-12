@@ -31,6 +31,8 @@ import { DEV_SEED } from "@patchy/auth/seed";
 import { sha256 } from "@patchy/core";
 import {
   CURRENT_RELEASE,
+  type DeclarationMetadata,
+  type Generated,
   GenerateRequest,
   MANIFEST_VERSION,
   PublishRequest,
@@ -253,7 +255,7 @@ const projectCatalog = {
 };
 
 /** Only the instance metadata is stubbed: these are the shipped client generators. */
-const generateProjectResponse = (body: unknown) => {
+const generateProjectResponse = (body: unknown): typeof Generated.Type => {
   const { manifest } = decodeGenerateRequest(body);
   const files: Array<{ path: string; contents: string }> = [];
   const uses: Array<{
@@ -262,17 +264,20 @@ const generateProjectResponse = (body: unknown) => {
     revision: number;
     declaration: (typeof GenerateRequest.Type)["manifest"]["uses"][string];
   }> = [];
+  const postgres: Record<string, (typeof DeclarationMetadata.Type)["postgres"][string]> = {};
   const connections: Record<string, string> = {};
   const skills = new Set(coreProjectSkills);
   for (const [alias, declaration] of Object.entries(manifest.uses)) {
     if (declaration.kind !== "postgres") throw new Error("Unexpected fixture declaration.");
     const stamp = { ...declaration, id: "conn-sales", revision: 1 };
-    const generated = generatePostgres(stamp, {
-      version: 1,
+    const snapshot = {
+      version: 1 as const,
       relations: [],
       enums: [],
       exclusions: []
-    });
+    };
+    postgres[alias] = { declaration: stamp, snapshot };
+    const generated = generatePostgres(stamp, snapshot);
     files.push(
       { path: `patchy/_generated/uses/${alias}.ts`, contents: generated.client },
       { path: `patchy/_generated/context/${alias}.md`, contents: generated.context },
@@ -299,7 +304,7 @@ const generateProjectResponse = (body: unknown) => {
       path: `.agents/skills/${skill}/SKILL.md`,
       contents: readFileSync(path.join(packageDir, "../sdk/skills", skill, "SKILL.md"), "utf8")
     });
-  return { ok: true, files, uses };
+  return { ok: true, files, metadata: { postgres, shared: {} }, uses };
 };
 
 const projectHandler: Handler = (request, respond) => {
@@ -2135,7 +2140,10 @@ describe("patch-repo commands", () => {
     const instance = await stubInstance(projectHandler);
     const dir = projectTree(instance.url);
     mkdirSync(path.join(dir, "patchy/_generated"), { recursive: true });
-    writeFileSync(path.join(dir, "patchy/_generated/obsolete.ts"), "old generated surface\n");
+    writeFileSync(
+      path.join(dir, "patchy/_generated/metadata.json"),
+      '{"postgres":{},"shared":{}}\n'
+    );
     const result = await runCli(["refresh", "--json"], { cwd: dir, env });
     expect(result).toMatchObject({ status: 0, stderr: "" });
     expect(JSON.parse(result.stdout)).toEqual({
@@ -2147,7 +2155,7 @@ describe("patch-repo commands", () => {
           "patchy/_generated/client.ts",
           "patchy/_generated/index.json",
           "patchy/_generated/manifest.json",
-          "patchy/_generated/obsolete.ts"
+          "patchy/_generated/metadata.json"
         ]),
         skills: coreProjectSkills,
         fixtures: []
@@ -2159,7 +2167,7 @@ describe("patch-repo commands", () => {
       tables: { notes: { columns: { title: { kind: "text" } } } },
       uses: {}
     });
-    expect(existsSync(path.join(dir, "patchy/_generated/obsolete.ts"))).toBe(false);
+    expect(existsSync(path.join(dir, "patchy/_generated/metadata.json"))).toBe(false);
     expect(readFileSync(path.join(dir, "patchy.config.ts"), "utf8")).toBe(projectConfig);
   });
 

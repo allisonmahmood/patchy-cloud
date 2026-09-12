@@ -22,7 +22,7 @@ import {
 import { DEV_SEED } from "@patchy/auth/seed";
 import * as CompanyTesting from "@patchy/company-database/testing";
 import { Tables } from "@patchy/primitives";
-import { ConnectionStore, CredentialKeys, PostgresSource } from "@patchy/integrations";
+import { SqlConnectionStore, CredentialKeys, PostgresSource } from "@patchy/integrations";
 import { RuntimeLog } from "@patchy/runtime";
 import * as Patches from "../Patches.js";
 
@@ -109,7 +109,7 @@ const seed = Effect.gen(function* () {
   }
 });
 
-export const integrations = ConnectionStore.layer.pipe(
+export const integrations = SqlConnectionStore.layer.pipe(
   Layer.provideMerge(
     Layer.mergeAll(
       CredentialKeys.layerFromKeys(Redacted.make(`test:${Buffer.alloc(32, 1).toString("base64")}`)),

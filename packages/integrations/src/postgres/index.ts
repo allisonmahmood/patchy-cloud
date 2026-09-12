@@ -1,6 +1,6 @@
 import * as Effect from "effect/Effect";
 import { defineIntegration } from "../definition.js";
-import { Snapshot } from "./Snapshot.js";
+import { Snapshot } from "@patchy/api/postgres-snapshot";
 import * as Source from "./Source.js";
 import { operations } from "./Operations.js";
 import { generate } from "./Generate.js";

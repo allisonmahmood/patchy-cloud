@@ -12,7 +12,7 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Execution from "./Execution.js";
 import { nativeType, quoteIdentifier, quoteLiteral, surface, typeMapping } from "./Mapping.js";
-import type { Snapshot } from "./Snapshot.js";
+import type { Snapshot } from "@patchy/api/postgres-snapshot";
 
 export class FixtureMissing extends Schema.TaggedError<FixtureMissing>()("FixtureMissing", {
   path: Schema.String
@@ -71,6 +71,7 @@ export interface Fixture {
   readonly connectionId: string;
   readonly handle: string;
   readonly root: string;
+  readonly stateDir?: string;
 }
 
 const Reply = Schema.Union([
@@ -294,9 +295,7 @@ export const dev = (
         .pipe(Effect.mapError((cause) => new FixtureInitialization({ path: fixturePath, cause })));
       const snapshot = surface(input);
       const dataDir = path.resolve(
-        fixture.root,
-        ".patchy",
-        "dev",
+        fixture.stateDir ?? path.join(fixture.root, ".patchy", "dev"),
         `postgres-${fixture.connectionId}`
       );
       const stampPath = `${dataDir}.json`;

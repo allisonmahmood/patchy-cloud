@@ -1,6 +1,6 @@
 # patchy
 
-One package for [Patchy Cloud](https://github.com/allisonmahmood/patchy-cloud): the `patchy` CLI, `patchy/config` builders, `patchy/client` browser client and a reserved `patchy/dev` entrypoint. The CLI initializes patch repos, manages their declarations and generated files, publishes tier 0 and tier 1 repos or static HTML files, changes sharing and takes patches down. Every publish carries a machine token; new patches are company-scoped by default and open through a colleague's signed-in browser. Choose public explicitly to let anyone with the link read the current version.
+One package for [Patchy Cloud](https://github.com/allisonmahmood/patchy-cloud): the `patchy` CLI, `patchy/config` builders, `patchy/client` browser client and `patchy/dev` local runtime. The CLI initializes patch repos, manages their declarations and generated files, runs them locally over fixtures, publishes tier 0 and tier 1 repos or static HTML files, changes sharing and takes patches down. Every publish carries a machine token; new patches are company-scoped by default and open through a colleague's signed-in browser. Choose public explicitly to let anyone with the link read the current version.
 
 An agent is the primary driver, so the CLI promises a contract an agent can branch on without reading prose: an [exit code that says who has to act](#exit-codes), `--json` on every command, and one resolution of which instance is being targeted. The contract is [ADR-0004](../../docs/adr/ADR-0004-cli-contract-for-agents.md).
 
@@ -107,8 +107,8 @@ sent. A `Blob` is read into a new buffer for transfer, leaving the blob usable.
 
 The internal generated `client.ts` template imports the config's **type** and
 `manifest.json`'s **value**. The package's browser graph has no Node, Effect or
-PGlite runtime. The hosted tier 1 shell supplies the broker. `patchy/dev`
-reserves its entrypoint; the local dev runtime remains separate work.
+PGlite runtime. The same tier 1 shell supplies the broker in the cloud and
+`patchy/dev`; the latter composes real handlers over local PGlite and fixtures.
 
 ## Commands
 
@@ -169,9 +169,8 @@ fixtures/                     postgres-<handle>.sql and shared-<alias>.sql stubs
 
 `AGENTS.md` is written once, says install already ran, points at the generated
 index, and says to test with `patchy dev`. The repo typechecks without added setup,
-and `pnpm patchy --help` runs its pinned copy. **The local dev runtime is not
-implemented by these commands**; repo publishing targets the hosted runtime.
-Do not replace a missing local runtime with production data access.
+and `pnpm patchy --help` runs its pinned copy. Use `pnpm patchy dev` to
+exercise the generated client locally before publishing.
 
 Managed writes are exactly the package pin, `patchy/_generated/`,
 `.agents/skills/patchy-*/`, missing fixture stubs, the lockfile through install,
@@ -179,6 +178,8 @@ and one `uses` edit for add/remove. The CLI writes `manifest.json` from local
 config execution; the server never returns that file. Server paths are checked
 against the managed roots. Existing fixtures, app source and agent instructions
 are not overwritten. Deleting `.patchy/` destroys local rows and files.
+Generation returns typed declaration metadata for the local runtime alongside
+the managed files; full snapshots are not written into `patchy/_generated/`.
 
 Refresh fetches one release, updates and installs the pin if needed, re-execs
 that CLI before executing config, requests generation, then stages and activates
@@ -187,6 +188,59 @@ re-fetches every present skill and adds any the config implies, but never delete
 one on its own. A present skill no longer offered by the release fails refresh.
 Edit definitions, declarations and invented fixtures; never hand-edit generated
 clients, stamps or project skills.
+
+### `patchy dev [--foreground]`
+
+Start this repo's local runtime, detached and idempotent. Exit 0 means the
+runtime and first single-file build are healthy; output contains the local
+page URL, log path and `pnpm patchy dev stop --api-url ...` command, using the
+repo's pinned CLI. A second start finds the same daemon without authenticating
+or checking a newer release. Start and status report the session's saved
+release and full `/api/me` identity, not the current login or a newer release.
+
+New starts check the pin/CLI/installed runtime release, then authenticate `/api/me`
+and bind the viewer to the machine token's user. They pull published inventory if
+`patchy.json` has an id and regenerate declarations. The production shell,
+CSP, sandbox, broker and runtime admission are reused without Clerk or runtime
+call logging. Tier 0 adds only the trusted local reload script and its polling
+endpoint to its shell CSP. No connection keyring or runtime log store is loaded.
+
+Vite runs in build-watch mode, not as an unrestricted dev server. Each complete
+single-file bundle is validated like publish, swapped atomically and followed
+by a whole-shell reload at the current route. Failed rebuilds leave the last
+successful bundle served and write the error to the log. Config and fixture
+changes need `dev stop` followed by `dev`.
+
+| command             | behaviour                                                                                      | `--json` success                                                    |
+| ------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `dev`, `dev status` | Start or inspect; status exits 1 with `not_running` unless healthy.                            | `{ ok, healthy: true, url, logPath, stop, pid, release, identity }` |
+| `dev stop`          | Stop this repo and instance, keeping local data. Stale process identities are never signalled. | `{ ok, healthy: false, reset: false }`                              |
+| `dev logs`          | Print the dev log.                                                                             | `{ ok, log, text }`                                                 |
+| `dev reset`         | Stop and wipe disposable local state. Published resources are unchanged; run `dev` afterwards. | `{ ok, healthy: false, reset: true }`                               |
+
+`--foreground` waits and streams logs; Ctrl-C stops a session it started.
+Joining an existing session leaves it running on interruption. Under `--json`
+only the readiness document is printed; use `dev logs --json` to read logs.
+
+Local state lives in `.patchy/dev/<instance-hash>/`, including the daemon
+record with its release and authenticated identity, log, PGlite data and
+filesystem content. Incomplete or malformed daemon records are refused and
+left untouched; they are never filled in from the current login. Process birth
+time prevents a stale record from signalling a reused PID. Before the first publish,
+every schema change recreates local rows/files. After publishing, the inventory
+is the baseline: compatible additions preserve rows, and a forbidden retype
+returns the same `not_additive` message as publish. A conflicting unpublished
+local-only definition may be recreated; it never becomes the baseline.
+Fresh or reset state fetches and materialises that full inventory before applying the current
+manifest. Omitted published columns and indexes remain in the local schema,
+including unique constraints; omission does not relax writes.
+
+Each Postgres declaration needs `fixtures/postgres-<handle>.sql`; aliases of
+one connection share its PGlite. Shared tables need `fixtures/shared-<alias>.sql`
+and use cumulative source definitions, including retained ref targets whose
+declaration was omitted from the source's current manifest. Missing files fail naming the
+file, rather than silently generating an empty replacement. Invent the fixture
+rows; dev fetches metadata only, never production rows, bytes or credentials.
 
 ### `patchy login [--complete [code]] [--wait <seconds>]`
 
@@ -434,7 +488,7 @@ Authentication failures, throttling, quota refusals, lost replies, server failur
 
 Concurrent invocations through the same instance and state directory resend the same persisted attempt rather than replacing it or refusing contention. Each authenticates the attempt's original owner before sending, including an invocation that loses the race to create it. Killing a process leaves the attempt available for recovery. A response clears only its matching publish key, so a stale response cannot remove a newer attempt.
 
-The executing CLI must match the instance's release exactly. A local mismatch exits 1 with `kind: "local"` and `code: "release_mismatch"`; an instance-detected mismatch exits 2 with `kind: "rejected"` and the same code. The diagnostic names both releases. Install the exact package reported by `GET /api/release`; inside a patch repo, `patchy refresh` upgrades the pin and managed set. Repo publishing admits tier 0 and tier 1 with tables, stores, shared-table declarations and resolved Postgres connections. The local `patchy dev` runtime remains separate work (SDK #207).
+The executing CLI must match the instance's release exactly. A local mismatch exits 1 with `kind: "local"` and `code: "release_mismatch"`; an instance-detected mismatch exits 2 with `kind: "rejected"` and the same code. The diagnostic names both releases. Install the exact package reported by `GET /api/release`; inside a patch repo, `patchy refresh` upgrades the pin and managed set. Repo publishing admits tier 0 and tier 1 with tables, stores, shared-table declarations and resolved Postgres connections. New local dev starts check the same release; a running session survives upgrades.
 
 File publishing onto a patch with cumulative table or store inventory is still
 `has_primitives` (422, exit 2, `rejected`), even if its current version omits

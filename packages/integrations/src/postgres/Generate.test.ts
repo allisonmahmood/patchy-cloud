@@ -2,7 +2,7 @@ import { assert, it } from "@effect/vitest";
 import * as ts from "typescript";
 import * as Schema from "effect/Schema";
 import { generate } from "./Generate.js";
-import type { Snapshot } from "./Snapshot.js";
+import type { Snapshot } from "@patchy/api/postgres-snapshot";
 import * as PatchyClient from "../../../patchy/src/client.js";
 import { t } from "../../../patchy/src/config.js";
 import { expect } from "vitest";

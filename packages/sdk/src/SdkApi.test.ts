@@ -26,9 +26,11 @@ import { CURRENT_RELEASE, MANIFEST_VERSION, Release, SdkGroup, WIRE_VERSION } fr
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlError from "effect/unstable/sql/SqlError";
-import { Catalog, Generated, isManagedOutputPath } from "@patchy/api";
+import { Catalog, Generated, Manifest, isManagedOutputPath } from "@patchy/api";
 import { Patches } from "@patchy/patches";
 import { ConnectionStore } from "@patchy/integrations";
+import { ConnectionStoreDev } from "@patchy/integrations/dev";
+import * as Tables from "../../primitives/src/Tables.js";
 import * as Fixtures from "../../patches/src/test/fixtures.js";
 import * as Generation from "./Generation.js";
 import * as CompanyDatabases from "../../company-database/src/CompanyDatabases.js";
@@ -258,6 +260,7 @@ void [inserted, changed, at, createClient, PatchyError, executeConfig, dev];
 
 const decodeCatalog = Schema.decodeUnknownEffect(Catalog);
 const decodeGenerated = Schema.decodeUnknownEffect(Generated);
+const decodeManifest = Schema.decodeUnknownEffect(Manifest);
 const identity = Fixtures.identities.uploader;
 const generateRequest = (manifest = Fixtures.manifest, skills: string[] = []) => ({
   release: CURRENT_RELEASE,
@@ -333,6 +336,7 @@ it.layer(layer)("SDK company generation", (it) => {
         assert.deepStrictEqual(output.uses, []);
         assert.isTrue(output.files.every(({ path }) => isManagedOutputPath(path)));
         assert.isFalse(output.files.some(({ path }) => path.endsWith("/manifest.json")));
+        assert.isFalse(output.files.some(({ path }) => path.endsWith("/metadata.json")));
         const skillFiles = output.files.filter(({ path }) => path.startsWith(".agents/skills/"));
         assert.deepStrictEqual(skillFiles.map(({ path }) => path).sort(), [
           ".agents/skills/patchy-files/SKILL.md",
@@ -446,6 +450,20 @@ it.layer(layer)("SDK company generation", (it) => {
         assert.strictEqual(response.status, 200);
         const output = yield* decodeGenerated(yield* response.json);
         assert.deepStrictEqual(output.uses, [{ alias: "sales", id: "sdk-connected", revision: 4 }]);
+        assert.deepStrictEqual(output.metadata, {
+          postgres: {
+            sales: {
+              declaration: {
+                kind: "postgres",
+                handle: "warehouse",
+                id: "sdk-connected",
+                revision: 4
+              },
+              snapshot
+            }
+          },
+          shared: {}
+        });
         for (const path of [
           "patchy/_generated/uses/sales.ts",
           "patchy/_generated/context/sales.md",
@@ -481,17 +499,47 @@ it.layer(layer)("SDK company generation", (it) => {
     Effect.gen(function* () {
       const patchId = "sdkshared001";
       const definition = {
-        columns: { title: { kind: "text" as const } },
+        columns: {
+          title: { kind: "text" as const },
+          member: { kind: "ref" as const, table: "members" }
+        },
         indexes: { byTitle: { columns: ["title"] } },
         shared: true
       };
+      const members = {
+        columns: { team: { kind: "ref" as const, table: "teams" } },
+        indexes: {},
+        shared: false
+      };
+      const teams = {
+        columns: {
+          lead: { kind: "ref" as const, table: "members", optional: true },
+          external: { kind: "ref" as const, table: "sdktarget001/people", optional: true }
+        },
+        indexes: {},
+        shared: false
+      };
       yield* (yield* CompanyDatabases.CompanyDatabases).ensureReady(identity.company.id);
-      yield* Fixtures.record({
+      const source: Patches.RecordInput = {
         ...Fixtures.publishRecord(),
         manifest: {
           ...Fixtures.manifest,
           name: "sdk-shared-source",
-          tables: { contacts: definition }
+          tables: {
+            contacts: definition,
+            members,
+            teams,
+            unrelated: { columns: { title: { kind: "text" } }, indexes: {} }
+          },
+          uses: {
+            people: {
+              kind: "sharedTable",
+              patchId: "sdktarget001",
+              table: "people",
+              id: "sdktarget001/people",
+              revision: 1
+            }
+          }
         },
         intent: "create",
         patchId,
@@ -511,7 +559,22 @@ it.layer(layer)("SDK company generation", (it) => {
         gitCommitSha: null,
         sourceIp: null,
         userAgent: null
+      };
+      yield* Fixtures.record({
+        ...source,
+        ...Fixtures.publishRecord(),
+        patchId: "sdktarget001",
+        versionId: "sdk-ref-target-version",
+        objectKey: "patches/sdktarget001/versions/1.html",
+        manifest: {
+          ...Fixtures.manifest,
+          name: "sdk-ref-target",
+          tables: {
+            people: { columns: { name: { kind: "text" } }, indexes: {}, shared: true }
+          }
+        }
       });
+      yield* Fixtures.record(source);
       const platform = yield* SqlClient.SqlClient;
       // The catalog and consumers retain omitted tables; the active manifest is not their authority.
       yield* platform`UPDATE patch_versions SET manifest = ${platform.json(Fixtures.manifest)} WHERE id = 'sdk-shared-version'`;
@@ -533,6 +596,28 @@ it.layer(layer)("SDK company generation", (it) => {
       assert.deepStrictEqual(output.uses, [
         { alias: "contacts", id: `${patchId}/contacts`, revision: 1 }
       ]);
+      const shared = output.metadata.shared.contacts!;
+      assert.deepStrictEqual(Object.keys(shared.tables).sort(), ["contacts", "members", "teams"]);
+      assert.deepStrictEqual(shared.tables.contacts!.columns, definition.columns);
+      assert.deepStrictEqual(shared.tables.members, members);
+      assert.deepStrictEqual(shared.tables.teams, teams);
+      assert.deepStrictEqual(
+        Object.values(shared.uses).map(({ id }) => id),
+        ["sdktarget001/people"]
+      );
+      // The generated fixture schema must provision without the source's omitted use.
+      const databases = yield* CompanyDatabases.CompanyDatabases;
+      const provisioner = yield* Tables.Tables;
+      const replayManifest = yield* decodeManifest({
+        ...Fixtures.manifest,
+        tables: shared.tables,
+        uses: shared.uses
+      });
+      yield* databases.withCompany(identity.company.id)(
+        databases.withPatchLock("sdkrefreplay")(
+          provisioner.provision("sdkrefreplay", replayManifest)
+        )
+      );
       for (const path of [
         "patchy/_generated/uses/contacts.ts",
         "patchy/_generated/context/contacts.md",
@@ -753,7 +838,7 @@ it.layer(layer)("SDK company generation", (it) => {
 
   it.effect("names the selected connection revision when its metadata snapshot is missing", () =>
     Effect.gen(function* () {
-      const dependencies = ConnectionStore.layerDev([
+      const dependencies = ConnectionStoreDev.layer([
         {
           connection: new ConnectionStore.Connection({
             id: "sdk-missing-snapshot",

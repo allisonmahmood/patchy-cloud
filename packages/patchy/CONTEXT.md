@@ -77,7 +77,7 @@ Where a patch runs: the cloud as its viewer, or the local dev runtime as the mac
 _Avoid_: instance (the target cloud), dev env (the CLI's local-instance discovery record)
 
 **Dev runtime**:
-The local execution of a patch's declared capabilities over disposable local data, under the same contract as the cloud runtime. It belongs to the patch repo, not the cloud's own development instance.
+The local execution of a patch's declared capabilities over disposable data, under the same contract as the cloud runtime and as the machine's user. It belongs to the patch repo, not the cloud's own development instance. The published inventory is its schema baseline; fixtures provide invented source data, never copied company rows. Dev calls are not logged.
 _Avoid_: mock backend, emulator, dev env
 
 **Managed files**:

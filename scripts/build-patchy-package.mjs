@@ -59,7 +59,12 @@ const common = {
   bundle: true,
   format: "esm",
   sourcemap: true,
-  tsconfig: path.join(packageDir, "tsconfig.json")
+  tsconfig: path.join(packageDir, "tsconfig.json"),
+  conditions: ["development"],
+  // Its WASM/data and worker-relative imports must remain a real package. npm packs it with Patchy.
+  external: ["@electric-sql/pglite", "@electric-sql/pglite/*"],
+  // CSSTree's Node entry reads JSON at runtime; its standalone build embeds that data.
+  alias: { "css-tree": path.join(packageDir, "node_modules/css-tree/dist/csstree.esm.js") }
 };
 const requireBanner =
   "import { createRequire as __createRequire } from 'node:module'; import { fileURLToPath as __fileURLToPath } from 'node:url'; import { dirname as __dirnameOf } from 'node:path'; const require = __createRequire(import.meta.url); const __filename = __fileURLToPath(import.meta.url); const __dirname = __dirnameOf(__filename);";
@@ -67,8 +72,6 @@ await esbuild.build({
   ...common,
   entryPoints: [path.join(packageDir, "src/index.ts")],
   outfile: path.join(distDir, "index.js"),
-  // CSSTree's Node entry reads JSON at runtime; its standalone build embeds that data.
-  alias: { "css-tree": path.join(packageDir, "node_modules/css-tree/dist/csstree.esm.js") },
   platform: "node",
   target: "node22",
   banner: { js: `#!/usr/bin/env node\n${requireBanner}` }
@@ -84,7 +87,8 @@ await esbuild.build({
 });
 await esbuild.build({
   ...common,
-  entryPoints: ["dev", "executeConfig", "executeConfigChild"].map((name) =>
+  external: [...common.external, "./dev.js"],
+  entryPoints: ["dev", "devChild", "executeConfig", "executeConfigChild"].map((name) =>
     path.join(packageDir, `src/${name}.ts`)
   ),
   outdir: distDir,
@@ -96,7 +100,12 @@ const declarations = await rollup({
   input: Object.fromEntries(
     publicEntries.map((name) => [name, path.join(packageDir, `src/${name}.ts`)])
   ),
-  plugins: [dts({ tsconfig: path.join(packageDir, "tsconfig.build.json") })]
+  plugins: [
+    dts({
+      tsconfig: path.join(packageDir, "tsconfig.build.json"),
+      compilerOptions: { customConditions: ["development"] }
+    })
+  ]
 });
 try {
   await declarations.write({

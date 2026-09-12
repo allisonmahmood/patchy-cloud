@@ -38,8 +38,10 @@ stay outside the browser graph.
 broker port in cloud and local environments, exposes one `PatchyError`, and never
 replays a mutation. A dispatched request with a lost reply has `unknown_outcome`:
 retrying it could duplicate a write. HTTP is a test adapter, not permission for a
-patch frame to fetch the runtime directly. `patchy/dev` reserves the separate
-Node entrypoint for the later dev-runtime ticket.
+patch frame to fetch the runtime directly. `patchy/dev` is the Node entrypoint
+composing local PGlite resources and fixtures with the production shell and dispatcher.
+PGlite is packed as a bundled dependency so its WASM/data and worker imports
+remain intact; installing the release needs neither registry access nor scripts.
 
 New publishes and dev starts require the pin, executing CLI and loaded runtime,
 where present, to equal the instance's current release. A mismatch names both

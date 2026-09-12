@@ -183,7 +183,78 @@ than weakening that restriction. Declared Postgres connections admit `list`, `ge
 integration's PGlite binding, not the normal network connector: one local database
 per connection under `.patchy/dev/`, initialized from `fixtures/postgres-<handle>.sql`.
 The file is required; its header describes native columns and synthetic views.
-The patch-repo CLI that composes this binding arrives separately.
+`patchy dev` composes this binding with the real primitive handlers and production
+shell, without Clerk, the keyring or a runtime log store.
+
+### A patch repo against this worktree
+
+The cloud instance (`pnpm dev`) and a patch's local runtime (`patchy dev`) are
+different processes. The cloud supplies release bytes, identity and metadata;
+the patch runtime executes only local rows/files and invented fixtures.
+For a disposable seeded check, initialize beneath this checkout so the CLI finds
+this worktree's `.local/dev/env`. Isolate the CLI's personal state first:
+
+```sh
+export PATCHY_STATE_DIR="$PWD/.local/patch-cli"
+pnpm patchy init .local/my-patch --purpose "Describe the tool being checked" --json
+cd .local/my-patch
+pnpm typecheck
+pnpm patchy dev --json
+```
+
+Installation already ran in `init`. Open the returned `url`: it is the production
+shell and broker at a loopback origin, authenticated as `/api/me`'s machine user
+without a browser sign-in. Insert and list through the generated client; exercise
+`files.<store>.put` and `url(name)` when files are declared. Postgres and shared-table
+declarations need invented inserts in `fixtures/postgres-<handle>.sql` and
+`fixtures/shared-<alias>.sql`. Missing files fail before generation replaces them.
+Never seed these files by querying a company's live rows or bytes.
+
+`pnpm patchy dev` twice reports one daemon. Vite build-watch swaps only complete
+single-file artifacts and reloads the whole shell at its current route; there is
+no Vite dev server or HMR escape from the production sandbox. Config and fixture
+edits need `dev stop` then `dev`. `dev status`, `stop`, `logs` and `reset` take
+`--json`; `--foreground` streams logs in text mode and stops its own session on
+Ctrl-C. Reset stops and wipes disposable local state and requires a separate start;
+it does not change published resources. State is scoped to this repo and instance
+under `.patchy/dev/`. The next start fetches and materialises the full published
+inventory from the server before the current
+manifest is applied. Omitted columns and indexes stay provisioned, including
+unique constraints, so reset does not make a formerly rejected write succeed.
+
+For a runtime source change, stop the patch session and run the source CLI from
+inside the patch repo, substituting this checkout's absolute path for `cloud`:
+
+```sh
+cloud=/absolute/path/to/this/checkout
+node --import "$cloud/node_modules/tsx/dist/loader.mjs" --conditions=development \
+  "$cloud/packages/patchy/src/index.ts" dev --foreground
+```
+
+This exercises the worktree's runtime with the repo's installed Vite and browser
+client, not `apps/server` inside the patch daemon. Restart the cloud instance for
+metadata/server changes. To verify the packed release after a package change,
+restart the cloud and initialize a fresh disposable repo with a fresh pnpm
+store **and metadata cache**. A new repo alone can reuse an old tarball cached by
+its unchanged local release URL. From the cloud checkout, for example:
+
+```sh
+cache=$(mktemp -d)
+pnpm_config_store_dir="$cache/store" pnpm_config_cache_dir="$cache/cache" \
+  pnpm patchy init .local/packed-check --purpose "Verify the current packed release" --json
+```
+
+Use a new destination and cache directory for each packed check, then follow the
+laid-down instructions without reinstalling. This is only a worktree-development
+precaution: deployed release URLs are immutable. Keep the cloud's printed API URL
+authoritative; ports may change on restart.
+
+New dev starts check the exact pin, executing CLI and installed runtime release.
+A release change never kills an existing session. After publishing to this local
+instance, non-additive config changes must fail at dev start with the real
+provisioner's message; compatible additions preserve local rows. Before first
+publish every schema change recreates disposable data. Stop patch sessions with
+`pnpm patchy dev stop` before stopping the cloud instance.
 
 Issue #202 adds exact operation outcome codes to the unmerged
 `0006_runtime_baseline`; no new migration ID is introduced. Disposable development

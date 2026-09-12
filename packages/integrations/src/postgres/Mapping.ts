@@ -2,7 +2,7 @@ import type { PostgresShapeColumn } from "@patchy/api";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import type { ColumnType, Snapshot } from "./Snapshot.js";
+import type { ColumnType, Snapshot } from "@patchy/api/postgres-snapshot";
 
 export const quoteIdentifier = (name: string): string => `"${name.replaceAll('"', '""')}"`;
 export const quoteLiteral = (value: string): string =>

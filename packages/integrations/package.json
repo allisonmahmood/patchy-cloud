@@ -6,6 +6,11 @@
   "type": "module",
   "description": "Company connections, encrypted credentials and Postgres schema discovery.",
   "exports": {
+    "./dev": {
+      "development": "./src/dev.ts",
+      "types": "./dist/dev.d.ts",
+      "import": "./dist/dev.js"
+    },
     ".": {
       "development": "./src/index.ts",
       "types": "./dist/index.d.ts",

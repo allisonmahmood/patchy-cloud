@@ -17,6 +17,7 @@ import { Limits } from "@patchy/limits";
 import * as Testing from "@patchy/sql/testing";
 import * as LoadedVersions from "../LoadedVersions.js";
 import * as Runtime from "../Runtime.js";
+import * as RuntimeProduction from "../RuntimeProduction.js";
 import * as RuntimeApi from "../RuntimeApi.js";
 import * as RuntimeLog from "../RuntimeLog.js";
 import { me } from "../me.js";
@@ -62,7 +63,7 @@ const seed = Layer.effectDiscard(
 
 export const layer = (handlers: Readonly<Record<string, Runtime.Handler>> = { me }) =>
   Layer.mergeAll(RuntimeApi.layer, HttpServer.layerServices).pipe(
-    Layer.provideMerge(Runtime.layer(handlers)),
+    Layer.provideMerge(RuntimeProduction.layer(handlers)),
     Layer.provideMerge(
       Layer.mergeAll(
         versions,

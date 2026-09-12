@@ -5,6 +5,7 @@ import {
   ColumnDefinition,
   Manifest,
   ProvisioningReport,
+  SharedTableDeclaration,
   TableDefinition,
   sharedTableId
 } from "@patchy/api";
@@ -257,6 +258,32 @@ export const inventoryManifest = (
   return { tables, files: Object.fromEntries(snapshot.stores.map((store) => [store.name, {}])) };
 };
 const decodeColumn = Schema.decodeUnknownSync(ColumnDefinition);
+
+/**
+ * Recover provisioning-only shared identities from persisted ref targets.
+ * Revision 0 is unresolved: these declarations validate schema, not runtime access
+ * or a target's current revision. Omitted manifest aliases are not authority.
+ */
+export const inventoryReferences = (tables: (typeof Manifest.Type)["tables"]) => {
+  const uses: Record<string, typeof SharedTableDeclaration.Type> = Object.create(null);
+  const seen = new Set<string>();
+  for (const definition of Object.values(tables)) {
+    for (const column of Object.values(definition.columns)) {
+      if (column.kind !== "ref" || seen.has(column.table)) continue;
+      const separator = column.table.indexOf("/");
+      if (separator === -1) continue;
+      uses[`ref${seen.size}`] = {
+        kind: "sharedTable",
+        patchId: column.table.slice(0, separator),
+        table: column.table.slice(separator + 1),
+        id: column.table,
+        revision: 0
+      };
+      seen.add(column.table);
+    }
+  }
+  return uses;
+};
 
 const diff = Effect.fn("Tables.diff")(function* (
   manifest: typeof Manifest.Type,

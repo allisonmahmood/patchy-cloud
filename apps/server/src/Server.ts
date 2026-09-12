@@ -38,7 +38,7 @@ import {
 import { AzureContentStore, BlobContainer, FilesystemContentStore } from "@patchy/content-store";
 import {
   ConnectionPages,
-  ConnectionStore,
+  SqlConnectionStore,
   CredentialKeys,
   PostgresSource,
   PostgresExecution,
@@ -57,7 +57,7 @@ import {
 import { Tables, TableOperations, Files } from "@patchy/primitives";
 import { Pages, servingHeaders, TrustedProxies } from "@patchy/serving";
 import {
-  Runtime,
+  RuntimeProduction,
   RuntimeApi,
   RuntimeLog,
   me,
@@ -108,7 +108,7 @@ const services = Layer.mergeAll(
       const tables = yield* TableOperations.make;
       const files = yield* Files.make;
       const postgres = yield* PostgresOperations.makeHandlers;
-      return Runtime.layer({ me, ...tables, ...files, ...postgres });
+      return RuntimeProduction.layer({ me, ...tables, ...files, ...postgres });
     })
   ).pipe(Layer.provide([LoadedVersions.layer, PostgresExecution.layer]))
 ).pipe(
@@ -125,7 +125,7 @@ const services = Layer.mergeAll(
       Session.layer
     ).pipe(
       Layer.provideMerge(
-        ConnectionStore.layer.pipe(Layer.provide([CredentialKeys.layer, PostgresSource.layer]))
+        SqlConnectionStore.layer.pipe(Layer.provide([CredentialKeys.layer, PostgresSource.layer]))
       ),
       Layer.provideMerge(Tables.layer),
       Layer.provideMerge(Inventory.layer),

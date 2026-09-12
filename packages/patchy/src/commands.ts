@@ -43,6 +43,7 @@ import { RELEASE, MANIFEST_VERSION } from "./release.js";
 import { checkRelease } from "./ReleaseCheck.js";
 import * as Project from "./Project.js";
 import { prepareRepoPublish } from "./repoBuild.js";
+import * as Dev from "./devLifecycle.js";
 
 /** The working directory the entrypoint started in; where the dev-env walk begins. */
 export class Cwd extends Context.Service<Cwd, string>()("patchy/commands/Cwd") {}
@@ -829,6 +830,43 @@ const generateProject = Command.make(
     )
 ).pipe(Command.unlisted);
 
+const dev = Command.make(
+  "dev",
+  { foreground: Flag.boolean("foreground").pipe(Flag.withDefault(false)) },
+  ({ foreground }) =>
+    runProject(
+      Effect.gen(function* () {
+        yield* Project.readRepo(yield* Cwd);
+        yield* Dev.start(yield* Cwd, requiredToken(), foreground);
+      })
+    )
+).pipe(
+  Command.withDescription(
+    "Start this patch repo's local runtime over fixtures (detached and idempotent)."
+  ),
+  Command.withSubcommands(
+    (["status", "stop", "logs", "reset"] as const).map((action) =>
+      Command.make(action, {}, () =>
+        runProject(
+          Effect.gen(function* () {
+            yield* Project.readRepo(yield* Cwd);
+            yield* Dev.manage(yield* Cwd, action);
+          })
+        )
+      ).pipe(
+        Command.withDescription(
+          {
+            status: "Report this repo's healthy local runtime; exit 1 when stopped.",
+            stop: "Stop this repo's local runtime, retaining its rows and files.",
+            logs: "Print this repo's dev log.",
+            reset: "Stop and wipe disposable local state; published resources are unchanged."
+          }[action]
+        )
+      )
+    )
+  )
+);
+
 // --- the tree ---------------------------------------------------------------
 
 export const root = Command.make("patchy").pipe(
@@ -844,6 +882,7 @@ export const root = Command.make("patchy").pipe(
     share,
     del,
     init,
+    dev,
     refresh,
     catalog,
     add,

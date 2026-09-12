@@ -56,6 +56,15 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
+    "@effect/sql-pglite": "catalog:",
+    "@patchy/company-database": "workspace:*",
+    "@patchy/content-store": "workspace:*",
+    "@patchy/integrations": "workspace:*",
+    "@patchy/limits": "workspace:*",
+    "@patchy/primitives": "workspace:*",
+    "@patchy/runtime": "workspace:*",
+    "@patchy/serving": "workspace:*",
+    "vite": "^7.3.1",
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
     "@patchy/api": "workspace:*",
@@ -68,5 +77,11 @@
     "typescript": "^6.0.3",
     "vite-plugin-singlefile": "^2.3.0",
     "vitest": "^4.1.11"
-  }
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "0.5.8"
+  },
+  "bundledDependencies": [
+    "@electric-sql/pglite"
+  ]
 }

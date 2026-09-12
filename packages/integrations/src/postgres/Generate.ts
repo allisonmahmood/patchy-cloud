@@ -1,6 +1,6 @@
 import type { PostgresDeclaration } from "@patchy/api";
 import { nativeType, quoteIdentifier, surface, typeMapping } from "./Mapping.js";
-import type { Snapshot } from "./Snapshot.js";
+import type { Snapshot } from "@patchy/api/postgres-snapshot";
 
 export interface Generated {
   readonly client: string;

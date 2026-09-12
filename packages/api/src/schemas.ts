@@ -8,6 +8,7 @@
 import * as Schema from "effect/Schema";
 import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
 import { isPatchId } from "@patchy/core";
+import { Snapshot } from "./postgresSnapshot.js";
 
 export const CURRENT_RELEASE = "0.0.1";
 export const MANIFEST_VERSION = 1;
@@ -377,6 +378,21 @@ export const isManagedOutputPath = (path: string): boolean => {
     /^fixtures\/(?:postgres-[a-z0-9-]+|shared-[a-z][a-zA-Z0-9]*)\.sql$/.test(path)
   );
 };
+export const DeclarationMetadata = Schema.Struct({
+  postgres: Schema.Record(
+    Schema.String,
+    Schema.Struct({ declaration: PostgresDeclaration, snapshot: Snapshot })
+  ),
+  shared: Schema.Record(
+    Schema.String,
+    Schema.Struct({
+      declaration: SharedTableDeclaration,
+      tables: Schema.Record(Schema.String, TableDefinition),
+      uses: Schema.Record(Schema.String, SharedTableDeclaration)
+    })
+  )
+});
+
 export const Generated = Schema.Struct({
   ok: Schema.Literal(true),
   files: Schema.Array(
@@ -385,6 +401,7 @@ export const Generated = Schema.Struct({
       contents: Schema.String
     })
   ),
+  metadata: DeclarationMetadata,
   uses: Schema.Array(Schema.Struct({ alias: DefinitionName, id: NonEmptyText, revision: Revision }))
 });
 

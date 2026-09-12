@@ -25,9 +25,11 @@ import * as Redacted from "effect/Redacted";
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const cliPackageDir = path.join(repoRoot, "packages/patchy");
 const serverEntry = path.join(repoRoot, "apps/server/dist/start.js");
-// npm is a pinned root devDependency so this test can install the CLI tarball
-// hermetically; the CLI itself is private and is never published to a registry.
+// npm is a pinned root devDependency so this test can pack bundled dependencies
+// and install the CLI tarball hermetically, without publishing it to a registry.
 const npmCliEntry = path.join(repoRoot, "node_modules/npm/bin/npm-cli.js");
+// Cold workspace compilation includes the SDK tarball; it is not a runtime command.
+const buildTimeoutMs = 120_000;
 let DEV_SEED;
 let authTesting;
 const packedCliTempRootBasePrefix = "patchy-packed-cli-e2e-";
@@ -187,7 +189,10 @@ try {
 
   if (signalProbe.target === "after-real-server-ready") {
     console.log("[packed-cli-e2e] building the real server for signal probe");
-    await run("pnpm", ["--filter", "@patchy/server...", "build"], { cwd: repoRoot });
+    await run("pnpm", ["--filter", "@patchy/server...", "build"], {
+      cwd: repoRoot,
+      timeoutMs: buildTimeoutMs
+    });
     portReservation = await reserveLoopbackPort();
     let publicBaseUrl = `http://127.0.0.1:${portReservation.port}`;
     const startedServer = await startServer({ publicBaseUrl, objectDir });
@@ -203,19 +208,25 @@ try {
   await signalProbeCheckpoint("before-first-child-spawn");
   throwIfSignalLatched();
   console.log("[packed-cli-e2e] building the real server");
-  await run("pnpm", ["--filter", "@patchy/server...", "build"], { cwd: repoRoot });
+  await run("pnpm", ["--filter", "@patchy/server...", "build"], {
+    cwd: repoRoot,
+    timeoutMs: buildTimeoutMs
+  });
 
   console.log("[packed-cli-e2e] building CLI once");
-  await run("pnpm", ["--filter", "patchy", "build"], { cwd: repoRoot });
+  await run("pnpm", ["--filter", "patchy", "build"], {
+    cwd: repoRoot,
+    timeoutMs: buildTimeoutMs
+  });
 
   console.log("[packed-cli-e2e] packing one exact tarball without rerunning prepack");
   const packed = await run(
-    "pnpm",
-    ["--config.ignore-scripts=true", "pack", "--json", "--pack-destination", packDir],
+    "npm",
+    ["pack", "--ignore-scripts", "--json", "--pack-destination", packDir],
     { cwd: cliPackageDir }
   );
   const packResult = parsePackResult(packed.stdout);
-  assert.equal(packResult.length, 1, "pnpm pack must produce exactly one artifact");
+  assert.equal(packResult.length, 1, "npm pack must produce exactly one artifact");
 
   const tarballs = (await checkedCall(() => readdir(packDir))).filter((entry) =>
     entry.endsWith(".tgz")
@@ -223,10 +234,18 @@ try {
   assert.deepEqual(
     tarballs,
     [path.basename(packResult[0].filename)],
-    "pnpm pack must create one exact tarball"
+    "npm pack must create one exact tarball"
   );
   const packedFiles = new Set(packResult[0].files.map((file) => file.path));
-  for (const requiredFile of ["dist/index.js", "skills/patchy/SKILL.md", "LICENSE", "README.md"]) {
+  for (const requiredFile of [
+    "dist/index.js",
+    "dist/dev.js",
+    "dist/devChild.js",
+    "node_modules/@electric-sql/pglite/package.json",
+    "skills/patchy/SKILL.md",
+    "LICENSE",
+    "README.md"
+  ]) {
     assert.ok(packedFiles.has(requiredFile), `packed CLI is missing ${requiredFile}`);
   }
 
@@ -258,6 +277,30 @@ try {
   const version = await run(cliPath, ["--version"], { cwd: consumerDir });
   assert.equal(version.stdout.trim(), installedManifest.version);
   assert.notEqual(version.stdout.trim(), "0.0.0-dev");
+
+  console.log("[packed-cli-e2e] exercising bundled PGlite from the installed dev runtime");
+  await run(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      [
+        'import assert from "node:assert/strict";',
+        'import { createRequire } from "node:module";',
+        'await import("patchy/dev");',
+        'const require = createRequire(import.meta.resolve("patchy/dev"));',
+        'const { PGlite } = require("@electric-sql/pglite");',
+        "const database = await PGlite.create();",
+        "try {",
+        '  const result = await database.query("SELECT 42 AS answer");',
+        "  assert.deepEqual(result.rows, [{ answer: 42 }]);",
+        "} finally {",
+        "  await database.close();",
+        "}"
+      ].join("\n")
+    ],
+    { cwd: consumerDir }
+  );
 
   portReservation = await reserveLoopbackPort();
   let publicBaseUrl = `http://127.0.0.1:${portReservation.port}`;
@@ -1150,7 +1193,7 @@ async function runLifecycleProbes() {
     {
       mode: "server-bind-race-retry",
       expectFailure: false,
-      timeoutMs: 120_000
+      timeoutMs: buildTimeoutMs + 60_000
     },
     {
       mode: "missing-server-entry-negative-control",
@@ -2138,7 +2181,10 @@ async function readJsonlRecords(markerPath) {
 
 async function runServerBindRaceRetryProbe({ objectDir }) {
   console.log("[lifecycle-probe] building real server for bind race probe");
-  await run("pnpm", ["--filter", "@patchy/server...", "build"], { cwd: repoRoot });
+  await run("pnpm", ["--filter", "@patchy/server...", "build"], {
+    cwd: repoRoot,
+    timeoutMs: buildTimeoutMs
+  });
 
   serverBindCollisionProbe = {
     armed: true,
@@ -2537,8 +2583,12 @@ function validHtml(title, marker) {
 
 function parsePackResult(stdout) {
   const parsed = JSON.parse(stdout);
-  assert.ok(parsed && typeof parsed === "object", `unexpected pnpm pack JSON: ${stdout}`);
-  return Array.isArray(parsed) ? parsed : [parsed];
+  assert.ok(
+    parsed && typeof parsed === "object" && !Array.isArray(parsed),
+    `unexpected npm pack JSON: ${stdout}`
+  );
+  // The pinned npm 12 packer keys its result by package name.
+  return Object.values(parsed);
 }
 
 async function reserveLoopbackPort() {

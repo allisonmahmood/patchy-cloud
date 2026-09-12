@@ -286,10 +286,10 @@ export class SdkGroup extends HttpApiGroup.make("sdk", { topLevel: true })
       .middleware(Authorization)
       .annotateMerge(
         describe(
-          "Resolve declarations against current company metadata and return finished managed files and uses stamps. " +
+          "Resolve declarations against current company metadata and return finished managed files, uses stamps and typed declaration metadata. " +
             "Requires the exact current release. Refuses connection_not_connected, patch_not_openable and release_mismatch. " +
             "Present skills are sticky; an unknown present skill refuses generation. Includes core and implied skills, " +
-            "typed clients, contexts and fixture stubs, never manifest.json, credentials or business rows."
+            "typed clients, contexts and fixture stubs. The metadata response field contains Postgres snapshots and shared-table definitions with recursive source ref targets and their shared declarations; it is never written to a generated file. Never returns manifest.json, credentials or business rows."
         )
       )
   )

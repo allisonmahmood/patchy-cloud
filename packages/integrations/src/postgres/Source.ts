@@ -6,7 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { reservedRelation, surface, typeMapping } from "./Mapping.js";
-import * as Metadata from "./Snapshot.js";
+import * as Metadata from "@patchy/api/postgres-snapshot";
 import * as SourceClient from "./SourceClient.js";
 import * as SourceNetwork from "./SourceNetwork.js";
 

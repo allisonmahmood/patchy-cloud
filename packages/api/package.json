@@ -10,6 +10,11 @@
       "development": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./postgres-snapshot": {
+      "development": "./src/postgresSnapshot.ts",
+      "types": "./dist/postgresSnapshot.d.ts",
+      "import": "./dist/postgresSnapshot.js"
     }
   },
   "files": [

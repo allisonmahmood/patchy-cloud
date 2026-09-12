@@ -49,14 +49,14 @@ Initialization installs the pinned package and generates the client, context and
 Inside that repo use `pnpm patchy catalog`, `add`, `remove` and `refresh`; see the
 [project commands](packages/patchy/README.md#patch-repo-commands) for their contracts.
 The repo is ready to typecheck, and hosted tier 1 patches use the sandboxed browser broker.
-Run `pnpm patchy publish` from the repo root to build and publish it. The local `patchy dev` runtime remains separate work.
+Run `pnpm patchy dev` to exercise it locally over PGlite and invented fixtures, then `pnpm patchy publish` from the repo root to build and publish it.
 
 ## Repository layout
 
 A Turborepo monorepo managed with pnpm. [AGENTS.md](AGENTS.md) is the guide to working in it, for people and agents alike.
 
 - `apps/server` — the Effect HTTP server: wires the capability packages into one layer, guards `/api/*`, and listens (`@patchy/server`).
-- `packages/patchy` — `patchy`, one package for the CLI, config builders, browser client and reserved dev-runtime entrypoint; initializes patch repos, refreshes managed files and edits declarations.
+- `packages/patchy` — `patchy`, one package for the CLI, config builders, browser client and local dev runtime; initializes patch repos, refreshes managed files and edits declarations.
 - `packages/sdk` — current release and immutable tarball distribution, authenticated catalog and generation, and canonical project skills under `skills/` (`@patchy/sdk`).
 - `packages/core` — shared HTML validation, hashing, ID helpers, and the first-party page shell (`@patchy/core`).
 - `packages/api` — the wire contract: schemas, the `HttpApi`, the derived client (`@patchy/api`).
