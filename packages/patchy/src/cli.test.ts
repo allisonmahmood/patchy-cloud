@@ -2746,7 +2746,7 @@ describe("repo publish recovery", () => {
     expect(refused).toMatchObject({ status: 1, stdout: "" });
     expect(JSON.parse(refused.stderr)).toMatchObject({ code: "tier_mismatch" });
     expect(instance.requests.filter((request) => request.url === "/api/publish")).toHaveLength(1);
-  }, 10_000); // Includes a refresh and two real TypeScript/Vite builds.
+  }, 30_000); // Refresh and two repo publishes each execute config and build child processes.
 
   it.each([
     ["patchy.config.ts", 'throw new Error("private-diagnostic-marker");'],
@@ -2873,7 +2873,7 @@ describe("repo publish recovery", () => {
       else expect(requests[1]!.body).toEqual(requests[0]!.body);
       expect(existsSync(attemptPath)).toBe(false);
     },
-    10_000 // A definitive refusal requires a second full build; an unknown reply replays.
+    30_000 // Refresh, refused publish, and recovery rebuild are one multi-process scenario.
   );
 
   it("recovers a moved create across owner refusal, failed identity write and release change", async () => {
