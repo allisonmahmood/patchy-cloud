@@ -38,6 +38,11 @@ export default async function setup(project: TestProject): Promise<() => Promise
   // Every server and CLI test sees the same real release, built before workers start.
   execFileSync(
     process.execPath,
+    [fileURLToPath(new URL("../scripts/build-serving-broker.mjs", import.meta.url))],
+    { stdio: "pipe" }
+  );
+  execFileSync(
+    process.execPath,
     [
       fileURLToPath(new URL("../scripts/build-patchy-package.mjs", import.meta.url)),
       "--stage-for-server"

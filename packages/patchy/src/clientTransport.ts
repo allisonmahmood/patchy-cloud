@@ -6,13 +6,21 @@ import { WIRE_VERSION } from "./release.js";
 
 export type Operation =
   | "me"
+  | "route.set"
+  | "download"
   | `tables.${"get" | "getMany" | "list" | "insert" | "insertMany" | "update" | "delete"}`
   | `shared.${"get" | "getMany" | "list"}`
   | `files.${"get" | "put" | "list" | "delete"}`
   | `postgres.${"get" | "getMany" | "list" | "query"}`;
 export type Call = (op: Operation, args: unknown, bytes?: Uint8Array) => Promise<unknown>;
+export interface Route {
+  get(): Promise<string>;
+  set(path: string): Promise<null>;
+  subscribe(listener: (path: string) => void): () => void;
+}
 export interface Transport {
   readonly call: Call;
+  readonly route: Route;
   close(): void;
 }
 export interface Me {
@@ -23,7 +31,7 @@ export interface Me {
 
 /** Structural subset implemented by browser MessagePort and the fake-port acceptance seam. */
 export interface Port {
-  postMessage(message: unknown): void;
+  postMessage(message: unknown, transfer?: Transferable[]): void;
   addEventListener(type: string, listener: EventListener): void;
   removeEventListener(type: string, listener: EventListener): void;
   start(): void;
@@ -38,27 +46,52 @@ const lost = () =>
 
 export function createPortTransport(
   port: Port,
-  options: { readonly timeoutMs?: number } = {}
+  options: { readonly timeoutMs?: number; readonly route?: string } = {}
 ): Transport {
   const timeoutMs = options.timeoutMs ?? 35_000;
   let sequence = 0;
   let closed = false;
+  let path = options.route ?? "/";
+  const listeners = new Set<(path: string) => void>();
+  const notify = (listener: (path: string) => void, value: string) => {
+    queueMicrotask(() => {
+      if (!closed && listeners.has(listener)) listener(value);
+    });
+  };
+  const updateRoute = (value: string) => {
+    path = value;
+    for (const listener of listeners) notify(listener, value);
+  };
   const pending = new Map<
     string,
     {
       resolve(value: unknown): void;
       reject(error: unknown): void;
       timer: ReturnType<typeof setTimeout>;
+      path?: string;
     }
   >();
   const onMessage: EventListener = (event) => {
     const reply: unknown = (event as MessageEvent).data;
     if (reply === null || typeof reply !== "object") return;
     const value = reply as Record<string, unknown>;
+    if (value.v !== WIRE_VERSION) return;
+    if (value.kind === "event") {
+      const data = value.data;
+      if (
+        value.event === "route" &&
+        data !== null &&
+        typeof data === "object" &&
+        "path" in data &&
+        typeof data.path === "string"
+      )
+        updateRoute(data.path);
+      return;
+    }
     if (typeof value.id !== "string") return;
     const request = pending.get(value.id);
     if (!request) return;
-    if (value.v !== WIRE_VERSION || (value.kind !== "result" && value.kind !== "error")) return;
+    if (value.kind !== "result" && value.kind !== "error") return;
     clearTimeout(request.timer);
     pending.delete(value.id);
     if (value.kind === "error") {
@@ -71,7 +104,10 @@ export function createPortTransport(
         ...(value.value as object),
         bytes: value.bytes instanceof Uint8Array ? value.bytes : new Uint8Array(value.bytes)
       });
-    } else request.resolve(value.value);
+    } else {
+      if (request.path !== undefined) updateRoute(request.path);
+      request.resolve(value.value);
+    }
   };
   const close = () => {
     if (closed) return;
@@ -85,41 +121,70 @@ export function createPortTransport(
       request.reject(lost());
     }
     pending.clear();
+    listeners.clear();
   };
   port.addEventListener("message", onMessage);
   port.addEventListener("messageerror", close);
   port.addEventListener("close", close);
   port.start();
-  return {
-    call: (op, args, bytes) => {
-      if (closed) return Promise.reject(lost());
-      const id = String(++sequence);
-      const { promise, resolve, reject } = Promise.withResolvers<unknown>();
-      const timer = setTimeout(() => {
-        pending.delete(id);
-        reject(lost());
-      }, timeoutMs);
-      pending.set(id, { resolve, reject, timer });
-      const payload =
-        bytes === undefined
-          ? undefined
-          : bytes.buffer instanceof ArrayBuffer &&
-              bytes.byteOffset === 0 &&
-              bytes.byteLength === bytes.buffer.byteLength
-            ? bytes.buffer
-            : bytes.slice().buffer;
-      try {
-        port.postMessage({
+  const call: Call = (op, args, bytes) => {
+    if (closed) return Promise.reject(lost());
+    const id = String(++sequence);
+    const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+    const timer = setTimeout(() => {
+      pending.delete(id);
+      reject(lost());
+    }, timeoutMs);
+    pending.set(id, {
+      resolve,
+      reject,
+      timer,
+      ...(op === "route.set" &&
+      args !== null &&
+      typeof args === "object" &&
+      "path" in args &&
+      typeof args.path === "string"
+        ? { path: args.path }
+        : {})
+    });
+    const payload =
+      bytes === undefined
+        ? undefined
+        : bytes.buffer instanceof ArrayBuffer &&
+            bytes.byteOffset === 0 &&
+            bytes.byteLength === bytes.buffer.byteLength
+          ? bytes.buffer
+          : new Uint8Array(bytes).buffer;
+    try {
+      port.postMessage(
+        {
           v: WIRE_VERSION,
           id,
           op,
           args,
           ...(payload === undefined ? {} : { bytes: payload })
-        });
-      } catch {
-        close();
+        },
+        payload === undefined ? [] : [payload]
+      );
+    } catch {
+      close();
+    }
+    return promise;
+  };
+  return {
+    call,
+    route: {
+      get: () => (closed ? Promise.reject(lost()) : Promise.resolve(path)),
+      set: (path) => call("route.set", { path }) as Promise<null>,
+      subscribe: (listener) => {
+        if (closed) return () => {};
+        const subscription = (path: string) => listener(path);
+        listeners.add(subscription);
+        notify(subscription, path);
+        return () => {
+          listeners.delete(subscription);
+        };
       }
-      return promise;
     },
     close
   };
@@ -137,7 +202,7 @@ export function createPostMessageTransport(
   if (!frame || frame.parent === frame) {
     reject(new PatchyError("shell_outdated", "This client must run inside the Patchy shell.", {}));
   } else {
-    const nonce = new URL(frame.location.href).searchParams.get("nonce");
+    const nonce = new URL(frame.location.href).searchParams.get("n");
     const timer = setTimeout(() => {
       removeBootstrap();
       reject(
@@ -154,7 +219,7 @@ export function createPostMessageTransport(
         data.nonce !== nonce
       )
         return;
-      if (data.v !== WIRE_VERSION || event.ports.length !== 1) {
+      if (data.v !== WIRE_VERSION || event.ports.length !== 1 || typeof data.route !== "string") {
         removeBootstrap();
         reject(
           new PatchyError("shell_outdated", "The shell and bundle use different wire versions.", {})
@@ -163,7 +228,7 @@ export function createPostMessageTransport(
       }
       removeBootstrap();
       const port = event.ports[0]!;
-      transport = createPortTransport(port, options);
+      transport = createPortTransport(port, { ...options, route: data.route });
       try {
         port.postMessage({ kind: "ready", wire: WIRE_VERSION, nonce });
         resolve(transport);
@@ -194,6 +259,30 @@ export function createPostMessageTransport(
       if (closed) throw lost();
       return (await ready).call(op, args, bytes);
     },
+    route: {
+      get: async () => {
+        if (closed) throw lost();
+        return (await ready).route.get();
+      },
+      set: async (path) => {
+        if (closed) throw lost();
+        return (await ready).route.set(path);
+      },
+      subscribe: (listener) => {
+        let active = !closed;
+        let unsubscribe: (() => void) | undefined;
+        void ready.then(
+          (transport) => {
+            if (active && !closed) unsubscribe = transport.route.subscribe(listener);
+          },
+          () => {}
+        );
+        return () => {
+          active = false;
+          unsubscribe?.();
+        };
+      }
+    },
     close
   };
 }
@@ -210,6 +299,8 @@ export function createHttpTransport(options: HttpTransportOptions): Transport {
   const origin = new URL(options.baseUrl).origin;
   const controller = new AbortController();
   let identity: Promise<Me | null> | undefined;
+  const browserOnly = () =>
+    new PatchyError("invalid_request", "This operation requires the Patchy shell, not HTTP.", {});
   const dispatch = async (
     op: Operation,
     args: unknown,
@@ -281,10 +372,18 @@ export function createHttpTransport(options: HttpTransportOptions): Transport {
   };
   return {
     call: async (op, args, bytes) => {
+      if (op === "route.set" || op === "download") throw browserOnly();
       identity ??= dispatch("me", {}, null) as Promise<Me | null>;
       const me = await identity;
       if (op === "me") return me;
       return dispatch(op, args, me === null ? null : { userId: me.user.id }, bytes);
+    },
+    route: {
+      get: () => Promise.reject(browserOnly()),
+      set: () => Promise.reject(browserOnly()),
+      subscribe: () => {
+        throw browserOnly();
+      }
     },
     close: () => controller.abort()
   };

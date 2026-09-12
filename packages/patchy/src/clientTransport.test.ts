@@ -4,7 +4,8 @@ import {
   createPortTransport,
   createPostMessageTransport
 } from "./clientTransport.js";
-import { PatchyError } from "./client.js";
+import { createClient, PatchyError } from "./client.js";
+import { defineConfig, files } from "./config.js";
 import type { Port } from "./clientTransport.js";
 
 class FakePort extends EventTarget implements Port {
@@ -76,7 +77,7 @@ it("binds bootstrap to the parent and URL nonce and closes pending calls on page
   const parent = {};
   const frame = Object.assign(new EventTarget(), {
     parent,
-    location: { href: "https://instance/~content/p/v?nonce=document-one" }
+    location: { href: "https://instance/~content/p/v?n=document-one" }
   });
   const transport = createPostMessageTransport({ window: frame as unknown as Window });
   const port = new FakePort();
@@ -104,29 +105,235 @@ it("binds bootstrap to the parent and URL nonce and closes pending calls on page
   expect(port.sent.filter((request) => request.op === "tables.insert")).toHaveLength(1);
 });
 
-it("uses the byte envelope without detaching or including bytes in arguments", async () => {
-  const port = new FakePort();
-  const transport = createPortTransport(port);
-  const source = new Uint8Array([0, 10, 20, 0]);
-  const put = transport.call(
-    "files.put",
-    { store: "images", name: "x", contentType: "image/png" },
-    source.subarray(1, 3)
-  );
-  expect(new Uint8Array(port.sent[0]!.bytes!)).toEqual(new Uint8Array([10, 20]));
-  expect(source).toEqual(new Uint8Array([0, 10, 20, 0]));
-  port.reply({ v: 1, id: port.sent[0]!.id, kind: "result", value: null });
-  await put;
-  const get = transport.call("files.get", { store: "images", name: "x" });
-  port.reply({
-    v: 1,
-    id: port.sent[1]!.id,
-    kind: "result",
-    value: { contentType: "image/png" },
-    bytes: new Uint8Array([10, 20]).buffer
+it("transfers owned upload buffers and isolates subviews without leaking neighboring bytes", async () => {
+  const channel = new MessageChannel();
+  const transport = createPortTransport(channel.port1);
+  const config = defineConfig({ name: "uploads", tier: 1, files: { images: files() } });
+  const client = createClient<typeof config>(config, { transport, shared: {}, connections: {} });
+  const uploads: Uint8Array[] = [];
+  channel.port2.onmessage = ({ data }) => {
+    expect(data.args).toEqual({ store: "images", name: "x", contentType: "image/png" });
+    uploads.push(new Uint8Array(data.bytes));
+    channel.port2.postMessage({ v: 1, id: data.id, kind: "result", value: null });
+  };
+  try {
+    const owned = new Uint8Array([10, 20]);
+    const put = client.files.images.put("x", owned, { contentType: "image/png" });
+    expect(owned.buffer.byteLength).toBe(0);
+    await expect(put).resolves.toBeNull();
+
+    const buffer = new Uint8Array([30, 40]).buffer;
+    const second = client.files.images.put("x", buffer, { contentType: "image/png" });
+    expect(buffer.byteLength).toBe(0);
+    await expect(second).resolves.toBeNull();
+
+    const source = new Uint8Array([99, 50, 60, 88]);
+    await client.files.images.put("x", source.subarray(1, 3), { contentType: "image/png" });
+    expect(source).toEqual(new Uint8Array([99, 50, 60, 88]));
+    expect(uploads).toEqual([
+      new Uint8Array([10, 20]),
+      new Uint8Array([30, 40]),
+      new Uint8Array([50, 60])
+    ]);
+  } finally {
+    client.close();
+    channel.port2.close();
+  }
+});
+
+it("decodes transferred file replies into client bytes and downloads through the broker", async () => {
+  const channel = new MessageChannel();
+  const transport = createPortTransport(channel.port1);
+  const config = defineConfig({ name: "downloads", tier: 1, files: { images: files() } });
+  const client = createClient<typeof config>(config, { transport, shared: {}, connections: {} });
+  const downloads: unknown[] = [];
+  channel.port2.onmessage = ({ data }) => {
+    if (data.op === "files.get") {
+      const bytes = new Uint8Array([10, 20]).buffer;
+      channel.port2.postMessage(
+        { v: 1, id: data.id, kind: "result", value: { contentType: "image/png" }, bytes },
+        [bytes]
+      );
+    } else {
+      downloads.push({ op: data.op, args: data.args });
+      channel.port2.postMessage({ v: 1, id: data.id, kind: "result", value: null });
+    }
+  };
+  try {
+    await expect(client.files.images.get("folder/x.png")).resolves.toEqual(
+      new Uint8Array([10, 20])
+    );
+    await expect(client.files.images.download("folder/x.png")).resolves.toBeNull();
+    expect(downloads).toEqual([
+      { op: "download", args: { store: "images", name: "folder/x.png" } }
+    ]);
+  } finally {
+    client.close();
+    channel.port2.close();
+  }
+});
+
+it("preserves bootstrap routes, acknowledges sets and receives popstate before id replies", async () => {
+  const parent = {};
+  const frame = Object.assign(new EventTarget(), {
+    parent,
+    location: { href: "https://instance/~content/p/v?n=route-document" }
   });
-  await expect(get).resolves.toEqual({ contentType: "image/png", bytes: new Uint8Array([10, 20]) });
+  const channel = new MessageChannel();
+  const transport = createPostMessageTransport({ window: frame as unknown as Window });
+  const config = defineConfig({ name: "routes", tier: 1 });
+  const client = createClient<typeof config>(config, { transport, shared: {}, connections: {} });
+  const paths: string[] = [];
+  const cancelled = vi.fn();
+  client.route.subscribe(cancelled)();
+  const unsubscribe = client.route.subscribe((path) => paths.push(path));
+  const initial = client.route.get();
+  const requests: Array<{ id: string; args: { path: string } }> = [];
+  const requested = Promise.withResolvers<void>();
+  channel.port2.onmessage = ({ data }) => {
+    if (data.op === "route.set") {
+      requests.push(data);
+      requested.resolve();
+      if (data.args.path === "/rejected")
+        channel.port2.postMessage({
+          v: 1,
+          id: data.id,
+          kind: "error",
+          error: { code: "invalid_request", error: "Rejected route.", details: {} }
+        });
+    } else if (data.op === "me") {
+      channel.port2.postMessage({ v: 1, id: data.id, kind: "result", value: null });
+    }
+  };
+  try {
+    const bootstrap = new Event("message");
+    Object.assign(bootstrap, {
+      source: parent,
+      data: { v: 1, kind: "bootstrap", nonce: "route-document", route: "/notes/deep-link" },
+      ports: [channel.port1]
+    });
+    frame.dispatchEvent(bootstrap);
+    await expect(initial).resolves.toBe("/notes/deep-link");
+    expect(paths).toEqual(["/notes/deep-link"]);
+    expect(cancelled).not.toHaveBeenCalled();
+
+    const changed = client.route.set("/notes/next");
+    await requested.promise;
+    expect(paths).toEqual(["/notes/deep-link"]);
+    await expect(client.route.get()).resolves.toBe("/notes/deep-link");
+    channel.port2.postMessage({ v: 1, id: requests[0]!.id, kind: "result", value: null });
+    await expect(changed).resolves.toBeNull();
+    expect(paths).toEqual(["/notes/deep-link", "/notes/next"]);
+    await expect(client.route.set("/rejected")).rejects.toMatchObject({ code: "invalid_request" });
+    await expect(client.route.get()).resolves.toBe("/notes/next");
+    expect(paths).toEqual(["/notes/deep-link", "/notes/next"]);
+    expect(requests.map((request) => request.args.path)).toEqual(["/notes/next", "/rejected"]);
+
+    channel.port2.postMessage({
+      v: 2,
+      kind: "event",
+      event: "route",
+      data: { path: "/wrong-wire" }
+    });
+    channel.port2.postMessage({
+      v: 1,
+      kind: "event",
+      event: "other",
+      data: { path: "/wrong-event" }
+    });
+    channel.port2.postMessage({ v: 1, kind: "event", event: "route", data: { path: 42 } });
+    channel.port2.postMessage({
+      v: 1,
+      kind: "event",
+      event: "route",
+      data: { path: "/notes/back" }
+    });
+    await transport.call("me", {});
+    expect(paths).toEqual(["/notes/deep-link", "/notes/next", "/notes/back"]);
+    await expect(client.route.get()).resolves.toBe("/notes/back");
+
+    unsubscribe();
+    channel.port2.postMessage({
+      v: 1,
+      kind: "event",
+      event: "route",
+      data: { path: "/notes/unsubscribed" }
+    });
+    await transport.call("me", {});
+    expect(paths).toEqual(["/notes/deep-link", "/notes/next", "/notes/back"]);
+    await expect(client.route.get()).resolves.toBe("/notes/unsubscribed");
+    client.route.subscribe(cancelled);
+    client.close();
+    await Promise.resolve();
+    expect(cancelled).not.toHaveBeenCalled();
+    await expect(client.route.get()).rejects.toMatchObject({ code: "unknown_outcome" });
+    await expect(client.route.set("/after-close")).rejects.toMatchObject({
+      code: "unknown_outcome"
+    });
+  } finally {
+    client.close();
+    channel.port2.close();
+  }
+});
+
+it("cancels each subscription independently and drops queued notifications on close", async () => {
+  const channel = new MessageChannel();
+  const transport = createPortTransport(channel.port1, { route: "/initial" });
+  const listener = vi.fn();
+  try {
+    const first = transport.route.subscribe(listener);
+    const second = transport.route.subscribe(listener);
+    first();
+    await Promise.resolve();
+    expect(listener.mock.calls).toEqual([["/initial"]]);
+    second();
+    transport.route.subscribe(listener);
+    transport.close();
+    await Promise.resolve();
+    expect(listener.mock.calls).toEqual([["/initial"]]);
+  } finally {
+    transport.close();
+    channel.port2.close();
+  }
+});
+
+it("does not deliver subscriptions cancelled or closed before bootstrap", async () => {
+  const frame = Object.assign(new EventTarget(), {
+    parent: {},
+    location: { href: "https://instance/~content/p/v?n=unbootstrapped" }
+  });
+  const transport = createPostMessageTransport({ window: frame as unknown as Window });
+  const listener = vi.fn();
+  transport.route.subscribe(listener);
+  const initial = transport.route.get();
+  const rejected = expect(initial).rejects.toMatchObject({ code: "unknown_outcome" });
   transport.close();
+  await rejected;
+  expect(listener).not.toHaveBeenCalled();
+});
+
+it("refuses browser-only operations in the HTTP adapter without making requests", async () => {
+  const fetcher = vi.fn<typeof fetch>();
+  const transport = createHttpTransport({
+    baseUrl: "https://instance",
+    patchId: "p",
+    versionId: "v",
+    fetch: fetcher
+  });
+  try {
+    await expect(transport.route.get()).rejects.toMatchObject({ code: "invalid_request" });
+    await expect(transport.route.set("/next")).rejects.toMatchObject({ code: "invalid_request" });
+    expect(() => transport.route.subscribe(() => {})).toThrow(PatchyError);
+    await expect(transport.call("route.set", { path: "/next" })).rejects.toMatchObject({
+      code: "invalid_request"
+    });
+    await expect(transport.call("download", { store: "images", name: "x" })).rejects.toMatchObject({
+      code: "invalid_request"
+    });
+    expect(fetcher).not.toHaveBeenCalled();
+  } finally {
+    transport.close();
+  }
 });
 
 it.each([

@@ -120,9 +120,12 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
     const analytics = yield* Analytics.Analytics;
     const publicBaseUrl = yield* PatchesConfig.publicBaseUrl;
     const maxHtmlBytes = yield* PatchesConfig.maxHtmlBytes;
+    const maxBundleBytes = yield* PatchesConfig.maxBundleBytes;
     const createRateLimitPerMinute = yield* PatchesConfig.patchCreateRateLimitPerMinute;
     const publishRateLimitPerMinute = yield* PatchesConfig.publishRateLimitPerMinute;
     const maxPublishBodyBytes = yield* PatchesConfig.maxPublishBodyBytes;
+    // Larger scripted bundles widen only publish; sharing keeps its existing request cap.
+    const maxShareBodyBytes = maxHtmlBytes * 3;
     const currentRelease = yield* PatchesConfig.release;
     const livePatchesPerUser = yield* PatchesConfig.livePatchesPerUser;
 
@@ -207,14 +210,33 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             })
           );
           if (HttpServerResponse.isHttpServerResponse(payload)) return payload;
-          if (manifest.tier > 0) return rejected("tier_mismatch", "Tier 1 is not served yet.");
-          const validation = validateHtml(payload.html, { maxBytes: maxHtmlBytes });
-          if (!validation.ok)
-            return refuse(InvalidHtml, {
-              ok: false,
-              errors: validation.errors,
-              warnings: validation.warnings
-            });
+          if (manifest.tier >= 2)
+            return rejected("tier_mismatch", "Tier 2 and above are not served yet.");
+          const bytes = Buffer.byteLength(payload.html, "utf8");
+          let title = manifest.name || "Untitled Patch";
+          let warnings: string[] = [];
+          if (manifest.tier === 0) {
+            if (payload.html.trim() === "" || bytes > maxHtmlBytes)
+              return refuse(InvalidHtml, {
+                ok: false,
+                errors: [
+                  payload.html.trim() === ""
+                    ? "HTML document is empty."
+                    : `HTML document is ${bytes} bytes; maximum is ${maxHtmlBytes} bytes.`
+                ],
+                warnings: []
+              });
+            const validation = validateHtml(payload.html, { maxBytes: maxHtmlBytes });
+            if (!validation.ok) return rejected("tier_mismatch", validation.errors.join(" "));
+            title = validation.title || title;
+            warnings = validation.warnings;
+          } else {
+            if (bytes > maxBundleBytes)
+              return refuse(PayloadTooLarge, {
+                ok: false,
+                error: `HTML bundle is ${bytes} bytes; maximum is ${maxBundleBytes} bytes.`
+              });
+          }
           const patchId = payload.patchId ?? null;
           const quotaResponse = () =>
             refuse(PatchQuotaExceeded, {
@@ -238,7 +260,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
               ownerUserId: identity.user.id,
               machineTokenId: identity.machine.id,
               scope: payload.scope,
-              title: validation.title || manifest.name || "Untitled Patch",
+              title,
               html: payload.html,
               filename: cleanText(metadata.filename),
               repoOrg: cleanText(metadata.repoOrg),
@@ -251,7 +273,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
               payloadDigest: digest,
               wireVersion: WIRE_VERSION,
               publicBaseUrl,
-              warnings: validation.warnings,
+              warnings,
               livePatchQuota: livePatchesPerUser,
               ...origin
             })
@@ -314,7 +336,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
               versionNumber: recorded.versionNumber,
               scope: recorded.scope,
               tier: recorded.tier,
-              htmlBytes: new TextEncoder().encode(payload.html).length
+              htmlBytes: bytes
             }
           });
           return HttpServerResponse.text(recorded.responseBody, {
@@ -352,7 +374,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
       .handleRaw("share", ({ params }) =>
         Effect.gen(function* () {
           const identity = yield* CurrentIdentity;
-          const payload = yield* readBody(maxPublishBodyBytes).pipe(
+          const payload = yield* readBody(maxShareBodyBytes).pipe(
             Effect.flatMap(decodeShare),
             Effect.catchTags({
               MalformedBody: () =>

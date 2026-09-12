@@ -1,6 +1,4 @@
-import { sessionScripts, type SessionShell } from "@patchy/auth";
-import { escapeAttribute, escapeHtml, htmlPage } from "@patchy/core";
-import type { Patches } from "@patchy/patches";
+import { escapeHtml, htmlPage } from "@patchy/core";
 
 export function renderHome(options: { publicBaseUrl: string }): string {
   const publicBaseUrl = escapeHtml(options.publicBaseUrl);
@@ -60,62 +58,6 @@ patchy validate './plan.html' &amp;&amp;
       </main>
     `
   });
-}
-
-/**
- * The uploaded document stays script-free in its sandboxed frame. Only a
- * company page's outer shell loads the session scripts; public pages load none.
- */
-export function renderPatchWrapper(
-  options: {
-    patch: Patches.Patch;
-    version: Patches.PatchVersion;
-    html: string;
-    /** Address-local route, carried for the future tier ≥ 1 shell; tier 0 ignores it. */
-    route?: string;
-  },
-  shell?: SessionShell
-): string {
-  const title = escapeHtml(options.patch.title || "Patchy patch");
-
-  return `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>${title}</title>
-  ${shell ? sessionScripts(shell) : ""}
-  <style>
-    html,
-    body {
-      height: 100%;
-      margin: 0;
-      background: #ffffff;
-    }
-
-    body {
-      overflow: hidden;
-    }
-
-    .patch-frame {
-      display: block;
-      width: 100%;
-      height: 100%;
-      border: 0;
-      background: #ffffff;
-    }
-  </style>
-</head>
-<body>
-  <iframe
-    class="patch-frame"
-    title="${title}"
-    sandbox=""
-    referrerpolicy="no-referrer"
-    srcdoc="${escapeAttribute(options.html)}"></iframe>
-  <!-- patch:${escapeHtml(options.patch.id)} version:${Number(options.version.versionNumber)} -->
-</body>
-</html>`;
 }
 
 export function renderNotFound(): string {

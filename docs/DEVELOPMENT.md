@@ -345,7 +345,7 @@ The file form uses its cached patch; `--patch` selects an id instead, exactly on
 target. Only the owner may change sharing. Publish and share JSON report `scope`,
 and text output announces who can open the link. While public, only the current
 version answers **200** at both `/<company>/<name>` and `/<company>/<name>/~v/<current n>` with
-`Cache-Control: public, max-age=60`, no `Set-Cookie`, and the unchanged script-free
+`Cache-Control: public, max-age=60`, no `Set-Cookie`, and the unchanged script-free tier 0
 public CSP. Older versions stay behind the company door even after sharing public
 again. After the company transition, all version URLs and the latest URL answer
 cookie-free requests with **401** and `Cache-Control: private, no-store`.
@@ -393,7 +393,7 @@ It also drives the login handoff through confirmation with an offline-signed
 session, completion, saved-login precedence, logout and seed fallback.
 The packed flow also reads the stored version's tier, release and server-stamped
 wire version. File mode synthesises a tier 0 manifest with empty `tables`, `files`
-and `uses`; the API admits tables, file stores, shared-table declarations and resolved Postgres declarations. Higher tiers remain refused.
+and `uses`; the API admits tier 0 and tier 1 manifests with tables, file stores, shared-table declarations and resolved Postgres declarations. Tier 1 bundles are stored raw and served in the sandbox; tiers 2 and above remain refused. Tier 0 keeps `PATCHY_MAX_HTML_BYTES` (512 KiB), tier 1 uses `PATCHY_MAX_BUNDLE_BYTES` (10 MiB), and the enclosing JSON request cap is three times the larger value.
 
 `GET /api/release` is public. A new CLI publish checks its executing version
 against that release. Interrupted attempts live in the isolated `PATCHY_STATE_DIR`
@@ -549,16 +549,28 @@ PGlite worker transport. Exercise discovery-to-fixture parity and verify that a
 timed-out call destroys its backend while the next call succeeds. The statement,
 service, row, byte and pool limits are spec constants, not environment settings.
 
-Table manifests can be published directly to `POST /api/publish` at tier 0;
-repo-mode CLI publishing and the browser broker remain separate SDK work.
+Table manifests can be published directly to `POST /api/publish` at tiers 0 and 1;
+repo-mode CLI publishing remains separate SDK work. Tier 1 uses the hosted shell broker.
 The owner reads cumulative metadata through `GET /api/patches/:patchId/inventory`.
 For table changes, exercise the Primitives contract suites over both Postgres
 and PGlite, and the real-Postgres publish/unique-index races. Ordinary table
 operations lease an existing company database; only resource-introducing
 publishes call `ensureReady`. No new platform migration belongs to Primitives.
+
 Explicit readiness also upgrades metadata in already-ready company databases
 (including recorded ref targets); it preserves their inventory and does not
 retain a query-pool reservation. Normal leases never bootstrap or upgrade.
+
+The offline tier 1 acceptance suite runs with
+`pnpm exec playwright test -c playwright.tier1.config.ts`. It owns an isolated
+server and Postgres, fake Clerk keys and signed session cookies; it does not use
+the daily-driver instance or live Clerk. Chromium and Firefox run serially.
+Install the matching Playwright Chromium and Firefox builds first. Native
+`window.print()` checks use isolated headed browsers, virtual PDF printers and
+`pdftotext`; they require a display (X11 for Chromium), never a physical printer.
+The resulting PDFs must contain both the first and last of 2,000 rows.
+The shell broker is bundled from the API schemas before builds and tests;
+`@patchy/serving/shell` has no auth/platform imports so a local runtime can reuse it.
 
 ## Running the server by hand
 

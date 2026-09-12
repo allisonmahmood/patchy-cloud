@@ -163,8 +163,8 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "and `publishKey` before limits or release validation: identical payloads return the " +
           "stored response and status, even after an upgrade; changed payloads answer 409 " +
           "`publish_key_conflict`. New attempts require the exact current release and manifest " +
-          "version from `GET /api/release`. Tier 0 may define tables and file stores, provisioned additively; " +
-          "higher tiers answer `tier_mismatch`. " +
+          "version from `GET /api/release`. Tiers 0 and 1 may define tables and file stores, provisioned additively; " +
+          "tiers 2 and above answer `tier_mismatch`. " +
           'Postgres uses carry `{ kind: "postgres", handle, id, revision }`, keyed by alias. ' +
           "The handle and id must name the same connected company connection, otherwise " +
           "`connection_not_connected`; the revision must equal its current schema snapshot, " +
@@ -185,7 +185,11 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "File mode (empty definitions and no repo name, or file metadata) onto cumulative inventory " +
           "answers `has_primitives`; an empty named repo manifest may omit all tables. " +
           "Reports and schema revision are persisted for replay. " +
-          "Tier 0 HTML passes the safe-HTML policy. Creates spend the per-token create limit " +
+          "Tier 0 HTML passes the safe-HTML policy; executable or otherwise unsafe content answers " +
+          "`tier_mismatch`. Empty or oversized tier 0 documents retain the HTML validation refusal. " +
+          "Tier 1 bundles are stored raw, without safe-HTML validation or transformation. " +
+          "Tier 0 keeps `PATCHY_MAX_HTML_BYTES` (512 KiB); tier 1 uses `PATCHY_MAX_BUNDLE_BYTES` " +
+          "(10 MiB), with oversized bundles refused as 413. Creates spend the per-token create limit " +
           "and live-patch quota; updates do not. Omitted scope defaults to company on creates " +
           "and remains unchanged on updates. `manifest.name` is an exact company-scoped name " +
           "(3–32 lowercase letters, digits or hyphens, starting and ending with a letter or digit); " +
@@ -194,7 +198,7 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "normalize it, fall back to `patch` and add `-2`, `-3`, etc. on collision. Updates with " +
           "no name retain their existing name. Rename leaves a redirect until another patch " +
           "claims it; deletion frees all names. `address` and `publicUrl` both name the absolute " +
-          "`/<company>/<name>` address. The JSON body cap is three times the HTML cap."
+          "`/<company>/<name>` address. The JSON body cap is three times the larger configured HTML or bundle cap."
       )
     ),
     HttpApiEndpoint.get("inventory", "/patches/:patchId/inventory", {
@@ -224,8 +228,8 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "A patch the caller does not own answers 404. The current public version may be cached for 60 seconds " +
           "at both `/<company>/<name>` and `/<company>/<name>/~v/<current n>`; older versions and company patches are " +
           "`private, no-store` and answer 401 without a session. " +
-          "The JSON body is bounded by the publish body limit: three times " +
-          "`PATCHY_MAX_HTML_BYTES`. An oversized declared body answers 413; " +
+          "The JSON body is bounded by three times `PATCHY_MAX_HTML_BYTES`; the larger scripted-bundle cap applies only to publishing. " +
+          "An oversized declared body answers 413; " +
           "streaming bodies are cut off at the cap. Rejected requests leave the scope unchanged."
       )
     ),

@@ -10,7 +10,7 @@ metadata:
 
 Review changed page-rendering code and directly affected call sites against the rules below. Apply them when a change creates, moves, or modifies markup or styling on a served page. Do not demand unrelated repository-wide cleanup.
 
-First-party pages compose the server-rendered shell and inline `<style>` block in `packages/core/src/html.ts`; the served-patch wrapper stays in `packages/serving/src/render.ts`. There is no component library, utility-CSS framework, client-side framework, or second theme. Auth and Companies pages use plain forms; only the session shell loads Clerk's headless script and Patchy's external initializer, never inline script or analytics.
+First-party pages compose the server-rendered shell and inline `<style>` block in `packages/core/src/html.ts`; the served-patch renderer stays in `packages/serving/src/shell.ts`. There is no component library, utility-CSS framework, client-side framework, or second theme. Auth and Companies pages use plain forms. Company shells load Clerk's headless script and Patchy's external session initializer; tier 1 shells also load Patchy's external broker. Never inline shell script or analytics.
 
 Two page kinds, and the distinction drives most findings:
 
@@ -20,16 +20,16 @@ Two page kinds, and the distinction drives most findings:
 ## The shell and its one exception
 
 - First-party pages compose `htmlPage`. A new page that re-emits its own `<head>`, base styles, or design tokens instead of composing the shell is a concrete finding.
-- `renderPatchWrapper` is the standing exception and stays one. It is a separate document on purpose: its own minimal `<head>`, no shell paper/grid/glyph styling, and `form-action 'none'`. The public CSP keeps no script source; only the company session shell admits the session sources below. Do not report it as a duplicated skeleton, and do not accept a change that folds it into `htmlPage`.
+- `renderPatchWrapper` is the standing exception and stays one. It is a separate document on purpose: its own minimal `<head>`, no shell paper/grid/glyph styling, and `form-action 'none'`. Tier 0 public shells keep no script source; tier 1 public shells admit only Patchy's external broker and same-origin runtime calls. Only company shells admit Clerk's session sources. Do not fold the patch frame into `htmlPage`; notices and the needs-rebuild door are first-party `htmlPage` pages.
 - When first-party pages repeat the same durable treatment — pills, notes, compact code panels — prefer a named shared class in the shell. Keep contextual layout, width, and color at the call site.
 - Flag call-site overrides that replace a shared class's core height, radius, padding, focus ring, or base colors. Extend the shared contract instead when the pattern is genuinely shared.
 
 ## Served patches
 
-- Tier-zero patch content runs no JavaScript. A public wrapper also runs none; a company wrapper loads only Clerk's headless script from the exact configured Frontend API host and Patchy's external `/auth/session.js` initializer. Its CSP admits only those script sources and that host for connections, never inline script. The internal content URL uses its stored version's tier: tier ≥ 1 allows inline script only inside `sandbox allow-scripts allow-modals`, with `default-src 'none'`, `connect-src 'none'`, and only blob/data media sources; camera, microphone and geolocation remain denied. This does not enable a higher-tier wrapper or broker.
-- Keep the patch iframe's `sandbox` and `title`, and its `srcdoc` escaping. Patch HTML reaches the attribute through `escapeAttribute`; a patch title reaching markup goes through `escapeHtml`. Flag any user-supplied value interpolated raw.
-- Readers are unwatched by the patch: no analytics at either scope. Public wrappers keep their script-free, session-free policy; company wrappers may maintain Clerk's session, isolated from the patch.
-- The wrapper's visible content is the sandboxed frame and nothing else: no footer, no chrome, no first-party link out of the page. The company shell's session scripts do not change that.
+- Tier-zero patch content runs no JavaScript. Its public shell runs none; its company shell loads Clerk's headless script from the exact configured Frontend API host and Patchy's external `/auth/session.js` initializer. Tier 1 shells add Patchy's external `/~shell/broker.js`, on company and public pages alike. Shell CSP never admits inline script; tier 1 uses exactly `frame-src 'self'` and same-origin runtime connections. Only company shells admit Clerk's configured script/connect host.
+- The internal content URL uses its stored version's tier: tier ≥ 1 allows inline script only inside `sandbox allow-scripts allow-modals`, with `default-src 'none'`, `connect-src 'none'`, and blob/data media sources; camera, microphone and geolocation remain denied. Tier 0 keeps its escaped `srcdoc` and empty sandbox. Keep every frame's title and referrer policy, and escape all uploaded titles and attribute values.
+- Tier 0 readers are unwatched by the patch; tier 1 code acts only through Patchy and never holds the reader's login. No analytics at either scope. Public shells remain session-free; company shells maintain the session outside the patch.
+- A running page's visible content is the sandboxed frame and nothing else: no footer, chrome or first-party link out. Non-suppressible first-party runtime notices stop the frame; access denial offers no reload, while session expiry and account changes return through sign-in to a whole-page reload. Validation errors stay with patch code.
 - The signed-out door reuses Auth's `/login` template with one **Sign in** link, not a second design or a form. Keep it in front of the patch; request-access controls wait until owner-only sharing returns.
 
 ## CSS ownership

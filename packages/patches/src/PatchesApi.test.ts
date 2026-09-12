@@ -282,8 +282,7 @@ it.layer(layer)("patches group", (it) => {
         Effect.provide(asUploader),
         Effect.flip
       );
-      assert.include(invalid, { ok: false });
-      assert.isTrue("errors" in invalid && invalid.errors.length > 0);
+      assert.include(invalid, { ok: false, code: "tier_mismatch" });
 
       const admins = yield* publish({ html: html("Theirs") }).pipe(
         Effect.provide(Fixtures.as(admin))
@@ -377,7 +376,8 @@ const publishConfig = (
   release = CURRENT_RELEASE,
   quota = 100,
   publishLimit = 100,
-  createLimit = 100
+  createLimit = 100,
+  bounds: Readonly<Record<string, string>> = {}
 ) =>
   Layer.merge(
     Layer.succeed(PatchesConfig.release, release),
@@ -386,7 +386,8 @@ const publishConfig = (
         PATCHY_PUBLIC_BASE_URL: "https://patchy.example",
         PATCHY_PATCH_CREATE_RATE_LIMIT_PER_MINUTE: String(createLimit),
         PATCHY_AUTHENTICATED_PUBLISH_RATE_LIMIT_PER_MINUTE: String(publishLimit),
-        PATCHY_LIVE_PATCHES_PER_USER: String(quota)
+        PATCHY_LIVE_PATCHES_PER_USER: String(quota),
+        ...bounds
       })
     )
   );
@@ -1016,13 +1017,147 @@ it.layer(publishLayer)("publish attempts", (it) => {
     })
   );
 
+  it.effect("publishes tier-one scripts without changing their bytes and replays the attempt", () =>
+    Effect.gen(function* () {
+      const api = yield* client.pipe(Effect.provide(Fixtures.as(admin)));
+      const raw =
+        '\uFEFF<!DOCTYPE html>\r\n<HTML><body><script>window.answer = "東京 & < >";</script></body></HTML>\r\n';
+      const payload = publishRequest({
+        html: raw,
+        manifest: { ...Fixtures.manifest, tier: 1, name: "raw-script" }
+      });
+      const [created, response] = yield* api.publish({
+        payload,
+        responseMode: "decoded-and-response"
+      });
+      assert.strictEqual(created.tier, 1);
+      const patches = yield* Patches.Patches;
+      const version = Option.getOrThrow(yield* patches.find(created.patchId)).version;
+      assert.strictEqual(yield* (yield* Content.Content).read(version), raw);
+      const replayed = yield* api.publish({ payload, responseMode: "response-only" });
+      assert.strictEqual(replayed.status, response.status);
+      assert.strictEqual(yield* replayed.text, yield* response.text);
+      const conflict = yield* api.publish({
+        payload: publishRequest({ ...payload, html: raw + " " }),
+        responseMode: "response-only"
+      });
+      assert.strictEqual(conflict.status, 409);
+      assert.include(yield* conflict.json, { code: "publish_key_conflict" });
+      assert.strictEqual(
+        Option.getOrThrow(yield* patches.find(created.patchId)).version.id,
+        created.versionId
+      );
+    })
+  );
+
+  it.effect(
+    "refuses a tier-zero claim over executable HTML without changing published content",
+    () =>
+      Effect.gen(function* () {
+        const api = yield* client.pipe(Effect.provide(Fixtures.as(admin)));
+        const safe = html("Static original");
+        const created = yield* api.publish({ payload: publishRequest({ html: safe }) });
+        const store = yield* ContentStore.ContentStore;
+        const before = yield* Stream.runCollect(store.list("patches/"));
+        const refused = yield* api.publish({
+          payload: publishRequest({
+            patchId: created.patchId,
+            html: "<!doctype html><html><body><ScRiPt>window.answer = 42;</ScRiPt></body></html>"
+          }),
+          responseMode: "response-only"
+        });
+        assert.strictEqual(refused.status, 422);
+        assert.include(yield* refused.json, { code: "tier_mismatch" });
+        const version = Option.getOrThrow(
+          yield* (yield* Patches.Patches).find(created.patchId)
+        ).version;
+        assert.strictEqual(version.id, created.versionId);
+        assert.strictEqual(yield* (yield* Content.Content).read(version), safe);
+        assert.deepStrictEqual(yield* Stream.runCollect(store.list("patches/")), before);
+      })
+  );
+
+  it.effect("enforces tier-specific UTF-8 bundle caps and the enclosing request cap", () =>
+    Effect.gen(function* () {
+      const api = yield* client.pipe(
+        Effect.provide(Fixtures.as(admin)),
+        Effect.provide(
+          Layer.fresh(
+            PatchesApi.layer.pipe(
+              Layer.provide(
+                publishConfig(CURRENT_RELEASE, 100, 100, 100, {
+                  PATCHY_MAX_HTML_BYTES: "512",
+                  PATCHY_MAX_BUNDLE_BYTES: "1024"
+                })
+              )
+            )
+          )
+        )
+      );
+      const raw = "<script>/*" + "é".repeat(501) + "*/</script>";
+      const atLimit = raw + " ";
+      const payload = publishRequest({
+        html: atLimit,
+        manifest: { ...Fixtures.manifest, tier: 1 }
+      });
+      const created = yield* api.publish({ payload });
+      const version = Option.getOrThrow(
+        yield* (yield* Patches.Patches).find(created.patchId)
+      ).version;
+      assert.strictEqual(yield* (yield* Content.Content).read(version), atLimit);
+      const oversized = yield* api.publish({
+        payload: publishRequest({
+          ...payload,
+          publishKey: crypto.randomUUID(),
+          html: atLimit + "x"
+        }),
+        responseMode: "response-only"
+      });
+      assert.strictEqual(oversized.status, 413);
+      expect(yield* oversized.json).toEqual({
+        ok: false,
+        error: expect.stringContaining("maximum is 1024 bytes")
+      });
+      const tierZero = yield* api.publish({
+        payload: publishRequest({ html: "<p>" + "é".repeat(256) + "</p>" }),
+        responseMode: "response-only"
+      });
+      assert.strictEqual(tierZero.status, 422);
+      expect(yield* tierZero.json).toEqual({
+        ok: false,
+        errors: [expect.stringContaining("maximum is 512 bytes")],
+        warnings: []
+      });
+      const empty = yield* api.publish({
+        payload: publishRequest({ html: " \n\t" }),
+        responseMode: "response-only"
+      });
+      assert.strictEqual(empty.status, 422);
+      expect(yield* empty.json).toEqual({
+        ok: false,
+        errors: [expect.any(String)],
+        warnings: []
+      });
+      const bodyTooLarge = yield* api.publish({
+        payload: publishRequest({
+          ...payload,
+          publishKey: crypto.randomUUID(),
+          metadata: { filename: "x".repeat(3072) }
+        }),
+        responseMode: "response-only"
+      });
+      assert.strictEqual(bodyTooLarge.status, 413);
+    })
+  );
+
   it.effect("refuses unsupported tiers and missing connections before writing content", () =>
     Effect.gen(function* () {
       const api = yield* client.pipe(Effect.provide(Fixtures.as(admin)));
       const patches = yield* Patches.Patches;
       const before = yield* patches.countLive(admin.user.id);
       const cases = [
-        { manifest: { ...Fixtures.manifest, tier: 1 as const }, code: "tier_mismatch" },
+        { manifest: { ...Fixtures.manifest, tier: 2 as const }, code: "tier_mismatch" },
+        { manifest: { ...Fixtures.manifest, tier: 3 as const }, code: "tier_mismatch" },
         {
           manifest: {
             ...Fixtures.manifest,

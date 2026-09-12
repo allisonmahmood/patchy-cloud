@@ -4,6 +4,34 @@ import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
 import { DefinitionName, Identity, IsoTimestamp, PatchId, PostgresText } from "./schemas.js";
 import { postgresOperations } from "./postgres.js";
 
+/** Byte defaults shared by the browser broker and configurable server runtime. */
+export const runtimeByteLimits = {
+  callBytes: 64 * 1024,
+  rowBytes: 1024 * 1024,
+  batchBytes: 8 * 1024 * 1024,
+  postgresBytes: 256 * 1024,
+  resultBytes: 8 * 1024 * 1024,
+  fileBytes: 20 * 1024 * 1024
+} as const;
+
+export function runtimeBodyLimit(
+  op: string,
+  limits: {
+    readonly callBytes: number;
+    readonly rowBytes: number;
+    readonly batchBytes: number;
+    readonly postgresBytes: number;
+  } = runtimeByteLimits
+): number {
+  return op === "tables.insert" || op === "tables.update"
+    ? limits.rowBytes + limits.callBytes
+    : op === "tables.insertMany"
+      ? limits.batchBytes + limits.callBytes
+      : op.startsWith("postgres.")
+        ? limits.postgresBytes
+        : limits.callBytes;
+}
+
 const NonEmptyText = Schema.String.check(Schema.isMinLength(1));
 const textEncoder = new TextEncoder();
 

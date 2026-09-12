@@ -556,6 +556,9 @@ importers:
 
   packages/serving:
     dependencies:
+      '@patchy/api':
+        specifier: workspace:*
+        version: link:../api
       '@patchy/auth':
         specifier: workspace:*
         version: link:../auth
@@ -581,9 +584,6 @@ importers:
       '@patchy/analytics':
         specifier: workspace:*
         version: link:../analytics
-      '@patchy/api':
-        specifier: workspace:*
-        version: link:../api
       '@patchy/company-database':
         specifier: workspace:*
         version: link:../company-database

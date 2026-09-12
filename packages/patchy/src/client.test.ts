@@ -13,6 +13,18 @@ import { defineConfig, files, table, t } from "./config.js";
 import { generateClient } from "../../sdk/src/generateClient.js";
 import { RuntimeCode, runtimeOperations } from "../../api/src/runtime.js";
 
+const unusedRoute: Transport["route"] = {
+  get: async () => {
+    throw new Error("This test does not implement routes.");
+  },
+  set: async () => {
+    throw new Error("This test does not implement routes.");
+  },
+  subscribe: () => {
+    throw new Error("This test does not implement routes.");
+  }
+};
+
 it("keeps the lightweight error decoder exactly on the authoritative runtime code contract", () => {
   expect(Object.keys(errorCodes).sort()).toEqual([...RuntimeCode.literals].sort());
   expect(decodeError({ code: "invented_code", message: "no" })).toBeUndefined();
@@ -28,6 +40,7 @@ it("caches blob URLs until replacement/deletion and revokes them on close", asyn
   const calls: string[] = [];
   let bytes = new Uint8Array([1]);
   const transport: Transport = {
+    route: unusedRoute,
     call: async (op, _args, input) => {
       calls.push(op);
       if (op === "files.get") return { bytes, contentType: "image/png" };
@@ -62,6 +75,7 @@ it.each(["put", "delete", "close"] as const)(
     const read = Promise.withResolvers<{ bytes: Uint8Array<ArrayBuffer>; contentType: string }>();
     let first = true;
     const transport: Transport = {
+      route: unusedRoute,
       call: async (op) => {
         if (op !== "files.get") return null;
         if (first) {
@@ -114,7 +128,7 @@ it("shares the supplied transport with generated aliases and exposes shared read
     })
   };
   const client = createClient<typeof config, typeof shared, typeof connections>(manifest, {
-    transport: { call, close() {} },
+    transport: { call, route: unusedRoute, close() {} },
     shared,
     connections
   });
@@ -133,7 +147,9 @@ it("infers the owned facade and generated aliases without widening index, id, or
   const source = `import { createClient, createSharedTable, type Call, type ErrorCode, type Operation, type Me, type FileMetadata } from "patchy/client";
 import { defineConfig, table, t, files, postgres, sharedTable, type Id } from "patchy/config";
 type Equal<A, B> = [A] extends [B] ? [B] extends [A] ? true : false : false;
-const operationsConform: Equal<Operation, ${Object.keys(runtimeOperations)
+const operationsConform: Equal<Operation, "route.set" | "download" | ${Object.keys(
+    runtimeOperations
+  )
     .map((name) => JSON.stringify(name))
     .join(" | ")}> = true;
 const config = defineConfig({ name: "notes", tier: 1, tables: {
@@ -154,6 +170,13 @@ async function use() {
   await client.tables.notes.list({ index: "byTitle", eq: { title: "ok" }, range: { column: "title", gte: "a" } });
   await client.tables.notes.list({ index: "parent", eq: { parent: id } });
   const count: number = await client.connections.sales.count();
+  const path: string = await client.route.get();
+  const routed: null = await client.route.set("/notes");
+  const unsubscribe: () => void = client.route.subscribe((path) => {
+    const current: string = path;
+  });
+  unsubscribe();
+  const downloaded: null = await client.files.images.download("report.csv");
   await client.tables.data.insert({ required: { nested: null }, optional: null });
   await client.tables.data.update("id" as Id<"data">, { defaulted: [null], optional: null });
   // @ts-expect-error required JSON cannot be top-level null

@@ -13,11 +13,14 @@ import * as Option from "effect/Option";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
-import { Session, withCookies } from "@patchy/auth";
+import { Session, withCookies, sessionScripts, returnPath } from "@patchy/auth";
+import { WIRE_VERSION } from "@patchy/api";
+import { newInternalId } from "@patchy/core";
 import type { Companies, Users } from "@patchy/companies";
 import { Content, Patches, PatchesConfig } from "@patchy/patches";
 import * as Door from "./Door.js";
-import { renderHome, renderNotFound, renderPatchWrapper } from "./render.js";
+import { renderHome, renderNotFound } from "./render.js";
+import { renderPatchWrapper, renderShellNotice, isShellNotice, brokerScript } from "./shell.js";
 import {
   NO_REFERRER_POLICY,
   PATCH_CONTENT_SECURITY_POLICY,
@@ -26,7 +29,7 @@ import {
   PRIVATE_PATCH_CACHE_CONTROL,
   contentSecurityPolicy,
   PATCH_PERMISSIONS_POLICY,
-  sessionContentSecurityPolicy
+  shellContentSecurityPolicy
 } from "./serving-headers.js";
 
 /** The HTML 404, uncached like every non-patch response. */
@@ -42,6 +45,10 @@ const patchUrlHeaders = {
   "x-robots-tag": PATCH_ROBOTS_TAG,
   "referrer-policy": NO_REFERRER_POLICY,
   "cache-control": PRIVATE_PATCH_CACHE_CONTROL
+};
+const noticeHeaders = {
+  ...patchUrlHeaders,
+  "content-security-policy": PATCH_CONTENT_SECURITY_POLICY
 };
 
 const servePatch = Effect.fn("Pages.servePatch")(function* (kind: "address" | "content") {
@@ -105,9 +112,22 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (kind: "address" | "c
     );
     return isPublic ? response : withCookies(response, cookies);
   }
-  const html = yield* content
-    .read(served.value.version)
-    .pipe(Effect.catchTags({ InvalidObjectKey: Effect.die, StoreUnavailable: Effect.die }));
+  if (served.value.version.tier >= 1 && served.value.version.wireVersion !== WIRE_VERSION) {
+    return withCookies(
+      HttpServerResponse.text(renderShellNotice("needs_rebuild", request.url), {
+        contentType: "text/html",
+        status: 409,
+        headers: noticeHeaders
+      }),
+      isPublic ? [] : cookies
+    );
+  }
+  const html =
+    kind === "content" || served.value.version.tier === 0
+      ? yield* content
+          .read(served.value.version)
+          .pipe(Effect.catchTags({ InvalidObjectKey: Effect.die, StoreUnavailable: Effect.die }))
+      : "";
 
   // The page is real and already fetched, so this is a visit — the thing that
   // keeps a patch people still visit from ageing out. The database decides
@@ -132,30 +152,37 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (kind: "address" | "c
     })
   );
 
-  const response = HttpServerResponse.html(
+  const response = HttpServerResponse.text(
     kind === "content"
       ? html
-      : renderPatchWrapper(
-          {
-            ...served.value,
-            html,
-            ...(selection !== undefined && served.value.version.tier >= 1
-              ? { route: selection.route }
-              : {})
-          },
-          isPublic ? undefined : session
-        )
+      : renderPatchWrapper({
+          ...served.value,
+          html,
+          head: isPublic ? undefined : sessionScripts(session),
+          ...(selection !== undefined && served.value.version.tier >= 1
+            ? {
+                nonce: newInternalId("boot"),
+                base: `/${served.value.patch.companyHandle}/${served.value.patch.name}${selection.versionNumber === undefined ? "" : `/~v/${selection.versionNumber}`}`,
+                route: selection.route
+              }
+            : {})
+        }),
+    { contentType: kind === "content" ? "text/html; charset=utf-8" : "text/html" }
   ).pipe(
     HttpServerResponse.setHeaders({
       ...patchUrlHeaders,
       "content-security-policy":
         kind === "content"
           ? contentSecurityPolicy(served.value.version.tier)
-          : isPublic
-            ? PATCH_CONTENT_SECURITY_POLICY
-            : sessionContentSecurityPolicy(session.frontendApiHost),
+          : shellContentSecurityPolicy(
+              served.value.version.tier,
+              isPublic ? undefined : session.frontendApiHost
+            ),
       ...(kind === "content" ? { "permissions-policy": PATCH_PERMISSIONS_POLICY } : {}),
-      "cache-control": isPublic ? PUBLIC_PATCH_CACHE_CONTROL : PRIVATE_PATCH_CACHE_CONTROL
+      "cache-control":
+        isPublic && url?.searchParams.get("__patchy_shell_reload") !== "1"
+          ? PUBLIC_PATCH_CACHE_CONTROL
+          : PRIVATE_PATCH_CACHE_CONTROL
     })
   );
   return isPublic ? response : withCookies(response, cookies);
@@ -196,6 +223,29 @@ const patches = HttpRouter.use((router) =>
 const otherPages = HttpRouter.use((router) =>
   Effect.gen(function* () {
     const publicBaseUrl = yield* PatchesConfig.publicBaseUrl;
+    yield* router.add(
+      "GET",
+      "/~shell/broker.js",
+      HttpServerResponse.text(brokerScript, {
+        contentType: "text/javascript",
+        headers: { "cache-control": "no-store" }
+      })
+    );
+    yield* router.add(
+      "GET",
+      "/~shell/notice/:code",
+      Effect.gen(function* () {
+        const { code } = yield* HttpRouter.params;
+        if (code === undefined || !isShellNotice(code)) return notFound;
+        const request = yield* HttpServerRequest.HttpServerRequest;
+        const url = new URL(request.url, publicBaseUrl);
+        const returnTo = returnPath(url.searchParams.get("return"), publicBaseUrl) ?? "/";
+        return HttpServerResponse.text(renderShellNotice(code, returnTo), {
+          contentType: "text/html",
+          headers: noticeHeaders
+        });
+      })
+    );
     yield* router.add("GET", "/", HttpServerResponse.html(renderHome({ publicBaseUrl })));
     yield* router.add("GET", "/healthz", HttpServerResponse.jsonUnsafe({ ok: true }));
     yield* router.add("*", "/d/*", notFound);

@@ -331,7 +331,8 @@ it.layer(
 it.layer(
   server({
     PATCHY_AUTHENTICATED_PUBLISH_RATE_LIMIT_PER_MINUTE: "2",
-    PATCHY_MAX_HTML_BYTES: String(512 * 1024)
+    PATCHY_MAX_HTML_BYTES: String(512 * 1024),
+    PATCHY_MAX_BUNDLE_BYTES: String(512 * 1024)
   })
 )("the publish route: replay admission before content validation", (it) => {
   it.effect("charges new attempts before validating their content", () =>

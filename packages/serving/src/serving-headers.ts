@@ -5,10 +5,9 @@
  * open a patch can read it: public by URL, company through its user's browser.
  * `X-Robots-Tag: noindex` keeps every patch out of search results.
  *
- * Tier-zero content runs no script. A company shell runs only the session
- * scripts, never analytics; a public shell loads no scripts or session cookies.
- * Exact content URLs use their stored version's tier: tier ≥ 1 allows inline
- * script inside the sandbox, with no network connections or external sources.
+ * Tier-zero content runs no script; tier-one shells load Patchy's broker,
+ * and company shells also maintain the session. Neither runs analytics.
+ * Exact content URLs use their stored version's tier and sandbox policy.
  *
  * Only a public patch's current version is public, at its latest and version
  * URLs; older versions stay behind the company door. Public pages cache for at
@@ -20,57 +19,17 @@ import * as HttpMiddleware from "effect/unstable/http/HttpMiddleware";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 
-export const PATCH_ROBOTS_TAG = "noindex";
+import {
+  NO_STORE_CACHE_CONTROL,
+  SCRIPTED_SHELL_SECURITY_POLICY,
+  SCRIPTED_CONTENT_SECURITY_POLICY,
+  PATCH_PERMISSIONS_POLICY
+} from "./shell-headers.js";
+export * from "./shell-headers.js";
 
 /**
- * Document-wide on every served patch. The patch's own frame is already
- * `referrerpolicy="no-referrer"`, and this says the same thing one level up:
- * navigating away from a served page must not hand anyone the patch URL the
- * reader was on. Sharing scope controls access; this prevents URL disclosure.
- */
-export const NO_REFERRER_POLICY = "no-referrer";
-
-export const PATCH_CONTENT_SECURITY_POLICY = [
-  "default-src 'none'",
-  "style-src 'unsafe-inline'",
-  "img-src https: data:",
-  "frame-src 'self' about:",
-  "base-uri 'none'",
-  "form-action 'none'"
-].join("; ");
-
-/** Direct bytes remain sandboxed even when opened outside the patch's frame. */
-const STATIC_CONTENT_SECURITY_POLICY = `sandbox; ${PATCH_CONTENT_SECURITY_POLICY}`;
-const SCRIPTED_CONTENT_SECURITY_POLICY = [
-  "sandbox allow-scripts allow-modals",
-  "default-src 'none'",
-  "script-src 'unsafe-inline'",
-  "style-src 'unsafe-inline'",
-  "img-src blob: data:",
-  "font-src blob: data:",
-  "media-src blob: data:",
-  "connect-src 'none'"
-].join("; ");
-
-export const PATCH_PERMISSIONS_POLICY = "camera=(), microphone=(), geolocation=()";
-
-export function contentSecurityPolicy(tier: number): string {
-  return tier >= 1 ? SCRIPTED_CONTENT_SECURITY_POLICY : STATIC_CONTENT_SECURITY_POLICY;
-}
-
-/** Everything that is not a served patch — API routes included — stays uncached. */
-export const NO_STORE_CACHE_CONTROL = "no-store";
-
-export const PUBLIC_PATCH_CACHE_CONTROL = "public, max-age=60";
-export const PRIVATE_PATCH_CACHE_CONTROL = "private, no-store";
-
-export function sessionContentSecurityPolicy(frontendApiHost: string): string {
-  return `${PATCH_CONTENT_SECURITY_POLICY}; script-src 'self' https://${frontendApiHost}; connect-src https://${frontendApiHost}`;
-}
-
-/**
- * The two headers every response carries, whatever produced it: `nosniff`
- * always, and `no-store` unless the route chose a cache policy of its own.
+ * Every response carries `nosniff`; CSP and `no-store` have safe fallbacks
+ * unless the route chose its own policy.
  * The server installs this as global router middleware, outside everything
  * that can answer a request, so a refusal is covered as well as a page.
  */
@@ -88,8 +47,19 @@ export const servingHeaders = HttpMiddleware.make((httpEffect) =>
           }) as HttpServerRequest.HttpServerRequest
         )
       : httpEffect;
+    const contentUrl = new URL(request.url, "http://localhost").pathname.startsWith("/~content/");
     return HttpServerResponse.setHeaders(response, {
       "x-content-type-options": "nosniff",
+      // Redirects and errors cannot become an unsandboxed navigation escape.
+      ...(response.headers["content-security-policy"] === undefined
+        ? { "content-security-policy": SCRIPTED_SHELL_SECURITY_POLICY }
+        : {}),
+      ...(contentUrl && response.status !== 200
+        ? {
+            "content-security-policy": SCRIPTED_CONTENT_SECURITY_POLICY,
+            "permissions-policy": PATCH_PERMISSIONS_POLICY
+          }
+        : {}),
       ...(response.headers["cache-control"] === undefined
         ? { "cache-control": NO_STORE_CACHE_CONTROL }
         : {})

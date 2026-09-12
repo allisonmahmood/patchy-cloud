@@ -2,11 +2,11 @@
 
 The product, written down where agents read it. Each section is the resolution of one decision on the [foundation map](https://github.com/allisonmahmood/patchy-cloud/issues/5); the glossaries in each `CONTEXT.md` carry the words, this file carries the shape.
 
-**Built today:** tier 0 HTML patches with manifests, release checks and replay-safe publishing; additive patch-owned tables and file stores with browser-runtime operations, read-only shared-table declarations, and company Postgres connections with immutable schema snapshots, constrained reads, generated relation clients and local fixtures; patch-repo initialization, catalog, declaration editing, transactional refresh and release-bound project skills; names and company addresses; user ownership and company/public sharing; Clerk sign-in; create-or-join and company administration; machine login, logout and revocation. Higher-tier serving and its browser broker, the local patch dev runtime, repo publishing, the portal, narrower sharing, billing and company lifecycle remain intended, not available features.
+**Built today:** tier 0 HTML pages and tier 1 sandboxed browser patches with manifests, release checks and replay-safe publishing; the document-bound shell broker, route bridge and access notices; additive patch-owned tables and file stores with browser-runtime operations, read-only shared-table declarations, and company Postgres connections with immutable schema snapshots, constrained reads, generated relation clients and local fixtures; patch-repo initialization, catalog, declaration editing, transactional refresh and release-bound project skills; names and company addresses; user ownership and company/public sharing; Clerk sign-in; create-or-join and company administration; machine login, logout and revocation. Hosted runtimes, the local patch dev runtime, repo publishing, the portal, narrower sharing, billing and company lifecycle remain intended, not available features.
 
 ## Patches
 
-A **patch** is the unit of what people build and deploy on Patchy Cloud — anything from a static page to a full CRM. A tier 0 page and a CRM are both patches for the same reason: each is one built thing in a company's cloud, stored as one, permissioned as one, provisioned as one, at one address, at one runtime tier. What differs between them is the tier they need — a CRM is a CRUD app, so it needs tier 2 — never what kind of thing they are.
+A **patch** is the unit of what people build and deploy on Patchy Cloud — anything from a static page to a full CRM. A tier 0 page and a CRM are both patches for the same reason: each is one built thing in a company's cloud, stored as one, permissioned as one, provisioned as one, at one address, at one runtime tier. What differs between them is where their code needs to run — never what kind of thing they are.
 
 ### What a patch is made of
 
@@ -24,7 +24,7 @@ Ownership: a patch belongs to a **user** in a company. The user holds a machine 
 
 ### Versions and publishing
 
-**Publish** is the act; each new publish is an immutable **version**, and the patch serves the version its pointer names. There is no working copy in the cloud and no unpublished patch — the working copy is local, and the act that creates a patch is the act that makes it live. `patchy publish <file>` synthesises a tier 0 **manifest** and sends one HTML **bundle**. Each version records its tier, release, manifest version, server-stamped wire version and schema revision. The publish API accepts tier 0 manifests with table and file-store definitions, shared-table declarations and resolved Postgres connections; higher tiers remain refused. File-mode publishing onto a patch with cumulative inventory is refused with `has_primitives`; that patch must be published from its repo. Moving the pointer back through rollback is future work.
+**Publish** is the act; each new publish is an immutable **version**, and the patch serves the version its pointer names. There is no working copy in the cloud and no unpublished patch — the working copy is local, and the act that creates a patch is the act that makes it live. `patchy publish <file>` synthesises a tier 0 **manifest** and sends one HTML **bundle**. Each version records its tier, release, manifest version, server-stamped wire version and schema revision. The publish API accepts tier 0 and tier 1 manifests with table and file-store definitions, shared-table declarations and resolved Postgres connections. Tier 0 obeys the safe-HTML policy; tier 1 bundles are stored raw and served in the sandbox. Tiers 2 and above remain refused. File-mode publishing onto a patch with cumulative inventory is refused with `has_primitives`; that patch must be published from its repo. Moving the pointer back through rollback is future work.
 
 A **publish key** identifies one attempt for its owning user. The CLI exclusively creates `attempt.json` with the complete request and owner before sending and recovers it first on the next publish, using a current token for that same user. Concurrent CLI processes resend the existing attempt rather than overwriting it; even a process that loses the creation race must authenticate its original owner. An account switch cannot resend another user's saved content. Killing a process leaves the persisted attempt recoverable, and clearing only the matching publish key prevents a stale response from removing a newer attempt. Repeating the same request returns the stored response without a new version, even after the instance's release changes; reusing the key with a different payload is a conflict. New publishes require an exact-current CLI release.
 
@@ -43,9 +43,9 @@ and Postgres connections. Row, insert and update types are inferred from the
 config; execution happens in a local child process, producing the existing
 manifest rather than sending executable config to the server. The browser client
 uses the broker's document-bound port and one `PatchyError`; lost replies never
-cause a mutation replay. Repo generation supplies this client surface; the broker,
-local dev runtime and repo publishing remain separate work. Initialization does
-not enable tier 1 serving.
+cause a mutation replay. Repo generation supplies this client surface and the
+hosted shell provides its broker. The local dev runtime and repo publishing
+remain separate work; initialization alone does not publish a patch.
 
 ### Building a patch
 
@@ -132,26 +132,42 @@ A **tier** is where a patch's code runs, and nothing else. Tier 0 is **static**:
 
 ### What a tier changes, and what it never changes
 
-A tier changes where code runs. It never changes who can open a patch, what a patch may declare it needs, or how it is published, versioned, retired, shared or found — those are identical at every tier. A person opening a patch never thinks about its tier: they are inside their company's cloud, so the patch opens; if they are not logged in they log in once and land back on it. That door is the same for a tier 0 page and a tier 2 CRM, and it sits in front of the page, not inside it. Today the door protects tier 0; the higher runtimes are still to come.
+A tier changes where code runs. It never changes who can open a patch, what a patch may declare it needs, or how it is published, versioned, retired, shared or found — those are identical at every tier. A person opening a patch never thinks about its tier: they are inside their company's cloud, so the patch opens; if they are not logged in they log in once and land back on it. That door is the same for a tier 0 page and a tier 1 tool, and it sits in front of the page, not inside it. Hosted runtimes are still to come.
 
 A patch may be set **public** — anyone with the link, no login — at any tier. That is a tier 0 story: a page the sales team hands a client. Above tier 0 it is allowed but pointless, because an anonymous viewer carries no identity and nothing acts as them, so a public tier 1 patch is client code with no company access and a public tier 2 patch serves through its own identity only. Setting a patch above tier 0 to public warns the agent and the person exactly that.
 
 ### Tier 0 — static
 
-The published document runs no script, so the patch cannot watch the reader or reach anything. The [serving guarantees](../packages/serving/CONTEXT.md) distinguish it from the shell: the patch remains in its script-free sandbox; a public shell runs no script, while a company shell runs only Patchy's own session script — Clerk's headless client and Patchy's external initializer — never analytics. Only the current version of a public patch is public; older versions stay behind the company door. Caching is keyed to sharing: a minute at most for the current public version at its latest and version URLs, never for a doored page. Pages stay open to any agent that may open them, never bot-blocked; an agent reads a company page through its user's signed-in browser, not a machine token. The host knows who opened a company page in order to let them in. The promise is _the patch cannot watch you_, not _nobody knows you were here_.
+The published document runs no script, so **the patch cannot watch you**. The [serving guarantees](../packages/serving/CONTEXT.md) distinguish it from the shell: a public shell runs only Patchy's own shell script, never analytics. At tier 0 no shell script is needed; a company shell loads Clerk's headless client and Patchy's external session initializer. Only the current version of a public patch is public; older versions stay behind the company door. Caching is keyed to sharing: a minute at most for the current public version at its latest and version URLs, never for a doored page. Pages stay open to any agent that may open them, never bot-blocked; an agent reads a company page through its user's signed-in browser, not a machine token. The host knows who opened a company page in order to let them in. The promise is _the patch cannot watch you_, not _nobody knows you were here_.
 
 ### Tier 1 — browser
 
 Code runs in the viewer's browser and acts **as the viewer**. It never holds a credential: not the Clerk session, not an integration token, not another patch's storage. It learns who the viewer is as claims, and it reaches everything else — the patch's primitives (its tables, its files) and the company's integrations — through Patchy, which performs the call as the viewer within the viewer's own permissions. A tier 1 patch can therefore never do more than the person using it could do themselves. Nothing leaves the browser except through Patchy: there is no direct outbound to third-party APIs, credentialed or not — reaching outside systems is what integrations are for.
+
+**A tier 1 patch acts as you, only through Patchy, and never holds your login. What you do inside it can be saved in its own tables, which your colleagues can read, and every write is logged for your company's admins. It reaches outside systems only through your company's integrations.** A public shell runs only Patchy's own shell script, never analytics; company shells also maintain the session.
+
+The shell binds one document, patch and version through a nonce-checked message
+channel. The sandbox permits scripts and printing, not outbound fetches, popups,
+external links, top navigation, client storage, workers, or device access.
+Clipboard write is delegated, not clipboard read; copying must be user-triggered
+and show a visible failure when the browser refuses it.
+Public company-data refusals remain errors for patch code to display, not stopping
+notices; public patches can still change routes and use back/forward.
+Routes and downloads belong to the shell; own-file images use frame-local blob
+URLs. Access loss is a first-party notice the patch cannot hide. Session expiry
+or account changes stop the patch and require a whole-page reload after sign-in;
+unanswered operations are never replayed. A stale shell refreshes once, bypassing
+its cache; a persistent mismatch stops visibly, while a retired wire shows the
+needs-rebuild door. See [ADR-0010](./adr/ADR-0010-sandboxed-frame-and-broker.md).
 
 The runtime operation path admits `me`, seven owned-table operations, three shared-table
 reads, four file operations and four Postgres operations. A company version returns its active viewer and company; a current
 public version returns null for `me` and refuses company data and integration access, even to
 a signed-in viewer. Requests are bound to the loaded version and cannot switch
 acting users mid-page. Runtime records every table and file mutation and every integration call before
-execution. The broker and higher-tier serving remain future work.
+execution.
 
-What tier 1 cannot do is anything the viewer's browser is not there to do: no pre-processing before the data reaches the page, no work on behalf of one viewer visible to another. Save a photo to file storage and it is saved; that is the whole story.
+Tier 1 runs only while the viewer has the patch open. It cannot run background work or server-side patch code, but its writes persist: a saved photo or table row remains available to other admitted viewers after the browser closes.
 
 ### Tier 2 — hosted
 
@@ -208,7 +224,7 @@ Every patch has an address at `/<company>/<patch>`, for every tier and sharing s
 
 A patch's **name** follows the company handle's grammar: 3–32 lowercase letters, digits or hyphens, no leading or trailing hyphen. Names share one per-company namespace, alongside future user and group handles. An explicit manifest name or file-mode `--name` must be free on create and rename alike (`name_taken`); without `--name`, file publishing normalises the filename and adds `-2`, `-3`, and so on when needed. Republishing a file preserves its name unless explicitly renamed. Renaming leaves a 308 redirect from the old name until another patch takes it; that claim removes the former redirect for good. Deleting a patch frees all its names. The patch's identity remains its id, never its name.
 
-Only the current public version is public and caches for at most a minute at both its address and its numbered version URL; older versions stay behind the company door. `/~content/<patchId>/<versionId>` is an internal, non-redirecting **content URL**, never the link to share: it serves that version's bytes with that version's tier and content security policy, the same door and sharing-based caching as the address. Tier 0 keeps its script-free `srcdoc` frame with `sandbox=""`; the higher-tier shell and broker arrive separately.
+Only the current public version is public and caches for at most a minute at both its address and its numbered version URL; older versions stay behind the company door. `/~content/<patchId>/<versionId>` is an internal, non-redirecting **content URL**, never the link to share: it serves that version's bytes with that version's tier and content security policy, the same door and sharing-based caching as the address. Tier 0 keeps its script-free `srcdoc` frame with `sandbox=""`; tier 1 frames that content URL with a document nonce and `sandbox="allow-scripts allow-modals"`. Historical pages always render with their own version's tier.
 
 ### The operator
 
@@ -423,7 +439,7 @@ and the viewer's current company access. Raw GET requires same-origin fetch
 metadata; PUT requires the exact Origin; both require wire and principal
 headers. HTML and SVG stay bytes, never a navigable page. File mutations log
 the store and name, not their body; reads are not logged. Frame-local blob URLs
-and ArrayBuffer transfer arrive with the browser broker.
+and ownership-transferring ArrayBuffers are available through the browser broker.
 
 ## Integrations
 

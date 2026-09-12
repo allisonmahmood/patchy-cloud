@@ -369,6 +369,7 @@ export function htmlPage(options: {
     }
 
     .auth-card .brand { margin-bottom: 32px; }
+    .auth-kicker { margin: 0 0 16px; color: var(--muted); font-size: .8rem; font-weight: 750; text-transform: uppercase; letter-spacing: .12em; }
     .auth-card h1 { max-width: none; font-size: 2rem; line-height: 1.12; }
     .auth-card label { display: block; margin: 18px 0 6px; font-size: .9rem; font-weight: 750; }
     .auth-card input, .auth-card select {
