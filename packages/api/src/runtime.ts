@@ -1,7 +1,7 @@
 /** The browser runtime wire; operation schemas are shared by the shell and server. */
 import * as Schema from "effect/Schema";
 import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
-import { Identity, PatchId } from "./schemas.js";
+import { DefinitionName, Identity, PatchId } from "./schemas.js";
 
 const NonEmptyText = Schema.String.check(Schema.isMinLength(1));
 
@@ -27,6 +27,28 @@ export const RuntimeMe = Schema.NullOr(
 ).annotate({ identifier: "RuntimeMe" });
 export type RuntimeMe = typeof RuntimeMe.Type;
 
+export const TableRow = Schema.Record(Schema.String, Schema.Json);
+export const TableRange = Schema.Struct({
+  column: DefinitionName,
+  gt: Schema.optionalKey(Schema.Json),
+  gte: Schema.optionalKey(Schema.Json),
+  lt: Schema.optionalKey(Schema.Json),
+  lte: Schema.optionalKey(Schema.Json)
+});
+export const TableList = Schema.Struct({
+  table: DefinitionName,
+  index: Schema.optionalKey(DefinitionName),
+  eq: Schema.optionalKey(TableRow),
+  range: Schema.optionalKey(TableRange),
+  order: Schema.optionalKey(Schema.Literals(["asc", "desc"])),
+  limit: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThan(0))),
+  cursor: Schema.optionalKey(NonEmptyText)
+});
+export const TablePage = Schema.Struct({
+  rows: Schema.Array(TableRow),
+  cursor: Schema.NullOr(Schema.String)
+});
+
 /** Only implemented operations belong here; names such as files.get are not admitted yet. */
 export const runtimeOperations = {
   me: {
@@ -36,11 +58,66 @@ export const runtimeOperations = {
     }),
     response: RuntimeMe,
     kind: "read"
+  },
+  "tables.get": {
+    request: Schema.Struct({
+      op: Schema.Literal("tables.get"),
+      args: Schema.Struct({ table: DefinitionName, id: NonEmptyText })
+    }),
+    response: Schema.NullOr(TableRow),
+    kind: "read"
+  },
+  "tables.getMany": {
+    request: Schema.Struct({
+      op: Schema.Literal("tables.getMany"),
+      args: Schema.Struct({ table: DefinitionName, ids: Schema.Array(NonEmptyText) })
+    }),
+    response: Schema.Array(Schema.NullOr(TableRow)),
+    kind: "read"
+  },
+  "tables.list": {
+    request: Schema.Struct({ op: Schema.Literal("tables.list"), args: TableList }),
+    response: TablePage,
+    kind: "read"
+  },
+  "tables.insert": {
+    request: Schema.Struct({
+      op: Schema.Literal("tables.insert"),
+      args: Schema.Struct({ table: DefinitionName, row: TableRow })
+    }),
+    response: TableRow,
+    kind: "mutation"
+  },
+  "tables.insertMany": {
+    request: Schema.Struct({
+      op: Schema.Literal("tables.insertMany"),
+      args: Schema.Struct({ table: DefinitionName, rows: Schema.Array(TableRow) })
+    }),
+    response: Schema.Array(TableRow),
+    kind: "mutation"
+  },
+  "tables.update": {
+    request: Schema.Struct({
+      op: Schema.Literal("tables.update"),
+      args: Schema.Struct({ table: DefinitionName, id: NonEmptyText, patch: TableRow })
+    }),
+    response: TableRow,
+    kind: "mutation"
+  },
+  "tables.delete": {
+    request: Schema.Struct({
+      op: Schema.Literal("tables.delete"),
+      args: Schema.Struct({ table: DefinitionName, id: NonEmptyText })
+    }),
+    response: Schema.Null,
+    kind: "mutation"
   }
 } as const;
 
 /** The operation-only discriminated union validated by the shell. */
-export const RuntimeRequest = Schema.Union([runtimeOperations.me.request]).annotate({
+export const RuntimeRequest = Schema.Union(
+  Object.values(runtimeOperations).map((operation) => operation.request)
+).annotate({
   identifier: "RuntimeRequest",
   parseOptions: { onExcessProperty: "error" }
 });
@@ -63,9 +140,11 @@ export const RuntimeEnvelope = Schema.Struct({
 export type RuntimeEnvelope = typeof RuntimeEnvelope.Type;
 
 /** The transport envelope paired with each admitted operation's exact request. */
-export const RuntimeCall = Schema.Union([
-  Schema.Struct({ ...envelopeFields, ...runtimeOperations.me.request.fields })
-]).annotate({ identifier: "RuntimeCall", parseOptions: { onExcessProperty: "error" } });
+export const RuntimeCall = Schema.Union(
+  Object.values(runtimeOperations).map((operation) =>
+    Schema.Struct({ ...envelopeFields, ...operation.request.fields })
+  )
+).annotate({ identifier: "RuntimeCall", parseOptions: { onExcessProperty: "error" } });
 export type RuntimeCall = typeof RuntimeCall.Type;
 
 /** Every code in the stable runtime wire, including shell-local and future-operation failures. */
@@ -107,9 +186,10 @@ export const RuntimeFailure = Schema.Struct({
 export type RuntimeFailure = typeof RuntimeFailure.Type;
 
 /** Each success value comes from that operation's response schema. */
-export const RuntimeSuccess = Schema.Union([
-  Schema.Struct({ ok: Schema.Literal(true), value: runtimeOperations.me.response })
-]).annotate({ identifier: "RuntimeSuccess" });
+export const RuntimeSuccess = Schema.Struct({
+  ok: Schema.Literal(true),
+  value: Schema.Union(Object.values(runtimeOperations).map((operation) => operation.response))
+}).annotate({ identifier: "RuntimeSuccess" });
 export type RuntimeSuccess = typeof RuntimeSuccess.Type;
 
 export const RuntimeReply = Schema.Union([RuntimeSuccess, RuntimeFailure]).annotate({

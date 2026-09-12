@@ -25,6 +25,9 @@ import {
   LoggedOut,
   NotFound,
   NameTaken,
+  NotAdditive,
+  PatchInventory,
+  PublishUnavailable,
   Ok,
   PatchQuotaExceeded,
   PayloadTooLarge,
@@ -143,6 +146,8 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
         InvalidHtml,
         PublishKeyConflict,
         NameTaken,
+        NotAdditive,
+        PublishUnavailable,
         Conflict,
         PayloadTooLarge,
         PublishRefused
@@ -154,8 +159,17 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "and `publishKey` before limits or release validation: identical payloads return the " +
           "stored response and status, even after an upgrade; changed payloads answer 409 " +
           "`publish_key_conflict`. New attempts require the exact current release and manifest " +
-          "version from `GET /api/release`. Only tier 0 with empty tables, files and uses is " +
-          "served yet; higher tiers answer `tier_mismatch`, resources `invalid_manifest`. " +
+          "version from `GET /api/release`. Tier 0 may define tables, provisioned additively; " +
+          "higher tiers answer `tier_mismatch`, files and uses `invalid_manifest`. " +
+          "Schema changes are checked before bytes and rechecked under the patch lock. " +
+          "Preflight conservatively refuses new indexes with existing uncompressed key tuples " +
+          "over 2,000 bytes, and added columns that expand existing rows over the row limit. " +
+          "`not_additive` names every refused object, change and fix. Omitted tables remain in " +
+          "the cumulative inventory and appear as `unused`; a required column cannot be omitted. " +
+          "The schema revision advances only when provisioning changes something, never for a new bundle alone. " +
+          "File mode (empty definitions and no repo name, or file metadata) onto cumulative inventory " +
+          "answers `has_primitives`; an empty named repo manifest may omit all tables. " +
+          "Reports and schema revision are persisted for replay. " +
           "Tier 0 HTML passes the safe-HTML policy. Creates spend the per-token create limit " +
           "and live-patch quota; updates do not. Omitted scope defaults to company on creates " +
           "and remains unchanged on updates. `manifest.name` is an exact company-scoped name " +
@@ -166,6 +180,20 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "no name retain their existing name. Rename leaves a redirect until another patch " +
           "claims it; deletion frees all names. `address` and `publicUrl` both name the absolute " +
           "`/<company>/<name>` address. The JSON body cap is three times the HTML cap."
+      )
+    ),
+    HttpApiEndpoint.get("inventory", "/patches/:patchId/inventory", {
+      params: patchParams,
+      success: PatchInventory,
+      error: [...patchRouteErrors, PublishUnavailable]
+    }).annotateMerge(
+      describe(
+        "Read the cumulative table and file-store definitions and schema revision for an owned, " +
+          "available patch. Omitted definitions remain here. Unknown, unavailable and another " +
+          "user's patches all answer 404. A primitive-free patch answers empty definitions and revision zero. " +
+          "An existing ready company database is probed for inventory even when the current version " +
+          "declares none: a failed platform commit may have left cumulative definitions. An unavailable " +
+          "database answers `source_unavailable` (or `busy`), never a fabricated empty inventory."
       )
     ),
     HttpApiEndpoint.post("share", "/patches/:patchId/share", {
@@ -274,14 +302,33 @@ export class RuntimeGroup extends HttpApiGroup.make("runtime", { topLevel: true 
           "The JSON envelope is `{ patchId, versionId, principal, wire, op, args }`; its principal " +
           "and wire must match the required headers. Mutating operations additionally require " +
           "the exact shell `Origin` (scheme, host and port); a cross-site or missing Origin is " +
-          "refused before execution. Only `me` with `args: {}` is admitted now. Its success is " +
+          "refused before execution. `me` with `args: {}` returns " +
           "`{ ok: true, value: { user: { id, name, email }, company: { id, handle, name }, admin } }` " +
           "on company versions, or `{ ok: true, value: null }` on public versions; `admin` is a UI " +
-          "hint, not additional authority. Unknown operations on company versions answer " +
-          "`invalid_request`. The current call body cap is 64 KiB (`too_large`, 413). Failures " +
-          "are `{ ok: false, error, code, correlationId? }`; every logged failure carries its " +
-          "runtime-log correlation id, while read failures such as `me` do not. Unsupported " +
-          "operation names are not part of the request union."
+          "hint, not additional authority. The seven `tables.*` operations resolve tables and validate " +
+          "rows against the loaded version's manifest, not the newest version. `get` returns a row " +
+          "or null; `getMany` preserves input order and nulls; `insert`, `insertMany` and `update` " +
+          "return their rows; `delete` returns null, including for a missing row. `update` of a " +
+          "missing row is `row_not_found`. Defaults apply to omitted insert fields, optional fields " +
+          "accept null, and explicit null for a defaulted field is `invalid_row`. " +
+          "`list { table, index?, eq?, range?, order?, limit?, cursor? }` returns `{ rows, cursor }`. " +
+          "The default index is `(createdAt, id)`; `eq` constrains leading index columns, one " +
+          "`range { column, gt?, gte?, lt?, lte? }` constrains the next column, and `order` is " +
+          "`asc` or `desc` with an id tie-breaker. Keyset cursors are bound to table, index, " +
+          "filters and order. The page defaults to 100 rows and is capped at 1,000; `getMany` and " +
+          "`insertMany` are capped at 1,000 items and 8 MiB, individual rows at 1 MiB. List and " +
+          "getMany results are capped at 8 MiB, checking database JSON transport before decoding " +
+          "and final wire bytes afterward. Transport whitespace can make its check stricter. " +
+          "Native PostgreSQL B-tree key-size failures are `too_large`; publishing a non-unique " +
+          "index adds no separate size CHECK constraint or 2,000-byte runtime write limit. " +
+          "Request bodies allow 1 MiB plus envelope for " +
+          "insert/update and 8 MiB plus envelope for insertMany; all other calls are capped at " +
+          "64 KiB. Overflow is `too_large` (413). Undeclared tables answer `table_not_declared`; " +
+          "invalid fields/defaults answer `invalid_row`, uniqueness conflicts `unique_violation`, " +
+          "and invalid pagination `invalid_cursor`. Unknown operations answer `invalid_request`. " +
+          "Failures are `{ ok: false, error, code, correlationId? }`; every table mutation is " +
+          "logged before execution and logged failures carry their runtime-log correlation id. " +
+          "Table reads are not logged. Files and other unimplemented operation names remain refused."
       )
     ),
     HttpApiEndpoint.put("putFile", "/runtime/files/:patchId/:versionId/:store/*", {

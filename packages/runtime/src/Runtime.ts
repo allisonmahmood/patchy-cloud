@@ -9,7 +9,12 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
-import { RuntimePrincipal, WIRE_VERSION, type RuntimeEnvelope } from "@patchy/api";
+import {
+  RuntimePrincipal,
+  WIRE_VERSION,
+  type RuntimeCode,
+  type RuntimeEnvelope
+} from "@patchy/api";
 import { RequireSession, Session } from "@patchy/auth";
 import { newInternalId } from "@patchy/core";
 import { Limits } from "@patchy/limits";
@@ -123,6 +128,15 @@ export class UnknownOutcome extends Schema.TaggedError<UnknownOutcome>()("Unknow
   }
 }
 
+/** Capabilities supply domain errors without introducing a reverse package dependency. */
+export interface OperationError {
+  readonly code: RuntimeCode;
+  readonly status: number;
+  readonly message: string;
+  readonly correlationId?: string;
+  readonly retryAfterSeconds?: number;
+}
+
 export type RuntimeError =
   | InvalidRequest
   | AccessDenied
@@ -133,11 +147,14 @@ export type RuntimeError =
   | TooLarge
   | RateLimited
   | SourceUnavailable
-  | UnknownOutcome;
+  | UnknownOutcome
+  | OperationError;
 
 export interface Handler {
   readonly kind: "read" | "mutation" | "integration";
   readonly run: (args: unknown) => Effect.Effect<unknown, RuntimeError, Binding.Binding>;
+  readonly resource?: (args: unknown) => string | null;
+  readonly rowCount?: (value: unknown) => number | null;
 }
 
 /** Compile each operation's schemas once, retaining the handler's inferred input/output. */
@@ -145,13 +162,21 @@ export const handler = <
   Input extends Schema.Top & Schema.Codec<unknown, unknown>,
   Output extends Schema.Top & Schema.Codec<unknown, unknown>
 >(
-  definition: { readonly kind: Handler["kind"]; readonly input: Input; readonly output: Output },
+  definition: {
+    readonly kind: Handler["kind"];
+    readonly input: Input;
+    readonly output: Output;
+    readonly resource?: Handler["resource"];
+    readonly rowCount?: Handler["rowCount"];
+  },
   run: (args: Input["Type"]) => Effect.Effect<Output["Type"], RuntimeError, Binding.Binding>
 ): Handler => {
   const decode = Schema.decodeUnknownEffect(definition.input, { onExcessProperty: "error" });
   const encode = Schema.encodeEffect(definition.output);
   return {
     kind: definition.kind,
+    ...(definition.resource === undefined ? {} : { resource: definition.resource }),
+    ...(definition.rowCount === undefined ? {} : { rowCount: definition.rowCount }),
     run: (args) =>
       decode(args).pipe(
         Effect.mapError((cause) => new InvalidRequest({ cause })),
@@ -313,7 +338,7 @@ export const make = (
           userId: identity!.user.id,
           credentialKind: "session",
           op: input.op,
-          resource: null,
+          resource: operation.resource?.(input.args) ?? null,
           connectionId: null,
           correlationId: binding.correlationId,
           deadlineMs
@@ -328,7 +353,7 @@ export const make = (
           correlationId: binding.correlationId,
           outcome: Exit.isSuccess(result) ? "success" : "failure",
           durationMs: (yield* Clock.currentTimeMillis) - started,
-          rowCount: null
+          rowCount: Exit.isSuccess(result) ? (operation.rowCount?.(result.value) ?? null) : null
         })
         .pipe(
           Effect.mapError(
@@ -338,7 +363,7 @@ export const make = (
       if (Exit.isFailure(result)) {
         const failure = Cause.findErrorOption(result.cause);
         return yield* Option.isSome(failure)
-          ? Object.assign(failure.value, { correlationId: binding.correlationId })
+          ? Effect.fail(Object.assign(failure.value, { correlationId: binding.correlationId }))
           : new SourceUnavailable({ cause: result.cause, correlationId: binding.correlationId });
       }
       return result.value;

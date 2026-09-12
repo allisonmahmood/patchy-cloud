@@ -35,6 +35,66 @@ it.layer(Testing.layer())("CompanyDatabases", (it) => {
     inventoryContract("cmp_dev")
   );
 
+  it.effect("upgrades a ready company's inventory without losing existing definitions", () =>
+    Effect.gen(function* () {
+      const companyId = "ready-upgrade";
+      const patchId = "legacy-patch";
+      yield* createCompany(companyId);
+      const service = yield* CompanyDatabases.CompanyDatabases;
+      const inventory = yield* Inventory.Inventory;
+      yield* service.ensureReady(companyId);
+      yield* service.withCompany(companyId)(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* service.withPatchLock(patchId)(
+            Effect.gen(function* () {
+              yield* inventory.ensurePatch(patchId);
+              yield* inventory.putTable({ patchId, name: "notes", shared: true });
+              yield* inventory.putColumn({
+                patchId,
+                table: "notes",
+                name: "body",
+                kind: "text",
+                refTable: null,
+                optional: false,
+                defaultKind: "constant",
+                defaultValue: "kept"
+              });
+            })
+          );
+          // Model the inventory schema shipped before tables recorded ref targets.
+          yield* sql.unsafe('ALTER TABLE "patchy"."columns" DROP COLUMN "ref_table"');
+        })
+      );
+      yield* service.ensureReady(companyId);
+      yield* service.withCompany(companyId)(
+        Effect.gen(function* () {
+          const existing = yield* inventory.read(patchId);
+          assert.strictEqual(existing?.columns[0]?.defaultValue, "kept");
+          assert.isNull(existing?.columns[0]?.refTable);
+          yield* service.withPatchLock(patchId)(
+            inventory.putColumn({
+              patchId,
+              table: "notes",
+              name: "parent",
+              kind: "ref",
+              refTable: "notes",
+              optional: true,
+              defaultKind: null,
+              defaultValue: null
+            })
+          );
+          const updated = yield* inventory.read(patchId);
+          assert.strictEqual(
+            updated?.columns.find((column) => column.name === "parent")?.refTable,
+            "notes"
+          );
+          assert.isTrue(updated?.tables[0]?.shared);
+        })
+      );
+    })
+  );
+
   it.effect("leases only ready databases without claiming or provisioning", () =>
     Effect.gen(function* () {
       yield* createCompany("lease-only");
@@ -258,6 +318,7 @@ it.layer(Testing.layer())("CompanyDatabases", (it) => {
                 table: "notes",
                 name: "body",
                 kind: "text",
+                refTable: null,
                 optional: true,
                 defaultKind: null,
                 defaultValue: null

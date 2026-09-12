@@ -12,6 +12,9 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlError from "effect/unstable/sql/SqlError";
 import { Analytics } from "@patchy/analytics";
 import { ContentStore } from "@patchy/content-store";
+import { CompanyDatabases, Inventory } from "@patchy/company-database";
+import * as CompanyTesting from "@patchy/company-database/testing";
+import { Tables } from "@patchy/primitives";
 import * as Content from "./Content.js";
 import * as ExpirySweep from "./ExpirySweep.js";
 import * as Patches from "./Patches.js";
@@ -136,6 +139,249 @@ it.layer(
     Layer.provideMerge(Fixtures.database)
   )
 )("Content", (it) => {
+  it.effect("serializes competing table changes and re-diffs after the content write", () =>
+    Effect.gen(function* () {
+      const manifest = {
+        ...Fixtures.manifest,
+        name: "serialized-tables",
+        tables: { notes: { columns: { title: { kind: "text" as const } }, indexes: {} } }
+      };
+      const created = yield* publish("<p>initial</p>", null, { manifest });
+      const ready = yield* Deferred.make<void>();
+      let puts = 0;
+      store.control.afterPut = Effect.gen(function* () {
+        if (++puts === 2) yield* Deferred.succeed(ready, undefined);
+        yield* Deferred.await(ready);
+      });
+      const results = yield* Effect.all(
+        (["text", "integer"] as const).map((kind) =>
+          publish(`<p>${kind}</p>`, created.patchId, {
+            manifest: {
+              ...manifest,
+              tables: {
+                notes: {
+                  ...manifest.tables.notes,
+                  columns: { ...manifest.tables.notes.columns, label: { kind, optional: true } }
+                }
+              }
+            }
+          }).pipe(Effect.result)
+        ),
+        { concurrency: "unbounded" }
+      ).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            store.control.afterPut = Effect.void;
+          })
+        )
+      );
+      const successes = results.filter((result) => result._tag === "Success");
+      const failures = results.filter((result) => result._tag === "Failure");
+      assert.strictEqual(successes.length, 1);
+      assert.strictEqual(failures.length, 1);
+      assert.strictEqual(failures[0]!.failure._tag, "NotAdditive");
+      const winner = successes[0]!.success;
+      assert.strictEqual(winner.versionNumber, 2);
+      assert.strictEqual(winner.schemaRevision, 2);
+      assert.deepStrictEqual(winner.provisioned.columns, ["notes.label"]);
+      const service = yield* patches;
+      const latest = Option.getOrThrow(yield* service.find(created.patchId));
+      assert.strictEqual(latest.version.id, winner.versionId);
+      const cumulative = yield* service.inventory(created.patchId, uploader.user.id);
+      assert.strictEqual(cumulative.schemaRevision, 2);
+      assert.strictEqual(
+        cumulative.tables.notes?.columns.label?.kind,
+        latest.version.manifest.tables.notes?.columns.label?.kind
+      );
+    })
+  );
+
+  it.effect("refuses oversized index keys and row expansion before writing content", () =>
+    Effect.gen(function* () {
+      const manifest = {
+        ...Fixtures.manifest,
+        name: "data-preflight",
+        tables: { notes: { columns: { title: { kind: "text" as const } }, indexes: {} } }
+      };
+      const created = yield* publish("<p>initial</p>", null, { manifest });
+      const databases = yield* CompanyDatabases.CompanyDatabases;
+      const qualified = `${Inventory.quoteIdentifier(Inventory.namespace(created.patchId))}."notes"`;
+      yield* databases.withCompany(uploader.company.id)(
+        Effect.flatMap(SqlClient.SqlClient, (sql) =>
+          sql.unsafe(`INSERT INTO ${qualified} ("id", "title")
+            SELECT 'existing', string_agg(md5(value::text), '')
+            FROM generate_series(1, 160) AS value`)
+        )
+      );
+      const before = yield* store.keys;
+      for (const notes of [
+        { ...manifest.tables.notes, indexes: { byTitle: { columns: ["title"] } } },
+        {
+          ...manifest.tables.notes,
+          columns: {
+            ...manifest.tables.notes.columns,
+            expanded: { kind: "text" as const, default: "x".repeat(1024 * 1024) }
+          }
+        }
+      ]) {
+        const refused = yield* publish("<p>refused</p>", created.patchId, {
+          manifest: { ...manifest, tables: { notes } }
+        }).pipe(Effect.flip);
+        assert.instanceOf(refused, Tables.NotAdditive);
+        assert.deepStrictEqual(yield* store.keys, before);
+      }
+      const service = yield* patches;
+      assert.strictEqual(
+        (yield* service.inventory(created.patchId, uploader.user.id)).schemaRevision,
+        1
+      );
+      yield* databases.withCompany(uploader.company.id)(
+        Effect.flatMap(SqlClient.SqlClient, (sql) =>
+          sql.unsafe(`UPDATE ${qualified} SET "title" = 'short'`)
+        )
+      );
+      const indexed = yield* publish("<p>indexed</p>", created.patchId, {
+        manifest: {
+          ...manifest,
+          tables: {
+            notes: { ...manifest.tables.notes, indexes: { byTitle: { columns: ["title"] } } }
+          }
+        }
+      });
+      assert.strictEqual(indexed.versionNumber, 2);
+      assert.deepStrictEqual(indexed.provisioned.indexes, ["notes.byTitle"]);
+    })
+  );
+
+  it.effect("fails closed for claimed placements during inventory, preflight and recording", () =>
+    Effect.gen(function* () {
+      const created = yield* publish("<p>initial</p>");
+      const databases = yield* CompanyDatabases.CompanyDatabases;
+      yield* databases.ensureReady(uploader.company.id);
+      const service = yield* patches;
+      const sql = yield* SqlClient.SqlClient;
+      const claim = sql`UPDATE company_databases SET status = 'claimed', ready_at = NULL
+        WHERE company_id = ${uploader.company.id}`;
+      const restore = sql`UPDATE company_databases SET status = 'ready', ready_at = now()
+        WHERE company_id = ${uploader.company.id}`;
+      yield* Effect.gen(function* () {
+        yield* claim;
+        const absent = yield* service
+          .inventory(created.patchId, uploader.user.id)
+          .pipe(Effect.flip);
+        assert.instanceOf(absent, CompanyDatabases.CompanyDatabaseNotReady);
+        assert.strictEqual(
+          absent._tag === "CompanyDatabaseNotReady" ? absent.status : null,
+          "claimed"
+        );
+        const before = yield* store.keys;
+        const preflight = yield* publish("<p>refused before bytes</p>", created.patchId).pipe(
+          Effect.flip
+        );
+        assert.instanceOf(preflight, CompanyDatabases.CompanyDatabaseNotReady);
+        assert.deepStrictEqual(yield* store.keys, before);
+
+        yield* restore;
+        store.control.afterPut = claim.pipe(Effect.orDie, Effect.asVoid);
+        const recorded = yield* publish("<p>refused after bytes</p>", created.patchId).pipe(
+          Effect.flip
+        );
+        assert.instanceOf(recorded, CompanyDatabases.CompanyDatabaseNotReady);
+        assert.strictEqual(
+          Option.getOrThrow(yield* service.find(created.patchId)).version.versionNumber,
+          created.versionNumber
+        );
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            store.control.afterPut = Effect.void;
+          }).pipe(Effect.andThen(restore), Effect.orDie)
+        )
+      );
+    })
+  );
+
+  it.effect(
+    "recovers company-committed DDL after platform rollback even without version history",
+    () =>
+      Effect.gen(function* () {
+        const created = yield* publish("<p>file born</p>");
+        const manifest = {
+          ...Fixtures.manifest,
+          name: "adopted-table-repo",
+          tables: { notes: { columns: { title: { kind: "text" as const } }, indexes: {} } }
+        };
+        const publishKey = crypto.randomUUID();
+        const failed = yield* publish("<p>adopted</p>", created.patchId, {
+          manifest,
+          publishKey,
+          machineTokenId: "missing-token"
+        }).pipe(Effect.flip);
+        assert.strictEqual(failed._tag, "SqlError");
+        const service = yield* patches;
+        assert.strictEqual(
+          Option.getOrThrow(yield* service.find(created.patchId)).version.schemaRevision,
+          0
+        );
+        assert.isTrue(Option.isNone(yield* service.replay(uploader.user.id, publishKey)));
+        const cumulative = yield* service.inventory(created.patchId, uploader.user.id);
+        assert.strictEqual(cumulative.schemaRevision, 1);
+        assert.strictEqual(cumulative.tables.notes?.columns.title?.kind, "text");
+        const before = yield* store.keys;
+        assert.strictEqual(
+          (yield* publish("<p>file overwrite</p>", created.patchId).pipe(Effect.flip))._tag,
+          "HasPrimitives"
+        );
+        assert.deepStrictEqual(yield* store.keys, before);
+        const retried = yield* publish("<p>adopted</p>", created.patchId, { manifest, publishKey });
+        assert.strictEqual(retried.versionNumber, 2);
+        assert.strictEqual(retried.schemaRevision, 1);
+        assert.deepStrictEqual(retried.provisioned, {
+          tables: [],
+          columns: [],
+          indexes: [],
+          stores: []
+        });
+        assert.strictEqual(
+          Option.getOrThrow(yield* service.find(created.patchId)).version.schemaRevision,
+          1
+        );
+        assert.strictEqual(
+          Option.getOrThrow(yield* service.replay(uploader.user.id, publishKey)).response
+            .schemaRevision,
+          1
+        );
+      })
+  );
+
+  it.effect("leaves failed creates as recoverable inventory without a platform patch", () =>
+    Effect.gen(function* () {
+      const before = yield* store.keys;
+      const manifest = {
+        ...Fixtures.manifest,
+        name: "orphan-table-repo",
+        tables: { notes: { columns: {}, indexes: {} } }
+      };
+      const failed = yield* publish("<p>orphan</p>", null, {
+        manifest,
+        machineTokenId: "missing-token"
+      }).pipe(Effect.flip);
+      assert.strictEqual(failed._tag, "SqlError");
+      const key = (yield* store.keys).find((candidate) => !before.includes(candidate))!;
+      const patchId = key.split("/")[1]!;
+      assert.isTrue(Option.isNone(yield* (yield* patches).find(patchId)));
+      const databases = yield* CompanyDatabases.CompanyDatabases;
+      const inventory = yield* Inventory.Inventory;
+      const orphan = yield* databases.withCompany(uploader.company.id)(inventory.read(patchId));
+      assert.isNotNull(orphan);
+      assert.strictEqual(orphan!.schemaRevision, 1);
+      assert.deepStrictEqual(
+        orphan!.tables.map((table) => table.name),
+        ["notes"]
+      );
+    })
+  );
+
   it.effect("stores the bytes, records the version, and reads both back", () =>
     Effect.gen(function* () {
       const created = yield* publish("<p>one</p>");
@@ -151,7 +397,7 @@ it.layer(
       const first = Option.getOrThrow(yield* found.find(created.patchId, 1));
       assert.strictEqual(yield* service.read(first.version), "<p>one</p>");
       assert.deepStrictEqual(
-        yield* store.keys,
+        (yield* store.keys).filter((key) => key.startsWith(`patches/${created.patchId}/`)),
         [
           Content.objectKey(created.patchId, created.versionId),
           Content.objectKey(updated.patchId, updated.versionId)
@@ -452,6 +698,43 @@ it.layer(
       assert.isTrue(Option.isNone(yield* service.replay(uploader.user.id, publishKey)));
       yield* sweep;
       assert.deepStrictEqual(yield* store.keys, before);
+    })
+  );
+});
+
+it.layer(
+  Content.layer.pipe(
+    Layer.provideMerge(Layer.mergeAll(Patches.layer, store.layer)),
+    Layer.provideMerge(
+      Tables.layer.pipe(Layer.provideMerge(CompanyTesting.layer({ maxBackends: 0 })))
+    )
+  )
+)("primitive-free publish", (it) => {
+  it.effect("needs neither a placement nor an available company lease", () =>
+    Effect.gen(function* () {
+      const identity = Fixtures.identities.admin;
+      const owner = {
+        ownerUserId: identity.user.id,
+        machineTokenId: identity.machine.id,
+        companyId: identity.company.id
+      };
+      const first = yield* publish("<p>no database</p>", null, owner);
+      assert.strictEqual(first.schemaRevision, 0);
+      const sql = yield* SqlClient.SqlClient;
+      assert.deepStrictEqual(yield* sql`SELECT company_id FROM company_databases`, []);
+      const databases = yield* CompanyDatabases.CompanyDatabases;
+      yield* databases.ensureReady(identity.company.id);
+      assert.strictEqual(
+        (yield* databases.withCompany(identity.company.id)(Effect.void).pipe(Effect.flip))._tag,
+        "Busy"
+      );
+      const second = yield* publish("<p>company pool unavailable</p>", null, owner);
+      assert.strictEqual(second.schemaRevision, 0);
+      const latest = Option.getOrThrow(yield* (yield* patches).find(second.patchId));
+      assert.strictEqual(
+        yield* (yield* content).read(latest.version),
+        "<p>company pool unavailable</p>"
+      );
     })
   );
 });

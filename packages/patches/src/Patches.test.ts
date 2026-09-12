@@ -105,14 +105,28 @@ it.layer(Patches.layer.pipe(Layer.provideMerge(Fixtures.database)))("Patches", (
         assert.strictEqual(refused._tag, "PatchUnavailable", patchId);
         assert.strictEqual(
           (yield* service
-            .checkTarget({ intent: "update", patchId, ownerUserId: uploader.user.id })
+            .preflight({
+              intent: "update",
+              patchId,
+              ownerUserId: uploader.user.id,
+              companyId: uploader.company.id,
+              manifest: Fixtures.manifest,
+              filename: null
+            })
             .pipe(Effect.flip))._tag,
           "PatchUnavailable"
         );
       }
       assert.strictEqual(
         (yield* service
-          .checkTarget({ intent: "create", patchId: owned, ownerUserId: uploader.user.id })
+          .preflight({
+            intent: "create",
+            patchId: owned,
+            ownerUserId: uploader.user.id,
+            companyId: uploader.company.id,
+            manifest: Fixtures.manifest,
+            filename: null
+          })
           .pipe(Effect.flip))._tag,
         "PatchConflict"
       );

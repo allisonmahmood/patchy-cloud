@@ -82,7 +82,16 @@ export const make = Effect.fn("PgliteCompanyDatabases.make")(function* (options:
     companyId: string
   ) {
     const placement = yield* claim(companyId);
-    if (placement.status === "ready") return placement;
+    if (placement.status === "ready") {
+      yield* Inventory.upgrade.pipe(
+        Effect.provideService(SqlClient.SqlClient, sql),
+        Effect.mapError(
+          (cause) =>
+            new CompanyDatabases.CompanyDatabaseError({ companyId, operation: "upgrade", cause })
+        )
+      );
+      return placement;
+    }
     return yield* sql
       .withTransaction(
         Effect.gen(function* () {

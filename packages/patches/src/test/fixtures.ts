@@ -17,7 +17,8 @@ import {
   WIRE_VERSION
 } from "@patchy/api";
 import { DEV_SEED } from "@patchy/auth/seed";
-import * as Testing from "@patchy/sql/testing";
+import * as CompanyTesting from "@patchy/company-database/testing";
+import { Tables } from "@patchy/primitives";
 import * as Patches from "../Patches.js";
 
 export const manifest = {
@@ -104,7 +105,9 @@ const seed = Effect.gen(function* () {
 });
 
 /** The seeded template with the additional users and machines above. */
-export const database = Layer.effectDiscard(seed).pipe(Layer.provideMerge(Testing.layer()));
+export const database = Layer.mergeAll(Layer.effectDiscard(seed), Tables.layer).pipe(
+  Layer.provideMerge(CompanyTesting.layer())
+);
 
 /** Revokes a fixture machine, as Auth's MachineTokens service would. */
 export const revoke = (machineTokenId: string) =>

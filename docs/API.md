@@ -61,7 +61,7 @@ Responses:
 
 ### `POST /api/publish`
 
-Publish one HTML bundle and its manifest. Without `patchId` creates a patch (201); with an owned `patchId` publishes a version (200). Authenticate, then replay by owner and `publishKey` before limits or release validation: identical payloads return the stored response and status, even after an upgrade; changed payloads answer 409 `publish_key_conflict`. New attempts require the exact current release and manifest version from `GET /api/release`. Only tier 0 with empty tables, files and uses is served yet; higher tiers answer `tier_mismatch`, resources `invalid_manifest`. Tier 0 HTML passes the safe-HTML policy. Creates spend the per-token create limit and live-patch quota; updates do not. Omitted scope defaults to company on creates and remains unchanged on updates. `manifest.name` is an exact company-scoped name (3–32 lowercase letters, digits or hyphens, starting and ending with a letter or digit); a taken current name answers 409 `name_taken` on create or rename. Without a name, creates derive one from `metadata.filename` without its extension (title when absent), normalize it, fall back to `patch` and add `-2`, `-3`, etc. on collision. Updates with no name retain their existing name. Rename leaves a redirect until another patch claims it; deletion frees all names. `address` and `publicUrl` both name the absolute `/<company>/<name>` address. The JSON body cap is three times the HTML cap.
+Publish one HTML bundle and its manifest. Without `patchId` creates a patch (201); with an owned `patchId` publishes a version (200). Authenticate, then replay by owner and `publishKey` before limits or release validation: identical payloads return the stored response and status, even after an upgrade; changed payloads answer 409 `publish_key_conflict`. New attempts require the exact current release and manifest version from `GET /api/release`. Tier 0 may define tables, provisioned additively; higher tiers answer `tier_mismatch`, files and uses `invalid_manifest`. Schema changes are checked before bytes and rechecked under the patch lock. Preflight conservatively refuses new indexes with existing uncompressed key tuples over 2,000 bytes, and added columns that expand existing rows over the row limit. `not_additive` names every refused object, change and fix. Omitted tables remain in the cumulative inventory and appear as `unused`; a required column cannot be omitted. The schema revision advances only when provisioning changes something, never for a new bundle alone. File mode (empty definitions and no repo name, or file metadata) onto cumulative inventory answers `has_primitives`; an empty named repo manifest may omit all tables. Reports and schema revision are persisted for replay. Tier 0 HTML passes the safe-HTML policy. Creates spend the per-token create limit and live-patch quota; updates do not. Omitted scope defaults to company on creates and remains unchanged on updates. `manifest.name` is an exact company-scoped name (3–32 lowercase letters, digits or hyphens, starting and ending with a letter or digit); a taken current name answers 409 `name_taken` on create or rename. Without a name, creates derive one from `metadata.filename` without its extension (title when absent), normalize it, fall back to `patch` and add `-2`, `-3`, etc. on collision. Updates with no name retain their existing name. Rename leaves a redirect until another patch claims it; deletion frees all names. `address` and `publicUrl` both name the absolute `/<company>/<name>` address. The JSON body cap is three times the HTML cap.
 
 Request body: [PublishRequest](#publishrequest)
 
@@ -75,8 +75,23 @@ Responses:
 - `404` { ok: false, error: string }
 - `409` { ok: false, error: string, code: "publish_key_conflict" } | { ok: false, error: string, code: "name_taken" } | { ok: false, error: string }
 - `413` { ok: false, error: string }
-- `422` { ok: false, errors: string[], warnings: string[] } | { ok: false, error: string, code: "release_mismatch" | "invalid_manifest" | "tier_mismatch" }
+- `422` { ok: false, errors: string[], warnings: string[] } | { ok: false, error: string, code: "not_additive", changes: { object: string, change: string, fix: string }[] } | { ok: false, error: string, code: "release_mismatch" | "invalid_manifest" | "tier_mismatch" | "has_primitives" }
 - `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
+- `503` { ok: false, error: string, code: "busy" | "source_unavailable" }
+
+### `GET /api/patches/:patchId/inventory`
+
+Read the cumulative table and file-store definitions and schema revision for an owned, available patch. Omitted definitions remain here. Unknown, unavailable and another user's patches all answer 404. A primitive-free patch answers empty definitions and revision zero. An existing ready company database is probed for inventory even when the current version declares none: a failed platform commit may have left cumulative definitions. An unavailable database answers `source_unavailable` (or `busy`), never a fabricated empty inventory.
+
+Responses:
+
+- `200` [PatchInventory](#patchinventory)
+- `400` { ok: false, error: string }
+- `401` { ok: false, error: "Missing or invalid API token." }
+- `404` { ok: false, error: string }
+- `414` { ok: false, error: string }
+- `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
+- `503` { ok: false, error: string, code: "busy" | "source_unavailable" }
 
 ### `POST /api/patches/:patchId/share`
 
@@ -121,7 +136,7 @@ Responses:
 
 ### `POST /api/runtime/call`
 
-Browser-only: no bearer middleware, and machine tokens are refused. Every request requires `X-Patchy-Wire` (the decimal wire version) and `X-Patchy-Principal` (JSON `null` or `{"userId":"..."}`). Admission resolves the loaded patch/version before validating an operation. A public version answers `me` with null and every other operation, including unknown ones, with `not_available_on_public`, with or without a session and before any principal check. Public shells always send a null principal. Company versions require a browser session (`session_expired`), a viewer who can open the patch (`access_denied`), and a principal matching that session's user (`principal_changed`); only `me` may bootstrap with null. Wire compatibility is checked before dispatch (`shell_outdated`). Per-viewer per-patch calls are limited to 300 per minute by default; `rate_limited` is 429 with `Retry-After` seconds. Responses, including failures, are `Cache-Control: no-store`. The JSON envelope is `{ patchId, versionId, principal, wire, op, args }`; its principal and wire must match the required headers. Mutating operations additionally require the exact shell `Origin` (scheme, host and port); a cross-site or missing Origin is refused before execution. Only `me` with `args: {}` is admitted now. Its success is `{ ok: true, value: { user: { id, name, email }, company: { id, handle, name }, admin } }` on company versions, or `{ ok: true, value: null }` on public versions; `admin` is a UI hint, not additional authority. Unknown operations on company versions answer `invalid_request`. The current call body cap is 64 KiB (`too_large`, 413). Failures are `{ ok: false, error, code, correlationId? }`; every logged failure carries its runtime-log correlation id, while read failures such as `me` do not. Unsupported operation names are not part of the request union.
+Browser-only: no bearer middleware, and machine tokens are refused. Every request requires `X-Patchy-Wire` (the decimal wire version) and `X-Patchy-Principal` (JSON `null` or `{"userId":"..."}`). Admission resolves the loaded patch/version before validating an operation. A public version answers `me` with null and every other operation, including unknown ones, with `not_available_on_public`, with or without a session and before any principal check. Public shells always send a null principal. Company versions require a browser session (`session_expired`), a viewer who can open the patch (`access_denied`), and a principal matching that session's user (`principal_changed`); only `me` may bootstrap with null. Wire compatibility is checked before dispatch (`shell_outdated`). Per-viewer per-patch calls are limited to 300 per minute by default; `rate_limited` is 429 with `Retry-After` seconds. Responses, including failures, are `Cache-Control: no-store`. The JSON envelope is `{ patchId, versionId, principal, wire, op, args }`; its principal and wire must match the required headers. Mutating operations additionally require the exact shell `Origin` (scheme, host and port); a cross-site or missing Origin is refused before execution. `me` with `args: {}` returns `{ ok: true, value: { user: { id, name, email }, company: { id, handle, name }, admin } }` on company versions, or `{ ok: true, value: null }` on public versions; `admin` is a UI hint, not additional authority. The seven `tables.*` operations resolve tables and validate rows against the loaded version's manifest, not the newest version. `get` returns a row or null; `getMany` preserves input order and nulls; `insert`, `insertMany` and `update` return their rows; `delete` returns null, including for a missing row. `update` of a missing row is `row_not_found`. Defaults apply to omitted insert fields, optional fields accept null, and explicit null for a defaulted field is `invalid_row`. `list { table, index?, eq?, range?, order?, limit?, cursor? }` returns `{ rows, cursor }`. The default index is `(createdAt, id)`; `eq` constrains leading index columns, one `range { column, gt?, gte?, lt?, lte? }` constrains the next column, and `order` is `asc` or `desc` with an id tie-breaker. Keyset cursors are bound to table, index, filters and order. The page defaults to 100 rows and is capped at 1,000; `getMany` and `insertMany` are capped at 1,000 items and 8 MiB, individual rows at 1 MiB. List and getMany results are capped at 8 MiB, checking database JSON transport before decoding and final wire bytes afterward. Transport whitespace can make its check stricter. Native PostgreSQL B-tree key-size failures are `too_large`; publishing a non-unique index adds no separate size CHECK constraint or 2,000-byte runtime write limit. Request bodies allow 1 MiB plus envelope for insert/update and 8 MiB plus envelope for insertMany; all other calls are capped at 64 KiB. Overflow is `too_large` (413). Undeclared tables answer `table_not_declared`; invalid fields/defaults answer `invalid_row`, uniqueness conflicts `unique_violation`, and invalid pagination `invalid_cursor`. Unknown operations answer `invalid_request`. Failures are `{ ok: false, error, code, correlationId? }`; every table mutation is logged before execution and logged failures carry their runtime-log correlation id. Table reads are not logged. Files and other unimplemented operation names remain refused.
 
 Request body: [RuntimeCall](#runtimecall)
 
@@ -286,7 +301,7 @@ Responses:
     release: string,
     name?: string,
     tier: 0 | 1 | 2 | 3,
-    tables: { [key: string]: { columns: { [key: string]: { kind: "text", optional?: boolean, default?: string } | { kind: "integer", optional?: boolean, default?: integer } | { kind: "number", optional?: boolean, default?: number } | { kind: "boolean", optional?: boolean, default?: boolean } | { kind: "timestamp", optional?: boolean, default?: string } | { kind: "json", optional?: boolean, default?: unknown } | { kind: "ref", table: string, optional?: boolean, default?: string } }, indexes: { [key: string]: { columns: string[], unique?: boolean } }, shared?: boolean } },
+    tables: { [key: string]: { columns: { [key: string]: { kind: "text", optional?: boolean, default?: string } | { kind: "integer", optional?: boolean, default?: integer } | { kind: "number", optional?: boolean, default?: number } | { kind: "boolean", optional?: boolean, default?: boolean } | { kind: "timestamp", optional?: boolean, default?: "now" | string } | { kind: "json", optional?: boolean, default?: unknown } | { kind: "ref", table: string, optional?: boolean, default?: string } }, indexes: { [key: string]: { columns: string[], unique?: boolean } }, shared?: boolean } },
     files: { [key: string]: {} },
     uses: { [key: string]: { kind: "postgres", handle: string, id: string, revision: integer } | { kind: "sharedTable", patchId: string, table: string, id: string, revision: integer } }
   },
@@ -360,6 +375,16 @@ Responses:
 }
 ```
 
+### PatchInventory
+
+```
+{
+  schemaRevision: integer,
+  tables: { [key: string]: { columns: { [key: string]: { kind: "text", optional?: boolean, default?: string } | { kind: "integer", optional?: boolean, default?: integer } | { kind: "number", optional?: boolean, default?: number } | { kind: "boolean", optional?: boolean, default?: boolean } | { kind: "timestamp", optional?: boolean, default?: "now" | string } | { kind: "json", optional?: boolean, default?: unknown } | { kind: "ref", table: string, optional?: boolean, default?: string } }, indexes: { [key: string]: { columns: string[], unique?: boolean } }, shared?: boolean } },
+  files: { [key: string]: {} }
+}
+```
+
 ### ShareRequest
 
 ```
@@ -410,7 +435,7 @@ Responses:
 ### RuntimeCall
 
 ```
-{ patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "me", args: {} }
+{ patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "me", args: {} } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.get", args: { table: string, id: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.getMany", args: { table: string, ids: string[] } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.list", args: { table: string, index?: string, eq?: { [key: string]: unknown }, range?: { column: string, gt?: unknown, gte?: unknown, lt?: unknown, lte?: unknown }, order?: "asc" | "desc", limit?: integer, cursor?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.insert", args: { table: string, row: { [key: string]: unknown } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.insertMany", args: { table: string, rows: { [key: string]: unknown }[] } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.update", args: { table: string, id: string, patch: { [key: string]: unknown } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.delete", args: { table: string, id: string } }
 ```
 
 ### RuntimeMe
@@ -422,7 +447,10 @@ Responses:
 ### RuntimeSuccess
 
 ```
-{ ok: true, value: RuntimeMe }
+{
+  ok: true,
+  value: RuntimeMe | { [key: string]: unknown } | null | { [key: string]: unknown } | null[] | { rows: { [key: string]: unknown }[], cursor: string | null } | { [key: string]: unknown }[] | { [key: string]: unknown } | null
+}
 ```
 
 ### RuntimeCode

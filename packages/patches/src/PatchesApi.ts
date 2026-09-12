@@ -22,8 +22,11 @@ import {
   NotFound,
   NameTaken,
   Ok,
+  NotAdditive,
+  PublishUnavailable,
   PatchQuotaExceeded,
   PatchyApi,
+  PatchInventory,
   PayloadTooLarge,
   rateLimited,
   readBody,
@@ -45,6 +48,13 @@ import * as Patches from "./Patches.js";
 import * as PatchesConfig from "./PatchesConfig.js";
 
 const notFound = () => refuse(NotFound, { ok: false, error: "Patch not found." });
+const databaseUnavailable = () =>
+  refuse(PublishUnavailable, {
+    ok: false,
+    code: "source_unavailable",
+    error: "Company database is unavailable."
+  });
+const encodeInventory = Schema.encodeSync(PatchInventory);
 
 const decodePublish = decodeBody(PublishRequest);
 const decodeKey = decodeBody(
@@ -199,12 +209,8 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
           );
           if (HttpServerResponse.isHttpServerResponse(payload)) return payload;
           if (manifest.tier > 0) return rejected("tier_mismatch", "Tier 1 is not served yet.");
-          if (
-            [manifest.tables, manifest.files, manifest.uses].some(
-              (entries) => Object.keys(entries).length > 0
-            )
-          ) {
-            return rejected("invalid_manifest", "Tables, files and uses are not provisioned yet.");
+          if ([manifest.files, manifest.uses].some((entries) => Object.keys(entries).length > 0)) {
+            return rejected("invalid_manifest", "Files and uses are not provisioned yet.");
           }
           const validation = validateHtml(payload.html, { maxBytes: maxHtmlBytes });
           if (!validation.ok)
@@ -264,6 +270,28 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
                   ),
                 PublishKeyTaken: () => replayOrRespond(keyConflict()),
                 PatchQuotaReached: () => replayOrRespond(quotaResponse()),
+                HasPrimitives: (error) =>
+                  replayOrRespond(rejected("has_primitives", error.message)),
+                NotAdditive: (error) =>
+                  replayOrRespond(
+                    refuse(NotAdditive, {
+                      ok: false,
+                      code: "not_additive",
+                      error: error.message,
+                      changes: error.changes
+                    })
+                  ),
+                Busy: (error) =>
+                  replayOrRespond(
+                    refuse(PublishUnavailable, {
+                      ok: false,
+                      code: "busy",
+                      error: error.message
+                    })
+                  ),
+                CompanyDatabaseError: () => replayOrRespond(databaseUnavailable()),
+                CompanyDatabaseNotReady: () => replayOrRespond(databaseUnavailable()),
+                CompanyIdentityMismatch: Effect.die,
                 SqlError: (error) =>
                   Effect.flatMap(replay(), (stored) =>
                     stored === undefined ? Effect.die(error) : Effect.succeed(stored)
@@ -289,6 +317,32 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
           return HttpServerResponse.text(recorded.responseBody, {
             status: recorded.status,
             contentType: "application/json"
+          });
+        })
+      )
+      .handleRaw("inventory", ({ params }) =>
+        Effect.gen(function* () {
+          const identity = yield* CurrentIdentity;
+          const result = yield* patches.inventory(params.patchId, identity.user.id).pipe(
+            Effect.catchTags({
+              PatchUnavailable: () => Effect.succeed(notFound()),
+              Busy: (error) =>
+                Effect.succeed(
+                  refuse(PublishUnavailable, {
+                    ok: false,
+                    code: "busy",
+                    error: error.message
+                  })
+                ),
+              CompanyDatabaseError: () => Effect.succeed(databaseUnavailable()),
+              CompanyDatabaseNotReady: () => Effect.succeed(databaseUnavailable()),
+              CompanyIdentityMismatch: Effect.die,
+              SqlError: Effect.die
+            })
+          );
+          if (HttpServerResponse.isHttpServerResponse(result)) return result;
+          return HttpServerResponse.jsonUnsafe(encodeInventory(result), {
+            headers: { "cache-control": "private, no-store" }
           });
         })
       )

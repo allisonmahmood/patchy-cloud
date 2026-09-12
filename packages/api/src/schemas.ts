@@ -47,7 +47,16 @@ export const PayloadTooLarge = failure(413, {});
 export const PublishKeyConflict = failure(409, { code: Schema.Literal("publish_key_conflict") });
 export const NameTaken = failure(409, { code: Schema.Literal("name_taken") });
 export const PublishRefused = failure(422, {
-  code: Schema.Literals(["release_mismatch", "invalid_manifest", "tier_mismatch"])
+  code: Schema.Literals(["release_mismatch", "invalid_manifest", "tier_mismatch", "has_primitives"])
+});
+export const NotAdditive = failure(422, {
+  code: Schema.Literal("not_additive"),
+  changes: Schema.Array(
+    Schema.Struct({ object: Schema.String, change: Schema.String, fix: Schema.String })
+  )
+});
+export const PublishUnavailable = failure(503, {
+  code: Schema.Literals(["busy", "source_unavailable"])
 });
 export const RequestTargetTooLong = failure(414, {});
 
@@ -149,13 +158,20 @@ export const PatchName = Schema.String.check(
 
 const NonEmptyText = Schema.String.check(Schema.isMinLength(1));
 const Revision = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
-const definitionName = /^[a-z][a-zA-Z0-9]*$/;
+export const DefinitionName = Schema.String.check(
+  Schema.makeFilter(
+    (value) =>
+      /^[a-z][a-zA-Z0-9]{0,62}$/.test(value) ||
+      "Definition names must be camelCase and at most 63 characters."
+  )
+);
+const isDefinitionName = Schema.is(DefinitionName);
 const definitions = <S extends Schema.Top>(value: S) =>
   Schema.Record(Schema.String, value).check(
     Schema.makeFilter(
       (record) =>
-        Object.keys(record).every((name) => definitionName.test(name)) ||
-        "Definition names must be camelCase."
+        Object.keys(record).every(isDefinitionName) ||
+        "Definition names must be camelCase and at most 63 characters."
     )
   );
 const modifiers = { optional: Schema.optionalKey(Schema.Boolean) };
@@ -166,47 +182,89 @@ const column = <const K extends string, S extends Schema.Top>(kind: K, value: S)
     default: Schema.optionalKey(value)
   });
 
+// PostgreSQL text has no NUL; jsonb also rejects unpaired UTF-16 surrogates.
+const invalidPostgresText =
+  /\u0000|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+export const PostgresText = Schema.String.check(
+  Schema.makeFilter(
+    (value) => !invalidPostgresText.test(value) || "Text must be valid Unicode without NUL."
+  )
+);
+const postgresJson = (value: typeof Schema.Json.Type): boolean => {
+  if (typeof value === "string") return !invalidPostgresText.test(value);
+  if (Array.isArray(value)) return value.every(postgresJson);
+  if (value !== null && typeof value === "object") {
+    return Object.entries(value).every(
+      ([key, item]) => !invalidPostgresText.test(key) && postgresJson(item)
+    );
+  }
+  return true;
+};
+export const PostgresJson = Schema.Json.check(
+  Schema.makeFilter(
+    (value) => postgresJson(value) || "JSON strings and keys must be valid Unicode without NUL."
+  )
+);
+export const IsoTimestamp = Schema.String.check(
+  Schema.makeFilter((value) => {
+    const parts =
+      /^(\d{4})-(0[1-9]|1[0-2])-(\d{2})T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,6})?(?:Z|[+-](?:0\d|1[0-5]):[0-5]\d)$/.exec(
+        value
+      );
+    if (parts === null) return "Expected an ISO timestamp with a timezone.";
+    const year = Number(parts[1]);
+    const month = Number(parts[2]);
+    const day = Number(parts[3]);
+    const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+    const days = month === 2 ? (leap ? 29 : 28) : [4, 6, 9, 11].includes(month) ? 30 : 31;
+    return (year > 0 && day > 0 && day <= days) || "Expected a valid calendar date.";
+  })
+);
+
 /** Serializable definitions; no uploaded code is ever executed by the server. */
 export const ColumnDefinition = Schema.Union([
-  column("text", Schema.String),
-  column("integer", Schema.Int),
-  column("number", Schema.Number.check(Schema.isFinite())),
-  column("boolean", Schema.Boolean),
+  column("text", PostgresText),
   column(
-    "timestamp",
-    Schema.String.check(
-      Schema.makeFilter(
-        (value) =>
-          value === "now" ||
-          (!Number.isNaN(Date.parse(value)) && value.includes("T")) ||
-          "Expected an ISO timestamp or now."
-      )
+    "integer",
+    Schema.Int.check(
+      Schema.isGreaterThanOrEqualTo(-2147483648),
+      Schema.isLessThanOrEqualTo(2147483647)
     )
   ),
-  column("json", Schema.Json),
+  column("number", Schema.Number.check(Schema.isFinite())),
+  column("boolean", Schema.Boolean),
+  column("timestamp", Schema.Union([Schema.Literal("now"), IsoTimestamp])),
+  column("json", PostgresJson),
   Schema.Struct({
     kind: Schema.Literal("ref"),
     table: NonEmptyText,
     ...modifiers,
-    default: Schema.optionalKey(Schema.String)
+    default: Schema.optionalKey(PostgresText)
   })
 ]).check(
   Schema.makeFilter(
     (column) =>
       !(column.optional === true && Object.hasOwn(column, "default")) ||
       "A defaulted column cannot be optional."
+  ),
+  Schema.makeFilter(
+    (column) => column.default !== null || "A defaulted column cannot default to null."
   )
 );
 export const IndexDefinition = Schema.Struct({
-  columns: Schema.Array(NonEmptyText).check(Schema.isMinLength(1)),
+  columns: Schema.Array(NonEmptyText).check(Schema.isMinLength(1), Schema.isMaxLength(32)),
   unique: Schema.optionalKey(Schema.Boolean)
 });
 export const TableDefinition = Schema.Struct({
   columns: definitions(ColumnDefinition).check(
     Schema.makeFilter(
       (columns) =>
-        !["id", "createdAt", "updatedAt"].some((name) => name in columns) ||
+        !["id", "createdAt", "updatedAt"].some((name) => Object.hasOwn(columns, name)) ||
         "System columns are reserved."
+    ),
+    Schema.makeFilter(
+      (columns) =>
+        Object.keys(columns).length <= 1597 || "A table supports at most 1597 defined columns."
     )
   ),
   indexes: definitions(IndexDefinition),
@@ -216,7 +274,8 @@ export const TableDefinition = Schema.Struct({
     (table) =>
       Object.values(table.indexes).every((index) =>
         index.columns.every(
-          (name) => name in table.columns || ["id", "createdAt", "updatedAt"].includes(name)
+          (name) =>
+            Object.hasOwn(table.columns, name) || ["id", "createdAt", "updatedAt"].includes(name)
         )
       ) || "An index names an unknown column."
   )
@@ -244,6 +303,13 @@ export const Manifest = Schema.Struct({
   files: definitions(FileStoreDefinition),
   uses: definitions(Schema.Union([PostgresDeclaration, SharedTableDeclaration]))
 }).annotate({ parseOptions: { onExcessProperty: "error" } });
+
+/** Cumulative definitions, independent of the currently served version. */
+export class PatchInventory extends Schema.Class<PatchInventory>("PatchInventory")({
+  schemaRevision: Revision,
+  tables: definitions(TableDefinition),
+  files: definitions(FileStoreDefinition)
+}) {}
 
 /** Integrity is absent until the instance has a real package artifact to hash. */
 export class Release extends Schema.Class<Release>("Release")({

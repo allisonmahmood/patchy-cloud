@@ -72,6 +72,7 @@ export const inventoryContract = Effect.fn("Contract.inventory")(function* (comp
             table,
             name: "body",
             kind: "text",
+            refTable: null,
             optional: false,
             defaultKind: "constant",
             defaultValue: "first"
@@ -107,6 +108,7 @@ export const inventoryContract = Effect.fn("Contract.inventory")(function* (comp
             table,
             name: "metadata",
             kind: "json",
+            refTable: null,
             optional: true,
             defaultKind: "constant",
             defaultValue: { nested: [true, null, "value"] }
@@ -143,6 +145,7 @@ export const inventoryContract = Effect.fn("Contract.inventory")(function* (comp
           table,
           name: "forbidden",
           kind: "text",
+          refTable: null,
           optional: true,
           defaultKind: null,
           defaultValue: null
@@ -183,6 +186,7 @@ export const inventoryContract = Effect.fn("Contract.inventory")(function* (comp
               table,
               name: "rolledBack",
               kind: "integer",
+              refTable: null,
               optional: true,
               defaultKind: null,
               defaultValue: null

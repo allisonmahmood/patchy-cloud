@@ -26,7 +26,16 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import type * as Statement from "effect/unstable/sql/Statement";
-import { Manifest, PatchName, PublishCreated, PublishUpdated, SharingScope } from "@patchy/api";
+import {
+  Manifest,
+  PatchInventory,
+  PatchName,
+  PublishCreated,
+  PublishUpdated,
+  SharingScope
+} from "@patchy/api";
+import { CompanyDatabases, Inventory } from "@patchy/company-database";
+import { Tables } from "@patchy/primitives";
 
 const encodeManifest = Schema.encodeSync(Schema.fromJsonString(Manifest));
 const encodePublishCreated = Schema.encodeSync(Schema.fromJsonString(PublishCreated));
@@ -174,11 +183,41 @@ export class PendingObjectExpired extends Schema.TaggedError<PendingObjectExpire
   }
 }
 
+export class HasPrimitives extends Schema.TaggedError<HasPrimitives>()("HasPrimitives", {
+  patchId: Schema.String
+}) {
+  readonly code = "has_primitives";
+  override get message() {
+    return "This patch has provisioned tables or file stores; publish from its repo instead of a single HTML file.";
+  }
+}
+
+export type DatabaseError =
+  | CompanyDatabases.Busy
+  | CompanyDatabases.CompanyDatabaseError
+  | CompanyDatabases.CompanyDatabaseNotReady
+  | CompanyDatabases.CompanyIdentityMismatch;
+
+export type ResourceError = HasPrimitives | Tables.NotAdditive | DatabaseError;
+
 export interface PublishTarget {
   readonly intent: "create" | "update";
   readonly patchId: string;
   readonly ownerUserId: string;
 }
+
+export interface PublishPreflight extends PublishTarget {
+  readonly companyId: string;
+  readonly manifest: typeof Manifest.Type;
+  readonly filename: string | null;
+}
+
+/** File requests may carry --name; empty named repo manifests are not file requests. */
+const isFileMode = (input: PublishPreflight) =>
+  Object.keys(input.manifest.tables).length === 0 &&
+  Object.keys(input.manifest.files).length === 0 &&
+  Object.keys(input.manifest.uses).length === 0 &&
+  (input.manifest.name === undefined || input.filename !== null);
 
 export interface RecordInput extends PublishTarget {
   readonly companyId: string;
@@ -238,9 +277,16 @@ export class Patches extends Context.Service<
      * The publish contract's preflight, before any bytes are written: an
      * update needs a patch the caller may write, a create needs a free id.
      */
-    readonly checkTarget: (
-      target: PublishTarget
-    ) => Effect.Effect<void, PatchUnavailable | PatchConflict | SqlError>;
+    readonly preflight: (
+      input: PublishPreflight
+    ) => Effect.Effect<
+      void,
+      PatchUnavailable | PatchConflict | NameTaken | ResourceError | SqlError
+    >;
+    readonly inventory: (
+      patchId: string,
+      ownerUserId: string
+    ) => Effect.Effect<PatchInventory, PatchUnavailable | DatabaseError | SqlError>;
     /** Durably reserves a fresh object key before any bytes can be written. */
     readonly prepareObject: (objectKey: string) => Effect.Effect<void, SqlError>;
     /**
@@ -255,7 +301,7 @@ export class Patches extends Context.Service<
      * patch row it creates or moves forward, and a fresh retention window,
      * in one transaction. Consumes the pending-object intent under a lock;
      * a sweep that claimed it first prevents the version from being recorded.
-     * Re-checks the target, so `checkTarget`'s answer can still change here.
+     * Re-checks the target, so the preflight's answer can still change here.
      */
     readonly record: (
       input: RecordInput
@@ -267,6 +313,7 @@ export class Patches extends Context.Service<
       | PublishKeyTaken
       | PatchQuotaReached
       | PendingObjectExpired
+      | ResourceError
       | SqlError
     >;
     /** Changes an owned, available patch's audience without publishing or extending retention. */
@@ -509,6 +556,9 @@ export const backfillNames = Effect.fn("Patches.backfillNames")(function* () {
 
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const databases = yield* CompanyDatabases.CompanyDatabases;
+  const inventoryStore = yield* Inventory.Inventory;
+  const tables = yield* Tables.Tables;
 
   /** An instant on the Effect clock, as a value Postgres compares against `expires_at`. */
   const stamp = (millis: number) => sql`to_timestamp(${millis / 1_000})`;
@@ -671,6 +721,112 @@ export const make = Effect.gen(function* () {
     if (rows.length > 0) return yield* new PatchConflict({ patchId: target.patchId });
   });
 
+  // Probe without starting a company transaction. A platform version is not
+  // evidence of absence: company DDL may have committed before platform failure.
+  const readInventory = Effect.fn("Patches.readInventory")((companyId: string, patchId: string) =>
+    databases
+      .withCompany(companyId)(
+        Effect.gen(function* () {
+          if (!(yield* inventoryStore.exists(patchId))) return null;
+          return yield* inventoryStore.read(patchId);
+        })
+      )
+      .pipe(
+        Effect.catchTags({
+          CompanyDatabaseNotReady: (error) =>
+            error.status === null ? Effect.succeed(null) : Effect.fail(error)
+        })
+      )
+  );
+
+  const preflight = Effect.fn("Patches.preflight")(function* (input: PublishPreflight) {
+    yield* checkTarget(input);
+    if (input.manifest.name !== undefined) {
+      const occupied = yield* sql`
+        SELECT 1 FROM patch_names WHERE company_id = ${input.companyId}
+          AND name = ${input.manifest.name} AND current AND patch_id <> ${input.patchId}`;
+      if (occupied.length > 0) return yield* new NameTaken({ name: input.manifest.name });
+    }
+    if (Object.keys(input.manifest.tables).length > 0) {
+      yield* databases.ensureReady(input.companyId);
+    }
+    const { companyId, snapshot } =
+      input.intent === "create"
+        ? { companyId: input.companyId, snapshot: null }
+        : yield* sql.withTransaction(
+            Effect.gen(function* () {
+              const locked = yield* lockTarget({
+                patchId: input.patchId,
+                ownerUserId: input.ownerUserId,
+                nowMillis: yield* Clock.currentTimeMillis
+              });
+              if (Option.isNone(locked))
+                return yield* new PatchUnavailable({ patchId: input.patchId });
+              return {
+                companyId: locked.value.companyId,
+                snapshot: yield* readInventory(locked.value.companyId, input.patchId)
+              };
+            }).pipe(Effect.catchTags(dieOnSchemaError))
+          );
+    if (snapshot !== null && isFileMode(input)) {
+      return yield* new HasPrimitives({ patchId: input.patchId });
+    }
+    yield* tables.diff(input.manifest, snapshot);
+    if (snapshot !== null) {
+      yield* databases.withCompany(companyId)(
+        tables.validate(input.patchId, input.manifest, snapshot)
+      );
+    }
+  });
+
+  const inventory = Effect.fn("Patches.inventory")((patchId: string, ownerUserId: string) =>
+    sql.withTransaction(
+      Effect.gen(function* () {
+        const locked = yield* lockTarget({
+          patchId,
+          ownerUserId,
+          nowMillis: yield* Clock.currentTimeMillis
+        });
+        if (Option.isNone(locked)) return yield* new PatchUnavailable({ patchId });
+        const snapshot = yield* readInventory(locked.value.companyId, patchId);
+        return new PatchInventory(
+          snapshot === null
+            ? { schemaRevision: 0, tables: {}, files: {} }
+            : { schemaRevision: snapshot.schemaRevision, ...Tables.inventoryManifest(snapshot) }
+        );
+      }).pipe(Effect.catchTags(dieOnSchemaError))
+    )
+  );
+
+  const provision = Effect.fn("Patches.provision")(function* (input: RecordInput) {
+    const introducesTables = Object.keys(input.manifest.tables).length > 0;
+    if (input.intent === "create" && !introducesTables) {
+      return yield* tables.diff(input.manifest, null);
+    }
+    return yield* databases
+      .withCompany(input.companyId)(
+        Effect.gen(function* () {
+          if (!introducesTables && !(yield* inventoryStore.exists(input.patchId))) {
+            return yield* tables.diff(input.manifest, null);
+          }
+          return yield* databases.withPatchLock(input.patchId)(
+            Effect.gen(function* () {
+              if (isFileMode(input)) return yield* new HasPrimitives({ patchId: input.patchId });
+              return yield* tables.provision(input.patchId, input.manifest);
+            })
+          );
+        })
+      )
+      .pipe(
+        Effect.catchTags({
+          CompanyDatabaseNotReady: (error) =>
+            !introducesTables && error.status === null
+              ? tables.diff(input.manifest, null)
+              : Effect.fail(error)
+        })
+      );
+  });
+
   const prepareObject = Effect.fn("Patches.prepareObject")(function* (objectKey: string) {
     const expiresAt = stamp(
       (yield* Clock.currentTimeMillis) + Duration.toMillis(PENDING_OBJECT_LEASE)
@@ -790,6 +946,7 @@ export const make = Effect.gen(function* () {
             yield* sql`UPDATE patch_names SET current = false
               WHERE patch_id = ${input.patchId} AND current AND name <> ${name}`;
           }
+          const resources = yield* provision({ ...input, companyId });
           const publicUrl = address(input.publicBaseUrl, companyHandle, name);
           const response = new (input.intent === "create" ? PublishCreated : PublishUpdated)({
             ok: true,
@@ -802,10 +959,10 @@ export const make = Effect.gen(function* () {
             address: publicUrl,
             publicUrl,
             tier: input.manifest.tier,
-            schemaRevision: 0,
-            provisioned: { tables: [], columns: [], indexes: [], stores: [] },
-            unused: { tables: [], columns: [], indexes: [], stores: [] },
-            warnings: input.warnings
+            schemaRevision: resources.schemaRevision,
+            provisioned: resources.provisioned,
+            unused: resources.unused,
+            warnings: [...input.warnings, ...resources.warnings]
           });
           const status = input.intent === "create" ? (201 as const) : (200 as const);
           const responseJson =
@@ -825,7 +982,7 @@ export const make = Effect.gen(function* () {
             ${input.contentHash}, ${input.fileSize}, ${input.machineTokenId}, ${input.sourceIp},
             ${input.userAgent}, ${input.cliVersion}, ${input.gitBranch}, ${input.gitCommitSha},
             ${input.filename}, ${input.ownerUserId}, ${input.manifest.tier}, ${input.manifest.release},
-            ${input.manifest.manifestVersion}, ${input.wireVersion}, 0,
+            ${input.manifest.manifestVersion}, ${input.wireVersion}, ${resources.schemaRevision},
             ${encodeManifest(input.manifest)}::jsonb, ${input.publishKey}, ${input.payloadDigest},
             ${responseJson}::jsonb, ${status}
           ) ON CONFLICT (owner_user_id, publish_key) DO NOTHING
@@ -984,7 +1141,8 @@ export const make = Effect.gen(function* () {
   return Patches.of({
     countLive,
     replay,
-    checkTarget,
+    preflight,
+    inventory,
     prepareObject,
     claimObjects,
     completeObject,

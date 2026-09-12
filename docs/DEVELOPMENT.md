@@ -501,10 +501,22 @@ recreatable, with fsync off and normalized `int8`/`DATE` codecs.
 
 Runtime admission tests use `HttpApiTest` with offline signed browser sessions;
 the server's socket test publishes real versions and checks historical and live
-sharing. `/api/runtime/call` admits only `me` today. A company version needs a
-browser session, never the dev machine token; a current public version returns
-null without one. Required headers and request shapes are in [API.md](API.md#runtime).
+sharing. `/api/runtime/call` admits `me` and the seven `tables.*` operations.
+A company version needs a browser session, never the dev machine token; a current
+public version returns null for `me` and refuses tables. Required headers and
+request shapes are in [API.md](API.md#runtime).
 The runtime log baseline is applied by all three migration entrypoints above.
+
+Table manifests can be published directly to `POST /api/publish` at tier 0;
+repo-mode CLI publishing and the browser broker remain separate SDK work.
+The owner reads cumulative metadata through `GET /api/patches/:patchId/inventory`.
+For table changes, exercise the Primitives contract suites over both Postgres
+and PGlite, and the real-Postgres publish/unique-index races. Ordinary table
+operations lease an existing company database; only resource-introducing
+publishes call `ensureReady`. No new platform migration belongs to Primitives.
+Explicit readiness also upgrades metadata in already-ready company databases
+(including recorded ref targets); it preserves their inventory and does not
+retain a query-pool reservation. Normal leases never bootstrap or upgrade.
 
 ## Running the server by hand
 
