@@ -23,6 +23,7 @@ import { applyDevSeed } from "@patchy/auth/seed";
 import { migrations as companiesMigrations } from "@patchy/companies";
 import { migrations as companyDatabaseMigrations } from "@patchy/company-database";
 import { migrations as patchesMigrations, Patches } from "@patchy/patches";
+import { migrations as runtimeMigrations } from "@patchy/runtime";
 import { layerFromUrl, migrate } from "@patchy/sql";
 import { developerEnvFile, readDeveloperEnv } from "./developerEnv.js";
 import { DATABASE_NAME, Plan } from "./plan.js";
@@ -149,7 +150,8 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
     ...companiesMigrations,
     ...authMigrations,
     ...patchesMigrations,
-    ...companyDatabaseMigrations
+    ...companyDatabaseMigrations,
+    ...runtimeMigrations
   }).pipe(Effect.provide(layerFromUrl(Redacted.make(plan.databaseUrl))));
   const inherited = yield* Config.all({
     PATH: Config.string("PATH"),

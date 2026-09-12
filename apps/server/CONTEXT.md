@@ -5,7 +5,7 @@ The process that brings Patchy Cloud's capabilities together: the API guard, pro
 ## Language
 
 **API guard**:
-The boundary ahead of every API route: protected requests require a valid machine token before revealing malformed or unknown targets. Only starting and polling a device login are admitted without one; their limits are separate from protected requests.
+The boundary ahead of every API route: protected requests require a valid machine token before revealing malformed or unknown targets. Release discovery and device-login starts and polls are public; Runtime owns its browser-session admission and per-viewer limits instead of using the bearer guard.
 _Avoid_: firewall, auth middleware (that is the bearer middleware, which the guard sits ahead of)
 
 **Protected-API limit**:

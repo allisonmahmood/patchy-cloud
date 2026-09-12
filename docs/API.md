@@ -3,7 +3,7 @@
 Rendered from `PatchyApi` in `packages/api` by `pnpm --filter @patchy/api render-docs`. Do not
 edit by hand: a test fails when this file and the schemas disagree.
 
-Every route lives under `/api` and speaks JSON. `GET /api/release`, `POST /api/login/device` and `POST /api/login/device/token` are unauthenticated. Every other route needs `Authorization: Bearer <token>`; a missing or invalid token is a 401 with `{ ok: false, error }`. A refusal is always `{ ok: false, error }`, plus a `code` and the number a client needs on the ones it branches on. A 429 also carries a `Retry-After` header with the same seconds as `retryAfterSeconds`.
+Every route lives under `/api`. Most speak JSON; runtime file routes carry raw bytes. `GET /api/release`, `POST /api/login/device` and `POST /api/login/device/token` are unauthenticated. `/api/runtime/*` admits only the shell's browser requests with the runtime headers and loaded-version admission described below; machine tokens are refused. Other routes need `Authorization: Bearer <token>`; a missing or invalid token is a 401 with `{ ok: false, error }`. Refusals add `code` and operation-specific fields when clients branch on them. A 429 carries `Retry-After` seconds; bearer API rate-limit responses also carry `retryAfterSeconds`.
 
 ## auth
 
@@ -116,6 +116,57 @@ The current tooling release and its manifest and wire versions. Unauthenticated.
 Responses:
 
 - `200` [Release](#release)
+
+## runtime
+
+### `POST /api/runtime/call`
+
+Browser-only: no bearer middleware, and machine tokens are refused. Every request requires `X-Patchy-Wire` (the decimal wire version) and `X-Patchy-Principal` (JSON `null` or `{"userId":"..."}`). Admission resolves the loaded patch/version before validating an operation. A public version answers `me` with null and every other operation, including unknown ones, with `not_available_on_public`, with or without a session and before any principal check. Public shells always send a null principal. Company versions require a browser session (`session_expired`), a viewer who can open the patch (`access_denied`), and a principal matching that session's user (`principal_changed`); only `me` may bootstrap with null. Wire compatibility is checked before dispatch (`shell_outdated`). Per-viewer per-patch calls are limited to 300 per minute by default; `rate_limited` is 429 with `Retry-After` seconds. Responses, including failures, are `Cache-Control: no-store`. The JSON envelope is `{ patchId, versionId, principal, wire, op, args }`; its principal and wire must match the required headers. Mutating operations additionally require the exact shell `Origin` (scheme, host and port); a cross-site or missing Origin is refused before execution. Only `me` with `args: {}` is admitted now. Its success is `{ ok: true, value: { user: { id, name, email }, company: { id, handle, name }, admin } }` on company versions, or `{ ok: true, value: null }` on public versions; `admin` is a UI hint, not additional authority. Unknown operations on company versions answer `invalid_request`. The current call body cap is 64 KiB (`too_large`, 413). Failures are `{ ok: false, error, code, correlationId? }`; every logged failure carries its runtime-log correlation id, while read failures such as `me` do not. Unsupported operation names are not part of the request union.
+
+Request body: [RuntimeCall](#runtimecall)
+
+Responses:
+
+- `200` [RuntimeSuccess](#runtimesuccess)
+- `400` [RuntimeFailure](#runtimefailure)
+- `401` [RuntimeFailure_1](#runtimefailure_1)
+- `403` [RuntimeFailure_2](#runtimefailure_2)
+- `409` [RuntimeFailure_3](#runtimefailure_3)
+- `413` [RuntimeFailure_4](#runtimefailure_4)
+- `429` [RuntimeFailure_5](#runtimefailure_5)
+- `503` [RuntimeFailure_6](#runtimefailure_6)
+
+### `GET /api/runtime/files/:patchId/:versionId/:store/*`
+
+Browser-only: no bearer middleware, and machine tokens are refused. Every request requires `X-Patchy-Wire` (the decimal wire version) and `X-Patchy-Principal` (JSON `null` or `{"userId":"..."}`). Admission resolves the loaded patch/version before validating an operation. A public version answers `me` with null and every other operation, including unknown ones, with `not_available_on_public`, with or without a session and before any principal check. Public shells always send a null principal. Company versions require a browser session (`session_expired`), a viewer who can open the patch (`access_denied`), and a principal matching that session's user (`principal_changed`); only `me` may bootstrap with null. Wire compatibility is checked before dispatch (`shell_outdated`). Per-viewer per-patch calls are limited to 300 per minute by default; `rate_limited` is 429 with `Retry-After` seconds. Responses, including failures, are `Cache-Control: no-store`. GET additionally requires the exact browser header `Sec-Fetch-Site: same-origin`. Principal and wire travel only in their required headers; GET has no request body. The trailing `*` is the file name, not an object URL. Encode the full name with `encodeURIComponent(name)` so slashes travel as `%2F`; the router decodes exactly once. The wildcard also accepts slash-separated segments and avoids the router's 100-character named-parameter limit. Names are 1–512 UTF-8 bytes, with no empty, `.` or `..` segments; `store` is a camelCase manifest-defined file store. Patch ids are twelve lowercase letters or digits; version ids are `ver_` followed by 24 lowercase letters or digits. The loaded manifest, never a client-supplied name, is the authority. Raw byte bodies are not JSON or base64; the byte limit is 20 MiB. These file routes are reserved: after the same admission they currently answer `invalid_request` on company versions or `not_available_on_public` on public versions, never a fake success. The byte response carries the stored `Content-Type` and `no-store`, never a redirect to uploaded content. HTML and SVG remain bytes, never a navigable page.
+
+Responses:
+
+- `200` raw bytes (`application/octet-stream`)
+- `400` [RuntimeFailure](#runtimefailure)
+- `401` [RuntimeFailure_1](#runtimefailure_1)
+- `403` [RuntimeFailure_2](#runtimefailure_2)
+- `409` [RuntimeFailure_3](#runtimefailure_3)
+- `413` [RuntimeFailure_4](#runtimefailure_4)
+- `429` [RuntimeFailure_5](#runtimefailure_5)
+- `503` [RuntimeFailure_6](#runtimefailure_6)
+
+### `PUT /api/runtime/files/:patchId/:versionId/:store/*`
+
+Browser-only: no bearer middleware, and machine tokens are refused. Every request requires `X-Patchy-Wire` (the decimal wire version) and `X-Patchy-Principal` (JSON `null` or `{"userId":"..."}`). Admission resolves the loaded patch/version before validating an operation. A public version answers `me` with null and every other operation, including unknown ones, with `not_available_on_public`, with or without a session and before any principal check. Public shells always send a null principal. Company versions require a browser session (`session_expired`), a viewer who can open the patch (`access_denied`), and a principal matching that session's user (`principal_changed`); only `me` may bootstrap with null. Wire compatibility is checked before dispatch (`shell_outdated`). Per-viewer per-patch calls are limited to 300 per minute by default; `rate_limited` is 429 with `Retry-After` seconds. Responses, including failures, are `Cache-Control: no-store`. PUT additionally requires the exact shell `Origin` (scheme, host and port). The uploaded media type travels as `Content-Type`. Principal and wire travel only in their required headers; the body contains only raw file bytes. The trailing `*` is the file name, not an object URL. Encode the full name with `encodeURIComponent(name)` so slashes travel as `%2F`; the router decodes exactly once. The wildcard also accepts slash-separated segments and avoids the router's 100-character named-parameter limit. Names are 1–512 UTF-8 bytes, with no empty, `.` or `..` segments; `store` is a camelCase manifest-defined file store. Patch ids are twelve lowercase letters or digits; version ids are `ver_` followed by 24 lowercase letters or digits. The loaded manifest, never a client-supplied name, is the authority. Raw byte bodies are not JSON or base64; the byte limit is 20 MiB. These file routes are reserved: after the same admission they currently answer `invalid_request` on company versions or `not_available_on_public` on public versions, never a fake success. The declared byte response contract uses `application/octet-stream` as its default, with the actual media type supplied by the handler.
+
+Request body: raw bytes (`application/octet-stream`)
+
+Responses:
+
+- `200` raw bytes (`application/octet-stream`)
+- `400` [RuntimeFailure](#runtimefailure)
+- `401` [RuntimeFailure_1](#runtimefailure_1)
+- `403` [RuntimeFailure_2](#runtimefailure_2)
+- `409` [RuntimeFailure_3](#runtimefailure_3)
+- `413` [RuntimeFailure_4](#runtimefailure_4)
+- `429` [RuntimeFailure_5](#runtimefailure_5)
+- `503` [RuntimeFailure_6](#runtimefailure_6)
 
 ## Shapes
 
@@ -347,5 +398,112 @@ Responses:
   },
   manifestVersion: integer,
   wireVersion: integer
+}
+```
+
+### RuntimePrincipal
+
+```
+{ userId: string } | null
+```
+
+### RuntimeCall
+
+```
+{ patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "me", args: {} }
+```
+
+### RuntimeMe
+
+```
+{ user: { id: string, email: string, name: string }, company: { id: string, handle: string, name: string }, admin: boolean } | null
+```
+
+### RuntimeSuccess
+
+```
+{ ok: true, value: RuntimeMe }
+```
+
+### RuntimeCode
+
+```
+"table_not_declared" | "row_not_found" | "invalid_row" | "unique_violation" | "access_denied" | "invalid_cursor" | "not_additive" | "connection_not_declared" | "invalid_request" | "timeout" | "too_large" | "source_unavailable" | "relation_unknown" | "invalid_query" | "shape_mismatch" | "session_expired" | "principal_changed" | "not_available_on_public" | "shell_outdated" | "unknown_outcome" | "rate_limited" | "too_many_requests" | "busy" | "offset_exhausted"
+```
+
+### RuntimeFailure
+
+```
+{
+  ok: false,
+  error: string,
+  code: RuntimeCode,
+  correlationId?: string
+}
+```
+
+### RuntimeFailure_1
+
+```
+{
+  ok: false,
+  error: string,
+  code: RuntimeCode,
+  correlationId?: string
+}
+```
+
+### RuntimeFailure_2
+
+```
+{
+  ok: false,
+  error: string,
+  code: RuntimeCode,
+  correlationId?: string
+}
+```
+
+### RuntimeFailure_3
+
+```
+{
+  ok: false,
+  error: string,
+  code: RuntimeCode,
+  correlationId?: string
+}
+```
+
+### RuntimeFailure_4
+
+```
+{
+  ok: false,
+  error: string,
+  code: RuntimeCode,
+  correlationId?: string
+}
+```
+
+### RuntimeFailure_5
+
+```
+{
+  ok: false,
+  error: string,
+  code: RuntimeCode,
+  correlationId?: string
+}
+```
+
+### RuntimeFailure_6
+
+```
+{
+  ok: false,
+  error: string,
+  code: RuntimeCode,
+  correlationId?: string
 }
 ```

@@ -1,0 +1,143 @@
+/** The browser runtime wire; operation schemas are shared by the shell and server. */
+import * as Schema from "effect/Schema";
+import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
+import { Identity, PatchId } from "./schemas.js";
+
+const NonEmptyText = Schema.String.check(Schema.isMinLength(1));
+
+/** Version ids use core's newInternalId("ver") grammar. */
+export const RuntimeVersionId = Schema.String.check(
+  Schema.makeFilter((value) => /^ver_[a-z0-9]{24}$/.test(value) || "Invalid version ID.")
+);
+
+/** Null bootstraps `me`; a company shell binds every later call to its returned user. */
+export const RuntimePrincipal = Schema.NullOr(Schema.Struct({ userId: NonEmptyText })).annotate({
+  identifier: "RuntimePrincipal",
+  parseOptions: { onExcessProperty: "error" }
+});
+export type RuntimePrincipal = typeof RuntimePrincipal.Type;
+
+/** Public versions return null, including when their viewer has a session. */
+export const RuntimeMe = Schema.NullOr(
+  Schema.Struct({
+    user: Identity.fields.user,
+    company: Identity.fields.company,
+    admin: Schema.Boolean
+  })
+).annotate({ identifier: "RuntimeMe" });
+export type RuntimeMe = typeof RuntimeMe.Type;
+
+/** Only implemented operations belong here; names such as files.get are not admitted yet. */
+export const runtimeOperations = {
+  me: {
+    request: Schema.Struct({
+      op: Schema.Literal("me"),
+      args: Schema.Record(Schema.String, Schema.Never)
+    }),
+    response: RuntimeMe,
+    kind: "read"
+  }
+} as const;
+
+/** The operation-only discriminated union validated by the shell. */
+export const RuntimeRequest = Schema.Union([runtimeOperations.me.request]).annotate({
+  identifier: "RuntimeRequest",
+  parseOptions: { onExcessProperty: "error" }
+});
+export type RuntimeRequest = typeof RuntimeRequest.Type;
+
+const envelopeFields = {
+  patchId: PatchId,
+  versionId: RuntimeVersionId,
+  principal: RuntimePrincipal,
+  wire: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))
+};
+
+/** Admission reads this before operation validation, so public refusals include unknown ops. */
+export const RuntimeEnvelope = Schema.Struct({
+  ...envelopeFields,
+  principal: Schema.Unknown,
+  op: Schema.String,
+  args: Schema.Unknown
+}).annotate({ identifier: "RuntimeEnvelope" });
+export type RuntimeEnvelope = typeof RuntimeEnvelope.Type;
+
+/** The transport envelope paired with each admitted operation's exact request. */
+export const RuntimeCall = Schema.Union([
+  Schema.Struct({ ...envelopeFields, ...runtimeOperations.me.request.fields })
+]).annotate({ identifier: "RuntimeCall", parseOptions: { onExcessProperty: "error" } });
+export type RuntimeCall = typeof RuntimeCall.Type;
+
+/** Every code in the stable runtime wire, including shell-local and future-operation failures. */
+export const RuntimeCode = Schema.Literals([
+  "table_not_declared",
+  "row_not_found",
+  "invalid_row",
+  "unique_violation",
+  "access_denied",
+  "invalid_cursor",
+  "not_additive",
+  "connection_not_declared",
+  "invalid_request",
+  "timeout",
+  "too_large",
+  "source_unavailable",
+  "relation_unknown",
+  "invalid_query",
+  "shape_mismatch",
+  "session_expired",
+  "principal_changed",
+  "not_available_on_public",
+  "shell_outdated",
+  "unknown_outcome",
+  "rate_limited",
+  "too_many_requests",
+  "busy",
+  "offset_exhausted"
+]).annotate({ identifier: "RuntimeCode" });
+export type RuntimeCode = typeof RuntimeCode.Type;
+
+/** Logged failures carry their row's correlation id; read and shell-local failures do not. */
+export const RuntimeFailure = Schema.Struct({
+  ok: Schema.Literal(false),
+  error: Schema.String,
+  code: RuntimeCode,
+  correlationId: Schema.optionalKey(NonEmptyText)
+}).annotate({ identifier: "RuntimeFailure" });
+export type RuntimeFailure = typeof RuntimeFailure.Type;
+
+/** Each success value comes from that operation's response schema. */
+export const RuntimeSuccess = Schema.Union([
+  Schema.Struct({ ok: Schema.Literal(true), value: runtimeOperations.me.response })
+]).annotate({ identifier: "RuntimeSuccess" });
+export type RuntimeSuccess = typeof RuntimeSuccess.Type;
+
+export const RuntimeReply = Schema.Union([RuntimeSuccess, RuntimeFailure]).annotate({
+  identifier: "RuntimeReply"
+});
+export type RuntimeReply = typeof RuntimeReply.Type;
+
+const textEncoder = new TextEncoder();
+
+/** Decode after admission; route params themselves stay permissive for runtime-shaped refusals. */
+export const RuntimeFileParams = Schema.Struct({
+  patchId: PatchId,
+  versionId: RuntimeVersionId,
+  store: Schema.String.check(
+    Schema.makeFilter((value) => /^[a-z][a-zA-Z0-9]*$/.test(value) || "Invalid file store name.")
+  ),
+  name: Schema.String.check(
+    Schema.makeFilter(
+      (value) =>
+        (textEncoder.encode(value).byteLength <= 512 &&
+          value
+            .split("/")
+            .every((segment) => segment !== "" && segment !== "." && segment !== "..")) ||
+        "File names must be 1–512 bytes with no empty, . or .. segments."
+    )
+  )
+});
+export type RuntimeFileParams = typeof RuntimeFileParams.Type;
+
+/** Bytes, never JSON/base64 or a public object URL; handlers supply the actual Content-Type. */
+export const RuntimeBytes = Schema.Uint8Array.pipe(HttpApiSchema.asUint8Array());

@@ -58,11 +58,18 @@ export function renderApiMarkdown(): string {
 
         const body = operation.requestBody?.content?.["application/json"]?.schema;
         if (body) lines.push(`Request body: ${renderType(body)}`, "");
+        else if (operation.requestBody?.content?.["application/octet-stream"])
+          lines.push("Request body: raw bytes (`application/octet-stream`)", "");
 
         lines.push("Responses:", "");
         for (const [status, response] of Object.entries(operation.responses)) {
           const schema = response.content?.["application/json"]?.schema;
-          lines.push(`- \`${status}\` ${schema ? renderType(schema) : "no body"}`);
+          const body = schema
+            ? renderType(schema)
+            : response.content?.["application/octet-stream"]
+              ? "raw bytes (`application/octet-stream`)"
+              : "no body";
+          lines.push(`- \`${status}\` ${body}`);
         }
         lines.push("");
       }

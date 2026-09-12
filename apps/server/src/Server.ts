@@ -38,12 +38,20 @@ import { AzureContentStore, BlobContainer, FilesystemContentStore } from "@patch
 import { Limits } from "@patchy/limits";
 import {
   Content,
+  LoadedVersions,
   ExpirySweep,
   migrations as patchesMigrations,
   Patches,
   PatchesApi
 } from "@patchy/patches";
 import { Pages, servingHeaders, TrustedProxies } from "@patchy/serving";
+import {
+  Runtime,
+  RuntimeApi,
+  RuntimeLog,
+  me,
+  migrations as runtimeMigrations
+} from "@patchy/runtime";
 import { migrate } from "@patchy/sql";
 import * as ApiGuard from "./ApiGuard.js";
 
@@ -67,7 +75,8 @@ const migrated = Layer.effectDiscard(
     ...companiesMigrations,
     ...authMigrations,
     ...patchesMigrations,
-    ...companyDatabaseMigrations
+    ...companyDatabaseMigrations,
+    ...runtimeMigrations
   })
 );
 
@@ -79,7 +88,8 @@ const services = Layer.mergeAll(
   Content.layer,
   ExpirySweep.layer,
   DeviceLogins.layer,
-  OrphanSweep.layer
+  OrphanSweep.layer,
+  Runtime.layer({ me }).pipe(Layer.provide([LoadedVersions.layer, RuntimeLog.layer]))
 ).pipe(
   Layer.provideMerge(
     Layer.mergeAll(
@@ -128,7 +138,7 @@ export const sweeper = Layer.effectDiscard(
 
 /** `/api/*`: the groups' handlers, bearer middleware on protected endpoints, and catch-all. */
 const api = Layer.mergeAll(HttpApiBuilder.layer(PatchyApi), ApiGuard.notFound).pipe(
-  Layer.provide([AuthApi.layer, PatchesApi.layer, PatchesApi.releaseLayer]),
+  Layer.provide([AuthApi.layer, PatchesApi.layer, PatchesApi.releaseLayer, RuntimeApi.layer]),
   Layer.provide(Authorization.layer)
 );
 
