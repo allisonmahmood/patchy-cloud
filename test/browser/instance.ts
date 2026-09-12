@@ -310,6 +310,7 @@ export async function startInstance(clerkUserId: string): Promise<BrowserInstanc
         DATABASE_URL: databaseUrl,
         PATCHY_COMPANY_DB_ADMIN_URL: databaseUrl,
         PATCHY_COMPANY_DB_URL: databaseUrl,
+        PATCHY_CREDENTIAL_KEYS: `test:${Buffer.alloc(32, 1).toString("base64")}`,
         PATCHY_STORAGE_DIR: path.join(tempRoot, "objects"),
         PATCHY_PUBLIC_BASE_URL: origin,
         CLERK_SECRET_KEY: secretKey,

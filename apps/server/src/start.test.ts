@@ -7,6 +7,7 @@ for (const missing of [
   "DATABASE_URL",
   "PATCHY_COMPANY_DB_ADMIN_URL",
   "PATCHY_COMPANY_DB_URL",
+  "PATCHY_CREDENTIAL_KEYS",
   "PATCHY_PUBLIC_BASE_URL",
   "CLERK_PUBLISHABLE_KEY",
   "CLERK_SECRET_KEY"
@@ -16,6 +17,7 @@ for (const missing of [
       ...clerkEnv(),
       DATABASE_URL: "postgresql://postgres:postgres@127.0.0.1:1/patchy",
       PATCHY_COMPANY_DB_ADMIN_URL: "postgresql://postgres:postgres@127.0.0.1:1/postgres",
+      PATCHY_CREDENTIAL_KEYS: `test:${Buffer.alloc(32, 1).toString("base64")}`,
       PATCHY_COMPANY_DB_URL: "postgresql://postgres:postgres@127.0.0.1:1/patchy"
     };
     delete env[missing];
@@ -43,6 +45,7 @@ for (const key of ["PATCHY_COMPANY_DB_ADMIN_URL", "PATCHY_COMPANY_DB_URL"]) {
       DATABASE_URL: "postgresql://postgres:postgres@127.0.0.1:1/patchy",
       PATCHY_COMPANY_DB_ADMIN_URL: "postgresql://postgres:postgres@127.0.0.1:1/postgres",
       PATCHY_COMPANY_DB_URL: "postgresql://postgres:postgres@127.0.0.1:1/patchy",
+      PATCHY_CREDENTIAL_KEYS: `test:${Buffer.alloc(32, 1).toString("base64")}`,
       [key]: `https://operator:${secret}@localhost/patchy`
     };
     const result = spawnSync(

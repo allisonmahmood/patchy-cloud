@@ -244,20 +244,26 @@ export const RuntimeCall = Schema.Union(
 ).annotate({ identifier: "RuntimeCall", parseOptions: { onExcessProperty: "error" } });
 export type RuntimeCall = typeof RuntimeCall.Type;
 
+/** Failures shared by every integration operation, independent of its source. */
+export const IntegrationBoundaryCode = Schema.Literals([
+  "connection_not_declared",
+  "access_denied",
+  "invalid_request",
+  "timeout",
+  "too_large",
+  "source_unavailable"
+]);
+export type IntegrationBoundaryCode = typeof IntegrationBoundaryCode.Type;
+
 /** Every code in the stable runtime wire, including shell-local and future-operation failures. */
 export const RuntimeCode = Schema.Literals([
+  ...IntegrationBoundaryCode.literals,
   "table_not_declared",
   "row_not_found",
   "invalid_row",
   "unique_violation",
-  "access_denied",
   "invalid_cursor",
   "not_additive",
-  "connection_not_declared",
-  "invalid_request",
-  "timeout",
-  "too_large",
-  "source_unavailable",
   "relation_unknown",
   "invalid_query",
   "shape_mismatch",

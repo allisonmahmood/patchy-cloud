@@ -2,7 +2,7 @@
 
 The product, written down where agents read it. Each section is the resolution of one decision on the [foundation map](https://github.com/allisonmahmood/patchy-cloud/issues/5); the glossaries in each `CONTEXT.md` carry the words, this file carries the shape.
 
-**Built today:** tier 0 HTML patches with manifests, release checks and replay-safe publishing; additive patch-owned tables and file stores with browser-runtime operations, and read-only shared-table declarations; names and company addresses; user ownership and company/public sharing; Clerk sign-in; create-or-join and company administration; machine login, logout and revocation. Higher-tier serving and its browser broker, patch repos, the portal, narrower sharing, integrations, billing and company lifecycle remain the intended product shape below, not available features.
+**Built today:** tier 0 HTML patches with manifests, release checks and replay-safe publishing; additive patch-owned tables and file stores with browser-runtime operations, read-only shared-table declarations, and company Postgres connections with schema discovery and publish binding; names and company addresses; user ownership and company/public sharing; Clerk sign-in; create-or-join and company administration; machine login, logout and revocation. Higher-tier serving and its browser broker, patch repos, the portal, narrower sharing, integration query operations, billing and company lifecycle remain intended, not available features.
 
 ## Patches
 
@@ -24,7 +24,7 @@ Ownership: a patch belongs to a **user** in a company. The user holds a machine 
 
 ### Versions and publishing
 
-**Publish** is the act; each new publish is an immutable **version**, and the patch serves the version its pointer names. There is no working copy in the cloud and no unpublished patch — the working copy is local, and the act that creates a patch is the act that makes it live. `patchy publish <file>` synthesises a tier 0 **manifest** and sends one HTML **bundle**. Each version records its tier, release, manifest version, server-stamped wire version and schema revision. The publish API accepts tier 0 manifests with table and file-store definitions and shared-table declarations; integration declarations and higher tiers remain refused. File-mode publishing onto a patch with cumulative inventory is refused with `has_primitives`; that patch must be published from its repo. Moving the pointer back through rollback is future work.
+**Publish** is the act; each new publish is an immutable **version**, and the patch serves the version its pointer names. There is no working copy in the cloud and no unpublished patch — the working copy is local, and the act that creates a patch is the act that makes it live. `patchy publish <file>` synthesises a tier 0 **manifest** and sends one HTML **bundle**. Each version records its tier, release, manifest version, server-stamped wire version and schema revision. The publish API accepts tier 0 manifests with table and file-store definitions, shared-table declarations and resolved Postgres connections; higher tiers remain refused. File-mode publishing onto a patch with cumulative inventory is refused with `has_primitives`; that patch must be published from its repo. Moving the pointer back through rollback is future work.
 
 A **publish key** identifies one attempt for its owning user. The CLI exclusively creates `attempt.json` with the complete request and owner before sending and recovers it first on the next publish, using a current token for that same user. Concurrent CLI processes resend the existing attempt rather than overwriting it; even a process that loses the creation race must authenticate its original owner. An account switch cannot resend another user's saved content. Killing a process leaves the persisted attempt recoverable, and clearing only the matching publish key prevents a stale response from removing a newer attempt. Repeating the same request returns the stored response without a new version, even after the instance's release changes; reusing the key with a different payload is a conflict. New publishes require an exact-current CLI release.
 
@@ -71,7 +71,7 @@ reads and four file operations. A company version returns its active viewer and 
 public version returns null for `me` and refuses owned-table, shared-table and file access, even to
 a signed-in viewer. Requests are bound to the loaded version and cannot switch
 acting users mid-page. Runtime records every table and file mutation before
-execution. The broker, higher-tier serving and integrations remain future work.
+execution. The broker, higher-tier serving and integration query operations remain future work.
 
 What tier 1 cannot do is anything the viewer's browser is not there to do: no pre-processing before the data reaches the page, no work on behalf of one viewer visible to another. Save a photo to file storage and it is saved; that is the whole story.
 
@@ -91,7 +91,7 @@ The tier is an explicit field in the patch repo, written by `init`, and the clou
 
 ## Companies
 
-A **company** is the tenant everything on Patchy Cloud hangs off. Every patch and user lives in exactly one company, and nothing inside crosses the company line except a patch someone chose to make public. A company is flat — no sub-tenants — and carries a globally unique **handle** alongside its display name. In the intended product it is also the unit that pays, owns connections and groups, and has usage counted against it; billing, connections and groups are not built yet.
+A **company** is the tenant everything on Patchy Cloud hangs off. Every patch and user lives in exactly one company, and nothing inside crosses the company line except a patch someone chose to make public. A company is flat — no sub-tenants — and carries a globally unique **handle** alongside its display name. It owns its Postgres connections; billing, groups and company-wide usage accounting are not built yet.
 
 A company comes to exist on **create-or-join**, after sign-in: a person without an invitation names a company, chooses its handle and becomes its first admin. The company and user are created together; a solo builder is a company of one. The handle is fixed once created, 3–32 lowercase letters, digits or hyphens, with no leading or trailing hyphen and reserved platform names refused. Self-serve billing — put in a card, set when it tops up — is the intended later path, not a step in today's signup.
 
@@ -99,7 +99,7 @@ A company comes to exist on **create-or-join**, after sign-in: a person without 
 
 A **user** is one individual with one account, in exactly one company. They sign in, and they hold expiring, rotatable tokens on the machines they build patches from — see [Identity and access](#identity-and-access).
 
-An **admin** is a user with the role that runs the company. Today that means invitations, roles, deactivation and reactivation; creating groups, setting their permissions, connecting company integrations and reassigning a patch's owner are future powers.
+An **admin** is a user with the role that runs the company. Today that means invitations, roles, deactivation, reactivation and company Postgres connections; creating groups, setting their permissions and reassigning a patch's owner are future powers.
 
 Today `/company` lists users, roles, active/deactivated state and pending invites.
 Admins manage invitations, roles, deactivation and reactivation there; members
@@ -118,6 +118,11 @@ In the intended company lifecycle, deactivation will also wipe personal-connecti
 ### Integrations and connections
 
 Patchy ships the **integration** — Salesforce-the-capability, the same for every company, a company-scoped primitive built by Patchy. What a company holds is a **connection**: the live, credentialed instance of an integration, connected by an admin and granted to groups or company-wide. Some integrations connect per user — sign into your own email — making a personal connection that dies with the user's account: credential wiped, stored data kept. A user needs no admin enablement to make a personal connection. A patch always uses a connection, never the integration in the abstract, and no patch at any tier ever sees a credential. The layer itself — modes, handles, declaring, what patch code is handed — is spelled out under [Integrations](#integrations).
+
+Today admins manage Postgres at `/company/connections`, linked from `/company`;
+members read its handles, descriptions, status and discovery/test timestamps.
+Connections are company-wide, not per patch. Personal connections and group
+grants remain future work.
 
 ### Addresses
 
@@ -163,7 +168,7 @@ Later, an admin may verify the company's **domain** — proven by email, never a
 
 ### Roles
 
-Two: **member** and **admin**. **Everyone in a company builds** — a member publishes patches with no gate and no permission to ask, because that is the point of the product. Today admin adds invitations, role changes, deactivation and reactivation; groups, domain and SSO, company connections and patch reassignment will come with those features. A company always has at least one active admin, who can neither be demoted nor deactivated. There is no builder role and no viewer role; if a company ever wants "can't publish", that is a setting to add, not a third role.
+Two: **member** and **admin**. **Everyone in a company builds** — a member publishes patches with no gate and no permission to ask, because that is the point of the product. Today admin adds invitations, role changes, deactivation, reactivation and company connections; groups, domain and SSO and patch reassignment will come with those features. A company always has at least one active admin, who can neither be demoted nor deactivated. There is no builder role and no viewer role; if a company ever wants "can't publish", that is a setting to add, not a third role.
 
 ### Access to a patch
 
@@ -344,7 +349,9 @@ and ArrayBuffer transfer arrive with the browser broker.
 
 ## Integrations
 
-This layer is not built yet. The rest of this section records its intended shape.
+Company Postgres connections, discovery and publish binding are built. The operation
+handler map still has no Postgres operations: a declared connection is inert until
+the query surface arrives. Other integrations and personal connections remain planned.
 
 An **integration** is a capability Patchy ships — Salesforce, Gmail, Postgres — built and maintained by Patchy, the same for every company. What a company holds is a **connection**: the live, credentialed instance of one. That distinction was drawn with [Companies](#integrations-and-connections); this section is the layer itself — how a connection comes to exist, how a patch declares and uses one, and what patch code is actually handed.
 
@@ -355,6 +362,55 @@ Integrations sit inside the **primitive** model. A primitive is what the cloud p
 Every integration declares the mode or modes it supports, fixed by Patchy when the integration is built — never chosen at connect time. A **company** connection is made once by an admin and granted to groups or the whole company: one shared credential, where "as the viewer" means Patchy checks the viewer holds the grant and records who acted — the source itself sees the shared identity. A **personal** connection is one user's own — sign into your own Gmail — made by the user with no admin involved, and dying with their account. An integration that honestly supports both is two declarations to a patch: "Salesforce, shared" and "Salesforce, as each rep" are different things to build against.
 
 A company holds as many connections of one integration as it likes — two databases, a production and a sandbox CRM — so every company connection carries a **handle** alongside its integration: `postgres/warehouse`, `salesforce/sandbox`. Handles are per integration per company, first-come like every name. Personal connections need none: a user holds at most one per integration.
+
+### Connecting Postgres
+
+An admin pastes a connection string in the browser-only connect form, with an
+immutable handle (3–32 lowercase letters, digits or hyphens, no leading/trailing
+hyphen) and a description. The description explains the source to builders;
+it never grants or restricts access. No CLI path accepts the secret.
+
+Only host, port, database, user, password and sslmode are accepted. Patchy requires
+TLS with certificate and hostname verification, refuses superusers and roles with
+CREATEDB or CREATEROLE, and rejects private, loopback and metadata addresses after
+DNS resolution. Every source reconnect resolves and checks again: **the database
+must be reachable from the internet over TLS**.
+
+Before connecting, the form states: **Every member can query this database through
+any patch that declares it, as the role you supply.** The read-only promise is
+**constrained reads through the role you supplied**, not harmless execution of
+arbitrary SQL: SELECT can invoke functions with side effects or extensions.
+Postgres query operations will use one extended-protocol statement in a read-only
+transaction, a statement timeout and a service deadline; they are not admitted yet.
+
+Connect tests the role and discovers metadata before saving credentials encrypted
+under the operator's keyring. Stored secrets never appear on a page or in generated
+metadata. Admins can test, rotate credentials on the same endpoint, retarget to a
+new host or database with discovery, refresh schema, disconnect, reconnect and edit
+the description. Rotation and retargeting preserve identity; disconnect keeps data.
+A connection may be deleted only when no stored patch version declares it.
+
+### Discovery and binding
+
+Discovery reads metadata, never company rows: tables (including foreign tables)
+and views, column types and nullability, primary and foreign keys, enum labels
+and named exclusions, including columns the supplied role cannot select.
+Snapshots are bounded to 500 relations with 200 columns each and 8 MiB total.
+At most 1,000 enums with 1,000 labels each are retained; columns that exceed those
+limits receive named exclusions rather than truncated enum labels. More than
+10,000 exclusions refuses discovery. Each successful discovery stores a whole
+validated immutable snapshot with a new server-assigned revision;
+a failure leaves the previous snapshot current. Snapshots are never deleted in v1.
+Discovery is attributed to the admin in the runtime log; its recent-calls UI
+arrives with query operations.
+
+A Postgres declaration carries `{ kind: "postgres", handle, id, revision }`.
+Publish verifies that the handle and id name the same connected company
+connection (`connection_not_connected`) and that the generated revision equals
+the current snapshot (`stale_generated`: “the warehouse schema changed; run
+`patchy refresh`”). Checks run before bytes and again while the version is recorded.
+Refresh never rewrites an existing version's recorded snapshot; reusing a deleted
+handle cannot silently rebind an old declaration.
 
 ### Declaring, granting, opening
 
@@ -374,7 +430,7 @@ There is no bring-your-own source: no generic REST escape hatch and no "connect 
 
 ### Development
 
-The builder's agent reaches connections through the same layer, as its user: the machine token stands in for the session, so the dev loop sees exactly what the user would see in the browser — their grants, their personal connections, nothing more. There are no mocks and no per-connection staging environments; the blast radius of an agent is the blast radius of its user.
+Patch development uses local fixtures, not live source rows or production credentials. The metadata-only development connection layer loads no keyring or platform database. The planned Postgres fixture is one PGlite database per connection, shared by its aliases, populated from `fixtures/postgres-<handle>.sql`; view fixtures are synthetic tables and do not recompute. The generated relation clients, fixture execution, catalog and refresh tooling arrive in the following SDK tickets. They consume the immutable snapshots already stored here.
 
 ### The edges
 

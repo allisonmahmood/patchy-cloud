@@ -410,6 +410,11 @@ export function htmlPage(options: {
       text-decoration: underline;
       cursor: pointer;
     }
+    .company-section { margin-top: 32px; }
+    .company-list { list-style: none; padding: 0; }
+    .company-row { padding: 20px 0; border-bottom: 1px solid var(--line-strong); overflow-wrap: anywhere; }
+    .company-row p { margin: 0 0 8px; }
+    .company-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 
 
     @media (max-width: 760px) {

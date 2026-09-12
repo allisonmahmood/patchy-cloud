@@ -1,0 +1,39 @@
+{
+  "name": "@patchy/integrations",
+  "version": "0.0.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "description": "Company connections, encrypted credentials and Postgres schema discovery.",
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.definition.json"
+  },
+  "dependencies": {
+    "@patchy/api": "workspace:*",
+    "@patchy/auth": "workspace:*",
+    "@patchy/companies": "workspace:*",
+    "@patchy/core": "workspace:*",
+    "@patchy/runtime": "workspace:*",
+    "effect": "catalog:",
+    "pg": "^8.23.0"
+  },
+  "devDependencies": {
+    "@effect/platform-node": "catalog:",
+    "@effect/vitest": "catalog:",
+    "@patchy/sql": "workspace:*",
+    "@types/pg": "^8.23.1",
+    "vitest": "^4.1.11"
+  }
+}

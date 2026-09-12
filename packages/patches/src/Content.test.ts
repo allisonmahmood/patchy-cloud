@@ -1030,6 +1030,7 @@ it.layer(
 it.layer(
   Content.layer.pipe(
     Layer.provideMerge(Layer.mergeAll(Patches.layer, store.layer)),
+    Layer.provideMerge(Fixtures.integrations),
     Layer.provideMerge(
       Tables.layer.pipe(Layer.provideMerge(CompanyTesting.layer({ maxBackends: 0 })))
     )

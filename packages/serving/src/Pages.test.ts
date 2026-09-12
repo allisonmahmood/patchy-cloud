@@ -30,6 +30,7 @@ import { Companies, InviteMail, Users } from "@patchy/companies";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { ContentStore } from "@patchy/content-store";
 import { Content, Patches } from "@patchy/patches";
+import { ConnectionStore } from "@patchy/integrations";
 import * as Testing from "@patchy/company-database/testing";
 import { Tables } from "@patchy/primitives";
 import * as Pages from "./Pages.js";
@@ -97,6 +98,7 @@ const services = Layer.mergeAll(Content.layer, DeviceLogins.layer).pipe(
       InviteMail.layerRecording
     )
   ),
+  Layer.provideMerge(ConnectionStore.layerDev([])),
   Layer.provideMerge(Tables.layer),
   Layer.provideMerge(Testing.layer()),
   Layer.provideMerge(ConfigProvider.layer(ConfigProvider.fromUnknown(clerkEnv())))

@@ -4,12 +4,30 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Redacted from "effect/Redacted";
 import { expect } from "vitest";
-import { readDeveloperEnv } from "./developerEnv.js";
+import { readCredentialKeys, readDeveloperEnv } from "./developerEnv.js";
 
 const Platform = Layer.mergeAll(NodeFileSystem.layer, NodePath.layer);
 
 it.layer(Platform)("readDeveloperEnv", (it) => {
+  it.effect("keeps the worktree credential key across restarts without overwriting it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const file = path.join(yield* fs.makeTempDirectoryScoped(), "dev.env");
+      const first = yield* readCredentialKeys(file);
+      const second = yield* readCredentialKeys(file);
+      expect(Redacted.value(second)).toBe(Redacted.value(first));
+      const encoded = Redacted.value(first).split(":")[1]!;
+      expect(Buffer.from(encoded, "base64").byteLength).toBe(32);
+      expect((yield* fs.stat(file)).mode & 0o777).toBe(0o600);
+      yield* fs.writeFileString(file, "PATCHY_CREDENTIAL_KEYS=invalid\n");
+      expect((yield* readCredentialKeys(file).pipe(Effect.exit))._tag).toBe("Failure");
+      expect(yield* fs.readFileString(file)).toBe("PATCHY_CREDENTIAL_KEYS=invalid\n");
+    }).pipe(Effect.scoped)
+  );
+
   it.effect("reads only Clerk settings and the seed user override from the developer file", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

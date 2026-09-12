@@ -24,8 +24,9 @@ import { migrations as companiesMigrations } from "@patchy/companies";
 import { migrations as companyDatabaseMigrations } from "@patchy/company-database";
 import { migrations as patchesMigrations, Patches } from "@patchy/patches";
 import { migrations as runtimeMigrations } from "@patchy/runtime";
+import { migrations as integrationsMigrations } from "@patchy/integrations";
 import { layerFromUrl, migrate } from "@patchy/sql";
-import { developerEnvFile, readDeveloperEnv } from "./developerEnv.js";
+import { developerEnvFile, readCredentialKeys, readDeveloperEnv } from "./developerEnv.js";
 import { DATABASE_NAME, Plan } from "./plan.js";
 import { alive } from "./process.js";
 import { PG_FLAGS, PG_PASSWORD, PG_USER } from "./postgres.js";
@@ -151,7 +152,8 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
     ...authMigrations,
     ...patchesMigrations,
     ...companyDatabaseMigrations,
-    ...runtimeMigrations
+    ...runtimeMigrations,
+    ...integrationsMigrations
   }).pipe(Effect.provide(layerFromUrl(Redacted.make(plan.databaseUrl))));
   const inherited = yield* Config.all({
     PATH: Config.string("PATH"),
@@ -159,6 +161,7 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
   });
   const devEnvFile = yield* developerEnvFile(inherited.HOME);
   const { PATCHY_DEV_CLERK_USER_ID, ...clerk } = yield* readDeveloperEnv(devEnvFile);
+  const credentialKeys = yield* readCredentialKeys(path.join(plan.stateDir, "dev.env"));
   yield* Effect.tryPromise({
     try: () => applyDevSeed(plan.databaseUrl, PATCHY_DEV_CLERK_USER_ID || undefined),
     catch: (cause) => new DatabaseSetupError({ cause })
@@ -188,6 +191,7 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
         env: {
           ...inherited,
           ...clerk,
+          PATCHY_CREDENTIAL_KEYS: Redacted.value(credentialKeys),
           PORT: String(plan.ports.server),
           DATABASE_URL: plan.databaseUrl,
           PATCHY_COMPANY_DB_ADMIN_URL: plan.databaseUrl,

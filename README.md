@@ -10,7 +10,7 @@ A patch runs at one of a few **tiers**: tier 0 is a static page with no patch co
 
 Tier 0. An agent hands the server one self-contained HTML file and gets back a URL, shared with the company by default or made public on purpose. Patches belong to users in companies; publishing uses user-owned machine tokens. Clerk holds the browser session, and the shell keeps it fresh while the patch runs no script.
 
-`patchy login` hands the person a browser URL and code; after they confirm, the CLI's poll mints and saves the machine token. `patchy publish --share public` and `patchy share` change who can open a patch. **Your machines** lists and revokes keys and offers browser sign-out; the company page handles invites, roles, deactivation and reactivation. Higher tiers and integrations are still to come.
+`patchy login` hands the person a browser URL and code; after they confirm, the CLI's poll mints and saves the machine token. `patchy publish --share public` and `patchy share` change who can open a patch. **Your machines** lists and revokes keys and offers browser sign-out; the company page handles invites, roles, deactivation and reactivation. `/company/connections` manages company Postgres credentials and immutable schema discovery. Publish admits resolved Postgres declarations; query operations and higher tiers are still to come.
 
 This repository is a full-history copy of [PatchPage](https://github.com/allisonmahmood/PatchPage), taken in a different direction. PatchPage remains a separate, free product with its own instance; nothing here runs it or publishes to it, and commits from before the split describe PatchPage, not Patchy Cloud.
 
@@ -58,6 +58,7 @@ A Turborepo monorepo managed with pnpm. [AGENTS.md](AGENTS.md) is the guide to w
 - `packages/serving` — the page routes and login door integration, sharing-aware CSP and caching, and the trusted-proxy schema (`@patchy/serving`).
 - `packages/runtime` — browser-only admission, loaded-version binding, operation dispatch and the attributed runtime log (`@patchy/runtime`).
 - `packages/primitives` — additive table/store provisioning, schema revisions, bounded owned-table operations, read-only shared-table operations and immutable file operations over Postgres and PGlite (`@patchy/primitives`).
+- `packages/integrations` — company connection pages, encrypted credentials, Postgres discovery and immutable snapshots, and publish declaration resolution (`@patchy/integrations`).
 - `packages/content-store` — the object store for a patch's bytes, with filesystem and Azure Blob layers (`@patchy/content-store`).
 - `packages/sql`, `packages/analytics`, `packages/limits` — the Postgres client and Migrator, the event service, the rate limiter.
 - `packages/company-database` — company placements, lazy Postgres databases, bounded pools, transactional patch locks, cumulative inventory and the PGlite development layer.

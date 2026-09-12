@@ -4,6 +4,7 @@
  */
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Redacted from "effect/Redacted";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
@@ -19,6 +20,8 @@ import {
 import { DEV_SEED } from "@patchy/auth/seed";
 import * as CompanyTesting from "@patchy/company-database/testing";
 import { Tables } from "@patchy/primitives";
+import { ConnectionStore, CredentialKeys, PostgresSource } from "@patchy/integrations";
+import { RuntimeLog } from "@patchy/runtime";
 import * as Patches from "../Patches.js";
 
 export const manifest = {
@@ -104,8 +107,18 @@ const seed = Effect.gen(function* () {
   }
 });
 
+export const integrations = ConnectionStore.layer.pipe(
+  Layer.provideMerge(
+    Layer.mergeAll(
+      CredentialKeys.layerFromKeys(Redacted.make(`test:${Buffer.alloc(32, 1).toString("base64")}`)),
+      PostgresSource.layer,
+      RuntimeLog.layer
+    )
+  )
+);
+
 /** The seeded template with the additional users and machines above. */
-export const database = Layer.mergeAll(Layer.effectDiscard(seed), Tables.layer).pipe(
+export const database = Layer.mergeAll(Layer.effectDiscard(seed), Tables.layer, integrations).pipe(
   Layer.provideMerge(CompanyTesting.layer())
 );
 

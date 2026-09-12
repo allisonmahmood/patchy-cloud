@@ -34,6 +34,7 @@
     "@patchy/api": "workspace:*",
     "@patchy/company-database": "workspace:*",
     "@patchy/content-store": "workspace:*",
+    "@patchy/integrations": "workspace:*",
     "@patchy/limits": "workspace:*",
     "@patchy/primitives": "workspace:*",
     "@patchy/sql": "workspace:*",

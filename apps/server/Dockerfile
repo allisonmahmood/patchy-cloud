@@ -18,6 +18,7 @@ COPY packages/companies/package.json packages/companies/package.json
 COPY packages/company-database/package.json packages/company-database/package.json
 COPY packages/content-store/package.json packages/content-store/package.json
 COPY packages/core/package.json packages/core/package.json
+COPY packages/integrations/package.json packages/integrations/package.json
 COPY packages/limits/package.json packages/limits/package.json
 COPY packages/patches/package.json packages/patches/package.json
 COPY packages/primitives/package.json packages/primitives/package.json

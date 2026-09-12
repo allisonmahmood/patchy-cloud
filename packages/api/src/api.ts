@@ -160,7 +160,12 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "stored response and status, even after an upgrade; changed payloads answer 409 " +
           "`publish_key_conflict`. New attempts require the exact current release and manifest " +
           "version from `GET /api/release`. Tier 0 may define tables and file stores, provisioned additively; " +
-          "higher tiers answer `tier_mismatch`, integration uses `invalid_manifest`. " +
+          "higher tiers answer `tier_mismatch`. " +
+          'Postgres uses carry `{ kind: "postgres", handle, id, revision }`, keyed by alias. ' +
+          "The handle and id must name the same connected company connection, otherwise " +
+          "`connection_not_connected`; the revision must equal its current schema snapshot, " +
+          "otherwise `stale_generated` (run `patchy refresh`). Credential rotation and retargeting " +
+          "preserve the connection id. Declarations are admitted but no Postgres runtime operations run yet. " +
           'Shared-table uses carry `{ kind: "sharedTable", patchId, table, id, revision }`, keyed by alias. ' +
           "The resolved id is `<patchId>/<table>`, never a patch name; revision stamps the source inventory. " +
           "Publish requires a live same-company source the publisher can open and an inventory table " +

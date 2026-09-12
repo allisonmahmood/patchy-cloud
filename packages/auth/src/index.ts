@@ -11,6 +11,7 @@ export {
   pageResponse,
   returnPath,
   sessionScripts,
+  signOutForm,
   withCookies,
   type SessionShell
 } from "./page.js";

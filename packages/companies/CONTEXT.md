@@ -17,11 +17,11 @@ One individual's Patchy account in exactly one company, carrying the member or a
 _Avoid_: account, person (a user is the account, not the human), builder (every user is one)
 
 **Member**:
-The role every user has who is not an admin. A member builds — publishes patches with no gate — and reads the company's users, roles, states and pending invites without management actions.
+The role every user has who is not an admin. A member builds — publishes patches with no gate — and reads the company's users, roles, states, pending invites and connection metadata without management actions.
 _Avoid_: viewer (the [Auth](../auth/CONTEXT.md) identity, whatever the user's role), builder (a description, not a role), guest
 
 **Admin**:
-A user with the role that manages the company's invitations, roles, deactivation and reactivation. A company always has at least one active admin, and the last one can neither be demoted nor deactivated.
+A user with the role that manages the company's invitations, roles, deactivation, reactivation and [connections](../integrations/CONTEXT.md). A company always has at least one active admin, and the last one can neither be demoted nor deactivated.
 _Avoid_: owner (patches have owners; companies have admins), operator (Patchy, never a company role), superadmin
 
 **Group**:

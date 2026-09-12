@@ -1,6 +1,6 @@
 # Integrations
 
-The future company capability for reaching outside systems: integrations, connections and the calls made through them. There is no implementation yet; [the product](../../docs/product.md#integrations) holds its decisions, [Patches](../patches/CONTEXT.md) defines primitives, [Companies](../companies/CONTEXT.md) owns membership, and [Auth](../auth/CONTEXT.md) defines the viewer.
+The company capability for connecting outside systems without handing credentials to patches. Postgres connections and their discovered metadata are managed here; [Companies](../companies/CONTEXT.md) owns membership and [Runtime](../runtime/CONTEXT.md) binds operations to the acting viewer.
 
 ## Language
 
@@ -9,7 +9,7 @@ A capability Patchy ships for reaching an outside system, such as Salesforce, Gm
 _Avoid_: connector, app (Zapier's word), resource (Retool and Windmill's word), toolkit
 
 **Connection**:
-A live, credentialed instance of an integration, used by a patch rather than owned by it. A company connection belongs to the company and is granted to users; a personal connection belongs to one user.
+A credentialed instance of an integration, used by a patch rather than owned by it. Today's company connection is shared company-wide; disconnecting preserves its identity and metadata while denying new use.
 _Avoid_: datasource, connected account, credential (what it holds, not what it is)
 
 **Personal connection**:
@@ -17,12 +17,44 @@ A connection belonging to one user rather than their company, such as that user'
 _Avoid_: user resource, private connection
 
 **Connection handle**:
-The name a company connection carries beside its integration — `warehouse` in `postgres/warehouse` — distinguishing several connections of the same integration in one company. A personal connection needs no such name.
+The immutable name a company connection carries beside its integration — `warehouse` in `postgres/warehouse` — distinguishing connections in one company. A declared connection binds to its stable identity, not a later reuse of that handle.
 _Avoid_: alias, connection id (the identity, which never changes)
 
 **Declaration**:
 A patch's statement of a connection or shared table it uses but does not own. It names an integration and connection handle, or a source patch's id and table; it describes a requirement, never a grant of access.
 _Avoid_: dependency, requirement, scope request
+
+**Description**:
+An admin's hint about a connection's purpose, helping a builder choose it. It neither grants nor restricts access.
+_Avoid_: permission, policy, grant
+
+**Metadata**:
+The source's shape as discovered for one connection, never its business rows. Postgres metadata is a schema snapshot.
+_Avoid_: instance, fixture
+
+**Schema snapshot**:
+An immutable description of a connection's relations, columns, keys, enum labels and named exclusions. A failed discovery leaves the previous snapshot current.
+_Avoid_: inventory (the cumulative authority for patch-owned resources), schema revision (Primitives' term)
+
+**Metadata revision**:
+The connection's server-assigned snapshot identifier. A published declaration keeps the revision it was generated against; refreshing discovery never rewrites it.
+_Avoid_: release, wire version, credential revision
+
+**Relation**:
+A source table or view described in a Postgres schema snapshot. Its source name is preserved.
+_Avoid_: primitive table, collection
+
+**Retarget**:
+Replacing a connection's source endpoint while keeping the connection's identity and discovering its new shape. Existing declarations keep their identity and recorded snapshot.
+_Avoid_: rename, new connection
+
+**Credential revision**:
+The changing generation of a connection's credentials and connected state. It invalidates old source sessions independently of the metadata revision.
+_Avoid_: snapshot revision, key id
+
+**Escape hatch**:
+An explicit raw query instead of the planned relation-specific typed client. It remains a constrained read through the supplied role, not harmless execution of arbitrary SQL.
+_Avoid_: unrestricted SQL, direct database access
 
 **Typed client**:
 The integration-specific surface patch code is handed for a declared connection, rather than raw HTTP or a credential. For example, `salesforce.query(…)` names the integration's operation instead of the transport.

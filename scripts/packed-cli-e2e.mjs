@@ -2632,6 +2632,7 @@ async function startServerAttempt({ publicBaseUrl, objectDir, serverEntryPath })
       DATABASE_URL: databaseUrl,
       PATCHY_COMPANY_DB_ADMIN_URL: databaseUrl,
       PATCHY_COMPANY_DB_URL: databaseUrl,
+      PATCHY_CREDENTIAL_KEYS: `test:${Buffer.alloc(32, 1).toString("base64")}`,
       PATCHY_STORAGE_DIR: objectDir,
       PATCHY_PROTECTED_API_RATE_LIMIT_PER_MINUTE: "10000",
       PATCHY_AUTHENTICATED_PUBLISH_RATE_LIMIT_PER_MINUTE: "10000"

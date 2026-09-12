@@ -108,6 +108,7 @@ State lives in `<worktree>/.local/dev/` (gitignored):
 - `plan.json` — the resolved plan, including the pids once running. `status`
   and `stop` act only on what is recorded here.
 - `env` — `PATCHY_API_URL`, `PATCHY_API_TOKEN`, `DATABASE_URL`, `PATCHY_COMPANY_DB_ADMIN_URL`, `PATCHY_COMPANY_DB_URL`.
+- `dev.env` — the worktree's generated `PATCHY_CREDENTIAL_KEYS`, created privately and retained across restarts; distinct from the shared Clerk settings file.
 - `dev.log` — every line from every process, each prefixed `[dev]`,
   `[postgres]` or `[server]`.
 - `postgres/` — the cluster's data directory; `storage/` — published HTML.
@@ -148,6 +149,27 @@ key formats and boot-time validation, see
 unset locally: a port-specific origin makes worktrees evict each other's
 sessions. The runner forwards these two optional Clerk settings, but no other
 settings from `dev.env` reach the server.
+
+### Connection credential keyring
+
+The server requires `PATCHY_CREDENTIAL_KEYS`: comma-separated
+`<kid>:<base64-encoded 32 bytes>` entries. The first key encrypts new credentials;
+retained keys decrypt rows bearing their key id. Keep old keys until no encrypted
+row uses them. Reading a row never re-encrypts it; changing the active key alone
+does not rewrite existing credentials.
+
+The dev runner creates a random key once in `.local/dev/dev.env` with mode `0600`.
+Restarts reuse that file, so saved connections stay decryptable. It does not
+modify the shared developer configuration or print key values. A dev reset removes
+both the database and this keyring. For a hand-started server, supply the keyring
+securely through its environment, never through an agent transcript.
+
+Connection management is browser-only at `/company/connections`: admins connect,
+test, rotate, retarget, refresh schema, disconnect, reconnect, edit descriptions
+and delete undeclared connections; members read metadata. The normal production
+connector refuses local/private addresses even in a local instance. Offline tests
+exercise discovery against disposable Postgres through the source seam rather
+than weakening that restriction. No Postgres runtime operation is admitted yet.
 
 ### Seed
 
@@ -484,7 +506,8 @@ SIGTERM — tears the other down. Migrations run through Effect's Migrator in
 `0002_auth_baseline`, and Patches owns `0003_patches_baseline`. Companies also
 owns `0004_invites_expiry`, which adds and backfills invitation expiry.
 Company database owns `0005_company_database_baseline`; Runtime owns
-`0006_runtime_baseline`. Allocate migration ids monotonically in landing order:
+`0006_runtime_baseline`; Integrations owns `0007_integrations_baseline`.
+Allocate migration ids monotonically in landing order:
 Effect's Migrator applies only ids above the ledger's highest applied id, so a
 later migration cannot fill a lower-numbered gap. The three migrator spreads are `apps/server/src/Server.ts`,
 `scripts/dev/src/supervisor.ts` and `test/postgres.ts`; server tests clone the
@@ -525,9 +548,9 @@ The runner is the normal path. The server can still be started directly
 against a Postgres you point it at:
 
 Unlike `pnpm dev`, a hand-started server reads the environment you give it, not
-the developer `dev.env`. Export `CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY`
-securely first, then supply a disposable Postgres URL and the browser-facing
-origin:
+the developer `dev.env`. Export `CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY` and
+`PATCHY_CREDENTIAL_KEYS` securely first, then supply a disposable Postgres URL
+and the browser-facing origin:
 
 ```sh
 DATABASE_URL=postgres://... PATCHY_PUBLIC_BASE_URL=http://localhost:3000 \
@@ -535,9 +558,9 @@ DATABASE_URL=postgres://... PATCHY_PUBLIC_BASE_URL=http://localhost:3000 \
   PATCHY_STORAGE_DIR=.local/manual-storage pnpm --filter @patchy/server dev
 ```
 
-All six variables are required: `DATABASE_URL`, `CLERK_PUBLISHABLE_KEY`,
-`CLERK_SECRET_KEY`, `PATCHY_PUBLIC_BASE_URL`, `PATCHY_COMPANY_DB_ADMIN_URL`
-and `PATCHY_COMPANY_DB_URL`. None has a default; startup
+All seven variables are required: `DATABASE_URL`, `CLERK_PUBLISHABLE_KEY`,
+`CLERK_SECRET_KEY`, `PATCHY_PUBLIC_BASE_URL`, `PATCHY_COMPANY_DB_ADMIN_URL`,
+`PATCHY_COMPANY_DB_URL` and `PATCHY_CREDENTIAL_KEYS`. None has a default; startup
 refuses a missing variable and names it. `PATCHY_PUBLIC_BASE_URL` must be an
 HTTP(S) origin, without credentials, a path, query or fragment, and must match
 the URL used in the browser; it is Clerk's single origin authority.
