@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
+import { EventEmitter, on } from "node:events";
 import {
   access,
   appendFile,
@@ -17,6 +18,7 @@ import { createConnection, createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { chromium, expect } from "@playwright/test";
 import pg from "pg";
 import { tsImport } from "tsx/esm/api";
 import * as Effect from "effect/Effect";
@@ -66,6 +68,8 @@ let serverReadyStdoutObserved = false;
 let serverStdout = "";
 let serverStderr = "";
 let serverBindCollisionProbe;
+let tier1BrowserServer;
+let patchDevCleanup;
 /** The embedded Postgres behind the real server, started once per process. */
 let postgres;
 const TERMINATION_SIGNALS = ["SIGHUP", "SIGINT", "SIGTERM", "SIGBREAK"];
@@ -763,6 +767,8 @@ try {
     allowFailure: true
   });
   assert.equal(removedAgain.code, 2, "deleting a patch that is gone is the instance's refusal");
+
+  await runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release: installedManifest.version });
 
   // Login uses its own state and dev env so it cannot replace the seeded key
   // that the publishing scenarios above need. Revoke that seed only at the end.
@@ -3025,6 +3031,325 @@ async function runCli(cliPath, args, options) {
   return result;
 }
 
+function parseJsonSuccess(result, keys) {
+  assert.equal(result.code, 0);
+  assert.equal(result.stderr, "", "--json success must leave stderr empty");
+  const document = JSON.parse(result.stdout);
+  assertDocumentKeys(document, keys);
+  assert.equal(document.ok, true);
+  return document;
+}
+
+async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
+  console.log("[packed-cli-e2e] tier 1: init with a fresh pnpm store and metadata cache");
+  const dir = path.join(tempRoot, "tier1-notes");
+  const options = {
+    cwd: dir,
+    env: {
+      ...cliEnv,
+      pnpm_config_store_dir: path.join(tempRoot, "tier1 pnpm store"),
+      pnpm_config_cache_dir: path.join(tempRoot, "tier1 pnpm metadata")
+    },
+    timeoutMs: 120_000
+  };
+  const initialized = parseJsonSuccess(
+    await runCli(
+      cliPath,
+      ["init", dir, "--tier", "1", "--purpose", "Exercise disposable notes end to end", "--json"],
+      { ...options, cwd: tempRoot }
+    ),
+    ["ok", "dir", "release", "tier", "generated", "skills", "installed"]
+  );
+  assert.equal(initialized.dir, dir);
+  assert.equal(initialized.release, release);
+  assert.equal(initialized.tier, 1);
+  assert.equal(initialized.installed, true);
+  assert.deepEqual(initialized.skills, ["patchy-files", "patchy-loop", "patchy-tables"]);
+  assert.ok(Array.isArray(initialized.generated));
+  for (const file of initialized.generated) assert.equal(typeof file, "string");
+  const repoCliPath = installedCliBinPath(dir);
+  await checkedCall(() => access(repoCliPath));
+
+  // Register the repo before starting: a failed/interrupted start can already have
+  // spawned its detached daemon. The CLI's stop checks its recorded process identity.
+  patchDevCleanup = { cliPath: repoCliPath, options };
+  const dev = parseJsonSuccess(await runCli(repoCliPath, ["dev", "--json"], options), [
+    "ok",
+    "healthy",
+    "url",
+    "logPath",
+    "stop",
+    "pid",
+    "release",
+    "identity"
+  ]);
+  assert.equal(dev.healthy, true);
+  assert.equal(dev.release, release);
+  assert.deepEqual(dev.identity, {
+    user: { id: DEV_SEED.userId, email: DEV_SEED.email, name: DEV_SEED.userName },
+    company: {
+      id: DEV_SEED.companyId,
+      handle: DEV_SEED.companyHandle,
+      name: DEV_SEED.companyName
+    },
+    role: DEV_SEED.role,
+    machine: { id: DEV_SEED.tokenId, name: DEV_SEED.tokenName }
+  });
+  assert.ok(Number.isSafeInteger(dev.pid) && dev.pid > 0);
+  patchDevCleanup.pid = dev.pid;
+  trackedProcessGroups.add(dev.pid);
+  assert.equal(new URL(dev.url).origin.startsWith("http://127.0.0.1:"), true);
+  assert.ok(dev.logPath.startsWith(path.join(dir, ".patchy", "dev") + path.sep));
+  assert.equal(dev.stop, `pnpm patchy dev stop --api-url '${publicBaseUrl}'`);
+
+  // A BrowserServer exposes the owned process, so the existing signal/process-group
+  // cleanup also covers Chromium. Failure to launch is a failure, never a skipped tier.
+  throwIfSignalLatched();
+  tier1BrowserServer = await chromium.launchServer({
+    headless: true,
+    host: "127.0.0.1",
+    env: sanitizedProcessEnv(),
+    handleSIGINT: false,
+    handleSIGTERM: false,
+    handleSIGHUP: false
+  });
+  registerSpawnedChild(tier1BrowserServer.process());
+  throwIfSignalLatched();
+  const browser = await checkedCall(() => chromium.connect(tier1BrowserServer.wsEndpoint()));
+  const context = await checkedCall(() => browser.newContext());
+  // Match browser-tier1's offline boundary, without replacing any runtime response.
+  await context.route("**/*", async (route) => {
+    const hostname = new URL(route.request().url()).hostname;
+    if (hostname === "127.0.0.1" || hostname === "localhost") await route.continue();
+    else await route.abort("blockedbyclient");
+  });
+  const page = await context.newPage();
+  page.setDefaultTimeout(15_000);
+  page.setDefaultNavigationTimeout(15_000);
+  const runtimeResponses = new EventEmitter();
+  await page.exposeBinding("__packedRuntimeResponse", ({ frame }, response) => {
+    runtimeResponses.emit("response", { frame, ...response });
+  });
+  await page.addInitScript(() => {
+    const fetch = window.fetch.bind(window);
+    window.fetch = async (input, init) => {
+      const request = new Request(input, init);
+      if (new URL(request.url).pathname !== "/api/runtime/call" || request.method !== "POST")
+        return fetch(request);
+      const body = await request.clone().json();
+      const response = await fetch(request);
+      // Copy bytes in the browser, before the broker can react and navigate.
+      // No CDP response-body lookup survives here for a reload to invalidate.
+      const result = await response.clone().json();
+      await window.__packedRuntimeResponse({
+        status: response.status,
+        url: response.url,
+        body,
+        result
+      });
+      return response;
+    };
+  });
+  const notes = page.frameLocator("#patch");
+  const readRuntime = async (op, published) => {
+    for await (const [response] of on(runtimeResponses, "response", {
+      signal: AbortSignal.timeout(15_000)
+    })) {
+      const { frame, status, url, body, result } = response;
+      if (body.op !== op) continue;
+      assert.equal(status, 200);
+      assert.equal(frame, page.mainFrame(), "only the real shell may call the runtime");
+      assertDocumentKeys(body, ["patchId", "versionId", "principal", "wire", "op", "args"]);
+      assert.deepEqual(body.principal, { userId: DEV_SEED.userId });
+      assert.ok(Number.isSafeInteger(body.wire) && body.wire > 0);
+      if (published) {
+        assert.equal(body.patchId, published.patchId);
+        assert.equal(body.versionId, published.versionId);
+        assert.equal(new URL(url).origin, publicBaseUrl);
+      }
+      assertDocumentKeys(result, ["ok", "value"]);
+      assert.equal(result.ok, true);
+      return result.value;
+    }
+  };
+  const openNotes = async (url, published) => {
+    const [content, listed, shell] = await checkedCall(() =>
+      Promise.all([
+        page.waitForResponse((response) =>
+          new URL(response.url()).pathname.startsWith("/~content/")
+        ),
+        readRuntime("tables.list", published),
+        page.goto(url)
+      ])
+    );
+    assert.equal(shell.status(), 200);
+    assert.equal(content.status(), 200);
+    assert.match(shell.headers()["content-security-policy"], /frame-src 'self'/);
+    assert.match(shell.headers()["content-security-policy"], /frame-ancestors 'none'/);
+    assert.equal(
+      content.headers()["content-security-policy"],
+      "sandbox allow-scripts allow-modals; default-src 'none'; script-src 'unsafe-inline'; " +
+        "style-src 'unsafe-inline'; img-src blob: data:; font-src blob: data:; " +
+        "media-src blob: data:; connect-src 'none'; frame-ancestors 'self'"
+    );
+    assert.equal(content.headers()["content-type"], "text/html; charset=utf-8");
+    assert.equal(
+      await page.locator("#patch").getAttribute("sandbox"),
+      "allow-scripts allow-modals"
+    );
+    await expect(notes.getByRole("heading", { name: "Notes", exact: true })).toBeVisible();
+    await expect(notes.locator("#error")).toBeEmpty();
+    return listed;
+  };
+  const addNote = async (title, published) => {
+    await notes.getByRole("textbox", { name: "Title", exact: true }).fill(title);
+    const [row, listed] = await checkedCall(() =>
+      Promise.all([
+        readRuntime("tables.insert", published),
+        readRuntime("tables.list", published),
+        notes.getByRole("button", { name: "Add note", exact: true }).click()
+      ])
+    );
+    assertDocumentKeys(row, ["id", "createdAt", "updatedAt", "title"]);
+    assert.equal(row.title, title);
+    assert.equal(typeof row.id, "string");
+    assert.ok(row.id.length > 0);
+    assert.deepEqual(listed, {
+      rows: [row],
+      cursor: null
+    });
+    await expect(notes.locator("#list li")).toHaveText([title]);
+    await expect(notes.locator("#error")).toBeEmpty();
+    return row;
+  };
+
+  console.log("[packed-cli-e2e] tier 1: inserting through the generated app and dev shell");
+  assert.deepEqual(await openNotes(dev.url), { rows: [], cursor: null });
+  const localRow = await addNote("Local-only note");
+  const stopped = parseJsonSuccess(await runCli(repoCliPath, ["dev", "stop", "--json"], options), [
+    "ok",
+    "healthy",
+    "reset"
+  ]);
+  assert.deepEqual(stopped, {
+    ok: true,
+    healthy: false,
+    reset: false
+  });
+  trackedProcessGroups.delete(dev.pid);
+  patchDevCleanup = undefined;
+  assert.equal(await isTcpPortOpen(Number(new URL(dev.url).port)), false);
+
+  const publishKeys = [
+    "ok",
+    "patchId",
+    "versionId",
+    "versionNumber",
+    "title",
+    "scope",
+    "name",
+    "address",
+    "publicUrl",
+    "tier",
+    "schemaRevision",
+    "provisioned",
+    "unused",
+    "warnings"
+  ];
+  console.log("[packed-cli-e2e] tier 1: publishing the repo and opening the session-gated bundle");
+  const published = parseJsonSuccess(
+    await runCli(repoCliPath, ["publish", "--json"], options),
+    publishKeys
+  );
+  assert.match(published.patchId, /^[a-z0-9]{12}$/);
+  assert.equal(typeof published.versionId, "string");
+  assert.ok(published.versionId.length > 0);
+  assert.equal(typeof published.title, "string");
+  assert.deepEqual(published, {
+    ok: true,
+    patchId: published.patchId,
+    versionId: published.versionId,
+    versionNumber: 1,
+    title: published.title,
+    scope: "company",
+    name: "tier1-notes",
+    address: `${publicBaseUrl}/${DEV_SEED.companyHandle}/tier1-notes`,
+    publicUrl: `${publicBaseUrl}/${DEV_SEED.companyHandle}/tier1-notes`,
+    tier: 1,
+    schemaRevision: 1,
+    provisioned: { tables: ["notes"], columns: ["notes.title"], indexes: [], stores: [] },
+    unused: { tables: [], columns: [], indexes: [], stores: [] },
+    warnings: []
+  });
+  assertViewerDoor(await fetchViewer(published.address));
+  await context.addCookies(
+    authTesting
+      .signedInCookies(authTesting.signSession({ azp: publicBaseUrl }))
+      .split("; ")
+      .map((cookie) => {
+        const at = cookie.indexOf("=");
+        return {
+          name: cookie.slice(0, at),
+          value: cookie.slice(at + 1),
+          url: publicBaseUrl,
+          sameSite: "Lax"
+        };
+      })
+  );
+  const hosted = await openNotes(published.address, published);
+  // Publish carries the application and schema, never local rows. Exercise the same
+  // generated form in the cloud rather than silently seeding/copying production data.
+  assert.deepEqual(hosted, { rows: [], cursor: null }, "local rows must not sync on publish");
+  await expect(notes.locator("#list li")).toHaveCount(0);
+  console.log("[packed-cli-e2e] tier 1: local data is isolated; inserting a separate hosted note");
+  const hostedRow = await addNote("Hosted note", published);
+  assert.notEqual(hostedRow.id, localRow.id);
+  assert.deepEqual(
+    await openNotes(published.address, published),
+    {
+      rows: [hostedRow],
+      cursor: null
+    },
+    "the shell's real runtime POST must return the persisted hosted row after reload"
+  );
+
+  console.log("[packed-cli-e2e] tier 1: publishing an additive optional column");
+  const configPath = path.join(dir, "patchy.config.ts");
+  const config = await checkedCall(() => readFile(configPath, "utf8"));
+  assert.ok(config.includes("title: t.text()"));
+  await checkedCall(() =>
+    writeFile(
+      configPath,
+      config.replace("title: t.text()", "title: t.text(), detail: t.text().optional()")
+    )
+  );
+  const updated = parseJsonSuccess(
+    await runCli(repoCliPath, ["publish", "--json"], options),
+    publishKeys
+  );
+  assert.notEqual(updated.versionId, published.versionId);
+  assert.deepEqual(updated, {
+    ...published,
+    versionId: updated.versionId,
+    versionNumber: 2,
+    schemaRevision: 2,
+    provisioned: { tables: [], columns: ["notes.detail"], indexes: [], stores: [] }
+  });
+  assert.deepEqual(
+    await openNotes(updated.address, updated),
+    {
+      rows: [{ ...hostedRow, detail: null }],
+      cursor: null
+    },
+    "adding a column must retain hosted rows without importing local data"
+  );
+  await expect(notes.locator("#list li")).toHaveText(["Hosted note"]);
+  await checkedCall(() => browser.close());
+  await checkedCall(() => tier1BrowserServer.close());
+  tier1BrowserServer = undefined;
+  console.log("[packed-cli-e2e] PASS: packed init → dev shell → hosted tier 1 → additive publish");
+}
+
 async function assertCliFailureNoMutation({
   cliPath,
   args,
@@ -3350,7 +3675,7 @@ function sanitizedProcessEnv(source = process.env) {
 }
 
 async function run(command, args, options = {}) {
-  throwIfSignalLatched();
+  if (!options.cleanup) throwIfSignalLatched();
   const probeCommand = signalProbe.stubRunAfterSignal && signalProbe.observedSignal;
   const effectiveCommand = probeCommand ? process.execPath : command;
   const effectiveArgs = probeCommand
@@ -3421,7 +3746,7 @@ async function run(command, args, options = {}) {
     activeChildren.delete(child);
     releaseTrackedProcessGroupIfEmpty(child);
   });
-  throwIfSignalLatched();
+  if (!options.cleanup) throwIfSignalLatched();
 
   if (timedOut || (result.code !== 0 && !options.allowFailure)) {
     const sensitiveValues = options.sensitiveValues ?? [];
@@ -3605,6 +3930,28 @@ async function cleanup() {
       count: lifecycleProbe.cleanupCount,
       tempRoot
     });
+    const resourceFailures = [];
+    if (patchDevCleanup) {
+      try {
+        await runCli(patchDevCleanup.cliPath, ["dev", "stop", "--json"], {
+          ...patchDevCleanup.options,
+          timeoutMs: 30_000,
+          cleanup: true
+        });
+        trackedProcessGroups.delete(patchDevCleanup.pid);
+        patchDevCleanup = undefined;
+      } catch (error) {
+        resourceFailures.push(error);
+      }
+    }
+    if (tier1BrowserServer) {
+      try {
+        await tier1BrowserServer.close();
+      } catch (error) {
+        resourceFailures.push(error);
+      }
+      tier1BrowserServer = undefined;
+    }
     if (portReservation) {
       await new Promise((resolve) => portReservation.server.close(() => resolve()));
       portReservation = undefined;
@@ -3643,6 +3990,9 @@ async function cleanup() {
       count: lifecycleProbe.cleanupCount,
       tempRoot
     });
+    if (resourceFailures.length > 0) {
+      throw new AggregateError(resourceFailures, "Tier 1 resource cleanup failed");
+    }
   })();
   return cleanupPromise;
 }

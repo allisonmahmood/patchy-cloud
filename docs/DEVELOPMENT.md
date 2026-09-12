@@ -451,10 +451,30 @@ user's machine tokens; reactivation restores browser access, not old keys.
 
 `pnpm test` stays offline and needs no Clerk account or development keys.
 `pnpm test:packed-cli-e2e` installs the packed CLI offline with an empty npm cache
-and install scripts disabled, then exercises it against its own server;
-`pnpm test:all` runs package tests through Turbo and that packed e2e, but not
-the live Clerk tiers. CI runs offline Vitest on Node 22 and 24, and one packed
-e2e on Node 22 in `cli-smoke`, separately from the eligible live job.
+and install scripts disabled, then exercises it against its own server and
+headless Chromium. Install the browser first with
+`pnpm exec playwright install --with-deps chromium`. Patch-repo initialization
+installs its toolchain with a fresh pnpm store and metadata cache; that step needs
+registry access, unlike `pnpm test`.
+
+`pnpm test:postgres-concurrency` runs the SDK's cross-package concurrency block
+over a clone of the migrated, seeded real-Postgres template. The
+`*.postgres.test.ts` marker excludes it from ordinary package discovery; its
+dedicated config discovers every `**/src/**/*.postgres.test.ts` file and refuses
+an empty suite. It must never use PGlite: multiple real backend sessions
+establish the locking invariants.
+The block covers competing first publishes, whole-publish serialization and
+cumulative inventory, rollback versus publish, old-bundle writes during additive
+DDL, unique batches, same-name file writes, and patch-row lost-update prevention.
+The existing package suites retain their focused primitive concurrency cases.
+
+`pnpm test:all` runs package tests through Turbo, the real-Postgres concurrency
+block and the packed e2e, but not the live Clerk tiers. CI runs offline Vitest on
+Node 22 and 24. `cli-smoke` and `postgres-concurrency` are unconditional Node 22
+checks on pull requests and pushes to `main`, including forks and Dependabot;
+neither needs Clerk secrets. Browser, Postgres, server, installation or suite
+startup failures fail their job rather than skipping it.
+`main` must require the `postgres-concurrency` and `cli-smoke` checks.
 
 The runner, the vitest template and the packed CLI e2e apply the shared dev seed.
 `Testing.layer()` clones the seeded template; package fixtures add rows on
@@ -468,6 +488,14 @@ an explicit `--share public` publish's 200 with `public, max-age=60`, no
 `Set-Cookie` and the locked CSP, and `share … company` returning it to the 401 door.
 It also drives the login handoff through confirmation with an offline-signed
 session, completion, saved-login precedence, logout and seed fallback.
+The tier 1 flow initializes a repo with the packed CLI, starts `patchy dev`,
+inserts through the generated client in the real headless shell, stops dev and
+publishes. It checks the anonymous 401 door, a seeded-session bundle under the
+tier 1 CSP, and a row round-trip through the hosted shell's
+`POST /api/runtime/call`. Dev rows stay local: the hosted round-trip inserts its
+own row rather than treating publish as a data migration. A second publish adds
+an optional column and checks the provisioning report. Each CLI step checks its
+JSON result and exit code.
 The packed flow also reads the stored version's tier, release and server-stamped
 wire version. File mode synthesises a tier 0 manifest with empty `tables`, `files`
 and `uses`; the API admits tier 0 and tier 1 manifests with tables, file stores, shared-table declarations and resolved Postgres declarations. Tier 1 bundles are stored raw and served in the sandbox; tiers 2 and above remain refused. Tier 0 keeps `PATCHY_MAX_HTML_BYTES` (512 KiB), tier 1 uses `PATCHY_MAX_BUNDLE_BYTES` (10 MiB), and the enclosing JSON request cap is three times the larger value.
