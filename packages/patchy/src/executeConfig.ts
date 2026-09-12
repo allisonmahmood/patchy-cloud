@@ -1,7 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off
 // The config entrypoint loads this Node-only process boundary only when execution is requested.
 import { fork } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -51,6 +52,11 @@ export interface ExecutedManifest {
     Record<string, Declaration & { readonly id: string; readonly revision: number }>
   >;
 }
+
+/** Generation resolves declarations on the instance, before there can be local stamps. */
+export type UnresolvedManifest = Omit<ExecutedManifest, "uses"> & {
+  readonly uses: Readonly<Record<string, Declaration>>;
+};
 
 const configSchema = Schema.Struct({
   name: PatchName,
@@ -128,10 +134,36 @@ const runConfig = (path: string): Promise<unknown> => {
   return promise;
 };
 
-/** Executes only local code, then resolves declarations from generated stamps and validates the API manifest. */
-export const executeConfig = async (path: string): Promise<ExecutedManifest> => {
+/** A sibling keeps relative imports and package resolution intact without changing the author's file. */
+const runEditedConfig = async (path: string, source: string): Promise<unknown> => {
+  const staged = resolve(dirname(path), `.patchy-config-${randomUUID()}.ts`);
+  await writeFile(staged, source, { flag: "wx", mode: 0o600 });
+  try {
+    return await runConfig(staged);
+  } finally {
+    await rm(staged, { force: true });
+  }
+};
+
+/** Executes local config; publishing requires stamps, while generation requests resolve them remotely. */
+export function executeConfig(path: string): Promise<ExecutedManifest>;
+export function executeConfig(
+  path: string,
+  options: { readonly resolve: false; readonly source?: string }
+): Promise<UnresolvedManifest>;
+export async function executeConfig(
+  path: string,
+  options?: { readonly resolve: false; readonly source?: string }
+): Promise<ExecutedManifest | UnresolvedManifest> {
   const absolutePath = resolve(path);
-  const config = decodeConfig(await runConfig(absolutePath));
+  const config = decodeConfig(
+    options?.source === undefined
+      ? await runConfig(absolutePath)
+      : await runEditedConfig(absolutePath, options.source)
+  );
+  if (options?.resolve === false) {
+    return { ...config, manifestVersion: MANIFEST_VERSION, release: RELEASE };
+  }
   const declarations = Object.entries(config.uses);
   const uses: Record<string, (typeof Manifest.Type)["uses"][string]> = {};
   if (declarations.length > 0) {
@@ -162,4 +194,4 @@ export const executeConfig = async (path: string): Promise<ExecutedManifest> => 
     }
   }
   return decodeManifest({ ...config, uses, manifestVersion: MANIFEST_VERSION, release: RELEASE });
-};
+}

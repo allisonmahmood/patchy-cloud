@@ -4,15 +4,15 @@ Patchy Cloud is one deployment: the hosting server on one side, the `patchy` CLI
 
 ## Contexts
 
-- [Patches](./packages/patches/CONTEXT.md) — `packages/patches`. Patches and immutable versions, company-scoped names, manifests and replay-safe publish keys, additive table and store provisioning at publish, owner inventory, user ownership, company/public sharing, owner deletion, retention and its sweep, the owner quota, and the `patches` API group. Patch repos, higher-tier serving and retirement remain future work
+- [Patches](./packages/patches/CONTEXT.md) — `packages/patches`. Patches and immutable versions, company-scoped names, manifests and replay-safe publish keys, additive table and store provisioning at publish, owner inventory, user ownership, company/public sharing, owner deletion, retention and its sweep, the owner quota, and the `patches` API group. Repo publishing, higher-tier serving and retirement remain future work
 - [Serving](./packages/serving/CONTEXT.md) — `packages/serving`. Patch addresses and version/content URLs, tier 0 pages, the login door, serving guarantees, admitted visits and trusted-proxy attribution. Higher runtimes, the connect door and patch identity remain future work
 - [Companies](./packages/companies/CONTEXT.md) — `packages/companies`. Companies and handles, users and roles, create-or-join, invitations, the company page, deactivation and reactivation. Groups, verified domains, SSO, billing, suspension and the operator's surfaces remain future work
 - [Auth](./packages/auth/CONTEXT.md) — `packages/auth`. Clerk session verification and viewers, user-owned machine tokens, device login, identity, revocation and bearer parsing, the sign-in and sign-out pages, Your machines, the `auth` API group and the shared dev seed
 - [Runtime](./packages/runtime/CONTEXT.md) — `packages/runtime`. Browser-only operation admission, loaded-version binding, acting identity, wire versions, dispatch and the runtime log. Admits `me`, owned-table operations, shared-table reads, file operations and Postgres calls supplied by their capabilities
 - [Primitives](./packages/primitives/CONTEXT.md) — `packages/primitives`. Patch-owned table and file-store definitions, one additive diff and provisioning, schema revisions, system columns, refs, bounded row operations and immutable file objects over Postgres and PGlite. Shared-table declarations grant no authority: reads check the source's live access and cumulative inventory
 - [Integrations](./packages/integrations/CONTEXT.md) — `packages/integrations`. Company Postgres connections, encrypted credentials, immutable schema snapshots, constrained runtime reads, generated relation clients, local fixtures and admin connection pages with recent calls. Publish binds connected identities and exact metadata revisions
-- [Publishing](./packages/patchy/CONTEXT.md) — `packages/patchy`, the single `patchy` package: CLI, config builders, browser client and dev-runtime entrypoint
-- SDK distribution — `packages/sdk`, the instance's current release metadata and immutable package artifact; [Publishing](./packages/patchy/CONTEXT.md) owns the release vocabulary. The SDK spec (#193 §2) assigns release, catalog and generation to this package, separate from page serving
+- [Publishing](./packages/patchy/CONTEXT.md) — `packages/patchy`, the single `patchy` package: CLI, config builders, browser client and reserved dev-runtime entrypoint; patch-repo initialization, transactional refresh, catalog and declaration editing, managed files, global and project skills, and fixture stubs
+- SDK distribution — `packages/sdk`, the instance's current release metadata, immutable package artifact, bearer-protected catalog and finished-file generation, and canonical project skill sources; [Publishing](./packages/patchy/CONTEXT.md) owns their vocabulary. Separate from page serving
 
 ## Shared kernel
 
@@ -33,7 +33,7 @@ Supporting packages rather than product contexts; their glossaries define only t
 ## Relationships
 
 - **Publishing → `api`**: publishes through the shared wire contract using a user-owned machine token
-- **SDK distribution → Publishing, `api`**: distributes the packed `patchy` release and its integrity through the shared wire contract
+- **SDK distribution → Publishing, Primitives, Integrations, Patches, `api`**: distributes the packed release, composes generated clients and context from capability definitions and snapshots, and catalogs only connections and shared sources the caller may use
 - **Serving → Patches, Auth**: relies on Patches for content, sharing and visits, and on Auth for viewer identity and session admission
 - **Patches → Content store**: owns the lifecycle of stored patch content, from publication through expiry
 - **Runtime → Auth, Limits, SQL**: admits the browser session as the acting identity, limits calls per viewer and owning patch, and records mutations and integration calls before execution

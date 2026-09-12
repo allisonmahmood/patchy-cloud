@@ -2,7 +2,7 @@
 
 The product, written down where agents read it. Each section is the resolution of one decision on the [foundation map](https://github.com/allisonmahmood/patchy-cloud/issues/5); the glossaries in each `CONTEXT.md` carry the words, this file carries the shape.
 
-**Built today:** tier 0 HTML patches with manifests, release checks and replay-safe publishing; additive patch-owned tables and file stores with browser-runtime operations, read-only shared-table declarations, and company Postgres connections with immutable schema snapshots, constrained reads, generated relation clients and local fixtures; names and company addresses; user ownership and company/public sharing; Clerk sign-in; create-or-join and company administration; machine login, logout and revocation. Higher-tier serving and its browser broker, patch repos, the portal, narrower sharing, billing and company lifecycle remain intended, not available features.
+**Built today:** tier 0 HTML patches with manifests, release checks and replay-safe publishing; additive patch-owned tables and file stores with browser-runtime operations, read-only shared-table declarations, and company Postgres connections with immutable schema snapshots, constrained reads, generated relation clients and local fixtures; patch-repo initialization, catalog, declaration editing, transactional refresh and release-bound project skills; names and company addresses; user ownership and company/public sharing; Clerk sign-in; create-or-join and company administration; machine login, logout and revocation. Higher-tier serving and its browser broker, the local patch dev runtime, repo publishing, the portal, narrower sharing, billing and company lifecycle remain intended, not available features.
 
 ## Patches
 
@@ -43,8 +43,68 @@ and Postgres connections. Row, insert and update types are inferred from the
 config; execution happens in a local child process, producing the existing
 manifest rather than sending executable config to the server. The browser client
 uses the broker's document-bound port and one `PatchyError`; lost replies never
-cause a mutation replay. The broker, repo-generation commands and dev runtime
-remain separate work; shipping their client surface does not enable tier 1 serving.
+cause a mutation replay. Repo generation supplies this client surface; the broker,
+local dev runtime and repo publishing remain separate work. Initialization does
+not enable tier 1 serving.
+
+### Building a patch
+
+`patchy init [dir] --purpose <text>` starts a patch repo, defaulting to tier 1
+(`--tier 0` is available). It authenticates first, names the instance and identity,
+and lays down config, application source, the single-file build, typechecking,
+generated client and context, project skills and fixtures. It installs the pinned
+package, so an agent starts with `pnpm patchy --help` and `pnpm typecheck`, not
+another setup or installation ritual. A second initialization refuses the same
+repo. A company without connections gets the core skills and empty declarations.
+
+`patchy.config.ts` defines what the patch owns and declares what it uses.
+`patchy.json` records the instance and optional patch id, never personal credentials.
+Write-once `AGENTS.md` records purpose, layout, skill paths, “test with `patchy dev`”
+and the generated-index pointer; `CLAUDE.md` imports it. The local dev runtime
+that completes that instruction is separate work, not a production-data shortcut.
+
+The **catalog** shows connected company connections and shared tables the caller
+can open, with copy-ready `add` and `uses` lines. `--all` includes offered
+integrations and their state. It grants no authority. `patchy add postgres/<handle>`
+or `patchy add shared-table <patchId>/<table>` adds one aliased declaration by
+TypeScript AST and generates the client, context, missing fixture stub and skill.
+The insertion is a literal declaration, requiring no import changes. An uneditable
+expression fails with its exact source line and the exact declaration line to
+add manually before refresh, rather than guessing at a rewrite.
+Connection refusals point to `/company/connections`; source access must be restored
+with the source owner or the declaration corrected. `patchy remove <alias>`
+reverses the declaration and generated surface, retaining its fixture.
+
+`patchy refresh` binds the whole change to one release: fetch, update pin and install
+if changed, re-exec the new CLI, execute config, generate, stage and activate.
+Failure leaves the old managed set intact. The **managed files** are exactly the
+pin, `patchy/_generated/`, `.agents/skills/patchy-*/`, missing fixture stubs,
+the lockfile through install and the one `uses` edit for add/remove. App source,
+existing fixtures and the write-once agent instructions belong to the builder.
+
+Generation is authenticated and server-side. It accepts the manifest, current
+release, optional patch id and present skills, and returns finished files with
+resolved declaration ids and revision stamps. `patchy/_generated/index.json`
+identifies each declaration, alias, stamp, skill and context path; its README says
+plainly that deleting `.patchy/` destroys local rows and files. The CLI alone writes
+`manifest.json` from config execution. Neither the server nor the CLI may write
+arbitrary paths outside the managed roots.
+
+The **global skill** is the door for sign-in, static pages and `init`; inside a repo
+the **project skills** govern. Their sole source is `packages/sdk/skills/`:
+`patchy-loop`, `patchy-tables` and `patchy-files` are core;
+`patchy-postgres` and `patchy-shared-tables` follow declarations. Refresh re-fetches
+every present skill and adds implied ones: presence is sticky, and a missing offer
+fails rather than preserving obsolete instructions. Explicit remove may retire a
+declaration skill when no declaration of its kind remains.
+
+A **fixture stub** contains metadata and guidance, not company rows. The builder
+fills `fixtures/postgres-<handle>.sql` or `fixtures/shared-<alias>.sql` with invented
+local inserts. Existing files are never overwritten. Only metadata and inventory
+come from the instance; development never copies production rows or bytes.
+Every readable row is available to whoever can open the patch, and UI filters
+do not create access control. Project skills teach this boundary and the tier 1
+limits: no outbound access or client storage; durable data goes through Patchy.
 
 ### Sharing and finding
 

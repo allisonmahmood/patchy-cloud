@@ -1,6 +1,6 @@
 # Publishing
 
-The path agents use to publish and manage patches for a user, through the `patchy` CLI and its bundled skill. An agent is the primary driver, with the same command contract available to a person at a terminal; the product's built unit is defined in [Patches](../patches/CONTEXT.md).
+The path agents use to build, publish and manage patches for a user through the `patchy` CLI, its global skill and release-bound project skills. An agent is the primary driver, with the same command contract available to a person at a terminal; the product's built unit is defined in [Patches](../patches/CONTEXT.md).
 
 ## Language
 
@@ -79,6 +79,26 @@ _Avoid_: instance (the target cloud), dev env (the CLI's local-instance discover
 **Dev runtime**:
 The local execution of a patch's declared capabilities over disposable local data, under the same contract as the cloud runtime. It belongs to the patch repo, not the cloud's own development instance.
 _Avoid_: mock backend, emulator, dev env
+
+**Managed files**:
+The release-bound parts of a patch repo maintained by Patchy's commands rather than its builder: the package pin, generated client and metadata, project skills, and missing fixture stubs. The lockfile follows installation; adding or removing a declaration also owns one edit to its `uses` object.
+_Avoid_: scaffold (these parts continue to be maintained), all project files
+
+**Global skill**:
+The agent instructions for entering Patchy: choosing an instance, signing the machine in, publishing a static file or starting a patch repo. Inside a patch repo, its project skills govern building.
+_Avoid_: project skill, template
+
+**Project skill**:
+A release-bound set of agent instructions for building within one patch repo, supplied by the instance for its core capabilities or declared connections and shared tables.
+_Avoid_: global skill, copied tutorial
+
+**Catalog**:
+The instance's view of the company's connected capabilities and the shared tables the caller can open, with declarations the builder can add to a patch. It describes availability, never grants access.
+_Avoid_: marketplace, connection inventory (the cumulative schema inventory is a different concept)
+
+**Fixture stub**:
+The initial, metadata-only guide for a declaration's local fixture, ready for the builder to fill with invented rows. Once present it belongs to the builder, including after that declaration is removed.
+_Avoid_: production sample, seed dump
 
 **Onboarding probe**:
 The local-only report of publishing state for the resolved instance — `status --json` — that lets onboarding skip settled questions and choose login-then-publish only when no key is available. It reaches no instance and reports the same credential precedence publishing uses, so it is a setup aid, never a per-session check or proof that a key still works.

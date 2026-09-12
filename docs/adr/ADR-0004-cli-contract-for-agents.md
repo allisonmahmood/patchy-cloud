@@ -127,8 +127,9 @@ is not its to remove; in a worktree it says _This worktree's dev instance still 
 with its seeded key_. JSON carries these in `warnings`, with `revoked`
 reporting whether the deleted key was successfully revoked or already invalid.
 
-`publish`, `delete`, `share` and `whoami` with no key exit 1 (`local`),
-`Run: patchy login`. No command starts a login on the caller's behalf.
+`publish`, `delete`, `share`, `whoami` and the five patch-repo commands below
+with no key exit 1 (`local`), `Run: patchy login`. No command starts a login
+on the caller's behalf.
 
 ### One credential chain
 
@@ -148,6 +149,53 @@ one pending login per instance: device code, user code, both verification
 URLs, polling interval and expiry. Neither the device code nor the publishing
 key appears in the handoff or command output.
 
+### Patch-repo commands
+
+The repo is bound to one instance and one exact release. `init` authenticates
+before creating files, installs once, and hands the builder a typechecking tree
+with generated client, declaration context, project skills and fixture stubs.
+Purpose, layout and the generated-index pointer live in write-once `AGENTS.md`;
+`CLAUDE.md` imports it. Nothing identifying the person is committed.
+
+| command                                                                                                     | behaviour                                                                                                                                                                                                                                                                               | `--json` success document                                                         |
+| ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `patchy init [dir] [--tier 0\|1] [--purpose <text>]`                                                        | Prints instance and identity, asks purpose interactively, lays down and installs a new repo, then generates. Default tier 1; an initialized target is refused. A company without connections gets empty declarations and core skills.                                                   | `{ ok, dir, release, tier, generated, skills, installed }`                        |
+| `patchy refresh`                                                                                            | Fetches one release, changes the pin and installs if needed, re-execs its CLI, executes config and generates, then stages and activates the managed set transactionally. Failure leaves the old set intact.                                                                             | `{ ok, release: { from, to }, changed: { pin, generated, skills, fixtures } }`    |
+| `patchy catalog [--all]`                                                                                    | Connected connections and openable shared tables, each with its `add` and `uses` line. Default text closes with a reminder about `--all`, which includes offered integrations and state.                                                                                                | Catalog wire response `{ connections, sharedTables, offered? }`, no `ok` wrapper. |
+| `patchy add postgres/<handle> [--as <alias>]` or `patchy add shared-table <patchId>/<table> [--as <alias>]` | One literal TypeScript AST insertion into `uses` without import changes, then generation. An uneditable expression fails with its exact source line and the exact declaration line to add manually before refresh. Refusals identify the connection/admin or source-access repair path. | `{ ok, alias, declaration, generated, skills }`                                   |
+| `patchy remove <alias>`                                                                                     | Removes the declaration, its generated surface and the declaration skill when no declaration of that kind remains; keeps the fixture and says so.                                                                                                                                       | `{ ok, alias, removed }`                                                          |
+
+`patchy add postgres` selects the sole connected Postgres connection, lists
+copy-ready handle choices and stops when several exist, or names
+`/company/connections` when none exists. Postgres aliases default to the handle
+with hyphens camel-cased; shared-table aliases default to the table name.
+`--as` overrides either. Init's target must be empty or absent under an existing
+parent; purpose is required explicitly for agent, JSON and non-terminal calls,
+and otherwise asked at the terminal. There is no inferred purpose.
+
+Only these files are managed: the pin, `patchy/_generated/`,
+`.agents/skills/patchy-*/`, missing fixture stubs, the lockfile through install,
+and one `uses` edit for add/remove. Existing fixtures belong to the builder.
+The CLI executes config locally and writes `manifest.json`; generation receives
+the manifest and returns finished files plus resolved ids and revision stamps,
+never that manifest file. Both sides constrain output paths to the managed roots.
+
+Project skill presence is sticky: refresh updates every present skill and adds
+config-implied ones without deleting skills. A present skill no longer offered
+by the release fails refresh. Only explicit removal may retire a declaration's
+skill when no use of that kind remains. Their canonical source is `packages/sdk`,
+not a hand-maintained copy in each patch.
+
+`--json` uses the same failure envelope and exit-code ladder above, preserving
+`connection_not_connected`, `patch_not_openable` and `release_mismatch` from the
+instance. `init` with no key is a local error before creating a repo, including
+in non-interactive execution. Pass `--purpose` for unattended initialization.
+No install or generation progress leaks into JSON stdout.
+
+The tree teaches “test with `patchy dev`”, but the local runtime, broker and
+repo publishing remain separate work. Initialization is not a claim that a
+standalone Vite preview can execute declared capabilities.
+
 ### Publishing and sharing commands
 
 | command                                                                                  | behaviour                                                                                                                                                                                                                              | `--json`                                                                                                               |
@@ -159,7 +207,7 @@ File publishing never reads `patchy.json`. The executing CLI must match
 `GET /api/release` exactly; a mismatch names both releases and `patchy refresh`.
 The same check accepts the repo pin and loaded runtime release for repo publishing
 and dev starts; each must be exact-current, not a compatible version range.
-Repo mode and refresh arrive in later SDK tickets.
+Repo publishing and dev starts arrive separately; refresh is available now.
 File publishing onto a patch with cumulative table or store inventory is
 `has_primitives` (422, exit 2, `rejected`), even if its current version omits
 those definitions. Publish that patch from its repo. `has_primitives`,
@@ -214,9 +262,12 @@ entries cannot be recalled.
 
 Resolution order: `--api-url` > `.local/dev/env` (searched upward from the
 working directory) > `PATCHY_API_URL` > `~/.patchy/config.json` > the local
-default. One service resolves it once per command and exposes the URL and its
-source (`flag` | `dev-env` | `env` | `config` | `default`); `status --json`
-reports both, and `publish` prints "Publishing to <url> (target came from …)"
+default. For repo commands (`refresh`, `catalog`, `add`, `remove` and private
+generation), `patchy.json`'s instance comes after `PATCHY_API_URL` and before
+saved config. `init` and file-oriented commands keep the order above. One service
+resolves the URL once per command and exposes its source (`flag` | `dev-env` |
+`env` | `project` | `config` | `default`); `status --json` reports its resolved
+URL and source, and `publish` prints "Publishing to <url> (target came from …)"
 in text mode. A worktree with a running `pnpm dev` instance is the one place
 an agent should never have to say where to publish, which is why the dev env
 outranks the environment variable.

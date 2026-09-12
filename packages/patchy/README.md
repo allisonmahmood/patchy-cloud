@@ -1,6 +1,6 @@
 # patchy
 
-One package for [Patchy Cloud](https://github.com/allisonmahmood/patchy-cloud): the `patchy` CLI, `patchy/config` builders, `patchy/client` browser client and a reserved `patchy/dev` entrypoint. The CLI publishes static HTML patches, changes their sharing and takes them down again. Every publish carries a machine token; new patches are company-scoped by default and open through a colleague's signed-in browser. Choose public explicitly to let anyone with the link open a patch. A machine token never opens a patch's view URL.
+One package for [Patchy Cloud](https://github.com/allisonmahmood/patchy-cloud): the `patchy` CLI, `patchy/config` builders, `patchy/client` browser client and a reserved `patchy/dev` entrypoint. The CLI initializes patch repos, manages their declarations and generated files, publishes static HTML patches, changes sharing and takes patches down. Every publish carries a machine token; new patches are company-scoped by default and open through a colleague's signed-in browser. Choose public explicitly to let anyone with the link open a patch. A machine token never opens a patch's view URL.
 
 An agent is the primary driver, so the CLI promises a contract an agent can branch on without reading prose: an [exit code that says who has to act](#exit-codes), `--json` on every command, and one resolution of which instance is being targeted. The contract is [ADR-0004](../../docs/adr/ADR-0004-cli-contract-for-agents.md).
 
@@ -68,7 +68,9 @@ process and returns a validated manifest. Declarations require real stamps in
 the sibling `patchy/_generated/index.json`, shaped as
 `{ "uses": [{ "alias": "sales", "id": "<resolved-id>", "revision": 1 }] }`.
 Missing, ambiguous or invalid stamps fail locally; the server never executes
-config. Generation and refresh commands are not available yet. Config files use
+config. `executeConfig(path, { resolve: false })` instead returns an unresolved
+generation manifest; `generate` supplies the ids and revisions for the CLI to stamp.
+Config files use
 Node's native TypeScript loader, including explicit `.ts` extensions for local
 TypeScript imports.
 
@@ -81,10 +83,86 @@ runtime directly.
 
 The internal generated `client.ts` template imports the config's **type** and
 `manifest.json`'s **value**. The package's browser graph has no Node, Effect or
-PGlite runtime. `patchy/dev` reserves its entrypoint; repo commands, the broker
-and local dev runtime arrive in their own SDK tickets.
+PGlite runtime. `patchy/dev` reserves its entrypoint; the broker, local dev
+runtime and repo publishing remain separate work from repo generation.
 
 ## Commands
+
+### Patch repo commands
+
+Use the instance-installed CLI outside a repo and the pinned `pnpm patchy` inside.
+The private package is not available as `npx patchy@latest` yet; use the
+instance's release tarball as described above.
+
+| command                                                                                                     | behaviour                                                                                                                                                                                                                                                                | `--json` success                                                                    |
+| ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| `patchy init [dir] [--tier 0\|1] [--purpose <text>]`                                                        | Authenticates first, prints instance and identity, asks purpose when interactive, installs the pinned release and generates a new repo. Tier 1 is the default; an initialized target is refused.                                                                         | `{ ok, dir, release, tier, generated, skills, installed }`                          |
+| `patchy refresh`                                                                                            | Refreshes the managed set as one release-bound transaction, installing and re-executing a new CLI if the pin changes.                                                                                                                                                    | `{ ok, release: { from, to }, changed: { pin, generated, skills, fixtures } }`      |
+| `patchy catalog [--all]`                                                                                    | Lists connected connections and shared tables the caller can open, with copy-ready `add` and `uses` lines. `--all` includes offered integrations and state; normal text ends with a reminder about it.                                                                   | Catalog wire response: `{ connections, sharedTables, offered? }` (no `ok` wrapper). |
+| `patchy add postgres/<handle> [--as <alias>]` or `patchy add shared-table <patchId>/<table> [--as <alias>]` | Inserts one literal declaration into `uses` by TypeScript AST without changing imports, then generates client, context, missing fixture and skill. An uneditable block fails naming its exact source line and the exact declaration line to add yourself before refresh. | `{ ok, alias, declaration, generated, skills }`                                     |
+| `patchy remove <alias>`                                                                                     | Reverses the declaration and generated output; removes its declaration skill when no declaration of that kind remains. Leaves the fixture and says so.                                                                                                                   | `{ ok, alias, removed }`                                                            |
+
+`patchy add postgres` selects the sole connected Postgres connection; with several
+it lists copy-ready choices and stops. With none, it names `/company/connections`.
+The default Postgres alias camel-cases the handle's hyphens; a shared-table alias
+defaults to its table name. `--as` overrides either.
+
+Initialization requires an empty or new target directory and an existing parent.
+Without `--purpose`, it asks only at an interactive human terminal; agent, JSON
+and non-terminal invocations must supply the flag:
+
+```sh
+patchy init ./team-notes --tier 1 --purpose "Track our team's notes" --json
+# Inside ./team-notes:
+pnpm patchy catalog
+pnpm patchy add postgres/warehouse --as sales
+pnpm patchy refresh --json
+pnpm typecheck
+pnpm patchy remove sales --json
+```
+
+Use actual handles and patch ids from the catalog. Connection setup and reconnection
+belong to an admin's browser at `/company/connections`; no CLI command accepts a
+connection string. A shared source must be openable; restore its access with its
+owner or correct the declaration. With no publishing key, non-interactive init
+exits 1 with `Run: patchy login` before laying down files. A company with no
+connections still gets the core skills and empty `uses`.
+
+The generated repo includes:
+
+```text
+patchy.config.ts              definitions and uses declarations
+patchy.json                   instance; optional patch id, never credentials
+package.json, pnpm-lock.yaml   pinned package; install already ran
+index.html, src/main.ts        starter insert/list through the generated client
+vite.config.ts, tsconfig.json  single-file build, pinned server.host, typechecking
+AGENTS.md, CLAUDE.md            purpose, layout, skills, index; @AGENTS.md
+patchy/_generated/             README, index, client, manifest, declaration context
+.agents/skills/patchy-*/       core and declaration-driven project skills
+fixtures/                     postgres-<handle>.sql and shared-<alias>.sql stubs
+.gitignore                    excludes .patchy/, node_modules/, dist/
+```
+
+`AGENTS.md` is written once, says install already ran, points at the generated
+index, and says to test with `patchy dev`. The repo typechecks without added setup,
+and `pnpm patchy --help` runs its pinned copy. **The local dev runtime is not
+implemented by these commands**; generation does not enable the broker or repo
+publishing. Do not replace a missing local runtime with production data access.
+
+Managed writes are exactly the package pin, `patchy/_generated/`,
+`.agents/skills/patchy-*/`, missing fixture stubs, the lockfile through install,
+and one `uses` edit for add/remove. The CLI writes `manifest.json` from local
+config execution; the server never returns that file. Server paths are checked
+against the managed roots. Existing fixtures, app source and agent instructions
+are not overwritten. Deleting `.patchy/` destroys local rows and files.
+
+Refresh fetches one release, updates and installs the pin if needed, re-execs
+that CLI before executing config, requests generation, then stages and activates
+the set. Failure leaves the old managed set intact. Skills are sticky: refresh
+re-fetches every present skill and adds any the config implies, but never deletes
+one on its own. A present skill no longer offered by the release fails refresh.
+Edit definitions, declarations and invented fixtures; never hand-edit generated
+clients, stamps or project skills.
 
 ### `patchy login [--complete [code]] [--wait <seconds>]`
 
@@ -293,7 +371,7 @@ Authentication failures, throttling, quota refusals, lost replies, server failur
 
 Concurrent invocations through the same instance and state directory resend the same persisted attempt rather than replacing it or refusing contention. Each authenticates the attempt's original owner before sending, including an invocation that loses the race to create it. Killing a process leaves the attempt available for recovery. A response clears only its matching publish key, so a stale response cannot remove a newer attempt.
 
-The executing CLI must match the instance's release exactly. A local mismatch exits 1 with `kind: "local"` and `code: "release_mismatch"`; an instance-detected mismatch exits 2 with `kind: "rejected"` and the same code. The diagnostic names both releases. Install the exact package reported by `GET /api/release`; `patchy refresh` is not implemented yet. This CLI currently publishes files only. The API also admits tier 0 table and file-store manifests with shared-table and resolved Postgres declarations; higher tiers remain refused. File publishing onto a patch with cumulative inventory returns `has_primitives` (422, exit 2): that patch requires repo publishing, which is not available in this CLI yet. `has_primitives`, `not_additive`, `patch_not_openable`, `connection_not_connected` and `stale_generated` are definitive payload refusals; the matching attempt is cleared. Restore shared-source access, reconnect the connection, or regenerate its snapshot stamp before publishing a fresh attempt. Connection secrets are accepted only in the admin's browser at `/company/connections`, never by a CLI command.
+The executing CLI must match the instance's release exactly. A local mismatch exits 1 with `kind: "local"` and `code: "release_mismatch"`; an instance-detected mismatch exits 2 with `kind: "rejected"` and the same code. The diagnostic names both releases. Install the exact package reported by `GET /api/release`; inside a patch repo, `patchy refresh` upgrades the pin and refreshes the managed set. File-mode `publish` still sends HTML files only. Repo publishing and the local `patchy dev` runtime remain separate work (SDK #207). The API also admits tier 0 table and file-store manifests with shared-table and resolved Postgres declarations; higher tiers remain refused. File publishing onto a patch with cumulative inventory returns `has_primitives` (422, exit 2): that patch requires repo publishing, which is not available in this CLI yet. `has_primitives`, `not_additive`, `patch_not_openable`, `connection_not_connected` and `stale_generated` are definitive payload refusals; the matching attempt is cleared. Restore shared-source access, reconnect the connection, or regenerate its snapshot stamp before publishing a fresh attempt. Connection secrets are accepted only in the admin's browser at `/company/connections`, never by a CLI command.
 
 Without `--share`, a new patch defaults to `company` and an update preserves the patch's current scope. An explicit `--share company` or `--share public` sets it in either direction while publishing the new version:
 
@@ -379,6 +457,10 @@ ADR-0004 records. Check the exit code before parsing stdout as a success documen
 - `--new` — on `publish`, always create a new patch with a server-generated ID instead of updating the one previously published from this path. It cannot be combined with `--patch`.
 - `--patch <patch-id>` — on `publish`, update a specific existing patch. This is update-only and never creates a new patch. It cannot be combined with `--new`.
 - `--patch <patch-id>` — on `share` and `delete`, name the patch outright instead of finding it from the file it was published from. It cannot be combined with a file argument.
+- `--tier 0|1` — on `init`, the new repo's declared tier; default 1.
+- `--purpose <text>` — on `init`, required for agent, JSON and non-terminal invocations; asked at an interactive human terminal otherwise.
+- `--as <alias>` — on `add`, override the default camelCased Postgres-handle or shared-table name.
+- `--all` — on `catalog`, include offered integrations and their connected state.
 
 ## Environment variables
 
@@ -389,6 +471,11 @@ ADR-0004 records. Check the exit code before parsing stdout as a success documen
 Setting any of these to the empty string means the same thing as leaving it unset.
 
 The instance is resolved once per command, in this order: `--api-url`, then the `.local/dev/env` that `pnpm dev` writes in a worktree (searched upward from the working directory, with the token it seeded), then `PATCHY_API_URL`, then the saved `config.json`, then the default. A checkout with a running dev instance therefore publishes to it without any environment set, and can never publish to a remote instance by accident.
+
+Repo commands (`refresh`, `catalog`, `add`, `remove` and private generation) also
+read `patchy.json`: its instance comes after `PATCHY_API_URL` and before saved
+config, with source `project`. `init` and file-oriented commands keep the order
+above.
 
 The dev seed is available only when the URL source is `dev-env`. An explicit
 `--api-url` selects `flag` even for the same URL: use a stored credential or

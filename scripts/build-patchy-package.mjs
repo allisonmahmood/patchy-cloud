@@ -62,7 +62,7 @@ const common = {
   tsconfig: path.join(packageDir, "tsconfig.json")
 };
 const requireBanner =
-  "import { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);";
+  "import { createRequire as __createRequire } from 'node:module'; import { fileURLToPath as __fileURLToPath } from 'node:url'; import { dirname as __dirnameOf } from 'node:path'; const require = __createRequire(import.meta.url); const __filename = __fileURLToPath(import.meta.url); const __dirname = __dirnameOf(__filename);";
 await esbuild.build({
   ...common,
   entryPoints: [path.join(packageDir, "src/index.ts")],

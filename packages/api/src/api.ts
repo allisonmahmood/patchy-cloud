@@ -7,6 +7,7 @@
  */
 import * as Context from "effect/Context";
 import * as Schema from "effect/Schema";
+import * as SchemaGetter from "effect/SchemaGetter";
 import * as HttpApi from "effect/unstable/httpapi/HttpApi";
 import * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
 import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
@@ -43,7 +44,10 @@ import {
   PublishUpdated,
   PublishRefused,
   PublishKeyConflict,
-  Release
+  Release,
+  Catalog,
+  GenerateRequest,
+  Generated
 } from "./schemas.js";
 import { RuntimeBytes, RuntimeCall, RuntimeFailure, RuntimeSuccess } from "./runtime.js";
 
@@ -239,6 +243,14 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
   .middleware(Authorization)
   .prefix("/api") {}
 
+/** A bare ?all is true; generated clients encode booleans as true/false. */
+const catalogAll = Schema.Literals(["", "true", "false"]).pipe(
+  Schema.decodeTo(Schema.Boolean, {
+    decode: SchemaGetter.transform((value) => value !== "false"),
+    encode: SchemaGetter.transform((value) => (value ? ("true" as const) : ("false" as const)))
+  })
+);
+
 export class SdkGroup extends HttpApiGroup.make("sdk", { topLevel: true })
   .add(
     HttpApiEndpoint.get("release", "/release", { success: Release }).annotateMerge(
@@ -248,7 +260,34 @@ export class SdkGroup extends HttpApiGroup.make("sdk", { topLevel: true })
           "with Cache-Control: public, max-age=31536000, immutable; integrity is its sha512 " +
           "Subresource Integrity digest. Discovery is no-store; only the exact GET tarball path is reserved."
       )
-    )
+    ),
+    HttpApiEndpoint.get("catalog", "/sdk/catalog", {
+      query: Schema.Struct({ all: Schema.optionalKey(catalogAll) }),
+      success: Catalog,
+      error: [PublishUnavailable, ...protectedErrors]
+    })
+      .middleware(Authorization)
+      .annotateMerge(
+        describe(
+          "Company metadata only: connected Postgres connections and live same-company shared tables. " +
+            "With all=true, include disconnected connections and every offered integration's connected state. " +
+            "Never returns credentials or business rows. Responses are private, no-store."
+        )
+      ),
+    HttpApiEndpoint.post("generate", "/sdk/generate", {
+      payload: GenerateRequest,
+      success: Generated,
+      error: [PublishRefused, PublishUnavailable, ...protectedErrors]
+    })
+      .middleware(Authorization)
+      .annotateMerge(
+        describe(
+          "Resolve declarations against current company metadata and return finished managed files and uses stamps. " +
+            "Requires the exact current release. Refuses connection_not_connected, patch_not_openable and release_mismatch. " +
+            "Present skills are sticky; an unknown present skill refuses generation. Includes core and implied skills, " +
+            "typed clients, contexts and fixture stubs, never manifest.json, credentials or business rows."
+        )
+      )
   )
   .prefix("/api") {}
 

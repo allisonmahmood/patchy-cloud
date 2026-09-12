@@ -10,7 +10,7 @@ import {
   type Transport
 } from "./client.js";
 import { defineConfig, files, table, t } from "./config.js";
-import { generateClient } from "./generateClient.js";
+import { generateClient } from "../../sdk/src/generateClient.js";
 import { RuntimeCode, runtimeOperations } from "../../api/src/runtime.js";
 
 it("keeps the lightweight error decoder exactly on the authoritative runtime code contract", () => {
