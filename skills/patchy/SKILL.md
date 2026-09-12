@@ -43,12 +43,34 @@ reverses it while leaving its fixture. `pnpm patchy refresh` updates the pin,
 generated files and present skills transactionally; never manually edit
 `patchy/_generated/` or managed project skills.
 
-Generation, typechecking and hosted tier 1 serving are available; the local
-`patchy dev` runtime and repo publishing are separate work. Do not claim a working
-local runtime from a successful init, and never substitute production data.
+Publish from the repo root with `pnpm patchy publish [--share company|public]`.
+It checks release, declaration stamps, types, the single-file build and tier,
+then publishes and records only the patch id in `patchy.json`, preserving its
+authoritative instance. On `instance_mismatch`, correct the effective URL
+override to match the stored instance; the refusal names both URLs before any
+HTTP request. Keep the instance binding and patch id intact.
+On `stale_generated`, run `pnpm patchy refresh`; on `invalid_manifest`, fix the
+config and its imports. On a build failure, fix the repo rather than publishing
+`dist/index.html` as a static file.
+`too_large` means reduce the largest contributors reported: the local HTML cap
+is 512 KiB at tier 0 and 10 MiB at tier 1. `tier_mismatch` instead means remove
+unsupported server code or correct the tier/static-HTML policy violation;
+browser code needs tier 1.
+Bundle inspection requires embedded resources and inline scripts/styles;
+CSS `@import` is unsupported. It is a resource-completeness check, while core's
+safe-HTML policy owns tier 0 safety. Fragment, relative and external anchors
+have identical acceptance in both tiers; the runtime sandbox still governs
+navigation. The local `patchy dev` runtime remains separate work; never
+substitute production data for local fixtures.
 Use invented local fixture inserts. Every readable row is available to whoever
 can open the patch; tier 1 has no outbound access or client storage. The project
 skills carry the complete runtime limits and the local-only workflow.
+
+Repo recovery lives under `.patchy/publish/`. Keep it after interruptions or a
+failed `patchy.json` write and rerun `pnpm patchy publish` as the same owning user.
+Recovery precedes release checks and rebuilding, returning the original result.
+`pnpm patchy share public` / `company` and `pnpm patchy delete` use the repo id.
+A deleted-patch 404 requires removing `patch` from `patchy.json` before a new create.
 
 ## Good fits
 
@@ -164,13 +186,17 @@ browser sign-out is a separate control on **Your machines**.
 
 ### Publishing behavior
 
-- Pages go to the selected Patchy Cloud instance, or to the `pnpm dev` instance
-  of a checkout. Instance selection follows `--api-url`, the `.local/dev/env`
-  a `pnpm dev` wrote in this checkout, the `PATCHY_API_URL` environment variable,
-  or the saved config — in that order. With none of those set the CLI tries
-  `http://localhost:3000`, which only works if a server is running locally. Settle the
-  instance before publishing — `status --json` says which one is resolved and where that
-  came from, and `publish` prints it before publishing.
+- For file mode and `init`, instance selection follows `--api-url`, the
+  `.local/dev/env` a `pnpm dev` wrote in this checkout, `PATCHY_API_URL`, then
+  saved config. With none set, the CLI tries `http://localhost:3000`, requiring
+  a running local server. Repo commands instead bind to `patchy.json`'s
+  instance: select the effective override in flag > dev env > environment
+  order, then require it to match the stored URL after normalization.
+  `instance_mismatch` refuses before HTTP; ignored lower-precedence settings
+  do not conflict. Without an override the repo has source `project`;
+  matching overrides retain their source and credential behavior.
+  Settle the instance before publishing — `status --json` reports its own
+  resolved target and source, and text-mode `publish` prints the publish target.
 - Publish, share, delete and whoami require a publishing key. With no key, they exit
   `1` (`local`), `Run: patchy login`; follow the login handoff above, then retry the
   original command. A local-state error needs the named repair first; `status`
@@ -187,20 +213,30 @@ browser sign-out is a separate control on **Your machines**.
 - A new publish checks the executing CLI against `GET /api/release`, then validates the file.
   A `release_mismatch` names both releases: install the exact package reported
   by that endpoint using the integrity check above. Inside a patch repo, use `pnpm patchy refresh`.
-  File mode synthesises a tier 0 manifest with no resources. The API also admits raw tier 1 bundles; repo-mode CLI publishing is separate work.
-  If the instance returns `has_primitives`, this patch has cumulative resources:
-  this CLI cannot publish it yet. Do not replace it with a file; an omitted table
-  still counts as inventory.
-- An interrupted publish keeps the complete attempt under the state dir. Rerun `publish`
+  File mode synthesises a tier 0 manifest with no resources. Repo mode admits tiers
+  0 and 1 with tables, stores, shared tables and Postgres declarations.
+  If the instance returns `has_primitives`, publish from the patch's repo, not a
+  file: omitted definitions still count as inventory.
+- An interrupted file publish keeps the complete attempt under the state dir;
+  repo publish keeps it under `.patchy/publish/`. Rerun `publish`
   with the same instance, state and owning user: it authenticates that user before
   resending the saved content, then applies the original result without another version.
+  After moving a repo with its `.patchy/`, recover from its new root. Creates and
+  updates record only the returned patch id, preserving the stored instance
+  spelling. A conflicting patch id or late instance edit retains the attempt:
+  restore an unintended target edit before retrying, rather than rebinding
+  the repo to apply a result.
   A replacement token for the same user works; another account is refused locally.
   Authentication, rate-limit and quota failures retain the attempt. Preserve the state
-  directory until recovery succeeds, including after a killed process. Exclusive
-  creation of `attempt.json` selects the attempt; concurrent publishes resend the
-  existing one after checking its original owner, even if they lose the creation race.
-  Success or a definitive payload refusal clears only the matching publish key,
-  so a stale response leaves a newer attempt intact.
+  directory until recovery succeeds, including after a killed process. Atomic
+  selection of the nonempty `attempt/` directory chooses one complete request;
+  concurrent publishes resend it after checking its original owner.
+  Success or a definitive payload refusal unlinks only that publish key's file,
+  so a stale response leaves a newer attempt intact. For the complete conditions
+  that clear rather than retain an attempt, read
+  [definitive publish refusals](https://github.com/allisonmahmood/patchy-cloud/blob/main/docs/adr/ADR-0004-cli-contract-for-agents.md#definitive-publish-refusals):
+  decoded 413s, selected 422s or 422s carrying `errors`, selected 409s and the
+  matching unavailable-update 404. A decoded 413 needs a smaller fresh payload.
   `patch_not_openable` is definitive (exit 2): correct the shared-table declaration
   or restore source access before publishing a fresh attempt.
   `connection_not_connected` and `stale_generated` are also definitive (exit 2).
@@ -246,8 +282,12 @@ browser sign-out is a separate control on **Your machines**.
   or contact Patchy about the unavailable instance. `130` is an interruption.
 - Every command takes `--json`: one JSON document on stdout on success, `{ "ok": false,
 "error", "kind", "code"? }` on stderr on failure, where `kind` is `local`, `rejected` or
-  `unreachable` and matches the exit code. Branch on `code` when present: a local
-  `release_mismatch` is `local`, the instance's is `rejected`.
+  `unreachable` and matches the exit code. Branch on `kind`/exit first, then
+  `code` when present. Repo checks emit local `instance_mismatch`,
+  `release_mismatch`, `stale_generated`, `invalid_manifest`, `too_large` and
+  `tier_mismatch` (exit 1); the same code from the instance is `rejected`
+  (exit 2). Other local failures may have no code. For machine-branching remedies,
+  read the [local-code contract](https://github.com/allisonmahmood/patchy-cloud/blob/main/docs/adr/ADR-0004-cli-contract-for-agents.md#local-repo-refusal-codes).
   `publish --json` prints the instance's response as it is on the wire
   (`patchId`, `name`, `address`, `publicUrl`, `scope`, `tier`, `versionNumber`, `schemaRevision`,
   `provisioned`, `unused`, `warnings`, …).

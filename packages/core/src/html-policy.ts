@@ -28,6 +28,8 @@ const URL_ATTRS = new Set([
 
 export const BLOCKED_PROTOCOLS = ["javascript:", "vbscript:", "file:"] as const;
 
+export const DEFAULT_MAX_HTML_BYTES = 512 * 1024;
+
 export interface ValidateHtmlOptions {
   maxBytes?: number;
 }
@@ -36,7 +38,7 @@ export function validateHtml(
   html: string,
   options: ValidateHtmlOptions = {}
 ): HtmlValidationResult {
-  const maxBytes = options.maxBytes ?? 512 * 1024;
+  const maxBytes = options.maxBytes ?? DEFAULT_MAX_HTML_BYTES;
   const errors: string[] = [];
   const warnings: string[] = [];
 

@@ -49,7 +49,7 @@ Initialization installs the pinned package and generates the client, context and
 Inside that repo use `pnpm patchy catalog`, `add`, `remove` and `refresh`; see the
 [project commands](packages/patchy/README.md#patch-repo-commands) for their contracts.
 The repo is ready to typecheck, and hosted tier 1 patches use the sandboxed browser broker.
-The local `patchy dev` runtime and repo publishing are separate work, not enabled by initialization.
+Run `pnpm patchy publish` from the repo root to build and publish it. The local `patchy dev` runtime remains separate work.
 
 ## Repository layout
 

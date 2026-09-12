@@ -3,6 +3,7 @@ import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Result from "effect/Result";
 import * as Layer from "effect/Layer";
@@ -80,6 +81,7 @@ const memoryStore = Layer.sync(ContentStore.ContentStore, () => {
 
 const client = HttpApiTest.groups(PatchyApi, ["patches"]);
 const decodeNotAdditive = Schema.decodeUnknownEffect(NotAdditive);
+const decodeCreated = Schema.decodeUnknownSync(PublishCreated);
 
 const html = (title: string) =>
   `<!doctype html><html><head><title>${title}</title></head><body><p>${title}</p></body></html>`;
@@ -616,6 +618,65 @@ it.layer(publishLayer)("publish attempts", (it) => {
       })
   );
 
+  it.effect("recovers one repo patch when response delivery fails after the commit", () =>
+    Effect.gen(function* () {
+      const analytics = yield* Analytics.Analytics;
+      const failedDelivery = Layer.succeed(Analytics.Analytics, {
+        track: (event: Analytics.AnalyticsEvent) =>
+          analytics.track(event).pipe(Effect.andThen(Effect.die(new Error("publish reply lost"))))
+      });
+      const unavailable = yield* client.pipe(
+        Effect.provide(Fixtures.as(uploader)),
+        Effect.provide(
+          Layer.fresh(
+            PatchesApi.layer.pipe(Layer.provide(failedDelivery), Layer.provide(publishConfig()))
+          )
+        )
+      );
+      const payload = publishRequest({
+        html: "<!doctype html><html><body><script>window.answer = 42;</script></body></html>",
+        manifest: {
+          ...Fixtures.manifest,
+          tier: 1,
+          name: "lost-repo-reply",
+          tables: { notes: { columns: { title: { kind: "text" } }, indexes: {} } },
+          files: { attachments: {} }
+        }
+      });
+      const patches = yield* Patches.Patches;
+      const before = yield* patches.countLive(uploader.user.id);
+      const failed = yield* unavailable
+        .publish({ payload, responseMode: "response-only" })
+        .pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(failed));
+      const stored = Option.getOrThrow(yield* patches.replay(uploader.user.id, payload.publishKey));
+      const committed = decodeCreated(stored.response);
+      const { versionId, patchId } = committed;
+      assert.strictEqual(yield* patches.countLive(uploader.user.id), before + 1);
+      const objects = yield* ContentStore.ContentStore;
+      const committedObjects = yield* Stream.runCollect(objects.list("patches/"));
+      const upgraded = yield* client.pipe(
+        Effect.provide(Fixtures.as(sibling)),
+        Effect.provide(
+          Layer.fresh(PatchesApi.layer.pipe(Layer.provide(publishConfig("9.0.0", 0, 0, 0))))
+        )
+      );
+      const replayed = yield* upgraded.publish({ payload, responseMode: "response-only" });
+      assert.strictEqual(replayed.status, 201);
+      assert.strictEqual(yield* replayed.text, stored.body);
+      assert.strictEqual(yield* patches.countLive(uploader.user.id), before + 1);
+      assert.deepStrictEqual(yield* Stream.runCollect(objects.list("patches/")), committedObjects);
+      const latest = Option.getOrThrow(yield* patches.find(patchId));
+      assert.strictEqual(latest.version.id, versionId);
+      assert.strictEqual(latest.version.versionNumber, 1);
+      assert.strictEqual(yield* (yield* Content.Content).read(latest.version), payload.html);
+      const inventory = yield* patches.inventory(patchId, uploader.user.id);
+      assert.strictEqual(inventory.schemaRevision, 1);
+      assert.strictEqual(inventory.tables.notes?.columns.title?.kind, "text");
+      assert.deepStrictEqual(inventory.files, { attachments: {} });
+    })
+  );
+
   it.effect(
     "replays stored JSONB bytes across release and response schema changes without another version",
     () =>
@@ -1138,11 +1199,19 @@ it.layer(publishLayer)("publish attempts", (it) => {
         errors: [expect.any(String)],
         warnings: []
       });
+      const envelope = publishRequest({
+        ...payload,
+        publishKey: crypto.randomUUID(),
+        metadata: { filename: "" }
+      });
+      const padding = "x".repeat(3072 - Buffer.byteLength(JSON.stringify(envelope), "utf8"));
+      const atBodyLimit = publishRequest({ ...envelope, metadata: { filename: padding } });
+      const accepted = yield* api.publish({ payload: atBodyLimit });
+      assert.strictEqual(accepted.tier, 1);
       const bodyTooLarge = yield* api.publish({
         payload: publishRequest({
-          ...payload,
-          publishKey: crypto.randomUUID(),
-          metadata: { filename: "x".repeat(3072) }
+          ...atBodyLimit,
+          metadata: { filename: padding + "x" }
         }),
         responseMode: "response-only"
       });

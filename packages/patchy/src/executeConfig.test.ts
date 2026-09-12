@@ -14,7 +14,10 @@ const builders = new URL("./config.ts", import.meta.url).href;
 const encodeManifest = Schema.encodeSync(Manifest);
 const decodeManifest = Schema.decodeUnknownSync(Manifest);
 const directories: string[] = [];
-const fixture = async (source: string, index?: unknown) => {
+const fixture = async (
+  source: string,
+  index: unknown = { release: RELEASE, manifestVersion: MANIFEST_VERSION, uses: [] }
+) => {
   const directory = await mkdtemp(join(tmpdir(), "patchy-config-"));
   directories.push(directory);
   const path = join(directory, "patchy.config.ts");
@@ -23,7 +26,7 @@ const fixture = async (source: string, index?: unknown) => {
     path,
     `import { defineConfig, table, t, files, postgres, sharedTable } from ${JSON.stringify(builders)};\n${source}`
   );
-  if (index !== undefined) {
+  if (index !== null) {
     await mkdir(join(directory, "patchy/_generated"), { recursive: true });
     await writeFile(join(directory, "patchy/_generated/index.json"), JSON.stringify(index));
   }
@@ -55,9 +58,32 @@ describe("executeConfig", () => {
       } });
     `,
       {
+        release: RELEASE,
+        manifestVersion: MANIFEST_VERSION,
         uses: [
-          { alias: "sales", id: "connection-real", revision: 7 },
-          { alias: "contacts", id: "abcdefghijkl/contacts", revision: 12 }
+          {
+            alias: "sales",
+            id: "connection-real",
+            revision: 7,
+            declaration: {
+              kind: "postgres",
+              handle: "warehouse",
+              id: "connection-real",
+              revision: 7
+            }
+          },
+          {
+            alias: "contacts",
+            id: "abcdefghijkl/contacts",
+            revision: 12,
+            declaration: {
+              kind: "sharedTable",
+              patchId: "abcdefghijkl",
+              table: "contacts",
+              id: "abcdefghijkl/contacts",
+              revision: 12
+            }
+          }
         ]
       }
     );
@@ -148,28 +174,121 @@ describe("executeConfig", () => {
   });
 
   it.each([
-    { uses: [] },
-    { uses: [{ alias: "sales", id: "real", revision: -1 }] },
     {
-      uses: [
-        { alias: "sales", id: "first", revision: 1 },
-        { alias: "sales", id: "second", revision: 2 }
-      ]
-    }
-  ])("rejects absent, invalid and ambiguous generated stamps: %j", async (index) => {
+      label: "a different release",
+      release: `${RELEASE}-stale`,
+      manifestVersion: MANIFEST_VERSION
+    },
+    {
+      label: "a different manifest version",
+      release: RELEASE,
+      manifestVersion: MANIFEST_VERSION + 1
+    },
+    { label: "a missing release", release: undefined, manifestVersion: MANIFEST_VERSION },
+    { label: "a missing manifest version", release: RELEASE, manifestVersion: undefined }
+  ])("refuses generated declarations with $label", async ({ release, manifestVersion }) => {
     const path = await fixture(
-      'export default defineConfig({ name: "bad-stamps", tier: 1, uses: { sales: postgres("warehouse") } });',
+      'export default defineConfig({ name: "stale-generation", tier: 1, uses: { sales: postgres("warehouse") } });',
+      {
+        release,
+        manifestVersion,
+        uses: [
+          {
+            alias: "sales",
+            id: "real",
+            revision: 1,
+            declaration: { kind: "postgres", handle: "warehouse", id: "real", revision: 1 }
+          }
+        ]
+      }
+    );
+    await expect(executeConfig(path)).rejects.toMatchObject({ code: "stale_generated" });
+  });
+
+  it.each([
+    { label: "missing", index: null },
+    {
+      label: "stale",
+      index: { release: `${RELEASE}-stale`, manifestVersion: MANIFEST_VERSION + 1, uses: [] }
+    }
+  ])("evaluates unresolved declarations for generation with a $label index", async ({ index }) => {
+    const path = await fixture(
+      'export default defineConfig({ name: "first-generation", tier: 1, uses: { sales: postgres("warehouse") } });',
       index
     );
-    await expect(executeConfig(path)).rejects.toThrow();
+    expect(await ConfigExecution.executeConfig(path, { resolve: false })).toEqual({
+      name: "first-generation",
+      tier: 1,
+      tables: {},
+      files: {},
+      uses: { sales: { kind: "postgres", handle: "warehouse" } },
+      release: RELEASE,
+      manifestVersion: MANIFEST_VERSION
+    });
+  });
+
+  it.each([
+    {
+      label: "removed alias",
+      config: "{}",
+      stamps: [{ alias: "sales", id: "real", revision: 1 }]
+    },
+    {
+      label: "rebound postgres handle",
+      config: '{ sales: postgres("other") }',
+      stamps: [{ alias: "sales", id: "real", revision: 1 }]
+    },
+    {
+      label: "ambiguous alias",
+      config: '{ sales: postgres("warehouse") }',
+      stamps: [
+        { alias: "sales", id: "real", revision: 1 },
+        { alias: "sales", id: "real", revision: 1 }
+      ]
+    },
+    {
+      label: "inconsistent revision",
+      config: '{ sales: postgres("warehouse") }',
+      stamps: [{ alias: "sales", id: "real", revision: 2 }]
+    }
+  ])("refuses $label without borrowing stale generated authority", async ({ config, stamps }) => {
+    const path = await fixture(
+      `export default defineConfig({ name: "changed-uses", tier: 1, uses: ${config} });`,
+      {
+        release: RELEASE,
+        manifestVersion: MANIFEST_VERSION,
+        uses: stamps.map((stamp) => ({
+          ...stamp,
+          declaration: { kind: "postgres", handle: "warehouse", id: "real", revision: 1 }
+        }))
+      }
+    );
+    await expect(executeConfig(path)).rejects.toMatchObject({ code: "stale_generated" });
   });
 
   it("does not rebind a changed shared declaration to its old generated identity", async () => {
     const path = await fixture(
       'export default defineConfig({ name: "changed-shared", tier: 1, uses: { contacts: sharedTable("abcdefghijkl", "contacts") } });',
-      { uses: [{ alias: "contacts", id: "abcdefghijkl/other", revision: 1 }] }
+      {
+        release: RELEASE,
+        manifestVersion: MANIFEST_VERSION,
+        uses: [
+          {
+            alias: "contacts",
+            id: "abcdefghijkl/other",
+            revision: 1,
+            declaration: {
+              kind: "sharedTable",
+              patchId: "abcdefghijkl",
+              table: "other",
+              id: "abcdefghijkl/other",
+              revision: 1
+            }
+          }
+        ]
+      }
     );
-    await expect(executeConfig(path)).rejects.toThrow();
+    await expect(executeConfig(path)).rejects.toMatchObject({ code: "stale_generated" });
   });
 
   it("evaluates staged edits with relative imports without replacing the author's config", async () => {

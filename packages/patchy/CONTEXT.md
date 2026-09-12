@@ -5,15 +5,15 @@ The path agents use to build, publish and manage patches for a user through the 
 ## Language
 
 **Publishing**:
-The flow from a local file to a live patch and a link announced with its [sharing scope](../patches/CONTEXT.md). It includes choosing the instance and establishing which user's publishing key the machine holds.
+The flow from a local file or patch repo to a live patch and a link announced with its [sharing scope](../patches/CONTEXT.md). It includes choosing the instance and establishing which user's publishing key the machine holds.
 _Avoid_: deployment, posting
 
 **Instance**:
-The Patchy Cloud deployment or local development server a command targets, identified by its API URL. Credentials and cached patches belong to exactly one instance; target selection follows [ADR-0004](../../docs/adr/ADR-0004-cli-contract-for-agents.md).
+The Patchy Cloud deployment or local development server a command targets, identified by its API URL. A patch repo is bound to one instance, as are credentials and cached patches; target selection follows [ADR-0004](../../docs/adr/ADR-0004-cli-contract-for-agents.md).
 _Avoid_: the server (ambiguous with the hosting codebase), host, backend, your own instance (there is one deployment; the rest are dev instances)
 
 **Dev env**:
-The local instance information a running dev loop makes available to the CLI: its URL and seeded publishing key. It makes a worktree target its own instance unless the driver explicitly chooses another.
+The local instance information a running dev loop makes available to the CLI: its URL and seeded publishing key. It offers a worktree's local target without changing a patch repo's instance binding.
 _Avoid_: dotenv, the env file
 
 **Exit-code ladder**:
@@ -61,7 +61,7 @@ The per-instance record linking a local file to the patch it produced, so republ
 _Avoid_: upload history, manifest
 
 **Pending publish**:
-A complete publish attempt whose outcome or local application is not yet settled, shared by concurrent invocations for one instance and owning user. Its original publish key, content and file identity remain the recovery target, and only credentials for that same owner may resend it.
+A complete publish attempt whose outcome or local application is not yet settled, shared by concurrent invocations for one instance and owning user. Its original content and patch identity remain the recovery target even after moving a repo; settling it preserves the repo's instance binding.
 _Avoid_: queued publish, upload history
 
 **Publish key**:

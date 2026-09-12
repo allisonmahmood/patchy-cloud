@@ -5,12 +5,10 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import * as Stream from "effect/Stream";
 import * as Prompt from "effect/unstable/cli/Prompt";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import { Catalog, DefinitionName, Generated, Manifest, PatchName } from "@patchy/api";
 import * as Api from "./Api.js";
-import { LocalError, RejectedError, UnreachableError } from "./CliError.js";
+import { InstanceMismatch, LocalError, RejectedError, UnreachableError } from "./CliError.js";
 import * as Instance from "./Instance.js";
 import * as Login from "./Login.js";
 import * as Output from "./Output.js";
@@ -25,6 +23,7 @@ import {
 } from "./ManagedProject.js";
 import { activateStarter, starterFiles, writeInitialGeneration } from "./initProject.js";
 import { RELEASE } from "./release.js";
+import { processResult } from "./processResult.js";
 
 const repoSchema = Schema.Struct({
   instance: Schema.String,
@@ -59,7 +58,9 @@ const failureSchema = Schema.Struct({
   kind: Schema.Literals(["local", "rejected", "unreachable"]),
   code: Schema.optionalKey(Schema.String)
 });
-const decodeRepo = Schema.decodeUnknownSync(Schema.fromJsonString(repoSchema));
+const decodeRepo = Schema.decodeUnknownSync(Schema.fromJsonString(repoSchema), {
+  onExcessProperty: "preserve"
+});
 const decodePackage = Schema.decodeUnknownSync(Schema.fromJsonString(packageSchema));
 const decodeDependencies = Schema.decodeUnknownSync(dependenciesSchema);
 const decodeChange = Schema.decodeUnknownSync(Schema.fromJsonString(changeSchema));
@@ -92,6 +93,56 @@ const parse = <A>(operation: string, run: () => A) =>
     catch: (cause) => new LocalError({ message: `${operation} failed.`, cause })
   });
 
+export const readRepo = Effect.fn("Project.readRepo")(function* (cwd: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const source = yield* fs.readFileString(path.join(cwd, "patchy.json")).pipe(
+    Effect.mapError(
+      (cause) =>
+        new LocalError({
+          message: "Run this command inside a patch repo created with patchy init.",
+          cause
+        })
+    )
+  );
+  return yield* parse("Read patchy.json", () => decodeRepo(source));
+});
+
+/** Reapply a returned patch id only while the repo retains its original instance binding. */
+export const recordPublish = Effect.fn("Project.recordPublish")(function* (
+  cwd: string,
+  patchId: string,
+  apiUrl: string
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const repo = yield* readRepo(cwd);
+  if (Instance.normalizeApiUrl(repo.instance) !== Instance.normalizeApiUrl(apiUrl))
+    return yield* InstanceMismatch.new({ stored: repo.instance, requested: apiUrl });
+  if (repo.patch === patchId) return;
+  if (repo.patch !== undefined)
+    return yield* new LocalError({
+      message:
+        "patchy.json now names a different patch. Restore the original repo identity before recovering this publish; the attempt has been kept."
+    });
+  const destination = yield* localIO("Resolve patchy.json", () => safePath(cwd, "patchy.json"));
+  yield* Effect.scoped(
+    Effect.gen(function* () {
+      const staged = yield* fs.makeTempFileScoped({ directory: cwd, prefix: ".patchy-publish-" });
+      yield* fs.writeFileString(staged, json({ ...repo, patch: patchId }));
+      yield* fs.rename(staged, destination);
+    })
+  ).pipe(
+    Effect.mapError(
+      (cause) =>
+        new LocalError({
+          message:
+            "Could not write patch into patchy.json. Run publish again to recover the saved result.",
+          cause
+        })
+    )
+  );
+});
+
 const installedFailure = (stderr: string, instanceUrl: string, fallback: string) => {
   const failure = decodeFailure(stderr.trim());
   if (Option.isNone(failure)) return new LocalError({ message: fallback });
@@ -106,37 +157,6 @@ const installedFailure = (stderr: string, instanceUrl: string, fallback: string)
       return new LocalError(fields);
   }
 };
-
-const processResult = Effect.fn("Project.processResult")(function* (
-  cwd: string,
-  command: string,
-  args: readonly string[],
-  env?: Record<string, string>
-) {
-  return yield* Effect.scoped(
-    Effect.gen(function* () {
-      const child = yield* ChildProcess.make(command, args, {
-        cwd,
-        env,
-        extendEnv: true,
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "pipe"
-      });
-      const [stdout, stderr, code] = yield* Effect.all(
-        [
-          Stream.mkString(Stream.decodeText(child.stdout)),
-          Stream.mkString(Stream.decodeText(child.stderr)),
-          child.exitCode
-        ],
-        { concurrency: "unbounded" }
-      );
-      return { stdout, stderr, code };
-    })
-  ).pipe(
-    Effect.mapError((cause) => new LocalError({ message: `Could not run ${command}.`, cause }))
-  );
-});
 
 const install = Effect.fn("Project.install")(function* (cwd: string) {
   const result = yield* processResult(cwd, "pnpm", [

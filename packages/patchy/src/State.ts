@@ -12,8 +12,9 @@
  * survives. A file in the retired single-instance format fails closed
  * everywhere: the token it holds is the only key to the pages it created.
  */
-// @effect-diagnostics nodeBuiltinImport:off -- homedir is OS-owned.
+// @effect-diagnostics nodeBuiltinImport:off -- homedir is OS-owned; FileSystem.remove cannot remove only an empty directory.
 import { homedir } from "node:os";
+import { rmdir } from "node:fs/promises";
 import * as Config from "effect/Config";
 import * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
@@ -66,11 +67,29 @@ export class CachedPatch extends Schema.Class<CachedPatch>("CachedPatch")({
 export class PendingPublish extends Schema.Class<PendingPublish>("PendingPublish")({
   request: PublishRequest,
   ownerUserId: Schema.NonEmptyString,
-  file: Schema.String,
-  explicitPatch: Schema.Boolean
+  target: Schema.Union([
+    Schema.Struct({ mode: Schema.Literal("repo") }),
+    Schema.Struct({
+      mode: Schema.Literal("file"),
+      file: Schema.String,
+      explicitPatch: Schema.Boolean
+    })
+  ])
 }) {}
 const decodePendingPublish = Schema.decodeUnknownEffect(PendingPublish);
 const encodePendingPublish = Schema.encodeUnknownEffect(PendingPublish);
+// Effect exposes ENOTEMPTY through its Node cause today. An unfamiliar wrapper fails closed
+// instead of treating an unknown filesystem failure as a harmless occupied-slot race.
+const isOccupiedDirectory = Schema.is(
+  Schema.Struct({
+    reason: Schema.Struct({
+      cause: Schema.Struct({ code: Schema.Literals(["ENOTEMPTY", "EEXIST"]) })
+    })
+  })
+);
+const isEmptySlotRace = Schema.is(
+  Schema.Struct({ code: Schema.Literals(["ENOENT", "ENOTEMPTY", "EEXIST"]) })
+);
 
 /**
  * An entry written before the wire renamed `draftId` to `patchId` is the same
@@ -152,14 +171,17 @@ export class State extends Context.Service<
     /** Exclusively persists a candidate or returns the attempt another invocation already saved. */
     readonly lockPublish: (
       apiUrl: string,
-      attempt: PendingPublish
+      attempt: PendingPublish,
+      repo?: string
     ) => Effect.Effect<PendingPublish, LocalError>;
     readonly readPendingPublish: (
-      apiUrl: string
+      apiUrl: string,
+      repo?: string
     ) => Effect.Effect<Option.Option<PendingPublish>, LocalError>;
     readonly forgetPendingPublish: (
       apiUrl: string,
-      publishKey: string
+      publishKey: string,
+      repo?: string
     ) => Effect.Effect<void, LocalError>;
     readonly readCachedPatch: (
       apiUrl: string,
@@ -199,7 +221,13 @@ export const make = Effect.gen(function* () {
   // new patch at a new URL instead of updating the one it remembers.
   const retiredPatchesPath = path.join(dir, "drafts.json");
   const stylePath = path.join(dir, "style.md");
-  const publishPath = (apiUrl: string) => path.join(dir, "publish", sha256(apiUrl), "attempt.json");
+  const publishPath = (apiUrl: string, repo?: string) =>
+    path.join(
+      repo === undefined ? dir : path.join(repo, ".patchy"),
+      "publish",
+      sha256(apiUrl),
+      "attempt"
+    );
 
   const credentialErrors: HostKeyedErrors = {
     unreadable:
@@ -325,49 +353,96 @@ export const make = Effect.gen(function* () {
     yield* writeJson(file, { hosts: remaining });
   });
 
-  const readPendingPublish = Effect.fn("State.readPendingPublish")(function* (apiUrl: string) {
-    const file = publishPath(apiUrl);
-    const invalid = `Pending publish is invalid: ${file}. Keep the file until the publish outcome is resolved.`;
+  const readPendingPublish = Effect.fn("State.readPendingPublish")(function* (
+    apiUrl: string,
+    repo?: string
+  ) {
+    const directory = publishPath(apiUrl, repo);
+    const invalid = `Pending publish is invalid: ${directory}. Keep the directory until the publish outcome is resolved.`;
+    const files = yield* fs.readDirectory(directory).pipe(
+      Effect.catchTags({
+        PlatformError: (cause) =>
+          cause.reason._tag === "NotFound" ? Effect.succeed([]) : Effect.fail(cause)
+      }),
+      Effect.mapError(
+        (cause) =>
+          new LocalError({ message: `Could not read ${directory}. Check permissions.`, cause })
+      )
+    );
+    if (files.length === 0) return Option.none<PendingPublish>();
+    if (files.length !== 1) return yield* new LocalError({ message: invalid });
+    const file = path.join(directory, files[0]!);
     const document = yield* readDocument(file, {
       unreadable: `Pending publish could not be read: ${file}. Check permissions.`,
       invalid
     });
     if (Option.isNone(document)) return Option.none<PendingPublish>();
-    return Option.some(yield* entry(decodePendingPublish(document.value), invalid));
+    const attempt = yield* entry(decodePendingPublish(document.value), invalid);
+    if (files[0] !== `${sha256(attempt.request.publishKey)}.json`)
+      return yield* new LocalError({ message: invalid });
+    return Option.some(attempt);
   });
+
+  // Never recursively remove the slot: a newer attempt may already occupy it.
+  const removeEmptySlot = (directory: string) =>
+    Effect.tryPromise({
+      try: async () => {
+        try {
+          await rmdir(directory);
+        } catch (cause) {
+          if (!isEmptySlotRace(cause)) throw cause;
+        }
+      },
+      catch: (cause) =>
+        new LocalError({ message: "Could not clear the empty publish slot.", cause })
+    });
 
   const lockPublish = Effect.fn("State.lockPublish")(function* (
     apiUrl: string,
-    attempt: PendingPublish
+    attempt: PendingPublish,
+    repo?: string
   ) {
     // Constructors do not validate: never persist a request recovery cannot decode.
     const encoded = yield* entry(
       encodePendingPublish(attempt),
       "Publish request is invalid. Check the patch ID and publish options."
     );
-    const file = publishPath(apiUrl);
-    const created = yield* Effect.gen(function* () {
-      yield* fs.makeDirectory(dir, { recursive: true, mode: 0o700 });
-      yield* fs.makeDirectory(path.dirname(file), { recursive: true, mode: 0o700 });
-      return yield* fs
-        .writeFileString(file, `${encodeJson(encoded)}\n`, {
-          flag: "wx",
-          mode: 0o600
-        })
-        .pipe(
+    const directory = publishPath(apiUrl, repo);
+    const created = yield* Effect.scoped(
+      Effect.gen(function* () {
+        yield* fs.makeDirectory(path.dirname(directory), { recursive: true, mode: 0o700 });
+        const staged = yield* Effect.acquireRelease(
+          fs.makeTempDirectory({
+            directory: path.dirname(directory),
+            prefix: ".attempt-"
+          }),
+          (temporary) => fs.remove(temporary, { recursive: true, force: true }).pipe(Effect.orDie)
+        );
+        yield* fs.writeFileString(
+          path.join(staged, `${sha256(attempt.request.publishKey)}.json`),
+          `${encodeJson(encoded)}\n`,
+          { flag: "wx", mode: 0o600 }
+        );
+        yield* removeEmptySlot(directory);
+        // A fully written, nonempty directory atomically claims the one active slot.
+        return yield* fs.rename(staged, directory).pipe(
           Effect.as(true),
           Effect.catchTags({
             PlatformError: (cause) =>
-              cause.reason._tag === "AlreadyExists" ? Effect.succeed(false) : Effect.fail(cause)
+              cause.reason._tag === "AlreadyExists" || isOccupiedDirectory(cause)
+                ? Effect.succeed(false)
+                : Effect.fail(cause)
           })
         );
-    }).pipe(
+      })
+    ).pipe(
       Effect.mapError(
-        (cause) => new LocalError({ message: `Could not write ${file}. Check permissions.`, cause })
+        (cause) =>
+          new LocalError({ message: `Could not write ${directory}. Check permissions.`, cause })
       )
     );
     if (created) return attempt;
-    const pending = yield* readPendingPublish(apiUrl);
+    const pending = yield* readPendingPublish(apiUrl, repo);
     if (Option.isSome(pending)) return pending.value;
     return yield* new LocalError({
       message:
@@ -432,11 +507,11 @@ export const make = Effect.gen(function* () {
     forgetPendingLogin: (apiUrl) => forgetHost(deviceLoginPath, readLoginFile, apiUrl),
     lockPublish,
     readPendingPublish,
-    forgetPendingPublish: (apiUrl, publishKey) =>
+    forgetPendingPublish: (apiUrl, publishKey, repo) =>
       Effect.gen(function* () {
-        const pending = yield* readPendingPublish(apiUrl);
-        if (Option.isNone(pending) || pending.value.request.publishKey !== publishKey) return;
-        yield* fs.remove(publishPath(apiUrl), { force: true }).pipe(
+        const directory = publishPath(apiUrl, repo);
+        // The key is part of the filename: a late K1 reply cannot unlink K2's payload.
+        yield* fs.remove(path.join(directory, `${sha256(publishKey)}.json`), { force: true }).pipe(
           Effect.mapError(
             (cause) =>
               new LocalError({
@@ -445,6 +520,7 @@ export const make = Effect.gen(function* () {
               })
           )
         );
+        yield* removeEmptySlot(directory);
       }),
     readCachedPatch: (apiUrl, file) =>
       Effect.gen(function* () {

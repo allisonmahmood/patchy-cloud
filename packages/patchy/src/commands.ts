@@ -42,6 +42,7 @@ import * as State from "./State.js";
 import { RELEASE, MANIFEST_VERSION } from "./release.js";
 import { checkRelease } from "./ReleaseCheck.js";
 import * as Project from "./Project.js";
+import { prepareRepoPublish } from "./repoBuild.js";
 
 /** The working directory the entrypoint started in; where the dev-env walk begins. */
 export class Cwd extends Context.Service<Cwd, string>()("patchy/commands/Cwd") {}
@@ -58,11 +59,13 @@ const run = <A, R>(handler: Effect.Effect<A, CliError, R>) =>
 
 /** Only repo commands read patchy.json; file-mode publish keeps its independent target. */
 const runProject = <A, R>(handler: Effect.Effect<A, CliError, R>) =>
-  Output.contract(handler).pipe(
-    Effect.provide(
-      Layer.provideMerge(
-        Layer.unwrap(Effect.map(Cwd, (cwd) => Instance.layer(cwd, true))),
-        State.layer
+  Output.contract(
+    handler.pipe(
+      Effect.provide(
+        Layer.provideMerge(
+          Layer.unwrap(Effect.map(Cwd, (cwd) => Instance.layer(cwd, true))),
+          State.layer
+        )
       )
     )
   );
@@ -340,8 +343,14 @@ const validate = Command.make("validate", { file: fileArgument }, ({ file }) =>
 const sendPublish = Effect.fn("sendPublish")(function* (
   attempt: State.PendingPublish,
   token: Redacted.Redacted,
-  ownerUserId: string
+  ownerUserId: string,
+  repoRoot?: string
 ) {
+  const repo = attempt.target.mode === "repo" ? repoRoot : undefined;
+  if (attempt.target.mode === "repo" && repo === undefined)
+    return yield* new LocalError({
+      message: "Recover this publish from the repo holding its attempt."
+    });
   if (attempt.ownerUserId !== ownerUserId) {
     return yield* new LocalError({
       message:
@@ -360,23 +369,28 @@ const sendPublish = Effect.fn("sendPublish")(function* (
               // limits) cannot tell us whether an earlier send committed.
               const definitive =
                 Api.isRefusal(error) &&
-                ((error.status === 422 &&
-                  (error.code === "release_mismatch" ||
-                    error.code === "invalid_manifest" ||
-                    error.code === "tier_mismatch" ||
-                    error.code === "has_primitives" ||
-                    error.code === "patch_not_openable" ||
-                    error.code === "connection_not_connected" ||
-                    error.code === "stale_generated" ||
-                    error.code === "not_additive" ||
-                    error.errors !== undefined)) ||
+                (error.status === 413 ||
+                  (error.status === 422 &&
+                    (error.code === "release_mismatch" ||
+                      error.code === "invalid_manifest" ||
+                      error.code === "tier_mismatch" ||
+                      error.code === "has_primitives" ||
+                      error.code === "patch_not_openable" ||
+                      error.code === "connection_not_connected" ||
+                      error.code === "stale_generated" ||
+                      error.code === "not_additive" ||
+                      error.errors !== undefined)) ||
                   (error.status === 409 &&
                     (error.code === "publish_key_conflict" || error.code === "name_taken")) ||
                   (error.status === 404 &&
                     attempt.request.patchId !== undefined &&
                     error.error === PATCH_NOT_FOUND));
               if (definitive) {
-                yield* state.forgetPendingPublish(instance.apiUrl, attempt.request.publishKey);
+                yield* state.forgetPendingPublish(
+                  instance.apiUrl,
+                  attempt.request.publishKey,
+                  repo
+                );
               }
               if (
                 attempt.request.patchId !== undefined &&
@@ -385,9 +399,12 @@ const sendPublish = Effect.fn("sendPublish")(function* (
                 error.error === PATCH_NOT_FOUND
               ) {
                 return yield* new RejectedError({
-                  message: attempt.explicitPatch
-                    ? "Patch is unavailable for update. --patch never creates a new patch."
-                    : "Cached patch is unavailable for update. Use --new to create a new patch.",
+                  message:
+                    attempt.target.mode === "repo"
+                      ? "Patch is unavailable for update. Remove patch from patchy.json to create a new patch."
+                      : attempt.target.explicitPatch
+                        ? "Patch is unavailable for update. --patch never creates a new patch."
+                        : "Cached patch is unavailable for update. Use --new to create a new patch.",
                   ...(refusal.code === undefined ? {} : { code: refusal.code })
                 });
               }
@@ -397,19 +414,22 @@ const sendPublish = Effect.fn("sendPublish")(function* (
       )
     )
   );
-  // A failed cache write leaves the original create request intact. Resending
-  // its key recovers the first response instead of publishing a second version.
-  yield* state.cachePatch(
-    instance.apiUrl,
-    attempt.file,
-    new State.CachedPatch({
-      patchId: published.patchId,
-      publicUrl: published.publicUrl,
-      latestVersionNumber: published.versionNumber,
-      updatedAt: yield* State.now
-    })
-  );
-  yield* state.forgetPendingPublish(instance.apiUrl, attempt.request.publishKey);
+  // Reapply creates and updates before clearing; failed local writes remain recoverable.
+  if (repo !== undefined) {
+    yield* Project.recordPublish(repo, published.patchId, instance.apiUrl);
+  } else if (attempt.target.mode === "file") {
+    yield* state.cachePatch(
+      instance.apiUrl,
+      attempt.target.file,
+      new State.CachedPatch({
+        patchId: published.patchId,
+        publicUrl: published.publicUrl,
+        latestVersionNumber: published.versionNumber,
+        updatedAt: yield* State.now
+      })
+    );
+  }
+  yield* state.forgetPendingPublish(instance.apiUrl, attempt.request.publishKey, repo);
   yield* Output.report(encodePublish(published), [
     attempt.request.patchId !== undefined ? "Updated patch" : "Published patch",
     `URL: ${published.address}`,
@@ -417,8 +437,12 @@ const sendPublish = Effect.fn("sendPublish")(function* (
     `Patch ID: ${published.patchId}`,
     `Tier: ${published.tier}`,
     `Version: ${published.versionNumber}`,
-    `Provisioned: ${Output.toJson(published.provisioned)}`,
-    `Unused: ${Output.toJson(published.unused)}`
+    ...(["provisioned", "unused"] as const).flatMap((kind) =>
+      Object.entries(published[kind]).map(
+        ([resource, names]) =>
+          `${kind === "provisioned" ? "Provisioned" : "Unused"} ${resource}: ${names.length ? names.join(", ") : "none"}.`
+      )
+    )
   ]);
   for (const warning of published.warnings) yield* Output.warn(`Warning: ${warning}`);
 });
@@ -426,7 +450,7 @@ const sendPublish = Effect.fn("sendPublish")(function* (
 const publish = Command.make(
   "publish",
   {
-    file: fileArgument,
+    file: fileArgument.pipe(Argument.optional),
     name: Flag.string("name").pipe(
       Flag.withDescription("Set the patch's name in its company"),
       Flag.optional
@@ -445,11 +469,13 @@ const publish = Command.make(
     )
   },
   (options) =>
-    run(
+    (Option.isNone(options.file) ? runProject : run)(
       Effect.gen(function* () {
         const instance = yield* Instance.Instance;
         const state = yield* State.State;
-        const pending = yield* state.readPendingPublish(instance.apiUrl);
+        const cwd = yield* Cwd;
+        const repo = Option.isNone(options.file) ? cwd : undefined;
+        const pending = yield* state.readPendingPublish(instance.apiUrl, repo);
         const apiToken = yield* requiredToken();
         const client = yield* Api.client(apiToken);
         const identity = yield* client
@@ -458,7 +484,38 @@ const publish = Command.make(
             Effect.catch((error) => refused(error, "Could not verify the publishing key's owner."))
           );
         if (Option.isSome(pending)) {
-          return yield* sendPublish(pending.value, apiToken, identity.user.id);
+          return yield* sendPublish(pending.value, apiToken, identity.user.id, repo);
+        }
+
+        if (repo !== undefined) {
+          if (options.new || Option.isSome(options.patch) || Option.isSome(options.name))
+            return yield* new LocalError({
+              message:
+                "Repo publishing uses name from patchy.config.ts and patch from patchy.json. --name, --patch and --new are file-mode options."
+            });
+          yield* Output.notice(
+            `Publishing to ${instance.apiUrl} (target came from ${Instance.describeSource(instance.source)}).`
+          );
+          const { manifest, html } = yield* prepareRepoPublish(repo, apiToken);
+          const project = yield* Project.readRepo(repo);
+          const attempt = new State.PendingPublish({
+            ownerUserId: identity.user.id,
+            target: { mode: "repo" },
+            request: new PublishRequest({
+              manifest,
+              html,
+              ...(project.patch === undefined ? {} : { patchId: project.patch }),
+              ...(Option.isSome(options.share) ? { scope: options.share.value } : {}),
+              publishKey: newInternalId("pub"),
+              metadata: new PublishMetadata({
+                ...(yield* Git.metadata(repo)),
+                cliVersion: RELEASE,
+                fileSha256: sha256(html)
+              })
+            })
+          });
+          const selected = yield* state.lockPublish(instance.apiUrl, attempt, repo);
+          return yield* sendPublish(selected, apiToken, identity.user.id, repo);
         }
 
         if (Option.isSome(options.patch) && options.new) {
@@ -483,7 +540,7 @@ const publish = Command.make(
           );
         yield* checkRelease(release.release, { cli: RELEASE });
         const path = yield* Path.Path;
-        const { resolved, html } = yield* readHtml(options.file);
+        const { resolved, html } = yield* readHtml(Option.getOrThrow(options.file));
         yield* validated(html);
         yield* Output.notice(
           `Publishing to ${instance.apiUrl} (target came from ${Instance.describeSource(instance.source)}).`
@@ -498,8 +555,11 @@ const publish = Command.make(
 
         const attempt = new State.PendingPublish({
           ownerUserId: identity.user.id,
-          file: resolved,
-          explicitPatch: Option.isSome(options.patch),
+          target: {
+            mode: "file",
+            file: resolved,
+            explicitPatch: Option.isSome(options.patch)
+          },
           request: new PublishRequest({
             manifest: {
               manifestVersion: MANIFEST_VERSION,
@@ -526,7 +586,7 @@ const publish = Command.make(
         yield* sendPublish(selected, apiToken, identity.user.id);
       })
     )
-).pipe(Command.withDescription("Publish or update an HTML patch."));
+).pipe(Command.withDescription("Publish the current patch repo, or an explicit static HTML file."));
 
 // --- patch targets ----------------------------------------------------------
 
@@ -545,8 +605,10 @@ const patchTarget = Effect.fn("patchTarget")(function* (
   }
   if (Option.isSome(patch)) return patch.value;
   if (Option.isNone(file)) {
+    const project = yield* Project.readRepo(yield* Cwd);
+    if (project.patch !== undefined) return project.patch;
     return yield* new LocalError({
-      message: "Pass the file the patch was published from, or --patch <patch-id>."
+      message: "This repo has not been published. Run: patchy publish"
     });
   }
   const path = yield* Path.Path;
@@ -580,7 +642,7 @@ const share = Command.make(
     )
   },
   (options) =>
-    run(
+    (Option.isNone(options.scope) && Option.isNone(options.patch) ? runProject : run)(
       Effect.gen(function* () {
         // The last positional is always the scope. With --patch it is also the
         // first, so an optional file argument must not swallow it as a path.
@@ -635,7 +697,7 @@ const del = Command.make(
     )
   },
   (options) =>
-    run(
+    (Option.isNone(options.file) && Option.isNone(options.patch) ? runProject : run)(
       Effect.gen(function* () {
         const patchId = yield* patchTarget(options.file, options.patch);
         const instance = yield* Instance.Instance;

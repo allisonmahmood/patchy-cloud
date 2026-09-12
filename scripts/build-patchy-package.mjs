@@ -67,6 +67,8 @@ await esbuild.build({
   ...common,
   entryPoints: [path.join(packageDir, "src/index.ts")],
   outfile: path.join(distDir, "index.js"),
+  // CSSTree's Node entry reads JSON at runtime; its standalone build embeds that data.
+  alias: { "css-tree": path.join(packageDir, "node_modules/css-tree/dist/csstree.esm.js") },
   platform: "node",
   target: "node22",
   banner: { js: `#!/usr/bin/env node\n${requireBanner}` }

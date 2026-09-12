@@ -2,7 +2,7 @@
 
 The product, written down where agents read it. Each section is the resolution of one decision on the [foundation map](https://github.com/allisonmahmood/patchy-cloud/issues/5); the glossaries in each `CONTEXT.md` carry the words, this file carries the shape.
 
-**Built today:** tier 0 HTML pages and tier 1 sandboxed browser patches with manifests, release checks and replay-safe publishing; the document-bound shell broker, route bridge and access notices; additive patch-owned tables and file stores with browser-runtime operations, read-only shared-table declarations, and company Postgres connections with immutable schema snapshots, constrained reads, generated relation clients and local fixtures; patch-repo initialization, catalog, declaration editing, transactional refresh and release-bound project skills; names and company addresses; user ownership and company/public sharing; Clerk sign-in; create-or-join and company administration; machine login, logout and revocation. Hosted runtimes, the local patch dev runtime, repo publishing, the portal, narrower sharing, billing and company lifecycle remain intended, not available features.
+**Built today:** tier 0 HTML pages and tier 1 sandboxed browser patches with manifests, release checks and replay-safe file and repo publishing; the document-bound shell broker, route bridge and access notices; additive patch-owned tables and file stores with browser-runtime operations, read-only shared-table declarations, and company Postgres connections with immutable schema snapshots, constrained reads, generated relation clients and local fixtures; patch-repo initialization, catalog, declaration editing, transactional refresh and release-bound project skills; names and company addresses; user ownership and company/public sharing; Clerk sign-in; create-or-join and company administration; machine login, logout and revocation. Hosted runtimes, the local patch dev runtime, the portal, narrower sharing, billing and company lifecycle remain intended, not available features.
 
 ## Patches
 
@@ -34,9 +34,9 @@ A **publish key** identifies one attempt for its owning user. The CLI exclusivel
 client, with a reserved dev-runtime entrypoint. Its version is the **release**.
 The instance distributes its immutable tarball and reports the matching SHA-512
 integrity through `GET /api/release`. New file publishes require the exact-current
-CLI; the shared check also accepts the repo pin and loaded runtime for future
-repo publishing and dev starts. A release upgrade never invalidates a deployed
-bundle's stable runtime wire.
+CLI; repo publishing also checks its package pin and installed runtime before
+executing config. A release upgrade never invalidates a deployed bundle's stable
+runtime wire.
 
 `patchy/config` defines owned tables and file stores and declares shared tables
 and Postgres connections. Row, insert and update types are inferred from the
@@ -44,8 +44,8 @@ config; execution happens in a local child process, producing the existing
 manifest rather than sending executable config to the server. The browser client
 uses the broker's document-bound port and one `PatchyError`; lost replies never
 cause a mutation replay. Repo generation supplies this client surface and the
-hosted shell provides its broker. The local dev runtime and repo publishing
-remain separate work; initialization alone does not publish a patch.
+hosted shell provides its broker. The local dev runtime remains separate work;
+initialization alone does not publish a patch.
 
 ### Building a patch
 
@@ -62,6 +62,25 @@ repo. A company without connections gets the core skills and empty declarations.
 Write-once `AGENTS.md` records purpose, layout, skill paths, “test with `patchy dev`”
 and the generated-index pointer; `CLAUDE.md` imports it. The local dev runtime
 that completes that instruction is separate work, not a production-data shortcut.
+
+From the repo root, `patchy publish` recovers any saved attempt first. For a new
+attempt it checks the release, executes config, compares generated declaration
+identities and revision stamps, typechecks, builds one self-contained HTML bundle
+and checks the evident tier. Stale declarations require `patchy refresh` before
+building; a bundle over 10 MiB names its largest contributors. `server/` is tier 2
+and refused; scripts require at least tier 1. File mode is never a build fallback.
+Tier 0 and tier 1 repos can define tables and stores and declare shared tables
+and Postgres connections.
+
+The **publish key** and complete request are saved under `.patchy/publish/` before
+sending. A create writes its returned id to `patchy.json` before clearing the
+attempt; lost replies and failed id writes recover that same create, before
+checking today's release or changed source. Success reports the address, tier,
+version, **provisioned** resources and **unused definitions** in text and JSON.
+An optional column is additive; a rename provisions a new table and reports the
+old one unused, preserving its data. A retype names the object, change and fix
+before any DDL. `share` and `delete` without a target use the repo id. A deleted
+patch refuses updates; removing `patch` from `patchy.json` explicitly starts a new one.
 
 The **catalog** shows connected company connections and shared tables the caller
 can open, with copy-ready `add` and `uses` lines. `--all` includes offered
