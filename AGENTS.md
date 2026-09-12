@@ -18,17 +18,17 @@ There are two life cycles a patch can be thought of. The development stage and t
 
 ## Long term vision
 
-The patchy cloud is not this yet, but i think here you will benefit from me explaining a bit of the future. currently we are rebuilding what used to be patch page. this means that in the patchy cloud there is a single primitive we serve the user. a static page. after we get all the migration and other things done, here is how we can think about the long term vission.
+Today Patchy serves tier 0 static pages and tier 1 sandboxed browser tools, with patch-owned tables and files, read-only shared tables, company Postgres connections, and a local SDK dev loop. `docs/product.md` separates what is built from the longer-term vision below.
 
 There will be four main tiers of runtimes.
 
-- Tier 0 is static page no execution local or server side. It can fetch data from integrations and other sources, but it basically has no javascript locally or code running server side.
-- Tier 1 is then where we get "local execution" essentially in the users browser. aka client side now can do things. again it can connect to integrations, now it can actually execute and do more things, but there is no server side execution for a patch with a tier 1 runtime.
+- Tier 0 is a static page with no patch execution, browser or server. A tier 0 repo may provision resources, but its page cannot call them.
+- Tier 1 runs patch code in a sandboxed browser frame. It acts as the viewer through Patchy for tables, files and declared integrations; it has no outbound fetch or hosted patch code.
 - Tier 2 is where you get server side execution. this is where lot of modern saas apps live. you have all your integrations and other primitives. a tier 2 patch has a thing on the server side (probably some kind of lambda function or something, we haven't gotten to the point of deciding that yet) as well as client side.
 - Tier 3 runtime of a patch is then the final state where we can have things happen fully server side. could be some kind of automations that persist, etc.
 - And then eventually a tier 4 which is a sandbox for agents, but that's months out.
 
-We will also have many primitives. Like if a patch needs a place to store files we will have a primitive for that, if it needs its own tables in a database we will have primitives for that. If it wants to use one of the integrations a company has connected like say gmail or salesforce, we will have primitives for that that patches can use to build full fledged internal company tools
+Tables and files are patch-owned primitives today; company Postgres connections and read-only shared-table declarations let tools use company data through Patchy. More integrations, including Gmail and Salesforce, remain future work.
 
 ## Final note from Patchy
 
@@ -49,6 +49,7 @@ One line each; only the things you would not find by reading the tree.
 - `docs/DEVELOPMENT.md` — required Clerk keys, `pnpm dev`, browser sign-in and CLI login, the seeded company/user/machine token, and offline/live test tiers. Read before starting a local instance or checking auth.
 - `packages/sql/README.md` — how migrations and row decoding work.
 - `docs/adr/ADR-0004-cli-contract-for-agents.md` — the CLI's exit codes and `--json` contract; keep it when touching `packages/patchy`.
+- `docs/SKILL_DISTRIBUTION.md` — global skill wiring, the lock hash, and release-bound project skills sourced from `packages/sdk/skills`; read before changing either skill surface.
 
 ## Agent skills
 
@@ -70,11 +71,11 @@ Multi-context — the root `CONTEXT-MAP.md` names the product's contexts, the sh
 
 The most common defect here is a change that lands on the path you tested and is missing everywhere else it is mirrored. Before calling work done, walk this list and say which entries applied:
 
-- **The wire contract.** A request, response or route in `packages/api` follows through to the server handler, the CLI command and its `--json` shape, and `docs/API.md`. The api package is the source; the rest mirror it.
-- **The CLI.** A new or changed command, flag or exit code follows through to `packages/patchy/README.md`, the contract in ADR-0004, and the public `patchy` skill that teaches agents to drive it. When that skill's `SKILL.md` changes, refresh the hash in `skills-lock.json` by hand; nothing in CI checks it.
+- **The wire contract.** A request, response or route in `packages/api` follows through to the server handler, the CLI command and its `--json` shape, and `docs/API.md`. Runtime operation schemas also validate the shell broker's inputs; update both shell and server consumers. The api package is the source; the rest mirror it.
+- **The CLI.** A new or changed command, flag or exit code follows through to `packages/patchy/README.md`, the contract in ADR-0004, and the global `patchy` skill for sign-in, file publishing and init. Repo workflows and capability operations follow through to the project skills under `packages/sdk/skills`, served by generation. When the global skill's `SKILL.md` changes, refresh the hash in `skills-lock.json` by hand; nothing in CI checks it.
 - **The dev loop.** A change to the runner under `scripts/dev`, its seed, or how the CLI finds a local instance follows through to `docs/DEVELOPMENT.md`, the `patchy-dev-loop` skill, and the vitest Postgres template that applies the same seed rows.
 - **Vocabulary and product shape.** A new or renamed concept follows through to the owning `CONTEXT.md` glossary, `CONTEXT-MAP.md` when a context gains or loses a package, and `docs/product.md` when the product's shape moved. An ADR the change contradicts is updated or deleted, never left standing.
-- **Migrations.** A package that gains its first migration record is spread into three places: the server's migrator run, the dev runner's, and the vitest template's. Miss one and that place silently does not migrate.
+- **Migrations.** Spread every migration into the server's migrator run, the dev runner's, and the vitest template's. There are seven records: `0001` companies, `0002` auth, `0003` patches, `0004` companies' invites-expiry, `0005` company-database, `0006` runtime, `0007` integrations. Allocate ids in landing order: the migrator only applies ids above its ledger's highest id and never backfills gaps.
 - **Company resources.** Read [ADR-0009](docs/adr/ADR-0009-one-postgres-database-per-company.md) before adding a company-database caller. Provisioning/reclamation take the platform row lock before `withPatchLock`; keep primitive-free patches off that path. Runtime files use company-only per-name index locks, with blob I/O outside leases and liveness supplied by Runtime.
 - **Served pages.** What a reader receives runs through the `ui-consistency` spec; what HTML is accepted or rejected lands as fixtures under `packages/core/fixtures`, which the policy tests and `pnpm seed:dev` both read.
 - **Reverse states.** If you add a way in, add the way out and the way to see it. An invite needs revoke, deactivation needs reactivation, a machine token needs revoke. A one-way door is a bug.
@@ -83,6 +84,8 @@ The most common defect here is a change that lands on the path you tested and is
 ### Review specs
 
 Standards sources for `/code-review`'s Standards axis, one `SKILL.md` each under `.agents/skills/`: `effect-service-conventions` when the diff creates, moves, refactors, or consumes an Effect service; `ui-consistency` when it touches rendered HTML or CSS. Pass the matching file(s) to the Standards sub-agent.
+
+When reading PR feedback, inspect review bodies and inline review comments as well as the conversation comments; Grok sometimes posts its findings on the Reviews tab.
 
 ## Effect
 

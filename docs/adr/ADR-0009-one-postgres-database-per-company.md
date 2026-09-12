@@ -12,7 +12,9 @@ Creation runs outside any transaction through `PATCHY_COMPANY_DB_ADMIN_URL`, a m
 
 The `CREATE DATABASE` statement is autocommit on the provisioning connection, never inside a PostgreSQL transaction block. A separate placement transaction holds the claim-row lock through creation and initialization to serialize replicas and make interrupted creation resumable; this does not make the admin statement transactional.
 
-The new platform migration is `0005_company_database_baseline`: issue #196 reserved 0004 before `0004_invites_expiry` occupied it. Preserving that existing ledger entry takes precedence over reusing its number.
+The platform migration is `0005_company_database_baseline`; Companies retains
+`0004_invites_expiry`. Runtime follows at 0006 and Integrations at 0007.
+[ADR-0003](./ADR-0003-postgres-only.md) records the seven-entry platform ledger.
 
 ## Pools and locks
 

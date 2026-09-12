@@ -286,9 +286,10 @@ browser sign-out is a separate control on **Your machines**.
   and their values are tabled in `references/onboarding.md`.
 - The exit code says who has to act, so branch on it before reading the message: `1` is
   yours to fix without the network (arguments, the file, validation, local state), `2`
-  means the instance answered and said no (a rejected key, a missing update, share or delete
-  target, a quota), `3` means there was no usable answer (network, a 5xx) — try later
-  or contact Patchy about the unavailable instance. `130` is an interruption.
+  means the instance returned a decoded wire refusal (including a declared 503
+  `busy` or `source_unavailable`), and `3` means there was no usable answer
+  (network failure, undecodable body or unmodelled 5xx) — try later or contact
+  Patchy about the unavailable instance. `130` is an interruption.
 - Every command takes `--json`: one JSON document on stdout on success, `{ "ok": false,
 "error", "kind", "code"? }` on stderr on failure, where `kind` is `local`, `rejected` or
   `unreachable` and matches the exit code. Branch on `kind`/exit first, then
@@ -311,11 +312,12 @@ browser sign-out is a separate control on **Your machines**.
 
 Open the returned `address`: `/<company>/<name>`, or append `/~v/<n>` for a version.
 Read company pages and older versions of public patches through the user's signed-in browser.
-Only the current version of a public patch can be fetched directly by address; a publishing key
-never opens a patch page. Old names may redirect with 308; follow the destination using the
-same browser access. `/~content/<patchId>/<versionId>` is internal, not a sharing link;
-the former `/d/*` URLs are gone. If browser access is unavailable, say so and ask
-the user to open the link or supply the content.
+Only the current public tier 0 page can be read by fetching its address directly;
+read tier 1 in the browser as described below. A publishing key never opens a
+patch page. Old names may redirect with 308; follow the destination using the
+same browser access. `/~content/<patchId>/<versionId>` is internal, not a sharing
+link; the former `/d/*` URLs are gone. If required browser access is unavailable,
+say so and ask the user to open the link or supply the content.
 
 Tier 1 pages run inside the sandboxed frame. Use the browser to read and interact
 with that frame, not the outer shell's HTML or the internal content URL. Deep

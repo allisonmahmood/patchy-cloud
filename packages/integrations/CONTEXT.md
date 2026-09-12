@@ -5,15 +5,15 @@ The company capability for connecting outside systems without handing credential
 ## Language
 
 **Integration**:
-A capability Patchy ships for reaching an outside system, such as Salesforce, Gmail or Postgres. It is the same capability for every company; a connection is a particular company's or user's live instance of it.
+A capability Patchy ships for reaching an outside system, the same capability for every company. Postgres is built; OAuth integrations such as Salesforce and Gmail remain future work.
 _Avoid_: connector, app (Zapier's word), resource (Retool and Windmill's word), toolkit
 
 **Connection**:
-A credentialed instance of an integration, used by a patch rather than owned by it. Today's company connection is shared company-wide; disconnecting preserves its identity and metadata while denying new use.
+A credentialed instance of an integration, used by a patch rather than owned by it. Today's company connection carries a handle and an admin description and is shared company-wide; disconnecting preserves its identity and metadata while denying new use.
 _Avoid_: datasource, connected account, credential (what it holds, not what it is)
 
 **Personal connection**:
-A connection belonging to one user rather than their company, such as that user's Gmail. Its credentials and lifetime follow the user; the future access rules live in [the product](../../docs/product.md#company-and-personal-connections).
+A future connection belonging to one user rather than their company, such as that user's Gmail. Its credentials and lifetime follow the user; the access rules live in [the product](../../docs/product.md#company-and-personal-connections).
 _Avoid_: user resource, private connection
 
 **Connection handle**:
@@ -36,9 +36,9 @@ _Avoid_: instance, fixture
 An immutable description of a connection's relations, columns, keys, enum labels and named exclusions. A failed discovery leaves the previous snapshot current.
 _Avoid_: inventory (the cumulative authority for patch-owned resources), schema revision (Primitives' term)
 
-**Metadata revision**:
-The connection's server-assigned snapshot identifier. A published declaration keeps the revision it was generated against; refreshing discovery never rewrites it.
-_Avoid_: release, wire version, credential revision
+**Revision**:
+The connection's server-assigned metadata revision identifying one schema snapshot. A published declaration keeps the revision it was generated against; refreshing discovery never rewrites it.
+_Avoid_: snapshot revision, release, wire version, credential revision, schema revision (Primitives' term)
 
 **Relation**:
 A source table or view described in a Postgres schema snapshot. Its source name is preserved; the typed client exposes a projection of its supported columns, not a copy of every source feature.
@@ -53,15 +53,15 @@ The changing generation of a connection's credentials and connected state. It in
 _Avoid_: snapshot revision, key id
 
 **Escape hatch**:
-An explicit raw query instead of the relation-specific typed client. It remains a constrained read through the supplied role, not harmless execution of arbitrary SQL.
+An explicit raw SQL query with a declared result shape instead of the relation-specific typed client. It remains a constrained read through the supplied role, not harmless execution of arbitrary SQL.
 _Avoid_: unrestricted SQL, direct database access
 
 **Typed client**:
-The integration-specific surface patch code is handed for a declared connection, rather than raw HTTP or a credential. For example, `salesforce.query(…)` names the integration's operation instead of the transport.
+The integration-specific surface patch code is handed for a declared connection, rather than raw HTTP or a credential. The Postgres client exposes relation reads and the escape hatch.
 _Avoid_: proxy (how it is carried out, not what the code sees), driver, raw API
 
 **Call log**:
-The record of a call through a connection: the patch, the connection and the identity it ran as. It answers who acted when the outside system sees a shared company credential.
+See **Runtime log** in [Runtime](../runtime/CONTEXT.md); connection calls and admin discovery belong to that record, not a separate log.
 _Avoid_: audit trail, analytics event (a business moment, not a call)
 
 **Dev binding**:
@@ -69,5 +69,5 @@ The local implementation of an integration's supported operations, using synthet
 _Avoid_: Mock integration, production proxy
 
 **Fixture**:
-Agent-authored synthetic rows for a declared connection or shared table's local shape. A view fixture holds explicit rows rather than recomputing from its source tables. Fixtures establish local behavior, not production data, privilege or volume guarantees.
+Agent-authored synthetic rows for a declared connection or shared table's local shape, with explicit rows for views rather than recomputed source data. Fixtures establish local behavior, not production data, privilege or volume guarantees.
 _Avoid_: Sample of production, mock response
