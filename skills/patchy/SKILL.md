@@ -101,7 +101,7 @@ The `patchy` CLI publishes one safe static HTML document and returns its view UR
 New patches default to company scope; use `--share public` only when the user wants
 anyone with the link to read the page.
 
-Requires Node.js 22.18 or newer and the `patchy` CLI on `PATH`. If the CLI is
+Requires Node.js 22.22.0 or newer and the `patchy` CLI on `PATH`. If the CLI is
 missing or its release differs from the intended instance, install from that
 instance, not a registry. For a new install, use the instance URL the user
 supplied; ask where to publish only if no destination is known.
