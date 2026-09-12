@@ -20,19 +20,20 @@ in the shared kernel, or in a package both consumers depend on.
 The wire contract is its own package, `@patchy/api`, beside neither context.
 
 1. **One schema per wire shape, and only there.** Every body the server accepts
-   or sends on `/api/*` is described by `Schema.Class` or `Schema.Struct`
-   in `packages/api/src/schemas.ts`. The server encodes its
+   or sends on `/api/*` is described by schemas in `packages/api/src`
+   (`schemas.ts`, `runtime.ts` and `postgres.ts`). The server encodes its
    responses and decodes its request bodies through them; the CLI decodes what it
    reads through them; `docs/API.md` is rendered from them and a test fails when
    the file drifts. A shape that exists in one place cannot disagree with itself.
    A publish success is encoded once when its version is recorded. Both the
    initial response and later replays return the stored JSONB representation;
    a replay never applies today's schema to a historical response.
-2. **The `HttpApi` lives with the schemas.** `PatchyApi` — the `auth`, `patches`
-   and public `release` groups, the bearer middleware _definition_, the derived
-   `HttpApiClient` — is the whole of the package. It imports only `@patchy/core`
-   and Effect, and no server or CLI code. Each capability package implements its
-   own group; none defines one.
+2. **The `HttpApi` lives with the schemas.** `PatchyApi` — the `auth`, `patches`,
+   `sdk` and `runtime` groups, the bearer middleware _definition_, the derived
+   `HttpApiClient` — belongs here. Release discovery is an unauthenticated SDK
+   endpoint; runtime admission is browser-only, not bearer middleware. The package
+   imports only `@patchy/core` and Effect, and no server or CLI code. Each
+   capability package implements its own group; none defines one.
 3. **Refusals are wire data, not internal errors.** A failure is
    `{ ok: false, error }`, with a `code` and supporting fields where a client
    needs to branch. They are plain structs, never `Schema.TaggedError`:
@@ -45,8 +46,10 @@ The wire contract is its own package, `@patchy/api`, beside neither context.
 context it would have been a server implementation detail the CLI happened to
 import; in `core` it would have made the shared kernel depend on Effect's HTTP
 modules for the sake of a CLI that only needs to decode JSON. As a package of its
-own it is a thing both sides are held to, and the place a third consumer — a
-future web surface, a test harness — starts from.
+own it is a thing every consumer is held to. The tier 1 shell also validates
+runtime operations with these schemas before forwarding them; the server
+independently validates and authorizes the call. This adds a consumer, not a
+second contract.
 
 **The reference is a build product.** `docs/API.md` is rendered by a small
 renderer in `packages/api` from `OpenApi.fromApi(PatchyApi)` and checked by a
