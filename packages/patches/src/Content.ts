@@ -39,6 +39,7 @@ export class Content extends Context.Service<
       Patches.Recorded,
       | Patches.PatchUnavailable
       | Patches.PatchConflict
+      | Patches.NameTaken
       | Patches.PublishKeyTaken
       | Patches.PatchQuotaReached
       | Patches.PendingObjectExpired

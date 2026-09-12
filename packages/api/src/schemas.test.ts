@@ -38,7 +38,7 @@ describe("wire schemas", () => {
       html: "<!doctype html><html></html>",
       patchId: "abcdefghijkl",
       scope: "public" as const,
-      metadata: { repoOrg: "patchy", repoName: null, cliVersion: "0.0.1" }
+      metadata: { filename: "plan.html", repoOrg: "patchy", repoName: null, cliVersion: "0.0.1" }
     };
     expect(roundTrip(PublishRequest, full)).toEqual(full);
     expect(roundTrip(PublishRequest, { ...attempt, html: "<html></html>" })).toEqual({
@@ -63,7 +63,9 @@ describe("wire schemas", () => {
       versionId: "ver_x",
       versionNumber: 2,
       title: "Plan",
-      publicUrl: "https://pages.example.com/d/abcdefghijkl",
+      name: "plan",
+      address: "https://pages.example.com/example/plan",
+      publicUrl: "https://pages.example.com/example/plan",
       scope: "company" as const,
       tier: 0,
       schemaRevision: 0,
@@ -110,7 +112,7 @@ describe("wire schemas", () => {
           ok: true,
           patchId: "abcdefghijkl",
           scope: "company",
-          publicUrl: "https://pages.example.com/d/abcdefghijkl"
+          publicUrl: "https://pages.example.com/example/plan"
         }
       ],
       [LoggedOut, { ok: true, alreadyRevoked: false }],

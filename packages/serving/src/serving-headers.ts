@@ -5,8 +5,10 @@
  * open a patch can read it: public by URL, company through its user's browser.
  * `X-Robots-Tag: noindex` keeps every patch out of search results.
  *
- * The patch runs no script. A company shell runs only the session scripts,
- * never analytics; a public shell loads no scripts or session cookies.
+ * Tier-zero content runs no script. A company shell runs only the session
+ * scripts, never analytics; a public shell loads no scripts or session cookies.
+ * Exact content URLs use their stored version's tier: tier ≥ 1 allows inline
+ * script inside the sandbox, with no network connections or external sources.
  *
  * Only a public patch's current version is public, at its latest and version
  * URLs; older versions stay behind the company door. Public pages cache for at
@@ -36,6 +38,25 @@ export const PATCH_CONTENT_SECURITY_POLICY = [
   "base-uri 'none'",
   "form-action 'none'"
 ].join("; ");
+
+/** Direct bytes remain sandboxed even when opened outside the patch's frame. */
+const STATIC_CONTENT_SECURITY_POLICY = `sandbox; ${PATCH_CONTENT_SECURITY_POLICY}`;
+const SCRIPTED_CONTENT_SECURITY_POLICY = [
+  "sandbox allow-scripts allow-modals",
+  "default-src 'none'",
+  "script-src 'unsafe-inline'",
+  "style-src 'unsafe-inline'",
+  "img-src blob: data:",
+  "font-src blob: data:",
+  "media-src blob: data:",
+  "connect-src 'none'"
+].join("; ");
+
+export const PATCH_PERMISSIONS_POLICY = "camera=(), microphone=(), geolocation=()";
+
+export function contentSecurityPolicy(tier: number): string {
+  return tier >= 1 ? SCRIPTED_CONTENT_SECURITY_POLICY : STATIC_CONTENT_SECURITY_POLICY;
+}
 
 /** Everything that is not a served patch — API routes included — stays uncached. */
 export const NO_STORE_CACHE_CONTROL = "no-store";

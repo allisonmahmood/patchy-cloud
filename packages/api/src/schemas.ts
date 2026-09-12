@@ -45,6 +45,7 @@ export const NotFound = failure(404, {});
 export const Conflict = failure(409, {});
 export const PayloadTooLarge = failure(413, {});
 export const PublishKeyConflict = failure(409, { code: Schema.Literal("publish_key_conflict") });
+export const NameTaken = failure(409, { code: Schema.Literal("name_taken") });
 export const PublishRefused = failure(422, {
   code: Schema.Literals(["release_mismatch", "invalid_manifest", "tier_mismatch"])
 });
@@ -139,6 +140,13 @@ export const DeviceLoginGone = failure(410, {
 /** Who may open a patch: signed-in company members, or anyone with the link. */
 export const SharingScope = Schema.Literals(["company", "public"]);
 
+/** The company-handle grammar, in a company's patch namespace. */
+export const PatchName = Schema.String.check(
+  Schema.makeFilter(
+    (value) => /^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$/.test(value) || "Invalid patch name."
+  )
+);
+
 const NonEmptyText = Schema.String.check(Schema.isMinLength(1));
 const Revision = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 const definitionName = /^[a-z][a-zA-Z0-9]*$/;
@@ -230,13 +238,7 @@ export const SharedTableDeclaration = Schema.Struct({
 export const Manifest = Schema.Struct({
   manifestVersion: Schema.Int.check(Schema.isGreaterThan(0)),
   release: NonEmptyText,
-  name: Schema.optionalKey(
-    Schema.String.check(
-      Schema.makeFilter(
-        (value) => /^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$/.test(value) || "Invalid patch name."
-      )
-    )
-  ),
+  name: Schema.optionalKey(PatchName),
   tier: Schema.Literals([0, 1, 2, 3]),
   tables: definitions(TableDefinition),
   files: definitions(FileStoreDefinition),
@@ -253,6 +255,7 @@ export class Release extends Schema.Class<Release>("Release")({
 
 /** What the CLI knows about where a document came from. Every field is optional. */
 export class PublishMetadata extends Schema.Class<PublishMetadata>("PublishMetadata")({
+  filename: OptionalText,
   repoOrg: OptionalText,
   repoName: OptionalText,
   gitBranch: OptionalText,
@@ -283,6 +286,8 @@ const publishFields = {
   versionId: Schema.String,
   versionNumber: Schema.Int,
   title: Schema.String,
+  name: PatchName,
+  address: Schema.String,
   publicUrl: Schema.String,
   scope: SharingScope,
   tier: Schema.Int,

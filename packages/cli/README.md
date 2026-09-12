@@ -206,15 +206,15 @@ Validate an HTML file locally without publishing. Exits non-zero if validation f
 patchy validate ./plan.html
 ```
 
-### `patchy publish <file> [--share company|public] [--patch <patch-id>] [--new] [--api-url <url>]`
+### `patchy publish <file> [--name <name>] [--share company|public] [--patch <patch-id>] [--new] [--api-url <url>]`
 
-First recover any pending publish for this instance. Otherwise check the executing CLI release against `GET /api/release`, validate the file, and publish it with a tier 0 manifest and empty `tables`, `files` and `uses`. File mode never reads `patchy.json`. On success it prints the view URL, patch ID, tier, version number, provisioned and unused resources, and sharing scope. The JSON response includes `scope: "company" | "public"`, `tier`, `schemaRevision`, `provisioned`, `unused` and `warnings`. Its URL field remains `publicUrl`; the scope, not that field name, controls who may read it.
+First recover any pending publish for this instance. Otherwise check the executing CLI release against `GET /api/release`, validate the file, and publish it with a tier 0 manifest and empty `tables`, `files` and `uses`. File mode never reads `patchy.json`. On success it prints the address, patch ID, tier, version number, provisioned and unused resources, and sharing scope. The JSON response includes `name`, `address`, `scope: "company" | "public"`, `tier`, `schemaRevision`, `provisioned`, `unused` and `warnings`. `publicUrl` equals `address`; the scope, not that field name, controls who may read it.
 
 ```sh
 patchy publish ./plan.html
 # Publishing to https://pages.example.com (target came from the saved config).
 # Published patch
-# URL: https://pages.example.com/d/k7f2m9x1a3b8
+# URL: https://pages.example.com/acme/plan
 # Scope: company (signed-in colleagues in your company)
 # Patch ID: k7f2m9x1a3b8
 # Tier: 0
@@ -226,6 +226,8 @@ patchy publish ./plan.html
 Credential selection is deterministic: `PATCHY_API_TOKEN` wins, then the token stored for the resolved instance, then the token seeded beside a dev-env URL. A login therefore outranks the seed. With no key, publish exits 1 (`local`), `Run: patchy login`. A rejected credential is reported as-is; the CLI never starts a login or obtains a replacement on your behalf.
 
 Publishing a previously seen file updates the same patch. If it is unavailable, the publish fails; pass `--new` to create a new patch with a server-generated ID. `--patch <patch-id>` is update-only for an active patch owned by your user, through any of that user's machine tokens. Unknown, unavailable and unowned targets fail with the same generic error.
+
+Every patch has an address at `/<company>/<name>` and numbered versions at `/<company>/<name>/~v/<n>`. Set or rename it with `--name quarterly-plan`: 3–32 lowercase letters, digits or hyphens, no leading or trailing hyphen. An explicit name taken by another patch fails with `name_taken` (409, exit 2, `rejected`); choose another name and retry. Without `--name`, a create normalises the filename, falls back to `patch` when unusable, and adds `-2`, `-3`, and so on on collision. Republishing keeps its name unless explicitly renamed. The old name redirects with 308 until another patch takes it; that redirect is then gone for good. Delete frees all the patch's names.
 
 Before sending, the CLI authenticates the publishing key and saves the whole request, a fresh `publishKey`, the owning user ID, the original file path and cache application context in its instance-scoped state directory. The next `publish` authenticates again and recovers that attempt **before** checking today's file, cache, flags or release. A replacement token for the same owner can recover it; a different user is refused locally without sending the saved content or deleting the attempt. A successful replay updates the original file's cache and exits without another version, even if you passed a different file or `--new`.
 
@@ -250,17 +252,17 @@ Change an existing patch's sharing without publishing a version. Name the file i
 ```sh
 patchy share ./plan.html public
 # Changed patch sharing
-# URL: https://pages.example.com/d/k7f2m9x1a3b8
+# URL: https://pages.example.com/acme/plan
 # Scope: public (anyone with the link)
 # Patch ID: k7f2m9x1a3b8
 
 patchy share --patch k7f2m9x1a3b8 company --json
-# {"ok":true,"patchId":"k7f2m9x1a3b8","scope":"company","publicUrl":"https://pages.example.com/d/k7f2m9x1a3b8"}
+# {"ok":true,"patchId":"k7f2m9x1a3b8","scope":"company","publicUrl":"https://pages.example.com/acme/plan"}
 ```
 
 Share uses the same credential chain as publish. With no key it exits 1 (`local`), `Run: patchy login`; a missing cached file target is also `local`. An unavailable or unowned patch answers 404 (`rejected`, exit 2), including under `--json`.
 
-Only the current version of a public patch is public; older versions stay behind the company door. Read company pages through the user's signed-in browser. The current public version has `Cache-Control: public, max-age=60` at both `/d/<id>` and `/d/<id>/v/<current n>`. Older versions, and all versions after changing to company, have origin responses of `private, no-store` and answer 401 to a cookie-free fetch. A previously cached public copy may remain reachable for up to 60 seconds; already downloaded copies cannot be recalled.
+Only the current version of a public patch is public; older versions stay behind the company door. Read company pages through the user's signed-in browser. The current public version has `Cache-Control: public, max-age=60` at both `/<company>/<name>` and `/<company>/<name>/~v/<current n>`. Older versions, and all versions after changing to company, have origin responses of `private, no-store` and answer 401 to a cookie-free fetch. A previously cached public copy may remain reachable for up to 60 seconds; already downloaded copies cannot be recalled.
 
 ### `patchy delete <file> | --patch <patch-id>`
 

@@ -18,7 +18,7 @@ production the Frontend API is a CNAME `clerk.<domain>` and the Account Portal i
 
 ## Decision
 
-Patchy Cloud's pages (`/d/*` and the first-party pages), its API and its Clerk
+Patchy Cloud's pages (patch addresses and the first-party pages), its API and its Clerk
 Account Portal are served under **one registrable domain**. The production
 Clerk instance is created for that domain, and the deployment chooses it before
 the instance exists.

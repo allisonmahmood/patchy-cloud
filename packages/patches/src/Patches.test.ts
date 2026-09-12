@@ -162,14 +162,20 @@ it.layer(Patches.layer.pipe(Layer.provideMerge(Fixtures.database)))("Patches", (
       const before = Option.getOrThrow(yield* service.find(owned));
 
       yield* TestClock.adjust(DAY);
-      assert.strictEqual(yield* service.setScope(owned, sibling.user.id, "public"), "public");
+      assert.strictEqual(
+        (yield* service.setScope(owned, sibling.user.id, "public")).scope,
+        "public"
+      );
       const published = Option.getOrThrow(yield* service.find(owned));
       assert.strictEqual(published.patch.scope, "public");
       assert.strictEqual(published.patch.expiresAt, before.patch.expiresAt);
       assert.deepStrictEqual(published.version, before.version);
       assert.isTrue(Option.isNone(yield* service.find(owned, 2)));
 
-      assert.strictEqual(yield* service.setScope(owned, uploader.user.id, "company"), "company");
+      assert.strictEqual(
+        (yield* service.setScope(owned, uploader.user.id, "company")).scope,
+        "company"
+      );
       const restricted = Option.getOrThrow(yield* service.find(owned));
       assert.strictEqual(restricted.patch.scope, "company");
       assert.strictEqual(restricted.patch.expiresAt, before.patch.expiresAt);
@@ -199,6 +205,46 @@ it.layer(Patches.layer.pipe(Layer.provideMerge(Fixtures.database)))("Patches", (
         concurrency: "unbounded"
       }).pipe(Effect.map((results) => results.map((result) => result.versionNumber).sort()));
       assert.deepStrictEqual(numbers, [2, 3, 4]);
+    })
+  );
+
+  it.effect("backfills title names in creation order without renaming or reviving patches", () =>
+    Effect.gen(function* () {
+      const service = yield* patches;
+      const named = yield* create(uploader, "Backfill Report");
+      const later = yield* create(uploader, "Bäckfill Réport");
+      const earlier = yield* create(admin, "BACKFILL___REPORT!");
+      const deleted = yield* create(uploader, "Backfill Report");
+      yield* service.delete(deleted, uploader.user.id);
+
+      const sql = yield* SqlClient.SqlClient;
+      // Recreate legacy missing claims, with creation order opposite to their ids.
+      yield* sql`DELETE FROM patch_names WHERE patch_id IN (${earlier}, ${later})`;
+      yield* sql`UPDATE patches SET created_at = '2020-01-01'::timestamptz WHERE id = ${deleted}`;
+      yield* sql`UPDATE patches SET created_at = '2020-01-02'::timestamptz WHERE id = ${earlier}`;
+      yield* sql`UPDATE patches SET created_at = '2020-01-03'::timestamptz WHERE id = ${later}`;
+      yield* sql`UPDATE patches SET title = 'Already named title' WHERE id = ${named}`;
+
+      for (let run = 0; run < 2; run++) {
+        yield* Patches.backfillNames();
+        for (const [patchId, name] of [
+          [named, "backfill-report"],
+          [earlier, "backfill-report-2"],
+          [later, "backfill-report-3"]
+        ] as const) {
+          assert.strictEqual(Option.getOrThrow(yield* service.find(patchId)).patch.name, name);
+          assert.deepStrictEqual(
+            { ...Option.getOrThrow(yield* service.resolveName(uploader.company.handle, name)) },
+            { patchId, name, current: true }
+          );
+        }
+        assert.isTrue(
+          Option.isNone(yield* service.resolveName(uploader.company.handle, "backfill-report-4"))
+        );
+        assert.isTrue(
+          Option.isNone(yield* service.resolveName(uploader.company.handle, "already-named-title"))
+        );
+      }
     })
   );
 

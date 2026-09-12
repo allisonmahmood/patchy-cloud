@@ -61,7 +61,7 @@ Responses:
 
 ### `POST /api/publish`
 
-Publish one HTML bundle and its manifest. Without `patchId` creates a patch (201); with an owned `patchId` publishes a version (200). Authenticate, then replay by owner and `publishKey` before limits or release validation: identical payloads return the stored response and status, even after an upgrade; changed payloads answer 409 `publish_key_conflict`. New attempts require the exact current release and manifest version from `GET /api/release`. Only tier 0 with empty tables, files and uses is served yet; higher tiers answer `tier_mismatch`, resources `invalid_manifest`. Tier 0 HTML passes the safe-HTML policy. Creates spend the per-token create limit and live-patch quota; updates do not. Omitted scope defaults to company on creates and remains unchanged on updates. The JSON body cap is three times the HTML cap.
+Publish one HTML bundle and its manifest. Without `patchId` creates a patch (201); with an owned `patchId` publishes a version (200). Authenticate, then replay by owner and `publishKey` before limits or release validation: identical payloads return the stored response and status, even after an upgrade; changed payloads answer 409 `publish_key_conflict`. New attempts require the exact current release and manifest version from `GET /api/release`. Only tier 0 with empty tables, files and uses is served yet; higher tiers answer `tier_mismatch`, resources `invalid_manifest`. Tier 0 HTML passes the safe-HTML policy. Creates spend the per-token create limit and live-patch quota; updates do not. Omitted scope defaults to company on creates and remains unchanged on updates. `manifest.name` is an exact company-scoped name (3–32 lowercase letters, digits or hyphens, starting and ending with a letter or digit); a taken current name answers 409 `name_taken` on create or rename. Without a name, creates derive one from `metadata.filename` without its extension (title when absent), normalize it, fall back to `patch` and add `-2`, `-3`, etc. on collision. Updates with no name retain their existing name. Rename leaves a redirect until another patch claims it; deletion frees all names. `address` and `publicUrl` both name the absolute `/<company>/<name>` address. The JSON body cap is three times the HTML cap.
 
 Request body: [PublishRequest](#publishrequest)
 
@@ -73,14 +73,14 @@ Responses:
 - `401` { ok: false, error: "Missing or invalid API token." }
 - `403` { ok: false, error: string, code: "live_patch_quota_exceeded", quota: integer }
 - `404` { ok: false, error: string }
-- `409` { ok: false, error: string, code: "publish_key_conflict" } | { ok: false, error: string }
+- `409` { ok: false, error: string, code: "publish_key_conflict" } | { ok: false, error: string, code: "name_taken" } | { ok: false, error: string }
 - `413` { ok: false, error: string }
 - `422` { ok: false, errors: string[], warnings: string[] } | { ok: false, error: string, code: "release_mismatch" | "invalid_manifest" | "tier_mismatch" }
 - `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
 
 ### `POST /api/patches/:patchId/share`
 
-Change the sharing scope of a patch owned by the bearer token's user, without publishing a version. `company` requires a company member's browser session; `public` lets anyone with the link open the current version. Only the current version of a public patch is public; older versions stay behind the company door. A patch the caller does not own answers 404. The current public version may be cached for 60 seconds at both `/d/<id>` and `/d/<id>/v/<current n>`; older versions and company patches are `private, no-store` and answer 401 without a session. The JSON body is bounded by the publish body limit: three times `PATCHY_MAX_HTML_BYTES`. An oversized declared body answers 413; streaming bodies are cut off at the cap. Rejected requests leave the scope unchanged.
+Change the sharing scope of a patch owned by the bearer token's user, without publishing a version. `company` requires a company member's browser session; `public` lets anyone with the link open the current version. Only the current version of a public patch is public; older versions stay behind the company door. A patch the caller does not own answers 404. The current public version may be cached for 60 seconds at both `/<company>/<name>` and `/<company>/<name>/~v/<current n>`; older versions and company patches are `private, no-store` and answer 401 without a session. The JSON body is bounded by the publish body limit: three times `PATCHY_MAX_HTML_BYTES`. An oversized declared body answers 413; streaming bodies are cut off at the cap. Rejected requests leave the scope unchanged.
 
 Request body: [ShareRequest](#sharerequest)
 
@@ -96,7 +96,7 @@ Responses:
 
 ### `DELETE /api/patches/:patchId`
 
-Delete a patch owned by the bearer token's user. The origin stops serving it at once; the expiry sweep removes its content after its retention clock expires.
+Delete a patch owned by the bearer token's user. The origin stops serving it at once; all its names are freed, and the expiry sweep removes its content after its retention clock expires.
 
 Responses:
 
@@ -216,6 +216,7 @@ Responses:
 
 ```
 {
+  filename?: string | null,
   repoOrg?: string | null,
   repoName?: string | null,
   gitBranch?: string | null,
@@ -255,6 +256,8 @@ Responses:
   versionId: string,
   versionNumber: integer,
   title: string,
+  name: string,
+  address: string,
   publicUrl: string,
   scope: "company" | "public",
   tier: integer,
@@ -284,6 +287,8 @@ Responses:
   versionId: string,
   versionNumber: integer,
   title: string,
+  name: string,
+  address: string,
   publicUrl: string,
   scope: "company" | "public",
   tier: integer,

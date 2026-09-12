@@ -71,6 +71,8 @@ export function renderPatchWrapper(
     patch: Patches.Patch;
     version: Patches.PatchVersion;
     html: string;
+    /** Address-local route, carried for the future tier ≥ 1 shell; tier 0 ignores it. */
+    route?: string;
   },
   shell?: SessionShell
 ): string {

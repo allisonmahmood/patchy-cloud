@@ -1,16 +1,17 @@
 /**
- * The routes a reader hits: the home page, the health check, and a patch at
- * its latest URL (`/d/:patchId`) or a version URL (`/d/:patchId/v/:n`), plus
+ * The routes a reader hits: the home page, the health check, patch addresses
+ * (`/:company/:name[/~v/:n][/route]`) and exact-version content URLs, plus
  * the HTML 404 for everything that is not a route. Pages read through
  * `patches` — metadata and visits go through `Patches`, and `Content` reads
- * the HTML only after admission. The serving guarantees these routes answer under are
- * `serving-headers.ts`.
+ * the HTML only after admission. The serving guarantees these routes answer
+ * under are `serving-headers.ts`.
  */
 import type { ConfigError } from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
+import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import { Session, withCookies } from "@patchy/auth";
 import type { Companies, Users } from "@patchy/companies";
@@ -23,6 +24,8 @@ import {
   PATCH_ROBOTS_TAG,
   PUBLIC_PATCH_CACHE_CONTROL,
   PRIVATE_PATCH_CACHE_CONTROL,
+  contentSecurityPolicy,
+  PATCH_PERMISSIONS_POLICY,
   sessionContentSecurityPolicy
 } from "./serving-headers.js";
 
@@ -32,8 +35,8 @@ export const notFound = HttpServerResponse.html(renderNotFound()).pipe(
 );
 
 /**
- * On every answer under `/d/`, the 404 included: a patch URL is never indexed
- * and never handed on as a referrer, whether or not it currently serves.
+ * On every address and content answer, the 404 included: a patch URL is never
+ * indexed or handed on as a referrer, whether or not it currently serves.
  */
 const patchUrlHeaders = {
   "x-robots-tag": PATCH_ROBOTS_TAG,
@@ -41,20 +44,37 @@ const patchUrlHeaders = {
   "cache-control": PRIVATE_PATCH_CACHE_CONTROL
 };
 
-const servePatch = Effect.fn("Pages.servePatch")(function* (
-  patchId: string,
-  versionNumber?: number | null
-) {
+const servePatch = Effect.fn("Pages.servePatch")(function* (kind: "address" | "content") {
   const content = yield* Content.Content;
   const patches = yield* Patches.Patches;
   const { result: admission, cookies, completedHandshake } = yield* Door.Admission;
   const session = yield* Session.Session;
-
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const params = yield* HttpRouter.params;
+  const url = kind === "address" ? new URL(request.url, session.publicBaseUrl) : undefined;
+  const suffix = url?.pathname.replace(/^\/[^/]+\/[^/]+/, "") ?? "";
+  const selection = url === undefined ? undefined : addressRouteOf(suffix);
+  const resolved =
+    selection !== undefined && selection.versionNumber !== null
+      ? yield* patches
+          .resolveName(params.company ?? "", params.name ?? "")
+          .pipe(Effect.catchTags({ SqlError: Effect.die }))
+      : Option.none();
+  const patchId =
+    kind === "content"
+      ? params.patchId
+      : Option.isSome(resolved)
+        ? resolved.value.patchId
+        : undefined;
   const served =
-    versionNumber === null
+    patchId === undefined
       ? Option.none()
       : yield* patches
-          .find(patchId, versionNumber)
+          .find(
+            patchId,
+            selection?.versionNumber ?? undefined,
+            kind === "content" ? params.versionId : undefined
+          )
           .pipe(Effect.catchTags({ SqlError: Effect.die }));
   const isPublic =
     Option.isSome(served) &&
@@ -78,6 +98,13 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
   }
   if (Option.isNone(served))
     return withCookies(HttpServerResponse.setHeaders(notFound, patchUrlHeaders), cookies);
+  if (url !== undefined && Option.isSome(resolved) && !resolved.value.current) {
+    const response = HttpServerResponse.redirect(
+      `/${served.value.patch.companyHandle}/${served.value.patch.name}${suffix}${url.search}`,
+      { status: 308, headers: patchUrlHeaders }
+    );
+    return isPublic ? response : withCookies(response, cookies);
+  }
   const html = yield* content
     .read(served.value.version)
     .pipe(Effect.catchTags({ InvalidObjectKey: Effect.die, StoreUnavailable: Effect.die }));
@@ -92,7 +119,7 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
   // 500 costs the reader the page itself.
   //
   // Only requests that reach the server are visits, and the cache headers below
-  // mean repeat reads inside the latest URL's window may not. That undercount is
+  // mean repeat reads inside the address's window may not. That undercount is
   // harmless: topping up needs one visit somewhere in the final stretch of a
   // 30-day window, not a true read count — this is a retention clock, not
   // analytics.
@@ -106,13 +133,28 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
   );
 
   const response = HttpServerResponse.html(
-    renderPatchWrapper({ ...served.value, html }, isPublic ? undefined : session)
+    kind === "content"
+      ? html
+      : renderPatchWrapper(
+          {
+            ...served.value,
+            html,
+            ...(selection !== undefined && served.value.version.tier >= 1
+              ? { route: selection.route }
+              : {})
+          },
+          isPublic ? undefined : session
+        )
   ).pipe(
     HttpServerResponse.setHeaders({
       ...patchUrlHeaders,
-      "content-security-policy": isPublic
-        ? PATCH_CONTENT_SECURITY_POLICY
-        : sessionContentSecurityPolicy(session.frontendApiHost),
+      "content-security-policy":
+        kind === "content"
+          ? contentSecurityPolicy(served.value.version.tier)
+          : isPublic
+            ? PATCH_CONTENT_SECURITY_POLICY
+            : sessionContentSecurityPolicy(session.frontendApiHost),
+      ...(kind === "content" ? { "permissions-policy": PATCH_PERMISSIONS_POLICY } : {}),
       "cache-control": isPublic ? PUBLIC_PATCH_CACHE_CONTROL : PRIVATE_PATCH_CACHE_CONTROL
     })
   );
@@ -126,24 +168,28 @@ const versionNumberOf = (segment: string | undefined) => {
   return version <= 2_147_483_647 ? version : undefined;
 };
 
+/** Every reserved segment is refused except the version selector at the address root. */
+const addressRouteOf = (suffix: string): { versionNumber?: number | null; route: string } => {
+  let segments: string[];
+  try {
+    segments = suffix === "" ? [] : decodeURIComponent(suffix.slice(1)).split("/");
+  } catch {
+    return { versionNumber: null, route: "" };
+  }
+  const versionNumber = segments[0] === "~v" ? (versionNumberOf(segments[1]) ?? null) : undefined;
+  const route = segments[0] === "~v" ? segments.slice(2) : segments;
+  if (route.some((segment) => segment.startsWith("~"))) return { versionNumber: null, route: "" };
+  return { versionNumber, route: `/${route.join("/")}` };
+};
+
 /**
- * Only the two patch registrations receive viewer admission. The home, health
- * and catch-all routes never authenticate a session.
+ * Only addresses and exact-version content receive viewer admission. The home,
+ * health, removed `/d/*` and catch-all routes never authenticate a session.
  */
 const patches = HttpRouter.use((router) =>
   Effect.gen(function* () {
-    yield* router.add(
-      "GET",
-      "/d/:patchId",
-      Effect.flatMap(HttpRouter.params, (params) => servePatch(params.patchId ?? ""))
-    );
-    yield* router.add(
-      "GET",
-      "/d/:patchId/v/:versionNumber",
-      Effect.flatMap(HttpRouter.params, (params) =>
-        servePatch(params.patchId ?? "", versionNumberOf(params.versionNumber) ?? null)
-      )
-    );
+    yield* router.add("GET", "/:company/:name/*", servePatch("address"));
+    yield* router.add("GET", "/~content/:patchId/:versionId", servePatch("content"));
   })
 ).pipe(Layer.provide(Door.layer));
 
@@ -152,6 +198,8 @@ const otherPages = HttpRouter.use((router) =>
     const publicBaseUrl = yield* PatchesConfig.publicBaseUrl;
     yield* router.add("GET", "/", HttpServerResponse.html(renderHome({ publicBaseUrl })));
     yield* router.add("GET", "/healthz", HttpServerResponse.jsonUnsafe({ ok: true }));
+    yield* router.add("*", "/d/*", notFound);
+    yield* router.add("*", "/~content/*", notFound);
     yield* router.add("*", "/*", notFound);
   })
 );

@@ -8,6 +8,10 @@ What the company holds and how it is published: patches and versions, user owner
 A built unit in a company's cloud, owned by one user and published as immutable versions. Shared with the company by default or made public on purpose; the current runtime serves it as a tier 0 static page.
 _Avoid_: draft, page (how a tier 0 patch is served, not what it is), app (one possible patch), document (the HTML a version holds)
 
+**Name**:
+The human-readable label unique within a company's patch namespace, forming the patch's address rather than its identity. Renaming keeps the former name as a redirect until another patch takes it; deleting the patch frees its names.
+_Avoid_: id (the stable identity), title (the document's display text), slug
+
 **Tier**:
 Where a patch's code runs, not who may open it or what pricing plan it uses. Tier 0 is static; the higher-runtime vocabulary and future declarations are recorded in [the product](../../docs/product.md#runtime-tiers).
 _Avoid_: runtime (the thing a tier names), level, plan (tiers are capability, not pricing)

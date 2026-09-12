@@ -28,7 +28,7 @@ describe("classify", () => {
 
     const open = { kind: "public" };
     assert.deepStrictEqual(classify("GET", "/apix"), open);
-    assert.deepStrictEqual(classify("GET", "/d/abc"), open);
+    assert.deepStrictEqual(classify("GET", "/acme/plan"), open);
     assert.deepStrictEqual(classify("GET", "http://host?x=/api/%"), open);
     assert.deepStrictEqual(classify("GET", "/public/%"), open);
     // An encoded slash is one segment to the router, so nothing routes here —

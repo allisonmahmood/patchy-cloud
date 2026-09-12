@@ -10,6 +10,7 @@ import { applyDevSeed } from "@patchy/auth/seed";
 import { migrations as companiesMigrations } from "../packages/companies/src/migrations.js";
 import { migrations as authMigrations } from "../packages/auth/src/migrations.js";
 import { migrations as patchesMigrations } from "../packages/patches/src/migrations.js";
+import * as Patches from "../packages/patches/src/Patches.js";
 import { layerFromUrl, migrate } from "../packages/sql/src/index.js";
 import { PG_FLAGS, PG_PASSWORD, PG_USER } from "../scripts/dev/src/postgres.js";
 
@@ -61,6 +62,9 @@ export default async function setup(project: TestProject): Promise<() => Promise
     // The same rows `pnpm dev` seeds, so a test and the dev instance agree
     // on which token works.
     await applyDevSeed(templateUrl);
+    await Effect.runPromise(
+      Patches.backfillNames().pipe(Effect.provide(layerFromUrl(Redacted.make(templateUrl))))
+    );
 
     project.provide("postgres", { adminUrl, templateDatabase: TEMPLATE_DATABASE });
   } catch (error) {

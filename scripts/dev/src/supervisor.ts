@@ -21,7 +21,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { migrations as authMigrations } from "@patchy/auth";
 import { applyDevSeed } from "@patchy/auth/seed";
 import { migrations as companiesMigrations } from "@patchy/companies";
-import { migrations as patchesMigrations } from "@patchy/patches";
+import { migrations as patchesMigrations, Patches } from "@patchy/patches";
 import { layerFromUrl, migrate } from "@patchy/sql";
 import { developerEnvFile, readDeveloperEnv } from "./developerEnv.js";
 import { DATABASE_NAME, Plan } from "./plan.js";
@@ -157,6 +157,9 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
     try: () => applyDevSeed(plan.databaseUrl, PATCHY_DEV_CLERK_USER_ID || undefined),
     catch: (cause) => new DatabaseSetupError({ cause })
   });
+  yield* Patches.backfillNames().pipe(
+    Effect.provide(layerFromUrl(Redacted.make(plan.databaseUrl)))
+  );
   yield* say("database migrated and seeded");
 
   // The server: plain node with the tsx loader so the pid we record is the

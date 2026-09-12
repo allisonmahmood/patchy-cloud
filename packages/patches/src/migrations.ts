@@ -23,6 +23,7 @@ export const migrations: Migrations = {
       owner_user_id TEXT NOT NULL REFERENCES users(id),
       scope TEXT NOT NULL DEFAULT 'company' CHECK (scope IN ('company', 'public')),
       title TEXT NOT NULL,
+      name TEXT NOT NULL CHECK (name ~ '^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$'),
       current_version_id TEXT,
       repo_org TEXT,
       repo_name TEXT,
@@ -33,6 +34,15 @@ export const migrations: Migrations = {
       disabled_at TIMESTAMPTZ,
       disabled_reason TEXT
     );
+
+    CREATE TABLE patch_names (
+      company_id TEXT NOT NULL REFERENCES companies(id),
+      name TEXT NOT NULL CHECK (name ~ '^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$'),
+      patch_id TEXT NOT NULL REFERENCES patches(id) ON DELETE CASCADE,
+      current BOOLEAN NOT NULL
+    );
+    CREATE UNIQUE INDEX patch_names_company_name_idx ON patch_names(company_id, name);
+    CREATE INDEX patch_names_patch_id_idx ON patch_names(patch_id);
 
     CREATE TABLE patch_versions (
       id TEXT PRIMARY KEY,

@@ -157,6 +157,12 @@ and active state, clears the seeded machine token's revocation, and resets its
 90-day lifetime and last-use timestamp. Machine tokens also stop working after
 30 idle days.
 
+The dev seed and vitest template then run `Patches.backfillNames`: patches without
+a current name entry receive names derived from their titles in creation order,
+with suffixes on collision. Already named patches keep their names; deleted
+patches do not reclaim names. Fresh baselines start empty and publish assigns
+names transactionally.
+
 Set `PATCHY_DEV_CLERK_USER_ID=user_...` in the same developer `dev.env` to bind
 the seeded admin to your Clerk development user; find that user's id in the
 same application's Clerk user record. Set it before the first sign-in if you
@@ -251,9 +257,9 @@ consumed by the terminal's poll returns 404 unknown.
 ### Reading a published patch
 
 New publishes default to company scope, including the seeded admin's patches;
-republishing without `--share` preserves their scope. The response includes `scope`;
-`publicUrl` is a view URL, not a promise of anonymous access. For a company patch,
-a cookie-free `curl -i <publicUrl>` answers **401** with the same HTML door as `/login`, one
+republishing without `--share` preserves their scope. The response includes `name`,
+`address` and `scope`; `publicUrl` equals `address`, not a promise of anonymous access.
+For a company patch, a cookie-free `curl -i <address>` answers **401** with the same HTML door as `/login`, one
 **Sign in** link, `x-patchy-sign-in-url`, and `Cache-Control: private, no-store`;
 it has neither `Location` nor `WWW-Authenticate`. A machine token does not open
 the page. Only the current version of a public patch is public; older versions
@@ -263,6 +269,14 @@ seed before creating your own company), its cached patch is still owned by
 that user. Use `pnpm patchy publish examples/plan.html --new` to create your own
 patch. After `pnpm dev reset`, `--new` also replaces a cache entry whose patch
 no longer exists; a cached update otherwise fails without silently creating one.
+
+The address is `/<company>/<name>`, for example `/patchy-dev/plan` for the seed's
+first `plan.html`. Without `--name`, file publishing derives a valid name and
+suffixes collisions; republishing preserves it. Use `--name quarterly-plan` to
+rename explicitly. The old name returns 308 until another patch claims it;
+delete frees its names. A company handle alone and the removed `/d/*` routes
+answer 404. `/~content/<patchId>/<versionId>` is an internal content URL with the
+same door and caching, not the link to hand a reader.
 
 Open a patch published by your logged-in user in the same browser, or bind the
 seed to your Clerk user before publishing as **Dev Machine**. Click **Sign in**
@@ -276,10 +290,10 @@ Exercise sharing and the current-version boundary through the CLI, not by editin
 
 ```sh
 pnpm patchy publish examples/plan.html --share public --json
-# Fetch the returned publicUrl and publicUrl/v/<versionNumber> with cookie-free curl -i: 200.
+# Fetch the returned address and address/~v/<versionNumber> with cookie-free curl -i: 200.
 # Keep this version URL for the history check.
 pnpm patchy publish examples/plan.html --json
-# Scope stays public. Fetch publicUrl and the NEW publicUrl/v/<versionNumber>: 200.
+# Scope stays public. Fetch address and the NEW address/~v/<versionNumber>: 200.
 # Fetch the previous version URL: 401, Cache-Control: private, no-store.
 pnpm patchy share examples/plan.html company --json
 # Fetch latest, current-version and previous-version URLs: 401, private, no-store.
@@ -292,7 +306,7 @@ pnpm patchy share --patch <patchId> company --json
 The file form uses its cached patch; `--patch` selects an id instead, exactly one
 target. Only the owner may change sharing. Publish and share JSON report `scope`,
 and text output announces who can open the link. While public, only the current
-version answers **200** at both `/d/<id>` and `/d/<id>/v/<current n>` with
+version answers **200** at both `/<company>/<name>` and `/<company>/<name>/~v/<current n>` with
 `Cache-Control: public, max-age=60`, no `Set-Cookie`, and the unchanged script-free
 public CSP. Older versions stay behind the company door even after sharing public
 again. After the company transition, all version URLs and the latest URL answer

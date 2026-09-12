@@ -6,7 +6,7 @@ import { liveClient, liveSettings } from "../../packages/auth/live/fixtures.js";
 import { startInstance, type BrowserInstance } from "./instance.js";
 
 const decodePublish = Schema.decodeUnknownSync(
-  Schema.Struct({ publicUrl: Schema.String, scope: Schema.Literal("company") })
+  Schema.Struct({ address: Schema.String, scope: Schema.Literal("company") })
 );
 const decodeRelease = Schema.decodeUnknownSync(
   Schema.Struct({ release: Schema.String, manifestVersion: Schema.Int })
@@ -107,7 +107,7 @@ export const test = base.extend<object, { live: Live }>({
           signal: AbortSignal.timeout(15_000)
         });
         expect(publish.status).toBe(201);
-        const { publicUrl: patchUrl } = decodePublish(await publish.json());
+        const { address: patchUrl } = decodePublish(await publish.json());
         const seededPage = await (await newContext()).newPage();
         await use({
           ...instance,

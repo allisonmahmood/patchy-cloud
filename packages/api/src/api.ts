@@ -23,6 +23,7 @@ import {
   InvalidHtml,
   LoggedOut,
   NotFound,
+  NameTaken,
   Ok,
   PatchQuotaExceeded,
   PayloadTooLarge,
@@ -139,6 +140,7 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
         ...protectedErrors,
         InvalidHtml,
         PublishKeyConflict,
+        NameTaken,
         Conflict,
         PayloadTooLarge,
         PublishRefused
@@ -154,7 +156,14 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "served yet; higher tiers answer `tier_mismatch`, resources `invalid_manifest`. " +
           "Tier 0 HTML passes the safe-HTML policy. Creates spend the per-token create limit " +
           "and live-patch quota; updates do not. Omitted scope defaults to company on creates " +
-          "and remains unchanged on updates. The JSON body cap is three times the HTML cap."
+          "and remains unchanged on updates. `manifest.name` is an exact company-scoped name " +
+          "(3–32 lowercase letters, digits or hyphens, starting and ending with a letter or digit); " +
+          "a taken current name answers 409 `name_taken` on create or rename. Without a name, " +
+          "creates derive one from `metadata.filename` without its extension (title when absent), " +
+          "normalize it, fall back to `patch` and add `-2`, `-3`, etc. on collision. Updates with " +
+          "no name retain their existing name. Rename leaves a redirect until another patch " +
+          "claims it; deletion frees all names. `address` and `publicUrl` both name the absolute " +
+          "`/<company>/<name>` address. The JSON body cap is three times the HTML cap."
       )
     ),
     HttpApiEndpoint.post("share", "/patches/:patchId/share", {
@@ -168,7 +177,7 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "`company` requires a company member's browser session; `public` lets anyone with the link open the current version. " +
           "Only the current version of a public patch is public; older versions stay behind the company door. " +
           "A patch the caller does not own answers 404. The current public version may be cached for 60 seconds " +
-          "at both `/d/<id>` and `/d/<id>/v/<current n>`; older versions and company patches are " +
+          "at both `/<company>/<name>` and `/<company>/<name>/~v/<current n>`; older versions and company patches are " +
           "`private, no-store` and answer 401 without a session. " +
           "The JSON body is bounded by the publish body limit: three times " +
           "`PATCHY_MAX_HTML_BYTES`. An oversized declared body answers 413; " +
@@ -182,7 +191,7 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
     }).annotateMerge(
       describe(
         "Delete a patch owned by the bearer token's user. The origin stops serving it at once; " +
-          "the expiry sweep removes its content after its retention clock expires."
+          "all its names are freed, and the expiry sweep removes its content after its retention clock expires."
       )
     )
   )
