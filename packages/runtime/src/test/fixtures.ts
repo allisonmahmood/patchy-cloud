@@ -33,7 +33,7 @@ const manifest = {
   uses: {}
 };
 const versions = Layer.succeed(LoadedVersions.LoadedVersions, {
-  find: (patch, version) =>
+  find: (patch, version = versionId) =>
     Effect.succeed(
       ![patchId, "secondpatch1"].includes(patch) || ![versionId, publicVersionId].includes(version)
         ? Option.none()

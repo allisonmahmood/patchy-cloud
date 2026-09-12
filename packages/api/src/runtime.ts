@@ -81,15 +81,16 @@ export const TableRange = Schema.Struct({
   lt: Schema.optionalKey(Schema.Json),
   lte: Schema.optionalKey(Schema.Json)
 });
-export const TableList = Schema.Struct({
-  table: DefinitionName,
+const listFields = {
   index: Schema.optionalKey(DefinitionName),
   eq: Schema.optionalKey(TableRow),
   range: Schema.optionalKey(TableRange),
   order: Schema.optionalKey(Schema.Literals(["asc", "desc"])),
   limit: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThan(0))),
   cursor: Schema.optionalKey(NonEmptyText)
-});
+};
+export const TableList = Schema.Struct({ table: DefinitionName, ...listFields });
+export const SharedList = Schema.Struct({ alias: DefinitionName, ...listFields });
 export const TablePage = Schema.Struct({
   rows: Schema.Array(TableRow),
   cursor: Schema.NullOr(Schema.String)
@@ -123,6 +124,27 @@ export const runtimeOperations = {
   },
   "tables.list": {
     request: Schema.Struct({ op: Schema.Literal("tables.list"), args: TableList }),
+    response: TablePage,
+    kind: "read"
+  },
+  "shared.get": {
+    request: Schema.Struct({
+      op: Schema.Literal("shared.get"),
+      args: Schema.Struct({ alias: DefinitionName, id: NonEmptyText })
+    }),
+    response: Schema.NullOr(TableRow),
+    kind: "read"
+  },
+  "shared.getMany": {
+    request: Schema.Struct({
+      op: Schema.Literal("shared.getMany"),
+      args: Schema.Struct({ alias: DefinitionName, ids: Schema.Array(NonEmptyText) })
+    }),
+    response: Schema.Array(Schema.NullOr(TableRow)),
+    kind: "read"
+  },
+  "shared.list": {
+    request: Schema.Struct({ op: Schema.Literal("shared.list"), args: SharedList }),
     response: TablePage,
     kind: "read"
   },

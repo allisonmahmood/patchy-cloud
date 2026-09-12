@@ -47,7 +47,13 @@ export const PayloadTooLarge = failure(413, {});
 export const PublishKeyConflict = failure(409, { code: Schema.Literal("publish_key_conflict") });
 export const NameTaken = failure(409, { code: Schema.Literal("name_taken") });
 export const PublishRefused = failure(422, {
-  code: Schema.Literals(["release_mismatch", "invalid_manifest", "tier_mismatch", "has_primitives"])
+  code: Schema.Literals([
+    "release_mismatch",
+    "invalid_manifest",
+    "tier_mismatch",
+    "has_primitives",
+    "patch_not_openable"
+  ])
 });
 export const NotAdditive = failure(422, {
   code: Schema.Literal("not_additive"),
@@ -287,10 +293,13 @@ export const PostgresDeclaration = Schema.Struct({
   id: NonEmptyText,
   revision: Revision
 });
+/** Stable shared-table identity; a patch name never participates in resolution. */
+export const sharedTableId = (patchId: string, table: string): string => `${patchId}/${table}`;
+
 export const SharedTableDeclaration = Schema.Struct({
   kind: Schema.Literal("sharedTable"),
   patchId: PatchId,
-  table: NonEmptyText,
+  table: DefinitionName,
   id: NonEmptyText,
   revision: Revision
 });

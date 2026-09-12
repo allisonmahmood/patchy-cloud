@@ -356,6 +356,7 @@ const sendPublish = Effect.fn("sendPublish")(function* (
                     error.code === "invalid_manifest" ||
                     error.code === "tier_mismatch" ||
                     error.code === "has_primitives" ||
+                    error.code === "patch_not_openable" ||
                     error.code === "not_additive" ||
                     error.errors !== undefined)) ||
                   (error.status === 409 &&

@@ -1,7 +1,13 @@
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
-import { ColumnDefinition, Manifest, ProvisioningReport, TableDefinition } from "@patchy/api";
+import {
+  ColumnDefinition,
+  Manifest,
+  ProvisioningReport,
+  TableDefinition,
+  sharedTableId
+} from "@patchy/api";
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
@@ -27,6 +33,7 @@ export interface Provisioned {
   readonly unused: typeof ProvisioningReport.Type;
   readonly warnings: readonly string[];
   readonly schemaRevision: number;
+  readonly sharing: readonly string[];
 }
 
 export interface Plan extends Provisioned {
@@ -34,7 +41,6 @@ export interface Plan extends Provisioned {
   readonly newColumns: readonly { readonly table: string; readonly name: string }[];
   readonly newIndexes: readonly { readonly table: string; readonly name: string }[];
   readonly newStores: readonly string[];
-  readonly sharing: readonly string[];
 }
 
 const INDEX_PREFLIGHT_MAX_BYTES = 2000;
@@ -273,6 +279,15 @@ const diff = Effect.fn("Tables.diff")(function* (
     snapshot?.indexes.map((index) => [`${index.table}.${index.name}`, index])
   );
   const oldStores = new Set(snapshot?.stores.map((store) => store.name));
+  const sharedTargets = new Set(
+    Object.values(manifest.uses)
+      .filter(
+        (declaration) =>
+          declaration.kind === "sharedTable" &&
+          declaration.id === sharedTableId(declaration.patchId, declaration.table)
+      )
+      .map((declaration) => declaration.id)
+  );
   const oldColumnCounts = new Map<string, number>();
   for (const column of snapshot?.columns ?? []) {
     oldColumnCounts.set(column.table, (oldColumnCounts.get(column.table) ?? 0) + 1);
@@ -291,11 +306,6 @@ const diff = Effect.fn("Tables.diff")(function* (
     } else if (oldTable.shared !== (definition.shared === true)) {
       sharing.push(table);
       provisioned.tables.push(table);
-      warnings.push(
-        definition.shared === true
-          ? `\`${table}\` is now shared.`
-          : `\`${table}\` is no longer shared; 0 declaring patches are affected.`
-      );
     }
     let columnCount = oldColumnCounts.get(table) ?? 0;
     for (const [name, column] of Object.entries(definition.columns)) {
@@ -304,12 +314,13 @@ const diff = Effect.fn("Tables.diff")(function* (
       if (
         column.kind === "ref" &&
         !Object.hasOwn(manifest.tables, column.table) &&
-        !oldTables.has(column.table)
+        !oldTables.has(column.table) &&
+        !sharedTargets.has(column.table)
       ) {
         changes.push({
           object,
           change: `ref target ${column.table} does not exist`,
-          fix: "define the target table"
+          fix: "define the target table or declare the shared table with its resolved id"
         });
       }
       if (!old) {
@@ -548,6 +559,7 @@ export const make = Effect.gen(function* () {
       provisioned: plan.provisioned,
       unused: plan.unused,
       warnings: plan.warnings,
+      sharing: plan.sharing,
       schemaRevision
     };
   });

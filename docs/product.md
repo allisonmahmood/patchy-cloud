@@ -2,7 +2,7 @@
 
 The product, written down where agents read it. Each section is the resolution of one decision on the [foundation map](https://github.com/allisonmahmood/patchy-cloud/issues/5); the glossaries in each `CONTEXT.md` carry the words, this file carries the shape.
 
-**Built today:** tier 0 HTML patches with manifests, release checks and replay-safe publishing; additive patch-owned tables and file stores with browser-runtime operations; names and company addresses; user ownership and company/public sharing; Clerk sign-in; create-or-join and company administration; machine login, logout and revocation. Higher-tier serving and its browser broker, patch repos, the portal, narrower sharing, integrations, billing and company lifecycle remain the intended product shape below, not available features.
+**Built today:** tier 0 HTML patches with manifests, release checks and replay-safe publishing; additive patch-owned tables and file stores with browser-runtime operations, and read-only shared-table declarations; names and company addresses; user ownership and company/public sharing; Clerk sign-in; create-or-join and company administration; machine login, logout and revocation. Higher-tier serving and its browser broker, patch repos, the portal, narrower sharing, integrations, billing and company lifecycle remain the intended product shape below, not available features.
 
 ## Patches
 
@@ -24,7 +24,7 @@ Ownership: a patch belongs to a **user** in a company. The user holds a machine 
 
 ### Versions and publishing
 
-**Publish** is the act; each new publish is an immutable **version**, and the patch serves the version its pointer names. There is no working copy in the cloud and no unpublished patch — the working copy is local, and the act that creates a patch is the act that makes it live. `patchy publish <file>` synthesises a tier 0 **manifest** and sends one HTML **bundle**. Each version records its tier, release, manifest version, server-stamped wire version and schema revision. The publish API accepts tier 0 manifests with table and file-store definitions; `uses` and higher tiers remain refused. File-mode publishing onto a patch with cumulative inventory is refused with `has_primitives`; that patch must be published from its repo. Moving the pointer back through rollback is future work.
+**Publish** is the act; each new publish is an immutable **version**, and the patch serves the version its pointer names. There is no working copy in the cloud and no unpublished patch — the working copy is local, and the act that creates a patch is the act that makes it live. `patchy publish <file>` synthesises a tier 0 **manifest** and sends one HTML **bundle**. Each version records its tier, release, manifest version, server-stamped wire version and schema revision. The publish API accepts tier 0 manifests with table and file-store definitions and shared-table declarations; integration declarations and higher tiers remain refused. File-mode publishing onto a patch with cumulative inventory is refused with `has_primitives`; that patch must be published from its repo. Moving the pointer back through rollback is future work.
 
 A **publish key** identifies one attempt for its owning user. The CLI exclusively creates `attempt.json` with the complete request and owner before sending and recovers it first on the next publish, using a current token for that same user. Concurrent CLI processes resend the existing attempt rather than overwriting it; even a process that loses the creation race must authenticate its original owner. An account switch cannot resend another user's saved content. Killing a process leaves the persisted attempt recoverable, and clearing only the matching publish key prevents a stale response from removing a newer attempt. Repeating the same request returns the stored response without a new version, even after the instance's release changes; reusing the key with a different payload is a conflict. New publishes require an exact-current CLI release.
 
@@ -42,11 +42,11 @@ The intended company model removes automatic expiry in [the expiry-removal effor
 
 ### Patches and other patches
 
-Today patches reference each other by address, nothing more. The long-run vision is composition (a tier 1 or 2 patch calling another) and **extensions** — a patch that plugs into another patch. Both are promised, neither is designed.
+A patch may declare and read another patch's **shared table** in the same company. The declaration names the source patch's stable id and table, never its address or name; it grants no access of its own. The viewer must be able to open the source and the table must remain shared. Composition (a tier 1 or 2 patch calling another) and **extensions** — a patch that plugs into another patch — remain promised, not designed.
 
 ### What a patch is not
 
-Not a **connection** (a connected source belongs to the company or a user, and a patch uses it), not a **primitive** (a patch declares and uses those), not a **company**, not a **version** (part of a patch), not an **agent** or a skill (those make patches). A patch is not a source of data, not a place data lives, and not the people using it.
+Not a **connection** (a connected source belongs to the company or a user, and a patch uses it), not a **primitive** (a patch defines its own and declares those it uses), not a **company**, not a **version** (part of a patch), not an **agent** or a skill (those make patches). A patch can own tables and files; it is not itself a table, a connection, or the people using it.
 
 ## Runtime tiers
 
@@ -66,9 +66,9 @@ The published document runs no script, so the patch cannot watch the reader or r
 
 Code runs in the viewer's browser and acts **as the viewer**. It never holds a credential: not the Clerk session, not an integration token, not another patch's storage. It learns who the viewer is as claims, and it reaches everything else — the patch's primitives (its tables, its files) and the company's integrations — through Patchy, which performs the call as the viewer within the viewer's own permissions. A tier 1 patch can therefore never do more than the person using it could do themselves. Nothing leaves the browser except through Patchy: there is no direct outbound to third-party APIs, credentialed or not — reaching outside systems is what integrations are for.
 
-The runtime operation path admits `me`, seven table operations and four file
-operations. A company version returns its active viewer and company; a current
-public version returns null for `me` and refuses table and file access, even to
+The runtime operation path admits `me`, seven owned-table operations, three shared-table
+reads and four file operations. A company version returns its active viewer and company; a current
+public version returns null for `me` and refuses owned-table, shared-table and file access, even to
 a signed-in viewer. Requests are bound to the loaded version and cannot switch
 acting users mid-page. Runtime records every table and file mutation before
 execution. The broker, higher-tier serving and integrations remain future work.
@@ -283,8 +283,35 @@ mutation is attributed in the runtime log before execution; reads are not
 logged. A public version grants no access to company rows. Older manifests
 remain usable after additive changes, including inserts omitting newer columns.
 
-Shared tables will give other declaring patches read-only access; cross-patch
-declarations are not admitted yet.
+### Shared tables
+
+A table defined with `shared: true` can be declared by another patch in the same
+company. `uses` is keyed by local alias; its shared-table entry carries
+`{ kind: "sharedTable", patchId, table, id, revision }`. The resolved id is
+`<patchId>/<table>` and `revision` stamps the source's cumulative schema revision.
+A ref column can carry this resolved id as its target; typed ref builders arrive
+with the SDK builders.
+
+Publishing resolves the source's inventory, not its active manifest. A missing,
+unopenable or unshared source is `patch_not_openable`; an older revision stamp
+warns rather than refuses. Shared metadata likewise comes from the inventory's
+tables, columns and indexes. Catalog, client generation and local fixtures will
+consume that metadata when their SDK tooling lands; they must never substitute
+the source's active manifest or fetch company rows.
+
+`shared.get`, `shared.getMany` and `shared.list` take the declaration's alias and
+provide the owned-table read surface, using the source's indexes and bounds.
+There are no shared writes. On every call the viewer must still be able to open
+the source and its inventory flag must remain shared; otherwise the whole call
+is `access_denied`, even for an empty id list. While authorized, `getMany`
+preserves input order, duplicates and nulls for dangling ids.
+
+Omitting a shared table from a source version keeps its identity, definition
+and sharing. Unsharing requires defining it with `shared: false`, and publish
+reports the number of distinct live declaring patches, including declarations
+in retained versions. Their next read is denied; their own rows are untouched.
+Rolling back the source never changes sharing. Deleting the source and creating
+a new patch under its old name never rebinds existing consumers.
 
 ### Files
 
@@ -351,4 +378,4 @@ The builder's agent reaches connections through the same layer, as its user: the
 
 ### The edges
 
-A tier 2 patch's own **patch identity** against a shared connection is sketched under [Runtime tiers](#tier-2--hosted); its mechanics are settled when tier 2 is designed. The company database as a shared data surface — company-wide tables several patches read — is undesigned, and belongs with composition.
+A tier 2 patch's own **patch identity** against a shared connection is sketched under [Runtime tiers](#tier-2--hosted); its mechanics are settled when tier 2 is designed. Patch-owned shared tables already provide read-only access across declaring patches; company-owned tables and broader composition remain undesigned.

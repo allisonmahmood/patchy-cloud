@@ -12,6 +12,7 @@ import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlError from "effect/unstable/sql/SqlError";
 import { Analytics } from "@patchy/analytics";
+import { sharedTableId } from "@patchy/api";
 import { ContentStore } from "@patchy/content-store";
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
 import * as CompanyTesting from "@patchy/company-database/testing";
@@ -301,6 +302,164 @@ it.layer(
             )
           ),
           [{ name: "kept.bin", objectId: "immutable-object" }]
+        );
+      })
+  );
+
+  it.effect("rechecks shared source revisions and access after the content write", () =>
+    Effect.gen(function* () {
+      const manifest = {
+        ...Fixtures.manifest,
+        name: "shared-racing-source",
+        tables: {
+          contacts: { columns: { name: { kind: "text" as const } }, indexes: {}, shared: true }
+        }
+      };
+      const source = yield* publish("<p>source</p>", null, { manifest });
+      const declaration = {
+        kind: "sharedTable" as const,
+        patchId: source.patchId,
+        table: "contacts",
+        id: sharedTableId(source.patchId, "contacts"),
+        revision: source.schemaRevision
+      };
+      const consumerManifest = {
+        ...Fixtures.manifest,
+        name: "shared-racing-consumer",
+        uses: { contacts: declaration }
+      };
+      const consumer = yield* publish("<p>consumer</p>", null, { manifest: consumerManifest });
+      const evolvedManifest = {
+        ...manifest,
+        tables: {
+          contacts: {
+            ...manifest.tables.contacts,
+            columns: {
+              ...manifest.tables.contacts.columns,
+              email: { kind: "text" as const, optional: true }
+            }
+          }
+        }
+      };
+      store.control.afterPut = Effect.gen(function* () {
+        store.control.afterPut = Effect.void;
+        yield* publish("<p>new source revision</p>", source.patchId, { manifest: evolvedManifest });
+      }).pipe(Effect.orDie);
+      const updated = yield* publish(
+        "<p>consumer records the new revision warning</p>",
+        consumer.patchId,
+        {
+          manifest: consumerManifest
+        }
+      ).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            store.control.afterPut = Effect.void;
+          })
+        )
+      );
+      assert.isTrue(
+        updated.warnings.some(
+          (warning) => warning.includes(declaration.id) && warning.includes("revision 2")
+        )
+      );
+      store.control.afterPut = Effect.gen(function* () {
+        store.control.afterPut = Effect.void;
+        yield* publish("<p>source unshares</p>", source.patchId, {
+          manifest: {
+            ...evolvedManifest,
+            tables: { contacts: { ...evolvedManifest.tables.contacts, shared: false } }
+          }
+        });
+      }).pipe(Effect.orDie);
+      const failed = yield* publish(
+        "<p>consumer loses access during storage</p>",
+        consumer.patchId,
+        {
+          manifest: consumerManifest
+        }
+      ).pipe(
+        Effect.flip,
+        Effect.ensuring(
+          Effect.sync(() => {
+            store.control.afterPut = Effect.void;
+          })
+        )
+      );
+      assert.instanceOf(failed, Patches.PatchNotOpenable);
+      const service = yield* patches;
+      assert.strictEqual(
+        Option.getOrThrow(yield* service.find(consumer.patchId)).version.id,
+        updated.versionId
+      );
+      assert.isFalse(
+        (yield* service.inventory(source.patchId, uploader.user.id)).tables.contacts?.shared
+      );
+    })
+  );
+
+  it.effect(
+    "keeps an unshare committed when platform recording fails or an older version is selected",
+    () =>
+      Effect.gen(function* () {
+        const manifest = {
+          ...Fixtures.manifest,
+          name: "shared-rollback-source",
+          tables: { contacts: { columns: {}, indexes: {}, shared: true } }
+        };
+        const source = yield* publish("<p>source</p>", null, { manifest });
+        const unsharedManifest = {
+          ...manifest,
+          tables: { contacts: { ...manifest.tables.contacts, shared: false } }
+        };
+        const failed = yield* publish(
+          "<p>unshare whose platform record fails</p>",
+          source.patchId,
+          {
+            manifest: unsharedManifest,
+            machineTokenId: "missing-machine-token"
+          }
+        ).pipe(Effect.flip);
+        assert.strictEqual(failed._tag, "SqlError");
+        const service = yield* patches;
+        assert.strictEqual(
+          Option.getOrThrow(yield* service.find(source.patchId)).version.id,
+          source.versionId
+        );
+        const inventory = yield* service.inventory(source.patchId, uploader.user.id);
+        assert.strictEqual(inventory.schemaRevision, source.schemaRevision + 1);
+        assert.isFalse(inventory.tables.contacts?.shared);
+        assert.instanceOf(
+          yield* service
+            .sharedTable(source.patchId, "contacts", uploader.company.id)
+            .pipe(Effect.flip),
+          Patches.PatchNotOpenable
+        );
+        const retried = yield* publish("<p>retry records without resharing</p>", source.patchId, {
+          manifest: unsharedManifest
+        });
+        assert.strictEqual(retried.schemaRevision, inventory.schemaRevision);
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`SELECT id FROM patches WHERE id = ${source.patchId} FOR UPDATE`;
+            yield* sql`UPDATE patches SET current_version_id = ${source.versionId}
+            WHERE id = ${source.patchId}`;
+          })
+        );
+        assert.isTrue(
+          Option.getOrThrow(yield* service.find(source.patchId)).version.manifest.tables.contacts
+            ?.shared
+        );
+        assert.deepStrictEqual(
+          yield* service.inventory(source.patchId, uploader.user.id),
+          inventory
+        );
+        assert.instanceOf(
+          yield* service
+            .sharedTable(source.patchId, "contacts", uploader.company.id)
+            .pipe(Effect.flip),
+          Patches.PatchNotOpenable
         );
       })
   );

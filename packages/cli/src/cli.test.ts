@@ -1202,6 +1202,7 @@ describe("patchy publish", async () => {
 
   it.each([
     { status: 422, code: "release_mismatch" },
+    { status: 422, code: "patch_not_openable" },
     { status: 409, code: "publish_key_conflict" },
     { status: 409, code: "name_taken" }
   ])(

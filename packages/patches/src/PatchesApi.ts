@@ -209,8 +209,8 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
           );
           if (HttpServerResponse.isHttpServerResponse(payload)) return payload;
           if (manifest.tier > 0) return rejected("tier_mismatch", "Tier 1 is not served yet.");
-          if (Object.keys(manifest.uses).length > 0) {
-            return rejected("invalid_manifest", "Uses are not provisioned yet.");
+          if (Object.values(manifest.uses).some((declaration) => declaration.kind === "postgres")) {
+            return rejected("invalid_manifest", "Postgres uses are not provisioned yet.");
           }
           const validation = validateHtml(payload.html, { maxBytes: maxHtmlBytes });
           if (!validation.ok)
@@ -272,6 +272,8 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
                 PatchQuotaReached: () => replayOrRespond(quotaResponse()),
                 HasPrimitives: (error) =>
                   replayOrRespond(rejected("has_primitives", error.message)),
+                PatchNotOpenable: (error) =>
+                  replayOrRespond(rejected("patch_not_openable", error.message)),
                 NotAdditive: (error) =>
                   replayOrRespond(
                     refuse(NotAdditive, {

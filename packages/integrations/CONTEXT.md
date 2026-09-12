@@ -21,7 +21,7 @@ The name a company connection carries beside its integration — `warehouse` in 
 _Avoid_: alias, connection id (the identity, which never changes)
 
 **Declaration**:
-A patch's statement of the connections it needs, naming an integration and, for a company connection, its handle. It describes a requirement, not a grant of access.
+A patch's statement of a connection or shared table it uses but does not own. It names an integration and connection handle, or a source patch's id and table; it describes a requirement, never a grant of access.
 _Avoid_: dependency, requirement, scope request
 
 **Typed client**:
