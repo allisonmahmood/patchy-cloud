@@ -1,8 +1,12 @@
 /** The patches capability's configuration, read from the environment through Effect `Config`. */
 import * as Config from "effect/Config";
+import * as Context from "effect/Context";
 import { CURRENT_RELEASE } from "@patchy/api";
 
-export const release = Config.string("PATCHY_RELEASE").pipe(Config.withDefault(CURRENT_RELEASE));
+/** The build binds production to its package version; tests can model an upgraded instance. */
+export const release = Context.Reference<string>("@patchy/patches/Release", {
+  defaultValue: () => CURRENT_RELEASE
+});
 
 /** The required origin a patch's public URL is built on. */
 export const publicBaseUrl = Config.string("PATCHY_PUBLIC_BASE_URL");

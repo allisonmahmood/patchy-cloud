@@ -69,8 +69,16 @@ The identity of one publish attempt, letting the instance return the first resul
 _Avoid_: publishing key, token
 
 **Release**:
-The version of Patchy's publishing tooling that an instance currently accepts. A fresh publish must use exactly that release; an unresolved attempt remains recoverable after the release changes.
+The exact version shared by Patchy's CLI, config builders, browser client and dev runtime. An instance accepts only its current release for new publishing and dev starts; unresolved publishes remain recoverable and deployed versions keep their own wire contract.
 _Avoid_: wire version, patch version
+
+**Environment**:
+Where a patch runs: the cloud as its viewer, or the local dev runtime as the machine's user. Both expose the same declared capabilities; local data comes from fixtures, never copied company rows.
+_Avoid_: instance (the target cloud), dev env (the CLI's local-instance discovery record)
+
+**Dev runtime**:
+The local execution of a patch's declared capabilities over disposable local data, under the same contract as the cloud runtime. It belongs to the patch repo, not the cloud's own development instance.
+_Avoid_: mock backend, emulator, dev env
 
 **Onboarding probe**:
 The local-only report of publishing state for the resolved instance — `status --json` — that lets onboarding skip settled questions and choose login-then-publish only when no key is available. It reaches no instance and reports the same credential precedence publishing uses, so it is a setup aid, never a per-session check or proof that a key still works.

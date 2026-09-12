@@ -28,6 +28,7 @@
     "@patchy/patches": "workspace:*",
     "@patchy/primitives": "workspace:*",
     "@patchy/runtime": "workspace:*",
+    "@patchy/sdk": "workspace:*",
     "@patchy/serving": "workspace:*",
     "@patchy/sql": "workspace:*",
     "effect": "catalog:"

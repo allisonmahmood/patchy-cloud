@@ -239,13 +239,14 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
   .middleware(Authorization)
   .prefix("/api") {}
 
-export class ReleaseGroup extends HttpApiGroup.make("release", { topLevel: true })
+export class SdkGroup extends HttpApiGroup.make("sdk", { topLevel: true })
   .add(
     HttpApiEndpoint.get("release", "/release", { success: Release }).annotateMerge(
       describe(
         "The current tooling release and its manifest and wire versions. Unauthenticated. " +
-          "The immutable package URL is reserved for the SDK distribution ticket; integrity is null " +
-          "until a real package artifact is available."
+          "GET /sdk/patchy-<release>.tgz serves this release's tarball without authentication " +
+          "with Cache-Control: public, max-age=31536000, immutable; integrity is its sha512 " +
+          "Subresource Integrity digest. Discovery is no-store; only the exact GET tarball path is reserved."
       )
     )
   )
@@ -427,7 +428,7 @@ export class RuntimeGroup extends HttpApiGroup.make("runtime", { topLevel: true 
   .prefix("/api") {}
 
 export class PatchyApi extends HttpApi.make("patchy")
-  .add(AuthGroup, PatchesGroup, ReleaseGroup, RuntimeGroup)
+  .add(AuthGroup, PatchesGroup, SdkGroup, RuntimeGroup)
   .annotateMerge(
     OpenApi.annotations({
       title: "Patchy Cloud API",

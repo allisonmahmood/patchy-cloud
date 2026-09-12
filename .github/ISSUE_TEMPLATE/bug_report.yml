@@ -56,8 +56,8 @@ body:
     id: node-version
     attributes:
       label: Node.js version
-      description: Output of `node --version`. Patchy Cloud supports Node 22 and later.
-      placeholder: "v22.13.0"
+      description: Output of `node --version`. Patchy Cloud supports Node 22.18 and later.
+      placeholder: "v22.18.0"
     validations:
       required: false
 

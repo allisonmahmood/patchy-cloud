@@ -19,36 +19,18 @@ const markdown = (value: string): string =>
   `<code>${value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;").replaceAll("`", "&#96;").replaceAll("\r", "&#13;").replaceAll("\n", "&#10;").replaceAll("|", "&#124;")}</code>`;
 
 const prelude = `// Generated from an immutable Postgres snapshot. Browser-only; transport is supplied by the host.
+import { PatchyError, decodeError } from "patchy/client";
+import type { Call, ErrorDetails, Errors, BoundaryError as ClientBoundaryError } from "patchy/client";
+import type { Column } from "patchy/config";
 export type Json = null | boolean | number | string | readonly Json[] | { readonly [key: string]: Json };
 export type Parameter = null | boolean | number | string | readonly (null | boolean | number | string)[];
-export type ErrorCode = "connection_not_declared" | "access_denied" | "invalid_request" | "timeout" | "too_large" | "source_unavailable" | "relation_unknown" | "invalid_query" | "shape_mismatch" | "invalid_cursor" | "offset_exhausted" | "session_expired" | "principal_changed" | "not_available_on_public" | "shell_outdated" | "unknown_outcome" | "rate_limited" | "too_many_requests" | "busy";
-export type RelationIdentifier = { readonly schema: string; readonly name: string };
-export type ShapeMismatchDetails =
-  | { readonly column: string; readonly reason: "missing" | "duplicate" | "type" | "null" | "value" | "row_width" }
-  | { readonly relation: RelationIdentifier; readonly reason: "source_schema_changed" };
-export type ErrorDetails<C extends ErrorCode> =
-  C extends "invalid_query" ? { readonly sqlstate: string; readonly message: string; readonly position?: string } :
-  C extends "shape_mismatch" ? ShapeMismatchDetails :
-  C extends "relation_unknown" ? { readonly relation: RelationIdentifier } :
-  C extends "offset_exhausted" ? { readonly maxOffset: 10000 } :
-  C extends "too_large" ? { readonly maxRows?: 1000 } :
-  Readonly<Record<string, never>>;
-export class PatchyError<C extends ErrorCode = ErrorCode> extends Error {
-  readonly name = "PatchyError";
-  constructor(readonly code: C, message: string, readonly details: ErrorDetails<C>) { super(message); }
-}
-export type Errors<C extends ErrorCode> = { [K in C]: PatchyError<K> }[C];
-export type BoundaryError = Errors<Exclude<ErrorCode, "relation_unknown" | "invalid_query" | "shape_mismatch" | "invalid_cursor" | "offset_exhausted">>;
+export type { ErrorCode, ErrorDetails, Errors, RelationIdentifier, ShapeMismatchDetails } from "patchy/client";
+export type BoundaryError = ClientBoundaryError | Errors<"connection_not_declared">;
 // These unions describe known Patchy refusals, not checked or exhaustive TypeScript throws.
 export type GetError = BoundaryError | Errors<"relation_unknown" | "invalid_query" | "shape_mismatch">;
 export type GetManyError = GetError;
 export type ListError = GetError | Errors<"invalid_cursor" | "offset_exhausted">;
 export type QueryError = BoundaryError | Errors<"invalid_query" | "shape_mismatch">;
-export function isPatchyError<C extends ErrorCode>(error: unknown, code: C): error is Errors<C>;
-export function isPatchyError(error: unknown): error is Errors<ErrorCode>;
-export function isPatchyError(error: unknown, code?: ErrorCode): error is Errors<ErrorCode> {
-  return error instanceof PatchyError && (code === undefined || error.code === code);
-}
 export type Page<Row> = { readonly ok: true; readonly rows: readonly Row[]; readonly cursor: string | null };
 export type Rows<Row> = { readonly ok: true; readonly rows: readonly Row[] };
 export type Range<Row, Columns extends keyof Row> = { [K in Columns]: { readonly column: K; readonly gt?: NonNullable<Row[K]>; readonly gte?: NonNullable<Row[K]>; readonly lt?: NonNullable<Row[K]>; readonly lte?: NonNullable<Row[K]> } }[Columns];
@@ -69,26 +51,26 @@ export interface KeyedRelation<Row, Columns extends keyof Row, Key> extends Rela
   getMany(keys: readonly Key[]): Promise<readonly (Row | null)[]>;
 }
 export type ShapeKind = "text" | "integer" | "number" | "boolean" | "timestamp" | "json";
-export type ShapeColumn = { readonly kind: ShapeKind; readonly optional?: boolean };
-export type Shape = Readonly<Record<string, ShapeColumn>>;
+export type ShapeColumn = { readonly kind: ShapeKind; readonly optional?: boolean; readonly default?: never; readonly table?: never };
+export type BuilderColumn = Column<ShapeKind, boolean, false>;
+export type Shape = Readonly<Record<string, ShapeColumn | BuilderColumn>>;
 export type ShapeValue<K extends ShapeKind> = K extends "integer" | "number" ? number : K extends "boolean" ? boolean : K extends "json" ? unknown : string;
-export type ShapeRow<S extends Shape> = { readonly [K in keyof S]: ShapeValue<S[K]["kind"]> | (S[K] extends { readonly optional?: infer Optional } ? true extends Optional ? null : never : never) };
-type StrictShape<S extends Shape> = { readonly [K in keyof S]: S[K] & Record<Exclude<keyof S[K], keyof ShapeColumn>, never> };
-export type Query = <const S extends Shape>(sql: string, params: readonly Parameter[], shape: S & StrictShape<S>) => Promise<Rows<ShapeRow<S>>>;
-type Call = (op: string, args: unknown) => Promise<unknown>;
-const errorCodes: Readonly<Record<string, true>> = Object.fromEntries(${JSON.stringify(["connection_not_declared", "access_denied", "invalid_request", "timeout", "too_large", "source_unavailable", "relation_unknown", "invalid_query", "shape_mismatch", "invalid_cursor", "offset_exhausted", "session_expired", "principal_changed", "not_available_on_public", "shell_outdated", "unknown_outcome", "rate_limited", "too_many_requests", "busy"])}.map((code) => [code, true]));
-function asError(value: unknown): PatchyError | undefined {
-  if (value === null || typeof value !== "object") return undefined;
-  const record = value as Record<string, unknown>;
-  if (typeof record.code !== "string" || !Object.hasOwn(errorCodes, record.code)) return undefined;
-  const message = typeof record.message === "string" ? record.message : typeof record.error === "string" ? record.error : "The Postgres operation failed.";
-  const details = record.details !== null && typeof record.details === "object" && !Array.isArray(record.details) ? record.details as ErrorDetails<ErrorCode> : {};
-  return new PatchyError(record.code as ErrorCode, message, details);
+export type ShapeRow<S extends Shape> = { readonly [K in keyof S]: ShapeValue<S[K]["kind"]> | (S[K] extends { readonly isOptional: infer Optional } ? true extends Optional ? null : never : S[K] extends { readonly optional?: infer Optional } ? true extends Optional ? null : never : never) };
+export type Query = <const S extends Shape>(sql: string, params: readonly Parameter[], shape: S) => Promise<Rows<ShapeRow<S>>>;
+function wireShape(shape: Shape): Readonly<Record<string, ShapeColumn>> {
+  return Object.fromEntries(Object.entries(shape).map(([name, column]) => {
+    if ((column.kind as string) === "ref" || ("hasDefault" in column && column.hasDefault))
+      throw new PatchyError("invalid_request", "Query shapes do not accept references or defaults.", {});
+    if (!("isOptional" in column) && Object.keys(column).some((key) => key !== "kind" && key !== "optional"))
+      throw new PatchyError("invalid_request", "Query shapes accept only kind and optional fields.", {});
+    const optional = "isOptional" in column ? column.isOptional : column.optional;
+    return [name, { kind: column.kind, ...(optional === undefined ? {} : { optional }) }];
+  }));
 }
-async function invoke(call: Call, op: string, args: unknown): Promise<{ readonly ok: true; readonly rows: readonly unknown[]; readonly cursor?: string | null }> {
+async function invoke(call: Call, op: Parameters<Call>[0], args: unknown): Promise<{ readonly ok: true; readonly rows: readonly unknown[]; readonly cursor?: string | null }> {
   let value: unknown;
-  try { value = await call(op, args); } catch (error) { throw asError(error) ?? error; }
-  const error = asError(value);
+  try { value = await call(op, args); } catch (error) { throw decodeError(error) ?? error; }
+  const error = decodeError(value);
   if (error) throw error;
   if (value === null || typeof value !== "object" || !("ok" in value) || value.ok !== true || !("rows" in value) || !Array.isArray(value.rows)) throw new PatchyError("invalid_request", "The Postgres transport returned an invalid response.", {});
   return value as { readonly ok: true; readonly rows: readonly unknown[]; readonly cursor?: string | null };
@@ -167,7 +149,7 @@ export const generate = (
     top.push(`[${literal(schema)}]: { ${members.join(",\n")} }`);
   for (const [schema, members] of schemaTypes)
     topTypes.push(`readonly [${literal(schema)}]: { ${members.join("\n")} };`);
-  const client = `${prelude}\n${rowTypes.join("\n")}\nexport interface Client {\n  readonly query: Query;\n${topTypes.join("\n")}\n}\nexport function createClient(connection: string, call: Call): Client {\n  const query = async <const S extends Shape>(sql: string, params: readonly Parameter[], shape: S & StrictShape<S>) => await invoke(call, "postgres.query", { connection, sql, params, shape }) as Rows<ShapeRow<S>>;\n  return { query,\n${top.map((member) => `    ${member}`).join(",\n")}\n  };\n}\n`;
+  const client = `${prelude}\n${rowTypes.join("\n")}\nexport interface Client {\n  readonly query: Query;\n${topTypes.join("\n")}\n}\nexport function createClient(connection: string, call: Call): Client {\n  const query: Query = async <const S extends Shape>(sql: string, params: readonly Parameter[], shape: S) => await invoke(call, "postgres.query", { connection, sql, params, shape: wireShape(shape) }) as Rows<ShapeRow<S>>;\n  return { query,\n${top.map((member) => `    ${member}`).join(",\n")}\n  };\n}\n`;
   const exclusions =
     snapshot.exclusions
       .map(

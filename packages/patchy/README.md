@@ -1,6 +1,6 @@
-# @patchy/cli
+# patchy
 
-Command-line publisher for [Patchy Cloud](https://github.com/allisonmahmood/patchy-cloud). It sends static HTML patches to a Patchy Cloud instance, changes their sharing and takes them down again. Every publish carries a machine token; new patches are company-scoped by default and open through a colleague's signed-in browser. Choose public explicitly to let anyone with the link open a patch. A machine token never opens a patch's view URL.
+One package for [Patchy Cloud](https://github.com/allisonmahmood/patchy-cloud): the `patchy` CLI, `patchy/config` builders, `patchy/client` browser client and a reserved `patchy/dev` entrypoint. The CLI publishes static HTML patches, changes their sharing and takes them down again. Every publish carries a machine token; new patches are company-scoped by default and open through a colleague's signed-in browser. Choose public explicitly to let anyone with the link open a patch. A machine token never opens a patch's view URL.
 
 An agent is the primary driver, so the CLI promises a contract an agent can branch on without reading prose: an [exit code that says who has to act](#exit-codes), `--json` on every command, and one resolution of which instance is being targeted. The contract is [ADR-0004](../../docs/adr/ADR-0004-cli-contract-for-agents.md).
 
@@ -8,16 +8,16 @@ The CLI talks to whichever instance you point it at — Patchy Cloud, or the `pn
 
 ## Run it
 
-Requires Node.js 22 or newer. The package is private and not published, so run it from a checkout of this repo:
+Requires Node.js 22.18 or newer. The package is private and not published to a registry. Fetch your intended instance's unauthenticated `GET /api/release`, download its exact `package.tarball` URL as `patchy.tgz`, and verify the downloaded bytes against the SHA-512 `package.integrity` before installing:
 
 ```sh
-pnpm --filter @patchy/cli build
-node packages/cli/dist/index.js login --api-url https://pages.example.com
+npm install --global --ignore-scripts ./patchy.tgz
+patchy login --api-url https://pages.example.com
 ```
 
-The build puts an executable at `packages/cli/dist/index.js`. Create a symlink named `patchy` to that executable in a directory on your `PATH`; adding `dist` alone exposes `index.js`, not `patchy`. Alternatively, replace `patchy` in the commands below and in login's returned `next` command with `node /absolute/path/to/packages/cli/dist/index.js`.
+Contributors working in this checkout can instead run `pnpm --filter patchy build`. It puts an executable at `packages/patchy/dist/index.js` and packs the release tarball. Symlink that executable as `patchy` into a directory on your `PATH`; adding `dist` alone exposes `index.js`, not `patchy`. Alternatively, replace `patchy` in the commands below and in login's returned `next` command with `node /absolute/path/to/packages/patchy/dist/index.js`.
 
-The CLI is a JavaScript bundle. The packed CLI installs offline without running install scripts.
+The package bundles its runtime dependencies and installs offline without running install scripts. Inside a patch repo it is pinned as one exact devDependency; `pnpm patchy` runs that copy. `GET /api/release` reports the tarball URL and SHA-512 integrity. See [ADR-0011](../../docs/adr/ADR-0011-one-package-one-release.md) for the release and stable-wire boundary.
 
 First run is `patchy login`, then `patchy publish ./plan.html`. A person at a real
 terminal confirms in their browser while login waits. An agent receives a URL,
@@ -25,6 +25,64 @@ code and next command, relays them to the person, and runs that next command
 after the handoff; it never opens a browser. Publishing the same file again
 updates the same patch. Inside a `pnpm dev` worktree, the seeded key works
 without a login, and a saved login takes precedence over that seed.
+
+## Config and browser client
+
+The only public library subpaths are `patchy/config`, `patchy/client` and `patchy/dev`.
+
+```ts
+import { defineConfig, table, t, files, postgres, sharedTable } from "patchy/config";
+
+export default defineConfig({
+  name: "team-notes",
+  tier: 1,
+  tables: {
+    notes: table(
+      {
+        title: t.text(),
+        body: t.text().optional(),
+        done: t.boolean().default(false),
+        created: t.timestamp().default("now"),
+        parent: t.ref("notes").optional()
+      },
+      { indexes: { byDone: ["done"] }, shared: true }
+    )
+  },
+  files: { attachments: files() },
+  uses: {
+    sales: postgres("warehouse"),
+    contacts: sharedTable("abcdefghijkl", "contacts")
+  }
+});
+```
+
+`Row<typeof config, "notes">`, `Insert<typeof config, "notes">` and
+`Update<typeof config, "notes">` infer the owned table contract. Rows include
+branded `id`, `createdAt` and `updatedAt`; writes cannot supply system columns.
+Optional columns accept null. Defaulted columns may be omitted on insert but do
+not accept null; updates are partial. Other kinds are `integer`, `number` and
+`json` (read as `unknown`). Refs are branded row ids, not foreign keys.
+
+`executeConfig(path)` from `patchy/config` runs the config in a child
+process and returns a validated manifest. Declarations require real stamps in
+the sibling `patchy/_generated/index.json`, shaped as
+`{ "uses": [{ "alias": "sales", "id": "<resolved-id>", "revision": 1 }] }`.
+Missing, ambiguous or invalid stamps fail locally; the server never executes
+config. Generation and refresh commands are not available yet. Config files use
+Node's native TypeScript loader, including explicit `.ts` extensions for local
+TypeScript imports.
+
+The browser entrypoint exposes owned tables, file stores, read-only shared
+tables, generated connections and `me()`. File `url(name)` returns a cached
+frame-local blob URL, never a public object URL. All runtime failures use
+`PatchyError` and `isPatchyError(error, code)`. HTTP and port transport constructors
+remain internal, not public client exports; patch frames must not fetch the
+runtime directly.
+
+The internal generated `client.ts` template imports the config's **type** and
+`manifest.json`'s **value**. The package's browser graph has no Node, Effect or
+PGlite runtime. `patchy/dev` reserves its entrypoint; repo commands, the broker
+and local dev runtime arrive in their own SDK tickets.
 
 ## Commands
 
@@ -235,7 +293,7 @@ Authentication failures, throttling, quota refusals, lost replies, server failur
 
 Concurrent invocations through the same instance and state directory resend the same persisted attempt rather than replacing it or refusing contention. Each authenticates the attempt's original owner before sending, including an invocation that loses the race to create it. Killing a process leaves the attempt available for recovery. A response clears only its matching publish key, so a stale response cannot remove a newer attempt.
 
-The executing CLI must match the instance's release exactly. A local mismatch exits 1 with `kind: "local"` and `code: "release_mismatch"`; an instance-detected mismatch exits 2 with `kind: "rejected"` and the same code. The diagnostic names both releases and directs you to `patchy refresh`. This CLI currently publishes files only. The API also admits tier 0 table and file-store manifests with shared-table and resolved Postgres declarations; higher tiers remain refused. File publishing onto a patch with cumulative inventory returns `has_primitives` (422, exit 2): publish that patch from its repo rather than replacing it with a file. `has_primitives`, `not_additive`, `patch_not_openable`, `connection_not_connected` and `stale_generated` are definitive payload refusals; the matching attempt is cleared. Restore shared-source access, reconnect the connection, or regenerate its snapshot stamp before publishing a fresh attempt. Connection secrets are accepted only in the admin's browser at `/company/connections`, never by a CLI command.
+The executing CLI must match the instance's release exactly. A local mismatch exits 1 with `kind: "local"` and `code: "release_mismatch"`; an instance-detected mismatch exits 2 with `kind: "rejected"` and the same code. The diagnostic names both releases. Install the exact package reported by `GET /api/release`; `patchy refresh` is not implemented yet. This CLI currently publishes files only. The API also admits tier 0 table and file-store manifests with shared-table and resolved Postgres declarations; higher tiers remain refused. File publishing onto a patch with cumulative inventory returns `has_primitives` (422, exit 2): that patch requires repo publishing, which is not available in this CLI yet. `has_primitives`, `not_additive`, `patch_not_openable`, `connection_not_connected` and `stale_generated` are definitive payload refusals; the matching attempt is cleared. Restore shared-source access, reconnect the connection, or regenerate its snapshot stamp before publishing a fresh attempt. Connection secrets are accepted only in the admin's browser at `/company/connections`, never by a CLI command.
 
 Without `--share`, a new patch defaults to `company` and an update preserves the patch's current scope. An explicit `--share company` or `--share public` sets it in either direction while publishing the new version:
 

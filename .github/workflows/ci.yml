@@ -19,8 +19,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 22 is the minimum supported Node (engines >=22; pnpm 11 also
-        # requires >=22.13). cli-smoke runs the packed real-server contract
+        # 22 is the minimum supported Node (engines >=22.18 for config execution).
+        # cli-smoke runs the packed real-server contract
         # entirely on Node 22, the floor the CLI has to keep working on.
         node-version: [22, 24]
     steps:

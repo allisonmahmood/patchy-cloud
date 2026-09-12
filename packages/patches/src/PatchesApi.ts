@@ -37,7 +37,6 @@ import {
   PublishRequest,
   PublishRefused,
   PublishKeyConflict,
-  Release,
   MANIFEST_VERSION,
   WIRE_VERSION
 } from "@patchy/api";
@@ -397,26 +396,5 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
           return new Ok({ ok: true });
         })
       );
-  })
-);
-
-/** Public release discovery is separate from the bearer-protected patch group. */
-export const releaseLayer = HttpApiBuilder.group(PatchyApi, "release", (handlers) =>
-  Effect.gen(function* () {
-    const release = yield* PatchesConfig.release;
-    const base = yield* PatchesConfig.publicBaseUrl;
-    return handlers.handle("release", () =>
-      Effect.succeed(
-        new Release({
-          release,
-          manifestVersion: MANIFEST_VERSION,
-          wireVersion: WIRE_VERSION,
-          package: {
-            tarball: `${base.replace(/\/+$/, "")}/sdk/patchy-${release}.tgz`,
-            integrity: null
-          }
-        })
-      )
-    );
   })
 );

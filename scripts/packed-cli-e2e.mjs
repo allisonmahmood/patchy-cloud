@@ -23,7 +23,7 @@ import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const cliPackageDir = path.join(repoRoot, "packages/cli");
+const cliPackageDir = path.join(repoRoot, "packages/patchy");
 const serverEntry = path.join(repoRoot, "apps/server/dist/start.js");
 // npm is a pinned root devDependency so this test can install the CLI tarball
 // hermetically; the CLI itself is private and is never published to a registry.
@@ -206,7 +206,7 @@ try {
   await run("pnpm", ["--filter", "@patchy/server...", "build"], { cwd: repoRoot });
 
   console.log("[packed-cli-e2e] building CLI once");
-  await run("pnpm", ["--filter", "@patchy/cli", "build"], { cwd: repoRoot });
+  await run("pnpm", ["--filter", "patchy", "build"], { cwd: repoRoot });
 
   console.log("[packed-cli-e2e] packing one exact tarball without rerunning prepack");
   const packed = await run(
@@ -252,7 +252,7 @@ try {
   await checkedCall(() => access(cliPath));
   const installedManifest = JSON.parse(
     await checkedCall(() =>
-      readFile(path.join(consumerDir, "node_modules/@patchy/cli/package.json"), "utf8")
+      readFile(path.join(consumerDir, "node_modules/patchy/package.json"), "utf8")
     )
   );
   const version = await run(cliPath, ["--version"], { cwd: consumerDir });
@@ -311,7 +311,7 @@ try {
   await checkedCall(() => writeFile(fixturePath, firstHtml, "utf8"));
   const publicShellSequence = decodePackedCliWorkflow(
     await checkedCall(() =>
-      readFile(path.join(consumerDir, "node_modules/@patchy/cli/README.md"), "utf8")
+      readFile(path.join(consumerDir, "node_modules/patchy/README.md"), "utf8")
     )
   );
   const hostileInheritedApiToken = "hostile-inherited-api-token";
@@ -1054,12 +1054,12 @@ async function runPlatformProbes() {
   assert.equal(npmInvocation.command, process.execPath);
   assert.deepEqual(npmInvocation.args, [npmCliEntry, "pack"]);
 
-  const pnpmInvocation = resolveSpawnInvocation("pnpm", ["--filter", "@patchy/cli", "build"], {
+  const pnpmInvocation = resolveSpawnInvocation("pnpm", ["--filter", "patchy", "build"], {
     platform: "win32",
     env: winEnv
   });
   assert.equal(pnpmInvocation.command, process.execPath);
-  assert.deepEqual(pnpmInvocation.args, [fakePnpmEntry, "--filter", "@patchy/cli", "build"]);
+  assert.deepEqual(pnpmInvocation.args, [fakePnpmEntry, "--filter", "patchy", "build"]);
 
   const winCliBin = path.win32.join(
     "C:\\workspace",
@@ -1074,15 +1074,7 @@ async function runPlatformProbes() {
   });
   assert.equal(winCliInvocation.command, process.execPath);
   assert.deepEqual(winCliInvocation.args, [
-    path.win32.join(
-      "C:\\workspace",
-      "consumer",
-      "node_modules",
-      "@patchy",
-      "cli",
-      "dist",
-      "index.js"
-    ),
+    path.win32.join("C:\\workspace", "consumer", "node_modules", "patchy", "dist", "index.js"),
     "--version"
   ]);
 
@@ -3456,7 +3448,7 @@ function installedPatchyJsForBin(command, platform = process.platform) {
   const pathApi = platform === "win32" ? path.win32 : path;
   const binDir = pathApi.dirname(command);
   const nodeModulesDir = pathApi.dirname(binDir);
-  return pathApi.join(nodeModulesDir, "@patchy", "cli", "dist", "index.js");
+  return pathApi.join(nodeModulesDir, "patchy", "dist", "index.js");
 }
 
 function installedCliBinPath(consumerDir) {

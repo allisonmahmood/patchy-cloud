@@ -1,3 +1,5 @@
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { createServer } from "node:net";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
@@ -33,6 +35,15 @@ declare module "vitest" {
 }
 
 export default async function setup(project: TestProject): Promise<() => Promise<void>> {
+  // Every server and CLI test sees the same real release, built before workers start.
+  execFileSync(
+    process.execPath,
+    [
+      fileURLToPath(new URL("../scripts/build-patchy-package.mjs", import.meta.url)),
+      "--stage-for-server"
+    ],
+    { stdio: "pipe" }
+  );
   const databaseDir = await mkdtemp(path.join(os.tmpdir(), "patchy-postgres-"));
   const port = await availablePort();
   const embedded = new EmbeddedPostgres({

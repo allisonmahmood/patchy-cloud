@@ -16,5 +16,7 @@ tmp/
 .local/patchy-plans/
 
 # Generated at build time from root skills/ and LICENSE.
-packages/cli/skills/
-packages/cli/LICENSE
+packages/patchy/skills/
+packages/patchy/LICENSE
+packages/sdk/artifacts/
+packages/patchy/artifacts/

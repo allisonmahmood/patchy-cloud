@@ -38,9 +38,23 @@ The `patchy` CLI publishes one safe static HTML document and returns its view UR
 New patches default to company scope; use `--share public` only when the user wants
 anyone with the link to read the page.
 
-Requires Node.js 22 or newer, and the `patchy` CLI on `PATH` — built from the
-patchy-cloud repo with `pnpm --filter @patchy/cli build`, then symlinked from
-`packages/cli/dist/index.js` as `patchy` into a directory on `PATH`.
+Requires Node.js 22.18 or newer and the `patchy` CLI on `PATH`. If the CLI is
+missing or its release differs from the intended instance, install from that
+instance, not a registry. For a new install, use the instance URL the user
+supplied; ask where to publish only if no destination is known.
+Fetch its unauthenticated `GET /api/release`, download the exact
+`package.tarball` URL as `patchy.tgz`, and verify the downloaded bytes against
+the SHA-512 `package.integrity` before installing:
+
+```bash
+npm install --global --ignore-scripts ./patchy.tgz
+```
+
+The package bundles its dependencies; installation needs no lifecycle scripts.
+Check that `patchy --version` matches the reported release before continuing.
+The installed skill lives at `node_modules/patchy/skills/patchy/SKILL.md`.
+Contributors in a source checkout may instead run `pnpm --filter patchy build`
+and symlink `packages/patchy/dist/index.js` as `patchy` into a directory on `PATH`.
 
 Settle the instance and available key before login or publish:
 
@@ -139,10 +153,12 @@ browser sign-out is a separate control on **Your machines**.
 - A rejected key is a hard error. Log in again as the same user to keep editing
   that user's pages; if an environment key overrides it, resolve that override.
 - A new publish checks the executing CLI against `GET /api/release`, then validates the file.
-  A `release_mismatch` names both releases and `patchy refresh`; repo tooling arrives later.
+  A `release_mismatch` names both releases: install the exact package reported
+  by that endpoint using the integrity check above. `patchy refresh` is not implemented yet.
   File mode synthesises a tier 0 manifest with no resources; higher tiers remain refused.
   If the instance returns `has_primitives`, this patch has cumulative resources:
-  publish it from its repo, not as a file. An omitted table still counts as inventory.
+  this CLI cannot publish it yet. Do not replace it with a file; an omitted table
+  still counts as inventory.
 - An interrupted publish keeps the complete attempt under the state dir. Rerun `publish`
   with the same instance, state and owning user: it authenticates that user before
   resending the saved content, then applies the original result without another version.

@@ -13,7 +13,7 @@ COPY apps/server/package.json apps/server/package.json
 COPY packages/analytics/package.json packages/analytics/package.json
 COPY packages/api/package.json packages/api/package.json
 COPY packages/auth/package.json packages/auth/package.json
-COPY packages/cli/package.json packages/cli/package.json
+COPY packages/patchy/package.json packages/patchy/package.json
 COPY packages/companies/package.json packages/companies/package.json
 COPY packages/company-database/package.json packages/company-database/package.json
 COPY packages/content-store/package.json packages/content-store/package.json
@@ -23,6 +23,7 @@ COPY packages/limits/package.json packages/limits/package.json
 COPY packages/patches/package.json packages/patches/package.json
 COPY packages/primitives/package.json packages/primitives/package.json
 COPY packages/runtime/package.json packages/runtime/package.json
+COPY packages/sdk/package.json packages/sdk/package.json
 COPY packages/serving/package.json packages/serving/package.json
 COPY packages/sql/package.json packages/sql/package.json
 COPY scripts/dev/package.json scripts/dev/package.json

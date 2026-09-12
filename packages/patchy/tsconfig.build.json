@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "declaration": true,
+    "declarationMap": false,
+    "noEmit": false,
+    "emitDeclarationOnly": true
+  },
+  "include": [
+    "src/config.ts",
+    "src/client.ts",
+    "src/dev.ts",
+    "src/executeConfig.ts",
+    "src/generateClient.ts"
+  ]
+}

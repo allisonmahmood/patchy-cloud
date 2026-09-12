@@ -322,10 +322,13 @@ export class PatchInventory extends Schema.Class<PatchInventory>("PatchInventory
   files: definitions(FileStoreDefinition)
 }) {}
 
-/** Integrity is absent until the instance has a real package artifact to hash. */
+/** The package integrity is the sha512 SRI of the bytes at the immutable tarball URL. */
 export class Release extends Schema.Class<Release>("Release")({
   release: NonEmptyText,
-  package: Schema.Struct({ tarball: Schema.String, integrity: Schema.NullOr(Schema.String) }),
+  package: Schema.Struct({
+    tarball: Schema.String,
+    integrity: Schema.String.check(Schema.isPattern(/^sha512-[A-Za-z0-9+/]{86}==$/))
+  }),
   manifestVersion: Schema.Int,
   wireVersion: Schema.Int
 }) {}

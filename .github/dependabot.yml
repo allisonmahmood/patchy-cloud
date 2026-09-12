@@ -28,7 +28,7 @@ updates:
         update-types:
           - patch
     ignore:
-      # Deliberately pinned to the minimum supported runtime (engines >=22);
+      # Deliberately pinned to the minimum supported runtime major (engines >=22.18);
       # typechecking against newer node types would undermine that claim.
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]

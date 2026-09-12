@@ -2,7 +2,7 @@
 #
 # The areas follow CONTEXT-MAP.md so pull requests and the domain docs stay in
 # one vocabulary: `area:server` is the hosting side (apps/server and its
-# packages: analytics, api, auth, content-store, limits, patches, serving, sql),
+# packages: analytics, api, auth, content-store, limits, patches, sdk, serving, sql),
 # `area:cli` the Publishing context, `area:core` the shared kernel. The table in
 # docs/agents/triage-labels.md says the same thing; change both together.
 #
@@ -18,14 +18,15 @@
           - "packages/content-store/**"
           - "packages/limits/**"
           - "packages/patches/**"
+          - "packages/sdk/**"
           - "packages/serving/**"
           - "packages/sql/**"
 
 "area:cli":
   - changed-files:
       - any-glob-to-any-file:
-          - "packages/cli/**"
-          # Single-sourced into packages/cli and shipped with it.
+          - "packages/patchy/**"
+          # Single-sourced into packages/patchy and shipped with it.
           - "skills/**"
 
 "area:core":

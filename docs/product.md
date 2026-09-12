@@ -28,6 +28,24 @@ Ownership: a patch belongs to a **user** in a company. The user holds a machine 
 
 A **publish key** identifies one attempt for its owning user. The CLI exclusively creates `attempt.json` with the complete request and owner before sending and recovers it first on the next publish, using a current token for that same user. Concurrent CLI processes resend the existing attempt rather than overwriting it; even a process that loses the creation race must authenticate its original owner. An account switch cannot resend another user's saved content. Killing a process leaves the persisted attempt recoverable, and clearing only the matching publish key prevents a stale response from removing a newer attempt. Repeating the same request returns the stored response without a new version, even after the instance's release changes; reusing the key with a different payload is a conflict. New publishes require an exact-current CLI release.
 
+### The package and its release
+
+`patchy` is one private npm package containing the CLI, config builders and browser
+client, with a reserved dev-runtime entrypoint. Its version is the **release**.
+The instance distributes its immutable tarball and reports the matching SHA-512
+integrity through `GET /api/release`. New file publishes require the exact-current
+CLI; the shared check also accepts the repo pin and loaded runtime for future
+repo publishing and dev starts. A release upgrade never invalidates a deployed
+bundle's stable runtime wire.
+
+`patchy/config` defines owned tables and file stores and declares shared tables
+and Postgres connections. Row, insert and update types are inferred from the
+config; execution happens in a local child process, producing the existing
+manifest rather than sending executable config to the server. The browser client
+uses the broker's document-bound port and one `PatchyError`; lost replies never
+cause a mutation replay. The broker, repo-generation commands and dev runtime
+remain separate work; shipping their client surface does not enable tier 1 serving.
+
 ### Sharing and finding
 
 A published patch is shared with **everyone in the company** by default, or made **public** on purpose: anyone with the link, without a login. Today its owner chooses either scope with `patchy publish <file> --share company|public` or changes an existing patch with `patchy share <file> company|public` (or `patchy share --patch <id> company|public`); a publish without `--share` preserves an existing patch's scope. Only the owner changes sharing. Narrower scopes — the owner plus named users, or one group — remain future work; who may open, and who may change, a patch is spelled out under [Identity and access](#access-to-a-patch).

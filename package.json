@@ -5,14 +5,14 @@
   "license": "UNLICENSED",
   "type": "module",
   "engines": {
-    "node": ">=22",
+    "node": ">=22.18",
     "pnpm": "11.5.2"
   },
   "packageManager": "pnpm@11.5.2",
   "scripts": {
     "build": "turbo run build",
     "dev": "node --import tsx --conditions=development scripts/dev/src/main.ts",
-    "patchy": "node --import tsx --conditions=development packages/cli/src/index.ts",
+    "patchy": "node --import tsx --conditions=development packages/patchy/src/index.ts",
     "seed:dev": "node scripts/seed-dev.mjs",
     "test": "vitest run",
     "test:clerk": "node --import tsx --conditions=development scripts/test-clerk.ts",
@@ -42,6 +42,8 @@
     "npm": "12.0.2",
     "pg": "^8.23.0",
     "prettier": "^3.9.6",
+    "rollup": "^4.59.0",
+    "rollup-plugin-dts": "^6.3.0",
     "simple-git-hooks": "^2.14.0",
     "tsx": "^4.23.13",
     "turbo": "^2.10.12",

@@ -58,6 +58,14 @@ export class DatabaseSetupError extends Schema.TaggedError<DatabaseSetupError>()
   }
 }
 
+class PackageBuildFailed extends Schema.TaggedError<PackageBuildFailed>()("PackageBuildFailed", {
+  exitCode: Schema.Number
+}) {
+  get message() {
+    return `The patchy release build failed with exit code ${this.exitCode}. See dev.log.`;
+  }
+}
+
 /** The whole instance; returns when the server exits, and tears down on interruption. */
 export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
   const fs = yield* FileSystem.FileSystem;
@@ -170,6 +178,27 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
     Effect.provide(layerFromUrl(Redacted.make(plan.databaseUrl)))
   );
   yield* say("database migrated and seeded");
+
+  yield* say("building the patchy release artifact");
+  const build = yield* spawner.spawn(
+    ChildProcess.make(
+      process.execPath,
+      [path.join(plan.worktree, "scripts/build-patchy-package.mjs"), "--stage-for-server"],
+      {
+        cwd: plan.worktree,
+        env: inherited,
+        extendEnv: false,
+        stdin: "ignore"
+      }
+    )
+  );
+  yield* build.all.pipe(
+    Stream.decodeText(),
+    Stream.splitLines,
+    Stream.runForEach((line) => write("package", line))
+  );
+  const buildExitCode = yield* build.exitCode;
+  if (buildExitCode !== 0) return yield* new PackageBuildFailed({ exitCode: buildExitCode });
 
   // The server: plain node with the tsx loader so the pid we record is the
   // one signals reach. Its env is closed: the plan, what a process needs to

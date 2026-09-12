@@ -2,13 +2,16 @@
 
 ## The local instance: `pnpm dev`
 
-Use Node 22.13+ and the pnpm version in `package.json`, with dependencies installed
+Use Node 22.18+ and the pnpm version in `package.json`, with dependencies installed
 by `pnpm install`. Embedded Postgres is included; no separately managed database
 is needed for this loop.
 
 `pnpm dev` runs a complete Patchy Cloud for the worktree you are in: embedded
-Postgres, migrations, a seeded dev company with a user-owned machine token, and
-the server. Before the first start, load the [Clerk development keys](#clerk-keys).
+Postgres, migrations, a seeded dev company with a user-owned machine token, the
+packed `patchy` release, and the server. The package build runs before startup so
+`GET /api/release` always describes downloadable bytes; failures appear under
+`[package]` in `dev.log`. The offline test global setup builds that same artifact
+once before its workers start. Before the first start, load the [Clerk development keys](#clerk-keys).
 Browser sign-in needs a real user in that Clerk application and network access
 to Clerk; the seeded machine token alone does not sign a browser in.
 The runner returns as soon as `/healthz` answers and prints where everything is:

@@ -35,6 +35,7 @@ import { ConnectionStore, PostgresSource } from "@patchy/integrations";
 import * as Content from "./Content.js";
 import * as Patches from "./Patches.js";
 import * as PatchesApi from "./PatchesApi.js";
+import * as PatchesConfig from "./PatchesConfig.js";
 import * as Fixtures from "./test/fixtures.js";
 
 const { admin, reader, sibling, uploader } = Fixtures.identities;
@@ -378,20 +379,18 @@ const publishConfig = (
   publishLimit = 100,
   createLimit = 100
 ) =>
-  ConfigProvider.layer(
-    ConfigProvider.fromUnknown({
-      PATCHY_PUBLIC_BASE_URL: "https://patchy.example",
-      PATCHY_RELEASE: release,
-      PATCHY_PATCH_CREATE_RATE_LIMIT_PER_MINUTE: String(createLimit),
-      PATCHY_AUTHENTICATED_PUBLISH_RATE_LIMIT_PER_MINUTE: String(publishLimit),
-      PATCHY_LIVE_PATCHES_PER_USER: String(quota)
-    })
+  Layer.merge(
+    Layer.succeed(PatchesConfig.release, release),
+    ConfigProvider.layer(
+      ConfigProvider.fromUnknown({
+        PATCHY_PUBLIC_BASE_URL: "https://patchy.example",
+        PATCHY_PATCH_CREATE_RATE_LIMIT_PER_MINUTE: String(createLimit),
+        PATCHY_AUTHENTICATED_PUBLISH_RATE_LIMIT_PER_MINUTE: String(publishLimit),
+        PATCHY_LIVE_PATCHES_PER_USER: String(quota)
+      })
+    )
   );
-const publishLayer = Layer.mergeAll(
-  PatchesApi.layer,
-  PatchesApi.releaseLayer,
-  HttpServer.layerServices
-).pipe(
+const publishLayer = Layer.mergeAll(PatchesApi.layer, HttpServer.layerServices).pipe(
   Layer.provideMerge(Fixtures.authorization),
   Layer.provideMerge(Layer.mergeAll(Content.layer, Limits.layer, recordingAnalytics)),
   Layer.provideMerge(Layer.mergeAll(Patches.layer, memoryStore)),
@@ -1156,25 +1155,6 @@ it.layer(publishLayer)("publish attempts", (it) => {
           }
         }
       })
-  );
-
-  it.effect("discovers the current release without a bearer or a fabricated integrity", () =>
-    Effect.gen(function* () {
-      const api = yield* HttpApiTest.groups(PatchyApi, ["release"]);
-      const release = yield* api.release();
-      assert.deepStrictEqual(
-        { ...release },
-        {
-          release: CURRENT_RELEASE,
-          manifestVersion: Fixtures.manifest.manifestVersion,
-          wireVersion: WIRE_VERSION,
-          package: {
-            tarball: `https://patchy.example/sdk/patchy-${CURRENT_RELEASE}.tgz`,
-            integrity: null
-          }
-        }
-      );
-    })
   );
 });
 

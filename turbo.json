@@ -4,7 +4,22 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": ["dist/**", "skills/**", "LICENSE"]
+      "outputs": ["dist/**", "artifacts/**", "skills/**", "LICENSE"]
+    },
+    "patchy#build": {
+      "dependsOn": ["^build"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/scripts/build-patchy-package.mjs",
+        "$TURBO_ROOT$/skills/**",
+        "$TURBO_ROOT$/LICENSE"
+      ],
+      "outputs": ["dist/**", "artifacts/**", "skills/**", "LICENSE"]
+    },
+    "@patchy/sdk#build": {
+      "dependsOn": ["^build"],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/scripts/copy-sdk-artifact.mjs"],
+      "outputs": ["dist/**", "artifacts/**"]
     },
     "dev": {
       "cache": false,

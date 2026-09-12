@@ -38,7 +38,7 @@ export default tseslint.config(
     }
   },
   {
-    files: ["packages/cli/src/**/*.{ts,mts,cts,tsx}"],
+    files: ["packages/patchy/src/**/*.{ts,mts,cts,tsx}"],
     // Integration fixtures share Auth's dev seed; shipped CLI code stays wire-only.
     ignores: ["**/*.test.ts"],
     rules: {
@@ -51,8 +51,9 @@ export default tseslint.config(
               message: "The CLI may depend only on @patchy/api and @patchy/core."
             },
             {
-              regex: "(^|/)\\.\\.(/|$)",
-              message: "CLI imports may not traverse parent directories."
+              regex: "(?!^\\.\\./package\\.json$)(^|/)\\.\\.(/|$)",
+              message:
+                "CLI imports may not traverse parent directories except for their own package metadata."
             }
           ]
         }
@@ -74,7 +75,7 @@ export default tseslint.config(
     files: [
       // Test entrypoints configure the environment for workers and child processes.
       "packages/serving/src/render.test.ts",
-      "packages/cli/src/cli.test.ts",
+      "packages/patchy/src/cli.test.ts",
       "vitest.clerk.config.ts",
       "test/clerk.ts",
       "scripts/test-clerk.ts",

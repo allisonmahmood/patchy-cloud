@@ -122,11 +122,11 @@ Responses:
 - `414` { ok: false, error: string }
 - `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
 
-## release
+## sdk
 
 ### `GET /api/release`
 
-The current tooling release and its manifest and wire versions. Unauthenticated. The immutable package URL is reserved for the SDK distribution ticket; integrity is null until a real package artifact is available.
+The current tooling release and its manifest and wire versions. Unauthenticated. GET /sdk/patchy-<release>.tgz serves this release's tarball without authentication with Cache-Control: public, max-age=31536000, immutable; integrity is its sha512 Subresource Integrity digest. Discovery is no-store; only the exact GET tarball path is reserved.
 
 Responses:
 
@@ -422,7 +422,7 @@ Responses:
   release: string,
   package: {
     tarball: string,
-    integrity: string | null
+    integrity: string
   },
   manifestVersion: integer,
   wireVersion: integer

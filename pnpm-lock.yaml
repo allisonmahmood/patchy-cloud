@@ -76,6 +76,12 @@ importers:
       prettier:
         specifier: ^3.9.6
         version: 3.9.6
+      rollup:
+        specifier: ^4.59.0
+        version: 4.63.1
+      rollup-plugin-dts:
+        specifier: ^6.3.0
+        version: 6.5.1(rollup@4.63.1)(typescript@6.0.3)
       simple-git-hooks:
         specifier: ^2.14.0
         version: 2.14.0
@@ -133,6 +139,9 @@ importers:
       '@patchy/runtime':
         specifier: workspace:*
         version: link:../../packages/runtime
+      '@patchy/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
       '@patchy/serving':
         specifier: workspace:*
         version: link:../../packages/serving
@@ -211,30 +220,6 @@ importers:
       tough-cookie:
         specifier: ^6.0.2
         version: 6.0.2
-      vitest:
-        specifier: ^4.1.11
-        version: 4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0))
-
-  packages/cli:
-    devDependencies:
-      '@effect/platform-node':
-        specifier: 4.0.0-rc.112
-        version: 4.0.0-rc.112(effect@4.0.0-rc.112)(redis@6.2.1)
-      '@effect/vitest':
-        specifier: 4.0.0-rc.112
-        version: 4.0.0-rc.112(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0)))
-      '@patchy/api':
-        specifier: workspace:*
-        version: link:../api
-      '@patchy/auth':
-        specifier: workspace:*
-        version: link:../auth
-      '@patchy/core':
-        specifier: workspace:*
-        version: link:../core
-      effect:
-        specifier: 4.0.0-rc.112
-        version: 4.0.0-rc.112
       vitest:
         specifier: ^4.1.11
         version: 4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0))
@@ -437,6 +422,30 @@ importers:
         specifier: ^4.1.11
         version: 4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0))
 
+  packages/patchy:
+    devDependencies:
+      '@effect/platform-node':
+        specifier: 4.0.0-rc.112
+        version: 4.0.0-rc.112(effect@4.0.0-rc.112)(redis@6.2.1)
+      '@effect/vitest':
+        specifier: 4.0.0-rc.112
+        version: 4.0.0-rc.112(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0)))
+      '@patchy/api':
+        specifier: workspace:*
+        version: link:../api
+      '@patchy/auth':
+        specifier: workspace:*
+        version: link:../auth
+      '@patchy/core':
+        specifier: workspace:*
+        version: link:../core
+      effect:
+        specifier: 4.0.0-rc.112
+        version: 4.0.0-rc.112
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0))
+
   packages/primitives:
     dependencies:
       '@patchy/api':
@@ -504,6 +513,28 @@ importers:
       '@patchy/companies':
         specifier: workspace:*
         version: link:../companies
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0))
+
+  packages/sdk:
+    dependencies:
+      '@patchy/api':
+        specifier: workspace:*
+        version: link:../api
+      effect:
+        specifier: 4.0.0-rc.112
+        version: 4.0.0-rc.112
+    devDependencies:
+      '@effect/platform-node':
+        specifier: 4.0.0-rc.112
+        version: 4.0.0-rc.112(effect@4.0.0-rc.112)(redis@6.2.1)
+      '@effect/vitest':
+        specifier: 4.0.0-rc.112
+        version: 4.0.0-rc.112(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0)))
+      patchy:
+        specifier: workspace:*
+        version: link:../patchy
       vitest:
         specifier: ^4.1.11
         version: 4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0))
@@ -689,6 +720,14 @@ packages:
   '@azure/storage-common@12.4.1':
     resolution: {integrity: sha512-t14unw/WofGDUi7TKJrsyXyPsN+NLgRm7hMaq0llxNmTIzt7f257+6LE6FKIJPh88zLj6M7LPvzve0fEYg/L3A==}
     engines: {node: '>=20.0.0'}
+
+  '@babel/code-frame@8.0.0':
+    resolution: {integrity: sha512-dYYg153EyN2Ekbqw2zAsbd6/JR+9N2SEoC7YV2GyyqMM7x9bLDTjBD6XBhSMLH0wtIVyJj03jWNriQhaN+eoCw==}
+    engines: {node: ^22.18.0 || >=24.11.0}
+
+  '@babel/helper-validator-identifier@8.0.4':
+    resolution: {integrity: sha512-4wFaiLd0bVo4cIoTXI3zKI038NIWE/cr3jvBjejOVYVxV/m8Ltav1USiGzG1fmS5J2RhgEOgXNNK46cRPnRsrg==}
+    engines: {node: ^22.18.0 || >=24.11.0}
 
   '@cacheable/memory@2.2.0':
     resolution: {integrity: sha512-CTLKqLItRCEixEAewD3/j9DB3/o96gpTPD4eJ1v+DGOlxZRZncRQkGYqqnAGCscYd6RNeXfGeiuCphsPtqyIfQ==}
@@ -1011,8 +1050,21 @@ packages:
     resolution: {integrity: sha512-bV0Tgo9K4hfPCek+aMAn81RppFKv2ySDQeMoSZuvTASywNTnVJCArCZE2FWqpvIatKu7VMRLWlR1EazvVhDyhQ==}
     engines: {node: '>=18.18'}
 
+  '@jridgewell/gen-mapping@0.3.13':
+    resolution: {integrity: sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==}
+
+  '@jridgewell/remapping@2.3.5':
+    resolution: {integrity: sha512-LI9u/+laYG4Ds1TDKSJW2YPrIlcVYOwi2fUC6xB43lueCjgxV4lffOCZCtYFiH6TNOX+tQKXx97T4IKHbhyHEQ==}
+
+  '@jridgewell/resolve-uri@3.1.2':
+    resolution: {integrity: sha512-bRISgCIjP20/tbWSPWMEi54QVPRZExkuD9lJL+UIxUKtwVJA8wW1Trb1jMs1RFXo1CBTNZ/5hpC9QvmKWdopKw==}
+    engines: {node: '>=6.0.0'}
+
   '@jridgewell/sourcemap-codec@1.5.5':
     resolution: {integrity: sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og==}
+
+  '@jridgewell/trace-mapping@0.3.31':
+    resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
 
   '@keyv/bigmap@1.3.1':
     resolution: {integrity: sha512-WbzE9sdmQtKy8vrNPa9BRnwZh5UF4s1KTmSK0KUVLo3eff5BlQNNWDnFOouNpKfPKDnms9xynJjsMYjMaT/aFQ==}
@@ -1694,6 +1746,9 @@ packages:
     resolution: {integrity: sha512-z/wZZgDrkNV1eA0ULjM/F9/50Ya8fbzgKneSpoPsXSGd0KnpdtHfOZWK+GcwLk+EZbS4F9RBhU+K2RgzuDaItw==}
     engines: {node: '>=20'}
 
+  js-tokens@10.0.0:
+    resolution: {integrity: sha512-lM/UBzQmfJRo9ABXbPWemivdCW8V2G8FHaHdypQaIy523snUjog0W71ayWXTjiR+ixeMyVHN2XcpnTd/liPg/Q==}
+
   json-schema-traverse@0.4.1:
     resolution: {integrity: sha512-xbbCH5dCYU5T8LcEhhuh7HJ88HXuW3qsI3Y0zOZFKfZEHcpWiHU/Jxzk629Brsab/mMiHQti9wMP+845RPe3Vg==}
 
@@ -2031,6 +2086,17 @@ packages:
   redis@6.2.1:
     resolution: {integrity: sha512-Z9VHtgYs48PiQC77X9O2Er8Hj4T+5BtFjT91/vi5Is1D04N72cA946ZslM1ImJw8ZctFBZWAVjM7S5wJNeHMpg==}
     engines: {node: '>= 20.0.0'}
+
+  rollup-plugin-dts@6.5.1:
+    resolution: {integrity: sha512-jODTXp3H7MK/Ur/ErtsrQ0G1GvaCmc3du+y5pNrdBMf6d7HlL2Nd/N6TkEr+f75CkUj01zEoEd7y2elH0eHi1Q==}
+    engines: {node: '>=20'}
+    peerDependencies:
+      '@typescript/typescript6': ^6
+      rollup: ^3 || ^4
+      typescript: ^4.5 || ^5 || ^6 || ^7
+    peerDependenciesMeta:
+      '@typescript/typescript6':
+        optional: true
 
   rollup@4.63.1:
     resolution: {integrity: sha512-3Df9jsstwhccuEfmAMi9l8XUh/GOkVObmFTU7CCVBysEbcOZLl84jCtaAZMcPiMz2EGKsATzQcU+Xr3n/wU6cg==}
@@ -2435,6 +2501,15 @@ snapshots:
       - '@azure/core-client'
       - supports-color
 
+  '@babel/code-frame@8.0.0':
+    dependencies:
+      '@babel/helper-validator-identifier': 8.0.4
+      js-tokens: 10.0.0
+    optional: true
+
+  '@babel/helper-validator-identifier@8.0.4':
+    optional: true
+
   '@cacheable/memory@2.2.0':
     dependencies:
       '@cacheable/utils': 2.5.0
@@ -2660,7 +2735,24 @@ snapshots:
 
   '@humanwhocodes/retry@0.4.3': {}
 
+  '@jridgewell/gen-mapping@0.3.13':
+    dependencies:
+      '@jridgewell/sourcemap-codec': 1.5.5
+      '@jridgewell/trace-mapping': 0.3.31
+
+  '@jridgewell/remapping@2.3.5':
+    dependencies:
+      '@jridgewell/gen-mapping': 0.3.13
+      '@jridgewell/trace-mapping': 0.3.31
+
+  '@jridgewell/resolve-uri@3.1.2': {}
+
   '@jridgewell/sourcemap-codec@1.5.5': {}
+
+  '@jridgewell/trace-mapping@0.3.31':
+    dependencies:
+      '@jridgewell/resolve-uri': 3.1.2
+      '@jridgewell/sourcemap-codec': 1.5.5
 
   '@keyv/bigmap@1.3.1(keyv@5.6.0)':
     dependencies:
@@ -3300,6 +3392,9 @@ snapshots:
 
   js-cookie@3.0.7: {}
 
+  js-tokens@10.0.0:
+    optional: true
+
   json-schema-traverse@0.4.1: {}
 
   json-stable-stringify-without-jsonify@1.0.1: {}
@@ -3557,6 +3652,17 @@ snapshots:
     transitivePeerDependencies:
       - '@node-rs/xxhash'
       - '@opentelemetry/api'
+
+  rollup-plugin-dts@6.5.1(rollup@4.63.1)(typescript@6.0.3):
+    dependencies:
+      '@jridgewell/remapping': 2.3.5
+      '@jridgewell/sourcemap-codec': 1.5.5
+      convert-source-map: 2.0.0
+      magic-string: 0.30.21
+      rollup: 4.63.1
+      typescript: 6.0.3
+    optionalDependencies:
+      '@babel/code-frame': 8.0.0
 
   rollup@4.63.1:
     dependencies:
