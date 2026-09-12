@@ -87,7 +87,7 @@ export function renderApiMarkdown(): string {
    * A schema on one line. A named shape is a link in prose and a bare name
    * inside a code block; anything else is spelled out.
    */
-  function renderType(schema: JsonSchema, linked = true): string {
+  function renderType(schema: JsonSchema, linked = true, arrayElement = false): string {
     if (schema.$ref) {
       const name = shapeName(schema.$ref);
       return linked ? `[${name}](#${name.toLowerCase()})` : name;
@@ -95,13 +95,23 @@ export function renderApiMarkdown(): string {
     if (schema.anyOf) {
       // The enum-of-non-finite-numbers arm Schema.Number adds is noise on a
       // reference and is dropped.
-      const arms = schema.anyOf
-        .filter((arm) => !isNonFiniteNumberArm(arm))
-        .map((arm) => renderType(arm, linked));
-      return [...new Set(arms)].join(" | ");
+      const arms = [
+        ...new Set(
+          schema.anyOf
+            .filter((arm) => !isNonFiniteNumberArm(arm))
+            .map((arm) => renderType(arm, linked, arrayElement))
+        )
+      ];
+      const rendered = arms.join(" | ");
+      return arrayElement && arms.length > 1 ? `(${rendered})` : rendered;
     }
-    if (schema.enum) return schema.enum.map((value) => JSON.stringify(value)).join(" | ");
-    if (schema.type === "array") return `${renderType(schema.items ?? {}, linked)}[]`;
+    if (schema.enum) {
+      const rendered = schema.enum.map((value) => JSON.stringify(value)).join(" | ");
+      return arrayElement && schema.enum.length > 1 ? `(${rendered})` : rendered;
+    }
+    if (schema.type === "array") {
+      return `${renderType(schema.items ?? {}, linked, true)}[]`;
+    }
     if (schema.type === "object") return renderShape(schema, 0, linked).replace(/\s+/g, " ");
     if (schema.title === "Timestamp") return "string (ISO-8601)";
     return schema.type ?? "unknown";

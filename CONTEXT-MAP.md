@@ -1,18 +1,19 @@
 # Context Map
 
-Patchy Cloud is one deployment: the hosting server on one side, the `patchy` CLI agents publish through on the other, and a wire contract between them. The contexts below are the product's, not the packages': each names the package that implements it today, or says that no code exists yet. A context with no code keeps its `CONTEXT.md` at the path its package will take, so the glossary is written before the code and the package is born beside it. `docs/product.md` carries the product's shape; the glossaries carry its words.
+Patchy Cloud is one deployment: the hosting server on one side, the `patchy` CLI agents publish through on the other, and a wire contract between them. The contexts below are the product's, not the packages': each names the packages that implement it today. `docs/product.md` carries the product's shape and future decisions; the glossaries carry its words.
 
 ## Contexts
 
-- [Patches](./packages/patches/CONTEXT.md) — `packages/patches`. Patches and immutable versions, company-scoped names, manifests and replay-safe publish keys, tier 0 and raw tier 1 bundle admission, additive table and store provisioning at publish, owner inventory, user ownership, company/public sharing, owner deletion, retention and its sweep, the owner quota, and the `patches` API group. Repo publishing and retirement remain future work
+- [Patches](./packages/patches/CONTEXT.md) — `packages/patches`. Patches and immutable versions, company-scoped names, manifests and replay-safe publish keys, tier 0 and tier 1 bundle admission, additive table and store provisioning at publish, owner inventory, user ownership, company/public sharing, owner deletion, retention and its sweep, the owner quota, and the `patches` API group. Retirement remains future work
 - [Serving](./packages/serving/CONTEXT.md) — `packages/serving`. Patch addresses and version/content URLs, tier 0 and tier 1 pages, the sandboxed frame and document-bound broker, route bridge, login and needs-rebuild doors, serving guarantees, admitted visits and trusted-proxy attribution. Hosted runtimes, the connect door and patch identity remain future work
 - [Companies](./packages/companies/CONTEXT.md) — `packages/companies`. Companies and handles, users and roles, create-or-join, invitations, the company page, deactivation and reactivation. Groups, verified domains, SSO, billing, suspension and the operator's surfaces remain future work
 - [Auth](./packages/auth/CONTEXT.md) — `packages/auth`. Clerk session verification and viewers, user-owned machine tokens, device login, identity, revocation and bearer parsing, the sign-in and sign-out pages, Your machines, the `auth` API group and the shared dev seed
 - [Runtime](./packages/runtime/CONTEXT.md) — `packages/runtime`. Browser-only operation admission, loaded-version binding, acting identity, wire versions, dispatch and the runtime log. Admits `me`, owned-table operations, shared-table reads, file operations and Postgres calls supplied by their capabilities
 - [Primitives](./packages/primitives/CONTEXT.md) — `packages/primitives`. Patch-owned table and file-store definitions, one additive diff and provisioning, schema revisions, system columns, refs, bounded row operations and immutable file objects over Postgres and PGlite. Shared-table declarations grant no authority: reads check the source's live access and cumulative inventory
 - [Integrations](./packages/integrations/CONTEXT.md) — `packages/integrations`. Company Postgres connections, encrypted credentials, immutable schema snapshots, constrained runtime reads, generated relation clients, local fixtures and admin connection pages with recent calls. Publish binds connected identities and exact metadata revisions
-- [Publishing](./packages/patchy/CONTEXT.md) — `packages/patchy`, the single `patchy` package: CLI, config builders, browser client and local PGlite dev runtime; patch-repo initialization, transactional refresh, catalog and declaration editing, managed files, global and project skills, and fixtures
-- SDK distribution — `packages/sdk`, the instance's current release metadata, immutable package artifact, bearer-protected catalog and finished-file generation, and canonical project skill sources; [Publishing](./packages/patchy/CONTEXT.md) owns their vocabulary. Separate from page serving
+- [Publishing](./packages/patchy/CONTEXT.md) — `packages/patchy` and `packages/sdk`, sharing one glossary:
+  - `packages/patchy`: the single `patchy` package's CLI, config builders, browser client and local PGlite dev runtime; patch-repo initialization and publishing, transactional refresh, catalog and declaration editing, managed files, global and project skills, and fixtures
+  - `packages/sdk`: the instance's current release metadata, immutable package artifact, bearer-protected catalog and finished-file generation, and canonical project skill sources. SDK distribution is part of Publishing, separate from page serving
 
 ## Shared kernel
 
@@ -22,9 +23,9 @@ Patchy Cloud is one deployment: the hosting server on one side, the `patchy` CLI
 
 Supporting packages rather than product contexts; their glossaries define only the terms their consumers need.
 
-- `packages/api` — the wire schemas and the `HttpApi` both sides speak: the server implements it, the CLI's client is derived from it, `docs/API.md` is rendered from it. Belongs to neither side; see [ADR-0002](./docs/adr/ADR-0002-api-is-the-contract-package.md). No `CONTEXT.md`: its terms are the contexts' own
+- `packages/api` — the wire schemas and the `HttpApi` both sides speak: the server implements it, the CLI's client is derived from it, `docs/API.md` is rendered from it, and the shell validates runtime operations with it. Belongs to neither side; see [ADR-0002](./docs/adr/ADR-0002-api-is-the-contract-package.md). No `CONTEXT.md`: its terms are the contexts' own
 - [SQL](./packages/sql/CONTEXT.md) — `packages/sql`, the Postgres client and Effect's Migrator every capability migrates through; owns no tables ([ADR-0003](./docs/adr/ADR-0003-postgres-only.md))
-- [Company database](./packages/company-database/CONTEXT.md) — `packages/company-database`, company placement, lazy database creation, bounded pools, patch locks, cumulative inventory and orphan reclamation; the same inventory over PGlite for patch development ([ADR-0009](./docs/adr/ADR-0009-one-postgres-database-per-company.md))
+- [Company database](./packages/company-database/CONTEXT.md) — `packages/company-database`, company placement, lazy database creation, bounded pools, patch and file locks, cumulative inventory and orphan reclamation; the same inventory over PGlite for patch development ([ADR-0009](./docs/adr/ADR-0009-one-postgres-database-per-company.md))
 - [Content store](./packages/content-store/CONTEXT.md) — `packages/content-store`, the object store a patch's bytes go into; a filesystem layer and an Azure Blob layer
 - [Analytics](./packages/analytics/CONTEXT.md) — `packages/analytics`, the event service Patches and Auth report business moments through
 - [Limits](./packages/limits/CONTEXT.md) — `packages/limits`, the fixed-window rate limiter behind every per-minute limit
@@ -33,16 +34,18 @@ Supporting packages rather than product contexts; their glossaries define only t
 ## Relationships
 
 - **Publishing → `api`**: publishes through the shared wire contract using a user-owned machine token
-- **SDK distribution → Publishing, Primitives, Integrations, Patches, `api`**: distributes the packed release, composes generated clients and context from capability definitions and snapshots, and catalogs only connections and shared sources the caller may use
+- **Publishing (`sdk`) → Primitives, Integrations, Patches, `api`**: distributes the packed release, composes generated clients and context from primitive definitions and integration snapshots, and catalogs only connections and shared sources the caller may use
+- **Publishing (`patchy/dev`) → Runtime, Primitives, Integrations, Company database, Content store, Limits**: supplies local loaded versions and the handler map, composing the real capabilities over PGlite and a filesystem store with the machine's user identity and synthetic fixtures
+- **`patchy/dev` → `serving/shell`**: serves the production renderer, broker and sandbox policies through the infrastructure-free shell export
 - **Serving → Patches, Auth**: relies on Patches for content, sharing and visits, and on Auth for viewer identity and session admission
 - **Patches → Content store**: owns the lifecycle of stored patch content, from publication through expiry
 - **Runtime → Auth, Limits, SQL**: admits the browser session as the acting identity, limits calls per viewer and owning patch, and records mutations and integration calls before execution
 - **Patches → Runtime**: supplies Runtime's loaded-version lookup: the manifest, effective sharing scope, owning company and server-stamped wire version; current-source lookup supplies shared-table liveness without platform persistence inside primitive operations
-- **Hosting → Runtime, Patches**: supplies the loaded-version layer and the operation handler map; Runtime does not import Patches
+- **Hosting → Runtime, Patches**: supplies the production loaded-version layer and the operation handler map; Runtime imports neither Patches, Primitives nor Integrations
 - **Primitives → Company database, Runtime, Content store**: provisions tables and stores under a patch lock and implements row and file operations under the admitted loaded-version binding; file indexes point to immutable byte objects
 - **Patches → Primitives, Integrations, Company database**: resolves declarations, diffs before storing bytes, then provisions under the platform patch-row lock and returns cumulative inventory metadata
 - **Integrations → Runtime, Auth**: supplies Postgres handlers under loaded-version binding, records discovery with the acting admin, and mounts connection pages and the admin-only recent-calls reader behind the existing session and company-role boundary
-- **Companies, Auth, Patches, Integrations → SQL**: persist their own domain data in the shared Postgres database
+- **Companies, Auth, Patches, Integrations → SQL**: persist their own domain data in the platform Postgres database
 - **Company database → SQL, Content store**: keeps placements in the platform database, inventories in each company database, and reclaims unreferenced file objects
 - **Auth, Patches → Analytics**: report business events
 - **Auth → Companies**: relies on company membership, roles and deactivation to authenticate users and machines

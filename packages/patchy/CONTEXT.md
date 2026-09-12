@@ -1,11 +1,11 @@
 # Publishing
 
-The path agents use to build, publish and manage patches for a user through the `patchy` CLI, its global skill and release-bound project skills. An agent is the primary driver, with the same command contract available to a person at a terminal; the product's built unit is defined in [Patches](../patches/CONTEXT.md).
+The path agents use to build, publish and manage patches for a user through the `patchy` package and the instance's SDK distribution. This glossary owns both sides' language; the built unit is defined in [Patches](../patches/CONTEXT.md).
 
 ## Language
 
 **Publishing**:
-The flow from a local file or patch repo to a live patch and a link announced with its [sharing scope](../patches/CONTEXT.md). It includes choosing the instance and establishing which user's publishing key the machine holds.
+The flow from a static file or patch repo to a live patch and a link announced with its [sharing scope](../patches/CONTEXT.md). It includes choosing the instance and establishing which user's publishing key the machine holds.
 _Avoid_: deployment, posting
 
 **Instance**:
@@ -21,7 +21,7 @@ The contract an agent branches on: 0 success, 1 locally fixable, 2 refused by th
 _Avoid_: error code (ambiguous with the wire's `code`), status (ambiguous with HTTP and with the probe)
 
 **State dir**:
-The home for the CLI's remembered instance choice, credentials, pending login, pending publish, patch cache and default style. Shared per user by default, it can be isolated for a development check.
+The user-level home for the CLI's remembered instance choice, credentials, pending login, file-mode pending publish, patch cache and default style. Repo-local state is separate and travels with its patch repo.
 _Avoid_: config directory, dotfiles
 
 **Default style**:
@@ -57,15 +57,15 @@ The user-facing name for the [machine token](../auth/CONTEXT.md), not a second k
 _Avoid_: token (in user-facing copy), password, account
 
 **Patch cache**:
-The per-instance record linking a local file to the patch it produced, so republishing the same file updates that patch instead of creating a new one, and sharing or deleting by file finds that patch. A deleted patch is forgotten.
+The file-mode, per-instance record linking a local HTML file to its patch for republishing, sharing and deletion. Repo identity belongs to the [Patch repo](../patches/CONTEXT.md), not this cache.
 _Avoid_: upload history, manifest
 
 **Pending publish**:
-A complete publish attempt whose outcome or local application is not yet settled, shared by concurrent invocations for one instance and owning user. Its original content and patch identity remain the recovery target even after moving a repo; settling it preserves the repo's instance binding.
+A complete publish attempt whose outcome or local application remains unsettled, retaining its original content, owner and patch identity even when a repo moves. Concurrent invocations recover the same attempt only for its original owner, and settling it preserves the repo's instance binding.
 _Avoid_: queued publish, upload history
 
 **Publish key**:
-The identity of one publish attempt, letting the instance return the first result when that same attempt is sent again. It is not the machine's [publishing key](#language), which authenticates the caller.
+See **Publish key** in [Patches](../patches/CONTEXT.md), distinct from the machine's publishing key.
 _Avoid_: publishing key, token
 
 **Release**:
@@ -77,11 +77,11 @@ Where a patch runs: the cloud as its viewer, or the local dev runtime as the mac
 _Avoid_: instance (the target cloud), dev env (the CLI's local-instance discovery record)
 
 **Dev runtime**:
-The local execution of a patch's declared capabilities over disposable data, under the same contract as the cloud runtime and as the machine's user. It belongs to the patch repo, not the cloud's own development instance. The published inventory is its schema baseline; fixtures provide invented source data, never copied company rows. Dev calls are not logged.
+The patch repo's local execution of real capabilities over disposable data, under the cloud's operation contract and as the machine token's user. Its schema baseline is the published inventory once the patch exists; its declarations use synthetic [Fixtures](../integrations/CONTEXT.md), never production rows.
 _Avoid_: mock backend, emulator, dev env
 
 **Managed files**:
-The release-bound parts of a patch repo maintained by Patchy's commands rather than its builder: the package pin, generated client and metadata, project skills, and missing fixture stubs. The lockfile follows installation; adding or removing a declaration also owns one edit to its `uses` object.
+The release-bound parts of a patch repo maintained by Patchy's commands rather than its builder: the package pin, generated client and metadata, and project skills. Fixture stubs are managed only until created, and declaration commands own only their targeted config edit.
 _Avoid_: scaffold (these parts continue to be maintained), all project files
 
 **Global skill**:

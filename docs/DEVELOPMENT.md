@@ -207,20 +207,24 @@ shell and broker at a loopback origin, authenticated as `/api/me`'s machine user
 without a browser sign-in. Insert and list through the generated client; exercise
 `files.<store>.put` and `url(name)` when files are declared. Postgres and shared-table
 declarations need invented inserts in `fixtures/postgres-<handle>.sql` and
-`fixtures/shared-<alias>.sql`. Missing files fail before generation replaces them.
+`fixtures/shared-<alias>.sql`. Missing files fail before declaration regeneration;
+dev generation leaves fixture files untouched.
 Never seed these files by querying a company's live rows or bytes.
 
-`pnpm patchy dev` twice reports one daemon. Vite build-watch swaps only complete
+`pnpm patchy dev` twice reports one healthy daemon without reauthenticating or
+checking a newer release. An alive but unhealthy daemon refuses another start;
+read `dev logs`, then use `dev stop`. Vite build-watch swaps only complete
 single-file artifacts and reloads the whole shell at its current route; there is
 no Vite dev server or HMR escape from the production sandbox. Config and fixture
 edits need `dev stop` then `dev`. `dev status`, `stop`, `logs` and `reset` take
-`--json`; `--foreground` streams logs in text mode and stops its own session on
-Ctrl-C. Reset stops and wipes disposable local state and requires a separate start;
+`--json`; `--foreground` streams logs in text mode, and Ctrl-C stops only a session
+it started. Joining an existing session leaves it running on interruption.
+Reset stops and wipes disposable local state and requires a separate start;
 it does not change published resources. State is scoped to this repo and instance
 under `.patchy/dev/`. The next start fetches and materialises the full published
-inventory from the server before the current
-manifest is applied. Omitted columns and indexes stay provisioned, including
-unique constraints, so reset does not make a formerly rejected write succeed.
+inventory from the server before the current manifest is applied. Omitted columns
+and indexes stay provisioned, including unique constraints, so reset does not make
+a formerly rejected write succeed.
 
 For a runtime source change, stop the patch session and run the source CLI from
 inside the patch repo, substituting this checkout's absolute path for `cloud`:
@@ -249,10 +253,12 @@ laid-down instructions without reinstalling. This is only a worktree-development
 precaution: deployed release URLs are immutable. Keep the cloud's printed API URL
 authoritative; ports may change on restart.
 
-New dev starts check the exact pin, executing CLI and installed runtime release.
-A release change never kills an existing session. After publishing to this local
-instance, non-additive config changes must fail at dev start with the real
-provisioner's message; compatible additions preserve local rows. Before first
+New dev starts resolve the credential and check the exact pin, executing CLI and
+installed runtime release before authenticating `/api/me`. They then fetch any
+published inventory, check required fixtures and regenerate declarations. A release
+change or logout never invalidates an existing healthy session. After publishing
+to this local instance, non-additive config changes must fail at dev start with the
+real provisioner's message; compatible additions preserve local rows. Before first
 publish every schema change recreates disposable data. Stop patch sessions with
 `pnpm patchy dev stop` before stopping the cloud instance.
 
@@ -469,11 +475,13 @@ DDL, unique batches, same-name file writes, and patch-row lost-update prevention
 The existing package suites retain their focused primitive concurrency cases.
 
 `pnpm test:all` runs package tests through Turbo, the real-Postgres concurrency
-block and the packed e2e, but not the live Clerk tiers. CI runs offline Vitest on
-Node 22 and 24. `cli-smoke` and `postgres-concurrency` are unconditional Node 22
-checks on pull requests and pushes to `main`, including forks and Dependabot;
+block and the packed e2e, but not the live Clerk tiers. It attempts all three even
+if an earlier suite fails and exits nonzero if any suite fails. CI runs offline
+Vitest on Node 22 and 24. `cli-smoke` and `postgres-concurrency` are unconditional
+Node 22 checks on pull requests and pushes to `main`, including forks and Dependabot;
 neither needs Clerk secrets. Browser, Postgres, server, installation or suite
 startup failures fail their job rather than skipping it.
+The packed e2e runs inside `cli-smoke`, not a separate check.
 `main` must require the `postgres-concurrency` and `cli-smoke` checks.
 
 The runner, the vitest template and the packed CLI e2e apply the shared dev seed.
@@ -509,11 +517,12 @@ before release, file or build checks. Token rotation is safe; an account switch
 is refused before sending saved content. Authentication, throttling and quota
 failures retain the attempt.
 
-An atomic directory rename selects one key-addressed attempt. Concurrent callers
-recover the winner; success or a definitive refusal clears only that key, so a
-stale response cannot remove a newer attempt. A killed process leaves the
-selected attempt recoverable. Repo result application preserves the stored
-instance and applies only the patch id, including after moving the repo.
+An atomic directory rename selects one fully written, key-addressed attempt.
+Concurrent callers recover the winner. Success clears only that key after local
+result application; a definitive refusal clears only that key, so a stale response
+cannot remove a newer attempt. A killed process leaves the selected attempt
+recoverable. Repo result application preserves the stored instance and applies
+only the patch id, including after moving the repo.
 [ADR-0004](adr/ADR-0004-cli-contract-for-agents.md) owns the selection protocol
 and definitive-refusal list.
 
@@ -660,8 +669,8 @@ PGlite worker transport. Exercise discovery-to-fixture parity and verify that a
 timed-out call destroys its backend while the next call succeeds. The statement,
 service, row, byte and pool limits are spec constants, not environment settings.
 
-Table manifests can be published directly to `POST /api/publish` at tiers 0 and 1;
-repo-mode CLI publishing remains separate SDK work. Tier 1 uses the hosted shell broker.
+Repo-mode `patchy publish` builds and sends table manifests to `POST /api/publish`
+at tiers 0 and 1. Tier 1 uses the same shell broker locally and when hosted.
 The owner reads cumulative metadata through `GET /api/patches/:patchId/inventory`.
 For table changes, exercise the Primitives contract suites over both Postgres
 and PGlite, and the real-Postgres publish/unique-index races. Ordinary table

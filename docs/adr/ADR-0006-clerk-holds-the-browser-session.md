@@ -50,10 +50,11 @@ The tier 0 patch runs no script; a public shell runs only Patchy's own shell
 script, never analytics; company shells also maintain the session.
 
 **Revocation reach is asymmetric, and honest.** Anything Patchy decides — a user
-deactivated, sharing changed, a patch gone — is checked on the next origin load.
-A still-fresh public response can outlive a sharing change for its one-minute
-cache window. Anything Clerk decides — a session revoked in the dashboard,
-a sign-out elsewhere — reaches verification within 65 seconds plus the next load.
+deactivated, sharing changed, a patch gone — is checked on the next origin load
+and each runtime call. A still-fresh public response can outlive a sharing change
+for its one-minute cache window. Anything Clerk decides — a session revoked in
+the dashboard, a sign-out elsewhere — reaches verification within 65 seconds
+plus the next load or runtime call.
 
 **Reading a doored patch needs Clerk once a minute, in the browser, not on the
 server.** The server verifies with a public key; the browser's refresh goes to
@@ -70,9 +71,10 @@ their setting domain and path, and returns to `/login`. First-party POSTs
 require the public origin or same-origin fetch metadata, including sign-out.
 
 **Required configuration fails at startup.** Clerk's publishable and secret
-keys, `PATCHY_PUBLIC_BASE_URL` and `DATABASE_URL` are required. The optional
-public JWT key is validated at startup too; there is no partially configured
-server mode.
+keys and `PATCHY_PUBLIC_BASE_URL` are required alongside the platform database,
+company-database URLs and credential keyring. The optional public JWT key is
+validated at startup too; there is no partially configured server mode.
+[Development](../DEVELOPMENT.md) owns the complete configuration reference.
 
 ## Alternatives considered
 

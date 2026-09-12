@@ -1,6 +1,6 @@
 # Serving
 
-How a published patch reaches its reader: the page, admission at its login door and the serving guarantees. Patch content and visits belong to [Patches](../patches/CONTEXT.md), the session and viewer to [Auth](../auth/CONTEXT.md); future runtime and connection-door decisions live in [the product](../../docs/product.md#runtime-tiers).
+How a published patch reaches its reader: the page, admission at its login door and the serving guarantees. Patch content and visits belong to [Patches](../patches/CONTEXT.md), the session and viewer to [Auth](../auth/CONTEXT.md); hosted runtimes and personal-connection doors remain future work described in [the product](../../docs/product.md#runtime-tiers).
 
 ## Language
 
@@ -13,11 +13,11 @@ The internal, non-redirecting location of one version's bytes, protected by the 
 _Avoid_: address (the reader-facing location), download link, public URL
 
 **Serving guarantee**:
-A tier-scoped promise about a published patch. At tier 0, **the patch cannot watch you**: its document runs no script. At tier 1, **a patch acts as you, only through Patchy, and never holds your login. What you do inside it can be saved in its own tables, which your colleagues can read, and every write is logged for your company's admins. It reaches outside systems only through your company's integrations.** A public shell runs only Patchy's own shell script, never analytics; a company shell also maintains the session. At every tier, pages are kept out of search results, open to machines that may open them, and cached by sharing: at most a minute for the current public version, never for a doored page. Older versions stay behind the company door.
+The promise made about a patch at each tier: **the patch cannot watch you** at tier 0; at tier 1, **a patch acts as you, only through Patchy, and never holds your login. What you do inside it can be saved in its own tables, which your colleagues can read, and every write is logged for your company's admins. It reaches outside systems only through your company's integrations.** Pages are kept out of search results. A public shell runs only Patchy's own shell script, never analytics; a company shell also maintains the session.
 _Avoid_: bot protection (authorized agents may open pages), unlisted as a synonym for private (sharing controls access), anonymous as a promise about company pages (the host admits the viewer)
 
 **Page**:
-A patch as a reader receives it: its document in a sandboxed frame and the surrounding shell. Tier 0 is script-free; tier 1 runs browser code without direct network or credential access. The frame fills the page without chrome; first-party doors and notices belong to Patchy, not to the patch.
+A patch as a reader receives it: its document in a sandboxed frame and the surrounding shell, with first-party doors and notices belonging to Patchy rather than the patch. Tier 0 content is script-free; tier 1 content runs browser code without direct network or credential access.
 _Avoid_: viewer (the [Auth](../auth/CONTEXT.md) identity, not the page), wrapper (the frame and its surrounding shell together make the page)
 
 **Shell**:
@@ -33,7 +33,7 @@ One correlated request or reply between a patch document and its broker, carryin
 _Avoid_: transport version (there is only the runtime wire), binding (the host's trusted context)
 
 **Route bridge**:
-The agreement by which a patch chooses its local route while the shell owns the address bar and browser history. The shipped client exposes get/set/subscribe; public patches retain this browser-only capability. Patchy-reserved address segments are never patch routes.
+The agreement by which a patch chooses its local route while the shell owns the address bar and browser history. Public patches retain this browser-only capability; Patchy-reserved address segments are never patch routes.
 _Avoid_: redirect (changes which page is loaded), content URL (the version's internal bytes location)
 
 **Needs-rebuild door**:
@@ -49,7 +49,7 @@ The admission in front of a company patch: an active colleague enters, a signed-
 _Avoid_: auth wall, login page (the door is a moment on the way to the patch, not a destination), paywall
 
 **Connect door**:
-The future admission in front of a patch that needs a personal connection the viewer has not made. Its connection and return behavior lives in [the product](../../docs/product.md#declaring-granting-opening).
+The future admission in front of a patch that needs a personal connection the viewer has not made, distinct from today's admin-managed company connection pages. Its connection and return behavior lives in [the product](../../docs/product.md#declaring-granting-opening).
 _Avoid_: consent screen (there is no per-patch consent), OAuth prompt (one thing that may happen behind it)
 
 **Patch identity**:

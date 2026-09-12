@@ -9,8 +9,8 @@ The CLI, config builders, browser client and dev runtime ship as one npm package
 `patchy`, at one exact version: the **release**. Separate packages would allow a
 repo to execute one config language, generate another client and run a third
 runtime. One pinned devDependency makes that mismatch a refused state rather
-than a compatibility matrix. `packages/cli` is renamed to `packages/patchy`;
-the executable remains `patchy`.
+than a compatibility matrix. The package lives in `packages/patchy`; the
+executable is `patchy`.
 
 The package stays private until launch. An instance distributes its packed bytes
 at unauthenticated, immutable `GET /sdk/patchy-<release>.tgz` and reports their

@@ -2,8 +2,8 @@
 
 - **Status**: Accepted
 - **Date**: 2026-08-29
-- **Contexts**: Hosting (`apps/server`), Companies (`packages/companies`), Auth (`packages/auth`), Patches (`packages/patches`), SQL (`packages/sql`) — the decision is about the one store every capability writes to, so it lives in the root ADR home.
-- **Source**: Effect v4 port spec (#68) §2 and §3; build tickets #72 (`sql`), #74 (`auth`) and #76 (`patches`); [auth spec §3 and §11](https://github.com/allisonmahmood/patchy-cloud/issues/135) for the three baselines and shared seed.
+- **Contexts**: Hosting (`apps/server`), SQL (`packages/sql`) and the capabilities that persist platform metadata or company resources. This is the shared relational storage decision, not a replacement for the content store that holds bytes.
+- **Source**: Effect v4 port spec (#68) §2 and §3; build tickets #72 (`sql`), #74 (`auth`) and #76 (`patches`); [auth spec §3 and §11](https://github.com/allisonmahmood/patchy-cloud/issues/135); [SDK map decisions](https://github.com/allisonmahmood/patchy-cloud/issues/164) and [SDK spec §14](https://github.com/allisonmahmood/patchy-cloud/issues/193).
 
 ## Context
 
@@ -19,18 +19,41 @@ recipe for discarding a deployed database's migration history.
 
 Postgres is the platform store. The JSON driver, the `PatchyDb` port and its
 contract suite are deleted; capability packages query a `SqlClient` through
-`SqlSchema`, and every rule exists once, in SQL. Company resources additionally
-use the local PGlite adapter described in [ADR-0009](./ADR-0009-one-postgres-database-per-company.md);
-that adapter is for patch development, not a second platform storage model.
+`SqlSchema`. Company resources live in a separate Postgres database per company,
+not a second storage model. [ADR-0009](./ADR-0009-one-postgres-database-per-company.md)
+owns placement, pooling and the inventory; patch development runs the same
+capability services over PGlite.
 
-1. **One baseline per owner.** The pre-deployment history was rewritten
-   rather than carried forward: Companies owns baseline 1
-   (`companies`, `users`, `invites`), Auth owns 2 (`machine_tokens`,
-   `device_logins`), and Patches owns 3 (`patches`, `patch_versions`).
-   Every enumerated column is text with a check constraint, not a Postgres enum.
-2. **Embedded Postgres is the dev and test store.** `pnpm dev` migrates and
-   seeds one per worktree; `@patchy/sql/testing` gives every `it.layer` block a
-   clone of the same seeded template, with an empty layer for migrator tests.
+1. **Migrations belong to capabilities, with one platform ledger.** The original
+   baselines were rewritten before deployment. The current ledger has seven
+   records across six owners:
+
+   | id   | owner            | record                      |
+   | ---- | ---------------- | --------------------------- |
+   | 0001 | Companies        | `companies_baseline`        |
+   | 0002 | Auth             | `auth_baseline`             |
+   | 0003 | Patches          | `patches_baseline`          |
+   | 0004 | Companies        | `invites_expiry`            |
+   | 0005 | Company database | `company_database_baseline` |
+   | 0006 | Runtime          | `runtime_baseline`          |
+   | 0007 | Integrations     | `integrations_baseline`     |
+
+   The patches baseline includes names, manifests, version stamps and publish
+   recovery; `connection_snapshots` belongs to the integrations baseline.
+   Enumerated platform columns use text with check constraints, not Postgres enums.
+
+2. **Embedded Postgres is the cloud worktree and test store.** `pnpm dev`
+   migrates and seeds one per worktree. `@patchy/sql/testing` gives each
+   `it.layer` block a clone of the seeded platform template, with an empty layer
+   for migrator tests; company databases are created lazily through the same
+   provisioning path and dropped after their pools close.
+3. **PGlite is local Postgres, not a substitute persistence model.** `patchy dev`
+   runs the real company-database and capability code against local PGlite and a
+   filesystem content store. Connections and shared tables bind to authored
+   fixtures; only metadata, never production rows, bytes or credentials, comes
+   from the instance. PGlite serializes its one connection, so it cannot prove
+   lost updates, lock waits, deadlocks or publish-versus-writer races. The
+   real-Postgres concurrency CI is mandatory; see [Development](../DEVELOPMENT.md).
 
 ## Consequences
 
@@ -46,6 +69,9 @@ an alternative server mode.
 **Migrations target their owning database.** Platform metadata migrations run
 through the platform ledger. Company inventory initialization runs in each
 company database; both drivers execute its same PostgreSQL statements.
+The PGlite path emits one statement per `sql.unsafe` call and normalizes `int8`
+and `DATE` codecs to match the PostgreSQL driver. Its fsync-off directories are
+recreatable local state, not a backup or a production database.
 
 The pre-deployment name backfill requested by #195 is a seed operation, not an
 upgrade of an existing schema: the rewritten baseline already contains the name

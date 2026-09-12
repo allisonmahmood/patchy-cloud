@@ -4,13 +4,15 @@ A cloud for a company's internal tools, built for the agentic era.
 
 People at a company build **patches** — anything from a static page to a full CRM — and deploy them here. Anyone can build one: a person who codes, or a person whose agent codes for them. Agents are good at CLIs and at running code locally, so the CLI is the front door: tell your agent to publish, and the patch is up. Log in once and reach everything in your company you have access to.
 
-A patch runs at one of a few **tiers**: tier 0 is a static page with no patch code running anywhere, tier 1 runs in the viewer's browser, tier 2 has its own hosted runtime. Patches reach a company's connected systems — its database, Google Workspace, Salesforce — through **primitives** the cloud provides, never through credentials of their own. [docs/product.md](docs/product.md) is the shape of all this.
+A patch runs at one of a few **tiers**: tier 0 is a static page with no patch code running anywhere, tier 1 runs in the viewer's browser, and tier 2 will add a hosted runtime. Patches use their own tables and files and reach company connections through Patchy, never through credentials of their own. Postgres is the first integration; Google Workspace and Salesforce are future integrations. [docs/product.md](docs/product.md) is the product's shape.
 
 ## Where it is today
 
-Tier 0. An agent hands the server one self-contained HTML file and gets back a URL, shared with the company by default or made public on purpose. Patches belong to users in companies; publishing uses user-owned machine tokens. Clerk holds the browser session, and the shell keeps it fresh while the patch runs no script.
+Tier 0 static pages and tier 1 sandboxed browser tools. `patchy publish <file>` publishes one safe HTML file; `patchy init` starts a repo with config builders, a typed client and project skills. `patchy dev` exercises the real handlers locally over PGlite and invented fixtures; repo publishing typechecks and builds one self-contained HTML bundle. New starts and publishes require the current package release; deployed bundles keep their stable wire contract.
 
-`patchy login` hands the person a browser URL and code; after they confirm, the CLI's poll mints and saves the machine token. `patchy publish --share public` and `patchy share` change who can open a patch. **Your machines** lists and revokes keys and offers browser sign-out; the company page handles invites, roles, deactivation and reactivation. `/company/connections` manages company Postgres credentials, immutable schema discovery and recent calls. Publish admits resolved Postgres declarations; the runtime executes bounded read-only queries with generated clients and local PGlite fixtures. Higher tiers are still to come.
+Patches have names at `/<company>/<patch>`, belong to users, and are shared with the company by default or made public on purpose. Tier 1 code acts as the viewer through the shell broker, never holding their login. It can read and write its own tables and files and read declared shared tables; company-data operations are unavailable on public tier 1 patches, even to members. Publish provisions resources additively in a Postgres database per company, preserving omitted definitions and data.
+
+`patchy login` hands the person a browser URL and code; confirmation lets the CLI mint and save a user-owned machine token. Clerk holds the browser session. **Your machines** lists and revokes keys and offers browser sign-out; the company page handles invites, roles, deactivation and reactivation. Admins manage Postgres connections, encrypted credentials, immutable schema snapshots and recent calls at `/company/connections`. Patches get generated clients for constrained read-only queries; every integration call and table/file mutation is logged. Tiers 2 and above remain future work.
 
 This repository is a full-history copy of [PatchPage](https://github.com/allisonmahmood/PatchPage), taken in a different direction. PatchPage remains a separate, free product with its own instance; nothing here runs it or publishes to it, and commits from before the split describe PatchPage, not Patchy Cloud.
 
@@ -40,11 +42,11 @@ pnpm patchy whoami
 pnpm patchy publish examples/plan.html
 ```
 
-Open the returned URL in the same signed-in browser. **Company scope is the default:** colleagues in that company can read the page, but a publishing key cannot open it. An agent reads company patches through its user's browser; only public patches fetch directly by URL. Choose `--share public` only when the page is intended for anyone holding the link. Don't publish secrets.
+Open the returned URL in the same signed-in browser. **Company scope is the default:** colleagues in that company can read the page, but a publishing key cannot open it. An agent reads company patches through its user's browser; only the current public tier 0 page can be read directly by URL. Tier 1 needs a browser to read its rendered frame. Choose `--share public` only when the page is intended for anyone holding the link. Don't publish secrets.
 
 `pnpm patchy` runs from source and discovers this worktree's instance automatically. `pnpm dev stop` shuts it down. The complete runner and login recipes are in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md), and the CLI's commands and contract are in [packages/patchy/README.md](packages/patchy/README.md).
 
-To start a patch repo, run `pnpm patchy init ./team-tool --purpose "Track our team's work"`.
+To start a patch repo against this worktree, run `pnpm patchy init .local/team-tool --purpose "Track our team's work"`.
 Initialization installs the pinned package and generates the client, context and project skills.
 Inside that repo use `pnpm patchy catalog`, `add`, `remove` and `refresh`; see the
 [project commands](packages/patchy/README.md#patch-repo-commands) for their contracts.
@@ -62,15 +64,15 @@ A Turborepo monorepo managed with pnpm. [AGENTS.md](AGENTS.md) is the guide to w
 - `packages/api` — the wire contract: schemas, the `HttpApi`, the derived client (`@patchy/api`).
 - `packages/companies` — companies, users, roles, invites and membership lifecycle (`@patchy/companies`).
 - `packages/auth` — browser sessions, the shared login door, device login, machine tokens, Your machines, bearer identity, revocation, the shared development seed and the `auth` API group (`@patchy/auth`).
-- `packages/patches` — user-owned patches and versions, replay-safe publishing and sharing, retention and the expiry sweep, owner-only deletion, and the `patches` API group (`@patchy/patches`).
-- `packages/serving` — the page routes and login door integration, sharing-aware CSP and caching, and the trusted-proxy schema (`@patchy/serving`).
+- `packages/patches` — user-owned patches and versions, names and addresses, replay-safe file/repo publishing, provisioning coordination, sharing, retention and the expiry sweep, owner-only deletion, and the `patches` API group (`@patchy/patches`).
+- `packages/serving` — tier-scoped page/content routes, the login and needs-rebuild doors, sandboxed frame, shell broker and route bridge, sharing-aware CSP and caching, and trusted-proxy attribution (`@patchy/serving`).
 - `packages/runtime` — browser-only admission, loaded-version binding, operation dispatch and the attributed runtime log (`@patchy/runtime`).
 - `packages/primitives` — additive table/store provisioning, schema revisions, bounded owned-table operations, read-only shared-table operations and immutable file operations over Postgres and PGlite (`@patchy/primitives`).
-- `packages/integrations` — company connection pages, encrypted credentials, Postgres discovery and immutable snapshots, and publish declaration resolution (`@patchy/integrations`).
+- `packages/integrations` — company connection pages, encrypted credentials, Postgres discovery and immutable snapshots, constrained reads, generated relation clients, fixtures and publish declaration resolution (`@patchy/integrations`).
 - `packages/content-store` — the object store for a patch's bytes, with filesystem and Azure Blob layers (`@patchy/content-store`).
 - `packages/sql`, `packages/analytics`, `packages/limits` — the Postgres client and Migrator, the event service, the rate limiter.
 - `packages/company-database` — company placements, lazy Postgres databases, bounded pools, transactional patch locks, cumulative inventory and the PGlite development layer.
-- `skills/patchy` — the agent skill that teaches an assistant to produce safe static HTML and publish it.
+- `skills/patchy` — the global agent skill for sign-in, safe static publishing, reading patches and starting a patch repo; project skills come from `packages/sdk`.
 - `examples/plan.html` — a Patchy-styled starter patch.
 
 `pnpm test`, `pnpm typecheck` and `pnpm lint` are the checks. `pnpm test:all` runs package tests, the real-Postgres concurrency suites and the packed CLI e2e; it does not run the live Clerk tiers. Install Chromium and its system dependencies first with `pnpm exec playwright install --with-deps chromium`. [`pnpm test:clerk`](docs/DEVELOPMENT.md#live-clerk-pnpm-testclerk) runs the live Backend-API and Playwright tiers with development keys.
