@@ -63,6 +63,56 @@ const fixture = ConnectionStore.layer.pipe(
 );
 
 it.layer(fixture)("ConnectionStore", (it) => {
+  it.effect(
+    "pool creation checks live identity and credentials without rebinding published metadata",
+    () =>
+      Effect.gen(function* () {
+        const store = yield* ConnectionStore.ConnectionStore;
+        const connected = yield* store.connect(input("pool-credentials"));
+        const declared = declaration(connected);
+        const target = identity(connected);
+        const refreshed = yield* store.refresh(target);
+        assert.strictEqual(refreshed.metadataRevision, 2);
+        assert.strictEqual(
+          Redacted.value(yield* store.poolCredentials(who.companyId, declared, 1)),
+          Redacted.value(secret)
+        );
+        const rotatedSecret = Redacted.make(
+          "postgresql://reader:rotated-secret@warehouse.example/sales?sslmode=verify-full"
+        );
+        const rotated = yield* store.rotate({ ...target, credentials: rotatedSecret });
+        assert.strictEqual(
+          (yield* store.poolCredentials(who.companyId, declared, 1).pipe(Effect.flip)).code,
+          "connection_changed"
+        );
+        assert.strictEqual(
+          Redacted.value(
+            yield* store.poolCredentials(who.companyId, declared, rotated.credentialRevision)
+          ),
+          Redacted.value(rotatedSecret)
+        );
+        for (const [companyId, candidate] of [
+          ["other-company", declared],
+          [who.companyId, { ...declared, id: "missing" }],
+          [who.companyId, { ...declared, handle: "wrong-handle" }]
+        ] as const) {
+          assert.strictEqual(
+            (yield* store
+              .poolCredentials(companyId, candidate, rotated.credentialRevision)
+              .pipe(Effect.flip)).code,
+            "connection_not_connected"
+          );
+        }
+        yield* store.disconnect(target);
+        assert.strictEqual(
+          (yield* store
+            .poolCredentials(who.companyId, declared, rotated.credentialRevision)
+            .pipe(Effect.flip)).code,
+          "connection_not_connected"
+        );
+      })
+  );
+
   it.effect("supports reverse states without silently changing identity or pinned metadata", () =>
     Effect.gen(function* () {
       const store = yield* ConnectionStore.ConnectionStore;
@@ -414,6 +464,11 @@ it.effect("dev holds metadata alone and explicitly refuses every administration 
       const target = { companyId: connection.companyId, userId: "dev-user", id: connection.id };
       for (const operation of [
         store.connect(input("local-disabled")),
+        store.poolCredentials(
+          connection.companyId,
+          declaration(connection),
+          connection.credentialRevision
+        ),
         store.test(target),
         store.rotate({ ...target, credentials: secret }),
         store.retarget({ ...target, credentials: secret }),

@@ -7,6 +7,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
+import { RuntimeCode } from "@patchy/api";
 import { newInternalId } from "@patchy/core";
 
 const MUTATION_DEADLINE_MS = 30_000;
@@ -40,6 +41,7 @@ export class Call extends Schema.Class<Call>("RuntimeLog.Call")({
   resource: Schema.NullOr(Schema.String),
   connectionId: Schema.NullOr(Schema.String),
   outcome: Schema.Literals(["pending", "unknown", "success", "failure"]),
+  outcomeCode: Schema.NullOr(RuntimeCode),
   durationMs: Schema.NullOr(Schema.Int),
   rowCount: Schema.NullOr(Schema.Int),
   sql: Schema.NullOr(Schema.String),
@@ -54,6 +56,7 @@ export class RuntimeLog extends Context.Service<
     readonly finish: (input: {
       readonly correlationId: string;
       readonly outcome: "success" | "failure";
+      readonly outcomeCode?: typeof RuntimeCode.Type | null;
       readonly durationMs: number;
       readonly rowCount: number | null;
     }) => Effect.Effect<void, SqlError>;
@@ -61,11 +64,25 @@ export class RuntimeLog extends Context.Service<
       readonly companyId: string;
       readonly correlationId: string;
     }) => Effect.Effect<Call | null, SqlError>;
+    readonly recent: (input: {
+      readonly companyId: string;
+      readonly connectionId: string;
+      readonly limit?: number;
+    }) => Effect.Effect<ReadonlyArray<Call>, SqlError>;
   }
 >()("@patchy/runtime/RuntimeLog") {}
 
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const columns = (now: number) => sql`
+    id, at, company_id AS "companyId", patch_id AS "patchId", version_id AS "versionId",
+    user_id AS "userId", credential_kind AS "credentialKind", op, resource,
+    connection_id AS "connectionId",
+    CASE WHEN outcome = 'pending'
+      AND at + deadline_ms * interval '1 millisecond' < to_timestamp(${now / 1_000})
+      THEN 'unknown' ELSE outcome END AS outcome,
+    outcome_code AS "outcomeCode", duration_ms AS "durationMs", row_count AS "rowCount", sql,
+    correlation_id AS "correlationId", deadline_ms AS "deadlineMs"`;
   const findCall = SqlSchema.findOneOption({
     Request: Schema.Struct({
       companyId: Schema.String,
@@ -74,16 +91,23 @@ export const make = Effect.gen(function* () {
     }),
     Result: Call,
     execute: ({ companyId, correlationId, now }) => sql`
-      SELECT id, at, company_id AS "companyId", patch_id AS "patchId", version_id AS "versionId",
-        user_id AS "userId", credential_kind AS "credentialKind", op, resource,
-        connection_id AS "connectionId",
-        CASE WHEN outcome = 'pending'
-          AND at + deadline_ms * interval '1 millisecond' < to_timestamp(${now / 1_000})
-          THEN 'unknown' ELSE outcome END AS outcome,
-        duration_ms AS "durationMs", row_count AS "rowCount", sql,
-        correlation_id AS "correlationId", deadline_ms AS "deadlineMs"
+      SELECT ${columns(now)}
       FROM runtime_calls
       WHERE company_id = ${companyId} AND correlation_id = ${correlationId}`
+  });
+  const recentCalls = SqlSchema.findAll({
+    Request: Schema.Struct({
+      companyId: Schema.String,
+      connectionId: Schema.String,
+      limit: Schema.Int,
+      now: Schema.Number
+    }),
+    Result: Call,
+    execute: ({ companyId, connectionId, limit, now }) => sql`
+      SELECT ${columns(now)}
+      FROM runtime_calls
+      WHERE company_id = ${companyId} AND connection_id = ${connectionId}
+      ORDER BY at DESC, id DESC LIMIT ${limit}`
   });
 
   const begin = Effect.fn("RuntimeLog.begin")(function* (input: Begin) {
@@ -111,7 +135,7 @@ export const make = Effect.gen(function* () {
   ) {
     yield* sql`
       UPDATE runtime_calls SET outcome = ${input.outcome}, duration_ms = ${input.durationMs},
-        row_count = ${input.rowCount}
+        row_count = ${input.rowCount}, outcome_code = ${input.outcomeCode ?? null}
       WHERE correlation_id = ${input.correlationId} AND outcome = 'pending'`;
   });
 
@@ -124,7 +148,19 @@ export const make = Effect.gen(function* () {
     return Option.getOrNull(row);
   });
 
-  return RuntimeLog.of({ begin, finish, find });
+  const recent = Effect.fn("RuntimeLog.recent")(function* (
+    input: Parameters<RuntimeLog["Service"]["recent"]>[0]
+  ) {
+    return yield* recentCalls({
+      ...input,
+      limit: Number.isFinite(input.limit)
+        ? Math.min(100, Math.max(1, Math.trunc(input.limit!)))
+        : 50,
+      now: yield* Clock.currentTimeMillis
+    }).pipe(Effect.catchTags({ SchemaError: Effect.die }));
+  });
+
+  return RuntimeLog.of({ begin, finish, find, recent });
 });
 
 export const layer = Layer.effect(RuntimeLog, make);

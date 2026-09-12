@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import type { RequireSession } from "@patchy/auth";
 import { escapeAttribute, escapeHtml } from "@patchy/core";
+import { RuntimeLog } from "@patchy/runtime";
 import * as ConnectionStore from "./ConnectionStore.js";
 
 export type Action =
@@ -61,6 +62,13 @@ export const styles = `
     .connection-details dd { margin: 0; }
     .connection-form button { margin-top: 20px; }
     .note-ok { border-left-color: var(--green-ink); background: var(--paper-green); }
+    .connection-calls .connection-details { margin: 12px 0; grid-template-columns: max-content minmax(0, 1fr); }
+    .connection-sql { max-height: 18rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .connection-calls summary { cursor: pointer; margin: 12px 0; }
+    @media (max-width: 480px) {
+      .connection-calls .connection-details { grid-template-columns: 1fr; gap: 4px; }
+      .connection-calls .connection-details dd { margin-bottom: 8px; }
+    }
 `;
 
 const pathFor = (id: string) => `/company/connections/${encodeURIComponent(id)}`;
@@ -88,11 +96,34 @@ const credentialsField = (id: string, note = "") =>
   `${note}<label for="${id}">Connection string</label><input id="${id}" type="password" name="credentials" required autocomplete="new-password" spellcheck="false" aria-describedby="${id}-hint"><p id="${id}-hint" class="auth-hint">A Postgres connection string with a password and sslmode=verify-full. Only host, port, database, user, password and sslmode are accepted. Credentials are encrypted and never shown again.</p>`;
 const connectForm = `<section class="company-section" aria-labelledby="connection-connect"><h2 id="connection-connect">Connect Postgres</h2><p>Patchy tests the connection and discovers its schema before saving anything. The database must be reachable from the internet over TLS with a verified certificate and hostname; superusers and roles with CREATEDB or CREATEROLE are refused.</p><form class="connection-form" method="post" action="/company/connections/connect"><label for="connection-handle">Handle</label><input id="connection-handle" name="handle" required minlength="3" maxlength="32" pattern="[a-z0-9][a-z0-9\\-]{1,30}[a-z0-9]" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="connection-handle-hint"><p id="connection-handle-hint" class="auth-hint">3–32 lowercase letters, digits or hyphens, with no leading or trailing hyphen. Patches declare this connection by its handle.</p><label for="connection-description">Description</label><input id="connection-description" name="description" maxlength="500" aria-describedby="connection-description-hint"><p id="connection-description-hint" class="auth-hint">One line explaining what this database is for.</p>${credentialsField("connection-credentials", promise)}<button class="auth-action" type="submit">Test and connect</button></form></section>`;
 
+const recentCalls = (calls: ReadonlyArray<RuntimeLog.Call>) =>
+  `<section class="company-section" aria-labelledby="connection-calls"><h2 id="connection-calls">Recent calls</h2><p class="auth-hint">Visible only to company admins. Query text is limited to its first 8 KiB; parameters and returned rows are never logged. Pending calls past their deadline have an unknown outcome.</p>${
+    calls.length === 0
+      ? "<p>No calls yet.</p>"
+      : `<ol class="company-list connection-calls">${calls
+          .map((call) => {
+            const outcome =
+              call.outcome === "failure"
+                ? "Failed"
+                : call.outcome === "success"
+                  ? "Succeeded"
+                  : call.outcome === "unknown"
+                    ? "Unknown"
+                    : "Pending";
+            return `<li class="company-row"><p class="connection-status"><strong>${escapeHtml(call.op)}</strong><span class="pill${call.outcome === "success" ? " pill-done" : ""}">${outcome}</span>${call.outcomeCode === null ? "" : `<code>${escapeHtml(call.outcomeCode)}</code>`}</p><p class="connection-meta">${time(call.at.toISOString())} · ${call.durationMs === null ? "Duration unknown" : `${call.durationMs} ms`} · ${call.rowCount === null ? "Row count unknown" : `${call.rowCount} rows`}</p><dl class="connection-details"><dt>Patch / version</dt><dd>${call.patchId === null ? "Connection administration" : `<code>${escapeHtml(call.patchId)}</code> / <code>${escapeHtml(call.versionId ?? "Unknown")}</code>`}</dd><dt>User</dt><dd><code>${escapeHtml(call.userId)}</code></dd><dt>Credential kind</dt><dd>${escapeHtml(call.credentialKind)}</dd>${call.resource === null ? "" : `<dt>Resource</dt><dd><code>${escapeHtml(call.resource)}</code></dd>`}<dt>Correlation ID</dt><dd><code>${escapeHtml(call.correlationId)}</code></dd></dl>${call.op === "postgres.query" && call.sql !== null ? `<details><summary>SQL query</summary><pre class="connection-sql"><code>${escapeHtml(call.sql)}</code></pre></details>` : ""}</li>`;
+          })
+          .join("")}</ol>`
+  }</section>`;
+
 const render = Effect.fn("ConnectionPage.render")(function* (
   viewer: RequireSession.Viewer["Service"],
   id: string | undefined,
   notice?: Notice
-): Effect.fn.Return<Page, ConnectionStore.ConnectionError, ConnectionStore.ConnectionStore> {
+): Effect.fn.Return<
+  Page,
+  ConnectionStore.ConnectionError,
+  ConnectionStore.ConnectionStore | RuntimeLog.RuntimeLog
+> {
   const store = yield* ConnectionStore.ConnectionStore;
   const admin = viewer.role === "admin";
   const company = `<a href="/company">${escapeHtml(viewer.company.name)}</a>`;
@@ -111,12 +142,28 @@ const render = Effect.fn("ConnectionPage.render")(function* (
   const connection = yield* store.get(viewer.company.id, id);
   const path = pathFor(connection.id);
   const display = connection.display;
+  // Members can see safe connection metadata, but must never fetch the call log.
+  const calls = admin
+    ? yield* Effect.gen(function* () {
+        const log = yield* RuntimeLog.RuntimeLog;
+        return recentCalls(
+          yield* log.recent({ companyId: viewer.company.id, connectionId: connection.id })
+        );
+      }).pipe(
+        Effect.catchTags({
+          SqlError: () =>
+            Effect.succeed(
+              '<section class="company-section" aria-labelledby="connection-calls"><h2 id="connection-calls">Recent calls</h2><div class="note note-warn" role="alert">Recent calls could not be loaded. Reload the page to try again.</div></section>'
+            )
+        })
+      )
+    : "";
   const management = admin
     ? `<section class="company-section" aria-labelledby="connection-access"><h2 id="connection-access">Access</h2><p>${connection.status === "connected" ? "Disconnect to revoke this connection for every patch. Reconnecting tests the stored credentials before restoring access." : "This connection is disconnected. Reconnecting tests the stored credentials before restoring access, without changing the schema revision."}</p><div class="company-actions">${actionForm(`${path}/test`, "Test connection")}${connection.status === "connected" ? actionForm(`${path}/disconnect`, "Disconnect") : actionForm(`${path}/reconnect`, "Reconnect")}</div></section><section class="company-section" aria-labelledby="connection-schema"><h2 id="connection-schema">Schema</h2><p>Refresh discovers a new immutable schema revision. If discovery fails, the previous revision stays available. Existing patches keep their pinned schema.</p>${connection.status === "connected" ? `<div class="company-actions">${actionForm(`${path}/refresh`, "Refresh schema")}</div>` : "<p>Reconnect before refreshing the schema.</p>"}</section><section class="company-section" aria-labelledby="connection-rotate"><h2 id="connection-rotate">Rotate credentials</h2><p>Replace the credentials for the same database without changing the connection id or schema revision. A new role changes the access every declaring patch has. To change the destination, use Retarget.</p><form class="connection-form" method="post" action="${escapeAttribute(`${path}/rotate`)}">${credentialsField("rotate-credentials")}<button class="auth-action" type="submit">Rotate credentials</button></form></section><section class="company-section" aria-labelledby="connection-retarget"><h2 id="connection-retarget">Retarget</h2><p>Point this connection at another database or role, keeping its id. Patchy tests and discovers the destination before replacing it. Every declaring patch will use the new destination, through its pinned schema. A disconnected connection stays disconnected.</p><form class="connection-form" method="post" action="${escapeAttribute(`${path}/retarget`)}">${credentialsField("retarget-credentials", promise)}<button class="auth-action" type="submit">Retarget connection</button></form></section><section class="company-section" aria-labelledby="connection-description-title"><h2 id="connection-description-title">Edit description</h2><form class="connection-form" method="post" action="${escapeAttribute(`${path}/description`)}"><label for="edit-description">Description</label><input id="edit-description" name="description" maxlength="500" value="${escapeAttribute(connection.description)}"><button class="auth-action" type="submit">Save description</button></form></section><section class="company-section" aria-labelledby="connection-delete"><h2 id="connection-delete">Delete connection</h2><p>Delete only when no stored patch version declares this connection. Disconnect instead to revoke access while keeping those declarations. Deletion cannot be undone; schema snapshots are kept.</p><div class="company-actions">${actionForm(`${path}/delete`, "Delete connection")}</div></section>`
     : '<p class="auth-hint">Only admins can change this connection.</p>';
   return {
     title: connection.handle,
-    body: `<p>${company} · <a href="/company/connections">Connections</a></p>${noticeHtml(notice)}<p class="connection-status">${statusPill(connection)}<span class="connection-meta">Postgres · Company-wide</span></p>${description(connection)}<dl class="connection-details"><dt>Connection ID</dt><dd><code>${escapeHtml(connection.id)}</code></dd><dt>Host</dt><dd>${escapeHtml(display.host)}:${escapeHtml(display.port)}</dd><dt>Database</dt><dd>${escapeHtml(display.database)}</dd><dt>Role</dt><dd>${escapeHtml(display.role)}</dd><dt>Last tested</dt><dd>${time(connection.lastTestedAt)}</dd><dt>Schema discovered</dt><dd>${time(connection.lastDiscoveredAt)}</dd><dt>Credential revision</dt><dd>${connection.credentialRevision}</dd><dt>Schema revision</dt><dd>${connection.metadataRevision}</dd></dl>${management}`,
+    body: `<p>${company} · <a href="/company/connections">Connections</a></p>${noticeHtml(notice)}<p class="connection-status">${statusPill(connection)}<span class="connection-meta">Postgres · Company-wide</span></p>${description(connection)}<dl class="connection-details"><dt>Connection ID</dt><dd><code>${escapeHtml(connection.id)}</code></dd><dt>Host</dt><dd>${escapeHtml(display.host)}:${escapeHtml(display.port)}</dd><dt>Database</dt><dd>${escapeHtml(display.database)}</dd><dt>Role</dt><dd>${escapeHtml(display.role)}</dd><dt>Last tested</dt><dd>${time(connection.lastTestedAt)}</dd><dt>Schema discovered</dt><dd>${time(connection.lastDiscoveredAt)}</dd><dt>Credential revision</dt><dd>${connection.credentialRevision}</dd><dt>Schema revision</dt><dd>${connection.metadataRevision}</dd></dl>${calls}${management}`,
     status: notice?.status
   };
 });

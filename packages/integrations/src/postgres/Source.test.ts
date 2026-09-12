@@ -265,8 +265,9 @@ it.layer(Testing.emptyLayer({}))("real Postgres discovery", (it) => {
           "CREATE TABLE sales.accounts (tenant int, id int, name sales.nested_name, PRIMARY KEY (tenant, id))"
         );
         yield* sql.unsafe(
-          "CREATE TABLE sales.orders (id bigint PRIMARY KEY, tenant int, account int, status sales.status NOT NULL, states sales.status[], exotic point, CONSTRAINT owner FOREIGN KEY (tenant, account) REFERENCES sales.accounts (tenant, id))"
+          "CREATE TABLE sales.orders (id bigint PRIMARY KEY, tenant int, account int, status sales.status NOT NULL, states sales.status[], CONSTRAINT owner FOREIGN KEY (tenant, account) REFERENCES sales.accounts (tenant, id))"
         );
+        yield* sql.unsafe("CREATE TABLE sales.unrepresentable (exotic point)");
         yield* sql.unsafe("CREATE VIEW sales.order_view AS SELECT id, status FROM sales.orders");
         // No handler exists: discovery must inspect the catalog, never query foreign rows.
         yield* sql.unsafe("CREATE FOREIGN DATA WRAPPER metadata_only");
@@ -300,7 +301,13 @@ it.layer(Testing.emptyLayer({}))("real Postgres discovery", (it) => {
           { schema: "sales", name: "status", labels: ["new", "in progress", "done"] }
         ]);
         assert.deepStrictEqual(snapshot.exclusions, [
-          { schema: "sales", relation: "orders", column: "exotic", reason: "unsupported_type" }
+          {
+            schema: "sales",
+            relation: "unrepresentable",
+            column: "exotic",
+            reason: "unsupported_type"
+          },
+          { schema: "sales", relation: "unrepresentable", reason: "unsupported_type" }
         ]);
         assert.isTrue(
           snapshot.relations

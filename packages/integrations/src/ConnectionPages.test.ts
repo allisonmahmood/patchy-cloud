@@ -194,6 +194,119 @@ const follow = Effect.fn(function* (response: Response, user: Users.User) {
 
 it.layer(services)("company connection pages", (it) => {
   it.effect(
+    "shows only the selected connection's escaped recent calls to admins and never reads the log for members",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.UTC(2026, 0, 1));
+        const owner = yield* createCompany("connections-audit");
+        const member = yield* addUser(owner, "member");
+        const { connection, path } = yield* connect(owner.user, "warehouse");
+        const other = yield* connect(owner.user, "another");
+        const foreign = yield* createCompany("connections-audit-foreign");
+        const audit = yield* RuntimeLog.RuntimeLog;
+        const sql = `SELECT '</code></pre><script>alert("query")</script>&'`;
+        const begin = {
+          companyId: owner.company.id,
+          patchId: "patch-</code><script>patch</script>",
+          versionId: "version-one",
+          userId: owner.user.id,
+          credentialKind: "session" as const,
+          op: "postgres.query",
+          resource: null,
+          connectionId: connection.id,
+          deadlineMs: 15_000
+        };
+        yield* audit.begin({ ...begin, correlationId: "visible-query", sql });
+        yield* audit.finish({
+          correlationId: "visible-query",
+          outcome: "failure",
+          outcomeCode: "invalid_query",
+          durationMs: 12,
+          rowCount: null
+        });
+        yield* audit.begin({
+          ...begin,
+          correlationId: "visible-list",
+          op: "postgres.list",
+          resource: "public.orders",
+          sql: "generated-SQL-not-visible"
+        });
+        yield* audit.finish({
+          correlationId: "visible-list",
+          outcome: "success",
+          durationMs: 8,
+          rowCount: 2
+        });
+        yield* audit.begin({ ...begin, correlationId: "visible-pending", op: "postgres.get" });
+        yield* audit.begin({
+          ...begin,
+          companyId: foreign.company.id,
+          correlationId: "hidden-company",
+          sql: "foreign-company-SQL"
+        });
+        yield* audit.begin({
+          ...begin,
+          connectionId: other.connection.id,
+          correlationId: "hidden-connection",
+          sql: "foreign-connection-SQL"
+        });
+        yield* TestClock.adjust(15_001);
+        const response = yield* send(
+          `${path}?companyId=${foreign.company.id}&connectionId=${other.connection.id}`,
+          {
+            headers: { cookie: cookie(owner.user) }
+          }
+        );
+        assert.strictEqual(response.status, 200);
+        const html = yield* Effect.promise(() => response.text());
+        assert.include(html, 'aria-labelledby="connection-calls"');
+        assert.include(
+          html,
+          `<pre class="connection-sql"><code>SELECT '&lt;/code&gt;&lt;/pre&gt;&lt;script&gt;alert(&quot;query&quot;)&lt;/script&gt;&amp;'</code></pre>`
+        );
+        assert.include(html, "patch-&lt;/code&gt;&lt;script&gt;patch&lt;/script&gt;");
+        assert.include(html, "<code>version-one</code>");
+        assert.include(html, `<code>${owner.user.id}</code>`);
+        assert.include(html, "<dt>Credential kind</dt><dd>session</dd>");
+        assert.include(html, "<code>invalid_query</code>");
+        assert.include(html, '<time datetime="2026-01-01T00:00:00.000Z">');
+        assert.include(html, "12 ms");
+        assert.include(html, "2 rows");
+        assert.include(html, '<span class="pill">Unknown</span>');
+        assert.include(html, "<code>visible-query</code>");
+        for (const forbidden of [
+          sql,
+          "<script>patch</script>",
+          "generated-SQL-not-visible",
+          "foreign-company-SQL",
+          "foreign-connection-SQL",
+          "hidden-company",
+          "hidden-connection"
+        ])
+          assert.notInclude(html, forbidden);
+        const recent = yield* audit.recent({
+          companyId: owner.company.id,
+          connectionId: connection.id
+        });
+        const memberResponse = yield* send(path, { headers: { cookie: cookie(member) } }).pipe(
+          Effect.provideService(RuntimeLog.RuntimeLog, {
+            ...audit,
+            recent: () => Effect.die(new Error("A member must not query the runtime log"))
+          })
+        );
+        assert.strictEqual(memberResponse.status, 200);
+        const memberHtml = yield* Effect.promise(() => memberResponse.text());
+        assert.notInclude(memberHtml, 'aria-labelledby="connection-calls"');
+        assert.notInclude(memberHtml, "visible-query");
+        assert.deepStrictEqual(
+          (yield* audit.recent({ companyId: owner.company.id, connectionId: connection.id })).map(
+            (call) => call.id
+          ),
+          recent.map((call) => call.id)
+        );
+      })
+  );
+  it.effect(
     "shows company-local safe metadata and escapes descriptions, destinations and company names",
     () =>
       Effect.gen(function* () {

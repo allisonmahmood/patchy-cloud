@@ -8,6 +8,7 @@ import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import { pageResponse, RequireSession, Session, signOutForm } from "@patchy/auth";
 import { escapeHtml } from "@patchy/core";
+import type { RuntimeLog } from "@patchy/runtime";
 import * as ConnectionPage from "./ConnectionPage.js";
 
 const page = Effect.fn("ConnectionPages.page")(function* (action: ConnectionPage.Action) {
@@ -78,6 +79,7 @@ export const layer: Layer.Layer<
       | Users.Users
       | SqlClient.SqlClient
       | ConnectionStore.ConnectionStore
+      | RuntimeLog.RuntimeLog
     >
 > = HttpRouter.use((router) =>
   Effect.gen(function* () {

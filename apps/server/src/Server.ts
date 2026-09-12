@@ -41,6 +41,8 @@ import {
   ConnectionStore,
   CredentialKeys,
   PostgresSource,
+  PostgresExecution,
+  PostgresOperations,
   migrations as integrationsMigrations
 } from "@patchy/integrations";
 import { Limits } from "@patchy/limits";
@@ -103,9 +105,10 @@ const services = Layer.mergeAll(
     Effect.gen(function* () {
       const tables = yield* TableOperations.make;
       const files = yield* Files.make;
-      return Runtime.layer({ me, ...tables, ...files });
+      const postgres = yield* PostgresOperations.makeHandlers;
+      return Runtime.layer({ me, ...tables, ...files, ...postgres });
     })
-  ).pipe(Layer.provide([LoadedVersions.layer, RuntimeLog.layer]))
+  ).pipe(Layer.provide([LoadedVersions.layer, PostgresExecution.layer]))
 ).pipe(
   Layer.provideMerge(
     Layer.mergeAll(
@@ -120,15 +123,14 @@ const services = Layer.mergeAll(
       Session.layer
     ).pipe(
       Layer.provideMerge(
-        ConnectionStore.layer.pipe(
-          Layer.provide([CredentialKeys.layer, PostgresSource.layer, RuntimeLog.layer])
-        )
+        ConnectionStore.layer.pipe(Layer.provide([CredentialKeys.layer, PostgresSource.layer]))
       ),
       Layer.provideMerge(Tables.layer),
       Layer.provideMerge(Inventory.layer),
       Layer.provideMerge(PgCompanyDatabases.layer)
     )
   ),
+  Layer.provideMerge(RuntimeLog.layer),
   Layer.provide(migrated)
 );
 

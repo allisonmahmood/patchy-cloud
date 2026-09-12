@@ -169,7 +169,17 @@ test, rotate, retarget, refresh schema, disconnect, reconnect, edit descriptions
 and delete undeclared connections; members read metadata. The normal production
 connector refuses local/private addresses even in a local instance. Offline tests
 exercise discovery against disposable Postgres through the source seam rather
-than weakening that restriction. No Postgres runtime operation is admitted yet.
+than weakening that restriction. Declared Postgres connections admit `list`, `get`,
+`getMany` and `query` through the runtime. Patch-development fixtures use the
+integration's PGlite binding, not the normal network connector: one local database
+per connection under `.patchy/dev/`, initialized from `fixtures/postgres-<handle>.sql`.
+The file is required; its header describes native columns and synthetic views.
+The patch-repo CLI that composes this binding arrives separately.
+
+Issue #202 adds exact operation outcome codes to the unmerged
+`0006_runtime_baseline`; no new migration ID is introduced. Disposable development
+databases created before this baseline change must be recreated with `pnpm dev reset`.
+Do not use a reset or baseline rewrite to upgrade a live database.
 
 ### Seed
 
@@ -380,7 +390,7 @@ It also drives the login handoff through confirmation with an offline-signed
 session, completion, saved-login precedence, logout and seed fallback.
 The packed flow also reads the stored version's tier, release and server-stamped
 wire version. File mode synthesises a tier 0 manifest with empty `tables`, `files`
-and `uses`; the API admits tables, file stores and shared-table declarations, while higher tiers and integration declarations remain refused.
+and `uses`; the API admits tables, file stores, shared-table declarations and resolved Postgres declarations. Higher tiers remain refused.
 
 `GET /api/release` is public. A new CLI publish checks its executing version
 against that release. Interrupted attempts live in the isolated `PATCHY_STATE_DIR`
@@ -525,11 +535,16 @@ recreatable, with fsync off and normalized `int8`/`DATE` codecs.
 Runtime admission tests use `HttpApiTest` with offline signed browser sessions;
 the server's socket test publishes real versions and checks historical and live
 sharing. `/api/runtime/call` admits `me`, the seven `tables.*` operations, the
-three `shared.*` reads, and `files.list`/`files.delete`; file bytes use separate routes.
+three `shared.*` reads, `files.list`/`files.delete`, and `postgres.list`/`postgres.get`/
+`postgres.getMany`/`postgres.query`; file bytes use separate routes.
 A company version needs a browser session, never the dev machine token; a current
-public version returns null for `me` and refuses owned-table, shared-table and file access.
+public version returns null for `me` and refuses owned-table, shared-table, file and Postgres access.
 Required headers and request shapes are in [API.md](API.md#runtime).
 The runtime log baseline is applied by all three migration entrypoints above.
+Postgres connection reads use one statement runner over native `pg` or a killable
+PGlite worker transport. Exercise discovery-to-fixture parity and verify that a
+timed-out call destroys its backend while the next call succeeds. The statement,
+service, row, byte and pool limits are spec constants, not environment settings.
 
 Table manifests can be published directly to `POST /api/publish` at tier 0;
 repo-mode CLI publishing and the browser broker remain separate SDK work.

@@ -165,7 +165,7 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "The handle and id must name the same connected company connection, otherwise " +
           "`connection_not_connected`; the revision must equal its current schema snapshot, " +
           "otherwise `stale_generated` (run `patchy refresh`). Credential rotation and retargeting " +
-          "preserve the connection id. Declarations are admitted but no Postgres runtime operations run yet. " +
+          "preserve the connection id. Postgres runtime calls retain the version's recorded snapshot. " +
           'Shared-table uses carry `{ kind: "sharedTable", patchId, table, id, revision }`, keyed by alias. ' +
           "The resolved id is `<patchId>/<table>`, never a patch name; revision stamps the source inventory. " +
           "Publish requires a live same-company source the publisher can open and an inventory table " +
@@ -255,7 +255,7 @@ export class ReleaseGroup extends HttpApiGroup.make("release", { topLevel: true 
  * Raw handlers choose an explicit HTTP status when encoding RuntimeFailure:
  * the identical wire shape at each status cannot select its own status.
  */
-const runtimeErrors = [400, 401, 403, 409, 413, 429, 503].map((status) =>
+const runtimeErrors = [400, 401, 403, 409, 413, 429, 503, 504].map((status) =>
   RuntimeFailure.pipe(HttpApiSchema.status(status))
 );
 
@@ -312,7 +312,7 @@ export class RuntimeGroup extends HttpApiGroup.make("runtime", { topLevel: true 
       describe(
         runtimeAdmission +
           "The JSON envelope is `{ patchId, versionId, principal, wire, op, args }`; its principal " +
-          "and wire must match the required headers. Mutating operations additionally require " +
+          "and wire must match the required headers. Mutating and integration operations require " +
           "the exact shell `Origin` (scheme, host and port); a cross-site or missing Origin is " +
           "refused before execution. `me` with `args: {}` returns " +
           "`{ ok: true, value: { user: { id, name, email }, company: { id, handle, name }, admin } }` " +
@@ -341,12 +341,38 @@ export class RuntimeGroup extends HttpApiGroup.make("runtime", { topLevel: true 
           "While authorized, dangling ids remain null in input order. Source definitions come from " +
           "cumulative inventory, so omission from the source's active manifest does not remove access. " +
           "Deletion and recreation under the same patch name never rebind a declaration. " +
+          "`postgres.list`, `postgres.get`, `postgres.getMany` and `postgres.query` select a " +
+          "declared alias with `connection`; relation operations use `relation: { schema, name }`. " +
+          "The alias resolves through the loaded manifest to its stable connection id and pinned " +
+          "snapshot revision, with credentials and connected state checked live. Each operation " +
+          "returns `value: { ok: true, rows }`; list additionally returns `cursor`. No rowCount or " +
+          "truncated flag is returned. `get { key }` returns one row or null in rows; " +
+          "`getMany { keys }` preserves input order and missing-row nulls. Both require a usable " +
+          "source primary key. `list { eq?, range?, orderBy?, select?, limit?, cursor? }` quotes " +
+          "all identifiers and projects supported columns explicitly. `orderBy` is `{ column, " +
+          'direction: "asc" | "desc" }`, with primary-key tie breakers. Keyset cursors bind to ' +
+          "connection, relation, snapshot, filters and order; unkeyed relations use offsets bounded " +
+          "to 10,000 (`offset_exhausted`). Default page 100, maximum 1,000. " +
+          "`query { sql, params, shape }` accepts scalar/null parameters and arrays of scalars. " +
+          'Shape columns are `{ kind: "text" | "integer" | "number" | "boolean" | ' +
+          '"timestamp" | "json", optional? }`; defaults and refs are refused. Missing or duplicate ' +
+          "columns and nulls in required columns fail `shape_mismatch`; extras are dropped. " +
+          "Integers must be safe; int8/numeric are strings, never silently rounded. " +
+          "Queries execute as one extended-protocol statement in a read-only transaction with " +
+          "a 10-second statement timeout and a 15-second deadline including queue wait. " +
+          "Every result is bounded during collection to 1,000 rows and 8 MiB; overflow fails the " +
+          "whole call. Pools allow four backends per connection, 64 per process and 60 seconds idle. " +
+          "Postgres failures include `relation_unknown`, `invalid_query`, `shape_mismatch`, " +
+          "`invalid_cursor`, `offset_exhausted` and integration boundary codes. `invalid_query` " +
+          "details retain the source message, SQLSTATE and position. Integration attempts are " +
+          "logged before execution, including denials and failures with trusted attribution; " +
+          "only query logs SQL text (up to 8 KiB), never parameters. " +
           "Request bodies allow 1 MiB plus envelope for " +
-          "insert/update and 8 MiB plus envelope for insertMany; all other calls are capped at " +
-          "64 KiB. Overflow is `too_large` (413). Undeclared tables answer `table_not_declared`; " +
+          "insert/update and 8 MiB plus envelope for insertMany; Postgres calls allow 256 KiB " +
+          "including parameters, and other calls 64 KiB. Overflow is `too_large` (413). Undeclared tables answer `table_not_declared`; " +
           "invalid fields/defaults answer `invalid_row`, uniqueness conflicts `unique_violation`, " +
           "and invalid pagination `invalid_cursor`. Unknown operations answer `invalid_request`. " +
-          "Failures are `{ ok: false, error, code, correlationId? }`; every table mutation is " +
+          "Failures are `{ ok: false, error, code, details?, correlationId? }`; every table mutation is " +
           "logged before execution and logged failures carry their runtime-log correlation id. " +
           "Table and file reads are not logged. `files.list { store, prefix?, limit?, cursor? }` " +
           "returns `{ files: [{ name, size, contentType, updatedAt }], cursor }`, ordered by name " +

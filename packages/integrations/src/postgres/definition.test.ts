@@ -4,10 +4,8 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
-import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { defineIntegration, operation } from "../definition.js";
-import { postgres, PostgresOperationsUnavailable } from "./index.js";
 
 const Input = Schema.Struct({ id: Schema.String });
 const Output = Schema.Struct({ count: Schema.Number });
@@ -91,20 +89,3 @@ it("rejects mismatched handlers at the schema boundary", () => {
     dev: () => Effect.succeed({})
   });
 });
-
-it.effect("declares no operations and refuses generation and fixtures explicitly", () =>
-  Effect.gen(function* () {
-    assert.deepStrictEqual(postgres.operations, {});
-    const metadata = { version: 1 as const, relations: [], enums: [], exclusions: [] };
-    const generated = postgres.generate(
-      { kind: "postgres", handle: "warehouse", id: "connection", revision: 1 },
-      metadata
-    );
-    assert.isTrue(Result.isFailure(generated));
-    const failure = yield* Effect.void.pipe(
-      Effect.provide(postgres.dev(metadata, "")),
-      Effect.flip
-    );
-    assert.instanceOf(failure, PostgresOperationsUnavailable);
-  })
-);

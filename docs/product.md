@@ -2,7 +2,7 @@
 
 The product, written down where agents read it. Each section is the resolution of one decision on the [foundation map](https://github.com/allisonmahmood/patchy-cloud/issues/5); the glossaries in each `CONTEXT.md` carry the words, this file carries the shape.
 
-**Built today:** tier 0 HTML patches with manifests, release checks and replay-safe publishing; additive patch-owned tables and file stores with browser-runtime operations, read-only shared-table declarations, and company Postgres connections with schema discovery and publish binding; names and company addresses; user ownership and company/public sharing; Clerk sign-in; create-or-join and company administration; machine login, logout and revocation. Higher-tier serving and its browser broker, patch repos, the portal, narrower sharing, integration query operations, billing and company lifecycle remain intended, not available features.
+**Built today:** tier 0 HTML patches with manifests, release checks and replay-safe publishing; additive patch-owned tables and file stores with browser-runtime operations, read-only shared-table declarations, and company Postgres connections with immutable schema snapshots, constrained reads, generated relation clients and local fixtures; names and company addresses; user ownership and company/public sharing; Clerk sign-in; create-or-join and company administration; machine login, logout and revocation. Higher-tier serving and its browser broker, patch repos, the portal, narrower sharing, billing and company lifecycle remain intended, not available features.
 
 ## Patches
 
@@ -67,11 +67,11 @@ The published document runs no script, so the patch cannot watch the reader or r
 Code runs in the viewer's browser and acts **as the viewer**. It never holds a credential: not the Clerk session, not an integration token, not another patch's storage. It learns who the viewer is as claims, and it reaches everything else — the patch's primitives (its tables, its files) and the company's integrations — through Patchy, which performs the call as the viewer within the viewer's own permissions. A tier 1 patch can therefore never do more than the person using it could do themselves. Nothing leaves the browser except through Patchy: there is no direct outbound to third-party APIs, credentialed or not — reaching outside systems is what integrations are for.
 
 The runtime operation path admits `me`, seven owned-table operations, three shared-table
-reads and four file operations. A company version returns its active viewer and company; a current
-public version returns null for `me` and refuses owned-table, shared-table and file access, even to
+reads, four file operations and four Postgres operations. A company version returns its active viewer and company; a current
+public version returns null for `me` and refuses company data and integration access, even to
 a signed-in viewer. Requests are bound to the loaded version and cannot switch
-acting users mid-page. Runtime records every table and file mutation before
-execution. The broker, higher-tier serving and integration query operations remain future work.
+acting users mid-page. Runtime records every table and file mutation and every integration call before
+execution. The broker and higher-tier serving remain future work.
 
 What tier 1 cannot do is anything the viewer's browser is not there to do: no pre-processing before the data reaches the page, no work on behalf of one viewer visible to another. Save a photo to file storage and it is saved; that is the whole story.
 
@@ -349,9 +349,9 @@ and ArrayBuffer transfer arrive with the browser broker.
 
 ## Integrations
 
-Company Postgres connections, discovery and publish binding are built. The operation
-handler map still has no Postgres operations: a declared connection is inert until
-the query surface arrives. Other integrations and personal connections remain planned.
+Company Postgres connections, discovery, publish binding and constrained runtime
+reads are built, with generated relation clients and local fixtures. Other
+integrations and personal connections remain planned.
 
 An **integration** is a capability Patchy ships — Salesforce, Gmail, Postgres — built and maintained by Patchy, the same for every company. What a company holds is a **connection**: the live, credentialed instance of one. That distinction was drawn with [Companies](#integrations-and-connections); this section is the layer itself — how a connection comes to exist, how a patch declares and uses one, and what patch code is actually handed.
 
@@ -380,8 +380,14 @@ Before connecting, the form states: **Every member can query this database throu
 any patch that declares it, as the role you supply.** The read-only promise is
 **constrained reads through the role you supplied**, not harmless execution of
 arbitrary SQL: SELECT can invoke functions with side effects or extensions.
-Postgres query operations will use one extended-protocol statement in a read-only
-transaction, a statement timeout and a service deadline; they are not admitted yet.
+Postgres calls use one extended-protocol statement inside `BEGIN READ ONLY`,
+with a 10-second statement timeout and a 15-second service deadline including
+queue wait. Each transaction is rolled back and the session reset before reuse;
+a timeout destroys the connection. Collection refuses more than 1,000 rows or
+8 MiB, never returning a silently partial report. Pools allow four backends per
+connection, 64 per process and 60 seconds idle. Rotation, retargeting and
+disconnect take effect on the next checkout; in-flight calls may finish within
+their deadline.
 
 Connect tests the role and discovers metadata before saving credentials encrypted
 under the operator's keyring. Stored secrets never appear on a page or in generated
@@ -401,8 +407,12 @@ limits receive named exclusions rather than truncated enum labels. More than
 10,000 exclusions refuses discovery. Each successful discovery stores a whole
 validated immutable snapshot with a new server-assigned revision;
 a failure leaves the previous snapshot current. Snapshots are never deleted in v1.
-Discovery is attributed to the admin in the runtime log; its recent-calls UI
-arrives with query operations.
+Discovery is attributed to the admin in the runtime log. Admins see recent calls
+on the connection's detail page: identity, patch/version, operation, duration,
+outcome, row count and correlation id. Query calls retain up to 8 KiB of SQL text,
+never parameters; ordinary relation calls retain no SQL. Failed and denied
+attempts with a trusted session and loaded version are recorded too. Unauthenticated
+or unresolvable requests cannot be attributed to a company user.
 
 A Postgres declaration carries `{ kind: "postgres", handle, id, revision }`.
 Publish verifies that the handle and id name the same connected company
@@ -426,11 +436,60 @@ The connect moment sits in front of the page, exactly like the login door: a vie
 
 A **typed client** per integration, from the SDK — `salesforce.query(…)`, never raw HTTP against the source. Building and maintaining that surface is Patchy's job: that is why Patchy builds integrations instead of letting each company wire its own, and it is what keeps the surface simple for agents. No patch at any tier ever sees a credential — credentials live in Patchy's own encrypted store, applied server-side, and every call through the layer is logged with the patch, the connection and the identity it ran as.
 
+For Postgres, generation exposes `sales.customers` for a public relation and
+`sales.reporting.profit` for another schema; source names are preserved, using
+brackets when needed. `query` and namespace collisions are excluded and named.
+The context file names the handle, description, revision, relations, keys and
+exclusions. This client is a projection of the source, not every source feature.
+
+Every relation supports `list({ eq, range, orderBy, select, limit, cursor })`.
+Comparable columns accept equality, one column may have a range, and one order
+column is followed by the primary key as a tie breaker. SQL always names and
+quotes selected columns, never `SELECT *`. Keyed relations use cursors bound to
+the connection, relation, revision, filters and order; unkeyed relations use
+offsets bounded at 10,000, then `offset_exhausted`. Pages default to 100, at most
+1,000. Only a usable primary key adds `get({ pk })` and `getMany([...])`; missing
+rows are null, with input order preserved. View columns are nullable.
+
+One type mapping determines generation, SQL projection and validation. Small
+integers and finite floats become numbers; int8 and numeric become strings,
+never rounded doubles. Text-like values, UUIDs and enums become strings.
+Timestamptz is UTC ISO at full precision, date is `YYYY-MM-DD`, and timestamp
+without time zone is `YYYY-MM-DDTHH:MM:SS.ffffff` without an offset. JSON and
+arrays are unknown; domains resolve to their base types. Unsupported columns
+and locally unrepresentable relations are excluded and named.
+
+`query(sql, params, shape)` is the explicit **escape hatch**. Shapes use the
+table column language, without refs or defaults: missing columns, duplicate
+result names and required nulls fail `shape_mismatch`; extra columns are dropped.
+Integer shapes require safe integers; cast int8 and numeric explicitly rather
+than relying on rounding. Source SQL errors include their message, SQLSTATE and
+position in `invalid_query`. Generated method error unions carry typed details,
+and `isPatchyError(error, code)` narrows them; TypeScript cannot promise exhaustive
+throws. All reads project through the revision the loaded version names, even
+after an admin refreshes discovery. Live credentials and access are checked
+separately; a dropped or incompatible column fails the old call rather than
+silently changing its contract.
+
 There is no bring-your-own source: no generic REST escape hatch and no "connect an MCP server". A company that needs an integration Patchy has not shipped requests it, and Patchy builds it; opening the catalog is its own later decision if that pressure proves real.
 
 ### Development
 
-Patch development uses local fixtures, not live source rows or production credentials. The metadata-only development connection layer loads no keyring or platform database. The planned Postgres fixture is one PGlite database per connection, shared by its aliases, populated from `fixtures/postgres-<handle>.sql`; view fixtures are synthetic tables and do not recompute. The generated relation clients, fixture execution, catalog and refresh tooling arrive in the following SDK tickets. They consume the immutable snapshots already stored here.
+Patch development uses local fixtures, not live source rows or production credentials.
+The **dev binding** supplies the same Postgres execution dependency without
+loading the keyring or runtime log. One PGlite database per connection under
+`.patchy/dev/` is shared by its aliases, with source-native types: numeric filters
+and ordering remain numeric, not string comparisons.
+
+Agent-authored rows come from `fixtures/postgres-<handle>.sql`, loaded on the
+privileged initialization path and validated. A missing fixture names the file
+to write. The generated stub lists tables and columns; views are synthetic tables
+whose rows do not recompute. A relation the local source cannot represent is
+excluded from both surfaces and named. Raw SQL using a feature PGlite lacks
+fails locally with its reason. Fixtures establish operation parity, not production
+data, privilege or volume guarantees. Catalog, refresh and patch-repo tooling
+remain the following SDK tickets; the integration's pure generation and fixture
+binding are available for those consumers.
 
 ### The edges
 

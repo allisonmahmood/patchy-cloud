@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import { reservedRelation, surface, typeMapping } from "./Mapping.js";
 import * as Metadata from "./Snapshot.js";
 import * as SourceClient from "./SourceClient.js";
 import * as SourceNetwork from "./SourceNetwork.js";
@@ -250,11 +251,7 @@ export const discover = Effect.gen(function* () {
   const selected: Array<typeof CatalogRelation.Type> = [];
   const exclusions: Array<typeof Metadata.Exclusion.Type> = [];
   for (const relation of catalog) {
-    if (
-      relation.name === "query" ||
-      relation.schema === "query" ||
-      (relation.schema === "public" && schemaNames.has(relation.name))
-    ) {
+    if (reservedRelation(relation.schema, relation.name, schemaNames)) {
       exclusions.push({
         schema: relation.schema,
         relation: relation.name,
@@ -277,10 +274,13 @@ export const discover = Effect.gen(function* () {
       SELECT a.attnum AS ordinal, jsonb_build_object('name', a.attname,
         'selectable', pg_catalog.has_column_privilege(c.oid, a.attnum, 'SELECT'), 'nullable',
         CASE WHEN c.relkind IN ('v', 'm') THEN true ELSE NOT (a.attnotnull OR base.domain_not_null) END,
-        'type', jsonb_build_object('schema', original_ns.nspname, 'name', original.typname,
+        'type', jsonb_strip_nulls(jsonb_build_object('schema', original_ns.nspname, 'name', original.typname,
           'sql', pg_catalog.format_type(a.atttypid, a.atttypmod), 'baseSchema', base_ns.nspname,
           'baseName', base.typname, 'kind', CASE WHEN base.typtype = 'e' THEN 'enum'
-            WHEN base.typcategory = 'A' THEN 'array' ELSE 'base' END),
+            WHEN base.typcategory = 'A' THEN 'array' ELSE 'base' END,
+          'element', CASE WHEN base.typcategory = 'A' THEN jsonb_build_object(
+            'baseSchema', element_ns.nspname, 'baseName', element.typname,
+            'kind', CASE WHEN element.typtype = 'e' THEN 'enum' ELSE 'base' END) ELSE NULL END)),
         'enumOid', CASE WHEN base.typtype = 'e' THEN base.oid::int
           WHEN element.typtype = 'e' THEN element.oid::int ELSE NULL END) AS column_info
       FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_type original ON original.oid = a.atttypid
@@ -293,7 +293,14 @@ export const discover = Effect.gen(function* () {
       ) SELECT t.*, chain.domain_not_null FROM chain JOIN pg_catalog.pg_type t ON t.oid = chain.oid
         ORDER BY chain.depth DESC LIMIT 1) base ON true
       JOIN pg_catalog.pg_namespace base_ns ON base_ns.oid = base.typnamespace
-      LEFT JOIN pg_catalog.pg_type element ON element.oid = base.typelem
+      LEFT JOIN LATERAL (WITH RECURSIVE chain AS (
+        SELECT t.oid, t.typbasetype, 0 AS depth FROM pg_catalog.pg_type t WHERE t.oid = base.typelem UNION ALL
+        SELECT t.oid, t.typbasetype, chain.depth + 1 FROM chain
+          JOIN pg_catalog.pg_type t ON t.oid = chain.typbasetype
+          WHERE chain.typbasetype <> 0 AND chain.depth < 32
+      ) SELECT t.* FROM chain JOIN pg_catalog.pg_type t ON t.oid = chain.oid
+        ORDER BY chain.depth DESC LIMIT 1) element ON true
+      LEFT JOIN pg_catalog.pg_namespace element_ns ON element_ns.oid = element.typnamespace
       WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
       ORDER BY a.attnum LIMIT 201
     ) columns), '[]'::jsonb) AS columns,
@@ -364,7 +371,7 @@ export const discover = Effect.gen(function* () {
     for (const column of detail.columns) {
       const reason = !column.selectable
         ? "access_denied"
-        : !Metadata.supportedType(column.type)
+        : typeMapping(column.type) === undefined
           ? "unsupported_type"
           : column.enumOid !== null && !allowedEnumOids.has(column.enumOid)
             ? "enum_limit"
@@ -390,14 +397,14 @@ export const discover = Effect.gen(function* () {
       foreignKeys: detail.foreignKeys.filter((key) => key.columns.every((name) => names.has(name)))
     });
   }
-  const snapshot = {
+  const snapshot = surface({
     version: 1 as const,
     relations,
     enums: allowedEnums.map(({ schema, name, labels }) => ({ schema, name, labels })),
     exclusions
-  };
+  });
   if (
-    exclusions.length > Metadata.MAX_EXCLUSIONS ||
+    snapshot.exclusions.length > Metadata.MAX_EXCLUSIONS ||
     Buffer.byteLength(encodeJson(snapshot)) > Metadata.MAX_SNAPSHOT_BYTES
   ) {
     return yield* new SourceClient.DiscoveryTooLarge({});

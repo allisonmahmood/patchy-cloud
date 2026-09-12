@@ -5,4 +5,6 @@ export * as ConnectionPage from "./ConnectionPage.js";
 export * as ConnectionPages from "./ConnectionPages.js";
 export * as PostgresSource from "./postgres/Source.js";
 export * as Postgres from "./postgres/index.js";
+export * as PostgresExecution from "./postgres/Execution.js";
+export * as PostgresOperations from "./postgres/Operations.js";
 export { migrations } from "./migrations.js";
