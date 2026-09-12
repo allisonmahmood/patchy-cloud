@@ -25,7 +25,7 @@ Who may open a patch: `company` means signed-in colleagues in its company; `publ
 _Avoid_: visibility, token scope (a publishing key does not grant reading access)
 
 **Patch repo**:
-The local working copy of exactly one patch: its file tree, id, declared tier and base config. Its creation and publishing rules live in [the product](../../docs/product.md#what-a-patch-is-made-of).
+The local working copy for one patch: its source tree, definitions, declarations, explicit tier and target instance. Once published, its identity ties later publishes to that same patch.
 _Avoid_: project, workspace, source (a repo holds the source; it is also the unit)
 
 **Publish**:
@@ -57,15 +57,15 @@ The promise that a successful publish leaves both a version and its content, whi
 _Avoid_: two-phase commit, saga
 
 **Manifest**:
-The serializable description of one version's release, tier, owned tables and file stores, and declared connections and shared tables. It describes the patch's contract rather than executing its source.
+The serializable description of one version's name, release, tier, owned tables and file stores, and declared connections and shared tables. It describes the patch's contract rather than executing its source.
 _Avoid_: config (the source from which a manifest is produced), inventory (the cumulative provisioned definitions)
 
 **Inventory**:
-The cumulative resources provisioned for a patch, including definitions omitted by its current version. It is the company database's authority, not a reconstruction of the active manifest; see [Company database](../company-database/CONTEXT.md).
+See **Inventory** in [Company database](../company-database/CONTEXT.md), its owning glossary.
 _Avoid_: manifest, current schema
 
 **Unused definition**:
-A cumulative definition that a published version no longer uses. Its resource and data remain, and older versions that still define it keep reaching it.
+A provisioned definition omitted from one version's manifest without removing its resource or data. Older versions that still define it retain access.
 _Avoid_: dropped resource, deleted definition
 
 **Publish key**:

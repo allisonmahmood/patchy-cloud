@@ -13,11 +13,11 @@ A patch-owned collection of rows with defined columns and indexes. An admitted c
 _Avoid_: collection, relation (an integration's source object)
 
 **Additive change**:
-A compatible extension of the cumulative definitions that preserves existing rows and the contracts of older versions. A refused change names the object, the incompatible change and the fix; omitted compatible definitions remain as unused resources.
+A compatible extension of cumulative definitions that preserves existing rows and older versions' contracts. Omission leaves compatible definitions unused rather than deleting them.
 _Avoid_: migration (destructive changes are not offered), replacement, synchronization
 
 **Schema revision**:
-The patch's cumulative definition revision, advanced only when provisioning changes its tables or adds file stores. It is independent of a published version and the runtime wire version.
+The patch's cumulative definition revision, advanced when provisioning changes its owned resources or table-sharing state. It is independent of a published version and the runtime wire version.
 _Avoid_: version number, release
 
 **System column**:
@@ -29,7 +29,7 @@ A column identifying a row in a named table, without requiring that row to exist
 _Avoid_: foreign key, join, embedded row
 
 **Shared table**:
-A source patch's table made available for other patches to declare and read, never write. Its identity is the source patch and table; sharing authority and the cumulative definition belong to the inventory, independent of the source's active version.
+A source patch's table that another patch may declare and read, never write, while the source remains openable and the table shared. Its identity is the source patch and table; its sharing authority and cumulative definition belong to [Company database's Inventory](../company-database/CONTEXT.md), independent of the source's active version.
 _Avoid_: public table, copied table
 
 **File store**:
