@@ -19,10 +19,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 22 is the minimum supported Node (engines >=22.18 for config execution).
-        # cli-smoke runs the packed real-server contract
-        # entirely on Node 22, the floor the CLI has to keep working on.
+        # Exercise the exact minimum required by PostHog, keeping the Node 22 check name.
         node-version: [22, 24]
+        include:
+          - node-version: 22
+            minimum-version: 22.22.0
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -30,7 +31,7 @@ jobs:
           package_json_file: package.json
       - uses: actions/setup-node@v7
         with:
-          node-version: ${{ matrix.node-version }}
+          node-version: ${{ matrix.minimum-version || matrix.node-version }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
@@ -45,7 +46,7 @@ jobs:
           package_json_file: package.json
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 22.22.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Verify SDK concurrency on isolated real Postgres
@@ -106,7 +107,7 @@ jobs:
           package_json_file: package.json
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 22.22.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Install Chromium and system dependencies

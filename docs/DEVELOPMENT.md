@@ -2,7 +2,7 @@
 
 ## The local instance: `pnpm dev`
 
-Use Node 22.18+ and the pnpm version in `package.json`, with dependencies installed
+Use Node 22.22.0+ and the pnpm version in `package.json`, with dependencies installed
 by `pnpm install`. Embedded Postgres is included; no separately managed database
 is needed for this loop.
 
@@ -477,8 +477,8 @@ The existing package suites retain their focused primitive concurrency cases.
 `pnpm test:all` runs package tests through Turbo, the real-Postgres concurrency
 block and the packed e2e, but not the live Clerk tiers. It attempts all three even
 if an earlier suite fails and exits nonzero if any suite fails. CI runs offline
-Vitest on Node 22 and 24. `cli-smoke` and `postgres-concurrency` are unconditional
-Node 22 checks on pull requests and pushes to `main`, including forks and Dependabot;
+Vitest on Node 22.22.0 and 24. `cli-smoke` and `postgres-concurrency` are unconditional
+Node 22.22.0 checks on pull requests and pushes to `main`, including forks and Dependabot;
 neither needs Clerk secrets. Browser, Postgres, server, installation or suite
 startup failures fail their job rather than skipping it.
 The packed e2e runs inside `cli-smoke`, not a separate check.
