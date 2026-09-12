@@ -8,7 +8,7 @@ The CLI talks to whichever instance you point it at — Patchy Cloud, or the `pn
 
 ## Run it
 
-Requires Node.js 22.18 or newer. The package is private and not published to a registry. Fetch your intended instance's unauthenticated `GET /api/release`, download its exact `package.tarball` URL as `patchy.tgz`, and verify the downloaded bytes against the SHA-512 `package.integrity` before installing:
+Requires Node.js 22.22.0 or newer. The package is private and not published to a registry. Fetch your intended instance's unauthenticated `GET /api/release`, download its exact `package.tarball` URL as `patchy.tgz`, and verify the downloaded bytes against the SHA-512 `package.integrity` before installing:
 
 ```sh
 npm install --global --ignore-scripts ./patchy.tgz

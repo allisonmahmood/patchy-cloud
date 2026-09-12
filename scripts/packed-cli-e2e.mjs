@@ -137,8 +137,11 @@ if (
 
 let mainFailure;
 try {
-  const nodeMajor = Number.parseInt(process.versions.node.split(".")[0], 10);
-  assert.ok(nodeMajor >= 22, `packed CLI E2E requires Node 22 or newer; found ${process.version}`);
+  const [nodeMajor, nodeMinor] = process.versions.node.split(".").map(Number);
+  assert.ok(
+    nodeMajor > 22 || (nodeMajor === 22 && nodeMinor >= 22),
+    `packed CLI E2E requires Node 22.22.0 or newer; found ${process.version}`
+  );
 
   await signalProbeCheckpoint("before-temp-creation");
   throwIfSignalLatched();
