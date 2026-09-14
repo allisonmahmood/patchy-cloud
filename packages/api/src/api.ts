@@ -47,7 +47,11 @@ import {
   Release,
   Catalog,
   GenerateRequest,
-  Generated
+  Generated,
+  PatchList,
+  PatchDetail,
+  PatchState,
+  PrimitiveDetail
 } from "./schemas.js";
 import { RuntimeBytes, RuntimeCall, RuntimeFailure, RuntimeSuccess } from "./runtime.js";
 
@@ -469,6 +473,50 @@ export class RuntimeGroup extends HttpApiGroup.make("runtime", { topLevel: true 
     )
   )
   .prefix("/api") {}
+
+/**
+ * Prototype #241 (throwaway): the discovery routes behind `patchy list`.
+ * Declared here so the CLI's client derives from the same schemas, but kept in
+ * its own `HttpApi` so `PatchyApi` and the rendered `docs/API.md` stay as they
+ * are. Both are served on one router.
+ */
+export class PortalPrototypeGroup extends HttpApiGroup.make("portalPrototype", { topLevel: true })
+  .add(
+    HttpApiEndpoint.get("listPatches", "/patches", {
+      query: Schema.Struct({
+        mine: Schema.optionalKey(catalogAll),
+        state: Schema.optionalKey(Schema.Literals([...PatchState.literals, "all"]))
+      }),
+      success: PatchList,
+      error: protectedErrors
+    }).annotateMerge(
+      describe(
+        "Prototype. The caller's company inventory: yours first, then the company's, by name. " +
+          "`state` defaults to live; `retired` lists retired patches; `all` adds deleted-in-window ones."
+      )
+    ),
+    HttpApiEndpoint.get("showPatch", "/patches/:patchRef", {
+      params: { patchRef: Schema.String },
+      success: PatchDetail,
+      error: patchRouteErrors
+    }).annotateMerge(
+      describe(
+        "Prototype. One patch by id or by current name, with its tables and file stores. " +
+          "A deleted patch answers by id only. Unknown, foreign and (by name) deleted answer 404."
+      )
+    ),
+    HttpApiEndpoint.get("showPrimitive", "/patches/:patchRef/primitives/:name", {
+      params: { patchRef: Schema.String, name: Schema.String },
+      success: PrimitiveDetail,
+      error: patchRouteErrors
+    }).annotateMerge(
+      describe("Prototype. One table or file store of the patch: columns, indexes, sharing.")
+    )
+  )
+  .middleware(Authorization)
+  .prefix("/api") {}
+
+export class PortalPrototypeApi extends HttpApi.make("portalPrototype").add(PortalPrototypeGroup) {}
 
 export class PatchyApi extends HttpApi.make("patchy")
   .add(AuthGroup, PatchesGroup, SdkGroup, RuntimeGroup)

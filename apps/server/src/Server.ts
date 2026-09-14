@@ -18,7 +18,7 @@ import * as Schedule from "effect/Schedule";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import { Analytics } from "@patchy/analytics";
-import { PatchyApi } from "@patchy/api";
+import { PatchyApi, PortalPrototypeApi } from "@patchy/api";
 import {
   AuthApi,
   AuthPages,
@@ -66,6 +66,9 @@ import {
 import { Artifact, SdkApi } from "@patchy/sdk";
 import { migrate } from "@patchy/sql";
 import * as ApiGuard from "./ApiGuard.js";
+import * as PortalApi from "./portal-prototype/PortalApi.js";
+import * as PortalPages from "./portal-prototype/PortalPages.js";
+import * as PortalQueries from "./portal-prototype/PortalQueries.js";
 
 /** The port the server listens on. */
 export const port = Config.int("PORT").pipe(Config.withDefault(3000));
@@ -99,6 +102,7 @@ const migrated = Layer.effectDiscard(
  */
 const services = Layer.mergeAll(
   Artifact.layer,
+  PortalQueries.layer,
   Content.layer,
   ExpirySweep.layer,
   DeviceLogins.layer,
@@ -164,9 +168,16 @@ export const sweeper = Layer.effectDiscard(
   })
 );
 
-/** `/api/*`: the groups' handlers, bearer middleware on protected endpoints, and catch-all. */
-const api = Layer.mergeAll(HttpApiBuilder.layer(PatchyApi), ApiGuard.notFound).pipe(
-  Layer.provide([AuthApi.layer, PatchesApi.layer, SdkApi.layer, RuntimeApi.layer]),
+/**
+ * `/api/*`: the groups' handlers, bearer middleware on protected endpoints, and catch-all.
+ * The portal prototype's group (#241, throwaway) rides beside `PatchyApi` on the same router.
+ */
+const api = Layer.mergeAll(
+  HttpApiBuilder.layer(PatchyApi),
+  HttpApiBuilder.layer(PortalPrototypeApi),
+  ApiGuard.notFound
+).pipe(
+  Layer.provide([AuthApi.layer, PatchesApi.layer, SdkApi.layer, RuntimeApi.layer, PortalApi.layer]),
   Layer.provide(Authorization.layer)
 );
 
@@ -186,11 +197,16 @@ const middleware = HttpRouter.middleware(
   { global: true }
 );
 
-/** The routes and middleware as one router application. */
+/**
+ * The routes and middleware as one router application. Serving's `/*`
+ * catch-all also claims the root, and the router keeps the first handler
+ * registered there, so the portal's routes (prototype #241) are added before
+ * Serving's by building them as its dependency.
+ */
 const app = Layer.mergeAll(
   api,
   SdkApi.tarballLayer,
-  Pages.layer,
+  Pages.layer.pipe(Layer.provide(PortalPages.layer)),
   AuthPages.layer,
   ConnectionPages.layer,
   middleware
