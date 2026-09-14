@@ -1,0 +1,1953 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Portal patch list · three mocks</title>
+    <style>
+      :root {
+        --paper: #fffdf4;
+        --paper-blue: #eaf5ff;
+        --paper-green: #eff9e8;
+        --paper-amber: #fff7e4;
+        --white: #fffefa;
+        --ink: #12110f;
+        --ink-soft: #36332d;
+        --muted: #69645a;
+        --line: rgba(18, 17, 15, 0.14);
+        --line-strong: rgba(18, 17, 15, 0.3);
+        --blue: #1263e6;
+        --blue-dark: #093b92;
+        --green: #64c83f;
+        --green-ink: #2f6a17;
+        --yellow: #ffbf35;
+        --amber-ink: #8a5a00;
+        --shadow-hard: 4px 4px 0 var(--ink);
+        --shadow-soft: 0 18px 50px rgba(18, 17, 15, 0.08);
+        --radius: 8px;
+        --radius-pill: 999px;
+        --font-sans:
+          system-ui, -apple-system, "Segoe UI", "Helvetica Neue", Arial, "Liberation Sans",
+          sans-serif;
+        --font-mono:
+          ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", Menlo, Consolas,
+          "Liberation Mono", monospace;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        background: var(--paper-blue);
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        background:
+          linear-gradient(rgba(18, 17, 15, 0.035) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(18, 17, 15, 0.035) 1px, transparent 1px),
+          linear-gradient(
+            180deg,
+            var(--paper-blue) 0%,
+            var(--paper) 34%,
+            var(--paper-green) 78%,
+            #fef7ef 100%
+          );
+        background-size:
+          32px 32px,
+          32px 32px,
+          auto;
+        color: var(--ink-soft);
+        font-family: var(--font-sans);
+        font-size: 17px;
+        font-weight: 450;
+        line-height: 1.65;
+        text-rendering: optimizeLegibility;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        z-index: -1;
+        pointer-events: none;
+        opacity: 0.22;
+        mix-blend-mode: multiply;
+        background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 160 160' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.95' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='.36'/%3E%3C/svg%3E");
+      }
+
+      ::selection {
+        background: rgba(255, 191, 53, 0.6);
+        color: var(--ink);
+      }
+
+      :focus-visible {
+        outline: 3px solid var(--blue);
+        outline-offset: 3px;
+        border-radius: 6px;
+      }
+
+      .wrap {
+        width: min(980px, calc(100% - 40px));
+        margin: 0 auto;
+        padding: 42px 0 96px;
+      }
+
+      .wrap.compact {
+        max-width: 760px;
+      }
+
+      .doc-head {
+        margin-bottom: 2.5rem;
+        padding-bottom: 1.5rem;
+        border-bottom: 2px solid var(--line-strong);
+      }
+
+      .head-line {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 18px 36px;
+        margin-bottom: 2.5rem;
+      }
+
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        color: var(--ink);
+        font-size: 1.05rem;
+        font-weight: 900;
+      }
+
+      .glyph {
+        position: relative;
+        width: 30px;
+        height: 30px;
+        flex: none;
+        border: 2px solid var(--ink);
+        border-radius: 8px;
+        background: var(--green);
+        box-shadow: 3px 3px 0 var(--ink);
+        transform: rotate(-5deg);
+      }
+
+      .glyph::after {
+        content: "";
+        position: absolute;
+        top: 6px;
+        right: 5px;
+        width: 10px;
+        height: 10px;
+        border-top: 2px solid var(--ink);
+        border-right: 2px solid var(--ink);
+      }
+
+      .kicker,
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        border: 2px solid var(--ink);
+        border-radius: var(--radius-pill);
+        color: var(--ink);
+        font-weight: 850;
+        line-height: 1;
+        text-transform: uppercase;
+        letter-spacing: 0;
+        white-space: nowrap;
+      }
+
+      .kicker {
+        min-height: 30px;
+        padding: 5px 18px;
+        background: var(--yellow);
+        box-shadow: 3px 3px 0 var(--ink);
+        font-size: 0.78rem;
+      }
+
+      .pill {
+        gap: 6px;
+        min-height: 28px;
+        padding: 3px 11px;
+        font-size: 0.76rem;
+      }
+
+      .pill::before {
+        content: "";
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: currentColor;
+      }
+
+      .pill-progress {
+        background: var(--paper-blue);
+        color: var(--blue-dark);
+      }
+
+      .pill-done {
+        background: var(--paper-green);
+        color: var(--green-ink);
+      }
+
+      h1,
+      h2,
+      h3 {
+        margin: 0 0 0.5em;
+        color: var(--ink);
+        font-weight: 850;
+        line-height: 1.04;
+        letter-spacing: 0;
+        text-wrap: balance;
+      }
+
+      h1 {
+        max-width: 12ch;
+        font-size: 3.35rem;
+        font-weight: 900;
+        line-height: 0.98;
+      }
+
+      h2 {
+        margin: 0;
+        font-size: 1.6rem;
+      }
+
+      h3 {
+        margin-top: 1.6rem;
+        font-size: 1.2rem;
+      }
+
+      p {
+        max-width: 70ch;
+        margin: 0 0 1rem;
+      }
+
+      a {
+        color: var(--blue-dark);
+        font-weight: 750;
+        text-decoration: underline;
+        text-underline-offset: 2px;
+      }
+
+      code,
+      pre {
+        font-family: var(--font-mono);
+      }
+
+      code {
+        padding: 0.12em 0.4em;
+        border-radius: 5px;
+        background: rgba(18, 17, 15, 0.06);
+        font-size: 0.9em;
+      }
+
+      pre {
+        margin: 0;
+        padding: 16px 18px;
+        overflow-x: auto;
+        border: 2px solid var(--ink);
+        border-radius: var(--radius);
+        background: #fffdf7;
+        box-shadow: var(--shadow-hard);
+        color: var(--ink);
+        font-size: 0.88rem;
+        line-height: 1.55;
+      }
+
+      pre code {
+        padding: 0;
+        background: none;
+        font-size: inherit;
+      }
+
+      .lede {
+        max-width: 64ch;
+        color: var(--ink-soft);
+        font-size: 1.08rem;
+      }
+
+      .meta {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px;
+        margin-top: 0.95rem;
+        color: var(--muted);
+        font-size: 0.92rem;
+        font-weight: 650;
+      }
+
+      .panel {
+        display: grid;
+        grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr);
+        gap: 20px;
+        align-items: start;
+        margin: 0 0 16px;
+        padding: 22px;
+        border: 2px solid var(--ink);
+        border-radius: var(--radius);
+        background: var(--white);
+        box-shadow: var(--shadow-hard);
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 16px;
+        margin: 16px 0;
+      }
+
+      .task {
+        padding: 20px 22px;
+        border: 2px solid var(--ink);
+        border-radius: var(--radius);
+        background: var(--white);
+        box-shadow: var(--shadow-hard);
+      }
+
+      .task > h3 {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 12px;
+        margin: 0 0 0.5rem;
+      }
+
+      .num {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 30px;
+        height: 30px;
+        flex: none;
+        border: 2px solid var(--ink);
+        border-radius: 8px;
+        background: var(--yellow);
+        box-shadow: 2px 2px 0 var(--ink);
+        color: var(--ink);
+        font-size: 0.95rem;
+        font-weight: 900;
+        transform: rotate(-3deg);
+      }
+
+      .note {
+        margin: 1.25rem 0;
+        padding: 14px 16px 14px 18px;
+        border: 1.5px solid var(--line-strong);
+        border-left-width: 6px;
+        border-radius: var(--radius);
+        background: var(--white);
+      }
+
+      .note-title {
+        display: block;
+        margin-bottom: 0.25rem;
+        color: var(--ink);
+        font-weight: 800;
+      }
+
+      .note-warn {
+        border-left-color: var(--yellow);
+        background: var(--paper-amber);
+      }
+
+      .foot {
+        color: var(--muted);
+        font-size: 0.92rem;
+        font-weight: 650;
+      }
+
+      body:has(.auth-card) {
+        min-height: 100vh;
+        display: flow-root;
+      }
+
+      .auth-card {
+        width: min(520px, calc(100% - 32px));
+        margin: 64px auto;
+        padding: 32px;
+        border: 2px solid var(--ink);
+        border-radius: var(--radius);
+        background: var(--white);
+        box-shadow: var(--shadow-hard);
+      }
+
+      .auth-card .brand {
+        margin-bottom: 32px;
+      }
+      .auth-kicker {
+        margin: 0 0 16px;
+        color: var(--muted);
+        font-size: 0.8rem;
+        font-weight: 750;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+      }
+      .auth-card h1 {
+        max-width: none;
+        font-size: 2rem;
+        line-height: 1.12;
+      }
+      .auth-card label {
+        display: block;
+        margin: 18px 0 6px;
+        font-size: 0.9rem;
+        font-weight: 750;
+      }
+      .auth-card input,
+      .auth-card select {
+        width: 100%;
+        min-height: 48px;
+        padding: 10px 12px;
+        border: 1.5px solid var(--ink);
+        border-radius: 6px;
+        background: white;
+        color: var(--ink);
+        font: inherit;
+      }
+      .auth-hint {
+        margin: 8px 0 20px;
+        color: var(--muted);
+        font-size: 0.8rem;
+      }
+      .auth-action {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 46px;
+        padding: 8px 20px;
+        border: 2px solid var(--ink);
+        border-radius: var(--radius);
+        background: var(--blue);
+        color: white;
+        font: inherit;
+        font-weight: 750;
+        text-decoration: none;
+        cursor: pointer;
+      }
+      .auth-email {
+        font-weight: 750;
+        overflow-wrap: anywhere;
+      }
+      .auth-signout {
+        margin-top: 28px;
+        padding-top: 20px;
+        border-top: 1px solid var(--line-strong);
+      }
+      .auth-signout button {
+        min-height: 44px;
+        border: 0;
+        padding: 0 4px;
+        background: none;
+        color: var(--ink);
+        font: inherit;
+        font-weight: 750;
+        text-decoration: underline;
+        cursor: pointer;
+      }
+      .company-section {
+        margin-top: 32px;
+      }
+      .company-list {
+        list-style: none;
+        padding: 0;
+      }
+      .company-row {
+        padding: 20px 0;
+        border-bottom: 1px solid var(--line-strong);
+        overflow-wrap: anywhere;
+      }
+      .company-row p {
+        margin: 0 0 8px;
+      }
+      .company-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 12px;
+      }
+
+      @media (max-width: 760px) {
+        .wrap {
+          width: min(100% - 28px, 980px);
+          padding-top: 28px;
+        }
+
+        h1 {
+          max-width: 13ch;
+          font-size: 2.45rem;
+        }
+
+        .head-line {
+          margin-bottom: 1.8rem;
+        }
+
+        .panel,
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        html {
+          scroll-behavior: auto;
+        }
+      }
+
+      /* ---- prototype-only styling; the shell above is copied verbatim from packages/core/src/html.ts ---- */
+      .wrap {
+        width: min(1180px, calc(100% - 40px));
+      }
+      .mock-toc {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 1rem;
+      }
+      .mock-toc a {
+        display: inline-flex;
+        min-height: 36px;
+        align-items: center;
+        padding: 4px 14px;
+        border: 2px solid var(--ink);
+        border-radius: var(--radius-pill);
+        background: var(--white);
+        text-decoration: none;
+        font-size: 0.9rem;
+        box-shadow: 2px 2px 0 var(--ink);
+      }
+      .mock-brief {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+        margin-bottom: 3rem;
+      }
+      .mock-brief p {
+        margin: 0;
+        font-size: 0.98rem;
+      }
+      .variant {
+        margin: 0 0 5rem;
+      }
+      .variant-head {
+        display: flex;
+        gap: 18px;
+        align-items: flex-start;
+        margin-bottom: 1.25rem;
+      }
+      .variant-head h2 {
+        margin-bottom: 0.3rem;
+      }
+      .variant-why {
+        max-width: 78ch;
+        color: var(--muted);
+        font-size: 1rem;
+        margin: 0;
+      }
+      .variant > h3 {
+        margin: 2.2rem 0 0.8rem;
+        color: var(--muted);
+        font-size: 1rem;
+      }
+      .muted {
+        color: var(--muted);
+        font-style: italic;
+        font-weight: 500;
+      }
+      .sr {
+        position: absolute;
+        left: -9999px;
+      }
+
+      /* the mocked browser viewport */
+      .frame {
+        border: 2px solid var(--ink);
+        border-radius: var(--radius);
+        background: var(--paper);
+        box-shadow: var(--shadow-hard);
+        overflow: hidden;
+      }
+      .frame.small {
+        font-size: 0.94em;
+      }
+      .app-bar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 12px 28px;
+        padding: 14px 26px;
+        border-bottom: 2px solid var(--ink);
+        background: var(--white);
+      }
+      .app-bar .brand {
+        font-size: 1rem;
+      }
+      .app-nav {
+        display: flex;
+        gap: 4px;
+      }
+      .app-nav a {
+        padding: 6px 12px;
+        border-radius: 6px;
+        color: var(--ink);
+        text-decoration: none;
+        font-weight: 750;
+        font-size: 0.95rem;
+      }
+      .app-nav a[aria-current="page"] {
+        background: var(--yellow);
+        border: 2px solid var(--ink);
+        box-shadow: 2px 2px 0 var(--ink);
+      }
+      .app-who {
+        margin-left: auto;
+        color: var(--muted);
+        font-size: 0.88rem;
+        font-weight: 650;
+      }
+      .app-body {
+        padding: 26px 26px 34px;
+      }
+
+      /* pills for states; would be shell classes if picked */
+      .pill-off {
+        background: rgba(18, 17, 15, 0.06);
+        color: var(--ink-soft);
+        min-height: 22px;
+        padding: 1px 9px;
+        font-size: 0.68rem;
+        vertical-align: middle;
+      }
+      .pill-warn {
+        background: var(--paper-amber);
+        color: var(--amber-ink);
+        min-height: 22px;
+        padding: 1px 9px;
+        font-size: 0.68rem;
+        vertical-align: middle;
+      }
+
+      /* A */
+      .a-h1 {
+        max-width: none;
+        font-size: 2.1rem;
+        margin-bottom: 0.2rem;
+      }
+      .a-sub {
+        color: var(--muted);
+        font-size: 0.98rem;
+        margin-bottom: 1.6rem;
+      }
+      .a-group {
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+        margin: 1.6rem 0 0.4rem;
+      }
+      .a-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+      .a-list li {
+        display: grid;
+        grid-template-columns: 220px 1fr;
+        grid-template-rows: auto auto;
+        column-gap: 22px;
+        padding: 12px 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .a-name {
+        grid-row: 1 / span 2;
+        align-self: start;
+        font-family: var(--font-mono);
+        font-size: 1rem;
+        font-weight: 750;
+        overflow-wrap: anywhere;
+      }
+      .a-desc {
+        display: block;
+        color: var(--ink-soft);
+        font-size: 0.98rem;
+        line-height: 1.5;
+      }
+      .a-meta {
+        display: block;
+        margin-top: 2px;
+        color: var(--muted);
+        font-size: 0.84rem;
+        font-weight: 650;
+      }
+      .a-off .a-name {
+        color: var(--muted);
+      }
+      .a-off .a-desc {
+        color: var(--muted);
+      }
+      .a-more {
+        grid-template-columns: 1fr;
+      }
+
+      /* B */
+      .b-head {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 12px 24px;
+        margin-bottom: 1rem;
+      }
+      .b-h1 {
+        max-width: none;
+        font-size: 2rem;
+        margin: 0;
+      }
+      .b-filters {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-left: auto;
+      }
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        min-height: 32px;
+        padding: 3px 12px;
+        border: 2px solid var(--ink);
+        border-radius: var(--radius-pill);
+        background: var(--white);
+        color: var(--ink);
+        text-decoration: none;
+        font-size: 0.82rem;
+        font-weight: 800;
+      }
+      .chip-on {
+        background: var(--yellow);
+        box-shadow: 2px 2px 0 var(--ink);
+      }
+      .chip-dim {
+        color: var(--muted);
+        border-color: var(--line-strong);
+      }
+      .b-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.88rem;
+        line-height: 1.4;
+      }
+      .b-table th {
+        text-align: left;
+        padding: 8px 10px;
+        border-bottom: 2px solid var(--ink);
+        color: var(--ink);
+        font-size: 0.74rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }
+      .b-table td {
+        padding: 9px 10px;
+        border-bottom: 1px solid var(--line);
+        vertical-align: top;
+      }
+      .b-table td:first-child a {
+        font-family: var(--font-mono);
+        font-size: 0.9rem;
+      }
+      .b-desc {
+        max-width: 46ch;
+        color: var(--ink-soft);
+      }
+      .b-act {
+        white-space: nowrap;
+        text-align: right;
+      }
+      .b-act a {
+        margin-left: 10px;
+        font-size: 0.84rem;
+      }
+      .b-mine {
+        background: rgba(255, 191, 53, 0.14);
+      }
+      .b-off td {
+        color: var(--muted);
+      }
+      .b-empty {
+        padding: 28px 10px !important;
+        color: var(--muted);
+        text-align: center;
+      }
+      .b-foot {
+        margin-top: 1rem;
+        color: var(--muted);
+        font-size: 0.88rem;
+      }
+
+      /* C */
+      .c-body {
+        display: grid;
+        grid-template-columns: 320px 1fr;
+        gap: 0;
+        padding: 0;
+      }
+      .c-index {
+        padding: 22px 18px 30px;
+        border-right: 2px solid var(--ink);
+        background: var(--white);
+      }
+      .c-count {
+        margin: 0 0 1rem;
+        color: var(--muted);
+        font-size: 0.84rem;
+        font-weight: 650;
+      }
+      .c-group {
+        font-size: 0.74rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+        margin: 1.2rem 0 0.3rem;
+      }
+      .c-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+      .c-list a {
+        display: block;
+        padding: 7px 10px;
+        border-radius: 6px;
+        text-decoration: none;
+        color: var(--ink);
+        font-weight: 600;
+      }
+      .c-list a:hover {
+        background: var(--paper-blue);
+      }
+      .c-current a {
+        background: var(--yellow);
+        border: 2px solid var(--ink);
+        box-shadow: 2px 2px 0 var(--ink);
+      }
+      .c-n {
+        display: block;
+        font-family: var(--font-mono);
+        font-size: 0.88rem;
+        font-weight: 750;
+      }
+      .c-l {
+        display: block;
+        color: var(--muted);
+        font-size: 0.8rem;
+        font-weight: 550;
+        line-height: 1.35;
+      }
+      .c-tag {
+        display: inline-block;
+        padding: 0 6px;
+        border: 1.5px solid var(--line-strong);
+        border-radius: 999px;
+        font-size: 0.68rem;
+        text-transform: uppercase;
+      }
+      .c-off .c-n {
+        color: var(--muted);
+      }
+      .c-emptyidx {
+        font-size: 0.9rem;
+      }
+      .c-detail {
+        padding: 30px 34px 36px;
+      }
+      .c-addr {
+        margin: 0 0 0.4rem;
+        font-family: var(--font-mono);
+        font-size: 0.9rem;
+        color: var(--muted);
+      }
+      .c-h1 {
+        max-width: none;
+        font-size: 2.2rem;
+        margin-bottom: 0.6rem;
+      }
+      .c-desc {
+        font-size: 1.05rem;
+        max-width: 60ch;
+      }
+      .c-actline {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        margin: 1.2rem 0 1.6rem;
+      }
+      .c-quiet {
+        font-size: 0.92rem;
+      }
+      .c-facts {
+        display: grid;
+        grid-template-columns: 150px 1fr;
+        gap: 8px 16px;
+        margin: 0 0 1.6rem;
+        font-size: 0.95rem;
+      }
+      .c-facts dt {
+        color: var(--muted);
+        font-weight: 750;
+      }
+      .c-facts dd {
+        margin: 0;
+      }
+      .c-manage {
+        padding-top: 1.2rem;
+        border-top: 2px solid var(--line-strong);
+      }
+      .c-manage h2 {
+        font-size: 1.1rem;
+        margin-bottom: 0.4rem;
+      }
+      .c-managerow {
+        font-size: 0.95rem;
+        margin-bottom: 0.4rem;
+      }
+      .c-managenote {
+        color: var(--muted);
+        font-size: 0.88rem;
+        margin: 0;
+      }
+      .c-pair {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+      }
+      .c-pair .c-detail {
+        padding: 24px 26px;
+      }
+      .c-offcard {
+        background: rgba(18, 17, 15, 0.03);
+      }
+
+      @media (max-width: 860px) {
+        .mock-brief,
+        .c-pair,
+        .grid {
+          grid-template-columns: 1fr;
+        }
+        .a-list li {
+          grid-template-columns: 1fr;
+        }
+        .a-name {
+          grid-row: auto;
+        }
+        .c-body {
+          grid-template-columns: 1fr;
+        }
+        .c-index {
+          border-right: 0;
+          border-bottom: 2px solid var(--ink);
+        }
+        .b-table {
+          font-size: 0.8rem;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header class="doc-head">
+        <div class="head-line">
+          <div class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</div>
+          <span class="kicker">Prototype · portal patch list</span>
+        </div>
+        <h1>Three ways the signed-in <code>/</code> could read</h1>
+        <p class="lede">
+          Static mocks for the Portal map. Same company, same patches, three structures. Each
+          variant shows the large inventory first, then the empty company and the viewer who owns
+          nothing. Retired, deleted and owner-deactivated patches sit inside the inventory. Nothing
+          here is live.
+        </p>
+        <nav class="mock-toc" aria-label="Variants">
+          <a href="#variant-a">A · Open-first directory</a>
+          <a href="#variant-b">B · Owner workbench</a>
+          <a href="#variant-c">C · Directory with detail</a>
+          <a href="#title-question">The title question</a>
+        </nav>
+      </header>
+
+      <section class="mock-brief">
+        <div class="task">
+          <h3>The cast</h3>
+          <p>
+            <strong>Northwind Trading</strong> (<code>northwind</code>), 17 patches. The viewer is
+            <strong>Priya Raman</strong>, a member who owns three.
+            <strong>Tom Okafor</strong> retired Time off on 30 Aug.
+            <strong>Ana Costa</strong> deleted the old CRM export on 6 Sep, so it has 22 days left.
+            <strong>Jonas Weber</strong> was deactivated on 2 Sep and still owns Price list 2026,
+            which keeps serving.
+          </p>
+        </div>
+        <div class="task">
+          <h3>What every variant shares</h3>
+          <p>
+            The shell's paper, ink and hard shadows. One header with Patches, Company, Connections
+            and Your machines. Yours first, then the company's. Live by default, retired and deleted
+            behind a toggle, shown expanded here. Descriptions are the owner's 500-code-point
+            paragraph; "No description" is muted, never substituted.
+          </p>
+        </div>
+      </section>
+
+      <!-- ============================================================ A -->
+      <section class="variant" id="variant-a">
+        <div class="variant-head">
+          <span class="num">A</span>
+          <div>
+            <h2>Open-first directory</h2>
+            <p class="variant-why">
+              A reading list. The address is the link, the description is the reason to click. No
+              owner controls on the list at all; management lives on the patch page. Bet: most
+              visits are "open the thing", and a non-builder should never see a Manage column.
+            </p>
+          </div>
+        </div>
+
+        <div class="frame">
+          <div class="app-bar">
+            <div class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</div>
+            <nav class="app-nav" aria-label="Primary">
+              <a href="#" aria-current="page">Patches</a><a href="#">Company</a
+              ><a href="#">Connections</a><a href="#">Your machines</a>
+            </nav>
+            <div class="app-who">Priya Raman · Northwind Trading · <a href="#">Sign out</a></div>
+          </div>
+          <div class="app-body a-body">
+            <h1 class="a-h1">Patches at Northwind</h1>
+            <p class="a-sub">
+              17 patches. Open one, or send someone its address.
+              <a href="#">Hide retired and deleted</a>
+            </p>
+
+            <h2 class="a-group">Yours</h2>
+            <ul class="a-list">
+              <li>
+                <a class="a-name" href="#">sales-dashboard</a
+                ><span class="a-desc"
+                  >Weekly pipeline and closed-won by rep, pulled from the CRM Postgres. Sales
+                  managers open this on Monday mornings.</span
+                ><span class="a-meta">you · v14 · company · published 3 days ago</span>
+              </li>
+              <li>
+                <a class="a-name" href="#">contract-review</a
+                ><span class="a-desc"
+                  >Drop a contract in, get back the clauses that differ from our standard terms,
+                  with the standard wording beside each.</span
+                ><span class="a-meta">you · v7 · company · published 11 days ago</span>
+              </li>
+              <li>
+                <a class="a-name" href="#">inventory-count</a
+                ><span class="a-desc"
+                  >Count sheets for the warehouse, one per aisle, tallied at the end of the shift
+                  and compared to the system quantity.</span
+                ><span class="a-meta">you · v22 · company · published yesterday</span>
+              </li>
+            </ul>
+
+            <h2 class="a-group">Everyone's</h2>
+            <ul class="a-list">
+              <li>
+                <a class="a-name" href="#">expense-claims</a
+                ><span class="a-desc"
+                  >Submit and approve expense claims. Approvers see their queue; finance exports the
+                  month as a CSV for the accountant.</span
+                ><span class="a-meta">Tom Okafor · v31 · company</span>
+              </li>
+              <li>
+                <a class="a-name" href="#">onboarding-checklist</a
+                ><span class="a-desc"
+                  >What a new hire does in their first two weeks, with links to every system they
+                  need and who to ask.</span
+                ><span class="a-meta">Maria Lindqvist · v3 · public</span>
+              </li>
+              <li>
+                <a class="a-name" href="#">pricing-sheet</a
+                ><span class="a-desc"
+                  >The current price list, updated when finance changes it. Share the link with
+                  customers; it is public.</span
+                ><span class="a-meta"
+                  >Jonas Weber <span class="pill pill-off">owner deactivated</span> · v2 ·
+                  public</span
+                >
+              </li>
+              <li>
+                <a class="a-name" href="#">supplier-directory</a
+                ><span class="a-desc"
+                  >Every supplier we buy from, their terms, and who owns the relationship.</span
+                ><span class="a-meta">Ana Costa · v5 · company</span>
+              </li>
+              <li>
+                <a class="a-name" href="#">it-requests</a
+                ><span class="a-desc"
+                  >Ask for a laptop, an account or access. Dev triages the queue every
+                  morning.</span
+                ><span class="a-meta">Dev Patel · v12 · company</span>
+              </li>
+              <li>
+                <a class="a-name" href="#">meeting-rooms</a
+                ><span class="a-desc muted">No description</span
+                ><span class="a-meta">Maria Lindqvist · v4 · company</span>
+              </li>
+              <li>
+                <a class="a-name" href="#">travel-policy</a
+                ><span class="a-desc"
+                  >What you can book, what needs sign-off, and how to claim it back.</span
+                ><span class="a-meta">Tom Okafor · v1 · public</span>
+              </li>
+              <li>
+                <a class="a-name" href="#">quarterly-okrs</a
+                ><span class="a-desc"
+                  >Company and team objectives for the quarter, with the weekly confidence score
+                  each lead posts.</span
+                ><span class="a-meta">Ana Costa · v6 · company</span>
+              </li>
+              <li>
+                <a class="a-name" href="#">warehouse-map</a
+                ><span class="a-desc"
+                  >Aisle and bin layout for both warehouses, searchable by SKU.</span
+                ><span class="a-meta">Dev Patel · v2 · company</span>
+              </li>
+              <li>
+                <a class="a-name" href="#">customer-feedback</a
+                ><span class="a-desc"
+                  >Every piece of feedback support has logged, tagged by product area, with the
+                  count per week.</span
+                ><span class="a-meta">Maria Lindqvist · v18 · company</span>
+              </li>
+              <li>
+                <a class="a-name" href="#">shift-roster</a
+                ><span class="a-desc"
+                  >Who is on which shift at the warehouse this month. Supervisors edit, everyone
+                  else reads.</span
+                ><span class="a-meta">Dev Patel · v9 · company</span>
+              </li>
+              <li>
+                <a class="a-name" href="#">brand-assets</a
+                ><span class="a-desc"
+                  >Logos, colours and templates, with the rules for using them.</span
+                ><span class="a-meta">Ana Costa · v3 · public</span>
+              </li>
+            </ul>
+
+            <h2 class="a-group">Retired and deleted</h2>
+            <ul class="a-list">
+              <li class="a-off">
+                <a class="a-name" href="#">holiday-calendar</a
+                ><span class="a-desc">Who is out this week and next, from the HR export.</span
+                ><span class="a-meta"
+                  ><span class="pill pill-off">retired</span> by Tom Okafor on 30 Aug · v9</span
+                >
+              </li>
+              <li class="a-off">
+                <a class="a-name" href="#">old-crm-export</a
+                ><span class="a-desc">One-off export of the old CRM before the migration.</span
+                ><span class="a-meta"
+                  ><span class="pill pill-warn">deleted · 22 days left</span> by Ana Costa on 6 Sep
+                  · v1</span
+                >
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <h3>A · empty company</h3>
+        <div class="frame small">
+          <div class="app-bar">
+            <div class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</div>
+            <nav class="app-nav" aria-label="Primary">
+              <a href="#" aria-current="page">Patches</a><a href="#">Company</a
+              ><a href="#">Connections</a><a href="#">Your machines</a>
+            </nav>
+            <div class="app-who">Priya Raman · Northwind Trading · <a href="#">Sign out</a></div>
+          </div>
+          <div class="app-body a-body">
+            <h1 class="a-h1">No patches yet</h1>
+            <p class="a-sub">
+              Nobody at Northwind has published anything. When someone does, it lists here for the
+              whole company.
+            </p>
+            <div class="note">
+              <span class="note-title">Publish the first one</span>Ask your agent to publish a page
+              with Patchy, or run <code>patchy init</code> in a terminal that has done
+              <code>patchy login</code>. Your machines shows the terminals that can publish as you.
+            </div>
+          </div>
+        </div>
+
+        <h3>A · viewer owns nothing</h3>
+        <div class="frame small">
+          <div class="app-bar">
+            <div class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</div>
+            <nav class="app-nav" aria-label="Primary">
+              <a href="#" aria-current="page">Patches</a><a href="#">Company</a
+              ><a href="#">Connections</a><a href="#">Your machines</a>
+            </nav>
+            <div class="app-who">Sam Ito · Northwind Trading · <a href="#">Sign out</a></div>
+          </div>
+          <div class="app-body a-body">
+            <h1 class="a-h1">Patches at Northwind</h1>
+            <p class="a-sub">
+              15 patches. Open one, or send someone its address.
+              <a href="#">Show retired and deleted</a>
+            </p>
+            <ul class="a-list">
+              <li>
+                <a class="a-name" href="#">expense-claims</a
+                ><span class="a-desc"
+                  >Submit and approve expense claims. Approvers see their queue; finance exports the
+                  month as a CSV for the accountant.</span
+                ><span class="a-meta">Tom Okafor · v31 · company</span>
+              </li>
+              <li>
+                <a class="a-name" href="#">onboarding-checklist</a
+                ><span class="a-desc"
+                  >What a new hire does in their first two weeks, with links to every system they
+                  need and who to ask.</span
+                ><span class="a-meta">Maria Lindqvist · v3 · public</span>
+              </li>
+              <li>
+                <a class="a-name" href="#">sales-dashboard</a
+                ><span class="a-desc"
+                  >Weekly pipeline and closed-won by rep, pulled from the CRM Postgres. Sales
+                  managers open this on Monday mornings.</span
+                ><span class="a-meta">Priya Raman · v14 · company</span>
+              </li>
+              <li class="a-more">
+                <span class="a-meta"
+                  >… 12 more, one list, no "Yours" heading because there is nothing to put under
+                  it.</span
+                >
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================================ B -->
+      <section class="variant" id="variant-b">
+        <div class="variant-head">
+          <span class="num">B</span>
+          <div>
+            <h2>Owner workbench</h2>
+            <p class="variant-why">
+              A table. Every column is a fact the lifecycle and admin tickets decided a person
+              needs: owner, version, sharing, state. Actions ride on each row. Bet: the portal is
+              mostly visited by builders and admins checking on what they own, and the density pays
+              for itself at 17 rows and more.
+            </p>
+          </div>
+        </div>
+
+        <div class="frame">
+          <div class="app-bar">
+            <div class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</div>
+            <nav class="app-nav" aria-label="Primary">
+              <a href="#" aria-current="page">Patches</a><a href="#">Company</a
+              ><a href="#">Connections</a><a href="#">Your machines</a>
+            </nav>
+            <div class="app-who">Priya Raman · Northwind Trading · <a href="#">Sign out</a></div>
+          </div>
+          <div class="app-body">
+            <div class="b-head">
+              <h1 class="b-h1">Patches</h1>
+              <div class="b-filters" aria-label="Filter">
+                <a class="chip chip-on" href="#">All · 17</a><a class="chip" href="#">Yours · 3</a
+                ><a class="chip" href="#">Public · 4</a
+                ><a class="chip" href="#">Retired and deleted · 2</a>
+              </div>
+            </div>
+            <table class="b-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Description</th>
+                  <th>Owner</th>
+                  <th>Version</th>
+                  <th>Sharing</th>
+                  <th>State</th>
+                  <th><span class="sr">Actions</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr class="b-mine">
+                  <td><a href="#">sales-dashboard</a></td>
+                  <td class="b-desc">
+                    Weekly pipeline and closed-won by rep, pulled from the CRM Postgres. Sales
+                    managers open this on Monday mornings.
+                  </td>
+                  <td>you</td>
+                  <td>v14</td>
+                  <td>company</td>
+                  <td>live</td>
+                  <td class="b-act"><a href="#">Open</a> <a href="#">Manage</a></td>
+                </tr>
+                <tr class="b-mine">
+                  <td><a href="#">contract-review</a></td>
+                  <td class="b-desc">
+                    Drop a contract in, get back the clauses that differ from our standard terms,
+                    with the standard wording beside each.
+                  </td>
+                  <td>you</td>
+                  <td>v7</td>
+                  <td>company</td>
+                  <td>live</td>
+                  <td class="b-act"><a href="#">Open</a> <a href="#">Manage</a></td>
+                </tr>
+                <tr class="b-mine">
+                  <td><a href="#">inventory-count</a></td>
+                  <td class="b-desc">
+                    Count sheets for the warehouse, one per aisle, tallied at the end of the shift
+                    and compared to the system quantity.
+                  </td>
+                  <td>you</td>
+                  <td>v22</td>
+                  <td>company</td>
+                  <td>live</td>
+                  <td class="b-act"><a href="#">Open</a> <a href="#">Manage</a></td>
+                </tr>
+                <tr>
+                  <td><a href="#">expense-claims</a></td>
+                  <td class="b-desc">
+                    Submit and approve expense claims. Approvers see their queue; finance exports
+                    the month as a CSV for the accountant.
+                  </td>
+                  <td>Tom Okafor</td>
+                  <td>v31</td>
+                  <td>company</td>
+                  <td>live</td>
+                  <td class="b-act"><a href="#">Open</a></td>
+                </tr>
+                <tr>
+                  <td><a href="#">onboarding-checklist</a></td>
+                  <td class="b-desc">
+                    What a new hire does in their first two weeks, with links to every system they
+                    need and who to ask.
+                  </td>
+                  <td>Maria Lindqvist</td>
+                  <td>v3</td>
+                  <td>public</td>
+                  <td>live</td>
+                  <td class="b-act"><a href="#">Open</a></td>
+                </tr>
+                <tr>
+                  <td><a href="#">pricing-sheet</a></td>
+                  <td class="b-desc">
+                    The current price list, updated when finance changes it. Share the link with
+                    customers; it is public.
+                  </td>
+                  <td>Jonas Weber <span class="pill pill-off">deactivated</span></td>
+                  <td>v2</td>
+                  <td>public</td>
+                  <td>live</td>
+                  <td class="b-act"><a href="#">Open</a></td>
+                </tr>
+                <tr>
+                  <td><a href="#">supplier-directory</a></td>
+                  <td class="b-desc">
+                    Every supplier we buy from, their terms, and who owns the relationship.
+                  </td>
+                  <td>Ana Costa</td>
+                  <td>v5</td>
+                  <td>company</td>
+                  <td>live</td>
+                  <td class="b-act"><a href="#">Open</a></td>
+                </tr>
+                <tr>
+                  <td><a href="#">it-requests</a></td>
+                  <td class="b-desc">
+                    Ask for a laptop, an account or access. Dev triages the queue every morning.
+                  </td>
+                  <td>Dev Patel</td>
+                  <td>v12</td>
+                  <td>company</td>
+                  <td>live</td>
+                  <td class="b-act"><a href="#">Open</a></td>
+                </tr>
+                <tr>
+                  <td><a href="#">meeting-rooms</a></td>
+                  <td class="b-desc muted">No description</td>
+                  <td>Maria Lindqvist</td>
+                  <td>v4</td>
+                  <td>company</td>
+                  <td>live</td>
+                  <td class="b-act"><a href="#">Open</a></td>
+                </tr>
+                <tr>
+                  <td><a href="#">travel-policy</a></td>
+                  <td class="b-desc">
+                    What you can book, what needs sign-off, and how to claim it back.
+                  </td>
+                  <td>Tom Okafor</td>
+                  <td>v1</td>
+                  <td>public</td>
+                  <td>live</td>
+                  <td class="b-act"><a href="#">Open</a></td>
+                </tr>
+                <tr>
+                  <td><a href="#">quarterly-okrs</a></td>
+                  <td class="b-desc">
+                    Company and team objectives for the quarter, with the weekly confidence score
+                    each lead posts.
+                  </td>
+                  <td>Ana Costa</td>
+                  <td>v6</td>
+                  <td>company</td>
+                  <td>live</td>
+                  <td class="b-act"><a href="#">Open</a></td>
+                </tr>
+                <tr>
+                  <td><a href="#">warehouse-map</a></td>
+                  <td class="b-desc">
+                    Aisle and bin layout for both warehouses, searchable by SKU.
+                  </td>
+                  <td>Dev Patel</td>
+                  <td>v2</td>
+                  <td>company</td>
+                  <td>live</td>
+                  <td class="b-act"><a href="#">Open</a></td>
+                </tr>
+                <tr>
+                  <td><a href="#">customer-feedback</a></td>
+                  <td class="b-desc">
+                    Every piece of feedback support has logged, tagged by product area, with the
+                    count per week.
+                  </td>
+                  <td>Maria Lindqvist</td>
+                  <td>v18</td>
+                  <td>company</td>
+                  <td>live</td>
+                  <td class="b-act"><a href="#">Open</a></td>
+                </tr>
+                <tr>
+                  <td><a href="#">shift-roster</a></td>
+                  <td class="b-desc">
+                    Who is on which shift at the warehouse this month. Supervisors edit, everyone
+                    else reads.
+                  </td>
+                  <td>Dev Patel</td>
+                  <td>v9</td>
+                  <td>company</td>
+                  <td>live</td>
+                  <td class="b-act"><a href="#">Open</a></td>
+                </tr>
+                <tr>
+                  <td><a href="#">brand-assets</a></td>
+                  <td class="b-desc">
+                    Logos, colours and templates, with the rules for using them.
+                  </td>
+                  <td>Ana Costa</td>
+                  <td>v3</td>
+                  <td>public</td>
+                  <td>live</td>
+                  <td class="b-act"><a href="#">Open</a></td>
+                </tr>
+                <tr class="b-off">
+                  <td><a href="#">holiday-calendar</a></td>
+                  <td class="b-desc">Who is out this week and next, from the HR export.</td>
+                  <td>Tom Okafor</td>
+                  <td>v9</td>
+                  <td>company</td>
+                  <td><span class="pill pill-off">retired</span> 30 Aug</td>
+                  <td class="b-act"><a href="#">Notice</a></td>
+                </tr>
+                <tr class="b-off">
+                  <td><a href="#">old-crm-export</a></td>
+                  <td class="b-desc">One-off export of the old CRM before the migration.</td>
+                  <td>Ana Costa</td>
+                  <td>v1</td>
+                  <td>company</td>
+                  <td><span class="pill pill-warn">deleted</span> 22 days left</td>
+                  <td class="b-act"><a href="#">Notice</a></td>
+                </tr>
+              </tbody>
+            </table>
+            <p class="b-foot">
+              Manage appears on your own rows. An admin sees it on every row. Open on a retired or
+              deleted row goes to the first-party notice, which is where Restore lives.
+            </p>
+          </div>
+        </div>
+
+        <h3>B · empty company</h3>
+        <div class="frame small">
+          <div class="app-bar">
+            <div class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</div>
+            <nav class="app-nav" aria-label="Primary">
+              <a href="#" aria-current="page">Patches</a><a href="#">Company</a
+              ><a href="#">Connections</a><a href="#">Your machines</a>
+            </nav>
+            <div class="app-who">Priya Raman · Northwind Trading · <a href="#">Sign out</a></div>
+          </div>
+          <div class="app-body">
+            <div class="b-head">
+              <h1 class="b-h1">Patches</h1>
+              <div class="b-filters">
+                <a class="chip chip-on" href="#">All · 0</a><a class="chip" href="#">Yours · 0</a>
+              </div>
+            </div>
+            <table class="b-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Description</th>
+                  <th>Owner</th>
+                  <th>Version</th>
+                  <th>Sharing</th>
+                  <th>State</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td colspan="7" class="b-empty">
+                    Nothing published at Northwind yet. Ask your agent to publish with Patchy, or
+                    run <code>patchy init</code> from a logged-in terminal.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <h3>B · viewer owns nothing</h3>
+        <div class="frame small">
+          <div class="app-bar">
+            <div class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</div>
+            <nav class="app-nav" aria-label="Primary">
+              <a href="#" aria-current="page">Patches</a><a href="#">Company</a
+              ><a href="#">Connections</a><a href="#">Your machines</a>
+            </nav>
+            <div class="app-who">Sam Ito · Northwind Trading · <a href="#">Sign out</a></div>
+          </div>
+          <div class="app-body">
+            <div class="b-head">
+              <h1 class="b-h1">Patches</h1>
+              <div class="b-filters">
+                <a class="chip chip-on" href="#">All · 15</a
+                ><a class="chip chip-dim" href="#">Yours · 0</a
+                ><a class="chip" href="#">Public · 4</a
+                ><a class="chip" href="#">Retired and deleted · 2</a>
+              </div>
+            </div>
+            <table class="b-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Description</th>
+                  <th>Owner</th>
+                  <th>Version</th>
+                  <th>Sharing</th>
+                  <th>State</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><a href="#">expense-claims</a></td>
+                  <td class="b-desc">
+                    Submit and approve expense claims. Approvers see their queue; finance exports
+                    the month as a CSV for the accountant.
+                  </td>
+                  <td>Tom Okafor</td>
+                  <td>v31</td>
+                  <td>company</td>
+                  <td>live</td>
+                  <td class="b-act"><a href="#">Open</a></td>
+                </tr>
+                <tr>
+                  <td><a href="#">onboarding-checklist</a></td>
+                  <td class="b-desc">
+                    What a new hire does in their first two weeks, with links to every system they
+                    need and who to ask.
+                  </td>
+                  <td>Maria Lindqvist</td>
+                  <td>v3</td>
+                  <td>public</td>
+                  <td>live</td>
+                  <td class="b-act"><a href="#">Open</a></td>
+                </tr>
+                <tr>
+                  <td colspan="7" class="b-empty">
+                    … 13 more. Same table, no Manage anywhere, and the Yours chip reads 0.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================================ C -->
+      <section class="variant" id="variant-c">
+        <div class="variant-head">
+          <span class="num">C</span>
+          <div>
+            <h2>Directory with per-patch detail</h2>
+            <p class="variant-why">
+              A compact index on the left, one patch's full card on the right. The list stays
+              scannable at any size because it carries only the name and one line; the card holds
+              everything else, including the owner's actions. Bet: people want to read about a patch
+              before opening it, and the patch page can be this card rather than a separate route.
+            </p>
+          </div>
+        </div>
+
+        <div class="frame">
+          <div class="app-bar">
+            <div class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</div>
+            <nav class="app-nav" aria-label="Primary">
+              <a href="#" aria-current="page">Patches</a><a href="#">Company</a
+              ><a href="#">Connections</a><a href="#">Your machines</a>
+            </nav>
+            <div class="app-who">Priya Raman · Northwind Trading · <a href="#">Sign out</a></div>
+          </div>
+          <div class="app-body c-body">
+            <aside class="c-index">
+              <p class="c-count">17 patches · <a href="#">hide retired and deleted</a></p>
+              <h2 class="c-group">Yours</h2>
+              <ul class="c-list">
+                <li class="c-current">
+                  <a href="#"
+                    ><span class="c-n">sales-dashboard</span
+                    ><span class="c-l">Weekly pipeline and closed-won by rep</span></a
+                  >
+                </li>
+                <li>
+                  <a href="#"
+                    ><span class="c-n">contract-review</span
+                    ><span class="c-l">Clauses that differ from our standard terms</span></a
+                  >
+                </li>
+                <li>
+                  <a href="#"
+                    ><span class="c-n">inventory-count</span
+                    ><span class="c-l">Count sheets for the warehouse</span></a
+                  >
+                </li>
+              </ul>
+              <h2 class="c-group">Everyone's</h2>
+              <ul class="c-list">
+                <li>
+                  <a href="#"
+                    ><span class="c-n">expense-claims</span
+                    ><span class="c-l">Submit and approve expense claims</span></a
+                  >
+                </li>
+                <li>
+                  <a href="#"
+                    ><span class="c-n">onboarding-checklist</span
+                    ><span class="c-l">A new hire's first two weeks</span></a
+                  >
+                </li>
+                <li>
+                  <a href="#"
+                    ><span class="c-n">pricing-sheet</span
+                    ><span class="c-l"
+                      >The current price list <span class="c-tag">owner deactivated</span></span
+                    ></a
+                  >
+                </li>
+                <li>
+                  <a href="#"
+                    ><span class="c-n">supplier-directory</span
+                    ><span class="c-l">Every supplier we buy from</span></a
+                  >
+                </li>
+                <li>
+                  <a href="#"
+                    ><span class="c-n">it-requests</span
+                    ><span class="c-l">Ask for a laptop, an account or access</span></a
+                  >
+                </li>
+                <li>
+                  <a href="#"
+                    ><span class="c-n">meeting-rooms</span
+                    ><span class="c-l muted">No description</span></a
+                  >
+                </li>
+                <li>
+                  <a href="#"
+                    ><span class="c-n">travel-policy</span
+                    ><span class="c-l">What you can book and how to claim it</span></a
+                  >
+                </li>
+                <li>
+                  <a href="#"
+                    ><span class="c-n">quarterly-okrs</span
+                    ><span class="c-l">Objectives for the quarter</span></a
+                  >
+                </li>
+                <li>
+                  <a href="#"
+                    ><span class="c-n">warehouse-map</span
+                    ><span class="c-l">Aisle and bin layout, searchable by SKU</span></a
+                  >
+                </li>
+                <li>
+                  <a href="#"
+                    ><span class="c-n">customer-feedback</span
+                    ><span class="c-l">Every piece of feedback support has logged</span></a
+                  >
+                </li>
+                <li>
+                  <a href="#"
+                    ><span class="c-n">shift-roster</span
+                    ><span class="c-l">Who is on which shift this month</span></a
+                  >
+                </li>
+                <li>
+                  <a href="#"
+                    ><span class="c-n">brand-assets</span
+                    ><span class="c-l">Logos, colours and templates</span></a
+                  >
+                </li>
+              </ul>
+              <h2 class="c-group">Retired and deleted</h2>
+              <ul class="c-list">
+                <li class="c-off">
+                  <a href="#"
+                    ><span class="c-n">holiday-calendar</span
+                    ><span class="c-l">Retired by Tom Okafor, 30 Aug</span></a
+                  >
+                </li>
+                <li class="c-off">
+                  <a href="#"
+                    ><span class="c-n">old-crm-export</span
+                    ><span class="c-l">Deleted by Ana Costa, 22 days left</span></a
+                  >
+                </li>
+              </ul>
+            </aside>
+            <article class="c-detail">
+              <p class="c-addr">northwind / <strong>sales-dashboard</strong></p>
+              <h1 class="c-h1">Sales dashboard · Q3</h1>
+              <p class="c-desc">
+                Weekly pipeline and closed-won by rep, pulled from the CRM Postgres. Sales managers
+                open this on Monday mornings.
+              </p>
+              <p class="c-actline">
+                <a class="auth-action" href="#">Open</a>
+                <a class="c-quiet" href="#">Copy address</a>
+              </p>
+              <dl class="c-facts">
+                <dt>Owner</dt>
+                <dd>You</dd>
+                <dt>Current version</dt>
+                <dd>v14, published 3 days ago from <code>priya-laptop</code></dd>
+                <dt>Sharing</dt>
+                <dd>Company. Anyone at Northwind who signs in can open it.</dd>
+                <dt>Uses</dt>
+                <dd>1 table (<code>weekly_totals</code>), 1 connection (<code>crm</code>)</dd>
+                <dt>Description</dt>
+                <dd>
+                  Edited by you, 3 days ago. Edits here pull down into the repo on the next
+                  <code>patchy dev</code>.
+                </dd>
+              </dl>
+              <div class="c-manage">
+                <h2>Manage</h2>
+                <p class="c-managerow">
+                  <a href="#">Edit description</a> · <a href="#">Change sharing</a> ·
+                  <a href="#">Roll back to an earlier version</a> · <a href="#">Retire</a> ·
+                  <a href="#">Delete</a>
+                </p>
+                <p class="c-managenote">
+                  Retire and delete warn with the list of patches that read this one's tables before
+                  they go through.
+                </p>
+              </div>
+            </article>
+          </div>
+        </div>
+
+        <h3>C · the card for a deactivated owner's patch, and for a retired one</h3>
+        <div class="c-pair">
+          <article class="c-detail frame small">
+            <p class="c-addr">northwind / <strong>pricing-sheet</strong></p>
+            <h1 class="c-h1">Price list 2026</h1>
+            <p class="c-desc">
+              The current price list, updated when finance changes it. Share the link with
+              customers; it is public.
+            </p>
+            <p class="c-actline"><a class="auth-action" href="#">Open</a></p>
+            <dl class="c-facts">
+              <dt>Owner</dt>
+              <dd>Jonas Weber <span class="pill pill-off">deactivated 2 Sep</span></dd>
+              <dt>Current version</dt>
+              <dd>v2, published 4 months ago</dd>
+              <dt>Sharing</dt>
+              <dd>Public</dd>
+            </dl>
+            <div class="note note-warn">
+              <span class="note-title">Nobody can publish to this patch</span>Jonas left. It keeps
+              serving as it is. An admin can reassign it to someone who can keep it up to date.
+            </div>
+          </article>
+          <article class="c-detail frame small c-offcard">
+            <p class="c-addr">northwind / <strong>holiday-calendar</strong></p>
+            <h1 class="c-h1">Time off</h1>
+            <p class="c-desc">Who is out this week and next, from the HR export.</p>
+            <dl class="c-facts">
+              <dt>State</dt>
+              <dd><span class="pill pill-off">retired</span> by Tom Okafor on 30 Aug</dd>
+              <dt>Owner</dt>
+              <dd>Tom Okafor</dd>
+              <dt>Last version</dt>
+              <dd>v9</dd>
+            </dl>
+            <div class="note">
+              <span class="note-title">Off the shelf, kept as it was</span>Its tables and files are
+              kept. Tom or an admin can restore it, and it comes back live at v9.
+            </div>
+          </article>
+        </div>
+
+        <h3>C · empty company</h3>
+        <div class="frame small">
+          <div class="app-bar">
+            <div class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</div>
+            <nav class="app-nav" aria-label="Primary">
+              <a href="#" aria-current="page">Patches</a><a href="#">Company</a
+              ><a href="#">Connections</a><a href="#">Your machines</a>
+            </nav>
+            <div class="app-who">Priya Raman · Northwind Trading · <a href="#">Sign out</a></div>
+          </div>
+          <div class="app-body c-body">
+            <aside class="c-index">
+              <p class="c-count">0 patches</p>
+              <p class="muted c-emptyidx">Nothing to list yet.</p>
+            </aside>
+            <article class="c-detail">
+              <h1 class="c-h1">Northwind has no patches yet</h1>
+              <p class="c-desc">
+                The first one published lists on the left for everyone in the company.
+              </p>
+              <div class="note">
+                <span class="note-title">Publish the first one</span>Ask your agent to publish a
+                page with Patchy, or run <code>patchy init</code> from a terminal that has done
+                <code>patchy login</code>.
+              </div>
+            </article>
+          </div>
+        </div>
+
+        <h3>C · viewer owns nothing</h3>
+        <div class="frame small">
+          <div class="app-bar">
+            <div class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</div>
+            <nav class="app-nav" aria-label="Primary">
+              <a href="#" aria-current="page">Patches</a><a href="#">Company</a
+              ><a href="#">Connections</a><a href="#">Your machines</a>
+            </nav>
+            <div class="app-who">Sam Ito · Northwind Trading · <a href="#">Sign out</a></div>
+          </div>
+          <div class="app-body c-body">
+            <aside class="c-index">
+              <p class="c-count">15 patches · <a href="#">show retired and deleted</a></p>
+              <ul class="c-list">
+                <li class="c-current">
+                  <a href="#"
+                    ><span class="c-n">expense-claims</span
+                    ><span class="c-l">Submit and approve expense claims</span></a
+                  >
+                </li>
+                <li>
+                  <a href="#"
+                    ><span class="c-n">onboarding-checklist</span
+                    ><span class="c-l">A new hire's first two weeks</span></a
+                  >
+                </li>
+                <li>
+                  <a href="#"
+                    ><span class="c-n">sales-dashboard</span
+                    ><span class="c-l">Weekly pipeline and closed-won by rep</span></a
+                  >
+                </li>
+                <li>
+                  <a href="#"><span class="c-l muted">… 12 more, no Yours group</span></a>
+                </li>
+              </ul>
+            </aside>
+            <article class="c-detail">
+              <p class="c-addr">northwind / <strong>expense-claims</strong></p>
+              <h1 class="c-h1">Expense claims</h1>
+              <p class="c-desc">
+                Submit and approve expense claims. Approvers see their queue; finance exports the
+                month as a CSV for the accountant.
+              </p>
+              <p class="c-actline"><a class="auth-action" href="#">Open</a></p>
+              <dl class="c-facts">
+                <dt>Owner</dt>
+                <dd>Tom Okafor</dd>
+                <dt>Current version</dt>
+                <dd>v31, published today</dd>
+                <dt>Sharing</dt>
+                <dd>Company</dd>
+              </dl>
+              <p class="c-managenote">No Manage block: Sam is not the owner and not an admin.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================================ title -->
+      <section class="variant" id="title-question">
+        <div class="variant-head">
+          <span class="num">?</span>
+          <div>
+            <h2>Does the title earn a place in the list?</h2>
+            <p class="variant-why">
+              Every patch carries a name (its address), a title lifted from the page's
+              <code>&lt;title&gt;</code> on every publish, and the description the owner writes. The
+              three variants above make three different calls.
+            </p>
+          </div>
+        </div>
+        <div class="grid">
+          <div class="task">
+            <h3>A drops it</h3>
+            <p>
+              Name and description only. The name is what people type and send; the description is
+              what they read. The title is whatever the last publish's HTML said, so it can drift
+              from what the owner means. Never shown in the list.
+            </p>
+          </div>
+          <div class="task">
+            <h3>B drops it</h3>
+            <p>
+              Same call, harder: a column for title would be the widest, least reliable column in
+              the table. Name links, description explains.
+            </p>
+          </div>
+          <div class="task">
+            <h3>C shows it on the card only</h3>
+            <p>
+              The index carries name and the first clause of the description. The card leads with
+              the title as the heading, because that is what the browser tab will say when the patch
+              opens. Below it the address, then the description.
+            </p>
+          </div>
+          <div class="task">
+            <h3>The scan test</h3>
+            <p>
+              Look at the 17-row inventory in A and B. Prose alone scans when every description
+              opens with what the tool does. Rows with "No description" are the ones that need an
+              icon or category, which argues for pushing descriptions, not for adding a taxonomy.
+            </p>
+          </div>
+        </div>
+        <p class="foot">Prototype for the Portal map. Throwaway; nothing here is wired.</p>
+      </section>
+    </div>
+  </body>
+</html>
