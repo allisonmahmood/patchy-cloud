@@ -53,7 +53,6 @@ const results = {
 const isResult = Schema.is(Schema.Literals(Object.keys(results) as Array<keyof typeof results>));
 
 export const styles = `
-    .auth-card { width: min(800px, calc(100% - 32px)); }
     .connection-status { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
     .connection-meta { color: var(--muted); font-size: .9rem; }
     .connection-meta time { white-space: nowrap; }

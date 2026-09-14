@@ -14,7 +14,14 @@ import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import type * as SqlClient from "effect/unstable/sql/SqlClient";
-import { pageResponse, RequireSession, Session, signOutForm, returnPath } from "@patchy/auth";
+import {
+  appHeader,
+  pageResponse,
+  RequireSession,
+  Session,
+  signOutForm,
+  returnPath
+} from "@patchy/auth";
 import type { Companies, Users } from "@patchy/companies";
 import { Pages } from "@patchy/serving";
 import * as PortalQueries from "./PortalQueries.js";
@@ -393,6 +400,7 @@ const handle = Effect.fn("PortalPages.handle")(
 const respond = (action: Action) =>
   Effect.gen(function* () {
     const session = yield* Session.Session;
+    const viewer = yield* effectiveViewer;
     const page = yield* handle(action);
     if (page === null) return Pages.notFound;
     if (page.redirect !== undefined)
@@ -403,9 +411,9 @@ const respond = (action: Action) =>
     return pageResponse(
       {
         title: page.title,
-        heading: "",
         body: page.body,
         styles: render.styles,
+        app: { header: appHeader(viewer, "patches", render.protoSwitch(viewer)), bare: true },
         ...(page.status === undefined ? {} : { status: page.status })
       },
       session

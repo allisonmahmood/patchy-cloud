@@ -26,16 +26,6 @@ export interface PortalViewer {
 
 /** Page-only CSS, under the shell: the app bar, two columns, index, card, forms, amber block. */
 export const styles = `
-    .auth-card { width: min(1180px, calc(100% - 32px)); margin: 32px auto; padding: 0; overflow: hidden; }
-    .auth-card > .brand { display: none; }
-    .app-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 28px; padding: 14px 26px; border-bottom: 2px solid var(--ink); background: var(--white); }
-    .app-bar .brand { font-size: 1rem; margin: 0; }
-    .app-nav { display: flex; gap: 4px; flex-wrap: wrap; }
-    .app-nav a { padding: 6px 12px; border-radius: 6px; color: var(--ink); text-decoration: none; font-weight: 750; font-size: .95rem; }
-    .app-nav a[aria-current="page"] { background: var(--yellow); border: 2px solid var(--ink); box-shadow: 2px 2px 0 var(--ink); }
-    .app-who { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; color: var(--muted); font-size: .88rem; font-weight: 650; }
-    .app-who .auth-signout { margin: 0; padding: 0; border: 0; display: inline; }
-    .app-who .auth-signout button { min-height: 0; }
     .proto-role { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border: 1.5px dashed var(--line-strong); border-radius: 6px; font-size: .78rem; }
     .proto-role button { border: 0; padding: 0 4px; background: none; font: inherit; font-weight: 750; color: var(--blue-dark); text-decoration: underline; cursor: pointer; }
     .proto-role button[aria-current="true"] { color: var(--ink); text-decoration: none; background: var(--yellow); border-radius: 4px; }
@@ -177,17 +167,13 @@ export const canManage = (row: PatchRow, viewer: PortalViewer) =>
 
 // --- chrome ------------------------------------------------------------------
 
-/** The shared header: brand, the four links, the viewer, sign-out, and the prototype role switch. */
-export const header = (viewer: PortalViewer, current: "patches" | null): string => {
-  const link = (href: string, label: string, key: "patches" | null) =>
-    `<a href="${href}"${key !== null && key === current ? ' aria-current="page"' : ""}>${label}</a>`;
+/** The prototype's role switch, shown beside the viewer in the shared header. */
+export const protoSwitch = (viewer: PortalViewer): string => {
   const roleButton = (role: "admin" | "member") =>
     `<button type="submit" name="role" value="${role}"${viewer.role === role ? ' aria-current="true"' : ""}>${role}</button>`;
-  const protoSwitch =
-    viewer.realRole === "admin"
-      ? `<form class="proto-role" method="post" action="/proto/role"><span>prototype only · Viewing as:</span>${roleButton("admin")}<span>|</span>${roleButton("member")}</form>`
-      : `<span class="proto-role">prototype only · Viewing as: member</span>`;
-  return `<header class="app-bar"><div class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</div><nav class="app-nav" aria-label="Primary">${link("/", "Patches", "patches")}${link("/company", "Company", null)}${link("/company/connections", "Connections", null)}${link("/machines", "Your machines", null)}</nav><div class="app-who"><span>${escapeHtml(viewer.user.name)} · ${escapeHtml(viewer.company.name)}</span><form class="auth-signout" method="post" action="/logout"><button type="submit">Sign out</button></form>${protoSwitch}</div></header>`;
+  return viewer.realRole === "admin"
+    ? `<form class="proto-role" method="post" action="/proto/role"><span>prototype only · Viewing as:</span>${roleButton("admin")}<span>|</span>${roleButton("member")}</form>`
+    : `<span class="proto-role">prototype only · Viewing as: member</span>`;
 };
 
 /** The 409 line for a stale action, or a 422 refusal, at the top of the re-rendered page. */
@@ -410,7 +396,7 @@ export const portal = (input: {
   readonly nowMs: number;
   readonly notice?: string;
 }): string =>
-  `${header(input.viewer, "patches")}${input.notice ?? ""}<div class="c-body">${index(
+  `${input.notice ?? ""}<div class="c-body">${index(
     input.rows,
     input.viewer,
     input.selected?.row ?? null,
@@ -444,7 +430,7 @@ export const retirePage = (data: CardData, viewer: PortalViewer, noticeHtml = ""
     dependants.length === 0
       ? '<div class="breaks"><h3>Nothing else reads this patch.</h3></div>'
       : `<div class="breaks"><h3>${dependants.length} ${dependants.length === 1 ? "patch" : "patches"} will break</h3><p>They read this patch's shared tables and will get an error the next time they do, until this one is restored.</p>${dependantsList(dependants)}</div>${ackBox(`I understand ${dependants.length === 1 ? "that patch" : `those ${dependants.length} patches`} will break until ${row.name} is restored.`)}`;
-  return `${header(viewer, "patches")}<div class="page">${back(row)}${noticeHtml}<h1>Retire ${escapeHtml(row.name)}?</h1><p class="lede">It goes off the shelf and stops serving now. Its tables, files and all ${versionsCount(versions)} are kept. You or an admin can restore it any time, and it comes back${row.currentVersionNumber === null ? "" : ` at v${row.currentVersionNumber}`} with the same address.</p><form method="post" action="${escapeAttribute(`${cardPath(row)}/retire`)}">${revisionField(row)}${breaks}<div class="f-row"><button class="btn btn-danger" type="submit">Retire ${escapeHtml(row.name)}</button><a class="btn btn-quiet" href="${escapeAttribute(cardPath(row))}">Cancel</a></div></form></div>`;
+  return `<div class="page">${back(row)}${noticeHtml}<h1>Retire ${escapeHtml(row.name)}?</h1><p class="lede">It goes off the shelf and stops serving now. Its tables, files and all ${versionsCount(versions)} are kept. You or an admin can restore it any time, and it comes back${row.currentVersionNumber === null ? "" : ` at v${row.currentVersionNumber}`} with the same address.</p><form method="post" action="${escapeAttribute(`${cardPath(row)}/retire`)}">${revisionField(row)}${breaks}<div class="f-row"><button class="btn btn-danger" type="submit">Retire ${escapeHtml(row.name)}</button><a class="btn btn-quiet" href="${escapeAttribute(cardPath(row))}">Cancel</a></div></form></div>`;
 };
 
 export const deletePage = (data: CardData, viewer: PortalViewer, noticeHtml = ""): string => {
@@ -460,7 +446,7 @@ export const deletePage = (data: CardData, viewer: PortalViewer, noticeHtml = ""
     : dependants.length === 0
       ? '<div class="breaks"><h3>Nothing else reads this patch.</h3></div>'
       : `<div class="breaks"><h3>${dependants.length} ${dependants.length === 1 ? "patch" : "patches"} will break</h3>${dependantsList(dependants)}</div>${ackBox(`I understand ${dependants.length === 1 ? "that patch" : `those ${dependants.length} patches`} will break.`)}`;
-  return `${header(viewer, "patches")}<div class="page">${back(row)}${noticeHtml}<h1>Delete ${escapeHtml(row.name)}?</h1><p class="lede">${lede}</p><form method="post" action="${escapeAttribute(`${cardPath(row)}/delete`)}">${revisionField(row)}${breaks}<label class="f-label" for="confirm-name">Type <code>${escapeHtml(row.name)}</code> to confirm</label><input class="f-in short" id="confirm-name" name="confirm" autocomplete="off" required placeholder="${escapeAttribute(row.name)}"><div class="f-row"><button class="btn btn-danger" type="submit">Delete ${escapeHtml(row.name)}</button><a class="btn btn-quiet" href="${escapeAttribute(cardPath(row))}">Cancel</a></div></form></div>`;
+  return `<div class="page">${back(row)}${noticeHtml}<h1>Delete ${escapeHtml(row.name)}?</h1><p class="lede">${lede}</p><form method="post" action="${escapeAttribute(`${cardPath(row)}/delete`)}">${revisionField(row)}${breaks}<label class="f-label" for="confirm-name">Type <code>${escapeHtml(row.name)}</code> to confirm</label><input class="f-in short" id="confirm-name" name="confirm" autocomplete="off" required placeholder="${escapeAttribute(row.name)}"><div class="f-row"><button class="btn btn-danger" type="submit">Delete ${escapeHtml(row.name)}</button><a class="btn btn-quiet" href="${escapeAttribute(cardPath(row))}">Cancel</a></div></form></div>`;
 };
 
 export const restorePage = (data: CardData, viewer: PortalViewer, noticeHtml = ""): string => {
@@ -474,7 +460,7 @@ export const restorePage = (data: CardData, viewer: PortalViewer, noticeHtml = "
       return `<li>${name} as <code>${escapeHtml(source.alias)}</code>, which is <strong>${source.state}</strong></li>`;
     })
     .join("");
-  return `${header(viewer, "patches")}<div class="page">${back(row)}${noticeHtml}<h1>Restore ${escapeHtml(row.name)}?</h1><p class="lede">It comes back live${row.currentVersionNumber === null ? "" : ` at v${row.currentVersionNumber}`} with the same address. It reads tables from ${brokenSources.length === 1 ? "a patch that is" : "patches that are"} off:</p><form method="post" action="${escapeAttribute(`${cardPath(row)}/restore`)}">${revisionField(row)}<div class="breaks"><h3>It will come back broken</h3><ul class="deps">${sources}</ul><p>Restored, it serves again but gets an error whenever it reads ${brokenSources.length === 1 ? "that table" : "those tables"}, until ${brokenSources.length === 1 ? "that patch is" : "those patches are"} restored too.</p></div>${ackBox("I understand it comes back broken.")}<div class="f-row"><button class="btn btn-primary" type="submit">Restore ${escapeHtml(row.name)}</button><a class="btn btn-quiet" href="${escapeAttribute(cardPath(row))}">Cancel</a></div></form></div>`;
+  return `<div class="page">${back(row)}${noticeHtml}<h1>Restore ${escapeHtml(row.name)}?</h1><p class="lede">It comes back live${row.currentVersionNumber === null ? "" : ` at v${row.currentVersionNumber}`} with the same address. It reads tables from ${brokenSources.length === 1 ? "a patch that is" : "patches that are"} off:</p><form method="post" action="${escapeAttribute(`${cardPath(row)}/restore`)}">${revisionField(row)}<div class="breaks"><h3>It will come back broken</h3><ul class="deps">${sources}</ul><p>Restored, it serves again but gets an error whenever it reads ${brokenSources.length === 1 ? "that table" : "those tables"}, until ${brokenSources.length === 1 ? "that patch is" : "those patches are"} restored too.</p></div>${ackBox("I understand it comes back broken.")}<div class="f-row"><button class="btn btn-primary" type="submit">Restore ${escapeHtml(row.name)}</button><a class="btn btn-quiet" href="${escapeAttribute(cardPath(row))}">Cancel</a></div></form></div>`;
 };
 
 export const reassignPage = (
@@ -495,7 +481,7 @@ export const reassignPage = (
       return `<li><strong>${escapeHtml(member.name)}</strong><span class="who">${escapeHtml(member.email)} · ${member.role}${you}</span>${action}</li>`;
     })
     .join("");
-  return `${header(viewer, "patches")}<div class="page">${back(row)}${noticeHtml}<h1>Reassign ${escapeHtml(row.name)}</h1><p class="lede">Owned by ${escapeHtml(row.ownerName)}${row.ownerDeactivatedAt === null ? "" : " (deactivated)"}. Any active member can take it, yourself included; deactivated members are not offered. The new owner publishes from their own copy of the repo.</p><form method="get" action="${escapeAttribute(path)}" class="f-row"><input class="f-in short" type="search" name="q" value="${escapeAttribute(q)}" placeholder="Filter by name or email" aria-label="Filter by name or email"><button class="btn btn-sm" type="submit">Filter</button></form>${
+  return `<div class="page">${back(row)}${noticeHtml}<h1>Reassign ${escapeHtml(row.name)}</h1><p class="lede">Owned by ${escapeHtml(row.ownerName)}${row.ownerDeactivatedAt === null ? "" : " (deactivated)"}. Any active member can take it, yourself included; deactivated members are not offered. The new owner publishes from their own copy of the repo.</p><form method="get" action="${escapeAttribute(path)}" class="f-row"><input class="f-in short" type="search" name="q" value="${escapeAttribute(q)}" placeholder="Filter by name or email" aria-label="Filter by name or email"><button class="btn btn-sm" type="submit">Filter</button></form>${
     members.length === 0
       ? '<p class="c-managenote">No active members match.</p>'
       : `<ul class="members">${items}</ul>`
@@ -505,5 +491,5 @@ export const reassignPage = (
 export const versionsPage = (data: CardData, viewer: PortalViewer, noticeHtml = ""): string => {
   const { row, versions } = data;
   const manage = canManage(row, viewer) && stateOf(row) === "live";
-  return `${header(viewer, "patches")}<div class="page">${back(row)}${noticeHtml}<h1>All ${versions.length} versions of ${escapeHtml(row.name)}</h1>${versionsTable(row, versions, manage)}${manage ? '<p class="f-hint">The address changes for everyone now. Tables and the description do not move.</p>' : ""}</div>`;
+  return `<div class="page">${back(row)}${noticeHtml}<h1>All ${versions.length} versions of ${escapeHtml(row.name)}</h1>${versionsTable(row, versions, manage)}${manage ? '<p class="f-hint">The address changes for everyone now. Tables and the description do not move.</p>' : ""}</div>`;
 };

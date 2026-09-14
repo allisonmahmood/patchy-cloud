@@ -10,7 +10,7 @@ import type * as DeviceLogins from "./DeviceLogins.js";
 import type * as MachineTokens from "./MachineTokens.js";
 import * as RequireSession from "./RequireSession.js";
 import * as Session from "./Session.js";
-import { pageResponse, returnPath, signOutForm, withCookies } from "./page.js";
+import { appHeader, pageResponse, returnPath, signOutForm, withCookies } from "./page.js";
 
 const join = Effect.gen(function* () {
   const claims = yield* RequireSession.SignedIn;
@@ -51,7 +51,11 @@ const company = Effect.fn("AuthPages.company")(function* (action: CompanyPage.Ac
         headers: { "cache-control": "private, no-store" }
       })
     : pageResponse(
-        { ...page, styles: CompanyPage.styles, body: `${page.body}${signOutForm()}` },
+        {
+          ...page,
+          styles: CompanyPage.styles,
+          app: { header: appHeader(viewer, "company") }
+        },
         session
       );
 });
