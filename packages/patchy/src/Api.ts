@@ -9,7 +9,13 @@ import type { SchemaError } from "effect/Schema";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import type * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpApiMiddleware from "effect/unstable/httpapi/HttpApiMiddleware";
-import { Authorization, authorizationClient, makeClient, type PublishRequest } from "@patchy/api";
+import {
+  Authorization,
+  authorizationClient,
+  makeClient,
+  makePortalClient,
+  type PublishRequest
+} from "@patchy/api";
 import { LocalError, RejectedError, UnreachableError } from "./CliError.js";
 import * as Instance from "./Instance.js";
 
@@ -23,6 +29,15 @@ export const client = (token?: Redacted.Redacted) =>
           ? HttpApiMiddleware.layerClient(Authorization, ({ next, request }) => next(request))
           : authorizationClient(token)
       )
+    );
+  });
+
+/** Prototype #241: the `patchy list` routes, on the same instance with the same bearer. */
+export const portalClient = (token: Redacted.Redacted) =>
+  Effect.gen(function* () {
+    const instance = yield* Instance.Instance;
+    return yield* makePortalClient(instance.apiUrl).pipe(
+      Effect.provide(authorizationClient(token))
     );
   });
 
