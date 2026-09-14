@@ -627,7 +627,8 @@ export const make = Effect.gen(function* () {
   /** A patch in service the user may write: theirs, and neither taken down nor expired. */
   const writable = (patchId: string, ownerUserId: string, at: Statement.Fragment) =>
     sql`patches.id = ${patchId} AND patches.owner_user_id = ${ownerUserId}
-        AND patches.deleted_at IS NULL AND patches.disabled_at IS NULL AND ${notExpired(at)}`;
+        AND patches.deleted_at IS NULL AND patches.retired_at IS NULL
+        AND patches.disabled_at IS NULL AND ${notExpired(at)}`;
 
   const countLiveRow = SqlSchema.findOne({
     Request: Schema.String,
@@ -647,7 +648,7 @@ export const make = Effect.gen(function* () {
       SELECT ${sql.unsafe(PATCH_COLUMNS)}
       FROM patches JOIN companies ON companies.id = patches.company_id
       WHERE patches.id = ${patchId}
-        AND patches.deleted_at IS NULL
+        AND patches.deleted_at IS NULL AND patches.retired_at IS NULL
         AND patches.disabled_at IS NULL
         AND ${notExpired(stamp(nowMillis))}`
   });
@@ -660,6 +661,7 @@ export const make = Effect.gen(function* () {
       FROM patches JOIN patch_versions ON patch_versions.id = patches.current_version_id
         AND patch_versions.patch_id = patches.id
       WHERE patches.company_id = ${companyId} AND patches.deleted_at IS NULL
+        AND patches.retired_at IS NULL
         AND patches.disabled_at IS NULL AND ${notExpired(stamp(nowMillis))}
       ORDER BY patches.name, patches.id`
   });
@@ -693,7 +695,8 @@ export const make = Effect.gen(function* () {
       JOIN companies ON companies.id = patch_names.company_id
       JOIN patches ON patches.id = patch_names.patch_id
       WHERE companies.handle = ${companyHandle} AND patch_names.name = ${name}
-        AND patches.deleted_at IS NULL AND patches.disabled_at IS NULL
+        AND patches.deleted_at IS NULL AND patches.retired_at IS NULL
+        AND patches.disabled_at IS NULL
         AND ${notExpired(stamp(nowMillis))}`
   });
 
@@ -912,7 +915,8 @@ export const make = Effect.gen(function* () {
       JOIN patch_versions ON patch_versions.patch_id = patches.id
       CROSS JOIN LATERAL jsonb_each(patch_versions.manifest->'uses') AS declaration
       WHERE patches.company_id = ${companyId}
-        AND patches.deleted_at IS NULL AND patches.disabled_at IS NULL
+        AND patches.deleted_at IS NULL AND patches.retired_at IS NULL
+        AND patches.disabled_at IS NULL
         AND ${notExpired(stamp(nowMillis))}
         AND declaration.value->>'kind' = 'sharedTable'
         AND declaration.value->>'patchId' = ${patchId}
@@ -1268,7 +1272,7 @@ export const make = Effect.gen(function* () {
       UPDATE patches
       SET expires_at = ${toppedUp}
       WHERE patches.id = ${patchId}
-        AND patches.deleted_at IS NULL
+        AND patches.deleted_at IS NULL AND patches.retired_at IS NULL
         AND patches.disabled_at IS NULL
         AND ${notExpired(at)}
         AND patches.expires_at < ${toppedUp}`;
@@ -1317,9 +1321,8 @@ export const make = Effect.gen(function* () {
             AND owner_user_id = ${ownerUserId}
             AND deleted_at IS NULL
           RETURNING id`;
-        if (rows.length === 0) return false;
-        yield* sql`DELETE FROM patch_names WHERE patch_id = ${patchId}`;
-        return true;
+        // Prototype #241: names stay reserved through deletion so the card stays reachable.
+        return rows.length > 0;
       })
     )
   );

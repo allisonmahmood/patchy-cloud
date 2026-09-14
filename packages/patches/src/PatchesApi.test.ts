@@ -874,24 +874,17 @@ it.layer(publishLayer)("publish attempts", (it) => {
       assert.isTrue(
         Option.isNone(yield* patches.resolveName(uploader.company.handle, "company-name-race"))
       );
-      const [reused, response] = yield* contenders[loser]!.api.publish({
+      // Prototype #241: a deleted patch keeps its name for its 30-day window, so a
+      // fresh create under that name is refused rather than reusing it.
+      const reused = yield* contenders[loser]!.api.publish({
         payload: publishRequest({
           html: html("Reused exact name"),
           manifest: { ...Fixtures.manifest, name: "company-name-race" }
         }),
-        responseMode: "decoded-and-response"
+        responseMode: "response-only"
       });
-      assert.strictEqual(response.status, 201);
-      assert.strictEqual(reused.name, "company-name-race");
-      assert.notStrictEqual(reused.patchId, created.patchId);
-      assert.deepStrictEqual(
-        {
-          ...Option.getOrThrow(
-            yield* patches.resolveName(uploader.company.handle, "company-name-race")
-          )
-        },
-        { patchId: reused.patchId, name: "company-name-race", current: true }
-      );
+      assert.strictEqual(reused.status, 409);
+      assert.include(yield* reused.json, { ok: false, code: "name_taken" });
     })
   );
 
