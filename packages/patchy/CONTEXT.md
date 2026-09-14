@@ -93,8 +93,12 @@ A release-bound set of agent instructions for building within one patch repo, su
 _Avoid_: global skill, copied tutorial
 
 **Catalog**:
-The instance's view of the company's connected capabilities and the shared tables the caller can open, with declarations the builder can add to a patch. It describes availability, never grants access.
+The instance's view of the company's connected capabilities and the shared tables the caller can open, with declarations the builder can add to a patch. It describes availability, never grants access. Decided to be replaced by discovery.
 _Avoid_: marketplace, connection inventory (the cumulative schema inventory is a different concept)
+
+**Discovery**:
+The decided agent's view of the company's inventory through `patchy list`: patches, one patch's primitives and reads, and connections, under the machine token, showing only what the credential can open, with a copy-ready declaration only where one can be made.
+_Avoid_: catalog (what it replaces), search, inspect
 
 **Fixture stub**:
 The initial, metadata-only guide for a declaration's local fixture, ready for the builder to fill with invented rows. Once present it belongs to the builder, including after that declaration is removed.
