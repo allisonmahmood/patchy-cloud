@@ -8,6 +8,7 @@ export * as Session from "./Session.js";
 export * as RequireSession from "./RequireSession.js";
 export * as AuthPages from "./AuthPages.js";
 export {
+  appHeader,
   pageResponse,
   returnPath,
   sessionScripts,

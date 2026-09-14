@@ -85,5 +85,19 @@ export const migrations: Migrations = {
     CREATE INDEX patches_owner_user_id_idx ON patches(owner_user_id);
     CREATE INDEX patch_versions_patch_id_idx ON patch_versions(patch_id);
     CREATE UNIQUE INDEX patch_versions_owner_publish_key_idx ON patch_versions(owner_user_id, publish_key);
+  `),
+  // THROWAWAY (prototype #241, the portal): the retired state, the actor
+  // stamps behind it, the owner-written description and the reassign stamp.
+  // Deleted patches keep their names from here on; the sweep is untouched.
+  "0008_prototype_portal": ddl(`
+    ALTER TABLE patches
+      ADD COLUMN retired_at TIMESTAMPTZ,
+      ADD COLUMN retired_by TEXT REFERENCES users(id),
+      ADD COLUMN deleted_by TEXT REFERENCES users(id),
+      ADD COLUMN description TEXT NOT NULL DEFAULT '',
+      ADD COLUMN description_updated_by TEXT REFERENCES users(id),
+      ADD COLUMN description_updated_at TIMESTAMPTZ,
+      ADD COLUMN reassigned_by TEXT REFERENCES users(id),
+      ADD COLUMN reassigned_at TIMESTAMPTZ;
   `)
 };

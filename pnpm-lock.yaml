@@ -124,6 +124,9 @@ importers:
       '@patchy/content-store':
         specifier: workspace:*
         version: link:../../packages/content-store
+      '@patchy/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@patchy/integrations':
         specifier: workspace:*
         version: link:../../packages/integrations

@@ -4,6 +4,7 @@
  * `CliError`, so the contract in `Output` is the whole of what an agent sees.
  * User-facing copy calls a token a publishing key.
  */
+import * as Clock from "effect/Clock";
 import * as Console from "effect/Console";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -23,6 +24,9 @@ import {
   PatchName,
   Identity,
   Ok,
+  PatchDetail,
+  PatchList,
+  PrimitiveDetail,
   Shared,
   ShareRequest,
   SharingScope,
@@ -72,6 +76,9 @@ const runProject = <A, R>(handler: Effect.Effect<A, CliError, R>) =>
   );
 
 const encodeIdentity = Schema.encodeSync(Identity);
+const encodePatchList = Schema.encodeSync(PatchList);
+const encodePatchDetail = Schema.encodeSync(PatchDetail);
+const encodePrimitiveDetail = Schema.encodeSync(PrimitiveDetail);
 // A create is 201, an update 200; the wire names them separately.
 const encodePublish = Schema.encodeSync(Schema.Union([PublishCreated, PublishUpdated]));
 const encodeOk = Schema.encodeSync(Ok);
@@ -729,6 +736,147 @@ const del = Command.make(
   )
 );
 
+// --- list (prototype #241) --------------------------------------------------
+
+type ListedPatch = (typeof PatchList.Type)["patches"][number];
+
+/** One inventory row as text: id first, then name, state, owner, version and the first line of the description. */
+const patchLine = (patch: ListedPatch, nowMs: number) =>
+  [
+    patch.id,
+    patch.name,
+    patch.state === "deleted" && patch.deletedAt !== null
+      ? `deleted (${Math.max(0, 30 - Math.floor((nowMs - Date.parse(patch.deletedAt)) / 86_400_000))} days left)`
+      : patch.state,
+    `${patch.owner.name}${patch.owner.deactivated ? " · deactivated" : ""}`,
+    patch.currentVersion === null ? "v-" : `v${patch.currentVersion}`,
+    patch.description.trim() === "" ? "(no description)" : patch.description.split(/\r?\n/)[0]!
+  ].join("  ");
+
+const list = Command.make(
+  "list",
+  {
+    patch: Argument.string("patch").pipe(
+      Argument.withDescription("patches, connections, or a patch id or name to drill into"),
+      Argument.optional
+    ),
+    primitive: Argument.string("primitive").pipe(
+      Argument.withDescription("A table or file store of the patch"),
+      Argument.optional
+    ),
+    mine: Flag.boolean("mine").pipe(
+      Flag.withDescription("Only the patches you own (top level only)"),
+      Flag.withDefault(false)
+    ),
+    state: Flag.choice("state", ["live", "retired", "all"]).pipe(
+      Flag.withDescription("live (default), retired, or all including deleted-in-window"),
+      Flag.optional
+    )
+  },
+  (options) =>
+    run(
+      Effect.gen(function* () {
+        const target = Option.getOrElse(options.patch, () => "patches");
+        const primitive = Option.getOrUndefined(options.primitive);
+        const state = Option.getOrUndefined(options.state);
+        if (target === "connections") {
+          return yield* new LocalError({
+            message:
+              "patchy list connections is not in this prototype. Run: patchy catalog for connected integrations."
+          });
+        }
+        if (target === "patches" && primitive !== undefined) {
+          return yield* new LocalError({
+            message: "Name a patch before a table or store: patchy list <patch> <primitive>."
+          });
+        }
+        if (target !== "patches" && options.mine) {
+          return yield* new LocalError({ message: "--mine applies to the top level only." });
+        }
+        if (primitive !== undefined && state !== undefined) {
+          return yield* new LocalError({ message: "--state does not apply to a table or store." });
+        }
+        const token = yield* requiredToken();
+        const client = yield* Api.portalClient(token);
+        const nowMs = yield* Clock.currentTimeMillis;
+        if (target === "patches") {
+          const result = yield* client
+            .listPatches({
+              query: { ...(options.mine ? { mine: true } : {}), ...(state ? { state } : {}) }
+            })
+            .pipe(Effect.catch((error) => refused(error, "Could not list patches.")));
+          const yours = result.patches.filter((patch) => patch.mine);
+          const company = result.patches.filter((patch) => !patch.mine);
+          const lines: string[] = [];
+          if (result.patches.length === 0)
+            lines.push("No patches yet. Run: patchy publish <file.html>");
+          if (yours.length > 0)
+            lines.push("Yours", ...yours.map((patch) => `  ${patchLine(patch, nowMs)}`));
+          if (company.length > 0)
+            lines.push("Company", ...company.map((patch) => `  ${patchLine(patch, nowMs)}`));
+          return yield* Output.report(encodePatchList(result), lines);
+        }
+        const detail = yield* client
+          .showPatch({ params: { patchRef: target } })
+          .pipe(Effect.catch((error) => refused(error, "Could not read the patch.")));
+        // A deleted patch is reachable by id only, and only when asked for.
+        if (detail.state === "deleted" && state !== "all") {
+          return yield* new RejectedError({
+            message: `Patch ${detail.id} (${detail.name}) is deleted. Pass --state all to show it.`
+          });
+        }
+        if (detail.state === "retired" && state === "live") {
+          return yield* new RejectedError({
+            message: `Patch ${detail.id} (${detail.name}) is retired. Pass --state retired or --state all to show it.`
+          });
+        }
+        if (primitive === undefined) {
+          const lines = [
+            patchLine(detail, nowMs),
+            `  ${detail.address}  tier ${detail.tier}  ${detail.scope}`,
+            ...(detail.description.trim() === "" ? [] : [detail.description]),
+            detail.tables.length === 0 ? "Tables: none" : "Tables:",
+            ...detail.tables.map((table) =>
+              `  ${table.name}  ${table.shared ? "shared" : "not shared"}  ${table.hint ?? table.reason ?? ""}`.trimEnd()
+            ),
+            detail.stores.length === 0 ? "Stores: none" : "Stores:",
+            ...detail.stores.map((store) => `  ${store.name}  ${store.reason}`)
+          ];
+          return yield* Output.report(encodePatchDetail(detail), lines);
+        }
+        const item = yield* client
+          .showPrimitive({ params: { patchRef: detail.id, name: primitive } })
+          .pipe(Effect.catch((error) => refused(error, "Could not read the table or store.")));
+        const lines = [
+          `${detail.id}  ${detail.name}  ${item.kind} ${item.name}  ${item.shared ? "shared" : "not shared"}  schema revision ${item.schemaRevision}`,
+          ...(item.kind === "store"
+            ? ["File store: not shareable yet."]
+            : [
+                item.columns.length === 0 ? "Columns: none" : "Columns:",
+                ...item.columns.map((column) =>
+                  [
+                    `  ${column.name}`,
+                    column.kind === "ref" ? `ref ${column.ref ?? ""}` : column.kind,
+                    ...(column.optional ? ["optional"] : []),
+                    ...("default" in column ? [`default ${Output.toJson(column.default)}`] : [])
+                  ].join("  ")
+                ),
+                item.indexes.length === 0 ? "Indexes: none" : "Indexes:",
+                ...item.indexes.map(
+                  (index) =>
+                    `  ${index.name}  (${index.columns.join(", ")})${index.unique ? "  unique" : ""}`
+                )
+              ])
+        ];
+        return yield* Output.report(encodePrimitiveDetail(item), lines);
+      })
+    )
+).pipe(
+  Command.withDescription(
+    "List the company's patches (yours first), one patch's tables and stores, or one table or store."
+  )
+);
+
 // --- patch repos ------------------------------------------------------------
 
 const init = Command.make(
@@ -881,6 +1029,7 @@ export const root = Command.make("patchy").pipe(
     publish,
     share,
     del,
+    list,
     init,
     dev,
     refresh,

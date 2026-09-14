@@ -15,7 +15,7 @@ import * as DeviceLogins from "./DeviceLogins.js";
 import * as MachineTokens from "./MachineTokens.js";
 import * as RequireSession from "./RequireSession.js";
 import * as Session from "./Session.js";
-import { pageResponse, signOutForm, type Page } from "./page.js";
+import { appHeader, pageResponse, type Page } from "./page.js";
 
 const styles = `
     .auth-card { overflow-wrap: anywhere; }
@@ -154,13 +154,14 @@ const machines = Effect.gen(function* () {
     (token) =>
       `<li class="machine-row"><h2>${escapeHtml(token.name)}</h2><dl><dt>Created</dt><dd>${time(token.createdAt)}</dd><dt>Last used</dt><dd>${time(token.lastUsedAt)}</dd><dt>Expires</dt><dd>${time(token.expiresAt)}</dd></dl><form method="post" action="/machines/${encodeURIComponent(token.id)}/revoke"><button class="auth-action" type="submit" aria-label="Revoke ${escapeAttribute(token.name)}">Revoke</button></form></li>`
   );
-  return pageResponse(
-    message(
+  const page: Page = {
+    ...message(
       "Your machines",
-      `<p>Machines publishing at <strong>${escapeHtml(viewer.company.name)}</strong> as <span class="auth-email">${escapeHtml(viewer.user.email)}</span>.</p>${tokens.length === 0 ? "<p>No machines are logged in.</p>" : `<ul class="machines-list">${rows.join("")}</ul><form class="machines-all" method="post" action="/machines/revoke-all"><button class="auth-action" type="submit">Revoke all machines</button></form>`}${signOutForm()}`
+      `<p>Machines publishing at <strong>${escapeHtml(viewer.company.name)}</strong> as <span class="auth-email">${escapeHtml(viewer.user.email)}</span>.</p>${tokens.length === 0 ? "<p>No machines are logged in.</p>" : `<ul class="machines-list">${rows.join("")}</ul><form class="machines-all" method="post" action="/machines/revoke-all"><button class="auth-action" type="submit">Revoke all machines</button></form>`}`
     ),
-    session
-  );
+    ...({ app: { header: appHeader(viewer, "machines") } } satisfies Pick<Page, "app">)
+  };
+  return pageResponse(page, session);
 });
 
 const revoke = Effect.fn("DevicePages.revoke")(function* (all: boolean) {

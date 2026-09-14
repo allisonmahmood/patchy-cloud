@@ -485,3 +485,80 @@ export class Shared extends Schema.Class<Shared>("Shared")({
 }) {}
 
 export class Ok extends Schema.Class<Ok>("Ok")({ ok: Schema.Literal(true) }) {}
+
+// --- portal prototype (#241, throwaway) -----------------------------------
+// The shapes behind `patchy list`. One inventory, two views: the portal and
+// the CLI read the same rows. Prototype only; nothing here is in `docs/API.md`.
+
+export const PatchState = Schema.Literals(["live", "retired", "deleted"]);
+
+/** One row of the company's inventory, as the CLI's top level prints it. */
+export const PatchSummary = Schema.Struct({
+  id: PatchId,
+  name: PatchName,
+  address: Schema.String,
+  owner: Schema.Struct({ id: Schema.String, name: Schema.String, deactivated: Schema.Boolean }),
+  mine: Schema.Boolean,
+  tier: Schema.Int,
+  scope: SharingScope,
+  description: Schema.String,
+  state: PatchState,
+  retiredAt: Schema.NullOr(Schema.String),
+  deletedAt: Schema.NullOr(Schema.String),
+  currentVersion: Schema.NullOr(Schema.Int),
+  publishedAt: Schema.NullOr(Schema.String)
+});
+
+export const PatchList = Schema.Struct({
+  patches: Schema.Array(PatchSummary),
+  /** Connections are not in this prototype; the key is here so the shape is stable. */
+  connections: Schema.Array(Schema.Never)
+});
+
+/** A table in the patch's inventory with whether another repo may declare it. */
+export const PatchTableSummary = Schema.Struct({
+  name: Schema.String,
+  description: Schema.String,
+  shared: Schema.Boolean,
+  declarable: Schema.Boolean,
+  reason: Schema.optionalKey(Schema.String),
+  hint: Schema.optionalKey(Schema.String)
+});
+
+export const PatchStoreSummary = Schema.Struct({
+  name: Schema.String,
+  description: Schema.String,
+  declarable: Schema.Literal(false),
+  reason: Schema.String
+});
+
+export const PatchDetail = Schema.Struct({
+  ...PatchSummary.fields,
+  tables: Schema.Array(PatchTableSummary),
+  stores: Schema.Array(PatchStoreSummary)
+});
+
+/** One table or file store, columns and indexes included. */
+export const PrimitiveDetail = Schema.Struct({
+  kind: Schema.Literals(["table", "store"]),
+  name: Schema.String,
+  description: Schema.String,
+  shared: Schema.Boolean,
+  schemaRevision: Schema.Int,
+  columns: Schema.Array(
+    Schema.Struct({
+      name: Schema.String,
+      kind: Schema.String,
+      optional: Schema.Boolean,
+      default: Schema.optionalKey(Schema.Unknown),
+      ref: Schema.optionalKey(Schema.String)
+    })
+  ),
+  indexes: Schema.Array(
+    Schema.Struct({
+      name: Schema.String,
+      columns: Schema.Array(Schema.String),
+      unique: Schema.Boolean
+    })
+  )
+});

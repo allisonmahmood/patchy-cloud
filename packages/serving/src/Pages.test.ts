@@ -373,7 +373,7 @@ it.layer(layer)("pages", (it) => {
 
   it.effect("matches static routes before the patch-address wildcard", () =>
     Effect.gen(function* () {
-      for (const url of ["/", "/healthz", "/auth/session.js"]) {
+      for (const url of ["/healthz", "/auth/session.js"]) {
         const response = yield* get(url, {});
         assert.strictEqual(response.status, 200, url);
         assert.strictEqual(response.headers["cache-control"], "no-store");

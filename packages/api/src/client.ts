@@ -27,3 +27,9 @@ export const makeClient = (apiUrl: string) =>
   });
 
 export type PatchyClient = Effect.Success<ReturnType<typeof makeClient>>;
+
+/** Prototype #241: the client for the portal group, served beside `PatchyApi` on one instance. */
+export const makePortalClient = (apiUrl: string) =>
+  HttpApiClient.make(Api.PortalPrototypeApi, {
+    transformClient: HttpClient.mapRequest(HttpClientRequest.prependUrl(apiUrl))
+  });

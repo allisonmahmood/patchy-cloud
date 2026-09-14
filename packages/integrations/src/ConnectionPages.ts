@@ -6,7 +6,7 @@ import type * as ConnectionStore from "./ConnectionStore.js";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
-import { pageResponse, RequireSession, Session, signOutForm } from "@patchy/auth";
+import { appHeader, pageResponse, RequireSession, Session, signOutForm } from "@patchy/auth";
 import { escapeHtml } from "@patchy/core";
 import type { RuntimeLog } from "@patchy/runtime";
 import * as ConnectionPage from "./ConnectionPage.js";
@@ -31,7 +31,11 @@ const page = Effect.fn("ConnectionPages.page")(function* (action: ConnectionPage
         headers: { "cache-control": "private, no-store" }
       })
     : pageResponse(
-        { ...content, styles: ConnectionPage.styles, body: `${content.body}${signOutForm()}` },
+        {
+          ...content,
+          styles: ConnectionPage.styles,
+          app: { header: appHeader(viewer, "connections") }
+        },
         session
       );
 });
