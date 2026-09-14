@@ -1,0 +1,2608 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Patch page · Manage side mocks</title>
+    <style>
+      :root {
+        --paper: #fffdf4;
+        --paper-blue: #eaf5ff;
+        --paper-green: #eff9e8;
+        --paper-amber: #fff7e4;
+        --white: #fffefa;
+        --ink: #12110f;
+        --ink-soft: #36332d;
+        --muted: #69645a;
+        --line: rgba(18, 17, 15, 0.14);
+        --line-strong: rgba(18, 17, 15, 0.3);
+        --blue: #1263e6;
+        --blue-dark: #093b92;
+        --green: #64c83f;
+        --green-ink: #2f6a17;
+        --yellow: #ffbf35;
+        --amber-ink: #8a5a00;
+        --shadow-hard: 4px 4px 0 var(--ink);
+        --shadow-soft: 0 18px 50px rgba(18, 17, 15, 0.08);
+        --radius: 8px;
+        --radius-pill: 999px;
+        --font-sans:
+          system-ui, -apple-system, "Segoe UI", "Helvetica Neue", Arial, "Liberation Sans",
+          sans-serif;
+        --font-mono:
+          ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", Menlo, Consolas,
+          "Liberation Mono", monospace;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        background: var(--paper-blue);
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        background:
+          linear-gradient(rgba(18, 17, 15, 0.035) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(18, 17, 15, 0.035) 1px, transparent 1px),
+          linear-gradient(
+            180deg,
+            var(--paper-blue) 0%,
+            var(--paper) 34%,
+            var(--paper-green) 78%,
+            #fef7ef 100%
+          );
+        background-size:
+          32px 32px,
+          32px 32px,
+          auto;
+        color: var(--ink-soft);
+        font-family: var(--font-sans);
+        font-size: 17px;
+        font-weight: 450;
+        line-height: 1.65;
+        text-rendering: optimizeLegibility;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        z-index: -1;
+        pointer-events: none;
+        opacity: 0.22;
+        mix-blend-mode: multiply;
+        background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 160 160' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.95' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='.36'/%3E%3C/svg%3E");
+      }
+
+      ::selection {
+        background: rgba(255, 191, 53, 0.6);
+        color: var(--ink);
+      }
+
+      :focus-visible {
+        outline: 3px solid var(--blue);
+        outline-offset: 3px;
+        border-radius: 6px;
+      }
+
+      .wrap {
+        width: min(980px, calc(100% - 40px));
+        margin: 0 auto;
+        padding: 42px 0 96px;
+      }
+
+      .wrap.compact {
+        max-width: 760px;
+      }
+
+      .doc-head {
+        margin-bottom: 2.5rem;
+        padding-bottom: 1.5rem;
+        border-bottom: 2px solid var(--line-strong);
+      }
+
+      .head-line {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 18px 36px;
+        margin-bottom: 2.5rem;
+      }
+
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        color: var(--ink);
+        font-size: 1.05rem;
+        font-weight: 900;
+      }
+
+      .glyph {
+        position: relative;
+        width: 30px;
+        height: 30px;
+        flex: none;
+        border: 2px solid var(--ink);
+        border-radius: 8px;
+        background: var(--green);
+        box-shadow: 3px 3px 0 var(--ink);
+        transform: rotate(-5deg);
+      }
+
+      .glyph::after {
+        content: "";
+        position: absolute;
+        top: 6px;
+        right: 5px;
+        width: 10px;
+        height: 10px;
+        border-top: 2px solid var(--ink);
+        border-right: 2px solid var(--ink);
+      }
+
+      .kicker,
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        border: 2px solid var(--ink);
+        border-radius: var(--radius-pill);
+        color: var(--ink);
+        font-weight: 850;
+        line-height: 1;
+        text-transform: uppercase;
+        letter-spacing: 0;
+        white-space: nowrap;
+      }
+
+      .kicker {
+        min-height: 30px;
+        padding: 5px 18px;
+        background: var(--yellow);
+        box-shadow: 3px 3px 0 var(--ink);
+        font-size: 0.78rem;
+      }
+
+      .pill {
+        gap: 6px;
+        min-height: 28px;
+        padding: 3px 11px;
+        font-size: 0.76rem;
+      }
+
+      .pill::before {
+        content: "";
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: currentColor;
+      }
+
+      .pill-progress {
+        background: var(--paper-blue);
+        color: var(--blue-dark);
+      }
+
+      .pill-done {
+        background: var(--paper-green);
+        color: var(--green-ink);
+      }
+
+      h1,
+      h2,
+      h3 {
+        margin: 0 0 0.5em;
+        color: var(--ink);
+        font-weight: 850;
+        line-height: 1.04;
+        letter-spacing: 0;
+        text-wrap: balance;
+      }
+
+      h1 {
+        max-width: 12ch;
+        font-size: 3.35rem;
+        font-weight: 900;
+        line-height: 0.98;
+      }
+
+      h2 {
+        margin: 0;
+        font-size: 1.6rem;
+      }
+
+      h3 {
+        margin-top: 1.6rem;
+        font-size: 1.2rem;
+      }
+
+      p {
+        max-width: 70ch;
+        margin: 0 0 1rem;
+      }
+
+      a {
+        color: var(--blue-dark);
+        font-weight: 750;
+        text-decoration: underline;
+        text-underline-offset: 2px;
+      }
+
+      code,
+      pre {
+        font-family: var(--font-mono);
+      }
+
+      code {
+        padding: 0.12em 0.4em;
+        border-radius: 5px;
+        background: rgba(18, 17, 15, 0.06);
+        font-size: 0.9em;
+      }
+
+      pre {
+        margin: 0;
+        padding: 16px 18px;
+        overflow-x: auto;
+        border: 2px solid var(--ink);
+        border-radius: var(--radius);
+        background: #fffdf7;
+        box-shadow: var(--shadow-hard);
+        color: var(--ink);
+        font-size: 0.88rem;
+        line-height: 1.55;
+      }
+
+      pre code {
+        padding: 0;
+        background: none;
+        font-size: inherit;
+      }
+
+      .lede {
+        max-width: 64ch;
+        color: var(--ink-soft);
+        font-size: 1.08rem;
+      }
+
+      .meta {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px;
+        margin-top: 0.95rem;
+        color: var(--muted);
+        font-size: 0.92rem;
+        font-weight: 650;
+      }
+
+      .panel {
+        display: grid;
+        grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr);
+        gap: 20px;
+        align-items: start;
+        margin: 0 0 16px;
+        padding: 22px;
+        border: 2px solid var(--ink);
+        border-radius: var(--radius);
+        background: var(--white);
+        box-shadow: var(--shadow-hard);
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 16px;
+        margin: 16px 0;
+      }
+
+      .task {
+        padding: 20px 22px;
+        border: 2px solid var(--ink);
+        border-radius: var(--radius);
+        background: var(--white);
+        box-shadow: var(--shadow-hard);
+      }
+
+      .task > h3 {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 12px;
+        margin: 0 0 0.5rem;
+      }
+
+      .num {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 30px;
+        height: 30px;
+        flex: none;
+        border: 2px solid var(--ink);
+        border-radius: 8px;
+        background: var(--yellow);
+        box-shadow: 2px 2px 0 var(--ink);
+        color: var(--ink);
+        font-size: 0.95rem;
+        font-weight: 900;
+        transform: rotate(-3deg);
+      }
+
+      .note {
+        margin: 1.25rem 0;
+        padding: 14px 16px 14px 18px;
+        border: 1.5px solid var(--line-strong);
+        border-left-width: 6px;
+        border-radius: var(--radius);
+        background: var(--white);
+      }
+
+      .note-title {
+        display: block;
+        margin-bottom: 0.25rem;
+        color: var(--ink);
+        font-weight: 800;
+      }
+
+      .note-warn {
+        border-left-color: var(--yellow);
+        background: var(--paper-amber);
+      }
+
+      .foot {
+        color: var(--muted);
+        font-size: 0.92rem;
+        font-weight: 650;
+      }
+
+      body:has(.auth-card) {
+        min-height: 100vh;
+        display: flow-root;
+      }
+
+      .auth-card {
+        width: min(520px, calc(100% - 32px));
+        margin: 64px auto;
+        padding: 32px;
+        border: 2px solid var(--ink);
+        border-radius: var(--radius);
+        background: var(--white);
+        box-shadow: var(--shadow-hard);
+      }
+
+      .auth-card .brand {
+        margin-bottom: 32px;
+      }
+      .auth-kicker {
+        margin: 0 0 16px;
+        color: var(--muted);
+        font-size: 0.8rem;
+        font-weight: 750;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+      }
+      .auth-card h1 {
+        max-width: none;
+        font-size: 2rem;
+        line-height: 1.12;
+      }
+      .auth-card label {
+        display: block;
+        margin: 18px 0 6px;
+        font-size: 0.9rem;
+        font-weight: 750;
+      }
+      .auth-card input,
+      .auth-card select {
+        width: 100%;
+        min-height: 48px;
+        padding: 10px 12px;
+        border: 1.5px solid var(--ink);
+        border-radius: 6px;
+        background: white;
+        color: var(--ink);
+        font: inherit;
+      }
+      .auth-hint {
+        margin: 8px 0 20px;
+        color: var(--muted);
+        font-size: 0.8rem;
+      }
+      .auth-action {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 46px;
+        padding: 8px 20px;
+        border: 2px solid var(--ink);
+        border-radius: var(--radius);
+        background: var(--blue);
+        color: white;
+        font: inherit;
+        font-weight: 750;
+        text-decoration: none;
+        cursor: pointer;
+      }
+      .auth-email {
+        font-weight: 750;
+        overflow-wrap: anywhere;
+      }
+      .auth-signout {
+        margin-top: 28px;
+        padding-top: 20px;
+        border-top: 1px solid var(--line-strong);
+      }
+      .auth-signout button {
+        min-height: 44px;
+        border: 0;
+        padding: 0 4px;
+        background: none;
+        color: var(--ink);
+        font: inherit;
+        font-weight: 750;
+        text-decoration: underline;
+        cursor: pointer;
+      }
+      .company-section {
+        margin-top: 32px;
+      }
+      .company-list {
+        list-style: none;
+        padding: 0;
+      }
+      .company-row {
+        padding: 20px 0;
+        border-bottom: 1px solid var(--line-strong);
+        overflow-wrap: anywhere;
+      }
+      .company-row p {
+        margin: 0 0 8px;
+      }
+      .company-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 12px;
+      }
+
+      @media (max-width: 760px) {
+        .wrap {
+          width: min(100% - 28px, 980px);
+          padding-top: 28px;
+        }
+
+        h1 {
+          max-width: 13ch;
+          font-size: 2.45rem;
+        }
+
+        .head-line {
+          margin-bottom: 1.8rem;
+        }
+
+        .panel,
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        html {
+          scroll-behavior: auto;
+        }
+      }
+
+      /* ---- prototype-only styling; the shell above is copied verbatim from packages/core/src/html.ts ---- */
+      .wrap {
+        width: min(1180px, calc(100% - 40px));
+      }
+      .mock-toc {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 1rem;
+      }
+      .mock-toc a {
+        display: inline-flex;
+        min-height: 36px;
+        align-items: center;
+        padding: 4px 14px;
+        border: 2px solid var(--ink);
+        border-radius: var(--radius-pill);
+        background: var(--white);
+        text-decoration: none;
+        font-size: 0.9rem;
+        box-shadow: 2px 2px 0 var(--ink);
+      }
+      .mock-brief {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+        margin-bottom: 3rem;
+      }
+      .mock-brief p {
+        margin: 0;
+        font-size: 0.98rem;
+      }
+      .variant {
+        margin: 0 0 5rem;
+      }
+      .variant-head {
+        display: flex;
+        gap: 18px;
+        align-items: flex-start;
+        margin-bottom: 1.25rem;
+      }
+      .variant-head h2 {
+        margin-bottom: 0.3rem;
+      }
+      .variant-why {
+        max-width: 78ch;
+        color: var(--muted);
+        font-size: 1rem;
+        margin: 0;
+      }
+      .variant > h3,
+      .shared > h3 {
+        margin: 2.2rem 0 0.8rem;
+        color: var(--muted);
+        font-size: 1rem;
+      }
+      .muted {
+        color: var(--muted);
+        font-style: italic;
+        font-weight: 500;
+      }
+      .url {
+        font-family: var(--font-mono);
+        font-size: 0.8rem;
+        color: var(--muted);
+        margin: 0 0 0.6rem;
+      }
+
+      /* the mocked browser viewport */
+      .frame {
+        border: 2px solid var(--ink);
+        border-radius: var(--radius);
+        background: var(--paper);
+        box-shadow: var(--shadow-hard);
+        overflow: hidden;
+      }
+      .frame.small {
+        font-size: 0.94em;
+      }
+      .app-bar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 12px 28px;
+        padding: 14px 26px;
+        border-bottom: 2px solid var(--ink);
+        background: var(--white);
+      }
+      .app-bar .brand {
+        font-size: 1rem;
+      }
+      .app-nav {
+        display: flex;
+        gap: 4px;
+      }
+      .app-nav a {
+        padding: 6px 12px;
+        border-radius: 6px;
+        color: var(--ink);
+        text-decoration: none;
+        font-weight: 750;
+        font-size: 0.95rem;
+      }
+      .app-nav a[aria-current="page"] {
+        background: var(--yellow);
+        border: 2px solid var(--ink);
+        box-shadow: 2px 2px 0 var(--ink);
+      }
+      .app-who {
+        margin-left: auto;
+        color: var(--muted);
+        font-size: 0.88rem;
+        font-weight: 650;
+      }
+      .app-body {
+        padding: 26px 26px 34px;
+      }
+
+      .pill-off,
+      .pill-warn,
+      .pill-live {
+        min-height: 22px;
+        padding: 1px 9px;
+        font-size: 0.68rem;
+        vertical-align: middle;
+      }
+      .pill-off {
+        background: rgba(18, 17, 15, 0.06);
+        color: var(--ink-soft);
+      }
+      .pill-warn {
+        background: var(--paper-amber);
+        color: var(--amber-ink);
+      }
+      .pill-live {
+        background: var(--paper-green);
+        color: var(--green-ink);
+      }
+
+      /* index + card, from list mock C */
+      .c-body {
+        display: grid;
+        grid-template-columns: 300px 1fr;
+        gap: 0;
+        padding: 0;
+      }
+      .c-index {
+        padding: 22px 18px 30px;
+        border-right: 2px solid var(--ink);
+        background: var(--white);
+      }
+      .c-count {
+        margin: 0 0 1rem;
+        color: var(--muted);
+        font-size: 0.84rem;
+        font-weight: 650;
+      }
+      .c-group {
+        font-size: 0.74rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+        margin: 1.2rem 0 0.3rem;
+      }
+      .c-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+      .c-list a {
+        display: block;
+        padding: 7px 10px;
+        border-radius: 6px;
+        text-decoration: none;
+        color: var(--ink);
+        font-weight: 600;
+      }
+      .c-list a:hover {
+        background: var(--paper-blue);
+      }
+      .c-current a {
+        background: var(--yellow);
+        border: 2px solid var(--ink);
+        box-shadow: 2px 2px 0 var(--ink);
+      }
+      .c-n {
+        display: block;
+        font-family: var(--font-mono);
+        font-size: 0.88rem;
+        font-weight: 750;
+      }
+      .c-l {
+        display: block;
+        color: var(--muted);
+        font-size: 0.8rem;
+        font-weight: 550;
+        line-height: 1.35;
+      }
+      .c-off .c-n {
+        color: var(--muted);
+      }
+      .c-detail {
+        padding: 30px 34px 36px;
+      }
+      .c-addr {
+        margin: 0 0 0.4rem;
+        font-family: var(--font-mono);
+        font-size: 0.9rem;
+        color: var(--muted);
+      }
+      .c-h1 {
+        max-width: none;
+        font-family: var(--font-mono);
+        font-size: 2rem;
+        margin-bottom: 0.2rem;
+      }
+      .c-title {
+        margin: 0 0 0.8rem;
+        color: var(--muted);
+        font-size: 1rem;
+        font-weight: 650;
+      }
+      .c-desc {
+        font-size: 1.05rem;
+        max-width: 60ch;
+        margin-bottom: 0.3rem;
+      }
+      .c-actor {
+        margin: 0 0 1rem;
+        color: var(--muted);
+        font-size: 0.84rem;
+      }
+      .c-actline {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        margin: 1rem 0 1.6rem;
+      }
+      .c-quiet {
+        font-size: 0.92rem;
+      }
+      .c-facts {
+        display: grid;
+        grid-template-columns: 150px 1fr;
+        gap: 8px 16px;
+        margin: 0 0 1.6rem;
+        font-size: 0.95rem;
+      }
+      .c-facts dt {
+        color: var(--muted);
+        font-weight: 750;
+      }
+      .c-facts dd {
+        margin: 0;
+      }
+      .c-manage {
+        padding-top: 1.2rem;
+        border-top: 2px solid var(--line-strong);
+      }
+      .c-manage h2 {
+        font-size: 1.1rem;
+        margin-bottom: 0.4rem;
+      }
+      .c-managenote {
+        color: var(--muted);
+        font-size: 0.88rem;
+        margin: 0;
+      }
+      .c-adminline {
+        margin: 0 0 1rem;
+        color: var(--amber-ink);
+        font-size: 0.88rem;
+        font-weight: 700;
+      }
+      .c-offcard {
+        background: rgba(18, 17, 15, 0.03);
+      }
+      .c-pair {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+      }
+      .c-pair .c-detail {
+        padding: 24px 26px;
+      }
+      .c-solo {
+        max-width: 720px;
+      }
+
+      /* drawn forms; the real thing is a plain POST <form> with <input>s, which PatchPage does not accept */
+      .f {
+        margin: 1.1rem 0 1.4rem;
+      }
+      .f-label {
+        display: block;
+        margin: 0 0 6px;
+        font-size: 0.88rem;
+        font-weight: 750;
+        color: var(--ink);
+      }
+      .f-hint {
+        margin: 6px 0 0;
+        color: var(--muted);
+        font-size: 0.82rem;
+      }
+      .f-in {
+        display: block;
+        width: 100%;
+        min-height: 44px;
+        padding: 9px 12px;
+        border: 1.5px solid var(--ink);
+        border-radius: 6px;
+        background: white;
+        color: var(--ink);
+        font: inherit;
+        font-size: 0.95rem;
+      }
+      .f-in.area {
+        min-height: 92px;
+      }
+      .f-in.short {
+        max-width: 340px;
+      }
+      .f-in.sel::after {
+        content: "▾";
+        float: right;
+        color: var(--muted);
+      }
+      .f-in.ph {
+        color: var(--muted);
+      }
+      .f-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px 14px;
+        margin-top: 10px;
+      }
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 42px;
+        padding: 6px 18px;
+        border: 2px solid var(--ink);
+        border-radius: var(--radius);
+        background: var(--white);
+        color: var(--ink);
+        font: inherit;
+        font-size: 0.95rem;
+        font-weight: 750;
+        text-decoration: none;
+        box-shadow: 2px 2px 0 var(--ink);
+      }
+      .btn-primary {
+        background: var(--blue);
+        color: white;
+      }
+      .btn-danger {
+        background: var(--paper-amber);
+        color: var(--red-ink, #b4220f);
+        border-color: var(--ink);
+      }
+      .btn-quiet {
+        border-color: var(--line-strong);
+        box-shadow: none;
+      }
+      .btn-sm {
+        min-height: 34px;
+        padding: 3px 12px;
+        font-size: 0.85rem;
+      }
+      .chk {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        margin: 10px 0;
+        font-size: 0.95rem;
+      }
+      .chk::before {
+        content: "";
+        flex: none;
+        width: 20px;
+        height: 20px;
+        margin-top: 3px;
+        border: 2px solid var(--ink);
+        border-radius: 4px;
+        background: white;
+      }
+      .chk.on::before {
+        background: var(--ink);
+        box-shadow: inset 0 0 0 3px white;
+      }
+      .chk.dim {
+        color: var(--muted);
+      }
+      .chk.dim::before {
+        border-color: var(--line-strong);
+        background: rgba(18, 17, 15, 0.06);
+      }
+      .radio {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        margin: 8px 0;
+        font-size: 0.95rem;
+      }
+      .radio::before {
+        content: "";
+        flex: none;
+        width: 20px;
+        height: 20px;
+        margin-top: 3px;
+        border: 2px solid var(--ink);
+        border-radius: 999px;
+        background: white;
+      }
+      .radio.on::before {
+        background: var(--ink);
+        box-shadow: inset 0 0 0 4px white;
+      }
+      .radio strong {
+        display: block;
+      }
+      .radio span {
+        display: block;
+        color: var(--muted);
+        font-size: 0.86rem;
+      }
+
+      /* sections on the card */
+      .sect {
+        padding: 1.2rem 0;
+        border-top: 1px solid var(--line-strong);
+      }
+      .sect h3 {
+        margin: 0 0 0.5rem;
+        font-size: 1rem;
+        color: var(--ink);
+      }
+      .sect p {
+        font-size: 0.95rem;
+      }
+      .danger {
+        margin-top: 1.4rem;
+        padding: 18px 20px 6px;
+        border: 2px solid var(--ink);
+        border-radius: var(--radius);
+        background: var(--paper-amber);
+      }
+      .danger > h3 {
+        margin: 0 0 0.4rem;
+        font-size: 1rem;
+      }
+      .danger .sect {
+        border-top-color: rgba(18, 17, 15, 0.2);
+      }
+      .danger .sect:first-of-type {
+        border-top: 0;
+        padding-top: 0.4rem;
+      }
+      .deps {
+        margin: 0.4rem 0 0.8rem;
+        padding: 0 0 0 1.1rem;
+        font-size: 0.92rem;
+      }
+      .deps li {
+        margin: 2px 0;
+      }
+      .deps code {
+        font-size: 0.88em;
+      }
+
+      /* versions table */
+      .v-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.9rem;
+        line-height: 1.4;
+        margin: 0.4rem 0 0.6rem;
+      }
+      .v-table th {
+        text-align: left;
+        padding: 6px 8px;
+        border-bottom: 2px solid var(--ink);
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--ink);
+      }
+      .v-table td {
+        padding: 8px 8px;
+        border-bottom: 1px solid var(--line);
+        vertical-align: top;
+      }
+      .v-table td:last-child {
+        text-align: right;
+        white-space: nowrap;
+      }
+      .v-cur td {
+        background: rgba(255, 191, 53, 0.16);
+      }
+
+      /* action list (variant B) */
+      .actlist {
+        list-style: none;
+        margin: 0.4rem 0 0;
+        padding: 0;
+      }
+      .actlist li {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        align-items: center;
+        gap: 14px;
+        padding: 10px 0;
+        border-bottom: 1px solid var(--line);
+        font-size: 0.95rem;
+      }
+      .actlist li span {
+        color: var(--muted);
+        font-size: 0.86rem;
+        display: block;
+      }
+      .actlist li strong {
+        color: var(--ink);
+      }
+
+      /* a focused action page (variant B) and confirmation pages */
+      .page {
+        max-width: 640px;
+        margin: 0 auto;
+        padding: 34px 30px 40px;
+      }
+      .page h1 {
+        max-width: none;
+        font-size: 1.9rem;
+        margin-bottom: 0.4rem;
+        line-height: 1.1;
+      }
+      .page .back {
+        font-size: 0.88rem;
+        margin-bottom: 1.2rem;
+        display: block;
+      }
+      .page .lede {
+        font-size: 1rem;
+      }
+      .pick {
+        list-style: none;
+        margin: 0.8rem 0 1.2rem;
+        padding: 0;
+      }
+      .pick li {
+        padding: 10px 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .pick .chk {
+        margin: 0;
+      }
+      .pick .chk-body {
+        flex: 1;
+      }
+      .pick .who {
+        color: var(--muted);
+        font-size: 0.86rem;
+      }
+      .badge {
+        display: inline-block;
+        margin-top: 4px;
+        padding: 1px 8px;
+        border: 1.5px solid var(--line-strong);
+        border-radius: 999px;
+        font-size: 0.74rem;
+        font-weight: 700;
+        color: var(--ink-soft);
+      }
+      .badge.hot {
+        border-color: var(--amber-ink);
+        color: var(--amber-ink);
+        background: var(--paper-amber);
+      }
+      .breaks {
+        margin: 0.6rem 0 1rem;
+        padding: 14px 16px;
+        border: 2px solid var(--ink);
+        border-radius: var(--radius);
+        background: var(--paper-amber);
+      }
+      .breaks h3 {
+        margin: 0 0 0.4rem;
+        font-size: 1rem;
+      }
+      .breaks ul {
+        margin: 0;
+        padding-left: 1.1rem;
+        font-size: 0.94rem;
+      }
+      .ok-box {
+        margin: 0.6rem 0 1rem;
+        padding: 14px 16px;
+        border: 2px solid var(--ink);
+        border-radius: var(--radius);
+        background: var(--paper-green);
+        font-size: 0.95rem;
+      }
+      .three {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 16px;
+      }
+      .two {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+      }
+      .verdict {
+        margin-top: 1.4rem;
+      }
+      .verdict td,
+      .verdict th {
+        vertical-align: top;
+      }
+      table.cmp {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.92rem;
+      }
+      table.cmp th,
+      table.cmp td {
+        text-align: left;
+        padding: 8px 10px;
+        border-bottom: 1px solid var(--line);
+      }
+      table.cmp th {
+        border-bottom: 2px solid var(--ink);
+        font-size: 0.74rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }
+
+      @media (max-width: 860px) {
+        .mock-brief,
+        .c-pair,
+        .three,
+        .two {
+          grid-template-columns: 1fr;
+        }
+        .c-body {
+          grid-template-columns: 1fr;
+        }
+        .c-index {
+          border-right: 0;
+          border-bottom: 2px solid var(--ink);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header class="doc-head">
+        <div class="head-line">
+          <div class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</div>
+          <span class="kicker">Prototype · patch page, Manage side</span>
+        </div>
+        <h1>Three ways the owner's card could read</h1>
+        <p class="lede">
+          Static mocks for the Portal map. The card at <code>/patches/&lt;name&gt;</code> was picked
+          on the list mocks; this page settles its Manage side. Same patch, same owner, three
+          structures. After the variants: the retired, deleted and deactivated-owner cards, an admin
+          on someone else's card, and the deactivation and reactivation pages, which every variant
+          shares. Nothing here is live. Buttons and fields are drawn; the real ones are plain POST
+          forms.
+        </p>
+        <nav class="mock-toc" aria-label="Sections">
+          <a href="#variant-a">A · Everything on the card</a>
+          <a href="#variant-b">B · One page per action</a>
+          <a href="#variant-c">C · Edits inline, destruction confirms</a>
+          <a href="#states">Retired, deleted, deactivated owner, admin</a>
+          <a href="#deactivation">Deactivation and reactivation</a>
+          <a href="#compare">Side by side</a>
+        </nav>
+      </header>
+
+      <section class="mock-brief">
+        <div class="task">
+          <h3>The cast</h3>
+          <p>
+            <strong>Northwind Trading</strong> (<code>northwind</code>).
+            <strong>Priya Raman</strong> owns <code>sales-dashboard</code>, at v14, company-shared,
+            with a shared <code>weekly_totals</code> table that two other patches read.
+            <strong>Tom Okafor</strong> retired Time off on 30 Aug.
+            <strong>Ana Costa</strong> deleted the old CRM export on 6 Sep, 22 days left.
+            <strong>Jonas Weber</strong> was deactivated on 2 Sep and still owns Price list 2026.
+            <strong>Maya Lindqvist</strong>
+            is an admin.
+          </p>
+        </div>
+        <div class="task">
+          <h3>What every variant shares</h3>
+          <p>
+            The card's top is fixed by the list mocks: name as heading, title as one secondary line,
+            description with its muted actor line, Open, then the facts. The facts gain a
+            plain-words "Who can open it" and a "Read by" row so the dependants are visible before
+            any destructive act. What varies is where the actions live: on the card, on their own
+            pages, or split by how reversible they are. Rollback is a pointer move, restore always
+            lands live, and retire, delete and reassign are the acts a non-builder must not do by
+            accident.
+          </p>
+        </div>
+      </section>
+
+      <!-- ============================================================ A -->
+      <section class="variant" id="variant-a">
+        <div class="variant-head">
+          <span class="num">A</span>
+          <div>
+            <h2>Everything on the card</h2>
+            <p class="variant-why">
+              The card is the whole management page. Each action is a small form in its own section,
+              top to bottom in order of how often you'd use it, and the destructive ones sit
+              together in an amber block at the end with their acknowledgement right there. No
+              second page, ever. Bet: an owner wants to see and change everything in one scroll, and
+              a form you can see is a form you understand.
+            </p>
+          </div>
+        </div>
+        <p class="url">/patches/sales-dashboard · Priya, the owner</p>
+        <div class="frame">
+          <div class="app-bar">
+            <div class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</div>
+            <nav class="app-nav" aria-label="Primary">
+              <a href="#" aria-current="page">Patches</a><a href="#">Company</a
+              ><a href="#">Connections</a><a href="#">Your machines</a>
+            </nav>
+            <div class="app-who">Priya Raman · Northwind Trading · <a href="#">Sign out</a></div>
+          </div>
+          <div class="app-body c-body">
+            <aside class="c-index">
+              <p class="c-count">17 patches · <a href="#">hide retired and deleted</a></p>
+              <h2 class="c-group">Yours</h2>
+              <ul class="c-list">
+                <li class="c-current">
+                  <a href="#"
+                    ><span class="c-n">sales-dashboard</span
+                    ><span class="c-l">Weekly pipeline and closed-won by rep</span></a
+                  >
+                </li>
+                <li>
+                  <a href="#"
+                    ><span class="c-n">contract-review</span
+                    ><span class="c-l">Clauses that differ from our standard terms</span></a
+                  >
+                </li>
+                <li>
+                  <a href="#"
+                    ><span class="c-n">inventory-count</span
+                    ><span class="c-l">Count sheets for the warehouse</span></a
+                  >
+                </li>
+              </ul>
+              <h2 class="c-group">Company</h2>
+              <ul class="c-list">
+                <li>
+                  <a href="#"
+                    ><span class="c-n">expense-claims</span
+                    ><span class="c-l">Submit and approve expense claims</span></a
+                  >
+                </li>
+                <li>
+                  <a href="#"
+                    ><span class="c-n">pricing-sheet</span
+                    ><span class="c-l">The current price list</span></a
+                  >
+                </li>
+                <li>
+                  <a href="#"
+                    ><span class="c-n">quarterly-okrs</span
+                    ><span class="c-l">Objectives for the quarter</span></a
+                  >
+                </li>
+                <li>
+                  <a href="#"><span class="c-l muted">… 9 more</span></a>
+                </li>
+              </ul>
+              <h2 class="c-group">Retired and deleted</h2>
+              <ul class="c-list">
+                <li class="c-off">
+                  <a href="#"
+                    ><span class="c-n">holiday-calendar</span
+                    ><span class="c-l">Retired by Tom Okafor, 30 Aug</span></a
+                  >
+                </li>
+                <li class="c-off">
+                  <a href="#"
+                    ><span class="c-n">old-crm-export</span
+                    ><span class="c-l">Deleted by Ana Costa, 22 days left</span></a
+                  >
+                </li>
+              </ul>
+            </aside>
+            <article class="c-detail">
+              <p class="c-addr">northwind / sales-dashboard</p>
+              <h1 class="c-h1">sales-dashboard</h1>
+              <p class="c-title">Sales dashboard · Q3</p>
+              <p class="c-desc">
+                Weekly pipeline and closed-won by rep, pulled from the CRM Postgres. Sales managers
+                open this on Monday mornings.
+              </p>
+              <p class="c-actor">Description edited by you, 3 days ago.</p>
+              <p class="c-actline">
+                <a class="auth-action" href="#">Open</a>
+                <a class="c-quiet" href="#">Copy address</a>
+              </p>
+              <dl class="c-facts">
+                <dt>Owner</dt>
+                <dd>You</dd>
+                <dt>Current version</dt>
+                <dd>v14, published 3 days ago</dd>
+                <dt>Who can open it</dt>
+                <dd>Anyone at Northwind who signs in. Not the public.</dd>
+                <dt>Read by</dt>
+                <dd>
+                  2 patches use its shared <code>weekly_totals</code> table:
+                  <code>quarterly-okrs</code> (you), <code>expense-claims</code> (Tom Okafor)
+                </dd>
+              </dl>
+              <div class="c-manage">
+                <h2>Manage</h2>
+
+                <div class="sect">
+                  <h3>Description</h3>
+                  <div class="f">
+                    <div class="f-in area">
+                      Weekly pipeline and closed-won by rep, pulled from the CRM Postgres. Sales
+                      managers open this on Monday mornings.
+                    </div>
+                    <p class="f-hint">
+                      One paragraph, up to 500 characters. Your repo picks the change up the next
+                      time it runs <code>patchy dev</code> or publishes.
+                    </p>
+                    <div class="f-row"><span class="btn btn-sm">Save description</span></div>
+                  </div>
+                </div>
+
+                <div class="sect">
+                  <h3>Who can open it</h3>
+                  <div class="radio on">
+                    <div>
+                      <strong>People at Northwind</strong
+                      ><span
+                        >Anyone who signs in to Northwind. The link asks strangers to sign in.</span
+                      >
+                    </div>
+                  </div>
+                  <div class="radio">
+                    <div>
+                      <strong>Anyone with the link</strong
+                      ><span>No sign-in. Share the address with customers or on a website.</span>
+                    </div>
+                  </div>
+                  <div class="f-row"><span class="btn btn-sm">Save</span></div>
+                  <p class="f-hint">
+                    This is about opening the page. Which tables other patches may read is set in
+                    the code and changes when you publish.
+                  </p>
+                </div>
+
+                <div class="sect">
+                  <h3>Versions</h3>
+                  <p>
+                    Every publish is kept. Making an older one current moves the address to it;
+                    nothing is deleted and your next publish goes on top.
+                  </p>
+                  <table class="v-table">
+                    <thead>
+                      <tr>
+                        <th>Version</th>
+                        <th>Published</th>
+                        <th>By</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr class="v-cur">
+                        <td>v14</td>
+                        <td>3 days ago</td>
+                        <td>you</td>
+                        <td><span class="pill pill-live">current</span></td>
+                      </tr>
+                      <tr>
+                        <td>v13</td>
+                        <td>9 days ago</td>
+                        <td>you</td>
+                        <td><span class="btn btn-sm">Make v13 current</span></td>
+                      </tr>
+                      <tr>
+                        <td>v12</td>
+                        <td>2 weeks ago</td>
+                        <td>you</td>
+                        <td><span class="btn btn-sm">Make v12 current</span></td>
+                      </tr>
+                      <tr>
+                        <td colspan="4"><a href="#">Show all 14 versions</a></td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <div class="danger">
+                  <h3>Take it off</h3>
+                  <p class="c-managenote">
+                    Both stop the page and cut off the 2 patches that read its table. Both can be
+                    undone from this card.
+                  </p>
+
+                  <div class="sect">
+                    <h3>Retire</h3>
+                    <p>
+                      Off the shelf, kept exactly as it is, for as long as you like. Restore brings
+                      it back at v14 with the same address.
+                    </p>
+                    <ul class="deps">
+                      <li>
+                        <code>quarterly-okrs</code> (you) and <code>expense-claims</code> (Tom
+                        Okafor) will get an error when they next read <code>weekly_totals</code>,
+                        until you restore.
+                      </li>
+                    </ul>
+                    <div class="chk">
+                      <div>I understand those 2 patches will break until this one is restored.</div>
+                    </div>
+                    <div class="f-row">
+                      <span class="btn btn-danger">Retire sales-dashboard</span>
+                    </div>
+                  </div>
+
+                  <div class="sect">
+                    <h3>Delete</h3>
+                    <p>
+                      Off now, and gone for good after 30 days: the page, every version, its tables
+                      and files, and the name. Until then it can be restored.
+                    </p>
+                    <ul class="deps">
+                      <li>Same 2 patches break until you restore.</li>
+                    </ul>
+                    <div class="chk"><div>I understand those 2 patches will break.</div></div>
+                    <span class="f-label">Type <code>sales-dashboard</code> to confirm</span>
+                    <div class="f-in short ph">sales-dashboard</div>
+                    <div class="f-row">
+                      <span class="btn btn-danger">Delete sales-dashboard</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </article>
+          </div>
+        </div>
+        <p class="c-managenote" style="margin-top: 0.8rem">
+          Admin on this card: a fourth section, <strong>Owner</strong>, with a member picker and a
+          "Reassign" button, sits between Versions and the amber block. Drawn under
+          <a href="#states">the admin card</a> below.
+        </p>
+      </section>
+
+      <!-- ============================================================ B -->
+      <section class="variant" id="variant-b">
+        <div class="variant-head">
+          <span class="num">B</span>
+          <div>
+            <h2>One page per action</h2>
+            <p class="variant-why">
+              The card stays a dossier. Manage is a short list of what you can do, one line each
+              with a plain sentence of consequence, and every action is its own small page at
+              <code>/patches/&lt;name&gt;/&lt;action&gt;</code> with one form, one button and a way
+              back. Bet: the card is read far more often than it is changed, and a page that does
+              one thing is the easiest form for a non-builder to trust.
+            </p>
+          </div>
+        </div>
+        <p class="url">/patches/sales-dashboard · Priya, the owner</p>
+        <div class="frame">
+          <div class="app-bar">
+            <div class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</div>
+            <nav class="app-nav" aria-label="Primary">
+              <a href="#" aria-current="page">Patches</a><a href="#">Company</a
+              ><a href="#">Connections</a><a href="#">Your machines</a>
+            </nav>
+            <div class="app-who">Priya Raman · Northwind Trading · <a href="#">Sign out</a></div>
+          </div>
+          <div class="app-body c-body">
+            <aside class="c-index">
+              <p class="c-count">17 patches · <a href="#">hide retired and deleted</a></p>
+              <h2 class="c-group">Yours</h2>
+              <ul class="c-list">
+                <li class="c-current">
+                  <a href="#"
+                    ><span class="c-n">sales-dashboard</span
+                    ><span class="c-l">Weekly pipeline and closed-won by rep</span></a
+                  >
+                </li>
+                <li>
+                  <a href="#"
+                    ><span class="c-n">contract-review</span
+                    ><span class="c-l">Clauses that differ from our standard terms</span></a
+                  >
+                </li>
+                <li>
+                  <a href="#"
+                    ><span class="c-n">inventory-count</span
+                    ><span class="c-l">Count sheets for the warehouse</span></a
+                  >
+                </li>
+              </ul>
+              <h2 class="c-group">Company</h2>
+              <ul class="c-list">
+                <li>
+                  <a href="#"
+                    ><span class="c-n">expense-claims</span
+                    ><span class="c-l">Submit and approve expense claims</span></a
+                  >
+                </li>
+                <li>
+                  <a href="#"
+                    ><span class="c-n">pricing-sheet</span
+                    ><span class="c-l">The current price list</span></a
+                  >
+                </li>
+                <li>
+                  <a href="#"
+                    ><span class="c-n">quarterly-okrs</span
+                    ><span class="c-l">Objectives for the quarter</span></a
+                  >
+                </li>
+                <li>
+                  <a href="#"><span class="c-l muted">… 9 more</span></a>
+                </li>
+              </ul>
+              <h2 class="c-group">Retired and deleted</h2>
+              <ul class="c-list">
+                <li class="c-off">
+                  <a href="#"
+                    ><span class="c-n">holiday-calendar</span
+                    ><span class="c-l">Retired by Tom Okafor, 30 Aug</span></a
+                  >
+                </li>
+                <li class="c-off">
+                  <a href="#"
+                    ><span class="c-n">old-crm-export</span
+                    ><span class="c-l">Deleted by Ana Costa, 22 days left</span></a
+                  >
+                </li>
+              </ul>
+            </aside>
+            <article class="c-detail">
+              <p class="c-addr">northwind / sales-dashboard</p>
+              <h1 class="c-h1">sales-dashboard</h1>
+              <p class="c-title">Sales dashboard · Q3</p>
+              <p class="c-desc">
+                Weekly pipeline and closed-won by rep, pulled from the CRM Postgres. Sales managers
+                open this on Monday mornings.
+              </p>
+              <p class="c-actor">Description edited by you, 3 days ago.</p>
+              <p class="c-actline">
+                <a class="auth-action" href="#">Open</a>
+                <a class="c-quiet" href="#">Copy address</a>
+              </p>
+              <dl class="c-facts">
+                <dt>Owner</dt>
+                <dd>You</dd>
+                <dt>Current version</dt>
+                <dd>v14, published 3 days ago</dd>
+                <dt>Who can open it</dt>
+                <dd>Anyone at Northwind who signs in. Not the public.</dd>
+                <dt>Read by</dt>
+                <dd>
+                  2 patches use its shared <code>weekly_totals</code> table:
+                  <code>quarterly-okrs</code> (you), <code>expense-claims</code> (Tom Okafor)
+                </dd>
+              </dl>
+              <div class="c-manage">
+                <h2>Manage</h2>
+                <ul class="actlist">
+                  <li>
+                    <div>
+                      <strong>Edit the description</strong
+                      ><span>One paragraph. Your repo picks it up on its next run.</span>
+                    </div>
+                    <a class="btn btn-sm" href="#b-desc">Edit</a>
+                  </li>
+                  <li>
+                    <div>
+                      <strong>Who can open it</strong
+                      ><span>People at Northwind. Change to anyone with the link, or back.</span>
+                    </div>
+                    <a class="btn btn-sm" href="#">Change</a>
+                  </li>
+                  <li>
+                    <div>
+                      <strong>Versions</strong
+                      ><span>14 kept. Make an earlier one current; nothing is lost.</span>
+                    </div>
+                    <a class="btn btn-sm" href="#b-versions">See versions</a>
+                  </li>
+                  <li>
+                    <div>
+                      <strong>Retire</strong
+                      ><span
+                        >Off the shelf, kept as it is. 2 patches that read its table will break
+                        until it is restored.</span
+                      >
+                    </div>
+                    <a class="btn btn-sm" href="#b-retire">Retire…</a>
+                  </li>
+                  <li>
+                    <div>
+                      <strong>Delete</strong
+                      ><span>Off now, gone after 30 days. Same 2 patches break.</span>
+                    </div>
+                    <a class="btn btn-sm" href="#b-delete">Delete…</a>
+                  </li>
+                </ul>
+                <p class="c-managenote" style="margin-top: 0.8rem">
+                  An admin sees one more line, <strong>Owner</strong>, with "Reassign…".
+                </p>
+              </div>
+            </article>
+          </div>
+        </div>
+
+        <h3>B · the retire page and the delete page</h3>
+        <div class="two">
+          <div class="frame small" id="b-retire">
+            <div class="page">
+              <a class="back" href="#">← Back to sales-dashboard</a>
+              <h1>Retire sales-dashboard?</h1>
+              <p class="lede">
+                It goes off the shelf and stops serving. Its tables, files and all 14 versions are
+                kept. You or an admin can restore it any time, and it comes back at v14 with the
+                same address.
+              </p>
+              <div class="breaks">
+                <h3>2 patches will break</h3>
+                <p style="margin: 0 0 0.4rem; font-size: 0.94rem">
+                  They read this patch's <code>weekly_totals</code> table and will get an error the
+                  next time they do, until this one is restored.
+                </p>
+                <ul>
+                  <li><code>quarterly-okrs</code>, owned by you</li>
+                  <li><code>expense-claims</code>, owned by Tom Okafor</li>
+                </ul>
+              </div>
+              <div class="chk">
+                <div>
+                  I understand those 2 patches will break until sales-dashboard is restored.
+                </div>
+              </div>
+              <div class="f-row">
+                <span class="btn btn-danger">Retire sales-dashboard</span
+                ><a class="btn btn-quiet" href="#">Cancel</a>
+              </div>
+            </div>
+          </div>
+          <div class="frame small" id="b-delete">
+            <div class="page">
+              <a class="back" href="#">← Back to sales-dashboard</a>
+              <h1>Delete sales-dashboard?</h1>
+              <p class="lede">
+                It stops serving now. In 30 days everything is gone for good: the page, all 14
+                versions, its tables and files, and the name. Until then it shows in Retired and
+                deleted and can be restored.
+              </p>
+              <div class="breaks">
+                <h3>2 patches will break</h3>
+                <ul>
+                  <li><code>quarterly-okrs</code>, owned by you</li>
+                  <li><code>expense-claims</code>, owned by Tom Okafor</li>
+                </ul>
+              </div>
+              <div class="chk"><div>I understand those 2 patches will break.</div></div>
+              <span class="f-label">Type <code>sales-dashboard</code> to confirm</span>
+              <div class="f-in short ph">sales-dashboard</div>
+              <div class="f-row">
+                <span class="btn btn-danger">Delete sales-dashboard</span
+                ><a class="btn btn-quiet" href="#">Cancel</a>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <h3>B · the versions page and the description page</h3>
+        <div class="two">
+          <div class="frame small" id="b-versions">
+            <div class="page">
+              <a class="back" href="#">← Back to sales-dashboard</a>
+              <h1>Versions of sales-dashboard</h1>
+              <p class="lede">
+                Every publish is kept. Making an older one current moves the address to it. Nothing
+                is deleted; your next publish goes on top.
+              </p>
+              <table class="v-table">
+                <thead>
+                  <tr>
+                    <th>Version</th>
+                    <th>Published</th>
+                    <th>By</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr class="v-cur">
+                    <td>v14</td>
+                    <td>3 days ago</td>
+                    <td>you</td>
+                    <td><span class="pill pill-live">current</span></td>
+                  </tr>
+                  <tr>
+                    <td>v13</td>
+                    <td>9 days ago</td>
+                    <td>you</td>
+                    <td><span class="btn btn-sm">Make current</span></td>
+                  </tr>
+                  <tr>
+                    <td>v12</td>
+                    <td>2 weeks ago</td>
+                    <td>you</td>
+                    <td><span class="btn btn-sm">Make current</span></td>
+                  </tr>
+                  <tr>
+                    <td>v11</td>
+                    <td>3 weeks ago</td>
+                    <td>you</td>
+                    <td><span class="btn btn-sm">Make current</span></td>
+                  </tr>
+                  <tr>
+                    <td colspan="4" class="muted">… v10 to v1</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="frame small" id="b-desc">
+            <div class="page">
+              <a class="back" href="#">← Back to sales-dashboard</a>
+              <h1>Describe sales-dashboard</h1>
+              <p class="lede">
+                What it does and who it is for, in one paragraph. This is the line people read in
+                the list.
+              </p>
+              <div class="f">
+                <div class="f-in area">
+                  Weekly pipeline and closed-won by rep, pulled from the CRM Postgres. Sales
+                  managers open this on Monday mornings.
+                </div>
+                <p class="f-hint">
+                  Up to 500 characters. Last edited by you, 3 days ago. Your repo picks the change
+                  up the next time it runs <code>patchy dev</code> or publishes.
+                </p>
+              </div>
+              <div class="f-row">
+                <span class="btn btn-primary">Save</span
+                ><a class="btn btn-quiet" href="#">Cancel</a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================================ C -->
+      <section class="variant" id="variant-c">
+        <div class="variant-head">
+          <span class="num">C</span>
+          <div>
+            <h2>Edits inline, destruction confirms</h2>
+            <p class="variant-why">
+              Split by reversibility. What can be undone with one more click (description, who can
+              open it, making a version current, and for admins the owner) is a form on the card.
+              What breaks other people's tools (retire, delete) is one button each in an amber
+              block, and the button leads to a confirmation page that lists the damage and asks for
+              the acknowledgement. Bet: the card should feel safe to poke at, and the only time you
+              leave it is when you are about to break something.
+            </p>
+          </div>
+        </div>
+        <p class="url">/patches/sales-dashboard · Priya, the owner</p>
+        <div class="frame">
+          <div class="app-bar">
+            <div class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</div>
+            <nav class="app-nav" aria-label="Primary">
+              <a href="#" aria-current="page">Patches</a><a href="#">Company</a
+              ><a href="#">Connections</a><a href="#">Your machines</a>
+            </nav>
+            <div class="app-who">Priya Raman · Northwind Trading · <a href="#">Sign out</a></div>
+          </div>
+          <div class="app-body c-body">
+            <aside class="c-index">
+              <p class="c-count">17 patches · <a href="#">hide retired and deleted</a></p>
+              <h2 class="c-group">Yours</h2>
+              <ul class="c-list">
+                <li class="c-current">
+                  <a href="#"
+                    ><span class="c-n">sales-dashboard</span
+                    ><span class="c-l">Weekly pipeline and closed-won by rep</span></a
+                  >
+                </li>
+                <li>
+                  <a href="#"
+                    ><span class="c-n">contract-review</span
+                    ><span class="c-l">Clauses that differ from our standard terms</span></a
+                  >
+                </li>
+                <li>
+                  <a href="#"
+                    ><span class="c-n">inventory-count</span
+                    ><span class="c-l">Count sheets for the warehouse</span></a
+                  >
+                </li>
+              </ul>
+              <h2 class="c-group">Company</h2>
+              <ul class="c-list">
+                <li>
+                  <a href="#"
+                    ><span class="c-n">expense-claims</span
+                    ><span class="c-l">Submit and approve expense claims</span></a
+                  >
+                </li>
+                <li>
+                  <a href="#"
+                    ><span class="c-n">pricing-sheet</span
+                    ><span class="c-l">The current price list</span></a
+                  >
+                </li>
+                <li>
+                  <a href="#"
+                    ><span class="c-n">quarterly-okrs</span
+                    ><span class="c-l">Objectives for the quarter</span></a
+                  >
+                </li>
+                <li>
+                  <a href="#"><span class="c-l muted">… 9 more</span></a>
+                </li>
+              </ul>
+              <h2 class="c-group">Retired and deleted</h2>
+              <ul class="c-list">
+                <li class="c-off">
+                  <a href="#"
+                    ><span class="c-n">holiday-calendar</span
+                    ><span class="c-l">Retired by Tom Okafor, 30 Aug</span></a
+                  >
+                </li>
+                <li class="c-off">
+                  <a href="#"
+                    ><span class="c-n">old-crm-export</span
+                    ><span class="c-l">Deleted by Ana Costa, 22 days left</span></a
+                  >
+                </li>
+              </ul>
+            </aside>
+            <article class="c-detail">
+              <p class="c-addr">northwind / sales-dashboard</p>
+              <h1 class="c-h1">sales-dashboard</h1>
+              <p class="c-title">Sales dashboard · Q3</p>
+              <p class="c-desc">
+                Weekly pipeline and closed-won by rep, pulled from the CRM Postgres. Sales managers
+                open this on Monday mornings.
+              </p>
+              <p class="c-actor">Description edited by you, 3 days ago.</p>
+              <p class="c-actline">
+                <a class="auth-action" href="#">Open</a>
+                <a class="c-quiet" href="#">Copy address</a>
+              </p>
+              <dl class="c-facts">
+                <dt>Owner</dt>
+                <dd>You</dd>
+                <dt>Current version</dt>
+                <dd>v14, published 3 days ago</dd>
+                <dt>Who can open it</dt>
+                <dd>Anyone at Northwind who signs in. Not the public.</dd>
+                <dt>Read by</dt>
+                <dd>
+                  2 patches use its shared <code>weekly_totals</code> table:
+                  <code>quarterly-okrs</code> (you), <code>expense-claims</code> (Tom Okafor)
+                </dd>
+              </dl>
+              <div class="c-manage">
+                <h2>Manage</h2>
+
+                <div class="sect">
+                  <h3>Description</h3>
+                  <div class="f" style="margin-top: 0.4rem">
+                    <div class="f-in area">
+                      Weekly pipeline and closed-won by rep, pulled from the CRM Postgres. Sales
+                      managers open this on Monday mornings.
+                    </div>
+                    <div class="f-row">
+                      <span class="btn btn-sm">Save</span
+                      ><span class="f-hint" style="margin: 0"
+                        >Up to 500 characters. Your repo picks it up on its next run.</span
+                      >
+                    </div>
+                  </div>
+                </div>
+
+                <div class="sect">
+                  <h3>Who can open it</h3>
+                  <div class="radio on">
+                    <div>
+                      <strong>People at Northwind</strong
+                      ><span>Anyone who signs in to Northwind.</span>
+                    </div>
+                  </div>
+                  <div class="radio">
+                    <div><strong>Anyone with the link</strong><span>No sign-in needed.</span></div>
+                  </div>
+                  <div class="f-row"><span class="btn btn-sm">Save</span></div>
+                </div>
+
+                <div class="sect">
+                  <h3>Versions</h3>
+                  <table class="v-table">
+                    <tbody>
+                      <tr class="v-cur">
+                        <td>v14</td>
+                        <td>3 days ago</td>
+                        <td><span class="pill pill-live">current</span></td>
+                      </tr>
+                      <tr>
+                        <td>v13</td>
+                        <td>9 days ago</td>
+                        <td><span class="btn btn-sm">Make current</span></td>
+                      </tr>
+                      <tr>
+                        <td>v12</td>
+                        <td>2 weeks ago</td>
+                        <td><span class="btn btn-sm">Make current</span></td>
+                      </tr>
+                      <tr>
+                        <td colspan="3"><a href="#">All 14 versions</a></td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <p class="f-hint">
+                    Making an older version current moves the address to it. Nothing is deleted.
+                  </p>
+                </div>
+
+                <div class="danger">
+                  <h3>Take it off</h3>
+                  <p class="c-managenote">
+                    Either way, the 2 patches that read its table break until it is restored. You
+                    will be asked to confirm.
+                  </p>
+                  <div class="sect">
+                    <div class="f-row" style="margin: 0.4rem 0 0.8rem">
+                      <a class="btn btn-danger" href="#c-confirm">Retire…</a>
+                      <a class="btn btn-danger" href="#c-confirm">Delete…</a>
+                    </div>
+                    <p class="c-managenote">
+                      Retire keeps everything, indefinitely. Delete keeps it 30 days, then it is
+                      gone for good.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </article>
+          </div>
+        </div>
+
+        <h3>C · the confirmation pages are B's retire and delete pages, unchanged</h3>
+        <p class="c-managenote" id="c-confirm">
+          The button on the amber block is a link to <code>/patches/sales-dashboard/retire</code> or
+          <code>/delete</code>, which render exactly the two pages drawn under
+          <a href="#b-retire">B</a>: consequence in plain words, the list of what breaks, the
+          acknowledgement, and for delete the typed name. Confirm posts and returns to the card,
+          which now shows the retired or deleted notice. So C is A's card without the
+          acknowledgements inline, plus B's two destructive pages.
+        </p>
+      </section>
+
+      <!-- ============================================================ states -->
+      <section class="variant shared" id="states">
+        <div class="variant-head">
+          <span class="num">·</span>
+          <div>
+            <h2>Cards every variant needs: retired, deleted, a deactivated owner, and an admin</h2>
+            <p class="variant-why">
+              These are the same whichever Manage side is picked. Restore is one button, so it sits
+              on the card in all three. The admin card is drawn in C's style; in A the owner picker
+              is a section, in B a line and a page.
+            </p>
+          </div>
+        </div>
+
+        <h3>Retired, seen by Tom (owner) · and deleted, seen by Priya (member, not owner)</h3>
+        <div class="c-pair">
+          <article class="c-detail frame small c-offcard">
+            <p class="c-addr">northwind / holiday-calendar</p>
+            <h1 class="c-h1">holiday-calendar</h1>
+            <p class="c-title">Time off</p>
+            <p class="c-desc">Who is out this week and next, from the HR export.</p>
+            <dl class="c-facts">
+              <dt>State</dt>
+              <dd><span class="pill pill-off">retired</span> by you on 30 Aug</dd>
+              <dt>Owner</dt>
+              <dd>You</dd>
+              <dt>Last version</dt>
+              <dd>v9, published 12 Aug</dd>
+              <dt>Read by</dt>
+              <dd>Nothing reads its tables.</dd>
+            </dl>
+            <div class="note">
+              <span class="note-title">Off the shelf, kept as it was</span>Its tables, files and all
+              9 versions are kept, for as long as you like. Colleagues who open the address see a
+              notice that it is retired.
+            </div>
+            <div class="f-row">
+              <span class="btn btn-primary">Restore holiday-calendar</span
+              ><a class="btn btn-quiet" href="#">Delete…</a>
+            </div>
+            <p class="f-hint">
+              Restore brings it back live at v9 with the same address. Delete starts the 30-day
+              clock.
+            </p>
+          </article>
+          <article class="c-detail frame small c-offcard">
+            <p class="c-addr">northwind / old-crm-export</p>
+            <h1 class="c-h1">old-crm-export</h1>
+            <p class="c-desc">A one-off export of the old CRM before the move to Postgres.</p>
+            <dl class="c-facts">
+              <dt>State</dt>
+              <dd>
+                <span class="pill pill-warn">deleted</span> by Ana Costa on 6 Sep ·
+                <strong>22 days left</strong>
+              </dd>
+              <dt>Owner</dt>
+              <dd>Ana Costa</dd>
+              <dt>Last version</dt>
+              <dd>v3, published 14 Jul</dd>
+            </dl>
+            <div class="note note-warn">
+              <span class="note-title">Gone for good on 6 Oct</span>Until then Ana or an admin can
+              restore it. After that the page, its versions, tables, files and the name
+              <code>old-crm-export</code> are all reclaimed.
+            </div>
+            <p class="c-managenote">
+              No Restore button: Priya is not the owner and not an admin. Ana or an admin sees
+              "Restore old-crm-export" here.
+            </p>
+          </article>
+        </div>
+
+        <h3>Restore that warns · Ana restoring a patch whose own source is gone</h3>
+        <div class="c-solo">
+          <article class="c-detail frame small c-offcard">
+            <p class="c-addr">northwind / contract-review</p>
+            <h1 class="c-h1">contract-review</h1>
+            <p class="c-desc">Clauses that differ from our standard terms.</p>
+            <dl class="c-facts">
+              <dt>State</dt>
+              <dd><span class="pill pill-off">retired</span> by you on 1 Sep</dd>
+              <dt>Owner</dt>
+              <dd>You</dd>
+              <dt>Last version</dt>
+              <dd>v6</dd>
+              <dt>Reads</dt>
+              <dd>
+                <code>old-crm-export</code>'s <code>accounts</code> table, which is
+                <strong>deleted</strong> (22 days left)
+              </dd>
+            </dl>
+            <div class="note note-warn">
+              <span class="note-title">It will come back broken</span>contract-review reads a table
+              from old-crm-export, which is deleted. Restored, it serves again but gets an error
+              whenever it reads that table, until old-crm-export is restored too.
+            </div>
+            <div class="chk"><div>I understand it comes back broken.</div></div>
+            <div class="f-row"><span class="btn btn-primary">Restore contract-review</span></div>
+          </article>
+        </div>
+
+        <h3>A deactivated owner's patch, seen by Maya (admin) · the Reassign form</h3>
+        <p class="url">/patches/pricing-sheet · Maya Lindqvist, admin</p>
+        <div class="frame">
+          <div class="app-bar">
+            <div class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</div>
+            <nav class="app-nav" aria-label="Primary">
+              <a href="#" aria-current="page">Patches</a><a href="#">Company</a
+              ><a href="#">Connections</a><a href="#">Your machines</a>
+            </nav>
+            <div class="app-who">
+              Maya Lindqvist · admin · Northwind Trading · <a href="#">Sign out</a>
+            </div>
+          </div>
+          <div class="app-body c-body">
+            <aside class="c-index">
+              <p class="c-count">17 patches · <a href="#">hide retired and deleted</a></p>
+              <h2 class="c-group">Yours</h2>
+              <ul class="c-list">
+                <li>
+                  <a href="#"
+                    ><span class="c-n">sales-dashboard</span
+                    ><span class="c-l">Weekly pipeline and closed-won by rep</span></a
+                  >
+                </li>
+                <li>
+                  <a href="#"
+                    ><span class="c-n">contract-review</span
+                    ><span class="c-l">Clauses that differ from our standard terms</span></a
+                  >
+                </li>
+                <li>
+                  <a href="#"
+                    ><span class="c-n">inventory-count</span
+                    ><span class="c-l">Count sheets for the warehouse</span></a
+                  >
+                </li>
+              </ul>
+              <h2 class="c-group">Company</h2>
+              <ul class="c-list">
+                <li>
+                  <a href="#"
+                    ><span class="c-n">expense-claims</span
+                    ><span class="c-l">Submit and approve expense claims</span></a
+                  >
+                </li>
+                <li class="c-current">
+                  <a href="#"
+                    ><span class="c-n">pricing-sheet</span
+                    ><span class="c-l">The current price list</span></a
+                  >
+                </li>
+                <li>
+                  <a href="#"
+                    ><span class="c-n">quarterly-okrs</span
+                    ><span class="c-l">Objectives for the quarter</span></a
+                  >
+                </li>
+                <li>
+                  <a href="#"><span class="c-l muted">… 9 more</span></a>
+                </li>
+              </ul>
+              <h2 class="c-group">Retired and deleted</h2>
+              <ul class="c-list">
+                <li class="c-off">
+                  <a href="#"
+                    ><span class="c-n">holiday-calendar</span
+                    ><span class="c-l">Retired by Tom Okafor, 30 Aug</span></a
+                  >
+                </li>
+                <li class="c-off">
+                  <a href="#"
+                    ><span class="c-n">old-crm-export</span
+                    ><span class="c-l">Deleted by Ana Costa, 22 days left</span></a
+                  >
+                </li>
+              </ul>
+            </aside>
+            <article class="c-detail">
+              <p class="c-addr">northwind / pricing-sheet</p>
+              <h1 class="c-h1">pricing-sheet</h1>
+              <p class="c-title">Price list 2026</p>
+              <p class="c-desc">
+                The current price list, updated when finance changes it. Share the link with
+                customers; it is public.
+              </p>
+              <p class="c-actor">Description edited by Jonas Weber on 14 Jun.</p>
+              <p class="c-actline">
+                <a class="auth-action" href="#">Open</a><a class="c-quiet" href="#">Copy address</a>
+              </p>
+              <dl class="c-facts">
+                <dt>Owner</dt>
+                <dd>Jonas Weber <span class="pill pill-off">deactivated 2 Sep</span></dd>
+                <dt>Current version</dt>
+                <dd>v2, published 14 Jun</dd>
+                <dt>Who can open it</dt>
+                <dd>Anyone with the link. No sign-in needed.</dd>
+                <dt>Read by</dt>
+                <dd>
+                  1 patch uses its shared <code>price_list</code> table:
+                  <code>sales-dashboard</code> (Priya Raman)
+                </dd>
+              </dl>
+              <div class="note note-warn">
+                <span class="note-title">Nobody can publish to this patch</span>Jonas was
+                deactivated on 2 Sep. It keeps serving as it is. Reassign it to someone who can keep
+                it up to date, or retire it.
+              </div>
+              <div class="c-manage">
+                <h2>Manage</h2>
+                <p class="c-adminline">
+                  You are managing this as an admin. You can do everything Jonas could, except
+                  publish a new version.
+                </p>
+
+                <div class="sect">
+                  <h3>Owner</h3>
+                  <div class="f" style="margin-top: 0.4rem">
+                    <div class="f-in short sel">Jonas Weber (deactivated)</div>
+                    <p class="f-hint">
+                      Any active member, yourself included. Deactivated members are not offered. The
+                      new owner publishes from their own copy of the repo; Jonas's old copy is
+                      refused by name.
+                    </p>
+                    <div class="f-row"><span class="btn btn-sm">Reassign</span></div>
+                  </div>
+                </div>
+
+                <div class="sect">
+                  <h3>Description</h3>
+                  <div class="f" style="margin-top: 0.4rem">
+                    <div class="f-in area">
+                      The current price list, updated when finance changes it. Share the link with
+                      customers; it is public.
+                    </div>
+                    <div class="f-row"><span class="btn btn-sm">Save</span></div>
+                  </div>
+                </div>
+
+                <div class="sect">
+                  <h3>Who can open it</h3>
+                  <div class="radio">
+                    <div><strong>People at Northwind</strong></div>
+                  </div>
+                  <div class="radio on">
+                    <div><strong>Anyone with the link</strong></div>
+                  </div>
+                  <div class="f-row"><span class="btn btn-sm">Save</span></div>
+                </div>
+
+                <div class="sect">
+                  <h3>Versions</h3>
+                  <table class="v-table">
+                    <tbody>
+                      <tr class="v-cur">
+                        <td>v2</td>
+                        <td>14 Jun</td>
+                        <td>Jonas Weber</td>
+                        <td><span class="pill pill-live">current</span></td>
+                      </tr>
+                      <tr>
+                        <td>v1</td>
+                        <td>3 Mar</td>
+                        <td>Jonas Weber</td>
+                        <td><span class="btn btn-sm">Make current</span></td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <div class="danger">
+                  <h3>Take it off</h3>
+                  <p class="c-managenote">
+                    The 1 patch that reads its table breaks until it is restored. You will be asked
+                    to confirm.
+                  </p>
+                  <div class="sect">
+                    <div class="f-row" style="margin: 0.4rem 0 0.8rem">
+                      <a class="btn btn-danger" href="#b-retire">Retire…</a
+                      ><a class="btn btn-danger" href="#b-delete">Delete…</a>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </article>
+          </div>
+        </div>
+
+        <h3>An admin on an active member's card</h3>
+        <p class="c-managenote">
+          Same card as above without the amber notice: the owner row reads "Tom Okafor", the admin
+          line reads the same, and the Owner section's picker starts on Tom. Members who are neither
+          owner nor admin see the facts and Open, and no Manage block at all.
+        </p>
+      </section>
+
+      <!-- ============================================================ deactivation -->
+      <section class="variant shared" id="deactivation">
+        <div class="variant-head">
+          <span class="num">·</span>
+          <div>
+            <h2>Deactivating Jonas: the pick page and the confirmation</h2>
+            <p class="variant-why">
+              Its own pages under Company, decided on the admin ticket: master-detail cannot fake
+              multi-select. Two steps on plain forms. The pick page shows every one of Jonas's
+              patches with a static badge of what reads it; the confirmation is recomputed for the
+              exact selection and lists what breaks outside it. Deactivation and the retires commit
+              together.
+            </p>
+          </div>
+        </div>
+
+        <h3>Step 1 · the pick page</h3>
+        <div class="two">
+          <div class="frame small">
+            <div class="page">
+              <a class="back" href="#">← Back to Company</a>
+              <h1>Deactivate Jonas Weber</h1>
+              <p class="lede">
+                Jonas loses access and his machine tokens stop. His patches keep serving unless you
+                retire them here. Retired ones can be restored later, one by one, from their cards.
+              </p>
+              <ul class="pick">
+                <li>
+                  <div class="chk">
+                    <div class="chk-body">
+                      <strong>pricing-sheet</strong> <span class="who">· public · v2</span
+                      ><br /><span class="badge hot">read by sales-dashboard (Priya Raman)</span>
+                    </div>
+                  </div>
+                </li>
+                <li>
+                  <div class="chk">
+                    <div class="chk-body">
+                      <strong>supplier-directory</strong> <span class="who">· company · v5</span
+                      ><br /><span class="badge hot">read by supplier-scorecard (Jonas's own)</span>
+                    </div>
+                  </div>
+                </li>
+                <li>
+                  <div class="chk">
+                    <div class="chk-body">
+                      <strong>supplier-scorecard</strong> <span class="who">· company · v3</span
+                      ><br /><span class="badge">nothing reads it</span>
+                    </div>
+                  </div>
+                </li>
+                <li>
+                  <div class="chk dim">
+                    <div class="chk-body">
+                      <strong>vendor-onboarding</strong>
+                      <span class="who">· retired by Jonas on 12 Aug</span><br /><span class="badge"
+                        >already retired, stays retired</span
+                      >
+                    </div>
+                  </div>
+                </li>
+              </ul>
+              <div class="f-row">
+                <span class="btn btn-primary">Leave them all and deactivate</span>
+                <span class="btn">Retire selected…</span>
+                <span class="btn btn-danger">Retire all…</span>
+              </div>
+              <p class="f-hint">
+                Leave them all deactivates Jonas now. The other two go to a confirmation.
+              </p>
+            </div>
+          </div>
+          <div class="frame small">
+            <div class="page">
+              <a class="back" href="#">← Back to Company</a>
+              <h1>Deactivate Jonas Weber</h1>
+              <p class="lede">
+                Retire selected, with supplier-directory and supplier-scorecard ticked.
+              </p>
+              <ul class="pick">
+                <li>
+                  <div class="chk">
+                    <div class="chk-body">
+                      <strong>pricing-sheet</strong> <span class="who">· public · v2</span
+                      ><br /><span class="badge hot">read by sales-dashboard (Priya Raman)</span>
+                    </div>
+                  </div>
+                </li>
+                <li>
+                  <div class="chk on">
+                    <div class="chk-body">
+                      <strong>supplier-directory</strong> <span class="who">· company · v5</span
+                      ><br /><span class="badge hot">read by supplier-scorecard (Jonas's own)</span>
+                    </div>
+                  </div>
+                </li>
+                <li>
+                  <div class="chk on">
+                    <div class="chk-body">
+                      <strong>supplier-scorecard</strong> <span class="who">· company · v3</span
+                      ><br /><span class="badge">nothing reads it</span>
+                    </div>
+                  </div>
+                </li>
+                <li>
+                  <div class="chk dim">
+                    <div class="chk-body">
+                      <strong>vendor-onboarding</strong>
+                      <span class="who">· retired by Jonas on 12 Aug</span><br /><span class="badge"
+                        >already retired, stays retired</span
+                      >
+                    </div>
+                  </div>
+                </li>
+              </ul>
+              <div class="f-row">
+                <span class="btn btn-quiet">Leave them all and deactivate</span>
+                <span class="btn btn-primary">Retire selected…</span>
+                <span class="btn btn-danger">Retire all…</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <h3>Step 2 · the confirmation, recomputed for the selection</h3>
+        <div class="two">
+          <div class="frame small">
+            <div class="page">
+              <a class="back" href="#">← Change the selection</a>
+              <h1>Retire 2 of Jonas's patches and deactivate him</h1>
+              <p class="lede">
+                supplier-directory and supplier-scorecard go off the shelf, kept as they are.
+                pricing-sheet keeps serving with Jonas as its deactivated owner.
+              </p>
+              <div class="ok-box">
+                <strong>Nothing outside the selection breaks.</strong> supplier-scorecard reads
+                supplier-directory, and both are being retired together.
+              </div>
+              <div class="f-row">
+                <span class="btn btn-primary">Retire 2 and deactivate Jonas</span
+                ><a class="btn btn-quiet" href="#">Cancel</a>
+              </div>
+            </div>
+          </div>
+          <div class="frame small">
+            <div class="page">
+              <a class="back" href="#">← Change the selection</a>
+              <h1>Retire all 3 of Jonas's patches and deactivate him</h1>
+              <p class="lede">
+                pricing-sheet, supplier-directory and supplier-scorecard go off the shelf, kept as
+                they are. Each can be restored later from its card.
+              </p>
+              <div class="breaks">
+                <h3>1 patch outside the selection will break</h3>
+                <ul>
+                  <li>
+                    <code>sales-dashboard</code>, owned by Priya Raman, reads pricing-sheet's
+                    <code>price_list</code> table. It gets an error the next time it does, until
+                    pricing-sheet is restored.
+                  </li>
+                </ul>
+              </div>
+              <div class="chk">
+                <div>I understand sales-dashboard will break until pricing-sheet is restored.</div>
+              </div>
+              <div class="f-row">
+                <span class="btn btn-danger">Retire 3 and deactivate Jonas</span
+                ><a class="btn btn-quiet" href="#">Cancel</a>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <h3>The mirror · reactivating Jonas</h3>
+        <div class="two">
+          <div class="frame small">
+            <div class="page">
+              <a class="back" href="#">← Back to Company</a>
+              <h1>Reactivate Jonas Weber</h1>
+              <p class="lede">
+                Jonas gets access back and will need new machine tokens. His retired patches can
+                come back with him. Patches reassigned while he was away stay with their new owners.
+              </p>
+              <ul class="pick">
+                <li>
+                  <div class="chk on">
+                    <div class="chk-body">
+                      <strong>supplier-directory</strong>
+                      <span class="who">· retired by Maya Lindqvist on 14 Sep · v5</span><br /><span
+                        class="badge"
+                        >comes back whole</span
+                      >
+                    </div>
+                  </div>
+                </li>
+                <li>
+                  <div class="chk on">
+                    <div class="chk-body">
+                      <strong>supplier-scorecard</strong>
+                      <span class="who">· retired by Maya Lindqvist on 14 Sep · v3</span><br /><span
+                        class="badge"
+                        >reads supplier-directory, restored with it</span
+                      >
+                    </div>
+                  </div>
+                </li>
+                <li>
+                  <div class="chk">
+                    <div class="chk-body">
+                      <strong>vendor-onboarding</strong>
+                      <span class="who">· retired by Jonas on 12 Aug · v7</span><br /><span
+                        class="badge hot"
+                        >reads old-crm-export, which is deleted</span
+                      >
+                    </div>
+                  </div>
+                </li>
+              </ul>
+              <div class="f-row">
+                <span class="btn btn-quiet">Leave them and reactivate</span
+                ><span class="btn btn-primary">Restore selected…</span
+                ><span class="btn">Restore all…</span>
+              </div>
+            </div>
+          </div>
+          <div class="frame small">
+            <div class="page">
+              <a class="back" href="#">← Change the selection</a>
+              <h1>Restore all 3 of Jonas's patches and reactivate him</h1>
+              <p class="lede">
+                All three come back live at their last version with their addresses.
+              </p>
+              <div class="breaks">
+                <h3>1 patch comes back broken</h3>
+                <ul>
+                  <li>
+                    <code>vendor-onboarding</code> reads old-crm-export's
+                    <code>accounts</code> table, which is deleted (22 days left). It serves, but
+                    gets an error whenever it reads that table.
+                  </li>
+                </ul>
+              </div>
+              <div class="chk"><div>I understand vendor-onboarding comes back broken.</div></div>
+              <div class="f-row">
+                <span class="btn btn-primary">Restore 3 and reactivate Jonas</span
+                ><a class="btn btn-quiet" href="#">Cancel</a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================================ compare -->
+      <section class="variant shared" id="compare">
+        <div class="variant-head">
+          <span class="num">·</span>
+          <div>
+            <h2>Side by side</h2>
+          </div>
+        </div>
+        <div class="task">
+          <table class="cmp">
+            <thead>
+              <tr>
+                <th></th>
+                <th>A · Everything on the card</th>
+                <th>B · One page per action</th>
+                <th>C · Edits inline, destruction confirms</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Card length</strong></td>
+                <td>Longest: five forms and the amber block, one scroll.</td>
+                <td>Shortest: facts plus five lines.</td>
+                <td>Medium: four forms and two buttons.</td>
+              </tr>
+              <tr>
+                <td><strong>Routes</strong></td>
+                <td><code>/patches/&lt;name&gt;</code> only; every form posts to it.</td>
+                <td>Card plus six action pages.</td>
+                <td>Card plus two confirmation pages.</td>
+              </tr>
+              <tr>
+                <td><strong>Where the acknowledgement lives</strong></td>
+                <td>
+                  On the card, beside the button. Always visible, so the damage is read before
+                  anyone means to act.
+                </td>
+                <td>On its own page, after choosing to act. The page is the confirmation.</td>
+                <td>
+                  On the confirmation page. The card names the count; the page names the patches.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>A validation error</strong></td>
+                <td>Redisplays the whole card with the section marked.</td>
+                <td>Redisplays one small page.</td>
+                <td>Inline forms redisplay the card; confirmations redisplay themselves.</td>
+              </tr>
+              <tr>
+                <td><strong>Non-builder reading</strong></td>
+                <td>
+                  A delete field on a page you visit to check a version is a lot of amber to look
+                  past.
+                </td>
+                <td>Each page says one thing; the list line already gives the consequence.</td>
+                <td>The card looks safe; leaving it is the signal that something is at stake.</td>
+              </tr>
+              <tr>
+                <td><strong>Admin's Reassign</strong></td>
+                <td>An Owner section with a picker.</td>
+                <td>A line and a page.</td>
+                <td>An Owner section with a picker (drawn above).</td>
+              </tr>
+              <tr>
+                <td><strong>Shared with all</strong></td>
+                <td colspan="3">
+                  Restore on the card; the restore warning; the retired and deleted notices; the
+                  deactivation pick and confirmation pages; who-can-open wording; the Read by row.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <p class="foot">
+        Prototype for the Portal map. Built by Claude Fable 5.1 in Claude Code; astra evaluates the
+        picked variant before this page is thrown away.
+      </p>
+    </div>
+  </body>
+</html>
