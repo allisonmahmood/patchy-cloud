@@ -10,16 +10,20 @@ import { migrations as patchesMigrations } from "../../patches/src/migrations.js
 import { migrations as integrationsMigrations } from "../../integrations/src/migrations.js";
 import { migrations } from "./migrations.js";
 
+// Prototype #241 landed a later patches migration (id 8); an upgrade from before
+// Runtime cannot have it, so it joins after Integrations here.
+const { "0008_prototype_portal": prototypePortal, ...patchesBeforeRuntime } = patchesMigrations;
 const previous: Migrations = {
   ...companiesMigrations,
   ...authMigrations,
-  ...patchesMigrations,
+  ...patchesBeforeRuntime,
   ...companyDatabaseMigrations
 };
 const withRuntime: Migrations = { ...previous, ...migrations };
 const withIntegrations: Migrations = {
   ...withRuntime,
-  ...integrationsMigrations
+  ...integrationsMigrations,
+  "0008_prototype_portal": prototypePortal!
 };
 
 const company = Effect.flatMap(
@@ -64,7 +68,10 @@ it.effect(
       const upgraded = yield* Effect.gen(function* () {
         yield* company;
         assert.deepStrictEqual(yield* migrate(withRuntime), [[6, "runtime_baseline"]]);
-        assert.deepStrictEqual(yield* migrate(withIntegrations), [[7, "integrations_baseline"]]);
+        assert.deepStrictEqual(yield* migrate(withIntegrations), [
+          [7, "integrations_baseline"],
+          [8, "prototype_portal"]
+        ]);
         return yield* useMigratedTables;
       }).pipe(Effect.provide(Testing.emptyLayer(previous)));
       const fresh = yield* Effect.gen(function* () {

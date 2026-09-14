@@ -1630,6 +1630,9 @@ it.layer(Layer.fresh(publishLayer))("shared table publishing", (it) => {
         yield* sql`UPDATE patches SET expires_at = to_timestamp(${expiredAt + 86400})
         WHERE id = ${source.patchId}`;
         yield* owner.delete({ params: { patchId: source.patchId } });
+        // Prototype #241 keeps a deleted patch's name for its window; stand in for the
+        // eventual reclaim so the recreated-name half of this test still runs.
+        yield* sql`DELETE FROM patch_names WHERE patch_id = ${source.patchId}`;
         const replacement = yield* owner.publish({
           payload: publishRequest({ html: html("Replacement"), manifest })
         });
