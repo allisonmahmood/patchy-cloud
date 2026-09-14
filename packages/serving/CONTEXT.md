@@ -44,6 +44,10 @@ _Avoid_: release mismatch (tooling freshness, not a deployed wire), session expi
 A network whose forwarded client address the host trusts when attributing requests. An untrusted direct peer speaks only for its own address, never for an address it supplied in a header.
 _Avoid_: hop count (cannot verify the connecting peer, and is rejected), `X-Real-IP`
 
+**Address notice**:
+The decided first-party page at the address of a retired or deleted patch: it tells an active colleague who took the patch off and when, offers restore to whoever may, and keeps the login door for a signed-out reader and the absence for another company.
+_Avoid_: 404 (the answer for a gone or foreign patch), door (a notice admits nothing), tombstone
+
 **Login door**:
 The admission in front of a company patch: an active colleague enters, a signed-out reader signs in and returns, and a reader from another company gets the same absence as a missing link. A signed-in person without a company first goes through create-or-join; a deactivated user sees the deactivated page.
 _Avoid_: auth wall, login page (the door is a moment on the way to the patch, not a destination), paywall
