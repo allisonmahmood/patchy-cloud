@@ -1,5 +1,5 @@
 /**
- * The `/api/*` contract: auth, patches, browser runtime and public release discovery.
+ * The `/api/*` contract: auth, patches, connections, browser runtime and public release discovery.
  * Request, success and error shapes come from the API's schema modules. The server
  * implements it and the CLI's client is derived from it; neither side
  * re-types a wire shape by hand. The route descriptions here are the text of

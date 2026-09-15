@@ -30,7 +30,13 @@ export class Connection extends Schema.Class<Connection>("Connection")({
 
 export class ConnectionNotFound extends Schema.TaggedError<ConnectionNotFound>()(
   "ConnectionNotFound",
-  { companyId: Schema.String, id: Schema.String, revision: Schema.optionalKey(Schema.Int) }
+  {
+    companyId: Schema.String,
+    lookup: Schema.Union([
+      Schema.Struct({ id: Schema.String, revision: Schema.optionalKey(Schema.Int) }),
+      Schema.Struct({ handle: Schema.String })
+    ])
+  }
 ) {
   readonly code = "connection_not_found";
   readonly status = 404;
@@ -128,6 +134,7 @@ export class ConnectionStorageFailed extends Schema.TaggedError<ConnectionStorag
     operation: Schema.Literals([
       "list",
       "get",
+      "detail",
       "snapshot",
       "connect",
       "test",
