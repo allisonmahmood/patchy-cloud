@@ -140,7 +140,7 @@ These commands never create a patch and require its owner's publishing key.
 
 - `retire [file] [--patch <id>]` takes a live patch off indefinitely, keeping its data and versions.
 - `delete [file] [--patch <id>] --yes` takes a live or retired patch off for 30 days. Ask the user first. Without `--yes`, only a human terminal can confirm; an agent gets local exit 1.
-- `restore [file] [--patch <id>]` brings it back at the same address before the returned `purgeAt`. A deleted file's cache entry is forgotten, so restore it by id.
+- `restore [file] [--patch <id>]` brings a retired patch back at any time, or a deleted patch before its `purgeAt`, at the same address. A deleted file's cache entry is forgotten, so restore it by id.
 - `rollback <n> [file] [--patch <id>]` serves retained version n of a live patch. Data, sharing, description and name stay unchanged.
 - `describe "<text>"`, `describe <file> "<text>"` or `describe "<text>" --patch <id>` edits a live or retired patch's description. Use `describe [file] --clear [--patch <id>]` to empty it. Without a file or `--patch`, describe uses the repo id and rewrites `patchy.json`; explicit targets do not change the local repo.
 

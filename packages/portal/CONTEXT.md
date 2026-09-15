@@ -1,6 +1,6 @@
 # Portal
 
-Where a signed-in person finds and manages their company's patches. The patch, its states and its owner belong to [Patches](../patches/CONTEXT.md); the viewer to [Auth](../auth/CONTEXT.md); users and roles to [Companies](../companies/CONTEXT.md). The portal, index, cards, inline management, versions, confirmation pages, stale-action refusals and deactivation/reactivation pick pages are built.
+Where a signed-in person finds and manages their company's patches. The patch, its states and its owner belong to [Patches](../patches/CONTEXT.md); the viewer to [Auth](../auth/CONTEXT.md); users and roles to [Companies](../companies/CONTEXT.md).
 
 ## Language
 
@@ -13,7 +13,7 @@ The compact list of the company's patches beside the card: name and the first cl
 _Avoid_: sidebar, list (the CLI's `patchy list` is discovery, not this), table
 
 **Card**:
-One patch's page at `/patches/<name>`: its address, description, owner, current version, who can open it and what reads it, with the management acts for whoever may perform them. The card is catalog plus manage, never the patch itself, which lives at its address.
+One patch's page at `/patches/<name>`: its address, description, owner, current version, who can open it and what reads it, with the management acts for whoever may perform them. The card describes and manages the patch; the patch itself lives at its address.
 _Avoid_: patch page (the patch is the page at the address), detail view, dossier
 
 **Manage**:
