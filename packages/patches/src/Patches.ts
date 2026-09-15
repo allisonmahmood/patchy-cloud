@@ -1081,9 +1081,11 @@ export const make = Effect.gen(function* () {
   const lockOpenable = SqlSchema.findOneOption({
     Request: Schema.Struct({ patchId: Schema.String, userId: Schema.String }),
     Result: ManagedPatchRow,
-    execute: Effect.fn(function* ({ patchId, userId }) {
+    execute: Effect.fn("Patches.lockOpenable")(function* ({ patchId, userId }) {
       // Lock the patch before joining its owner. A join planned before a lock
       // wait can lose the row when PostgreSQL rechecks a concurrent reassignment.
+      // Callers keep both statements in one transaction; its patch lock preserves
+      // the company and disabled-state checks through the owner lookup.
       const locked = yield* sql`SELECT id FROM patches
         WHERE id = ${patchId} AND disabled_at IS NULL
           AND company_id = (SELECT company_id FROM users WHERE id = ${userId})

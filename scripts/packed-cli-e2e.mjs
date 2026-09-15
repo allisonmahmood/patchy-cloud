@@ -3647,12 +3647,11 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
     publishKeys
   );
   const openReader = async () => {
-    const [rows, response] = await Promise.all([
-      readRuntime("shared.list", dependant),
-      page.goto(dependant.address)
-    ]);
+    const [rows, response] = await checkedCall(() =>
+      Promise.all([readRuntime("shared.list", dependant), page.goto(dependant.address)])
+    );
     assert.equal(response.status(), 200);
-    await expect(notes.locator("#list")).toHaveText(JSON.stringify(rows));
+    await expect(page.frameLocator("#patch").locator("#list")).toHaveText(JSON.stringify(rows));
     assert.deepEqual(
       rows.rows.map((row) => row.item),
       ["Hosted note"]
@@ -3661,12 +3660,19 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
   await openReader();
 
   const listing = JSON.parse((await runCli(cliPath, ["list", "--json"], options)).stdout);
-  assert.equal(listing.patches.find((patch) => patch.id === published.patchId).state, "live");
+  for (const patch of [published, dependant]) {
+    const summary = listing.patches.find((entry) => entry.id === patch.patchId);
+    assert.ok(summary, `list must include ${patch.name}`);
+    assert.equal(summary.state, "live");
+  }
   const detail = JSON.parse(
     (await runCli(cliPath, ["list", published.name, "--json"], options)).stdout
   );
   assert.equal(detail.id, published.patchId);
-  assert.equal(detail.inventory.tables.find((table) => table.name === "orders").declarable, true);
+  assert.ok(detail.inventory, "the source inventory must be available");
+  const ordersTable = detail.inventory.tables.find((table) => table.name === "orders");
+  assert.ok(ordersTable, "the source inventory must include orders");
+  assert.equal(ordersTable.declarable, true);
   const orderSchema = JSON.parse(
     (await runCli(cliPath, ["list", published.name, "orders", "--json"], options)).stdout
   );
@@ -3686,9 +3692,9 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
   ]);
 
   console.log("[packed-cli-e2e] portal: seeded-session index and patch card");
-  assert.equal((await page.goto(publicBaseUrl)).status(), 200);
+  assert.equal((await checkedCall(() => page.goto(publicBaseUrl))).status(), 200);
   await expect(page.getByRole("heading", { name: "Yours", exact: true })).toBeVisible();
-  await page.locator(`a[href="/patches/${published.name}"]`).click();
+  await checkedCall(() => page.locator(`a[href="/patches/${published.name}"]`).click());
   await expect(page.getByRole("heading", { name: published.name, exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "Open", exact: true })).toHaveAttribute(
     "href",
@@ -3715,20 +3721,23 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
     (await runCli(repoCliPath, ["retire", "--force", "--json"], options)).stdout
   );
   assert.equal(retired.state, "retired");
-  assert.equal((await page.goto(published.address)).status(), 200);
+  assert.equal((await checkedCall(() => page.goto(published.address))).status(), 200);
   await expect(page.locator("#patch")).toHaveCount(0);
   await expect(
     page.locator("dd").filter({ hasText: `Retired by ${DEV_SEED.userName}` })
   ).toBeVisible();
   await expect(page.getByRole("button", { name: "Restore", exact: true })).toBeVisible();
   await expect(page.locator(`a[href="/patches/${published.name}"]`)).toBeVisible();
-  const deniedRead = page.waitForResponse(
-    async (response) =>
-      new URL(response.url()).pathname === "/api/runtime/call" &&
-      response.request().postDataJSON()?.op === "shared.list"
+  const [denied] = await checkedCall(() =>
+    Promise.all([
+      page.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname === "/api/runtime/call" &&
+          response.request().postDataJSON()?.op === "shared.list"
+      ),
+      page.goto(dependant.address)
+    ])
   );
-  await page.goto(dependant.address);
-  const denied = await deniedRead;
   assert.equal((await denied.json()).code, "access_denied");
   const restored = JSON.parse((await runCli(repoCliPath, ["restore", "--json"], options)).stdout);
   assert.equal(restored.state, "live");
@@ -3784,15 +3793,16 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
   assert.equal(syncedRepo.description, cloudDescription);
   const unchanged = JSON.parse((await runCli(repoCliPath, ["refresh", "--json"], options)).stdout);
   assert.equal((unchanged.warnings ?? []).length, 0);
-  await page.goto(`${publicBaseUrl}/patches/${published.name}`);
+  await checkedCall(() => page.goto(`${publicBaseUrl}/patches/${published.name}`));
   await expect(page.getByRole("textbox", { name: "Description", exact: true })).toHaveValue(
     cloudDescription
   );
   await checkedCall(() => browser.close());
   await checkedCall(() => tier1BrowserServer.close());
   tier1BrowserServer = undefined;
-  console.log("[packed-cli-e2e] PASS: packed discovery, lifecycle, description sync and portal");
-  console.log("[packed-cli-e2e] PASS: packed init → dev shell → hosted tier 1 → additive publish");
+  console.log(
+    "[packed-cli-e2e] PASS: packed init, local and hosted tier 1, discovery, lifecycle, description sync and portal"
+  );
 }
 
 async function assertCliFailureNoMutation({
