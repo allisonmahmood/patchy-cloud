@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import type * as SqlClient from "effect/unstable/sql/SqlClient";
 import { PatchName, PatchState, SharingScope } from "@patchy/api";
 import { pageResponse, RequireSession, Session } from "@patchy/auth";
 import { escapeHtml } from "@patchy/core";
@@ -19,6 +20,7 @@ import {
   renderVersions,
   styles
 } from "./render.js";
+import * as UserLifecyclePage from "./UserLifecyclePage.js";
 
 const isName = Schema.is(PatchName);
 const decodeDescription = Schema.decodeUnknownEffect(
@@ -407,10 +409,24 @@ export const layer: Layer.Layer<
   | HttpRouter.HttpRouter
   | HttpRouter.Request.From<
       "Requires",
-      Session.Session | Companies.Companies | Users.Users | Patches.Patches
+      Session.Session | Companies.Companies | Users.Users | Patches.Patches | SqlClient.SqlClient
     >
 > = HttpRouter.use((router) =>
   Effect.gen(function* () {
+    for (const action of ["deactivate", "reactivate"] as const) {
+      for (const method of ["GET", "POST"] as const) {
+        const handler = RequireSession.withViewer(
+          Effect.flatMap(HttpRouter.params, (params) =>
+            UserLifecyclePage.handle(params.id ?? "", action)
+          )
+        );
+        yield* router.add(
+          method,
+          `/company/users/:id/${action}`,
+          errors(method === "POST" ? RequireSession.sameOrigin(handler) : handler)
+        );
+      }
+    }
     yield* router.add(
       "GET",
       "/patches/:name",

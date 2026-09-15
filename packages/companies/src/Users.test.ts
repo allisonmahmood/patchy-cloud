@@ -1,6 +1,8 @@
 import { assert, it } from "@effect/vitest";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as Testing from "@patchy/sql/testing";
@@ -192,6 +194,120 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(Te
             1
           );
         })
+    );
+
+    it.effect("checks deactivation without changing access, tokens or the final active admin", () =>
+      Effect.gen(function* () {
+        const users = yield* Users.Users;
+        const sql = yield* SqlClient.SqlClient;
+        const { company, admin, member } = yield* companyWithMember("deactivation-check");
+        const input = { companyId: company.id, userId: member.id };
+        yield* sql`
+          INSERT INTO machine_tokens (id, user_id, name, token_hash, created_at, expires_at, last_used_at)
+          VALUES ('tok_deactivation_check', ${member.id}, 'Laptop', 'deactivation-check-hash', now(), now() + interval '90 days', now())`;
+
+        assert.deepStrictEqual(yield* users.checkDeactivation(input), member);
+        assert.strictEqual(
+          (yield* users
+            .checkDeactivation({ companyId: company.id, userId: admin.id })
+            .pipe(Effect.flip))._tag,
+          "LastAdmin"
+        );
+        assert.strictEqual(
+          (yield* users
+            .checkDeactivation({ companyId: "cmp_elsewhere", userId: member.id })
+            .pipe(Effect.flip))._tag,
+          "UserNotFound"
+        );
+        assert.deepStrictEqual(yield* users.findByClerkId(member.clerkUserId), member);
+        assert.deepStrictEqual(yield* users.findByClerkId(admin.clerkUserId), admin);
+        assert.deepStrictEqual(
+          yield* sql`SELECT revoked_at IS NULL AS live FROM machine_tokens WHERE id = 'tok_deactivation_check'`,
+          [{ live: true }]
+        );
+      })
+    );
+
+    it.effect("commits or rolls back lifecycle changes with the supplied outer transaction", () =>
+      Effect.gen(function* () {
+        const users = yield* Users.Users;
+        const sql = yield* SqlClient.SqlClient;
+        const { company, member } = yield* companyWithMember("lifecycle-outer-transaction");
+        const input = { companyId: company.id, userId: member.id };
+        yield* sql`
+          INSERT INTO machine_tokens (id, user_id, name, token_hash, created_at, expires_at, last_used_at)
+          VALUES ('tok_lifecycle_outer', ${member.id}, 'Laptop', 'lifecycle-outer-hash', now(), now() + interval '90 days', now())`;
+        // Remove inheritance so only the explicit connection can keep these writes in the transaction.
+        const withoutAmbientTransaction = Effect.updateContext((context: Context.Context<never>) =>
+          Context.omit(sql.transactionService)(context)
+        );
+
+        assert.strictEqual(
+          yield* sql
+            .withTransaction(
+              Effect.gen(function* () {
+                const transaction = Option.getOrThrow(
+                  yield* Effect.serviceOption(sql.transactionService)
+                );
+                yield* users.checkDeactivation(input, transaction).pipe(withoutAmbientTransaction);
+                yield* users.deactivate(input, transaction).pipe(withoutAmbientTransaction);
+                return yield* Effect.fail("abort deactivation");
+              })
+            )
+            .pipe(Effect.flip),
+          "abort deactivation"
+        );
+        assert.deepStrictEqual(yield* users.findByClerkId(member.clerkUserId), member);
+        assert.deepStrictEqual(
+          yield* sql`SELECT revoked_at IS NULL AS live FROM machine_tokens WHERE id = 'tok_lifecycle_outer'`,
+          [{ live: true }]
+        );
+
+        const deactivated = yield* sql.withTransaction(
+          Effect.gen(function* () {
+            const transaction = Option.getOrThrow(
+              yield* Effect.serviceOption(sql.transactionService)
+            );
+            return yield* users.deactivate(input, transaction).pipe(withoutAmbientTransaction);
+          })
+        );
+        assert.isNotNull(deactivated.deactivatedAt);
+        assert.deepStrictEqual(yield* users.findByClerkId(member.clerkUserId), deactivated);
+        assert.deepStrictEqual(
+          yield* sql`SELECT revoked_at IS NOT NULL AS revoked FROM machine_tokens WHERE id = 'tok_lifecycle_outer'`,
+          [{ revoked: true }]
+        );
+
+        assert.strictEqual(
+          yield* sql
+            .withTransaction(
+              Effect.gen(function* () {
+                const transaction = Option.getOrThrow(
+                  yield* Effect.serviceOption(sql.transactionService)
+                );
+                yield* users.reactivate(input, transaction).pipe(withoutAmbientTransaction);
+                return yield* Effect.fail("abort reactivation");
+              })
+            )
+            .pipe(Effect.flip),
+          "abort reactivation"
+        );
+        assert.deepStrictEqual(yield* users.findByClerkId(member.clerkUserId), deactivated);
+
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            const transaction = Option.getOrThrow(
+              yield* Effect.serviceOption(sql.transactionService)
+            );
+            return yield* users.reactivate(input, transaction).pipe(withoutAmbientTransaction);
+          })
+        );
+        assert.deepStrictEqual(yield* users.findByClerkId(member.clerkUserId), member);
+        assert.deepStrictEqual(
+          yield* sql`SELECT revoked_at IS NOT NULL AS revoked FROM machine_tokens WHERE id = 'tok_lifecycle_outer'`,
+          [{ revoked: true }]
+        );
+      })
     );
 
     it.effect(

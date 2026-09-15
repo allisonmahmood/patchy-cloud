@@ -70,10 +70,18 @@ export class Users extends Context.Service<
     readonly setRole: (
       input: UserRef & { readonly role: Role }
     ) => Effect.Effect<User, UserNotFound | LastAdmin | SqlError>;
-    readonly deactivate: (
-      input: UserRef
+    readonly checkDeactivation: (
+      input: UserRef,
+      transaction?: SqlClient.TransactionConnection.Service
     ) => Effect.Effect<User, UserNotFound | LastAdmin | SqlError>;
-    readonly reactivate: (input: UserRef) => Effect.Effect<User, UserNotFound | SqlError>;
+    readonly deactivate: (
+      input: UserRef,
+      transaction?: SqlClient.TransactionConnection.Service
+    ) => Effect.Effect<User, UserNotFound | LastAdmin | SqlError>;
+    readonly reactivate: (
+      input: UserRef,
+      transaction?: SqlClient.TransactionConnection.Service
+    ) => Effect.Effect<User, UserNotFound | SqlError>;
   }
 >()("@patchy/companies/Users") {}
 
@@ -162,6 +170,26 @@ export const make = Effect.gen(function* () {
     if (count <= 1) return yield* new LastAdmin({ companyId: user.companyId, userId: user.id });
   });
 
+  const inTransaction = <A, E, R>(
+    effect: Effect.Effect<A, E, R>,
+    transaction?: SqlClient.TransactionConnection.Service
+  ) =>
+    transaction === undefined
+      ? sql.withTransaction(effect)
+      : effect.pipe(Effect.provideService(sql.transactionService, transaction));
+
+  const checkDeactivation = Effect.fn("Users.checkDeactivation")(
+    (input: UserRef, transaction?: SqlClient.TransactionConnection.Service) =>
+      inTransaction(
+        Effect.gen(function* () {
+          const user = yield* lockUser(input);
+          yield* preserveAdmin(user);
+          return user;
+        }),
+        transaction
+      )
+  );
+
   const setRole = Effect.fn("Users.setRole")((input: UserRef & { readonly role: Role }) =>
     sql.withTransaction(
       Effect.gen(function* () {
@@ -173,34 +201,38 @@ export const make = Effect.gen(function* () {
       })
     )
   );
-  const deactivate = Effect.fn("Users.deactivate")((input: UserRef) =>
-    sql.withTransaction(
-      Effect.gen(function* () {
-        const user = yield* lockUser(input);
-        yield* preserveAdmin(user);
-        const now = yield* Clock.currentTimeMillis;
-        yield* sql`
+  const deactivate = Effect.fn("Users.deactivate")(
+    (input: UserRef, transaction?: SqlClient.TransactionConnection.Service) =>
+      inTransaction(
+        Effect.gen(function* () {
+          const user = yield* lockUser(input);
+          yield* preserveAdmin(user);
+          const now = yield* Clock.currentTimeMillis;
+          yield* sql`
         UPDATE users SET deactivated_at = to_timestamp(${now / 1_000})
         WHERE id = ${input.userId} AND deactivated_at IS NULL`;
-        // Auth owns the rows. Keep this revocation in the user transaction, and
-        // preserve earlier revocation stamps; reactivation never revives keys.
-        yield* sql`
+          // Auth owns the rows. Keep this revocation in the user transaction, and
+          // preserve earlier revocation stamps; reactivation never revives keys.
+          yield* sql`
         UPDATE machine_tokens SET revoked_at = to_timestamp(${now / 1_000})
         WHERE user_id = ${input.userId} AND revoked_at IS NULL`;
-        const updated = yield* lockedUser(input).pipe(Effect.catchTags(dieOnSchemaError));
-        return Option.getOrThrow(updated);
-      })
-    )
+          const updated = yield* lockedUser(input).pipe(Effect.catchTags(dieOnSchemaError));
+          return Option.getOrThrow(updated);
+        }),
+        transaction
+      )
   );
-  const reactivate = Effect.fn("Users.reactivate")((input: UserRef) =>
-    sql.withTransaction(
-      Effect.gen(function* () {
-        const user = yield* lockUser(input);
-        if (user.deactivatedAt === null) return user;
-        yield* sql`UPDATE users SET deactivated_at = NULL WHERE id = ${input.userId}`;
-        return new User({ ...user, deactivatedAt: null });
-      })
-    )
+  const reactivate = Effect.fn("Users.reactivate")(
+    (input: UserRef, transaction?: SqlClient.TransactionConnection.Service) =>
+      inTransaction(
+        Effect.gen(function* () {
+          const user = yield* lockUser(input);
+          if (user.deactivatedAt === null) return user;
+          yield* sql`UPDATE users SET deactivated_at = NULL WHERE id = ${input.userId}`;
+          return new User({ ...user, deactivatedAt: null });
+        }),
+        transaction
+      )
   );
 
   return Users.of({
@@ -209,6 +241,7 @@ export const make = Effect.gen(function* () {
     list,
     refreshClaims,
     setRole,
+    checkDeactivation,
     deactivate,
     reactivate
   });

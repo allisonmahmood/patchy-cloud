@@ -16,7 +16,7 @@ interface Viewer {
 export type Action =
   | { readonly kind: "view" | "invite" }
   | {
-      readonly kind: "revoke" | "resend" | "role" | "deactivate" | "reactivate";
+      readonly kind: "revoke" | "resend" | "role";
       readonly id: string;
     };
 
@@ -53,7 +53,7 @@ const render = Effect.fn("CompanyPage.render")(function* (
     const path = `/company/users/${encodeURIComponent(user.id)}`;
     const role = user.role === "admin" ? "member" : "admin";
     const actions = admin
-      ? `<div class="actions">${actionForm(`${path}/role`, role === "admin" ? "Promote to admin" : "Demote to member", `<input type="hidden" name="role" value="${role}">`)}${user.deactivatedAt ? actionForm(`${path}/reactivate`, "Reactivate") : user.id !== viewer.user.id ? actionForm(`${path}/deactivate`, "Deactivate", "", true) : ""}</div>`
+      ? `<div class="actions">${actionForm(`${path}/role`, role === "admin" ? "Promote to admin" : "Demote to member", `<input type="hidden" name="role" value="${role}">`)}${user.deactivatedAt ? `<a class="btn" href="${escapeAttribute(`${path}/reactivate`)}">Reactivate</a>` : user.id !== viewer.user.id ? `<a class="btn btn-danger" href="${escapeAttribute(`${path}/deactivate`)}">Deactivate</a>` : ""}</div>`
       : "";
     return `<li class="list-row"><p><strong>${escapeHtml(user.name)}</strong><br><span class="auth-email">${escapeHtml(user.email)}</span></p><p>${user.role === "admin" ? "Admin" : "Member"} · ${user.deactivatedAt ? "Deactivated" : "Active"}${user.id === viewer.user.id ? " · You" : ""}</p>${actions}</li>`;
   });
@@ -102,10 +102,6 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
     } else if (action.kind === "role") {
       const form = yield* decodeRole(Object.fromEntries(yield* request.urlParamsBody));
       yield* users.setRole({ companyId: viewer.company.id, userId: action.id, role: form.role });
-    } else if (action.kind === "deactivate") {
-      yield* users.deactivate({ companyId: viewer.company.id, userId: action.id });
-    } else if (action.kind === "reactivate") {
-      yield* users.reactivate({ companyId: viewer.company.id, userId: action.id });
     }
     if (mailFailed) {
       return yield* render(viewer, {

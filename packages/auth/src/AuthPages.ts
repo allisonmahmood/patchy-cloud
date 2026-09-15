@@ -169,9 +169,7 @@ export const layer: Layer.Layer<
       for (const [path, kind] of [
         ["/company/invites/:id/revoke", "revoke"],
         ["/company/invites/:id/resend", "resend"],
-        ["/company/users/:id/role", "role"],
-        ["/company/users/:id/deactivate", "deactivate"],
-        ["/company/users/:id/reactivate", "reactivate"]
+        ["/company/users/:id/role", "role"]
       ] as const) {
         yield* router.add(
           "POST",
