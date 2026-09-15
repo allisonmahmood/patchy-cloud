@@ -1081,13 +1081,20 @@ export const make = Effect.gen(function* () {
   const lockOpenable = SqlSchema.findOneOption({
     Request: Schema.Struct({ patchId: Schema.String, userId: Schema.String }),
     Result: ManagedPatchRow,
-    execute: ({ patchId, userId }) => sql`
-      SELECT ${sql.unsafe(PATCH_COLUMNS)}, owner.name AS "ownerName"
-      FROM patches JOIN companies ON companies.id = patches.company_id
-      JOIN users owner ON owner.id = patches.owner_user_id
-      JOIN users actor ON actor.id = ${userId} AND actor.company_id = patches.company_id
-      WHERE patches.id = ${patchId} AND patches.disabled_at IS NULL
-      FOR UPDATE OF patches`
+    execute: Effect.fn(function* ({ patchId, userId }) {
+      // Lock the patch before joining its owner. A join planned before a lock
+      // wait can lose the row when PostgreSQL rechecks a concurrent reassignment.
+      const locked = yield* sql`SELECT id FROM patches
+        WHERE id = ${patchId} AND disabled_at IS NULL
+          AND company_id = (SELECT company_id FROM users WHERE id = ${userId})
+        FOR UPDATE`;
+      if (locked.length === 0) return [];
+      return yield* sql`
+        SELECT ${sql.unsafe(PATCH_COLUMNS)}, owner.name AS "ownerName"
+        FROM patches JOIN companies ON companies.id = patches.company_id
+        JOIN users owner ON owner.id = patches.owner_user_id
+        WHERE patches.id = ${patchId}`;
+    })
   });
   // Serialize dependency admissions and source changes before taking patch rows.
   // This prevents cross-patch write skew without lock-order cycles in shared reads.

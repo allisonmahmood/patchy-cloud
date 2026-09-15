@@ -14,6 +14,8 @@ Patches have names at `/<company>/<patch>`, belong to users, and are shared with
 
 `patchy login` hands the person a browser URL and code; confirmation lets the CLI mint and save a user-owned machine token. Clerk holds the browser session. **Your machines** lists and revokes keys and offers browser sign-out; the company page handles invites, roles, deactivation and reactivation. Admins manage Postgres connections, encrypted credentials, immutable schema snapshots and recent calls at `/company/connections`. Patches get generated clients for constrained read-only queries; every integration call and table/file mutation is logged. Tiers 2 and above remain future work.
 
+The signed-in `/` is the company's patch portal. Cards at `/patches/<name>` show descriptions, owners, sharing, versions and dependants, with management controls for owners and admins. Patches remain live or retired indefinitely; delete keeps them recoverable for 30 days. Owners can retire, delete, restore, roll back and describe through the CLI too. Admins can reassign patches and choose which to retire or restore when changing a user's active state; publish remains owner-only. Off addresses explain what happened and link colleagues to the card.
+
 This repository is a full-history copy of [PatchPage](https://github.com/allisonmahmood/PatchPage), taken in a different direction. PatchPage remains a separate, free product with its own instance; nothing here runs it or publishes to it, and commits from before the split describe PatchPage, not Patchy Cloud.
 
 ## Try it
@@ -62,18 +64,18 @@ Run `pnpm patchy dev` to exercise it locally over PGlite and invented fixtures, 
 A Turborepo monorepo managed with pnpm. [AGENTS.md](AGENTS.md) is the guide to working in it, for people and agents alike.
 
 - `apps/server` — the Effect HTTP server: wires the capability packages into one layer, guards `/api/*`, and listens (`@patchy/server`).
-- `packages/patchy` — `patchy`, one package for the CLI, config builders, browser client and local dev runtime; initializes patch repos, refreshes managed files and edits declarations.
+- `packages/patchy`: `patchy`, one package for the CLI, config builders, browser client and local dev runtime; initializes patch repos, refreshes managed files, edits declarations, discovers company tools and data sources, and manages owned patches.
 - `packages/sdk` — current release and immutable tarball distribution, authenticated generation, and canonical project skills under `skills/` (`@patchy/sdk`).
-- `packages/core` — shared HTML validation, hashing, ID helpers, and the first-party page shell (`@patchy/core`).
+- `packages/core`: shared HTML validation, hashing, ID helpers, and the first-party card shell, app shell and component set (`@patchy/core`).
 - `packages/api` — the wire contract: schemas, the `HttpApi`, the derived client (`@patchy/api`).
 - `packages/companies` — companies, users, roles, invites and membership lifecycle (`@patchy/companies`).
 - `packages/auth` — browser sessions, the shared login door, device login, machine tokens, Your machines, bearer identity, revocation, the shared development seed and the `auth` API group (`@patchy/auth`).
 - `packages/patches`: user-owned patches and versions, names and addresses, replay-safe file/repo publishing, provisioning coordination, sharing, lifecycle moves and actor stamps, visits and quotas, the deletion sweep, and the `patches` API group (`@patchy/patches`).
-- `packages/portal`: the signed-in index and patch cards, versions, inline management and stale-action refusals (`@patchy/portal`).
-- `packages/serving` — tier-scoped page/content routes, the login and needs-rebuild doors, sandboxed frame, shell broker and route bridge, sharing-aware CSP and caching, and trusted-proxy attribution (`@patchy/serving`).
+- `packages/portal`: the signed-in index and patch cards, versions, inline management, lifecycle and reassignment confirmations, stale-action refusals, and user deactivation/reactivation pick pages (`@patchy/portal`).
+- `packages/serving`: tier-scoped page/content routes, retired and deleted address notices, login and needs-rebuild doors, sandboxed frame, shell broker and route bridge, sharing-aware CSP and caching, and trusted-proxy attribution (`@patchy/serving`).
 - `packages/runtime` — browser-only admission, loaded-version binding, operation dispatch and the attributed runtime log (`@patchy/runtime`).
 - `packages/primitives` — additive table/store provisioning, schema revisions, bounded owned-table operations, read-only shared-table operations and immutable file operations over Postgres and PGlite (`@patchy/primitives`).
-- `packages/integrations` — company connection pages, encrypted credentials, Postgres discovery and immutable snapshots, constrained reads, generated relation clients, fixtures and publish declaration resolution (`@patchy/integrations`).
+- `packages/integrations`: company connection pages, encrypted credentials, Postgres discovery and immutable snapshots, the member-readable `connections` API group, constrained reads, generated relation clients, fixtures and publish declaration resolution (`@patchy/integrations`).
 - `packages/content-store` — the object store for a patch's bytes, with filesystem and Azure Blob layers (`@patchy/content-store`).
 - `packages/sql`, `packages/analytics`, `packages/limits` — the Postgres client and Migrator, the event service, the rate limiter.
 - `packages/company-database` — company placements, lazy Postgres databases, bounded pools, transactional patch locks, cumulative inventory and the PGlite development layer.

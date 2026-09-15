@@ -9,20 +9,26 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { inject } from "vitest";
 import { FilePage, Manifest, TablePage, TableRow } from "@patchy/api";
-import { CompanyDatabases } from "@patchy/company-database";
+import { Analytics } from "@patchy/analytics";
+import { CompanyDatabases, Inventory } from "@patchy/company-database";
 import { ContentStore, FilesystemContentStore } from "@patchy/content-store";
 import { Files, TableOperations, Tables } from "@patchy/primitives";
 import { Binding, LoadedVersions } from "@patchy/runtime";
 import * as Content from "./Content.js";
+import * as DeletionSweep from "./DeletionSweep.js";
 import * as Patches from "./Patches.js";
 import * as PatchLoadedVersions from "./LoadedVersions.js";
 import * as Fixtures from "./test/fixtures.js";
 
-const { uploader } = Fixtures.identities;
+const DAY = 24 * 60 * 60 * 1000;
+const { admin, uploader, reader } = Fixtures.identities;
+const owner = { userId: uploader.user.id, admin: false };
+const administrator = { userId: admin.user.id, admin: true };
 const decodePage = Schema.decodeUnknownEffect(TablePage);
 const decodeRow = Schema.decodeUnknownEffect(TableRow);
 const decodeFiles = Schema.decodeUnknownEffect(FilePage);
@@ -80,24 +86,25 @@ const realPostgres = Layer.unwrap(
   })
 );
 
-const services = Layer.mergeAll(Content.layer, PatchLoadedVersions.layer).pipe(
+const services = Layer.mergeAll(Content.layer, PatchLoadedVersions.layer, DeletionSweep.layer).pipe(
   Layer.provideMerge(Patches.layer),
-  Layer.provideMerge(Layer.merge(realPostgres, filesystem))
+  Layer.provideMerge(Layer.mergeAll(realPostgres, filesystem, Analytics.layerNoop))
 );
 
 const publish = Effect.fn("SdkConcurrency.publish")(function* (
   manifest: typeof Manifest.Type,
   html: string,
-  patchId: string | null = null
+  patchId: string | null = null,
+  identity = uploader
 ) {
   const content = yield* Content.Content;
   return yield* content.publish({
     ...Fixtures.publishRecord(),
     manifest,
     patchId,
-    companyId: uploader.company.id,
-    ownerUserId: uploader.user.id,
-    machineTokenId: uploader.machine.id,
+    companyId: identity.company.id,
+    ownerUserId: identity.user.id,
+    machineTokenId: identity.machine.id,
     title: manifest.name!,
     html,
     filename: null,
@@ -122,6 +129,45 @@ const bindingFor = Effect.fn("SdkConcurrency.bindingFor")(function* (
     principal: null,
     correlationId: "real-postgres-concurrency"
   });
+});
+
+const saveResources = Effect.fn("SdkConcurrency.saveResources")(function* (
+  patchId: string,
+  versionId: string
+) {
+  const binding = yield* bindingFor(patchId, versionId);
+  const tables = yield* TableOperations.make;
+  const files = yield* Files.make;
+  const row = yield* tables["tables.insert"]
+    .run({ table: "notes", row: { title: "retained note", slug: "retained-note" } })
+    .pipe(Effect.provideService(Binding.Binding, binding), Effect.flatMap(decodeRow));
+  yield* files["files.put"]
+    .run(
+      { store: "docs", name: "retained.bin", contentType: "application/octet-stream" },
+      new Uint8Array([0, 255, 19])
+    )
+    .pipe(Effect.provideService(Binding.Binding, binding));
+  return row.id;
+});
+
+const assertResources = Effect.fn("SdkConcurrency.assertResources")(function* (
+  patchId: string,
+  versionId: string,
+  rowId: string
+) {
+  const binding = yield* bindingFor(patchId, versionId);
+  const tables = yield* TableOperations.make;
+  const files = yield* Files.make;
+  const row = yield* tables["tables.get"]
+    .run({ table: "notes", id: rowId })
+    .pipe(Effect.provideService(Binding.Binding, binding), Effect.flatMap(decodeRow));
+  assert.strictEqual(row.title, "retained note");
+  assert.strictEqual(row.slug, "retained-note");
+  const file = yield* files["files.get"]
+    .run({ store: "docs", name: "retained.bin" })
+    .pipe(Effect.provideService(Binding.Binding, binding));
+  assert.strictEqual(file.contentType, "application/octet-stream");
+  assert.deepStrictEqual(file.bytes, new Uint8Array([0, 255, 19]));
 });
 
 const backendPid = (sql: SqlClient.SqlClient) =>
@@ -171,8 +217,8 @@ const stagedContent = Effect.fn("SdkConcurrency.stagedContent")(function* (
   );
 });
 
-// Capture record's backend inside its own transaction, before either dependency or row locks.
-const observedRecord = Effect.fn("SdkConcurrency.observedRecord")(function* () {
+// Capture publication and sweep backends inside their transactions, before their locks.
+const observedPatches = Effect.fn("SdkConcurrency.observedPatches")(function* () {
   const sql = yield* SqlClient.SqlClient;
   const patches = yield* Patches.Patches;
   const session = yield* Deferred.make<number>();
@@ -192,7 +238,11 @@ const observedRecord = Effect.fn("SdkConcurrency.observedRecord")(function* () {
   );
   return {
     session,
-    patches: Patches.Patches.of({ ...patches, record: observed.record })
+    patches: Patches.Patches.of({
+      ...patches,
+      record: observed.record,
+      purgeDeleted: observed.purgeDeleted
+    })
   };
 });
 
@@ -341,7 +391,7 @@ it.layer(services, { timeout: "60 seconds" })("SDK orchestration / real PostgreS
         const firstStored = yield* gate();
         const secondStored = yield* gate();
         const provisioning = yield* heldProvision();
-        const secondRecord = yield* observedRecord();
+        const secondRecord = yield* observedPatches();
         const firstContent = yield* stagedContent(firstStored.pause, provisioning.patches);
         const secondContent = yield* stagedContent(secondStored.pause, secondRecord.patches);
         const first = yield* publish(firstManifest, "<p>label bundle</p>", initial.patchId).pipe(
@@ -596,15 +646,11 @@ it.layer(services, { timeout: "60 seconds" })("SDK orchestration / real PostgreS
         ).pipe(Effect.provideService(Content.Content, heldContent), Effect.forkScoped);
         const pids = yield* Deferred.await(held.sessions);
         const rollbackPid = yield* Deferred.make<number>();
-        // There is no rollback service yet; this is the existing locked pointer-change seam.
         const rollback = yield* platform
           .withTransaction(
             Effect.gen(function* () {
               yield* Deferred.succeed(rollbackPid, yield* backendPid(platform));
-              const [current] = yield* platform<{ version: string }>`
-          SELECT current_version_id AS version FROM patches WHERE id = ${original.patchId} FOR UPDATE`;
-              yield* platform`UPDATE patches SET current_version_id = ${original.versionId} WHERE id = ${original.patchId}`;
-              return current!.version;
+              return yield* patches.rollback(original.patchId, owner, 1);
             })
           )
           .pipe(Effect.forkScoped);
@@ -613,7 +659,7 @@ it.layer(services, { timeout: "60 seconds" })("SDK orchestration / real PostgreS
         ]);
         yield* Deferred.succeed(held.release, undefined);
         const published = yield* Fiber.join(publication);
-        assert.strictEqual(yield* Fiber.join(rollback), published.versionId);
+        yield* Fiber.join(rollback);
         const rolledBack = Option.getOrThrow(yield* patches.find(original.patchId));
         assert.strictEqual(rolledBack.patch.currentVersionId, original.versionId);
         assert.strictEqual(yield* content.read(rolledBack.version), "<p>rollback target</p>");
@@ -645,7 +691,7 @@ it.layer(services, { timeout: "60 seconds" })("SDK orchestration / real PostgreS
 
         // Preflight saw company scope. A later row-locked change must survive record's whole-row update.
         const stored = yield* gate();
-        const nextRecord = yield* observedRecord();
+        const nextRecord = yield* observedPatches();
         const staged = yield* stagedContent(stored.pause, nextRecord.patches);
         const next = yield* publish(
           manifest,
@@ -689,6 +735,278 @@ it.layer(services, { timeout: "60 seconds" })("SDK orchestration / real PostgreS
           yield* patches.inventory(original.patchId, uploader.user.id),
           inventory
         );
+      }).pipe(Effect.scoped),
+    60_000
+  );
+
+  it.effect(
+    "refuses a staged publish after retire commits and restores the unchanged resources",
+    () =>
+      Effect.gen(function* () {
+        const platform = yield* SqlClient.SqlClient;
+        const patches = yield* Patches.Patches;
+        const content = yield* Content.Content;
+        const manifest = { ...definition, name: "retire-wins-publish" };
+        const initial = yield* publish(manifest, "<p>kept through retirement</p>");
+        const rowId = yield* saveResources(initial.patchId, initial.versionId);
+        const inventory = yield* patches.inventory(initial.patchId, uploader.user.id);
+        const stored = yield* gate();
+        const observed = yield* observedPatches();
+        const staged = yield* stagedContent(stored.pause, observed.patches);
+        const publication = yield* publish(
+          { ...manifest, files: { ...manifest.files, images: { description: "New images." } } },
+          "<p>must not replace the retired bundle</p>",
+          initial.patchId
+        ).pipe(Effect.provideService(Content.Content, staged), Effect.flip, Effect.forkScoped);
+        yield* Deferred.await(stored.entered);
+        const held = yield* gate();
+        const session = yield* Deferred.make<number>();
+        const retiring = yield* platform
+          .withTransaction(
+            Effect.gen(function* () {
+              const retired = yield* patches.retire(initial.patchId, owner);
+              yield* Deferred.succeed(session, yield* backendPid(platform));
+              yield* held.pause;
+              return retired;
+            })
+          )
+          .pipe(Effect.forkScoped);
+        const pid = yield* Deferred.await(session);
+        yield* Deferred.succeed(stored.release, undefined);
+        assert.deepStrictEqual(yield* blockedBy(pid), [yield* Deferred.await(observed.session)]);
+        yield* Deferred.succeed(held.release, undefined);
+        assert.strictEqual((yield* Fiber.join(retiring)).state, "retired");
+        assert.instanceOf(yield* Fiber.join(publication), Patches.PatchRetired);
+        assert.isTrue(Option.isNone(yield* patches.find(initial.patchId)));
+        const retained = Option.getOrThrow(yield* patches.findRetained(initial.patchId));
+        assert.strictEqual(retained.version.id, initial.versionId);
+        assert.strictEqual(yield* content.read(retained.version), "<p>kept through retirement</p>");
+        assert.isTrue(Option.isNone(yield* patches.findRetained(initial.patchId, 2)));
+        assert.deepStrictEqual(
+          yield* patches.inventory(initial.patchId, uploader.user.id),
+          inventory
+        );
+        assert.strictEqual((yield* patches.restore(initial.patchId, owner)).state, "live");
+        yield* assertResources(initial.patchId, initial.versionId, rowId);
+      }).pipe(Effect.scoped),
+    60_000
+  );
+
+  it.effect(
+    "refuses the old owner's staged publish after reassignment and lets the new owner continue",
+    () =>
+      Effect.gen(function* () {
+        const platform = yield* SqlClient.SqlClient;
+        const patches = yield* Patches.Patches;
+        const content = yield* Content.Content;
+        const manifest = { ...definition, name: "reassign-wins-publish" };
+        const initial = yield* publish(manifest, "<p>original owner's bundle</p>");
+        const rowId = yield* saveResources(initial.patchId, initial.versionId);
+        const inventory = yield* patches.inventory(initial.patchId, uploader.user.id);
+        const expanded = {
+          ...manifest,
+          files: { ...manifest.files, images: { description: "New owner's images." } }
+        };
+        const stored = yield* gate();
+        const observed = yield* observedPatches();
+        const staged = yield* stagedContent(stored.pause, observed.patches);
+        const publication = yield* publish(
+          expanded,
+          "<p>former owner's late bundle</p>",
+          initial.patchId
+        ).pipe(Effect.provideService(Content.Content, staged), Effect.flip, Effect.forkScoped);
+        yield* Deferred.await(stored.entered);
+        const held = yield* gate();
+        const session = yield* Deferred.make<number>();
+        const reassigning = yield* platform
+          .withTransaction(
+            Effect.gen(function* () {
+              const reassigned = yield* patches.reassign(
+                initial.patchId,
+                administrator,
+                reader.user.id,
+                uploader.user.id
+              );
+              yield* Deferred.succeed(session, yield* backendPid(platform));
+              yield* held.pause;
+              return reassigned;
+            })
+          )
+          .pipe(Effect.forkScoped);
+        const pid = yield* Deferred.await(session);
+        yield* Deferred.succeed(stored.release, undefined);
+        assert.deepStrictEqual(yield* blockedBy(pid), [yield* Deferred.await(observed.session)]);
+        yield* Deferred.succeed(held.release, undefined);
+        assert.strictEqual((yield* Fiber.join(reassigning)).ownerUserId, reader.user.id);
+        const refusal = yield* Fiber.join(publication);
+        assert.instanceOf(refusal, Patches.NotOwner);
+        assert.deepStrictEqual(refusal.owner, { id: reader.user.id, name: reader.user.name });
+        const unchanged = Option.getOrThrow(yield* patches.find(initial.patchId));
+        assert.strictEqual(unchanged.patch.ownerUserId, reader.user.id);
+        assert.strictEqual(unchanged.version.id, initial.versionId);
+        assert.strictEqual(unchanged.version.createdByMachineTokenId, uploader.machine.id);
+        assert.strictEqual(
+          yield* content.read(unchanged.version),
+          "<p>original owner's bundle</p>"
+        );
+        assert.isTrue(Option.isNone(yield* patches.find(initial.patchId, 2)));
+        assert.deepStrictEqual(
+          yield* patches.inventory(initial.patchId, reader.user.id),
+          inventory
+        );
+        const next = yield* publish(expanded, "<p>new owner's bundle</p>", initial.patchId, reader);
+        assert.strictEqual(next.versionNumber, 2);
+        assert.deepStrictEqual(next.provisioned.stores, ["images"]);
+        const current = Option.getOrThrow(yield* patches.find(initial.patchId));
+        assert.strictEqual(current.patch.ownerUserId, reader.user.id);
+        assert.strictEqual(current.version.createdByMachineTokenId, reader.machine.id);
+        assert.strictEqual(yield* content.read(current.version), "<p>new owner's bundle</p>");
+        yield* assertResources(initial.patchId, next.versionId, rowId);
+      }).pipe(Effect.scoped),
+    60_000
+  );
+
+  it.effect(
+    "skips a stale sweep candidate after a pre-deadline restore wins the row lock",
+    () =>
+      Effect.gen(function* () {
+        const platform = yield* SqlClient.SqlClient;
+        const patches = yield* Patches.Patches;
+        const content = yield* Content.Content;
+        const initial = yield* publish(
+          { ...definition, name: "restore-wins-sweep" },
+          "<p>restored with its data</p>"
+        );
+        const rowId = yield* saveResources(initial.patchId, initial.versionId);
+        yield* patches.delete(initial.patchId, owner);
+        yield* TestClock.adjust(30 * DAY - 1);
+        const held = yield* gate();
+        const session = yield* Deferred.make<number>();
+        const restoring = yield* platform
+          .withTransaction(
+            Effect.gen(function* () {
+              const restored = yield* patches.restore(initial.patchId, owner);
+              yield* Deferred.succeed(session, yield* backendPid(platform));
+              yield* held.pause;
+              return restored;
+            })
+          )
+          .pipe(Effect.forkScoped);
+        const pid = yield* Deferred.await(session);
+        yield* TestClock.adjust(1);
+        assert.include(yield* patches.listDeleted(100), initial.patchId);
+        const observed = yield* observedPatches();
+        const sweeper = yield* DeletionSweep.make.pipe(
+          Effect.provideService(Patches.Patches, observed.patches)
+        );
+        const sweeping = yield* sweeper.sweep.pipe(Effect.forkScoped);
+        assert.deepStrictEqual(yield* blockedBy(pid), [yield* Deferred.await(observed.session)]);
+        yield* Deferred.succeed(held.release, undefined);
+        assert.strictEqual((yield* Fiber.join(restoring)).state, "live");
+        assert.deepStrictEqual(yield* Fiber.join(sweeping), {
+          deleted: 0,
+          skipped: 1,
+          failed: 0,
+          orphanedObjects: 0
+        });
+        const current = Option.getOrThrow(yield* patches.find(initial.patchId));
+        assert.strictEqual(current.version.id, initial.versionId);
+        assert.strictEqual(yield* content.read(current.version), "<p>restored with its data</p>");
+        assert.strictEqual(
+          Option.getOrThrow(yield* patches.resolveName(uploader.company.handle, initial.name))
+            .patchId,
+          initial.patchId
+        );
+        yield* assertResources(initial.patchId, initial.versionId, rowId);
+      }).pipe(Effect.scoped),
+    60_000
+  );
+
+  it.effect(
+    "refuses a restore waiting on the sweep and never revives its reclaimed namespace",
+    () =>
+      Effect.gen(function* () {
+        const platform = yield* SqlClient.SqlClient;
+        const patches = yield* Patches.Patches;
+        const companies = yield* CompanyDatabases.CompanyDatabases;
+        const inventory = yield* Inventory.Inventory;
+        const objects = yield* ContentStore.ContentStore;
+        const manifest = { ...definition, name: "sweep-wins-restore" };
+        const initial = yield* publish(manifest, "<p>reclaimed bundle</p>");
+        yield* saveResources(initial.patchId, initial.versionId);
+        yield* patches.delete(initial.patchId, owner);
+        yield* TestClock.adjust(30 * DAY);
+        const held = yield* gate();
+        const session = yield* Deferred.make<number>();
+        const withPatchLock: CompanyDatabases.CompanyDatabases["Service"]["withPatchLock"] =
+          (patchId) => (effect) =>
+            companies.withPatchLock(patchId)(
+              Effect.gen(function* () {
+                yield* Deferred.succeed(session, yield* backendPid(platform));
+                yield* held.pause;
+                return yield* effect;
+              })
+            );
+        const gated = yield* Patches.make.pipe(
+          Effect.provideService(
+            CompanyDatabases.CompanyDatabases,
+            CompanyDatabases.CompanyDatabases.of({ ...companies, withPatchLock })
+          )
+        );
+        const sweeper = yield* DeletionSweep.make.pipe(
+          Effect.provideService(Patches.Patches, gated)
+        );
+        const sweeping = yield* sweeper.sweep.pipe(Effect.forkScoped);
+        const pid = yield* Deferred.await(session);
+        const restoreSession = yield* Deferred.make<number>();
+        const restoring = yield* platform
+          .withTransaction(
+            Effect.gen(function* () {
+              yield* Deferred.succeed(restoreSession, yield* backendPid(platform));
+              return yield* patches.restore(initial.patchId, owner);
+            })
+          )
+          .pipe(Effect.flip, Effect.forkScoped);
+        assert.deepStrictEqual(yield* blockedBy(pid), [yield* Deferred.await(restoreSession)]);
+        yield* Deferred.succeed(held.release, undefined);
+        assert.instanceOf(yield* Fiber.join(restoring), Patches.PatchUnavailable);
+        assert.deepStrictEqual(yield* Fiber.join(sweeping), {
+          deleted: 1,
+          skipped: 0,
+          failed: 0,
+          orphanedObjects: 0
+        });
+        assert.isTrue(Option.isNone(yield* patches.findRetained(initial.patchId)));
+        assert.isTrue(
+          Option.isNone(yield* patches.resolveName(uploader.company.handle, initial.name))
+        );
+        assert.isNull(
+          yield* companies.withCompany(uploader.company.id)(inventory.read(initial.patchId))
+        );
+        assert.instanceOf(
+          yield* objects
+            .get(Content.objectKey(initial.patchId, initial.versionId))
+            .pipe(Effect.flip),
+          ContentStore.ObjectNotFound
+        );
+        assert.deepStrictEqual(
+          yield* objects.list(`files/${initial.patchId}/`).pipe(Stream.runCollect),
+          []
+        );
+        assert.instanceOf(
+          yield* patches.restore(initial.patchId, owner).pipe(Effect.flip),
+          Patches.PatchUnavailable
+        );
+        const replacement = yield* publish(manifest, "<p>new patch at the reclaimed name</p>");
+        assert.notStrictEqual(replacement.patchId, initial.patchId);
+        const tables = yield* TableOperations.make;
+        const binding = yield* bindingFor(replacement.patchId, replacement.versionId);
+        const page = yield* tables["tables.list"]
+          .run({ table: "notes" })
+          .pipe(Effect.provideService(Binding.Binding, binding), Effect.flatMap(decodePage));
+        assert.deepStrictEqual(page.rows, []);
+        const rowId = yield* saveResources(replacement.patchId, replacement.versionId);
+        yield* assertResources(replacement.patchId, replacement.versionId, rowId);
       }).pipe(Effect.scoped),
     60_000
   );

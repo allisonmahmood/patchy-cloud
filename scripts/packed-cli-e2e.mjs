@@ -3300,6 +3300,23 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
       initialConfig
         .replace("One note per id, with a title.", "One shared note per id, with a title.")
         .replace("{ title: t.text() })", "{ title: t.text() }, { shared: true })")
+        .replace(
+          "tables: {",
+          'tables: { orders: table("One order per id, with an item.", { item: t.text() }, { shared: true }),'
+        )
+    )
+  );
+  const appPath = path.join(dir, "src/main.ts");
+  const appSource = await checkedCall(() => readFile(appPath, "utf8"));
+  const insertNote = "await patchy.tables.notes.insert({ title });";
+  assert.ok(appSource.includes(insertNote));
+  await checkedCall(() =>
+    writeFile(
+      appPath,
+      appSource.replace(
+        insertNote,
+        `${insertNote}\n    await patchy.tables.orders.insert({ item: title });`
+      )
     )
   );
 
@@ -3501,24 +3518,39 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
   assert.equal(typeof published.versionId, "string");
   assert.ok(published.versionId.length > 0);
   assert.equal(typeof published.title, "string");
-  assert.deepEqual(published, {
-    ok: true,
-    patchId: published.patchId,
-    versionId: published.versionId,
-    versionNumber: 1,
-    title: published.title,
-    description: "Exercise disposable notes end to end",
-    descriptionUpdatedAt: published.descriptionUpdatedAt,
-    scope: "company",
-    name: "tier1-notes",
-    address: `${publicBaseUrl}/${DEV_SEED.companyHandle}/tier1-notes`,
-    publicUrl: `${publicBaseUrl}/${DEV_SEED.companyHandle}/tier1-notes`,
-    tier: 1,
-    schemaRevision: 1,
-    provisioned: { tables: ["notes"], columns: ["notes.title"], indexes: [], stores: [] },
-    unused: { tables: [], columns: [], indexes: [], stores: [] },
-    warnings: []
-  });
+  assert.deepEqual(
+    {
+      ...published,
+      provisioned: {
+        ...published.provisioned,
+        tables: published.provisioned.tables.toSorted(),
+        columns: published.provisioned.columns.toSorted()
+      }
+    },
+    {
+      ok: true,
+      patchId: published.patchId,
+      versionId: published.versionId,
+      versionNumber: 1,
+      title: published.title,
+      description: "Exercise disposable notes end to end",
+      descriptionUpdatedAt: published.descriptionUpdatedAt,
+      scope: "company",
+      name: "tier1-notes",
+      address: `${publicBaseUrl}/${DEV_SEED.companyHandle}/tier1-notes`,
+      publicUrl: `${publicBaseUrl}/${DEV_SEED.companyHandle}/tier1-notes`,
+      tier: 1,
+      schemaRevision: 1,
+      provisioned: {
+        tables: ["notes", "orders"],
+        columns: ["notes.title", "orders.item"],
+        indexes: [],
+        stores: []
+      },
+      unused: { tables: [], columns: [], indexes: [], stores: [] },
+      warnings: []
+    }
+  );
   assert.ok(Number.isFinite(Date.parse(published.descriptionUpdatedAt)));
   assertViewerDoor(await fetchViewer(published.address));
   await context.addCookies(
@@ -3586,50 +3618,90 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
     "adding a column must retain hosted rows without importing local data"
   );
   await expect(notes.locator("#list li")).toHaveText(["Hosted note"]);
-  await checkedCall(() => browser.close());
-  await checkedCall(() => tier1BrowserServer.close());
-  tier1BrowserServer = undefined;
   console.log(
     "[packed-cli-e2e] lifecycle: dependant refusal, forced retirement, restore and rollback"
   );
-  const dependantResponse = await checkedCall(() =>
-    fetch(`${publicBaseUrl}/api/publish`, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${DEV_SEED.token}`,
-        "content-type": "application/json"
-      },
-      body: JSON.stringify({
-        manifest: {
-          manifestVersion: 1,
-          release,
-          name: "packed-notes-reader",
-          tier: 0,
-          tables: {},
-          files: {},
-          uses: {
-            notes: {
-              kind: "sharedTable",
-              patchId: published.patchId,
-              table: "notes",
-              id: `${published.patchId}/notes`,
-              revision: updated.schemaRevision
-            }
-          }
-        },
-        html: validHtml("Notes reader", "Invented lifecycle dependant"),
-        publishKey: randomUUID(),
-        metadata: {}
-      })
-    })
+  const readerDir = path.join(tempRoot, "packed-orders-reader");
+  await runCli(
+    cliPath,
+    ["init", readerDir, "--tier", "1", "--purpose", "Reads the team's shared orders", "--json"],
+    { ...options, cwd: tempRoot }
   );
-  assert.equal(dependantResponse.status, 201);
-  const dependant = await dependantResponse.json();
+  const readerCli = installedCliBinPath(readerDir);
+  const readerOptions = { ...options, cwd: readerDir };
+  await runCli(
+    readerCli,
+    ["add", "shared-table", `${published.patchId}/orders`, "--json"],
+    readerOptions
+  );
+  await checkedCall(() =>
+    writeFile(
+      path.join(readerDir, "src/main.ts"),
+      'import { patchy } from "../patchy/_generated/client.js";\n' +
+        "const orders = await patchy.shared.orders.list({ limit: 20 });\n" +
+        'document.querySelector("#list")!.textContent = JSON.stringify(orders);\n'
+    )
+  );
+  const dependant = parseJsonSuccess(
+    await runCli(readerCli, ["publish", "--json"], readerOptions),
+    publishKeys
+  );
+  const openReader = async () => {
+    const [rows, response] = await Promise.all([
+      readRuntime("shared.list", dependant),
+      page.goto(dependant.address)
+    ]);
+    assert.equal(response.status(), 200);
+    await expect(notes.locator("#list")).toHaveText(JSON.stringify(rows));
+    assert.deepEqual(
+      rows.rows.map((row) => row.item),
+      ["Hosted note"]
+    );
+  };
+  await openReader();
+
+  const listing = JSON.parse((await runCli(cliPath, ["list", "--json"], options)).stdout);
+  assert.equal(listing.patches.find((patch) => patch.id === published.patchId).state, "live");
+  const detail = JSON.parse(
+    (await runCli(cliPath, ["list", published.name, "--json"], options)).stdout
+  );
+  assert.equal(detail.id, published.patchId);
+  assert.equal(detail.inventory.tables.find((table) => table.name === "orders").declarable, true);
+  const orderSchema = JSON.parse(
+    (await runCli(cliPath, ["list", published.name, "orders", "--json"], options)).stdout
+  );
+  assert.deepEqual(orderSchema.columns, [{ name: "item", kind: "text", optional: false }]);
+  assert.equal(orderSchema.shared, true);
+  const readerDetail = JSON.parse(
+    (await runCli(cliPath, ["list", dependant.patchId, "--json"], options)).stdout
+  );
+  assert.deepEqual(readerDetail.reads, [
+    {
+      alias: "orders",
+      patchId: published.patchId,
+      name: published.name,
+      table: "orders",
+      state: "live"
+    }
+  ]);
+
+  console.log("[packed-cli-e2e] portal: seeded-session index and patch card");
+  assert.equal((await page.goto(publicBaseUrl)).status(), 200);
+  await expect(page.getByRole("heading", { name: "Yours", exact: true })).toBeVisible();
+  await page.locator(`a[href="/patches/${published.name}"]`).click();
+  await expect(page.getByRole("heading", { name: published.name, exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Open", exact: true })).toHaveAttribute(
+    "href",
+    new URL(published.address).pathname
+  );
+  await expect(page.getByText(dependant.name, { exact: false }).last()).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Manage", exact: true })).toBeVisible();
   const refusedRetire = await runCli(repoCliPath, ["retire", "--json"], {
     ...options,
     allowFailure: true
   });
   assert.equal(refusedRetire.code, 2);
+  assert.equal(refusedRetire.stdout, "");
   const refusal = JSON.parse(refusedRetire.stderr);
   assert.equal(refusal.kind, "rejected");
   assert.equal(refusal.code, "has_dependants");
@@ -3638,17 +3710,50 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
     [dependant.patchId]
   );
   assert.match(refusal.error, /Ask the person you are working for before forcing\.$/);
+  await openReader();
   const retired = JSON.parse(
     (await runCli(repoCliPath, ["retire", "--force", "--json"], options)).stdout
   );
   assert.equal(retired.state, "retired");
+  assert.equal((await page.goto(published.address)).status(), 200);
+  await expect(page.locator("#patch")).toHaveCount(0);
+  await expect(
+    page.locator("dd").filter({ hasText: `Retired by ${DEV_SEED.userName}` })
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Restore", exact: true })).toBeVisible();
+  await expect(page.locator(`a[href="/patches/${published.name}"]`)).toBeVisible();
+  const deniedRead = page.waitForResponse(
+    async (response) =>
+      new URL(response.url()).pathname === "/api/runtime/call" &&
+      response.request().postDataJSON()?.op === "shared.list"
+  );
+  await page.goto(dependant.address);
+  const denied = await deniedRead;
+  assert.equal((await denied.json()).code, "access_denied");
   const restored = JSON.parse((await runCli(repoCliPath, ["restore", "--json"], options)).stdout);
   assert.equal(restored.state, "live");
+  await openReader();
   const rolledBack = JSON.parse(
     (await runCli(repoCliPath, ["rollback", "1", "--json"], options)).stdout
   );
   assert.equal(rolledBack.currentVersion, 1);
   assert.equal(rolledBack.address, published.address);
+  assert.deepEqual(
+    await openNotes(published.address, published),
+    {
+      rows: [hostedRow],
+      cursor: null
+    },
+    "rollback serves v1 with its original columns and retained hosted rows"
+  );
+  assert.deepEqual(
+    await openNotes(`${published.address}/~v/2`, updated),
+    {
+      rows: [{ ...hostedRow, detail: null }],
+      cursor: null
+    },
+    "v2 still reads the cumulative schema after rollback"
+  );
 
   console.log("[packed-cli-e2e] description: repo edit, remote edit and refresh pull-down");
   const description = "Keeps shared notes for the team.";
@@ -3679,6 +3784,14 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
   assert.equal(syncedRepo.description, cloudDescription);
   const unchanged = JSON.parse((await runCli(repoCliPath, ["refresh", "--json"], options)).stdout);
   assert.equal((unchanged.warnings ?? []).length, 0);
+  await page.goto(`${publicBaseUrl}/patches/${published.name}`);
+  await expect(page.getByRole("textbox", { name: "Description", exact: true })).toHaveValue(
+    cloudDescription
+  );
+  await checkedCall(() => browser.close());
+  await checkedCall(() => tier1BrowserServer.close());
+  tier1BrowserServer = undefined;
+  console.log("[packed-cli-e2e] PASS: packed discovery, lifecycle, description sync and portal");
   console.log("[packed-cli-e2e] PASS: packed init → dev shell → hosted tier 1 → additive publish");
 }
 
