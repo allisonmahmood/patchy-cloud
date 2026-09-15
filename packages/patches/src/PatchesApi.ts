@@ -216,7 +216,7 @@ const readFailures = {
         ok: false,
         code: "wrong_state",
         state: error.state,
-        error: `This patch is ${error.state}; pass --state ${error.state === "deleted" ? "all" : error.state}.`
+        error: `This patch is ${error.state}; request ?state=${error.state === "deleted" ? "all" : error.state}.`
       })
     ),
   SqlError: Effect.die

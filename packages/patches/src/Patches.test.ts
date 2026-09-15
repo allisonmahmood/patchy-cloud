@@ -994,7 +994,7 @@ it.layer(Patches.layer.pipe(Layer.provideMerge(Fixtures.database)))("Patches rea
     })
   );
 
-  it.effect("keeps retained reads and hides every unavailable or foreign source name", () =>
+  it.effect("keeps retained source states while redacting inaccessible source names", () =>
     Effect.gen(function* () {
       const service = yield* Patches.Patches;
       const sources: Record<string, Patches.Recorded> = {};
@@ -1007,6 +1007,7 @@ it.layer(Patches.layer.pipe(Layer.provideMerge(Fixtures.database)))("Patches rea
       yield* update(consumer.patchId, { manifest: { ...Fixtures.manifest, uses } });
       yield* update(consumer.patchId);
       yield* service.retire(sources.retired!.patchId, owner, true);
+      yield* service.retire(sources.hidden!.patchId, owner, true);
       yield* service.delete(sources.deleted!.patchId, owner, true);
       yield* service.delete(sources.gone!.patchId, owner, true);
       yield* TestClock.adjust(30 * DAY);
@@ -1029,7 +1030,11 @@ it.layer(Patches.layer.pipe(Layer.provideMerge(Fixtures.database)))("Patches rea
         table: "notes",
         ...(["live", "retired", "deleted"].includes(alias)
           ? { name: source.name, state: alias }
-          : { state: "gone" })
+          : alias === "disabled"
+            ? { state: "live" }
+            : alias === "hidden"
+              ? { state: "retired" }
+              : { state: "gone" })
       }));
       assert.deepStrictEqual(
         detail!.reads,

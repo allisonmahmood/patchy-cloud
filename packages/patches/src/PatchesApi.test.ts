@@ -1263,6 +1263,16 @@ it.layer(
         responseMode: "response-only"
       });
       assert.strictEqual(missing.status, 404);
+      yield* owner.delete({ params: { patchId: source.patchId }, query: { force: true } });
+      yield* TestClock.adjust("30 days");
+      yield* (yield* Patches.Patches).purgeDeleted(source.patchId);
+      const afterPurge = yield* colleague.detail({
+        params: { patchRef: consumer.patchId },
+        query: {}
+      });
+      assert.deepStrictEqual(afterPurge.reads, [
+        { alias: "sourceNotes", patchId: source.patchId, table: "notes", state: "gone" }
+      ]);
     })
   );
 });
