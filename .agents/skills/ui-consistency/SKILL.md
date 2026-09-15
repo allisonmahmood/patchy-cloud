@@ -33,6 +33,7 @@ Three page kinds:
 - Fields: `field` for input, select and textarea; `field-label`, `field-hint`, `field-error`, `field-choice`, `field-checkbox` and `field-radio`. Keep labels, hint/error associations and native disabled and keyboard behavior.
 - Supporting text: `supporting-text` for metadata and page-level guidance; reserve `field-hint` for a field's hint.
 - Fact lists: `facts` on a `dl` with `dt`/`dd`; item lists: `list` and `list-row`.
+- Code panels: `code-panel` on `pre` preserves wrapping and caps long content at a scrollable height. Expandable list rows use the shell's `summary` spacing and pointer.
 - Notices: `note`, `note-warn`, `note-refused`, `note-ok` and `note-title`. Refusals use `role="alert"`; completed actions use `role="status"`.
 - Headings and sections: `page-heading`, `section-heading`, `section`; `verification-code` is the device confirmation's code display, not a page-specific heading scale.
 - Pills: `pill`, `pill-progress` and `pill-done`.

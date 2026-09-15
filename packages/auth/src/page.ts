@@ -1,6 +1,6 @@
 import * as Cookies from "effect/unstable/http/Cookies";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
-import { escapeAttribute, escapeHtml, htmlPage } from "@patchy/core";
+import { type AppShell, escapeAttribute, escapeHtml, htmlPage } from "@patchy/core";
 
 export interface Page {
   readonly title: string;
@@ -8,7 +8,7 @@ export interface Page {
   readonly status?: number;
   readonly styles?: string;
   readonly heading?: string;
-  readonly app?: Parameters<typeof htmlPage>[0]["app"];
+  readonly app?: AppShell;
 }
 
 export interface SessionShell {
