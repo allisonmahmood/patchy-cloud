@@ -49,7 +49,7 @@ The decided first-party page at the address of a retired or deleted patch: it te
 _Avoid_: 404 (the answer for a gone or foreign patch), door (a notice admits nothing), tombstone
 
 **Login door**:
-The admission in front of a company patch: an active colleague enters, a signed-out reader signs in and returns, and a reader from another company gets the same absence as a missing link. A signed-in person without a company first goes through create-or-join; a deactivated user sees the deactivated page.
+The admission in front of a company patch and the signed-out root: an active colleague enters, a signed-out reader signs in and returns, and a reader from another company gets the same absence as a missing patch. A signed-in person without a company first goes through create-or-join; a deactivated user sees the deactivated page.
 _Avoid_: auth wall, login page (the door is a moment on the way to the patch, not a destination), paywall
 
 **Connect door**:

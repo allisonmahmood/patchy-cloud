@@ -1,12 +1,12 @@
 # Portal
 
-Where a signed-in person finds and manages their company's patches: the landing at `/`, one patch's card, its management acts, and the deactivation and reactivation choices about a user's patches. The patch, its states and its owner belong to [Patches](../patches/CONTEXT.md); the viewer to [Auth](../auth/CONTEXT.md); users and roles to [Companies](../companies/CONTEXT.md). Decided on [the portal map](https://github.com/allisonmahmood/patchy-cloud/issues/230) and specified in [#247](https://github.com/allisonmahmood/patchy-cloud/issues/247). The app shell and component set are built; the portal itself is not yet built.
+Where a signed-in person finds and manages their company's patches. The patch, its states and its owner belong to [Patches](../patches/CONTEXT.md); the viewer to [Auth](../auth/CONTEXT.md); users and roles to [Companies](../companies/CONTEXT.md). The portal, index, cards, inline management, versions and stale-action refusals are built. Destructive confirmations and deactivation/reactivation choices remain decided work from [#247](https://github.com/allisonmahmood/patchy-cloud/issues/247).
 
 ## Language
 
 **Portal**:
 The signed-in landing at `/`: the company's patches on one side and one patch's card on the other. It lists only the viewer's own company, public patches included, and never another company's.
-_Avoid_: dashboard, home page (the signed-out marketing page), directory (the index is one half of it)
+_Avoid_: dashboard, home page (the root is a sign-in door when signed out), directory (the index is one half of it)
 
 **Index**:
 The compact list of the company's patches beside the card: name and the first clause of the description, grouped as the viewer's own, the company's, and retired and deleted behind a toggle.
@@ -17,11 +17,11 @@ One patch's page at `/patches/<name>`: its address, description, owner, current 
 _Avoid_: patch page (the patch is the page at the address), detail view, dossier
 
 **Manage**:
-The acts an owner or admin performs from the card: describe, change who can open it, show another version at the address, restore, retire, delete and reassign. An act stays on the card when the same actor can undo it with one click; otherwise it leaves for a confirmation page.
+The owner or admin's controls on a card: description, who can open it, served version and restore are built inline. Retire, delete, restore with off sources and reassign lead to the decided confirmation pages, which are not yet built.
 _Avoid_: settings, admin panel, edit mode
 
 **Confirmation page**:
-A page under the card's URL holding one act that breaks someone else's tool or that the actor cannot undo alone: the consequence in plain words, what breaks, the acknowledgement, and the way back to the card.
+The decided page under a card's URL for an act that breaks someone else's tool or that the actor cannot undo alone: the consequence, what breaks, the acknowledgement and the way back. These pages are not yet built; an inline restore that discovers off sources displays their warning without performing the act.
 _Avoid_: modal, dialog, are-you-sure
 
 **Acknowledgement**:
@@ -29,7 +29,7 @@ The actor's explicit acceptance, on a confirmation page, of the breakage an act 
 _Avoid_: consent, override, warning (what precedes it)
 
 **Pick page**:
-The deactivation or reactivation step that lists a user's patches with what each depends on, for the admin to leave alone, act on a selection, or act on all, before a confirmation recomputed for that selection.
+The decided, not-yet-built deactivation or reactivation step that lists a user's patches with what each depends on, for the admin to leave alone, act on a selection, or act on all before confirmation.
 _Avoid_: bulk action, checklist, wizard
 
 **Stale action**:
@@ -37,7 +37,7 @@ An act posted from a page whose patch has since changed in the way the act depen
 _Avoid_: conflict, optimistic lock, revision mismatch
 
 **App shell**:
-The shared frame for signed-in pages, built for Company, Connections and Your machines: the header bar with the sections, viewer and sign-out, over the page. Doors (sign-in, create-or-join, device confirmation, errors) keep the card shell instead.
+The shared frame for the portal, Company, Connections and Your machines: the header bar with sections, viewer and sign-out, over the page. Sign-in, create-or-join, device confirmation and error doors keep the card shell; portal not-found pages keep the app shell.
 _Avoid_: layout, template, theme
 
 **Component set**:

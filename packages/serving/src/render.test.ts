@@ -8,9 +8,9 @@ import { renderHome } from "./render.js";
 import { renderPatchWrapper, renderShellNotice } from "./shell.js";
 
 describe("renderHome", () => {
-  it("keeps markup in the configured instance URL inert in the login instructions", () => {
+  it("keeps markup in the sign-in destination inert", () => {
     const html = renderHome({
-      publicBaseUrl: "https://pages.example.com/'><img src=x onerror=alert(1)>"
+      signInUrl: "https://pages.example.com/'><img src=x onerror=alert(1)>"
     });
 
     expect(html).not.toContain("<img");

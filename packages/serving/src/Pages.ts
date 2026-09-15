@@ -1,8 +1,8 @@
 /**
- * The routes a reader hits: the home page, the health check, patch addresses
- * (`/:company/:name[/~v/:n][/route]`) and exact-version content URLs, plus
- * the HTML 404 for everything that is not a route. Pages read through
- * `patches` — metadata and visits go through `Patches`, and `Content` reads
+ * The routes a reader hits: the health check, patch addresses
+ * (`/:company/:name[/~v/:n][/route]`) and exact-version content URLs.
+ * The server owns the root and catch-all together. Pages read through
+ * `patches`; metadata and visits go through `Patches`, and `Content` reads
  * the HTML only after admission. The serving guarantees these routes answer
  * under are `serving-headers.ts`.
  */
@@ -19,7 +19,7 @@ import { newInternalId } from "@patchy/core";
 import type { Companies, Users } from "@patchy/companies";
 import { Content, Patches, PatchesConfig } from "@patchy/patches";
 import * as Door from "./Door.js";
-import { renderHome, renderNotFound } from "./render.js";
+import { renderNotFound } from "./render.js";
 import { renderPatchWrapper, renderShellNotice, isShellNotice, brokerScript } from "./shell.js";
 import {
   NO_REFERRER_POLICY,
@@ -198,8 +198,8 @@ const addressRouteOf = (suffix: string): { versionNumber?: number | null; route:
 };
 
 /**
- * Only addresses and exact-version content receive viewer admission. The home,
- * health, removed `/d/*` and catch-all routes never authenticate a session.
+ * Only addresses and exact-version content receive viewer admission here.
+ * The server owns the signed-in root and the catch-all.
  */
 const patches = HttpRouter.use((router) =>
   Effect.gen(function* () {
@@ -234,11 +234,9 @@ const otherPages = HttpRouter.use((router) =>
         });
       })
     );
-    yield* router.add("GET", "/", HttpServerResponse.html(renderHome({ publicBaseUrl })));
     yield* router.add("GET", "/healthz", HttpServerResponse.jsonUnsafe({ ok: true }));
     yield* router.add("*", "/d/*", notFound);
     yield* router.add("*", "/~content/*", notFound);
-    yield* router.add("*", "/*", notFound);
   })
 );
 
