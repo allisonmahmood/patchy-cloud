@@ -84,7 +84,7 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
         assert.include(page.headers.get("content-security-policy")!, "form-action 'self'");
         const html = yield* Effect.promise(() => page.text());
         assert.include(html, "Is this the code on your terminal?");
-        assert.include(html, `<h1 class="device-code">${login.userCode}</h1>`);
+        assert.match(html, new RegExp(`<h1\\b[^>]*>${login.userCode}</h1>`));
         assert.include(html, "Company &lt;confirm&gt;");
         assert.include(html, "Alex &quot;Owner&quot;");
         assert.include(html, owner.user.email);

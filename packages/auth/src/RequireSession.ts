@@ -54,7 +54,7 @@ export function door(
   const url = signInUrl(session, path);
   return pageResponse({
     title: failed ? "Sign-in could not complete" : "Sign in to Patchy",
-    body: `<p>${failed ? "Try signing in again." : "Continue to your company."}</p><a class="auth-action" href="${escapeAttribute(url)}">Sign in</a>`,
+    body: `<p>${failed ? "Try signing in again." : "Continue to your company."}</p><div class="actions"><a class="btn btn-primary" href="${escapeAttribute(url)}">Sign in</a></div>`,
     status
   }).pipe(HttpServerResponse.setHeader("x-patchy-sign-in-url", url));
 }

@@ -28,8 +28,8 @@ export interface JoinPage {
 }
 
 export const styles = `
-    .auth-invite { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 0; border-bottom: 1px solid var(--line-strong); }
-    .auth-invite p { margin: 0; overflow-wrap: anywhere; }
+    .join-invite { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; }
+    .join-invite p { margin: 0; }
 `;
 
 /** Server-side suggestion: plain forms need no client code to create a company. */
@@ -61,12 +61,12 @@ const render = Effect.fn("Join.render")(function* (
       Effect.fn(function* (invite) {
         const company = yield* companies.findById(invite.companyId);
         if (!company) return yield* Effect.die(new Error("Invited company is missing"));
-        return `<form class="auth-invite" method="post" action="${escapeAttribute(action)}"><p><strong>${escapeHtml(company.name)}</strong><br>${escapeHtml(invite.role)}</p><input type="hidden" name="action" value="join"><input type="hidden" name="inviteId" value="${escapeAttribute(invite.id)}"><button class="auth-action" type="submit" aria-label="Join ${escapeAttribute(company.name)}">Join</button></form>`;
+        return `<form class="list-row join-invite" method="post" action="${escapeAttribute(action)}"><p><strong>${escapeHtml(company.name)}</strong><br>${escapeHtml(invite.role)}</p><input type="hidden" name="action" value="join"><input type="hidden" name="inviteId" value="${escapeAttribute(invite.id)}"><button class="btn btn-primary" type="submit" aria-label="Join ${escapeAttribute(company.name)}">Join</button></form>`;
       })
     );
     return {
       title: "Join your company",
-      body: `<p>Invitations for <span class="auth-email">${escapeHtml(claims.email)}</span>.</p>${notice}${rows.join("")}`,
+      body: `<p>Invitations for <span class="auth-email">${escapeHtml(claims.email)}</span>.</p>${notice}<div class="list">${rows.join("")}</div>`,
       status: refusal?.status
     };
   }
@@ -74,7 +74,7 @@ const render = Effect.fn("Join.render")(function* (
   const handle = fields?.handle ?? suggestedHandle(name);
   return {
     title: "Create your company",
-    body: `<p>There is no invite for <span class="auth-email">${escapeHtml(claims.email)}</span>.</p>${notice}<form method="post" action="${escapeAttribute(action)}"><input type="hidden" name="action" value="create"><label for="company-name">Company name</label><input id="company-name" name="name" value="${escapeAttribute(name)}" required maxlength="200" autocomplete="organization"><label for="company-handle">Company handle</label><input id="company-handle" name="handle" value="${escapeAttribute(handle)}" required minlength="3" maxlength="32" pattern="[a-z0-9][a-z0-9\\-]{1,30}[a-z0-9]" aria-describedby="handle-hint" autocapitalize="none" spellcheck="false"><p id="handle-hint" class="auth-hint">Pre-filled from the company name and editable. 3–32 lowercase letters, digits or hyphens; no hyphen at either end. Fixed once created.</p><button class="auth-action" type="submit">Create company</button></form>`,
+    body: `<p>There is no invite for <span class="auth-email">${escapeHtml(claims.email)}</span>.</p>${notice}<form method="post" action="${escapeAttribute(action)}"><input type="hidden" name="action" value="create"><label class="field-label" for="company-name">Company name</label><input class="field" id="company-name" name="name" value="${escapeAttribute(name)}" required maxlength="200" autocomplete="organization"><label class="field-label" for="company-handle">Company handle</label><input class="field" id="company-handle" name="handle" value="${escapeAttribute(handle)}" required minlength="3" maxlength="32" pattern="[a-z0-9][a-z0-9\\-]{1,30}[a-z0-9]" aria-describedby="handle-hint" autocapitalize="none" spellcheck="false"><p id="handle-hint" class="field-hint">Pre-filled from the company name and editable. 3–32 lowercase letters, digits or hyphens; no hyphen at either end. Fixed once created.</p><div class="actions"><button class="btn btn-primary" type="submit">Create company</button></div></form>`,
     status: refusal?.status
   };
 });

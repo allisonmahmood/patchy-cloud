@@ -1,9 +1,24 @@
+export interface AppShell {
+  readonly viewer: {
+    readonly user: { readonly name: string };
+    readonly company: { readonly name: string };
+  };
+  readonly section: "patches" | "company" | "connections" | "machines" | null;
+}
+
+function appBody(app: AppShell, body: string): string {
+  const link = (href: string, label: string, section: AppShell["section"]) =>
+    `<a href="${href}"${section === app.section ? ' aria-current="page"' : ""}>${label}</a>`;
+  return `<div class="app-card"><header class="app-bar"><div class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</div><nav class="app-nav" aria-label="Primary">${link("/", "Patches", "patches")}${link("/company", "Company", "company")}${link("/company/connections", "Connections", "connections")}${link("/machines", "Your machines", "machines")}</nav><div class="app-who"><span>${escapeHtml(app.viewer.user.name)} · ${escapeHtml(app.viewer.company.name)}</span><form method="post" action="/logout"><button class="btn btn-quiet" type="submit">Sign out</button></form></div></header><main class="app-page">${body}</main></div>`;
+}
+
 /** First-party HTML shell. Served patch documents remain separate in Serving. */
 export function htmlPage(options: {
   title: string;
   body: string;
   head?: string;
   styles?: string;
+  app?: AppShell;
 }): string {
   return `<!doctype html>
 <html lang="en">
@@ -30,6 +45,8 @@ export function htmlPage(options: {
       --green-ink: #2f6a17;
       --yellow: #ffbf35;
       --amber-ink: #8a5a00;
+      --danger: #963c22;
+      --field-radius: 6px;
       --shadow-hard: 4px 4px 0 var(--ink);
       --shadow-soft: 0 18px 50px rgba(18, 17, 15, .08);
       --radius: 8px;
@@ -350,13 +367,16 @@ export function htmlPage(options: {
       background: var(--paper-amber);
     }
 
+    .note-refused { border-left-color: var(--danger); background: var(--paper-amber); }
+    .note-ok { border-left-color: var(--green-ink); background: var(--paper-green); }
+
     .foot {
       color: var(--muted);
       font-size: .92rem;
       font-weight: 650;
     }
 
-    body:has(.auth-card) { min-height: 100vh; display: flow-root; }
+    body:has(.auth-card, .app-card) { min-height: 100vh; display: flow-root; }
 
     .auth-card {
       width: min(520px, calc(100% - 32px));
@@ -366,56 +386,85 @@ export function htmlPage(options: {
       border-radius: var(--radius);
       background: var(--white);
       box-shadow: var(--shadow-hard);
+      overflow-wrap: anywhere;
     }
 
     .auth-card .brand { margin-bottom: 32px; }
     .auth-kicker { margin: 0 0 16px; color: var(--muted); font-size: .8rem; font-weight: 750; text-transform: uppercase; letter-spacing: .12em; }
-    .auth-card h1 { max-width: none; font-size: 2rem; line-height: 1.12; }
-    .auth-card label { display: block; margin: 18px 0 6px; font-size: .9rem; font-weight: 750; }
-    .auth-card input, .auth-card select {
+    .page-heading { max-width: none; margin-bottom: .6rem; font-size: 2.2rem; line-height: 1.12; overflow-wrap: anywhere; }
+    .section-heading { margin: 0 0 12px; font-size: 1.2rem; line-height: 1.2; }
+    .verification-code { max-width: none; font-family: var(--font-mono); font-size: clamp(1.65rem, 7vw, 3rem); letter-spacing: .04em; white-space: nowrap; }
+    .field-label { display: block; margin: 18px 0 6px; font-size: .9rem; font-weight: 750; }
+    .field {
+      display: block;
       width: 100%;
-      min-height: 48px;
-      padding: 10px 12px;
+      min-width: 0;
+      min-height: 44px;
+      padding: 9px 12px;
       border: 1.5px solid var(--ink);
-      border-radius: 6px;
-      background: white;
+      border-radius: var(--field-radius);
+      background: var(--white);
       color: var(--ink);
       font: inherit;
+      font-size: .95rem;
     }
-    .auth-hint { margin: 8px 0 20px; color: var(--muted); font-size: .8rem; }
-    .auth-action {
+    textarea.field { min-height: 110px; resize: vertical; }
+    .field-hint { margin: 8px 0 20px; color: var(--muted); font-size: .85rem; }
+    .supporting-text { color: var(--muted); font-size: .9rem; }
+    .field-error { margin: 8px 0 20px; color: var(--danger); font-size: .85rem; font-weight: 750; }
+    .field[aria-invalid="true"] { border-color: var(--danger); }
+    .field-choice, .confirmation-acknowledgement { display: flex; align-items: baseline; gap: 10px; min-height: 44px; padding: 8px 0; cursor: pointer; }
+    .field-checkbox, .field-radio { flex: none; width: 18px; height: 18px; margin: 0; accent-color: var(--blue); cursor: pointer; }
+    .field:disabled, .field-checkbox:disabled, .field-radio:disabled { opacity: .55; cursor: not-allowed; }
+    .btn {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      min-height: 46px;
-      padding: 8px 20px;
+      min-height: 44px;
+      padding: 8px 14px;
       border: 2px solid var(--ink);
       border-radius: var(--radius);
-      background: var(--blue);
-      color: white;
+      background: var(--white);
+      color: var(--ink);
       font: inherit;
+      font-size: .9rem;
       font-weight: 750;
+      line-height: 1.3;
       text-decoration: none;
       cursor: pointer;
     }
+    .btn-primary { background: var(--blue); color: var(--white); }
+    .btn-quiet { border-color: transparent; background: transparent; text-decoration: underline; }
+    .btn-danger { background: var(--paper-amber); color: var(--danger); }
+    .btn:hover:not(:disabled) { box-shadow: 2px 2px 0 var(--ink); }
+    .btn:disabled { opacity: .55; cursor: not-allowed; }
     .auth-email { font-weight: 750; overflow-wrap: anywhere; }
     .auth-signout { margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--line-strong); }
-    .auth-signout button {
-      min-height: 44px;
-      border: 0;
-      padding: 0 4px;
-      background: none;
-      color: var(--ink);
-      font: inherit;
-      font-weight: 750;
-      text-decoration: underline;
-      cursor: pointer;
+    .section { margin-top: 32px; }
+    .list, .confirmation-list { list-style: none; padding: 0; margin: 16px 0; }
+    .list-row, .confirmation-list > li { padding: 20px 0; border-bottom: 1px solid var(--line-strong); overflow-wrap: anywhere; }
+    .list-row p { margin: 0 0 8px; }
+    .list-row summary { cursor: pointer; }
+    .actions, .confirmation-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
+    .facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px 24px; margin: 20px 0; font-size: .9rem; overflow-wrap: anywhere; }
+    .facts dt { color: var(--muted); font-weight: 750; }
+    .facts dd { min-width: 0; margin: 0; }
+    .confirmation-form { margin-top: 24px; }
+    .confirmation-consequence { margin: 0 0 20px; }
+    .app-card { width: min(1180px, calc(100% - 32px)); margin: 32px auto; border: 2px solid var(--ink); border-radius: var(--radius); background: var(--white); box-shadow: var(--shadow-hard); }
+    .app-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 28px; padding: 14px 26px; border-bottom: 2px solid var(--ink); border-radius: var(--radius) var(--radius) 0 0; background: var(--white); }
+    .app-nav { display: flex; flex-wrap: wrap; gap: 4px; }
+    .app-nav a { display: inline-flex; align-items: center; min-height: 44px; padding: 6px 12px; border: 2px solid transparent; border-radius: var(--field-radius); color: var(--ink); text-decoration: none; font-size: .95rem; }
+    .app-nav a[aria-current="page"] { border-color: var(--ink); background: var(--yellow); box-shadow: 2px 2px 0 var(--ink); }
+    .app-who { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; color: var(--muted); font-size: .88rem; font-weight: 650; overflow-wrap: anywhere; }
+    .app-page { min-width: 0; padding: 30px 34px 40px; overflow-wrap: anywhere; }
+    @media (max-width: 480px) {
+      .auth-card { padding: 24px; }
+      .app-bar { padding: 14px; }
+      .app-page { padding: 24px 18px; }
+      .facts { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+      .facts dd { margin-bottom: 8px; }
     }
-    .company-section { margin-top: 32px; }
-    .company-list { list-style: none; padding: 0; }
-    .company-row { padding: 20px 0; border-bottom: 1px solid var(--line-strong); overflow-wrap: anywhere; }
-    .company-row p { margin: 0 0 8px; }
-    .company-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 
 
     @media (max-width: 760px) {
@@ -447,7 +496,7 @@ export function htmlPage(options: {
     ${options.styles ?? ""}
   </style>
 </head>
-<body>${options.body}</body>
+<body>${options.app ? appBody(options.app, options.body) : options.body}</body>
 </html>`;
 }
 export function escapeHtml(value: unknown): string {

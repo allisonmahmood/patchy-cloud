@@ -8,6 +8,7 @@ export interface Page {
   readonly status?: number;
   readonly styles?: string;
   readonly heading?: string;
+  readonly app?: Parameters<typeof htmlPage>[0]["app"];
 }
 
 export interface SessionShell {
@@ -33,7 +34,7 @@ export function returnPath(value: string | null, publicBaseUrl: string): string 
 }
 
 export const signOutForm = (notYou = false) =>
-  `<form class="auth-signout" method="post" action="/logout">${notYou ? "Not you? " : ""}<button type="submit">Sign out</button></form>`;
+  `<form class="auth-signout" method="post" action="/logout">${notYou ? "Not you? " : ""}<button class="btn btn-quiet" type="submit">Sign out</button></form>`;
 
 /** Cookie collections normally key by name, which would lose distinct Domain/Path setters. */
 export function withCookies(
@@ -60,12 +61,16 @@ export function pageResponse(
   shell?: SessionShell
 ): HttpServerResponse.HttpServerResponse {
   const head = shell ? sessionScripts(shell) : undefined;
+  const heading = page.heading ?? `<h1 class="page-heading">${escapeHtml(page.title)}</h1>`;
   return HttpServerResponse.text(
     htmlPage({
       title: page.title,
       head,
       styles: page.styles,
-      body: `<main class="auth-card"><div class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</div>${page.heading ?? `<h1>${escapeHtml(page.title)}</h1>`}${page.body}</main>`
+      app: page.app,
+      body: page.app
+        ? `${heading}${page.body}`
+        : `<main class="auth-card"><div class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</div>${heading}${page.body}</main>`
     }),
     {
       contentType: "text/html",
