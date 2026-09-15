@@ -21,7 +21,7 @@ The role every user has who is not an admin. A member builds — publishes patch
 _Avoid_: viewer (the [Auth](../auth/CONTEXT.md) identity, whatever the user's role), builder (a description, not a role), guest
 
 **Admin**:
-A user with the role that manages the company's invitations, roles, deactivation, reactivation and [connections](../integrations/CONTEXT.md). A company always has at least one active admin, and the last one can neither be demoted nor deactivated. Decided: an admin also manages every [patch](../patches/CONTEXT.md) in the company, everything but publishing it.
+A user with the role that manages the company's invitations, roles, deactivation, reactivation and [connections](../integrations/CONTEXT.md), and every [patch](../patches/CONTEXT.md) in the company except publishing it. A company always has at least one active admin, and the last one can neither be demoted nor deactivated.
 _Avoid_: owner (patches have owners; companies have admins), operator (Patchy, never a company role), superadmin
 
 **Group**:
@@ -45,11 +45,11 @@ Company sign-in through its own identity provider instead of the ordinary sign-i
 _Avoid_: enterprise connection (Clerk's word), SAML (one of the two shapes)
 
 **Deactivation**:
-An admin ending a user's company access and revoking every machine token while keeping their data. It is reversible through reactivation, but the last active admin cannot be deactivated. It changes no patch by itself; decided, the admin may retire the user's live patches in the same act, shown what each retire breaks.
+An admin ending a user's company access and revoking every machine token while keeping their data, reversible except that the last active admin cannot be deactivated. The pick page offers to keep their patches live or retire some or all in the same act, with confirmation of what breaks outside the selection.
 _Avoid_: ban, suspend (the operator's act on a company), delete (the later act)
 
 **Reactivation**:
-An admin restoring a deactivated user's access to the same company and data. The user needs fresh machine tokens because keys revoked by deactivation stay revoked.
+An admin restoring a deactivated user's access to the same company and data, with a pick page offering to keep their patches retired or restore some or all, warned about sources that stay off. The user needs fresh machine tokens; reassigned patches stay with their new owners and deleted patches stay deleted.
 _Avoid_: un-revoke, restore token
 
 **Suspension**:
