@@ -244,17 +244,48 @@ const projectConfig =
   'export default defineConfig({ name: "cli-project", tier: 1,\n' +
   '  tables: { notes: table("One note per id, with a title.", { title: t.text() }) }, files: {},\n' +
   "  uses: {}\n});\n";
-const projectCatalog = {
+const projectConnections = {
   connections: [
     {
       id: "conn-sales",
       handle: "sales-db",
       integration: "postgres",
       description: "Synthetic sales database",
-      status: "connected"
+      status: "connected",
+      hint: "patchy add postgres/sales-db"
+    },
+    {
+      id: "conn-archive",
+      handle: "archive-db",
+      integration: "postgres",
+      description: "Historical sales database",
+      status: "disconnected",
+      reason: "not_connected",
+      hint: "Ask an admin to reconnect archive-db at /company/connections."
     }
-  ],
-  sharedTables: [{ patchId: "abcdefghijkl", name: "directory", table: "people", schemaRevision: 1 }]
+  ]
+};
+const projectSource = {
+  id: "abcdefghijkl",
+  name: "directory",
+  address: "/company/directory",
+  owner: { id: identity.user.id, name: identity.user.name, deactivated: false },
+  mine: true,
+  tier: 1,
+  scope: "company",
+  description: "Company directory",
+  state: "live",
+  retiredAt: null,
+  deletedAt: null,
+  purgeAt: null,
+  currentVersion: 1,
+  publishedAt: "2026-09-01T00:00:00.000Z",
+  title: "Directory",
+  inventory: {
+    tables: [{ name: "people", description: "One person per id.", shared: true, declarable: true }],
+    stores: []
+  },
+  reads: []
 };
 
 /** Only the instance metadata is stubbed: these are the shipped client generators. */
@@ -312,13 +343,15 @@ const generateProjectResponse = (body: unknown): typeof Generated.Type => {
 
 const projectHandler: Handler = (request, respond) => {
   if (request.url === "/api/me") return respond(200, identity);
-  if (request.url.startsWith("/api/sdk/catalog"))
+  if (request.url.startsWith("/api/connections"))
     return respond(200, {
-      ...projectCatalog,
+      ...projectConnections,
       ...(request.url.includes("all=true")
         ? { offered: [{ integration: "postgres", connected: true }] }
         : {})
     });
+  if (["/api/patches/directory", "/api/patches/abcdefghijkl"].includes(request.url.split("?")[0]!))
+    return respond(200, projectSource);
   if (request.url === "/api/sdk/generate")
     return respond(200, generateProjectResponse(request.body));
   respond(404, { ok: false, error: "Unexpected fixture route." });
@@ -2224,17 +2257,147 @@ describe("patch-repo commands", () => {
     expect(instance.requests).toEqual([]);
   });
 
-  it("returns the catalog document, including offered integrations under --all", async () => {
+  it("returns connections, including disconnected entries and offered integrations under --all", async () => {
     const instance = await stubInstance(projectHandler);
     const result = await runCli(["catalog", "--all", "--api-url", instance.url, "--json"], {
       env
     });
     expect(result).toMatchObject({ status: 0, stderr: "" });
     expect(JSON.parse(result.stdout)).toEqual({
-      ...projectCatalog,
+      ...projectConnections,
       offered: [{ integration: "postgres", connected: true }]
     });
   });
+
+  it("prints server hints without executable declarations for disconnected connections", async () => {
+    const instance = await stubInstance(projectHandler);
+    const result = await runCli(["catalog", "--api-url", instance.url], { env });
+    expect(result).toMatchObject({ status: 0, stderr: "" });
+    for (const connection of projectConnections.connections)
+      expect(result.stdout).toContain(connection.hint);
+    expect(result.stdout).toContain('postgres("sales-db")');
+    expect(result.stdout).toContain("patchy add postgres/sales-db");
+    expect(result.stdout).not.toContain('postgres("archive-db")');
+    expect(result.stdout).not.toContain("patchy add postgres/archive-db");
+    expect(result.stdout).not.toContain("shared-table");
+  });
+
+  it("refuses a disconnected Postgres target without modifying the project", async () => {
+    const instance = await stubInstance(projectHandler);
+    const dir = projectTree(instance.url);
+    const result = await runCli(["add", "postgres/archive-db", "--json"], { cwd: dir, env });
+    expect(result).toMatchObject({ status: 2, stdout: "" });
+    expect(JSON.parse(result.stderr)).toMatchObject({
+      ok: false,
+      kind: "rejected",
+      code: "connection_not_connected"
+    });
+    expect(readFileSync(path.join(dir, "patchy.config.ts"), "utf8")).toBe(projectConfig);
+    expect(instance.requests.some((request) => request.url === "/api/sdk/generate")).toBe(false);
+  });
+
+  it.each([
+    { status: 404, exit: 2, kind: "rejected", code: "patch_not_openable" },
+    { status: 401, exit: 2, kind: "rejected", code: undefined },
+    { status: 503, exit: 3, kind: "unreachable", code: undefined }
+  ])(
+    "preserves shared-source repair guidance without disguising HTTP $status",
+    async ({ status, exit, kind, code }) => {
+      const instance = await stubInstance((request, respond, disconnect) => {
+        if (request.url.split("?")[0] === "/api/patches/directory")
+          return respond(status, {
+            ok: false,
+            error: status === 401 ? "Missing or invalid API token." : "Patch not found."
+          });
+        projectHandler(request, respond, disconnect);
+      });
+      const dir = projectTree(instance.url);
+      const result = await runCli(["add", "shared-table", "directory/people", "--json"], {
+        cwd: dir,
+        env
+      });
+      expect(result).toMatchObject({ status: exit, stdout: "" });
+      const failure = JSON.parse(result.stderr);
+      expect(failure).toMatchObject({ ok: false, kind });
+      expect(failure.code).toBe(code);
+      if (status === 404) expect(failure.error).toContain(`${instance.url}/company`);
+      expect(readFileSync(path.join(dir, "patchy.config.ts"), "utf8")).toBe(projectConfig);
+    }
+  );
+
+  it.each([
+    { availability: "missing", inventory: { tables: [], stores: [] }, code: "patch_not_openable" },
+    {
+      availability: "unshared",
+      inventory: {
+        tables: [
+          {
+            ...projectSource.inventory.tables[0],
+            shared: false,
+            declarable: false,
+            reason: "not_shared"
+          }
+        ],
+        stores: []
+      },
+      code: "patch_not_openable"
+    },
+    {
+      availability: "retired",
+      inventory: {
+        tables: [{ ...projectSource.inventory.tables[0], declarable: false, reason: "source_off" }],
+        stores: []
+      },
+      code: "patch_not_openable"
+    },
+    {
+      availability: "file store",
+      inventory: {
+        tables: [],
+        stores: [
+          {
+            name: "people",
+            description: "Directory files.",
+            declarable: false,
+            reason: "not_shareable",
+            hint: "File stores cannot be shared."
+          }
+        ]
+      },
+      code: "patch_not_openable"
+    },
+    { availability: "unavailable", inventory: null, code: "source_unavailable" }
+  ])(
+    "refuses a $availability shared source without enumerating connections",
+    async ({ availability, inventory, code }) => {
+      const instance = await stubInstance((request, respond, disconnect) => {
+        if (request.url.split("?")[0] === "/api/patches/directory")
+          return respond(200, {
+            ...projectSource,
+            ...(availability === "retired"
+              ? { state: "retired", retiredAt: "2026-09-02T00:00:00.000Z" }
+              : {}),
+            inventory
+          });
+        projectHandler(request, respond, disconnect);
+      });
+      const dir = projectTree(instance.url);
+      const result = await runCli(["add", "shared-table", "directory/people", "--json"], {
+        cwd: dir,
+        env
+      });
+      expect(result).toMatchObject({ status: inventory === null ? 3 : 2, stdout: "" });
+      expect(JSON.parse(result.stderr)).toMatchObject({
+        ok: false,
+        kind: inventory === null ? "unreachable" : "rejected",
+        code
+      });
+      expect(readFileSync(path.join(dir, "patchy.config.ts"), "utf8")).toBe(projectConfig);
+      expect(instance.requests.map((request) => request.url)).toEqual([
+        "/api/patches/directory?state=all"
+      ]);
+    }
+  );
 
   it("refreshes the generated client and reports the managed changes as JSON", async () => {
     const instance = await stubInstance(projectHandler);
@@ -2276,13 +2439,13 @@ describe("patch-repo commands", () => {
     expect(readFileSync(path.join(dir, "patchy.config.ts"), "utf8")).toBe(projectConfig);
   });
 
-  it("adds a declaration through the real config and client generators without overwriting fixtures", async () => {
+  it("adds the sole connected Postgres declaration without overwriting fixtures", async () => {
     const instance = await stubInstance(projectHandler);
     const dir = projectTree(instance.url);
     mkdirSync(path.join(dir, "fixtures"));
     const fixture = "-- Builder-owned synthetic rows.\n";
     writeFileSync(path.join(dir, "fixtures/postgres-sales-db.sql"), fixture);
-    const result = await runCli(["add", "postgres/sales-db", "--json"], { cwd: dir, env });
+    const result = await runCli(["add", "postgres", "--json"], { cwd: dir, env });
     expect(result).toMatchObject({ status: 0, stderr: "" });
     expect(JSON.parse(result.stdout)).toEqual({
       ok: true,
@@ -2330,27 +2493,43 @@ describe("patch-repo commands", () => {
     expect(readFileSync(path.join(dir, "fixtures/postgres-sales-db.sql"), "utf8")).toBe(fixture);
   });
 
-  it("refuses add on a spread with its exact source line and copy-ready insertion", async () => {
-    const instance = await stubInstance(projectHandler);
-    const source =
-      'import { defineConfig } from "patchy/config";\n' +
-      "const existing = {};\n" +
-      'export default defineConfig({ name: "cli-project", tier: 1, tables: {}, files: {},\n' +
-      "  uses: {\n" +
-      "    ...existing // Builder-owned declarations.\n" +
-      "  }\n});\n";
-    const dir = projectTree(instance.url, source);
-    const result = await runCli(["add", "postgres/sales-db", "--json"], { cwd: dir, env });
-    expect(result).toMatchObject({ status: 1, stdout: "" });
-    const failure = JSON.parse(result.stderr);
-    expect(failure).toMatchObject({ ok: false, kind: "local" });
-    expect(failure.error).toContain("patchy.config.ts:5:");
-    expect(failure.error.split("\n")).toContain("    ...existing // Builder-owned declarations.");
-    expect(failure.error).toContain('"salesDb": {"kind":"postgres","handle":"sales-db"},');
-    expect(failure.error).toContain("patchy refresh");
-    expect(readFileSync(path.join(dir, "patchy.config.ts"), "utf8")).toBe(source);
-    expect(instance.requests.some((request) => request.url === "/api/sdk/generate")).toBe(false);
-  });
+  it.each([
+    {
+      args: ["postgres/sales-db"],
+      declaration: '"salesDb": {"kind":"postgres","handle":"sales-db"},'
+    },
+    {
+      args: ["shared-table", "directory/people"],
+      declaration: '"people": {"kind":"sharedTable","patchId":"abcdefghijkl","table":"people"},'
+    }
+  ])(
+    "refuses add $args on a spread with a canonical copy-ready insertion",
+    async ({ args, declaration }) => {
+      const instance = await stubInstance(projectHandler);
+      const source =
+        'import { defineConfig } from "patchy/config";\n' +
+        "const existing = {};\n" +
+        'export default defineConfig({ name: "cli-project", tier: 1, tables: {}, files: {},\n' +
+        "  uses: {\n" +
+        "    ...existing // Builder-owned declarations.\n" +
+        "  }\n});\n";
+      const dir = projectTree(instance.url, source);
+      const result = await runCli(["add", ...args, "--json"], { cwd: dir, env });
+      expect(result).toMatchObject({ status: 1, stdout: "" });
+      const failure = JSON.parse(result.stderr);
+      expect(failure).toMatchObject({ ok: false, kind: "local" });
+      expect(failure.error).toContain("patchy.config.ts:5:");
+      expect(failure.error.split("\n")).toContain("    ...existing // Builder-owned declarations.");
+      expect(failure.error).toContain(declaration);
+      expect(failure.error).toContain("patchy refresh");
+      expect(readFileSync(path.join(dir, "patchy.config.ts"), "utf8")).toBe(source);
+      expect(instance.requests.some((request) => request.url === "/api/sdk/generate")).toBe(false);
+      if (args[0] === "shared-table")
+        expect(
+          instance.requests.some((request) => request.url.startsWith("/api/connections"))
+        ).toBe(false);
+    }
+  );
 
   it.each([false, true])(
     "preserves generated bytes and concurrent author edits after refused refresh (pin changes: %s)",
@@ -2436,10 +2615,24 @@ describe("patch-repo commands", () => {
       exit: 2,
       kind: "rejected"
     },
-    { args: ["catalog"], route: "/api/sdk/catalog", status: 403, exit: 2, kind: "rejected" },
+    { args: ["catalog"], route: "/api/connections", status: 403, exit: 2, kind: "rejected" },
     {
       args: ["add", "postgres/sales-db"],
-      route: "/api/sdk/catalog",
+      route: "/api/connections",
+      status: 503,
+      exit: 3,
+      kind: "unreachable"
+    },
+    {
+      args: ["add", "shared-table", "directory/people"],
+      route: "/api/patches/directory",
+      status: 404,
+      exit: 2,
+      kind: "rejected"
+    },
+    {
+      args: ["add", "shared-table", "directory/people"],
+      route: "/api/patches/directory",
       status: 503,
       exit: 3,
       kind: "unreachable"

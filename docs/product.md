@@ -114,10 +114,11 @@ create another patch. Only a gone patch's 404 asks for the id to be removed.
 The new `retire`, `restore`, `rollback <n>` and `describe` CLI commands remain
 future work. Their owner API routes and the service's admin authority are built.
 
-Today the **catalog** shows connected company connections and shared tables the caller
-can open, with copy-ready `add` and `uses` lines. `--all` includes offered
-integrations and their state. It grants no authority. Decided and not built, `patchy list`
-replaces it (see [Sharing and finding](#sharing-and-finding)). `patchy add postgres/<handle>`
+The temporary `patchy catalog` command lists company connections in both states,
+with copy-ready `add` and `uses` lines only for connected ones. `--all` includes
+offered integrations and their state. Shared tables are discovered through the patch
+API, not catalog. Discovery grants no authority. The planned `patchy list` replaces
+the command (see [Sharing and finding](#sharing-and-finding)). `patchy add postgres/<handle>`
 or `patchy add shared-table <patchId>/<table>` adds one aliased declaration by
 TypeScript AST and generates the client, context, missing fixture stub and skill.
 The insertion is a literal declaration, requiring no import changes. An uneditable
@@ -172,7 +173,9 @@ Today a person finds a patch because someone shared its address. A patch's ident
 
 Discovery defaults to live patches; `state=retired|all` admits the other states. A name resolves only among non-deleted patches; a deleted patch is reachable by id with `state=all`. A resolved patch outside the requested state answers `wrong_state` with its actual state. Only patches the credential can open appear; unknown, foreign, disabled, gone and unopenable references all answer 404. Shared live tables carry copy-ready `patchy add shared-table <patchId>/<table>` hints. Unshared tables name the owner to ask, file stores are not shareable, and off sources must be restored first.
 
-**The `patchy list` CLI remains planned.** It will expose these three patch levels and merge connections from their separate read routes. Connection discovery routes, `list connections [<handle>]`, and replacing `patchy catalog` are later tickets. The existing catalog and owner inventory route remain available.
+**Connection discovery is built.** Every active member's machine token can list their company's connections through `GET /api/connections`; `all` adds offered integrations and their state. Connected entries carry an `add` hint; disconnected ones carry `reason: not_connected` and a `/company/connections` pointer. `GET /api/connections/:handle` returns the current immutable snapshot with its revision and taken-at timestamp, or `snapshot: null` when missing. Neither route reads source rows or exposes credentials. The SDK catalog route is removed.
+
+**The `patchy list` CLI remains planned.** It will expose these three patch levels and merge connections from their separate read routes. `list connections [<handle>]` and replacing the temporary, connections-only `patchy catalog` command are later work. The owner inventory route remains available.
 
 ### Updating, retiring, deleting
 
@@ -506,7 +509,7 @@ foreign key.
 
 Publishing resolves the source's inventory, not its active manifest. A missing,
 unopenable or unshared source is `patch_not_openable`; an older revision stamp
-warns rather than refuses. Catalog, client generation and local fixtures consume
+warns rather than refuses. Patch discovery, client generation and local fixtures consume
 that inventory's tables, columns and indexes, never the source's active manifest
 or its company rows.
 
@@ -650,7 +653,7 @@ handle cannot silently rebind an old declaration.
 ### Declaring, granting, opening
 
 A patch declares each connection under a local `uses` alias in its config.
-`patchy catalog` shows what the company has connected; `patchy add` inserts the
+`patchy catalog` shows the company's connections and their state; `patchy add` inserts the
 declaration and brings its generated client, context, fixture stub and skill.
 Publish resolves the handle to a stable connection id and metadata revision.
 Neither the alias, the handle nor the declaration is a permission.

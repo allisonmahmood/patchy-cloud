@@ -798,7 +798,7 @@ const catalog = Command.make(
         yield* Project.catalog(yield* requiredToken(), options.all);
       })
     )
-).pipe(Command.withDescription("List connected integrations and shared tables you can open."));
+).pipe(Command.withDescription("List company connections and their status."));
 
 const add = Command.make(
   "add",

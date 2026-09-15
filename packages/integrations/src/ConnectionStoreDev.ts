@@ -31,6 +31,29 @@ export const layer = (metadata: ReadonlyArray<DevConnection> = []) => {
           ? Effect.fail(new ConnectionStore.ConnectionNotFound({ companyId, id }))
           : Effect.succeed(item.connection);
       },
+      detail: (companyId, handle) => {
+        const item = metadata.find(
+          (item) => item.connection.companyId === companyId && item.connection.handle === handle
+        );
+        if (item === undefined)
+          return Effect.fail(new ConnectionStore.ConnectionNotFound({ companyId, id: handle }));
+        const {
+          description,
+          status,
+          metadataRevision: revision,
+          lastDiscoveredAt: takenAt
+        } = item.connection;
+        const snapshot = item.snapshots.find((snapshot) => snapshot.revision === revision);
+        return Effect.succeed({
+          handle,
+          description,
+          status,
+          snapshot:
+            snapshot === undefined || takenAt === null
+              ? null
+              : { ...snapshot.snapshot, revision, takenAt }
+        });
+      },
       snapshot: (companyId, id, revision) => {
         const item = metadata.find(
           (item) => item.connection.companyId === companyId && item.connection.id === id

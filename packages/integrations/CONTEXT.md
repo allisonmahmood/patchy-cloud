@@ -1,6 +1,6 @@
 # Integrations
 
-The company capability for connecting outside systems without handing credentials to patches. Postgres connections and their discovered metadata are managed here; [Companies](../companies/CONTEXT.md) owns membership and [Runtime](../runtime/CONTEXT.md) binds operations to the acting viewer.
+The company capability for connecting outside systems without handing credentials to patches. Postgres connections and their discovered metadata are managed here; the `connections` API group exposes their safe metadata to active members. [Companies](../companies/CONTEXT.md) owns membership and [Runtime](../runtime/CONTEXT.md) binds operations to the acting viewer.
 
 ## Language
 
@@ -11,6 +11,13 @@ _Avoid_: connector, app (Zapier's word), resource (Retool and Windmill's word), 
 **Connection**:
 A credentialed instance of an integration, used by a patch rather than owned by it. Today's company connection carries a handle and an admin description and is shared company-wide; disconnecting preserves its identity and metadata while denying new use.
 _Avoid_: datasource, connected account, credential (what it holds, not what it is)
+
+**Connection discovery**:
+The member-readable list of the company's connections and their state, with declaration hints for connected ones and setup guidance for disconnected ones. Offered integrations are optional; drilling into one connection reveals its current immutable snapshot and taken-at time, or reports the snapshot unavailable.
+_Avoid_: catalog, connection administration
+
+**Catalog**:
+The former combined discovery of connections and shared tables. See **Connection discovery** here and **Discovery** in [Publishing](../patchy/CONTEXT.md); the temporary CLI command lists connections only.
 
 **Personal connection**:
 A future connection belonging to one user rather than their company, such as that user's Gmail. Its credentials and lifetime follow the user; the access rules live in [the product](../../docs/product.md#company-and-personal-connections).

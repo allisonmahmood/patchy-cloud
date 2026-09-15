@@ -1,4 +1,4 @@
-import { PostgresDeclaration } from "@patchy/api";
+import { PostgresDeclaration, type ConnectionDetail } from "@patchy/api";
 import * as Companies from "@patchy/companies/Companies";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -187,6 +187,10 @@ export class ConnectionStore extends Context.Service<
   {
     readonly list: (companyId: string) => Effect.Effect<ReadonlyArray<Connection>, ConnectionError>;
     readonly get: (companyId: string, id: string) => Effect.Effect<Connection, ConnectionError>;
+    readonly detail: (
+      companyId: string,
+      handle: string
+    ) => Effect.Effect<typeof ConnectionDetail.Type, ConnectionNotFound | ConnectionStorageFailed>;
     readonly snapshot: (
       companyId: string,
       id: string,

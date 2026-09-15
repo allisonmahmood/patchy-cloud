@@ -241,6 +241,34 @@ Responses:
 - `422` { ok: false, error: string, code: "invalid_description" }
 - `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
 
+## connections
+
+### `GET /api/connections`
+
+List the caller's company connections, including disconnected ones, for any active member. Connected entries carry a copy-ready add hint; disconnected entries carry reason `not_connected` and a /company/connections hint. A bare all or all=true also includes every offered integration's connected state. No snapshots, credentials or business rows. Responses are private, no-store.
+
+Responses:
+
+- `200` { connections: { id: string, handle: string, integration: "postgres", description: string, status: "connected" | "disconnected", hint: string, reason?: "not_connected" }[], offered?: { integration: "postgres", connected: boolean }[] }
+- `400` { ok: false, error: string }
+- `401` { ok: false, error: "Missing or invalid API token." }
+- `404` { ok: false, error: string }
+- `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
+- `503` { ok: false, error: string, code: "connection_storage_failed" }
+
+### `GET /api/connections/:handle`
+
+Read one company connection by its exact handle, for any active member. The current immutable snapshot includes its revision and ISO takenAt timestamp, including when the connection is disconnected. A missing snapshot is null, never an empty database. Unknown handles and another company's connections answer the same 404. Never returns credentials or business rows. Responses are private, no-store.
+
+Responses:
+
+- `200` { handle: string, description: string, status: "connected" | "disconnected", snapshot: { version: 1, relations: { schema: string, name: string, kind: "table" | "view", columns: { name: string, type: { schema: string, name: string, sql: string, baseSchema: string, baseName: string, kind: "base" | "enum" | "array", element?: { baseSchema: string, baseName: string, kind: "base" | "enum" } }, nullable: boolean }[], primaryKey: { name: string, columns: string[] } | null, foreignKeys: { name: string, columns: string[], target: { schema: string, relation: string, columns: string[] } }[] }[], enums: { schema: string, name: string, labels: string[] }[], exclusions: { schema: string, relation: string, column?: string, reason: "access_denied" | "relation_limit" | "column_limit" | "unsupported_type" | "reserved_name" | "key_limit" | "enum_limit" }[], revision: integer, takenAt: string } | null }
+- `400` { ok: false, error: string }
+- `401` { ok: false, error: "Missing or invalid API token." }
+- `404` { ok: false, error: string }
+- `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
+- `503` { ok: false, error: string, code: "connection_storage_failed" }
+
 ## sdk
 
 ### `GET /api/release`
@@ -250,19 +278,6 @@ The current tooling release and its manifest and wire versions. Unauthenticated.
 Responses:
 
 - `200` [Release](#release)
-
-### `GET /api/sdk/catalog`
-
-Company metadata only: connected Postgres connections and live same-company shared tables. With all=true, include disconnected connections and every offered integration's connected state. Never returns credentials or business rows. Responses are private, no-store.
-
-Responses:
-
-- `200` { connections: { id: string, handle: string, integration: "postgres", description: string, status: "connected" | "disconnected" }[], sharedTables: { patchId: string, name: string, table: string, schemaRevision: integer }[], offered?: { integration: "postgres", connected: boolean }[] }
-- `400` { ok: false, error: string }
-- `401` { ok: false, error: "Missing or invalid API token." }
-- `404` { ok: false, error: string }
-- `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
-- `503` { ok: false, error: string, code: "busy" | "source_unavailable" }
 
 ### `POST /api/sdk/generate`
 
