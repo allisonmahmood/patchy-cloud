@@ -9,11 +9,20 @@ Read `../patchy-loop/SKILL.md` first. Every readable row is available to whoever
 
 ## Declare, seed locally, read
 
-1. Obtain the source's canonical patch id and table name from its owner or the bearer-protected patch discovery API: `GET /api/patches`, then `GET /api/patches/:patchRef`. Choose a table marked `declarable: true` in its cumulative inventory, using the response's patch id rather than its address or name. `pnpm patchy catalog` lists connections only.
+1. Run `pnpm patchy list --json` and choose candidate patches by description, then `pnpm patchy list <patch> --json` for their tables, stores and reads. Names and canonical ids work; a pasted URL resolves by its final path segment. Choose a table marked `declarable: true` and inspect `pnpm patchy list <patch> <table> --json` for its keys, types, optionality, explicit defaults, ref targets, indexes and revision. Carry the returned canonical patch id into `add`, not the name or address.
 2. Run `pnpm patchy add shared-table <patchId>/<table> --as contacts`. It inserts `contacts: { kind: "sharedTable", patchId: "<patchId>", table: "<table>" }` into `uses` without changing imports, and generates client, context, fixture stub and this skill. When hand-editing config, you may instead import `sharedTable` from `patchy/config` and write the equivalent `contacts: sharedTable("<patchId>", "<table>")`; run `pnpm patchy refresh` afterwards.
 3. Read the `contacts` entry in `patchy/_generated/index.json` and its context file. They identify the source definition, revision and indexes; use these fields rather than guessing the source's current application schema.
 4. Fill `fixtures/shared-contacts.sql` with invented `INSERT` rows. Use the exact local namespace, quoted table and columns from the stub header, not the source patch's production namespace. For a stub listing a `title` column, include an invented value such as `'Local contact'` alongside any other required columns the header names. These inserts populate the local copy, not the source patch; runtime reads stay read-only.
 5. Run `pnpm typecheck`, then `pnpm patchy dev --json` and read the fixture through the generated client in its local shell. A missing fixture fails naming the file. After changing fixture rows, stop and start dev again; never substitute a cloud read or copy production rows.
+
+Follow the loop skill's state and JSON contracts at each discovery level. No
+match means none you can use; check `--state retired` before concluding a tool
+does not exist, keeping that flag when drilling into a retired candidate.
+Deleted patches need their id and `--state all` at both detail levels. A
+`wrong_state` refusal is exit 2 with the needed state flag, not proof of absence.
+Null inventory means unavailable. Branch on `declarable` and `reason`, not
+`hint`: ask the named owner about `not_shared`, arrange restoration for
+`source_off`, and use an owned store for files marked `not_shareable`.
 
 In application source, if the declaration's generated alias is `contacts`:
 

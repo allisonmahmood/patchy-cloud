@@ -1,6 +1,6 @@
 ---
 name: patchy-loop
-description: Build in a Patchy repo, refresh generated files, choose declarations, or diagnose release and local-development boundaries. Read before changing patch code.
+description: Build in a Patchy repo, discover company tools and data sources, refresh generated files, choose declarations, or diagnose release and local-development boundaries. Read before changing patch code.
 ---
 
 # Build in a patch repo
@@ -13,14 +13,51 @@ description: Build in a Patchy repo, refresh generated files, choose declaration
 4. Run `pnpm patchy dev --json`. Open its `url` and exercise an insert and a list through the actual local shell; inspect file and declaration behavior when used. The command returns only when healthy and is idempotent. Code rebuilds reload the whole shell at its current route. After config or fixture changes, stop and start dev again. A standalone Vite preview cannot exercise declared capabilities.
 5. When asked to publish, run `pnpm patchy publish` from the repo root. It recovers any saved attempt first; otherwise checks the release, executes config, verifies declaration stamps, typechecks and builds a single HTML bundle. Fix `stale_generated` with `pnpm patchy refresh`, build errors in source, and `not_additive` using the reported object/change/fix. Report the address, scope, tier, version, provisioned and unused resources.
 
+## Discover before declaring
+
+1. Run `pnpm patchy list --json` and choose candidate patches by description.
+   `list patches` is identical and also includes connections. No match means
+   "none you can use"; check `list --state retired --json` before concluding a
+   tool does not exist.
+2. Run `pnpm patchy list <patch> --json` for its cumulative tables, stores and
+   reads across retained versions. Names and canonical ids work; a pasted URL
+   resolves by its final path segment. Null `inventory` means unavailable,
+   not an empty set.
+3. Run `pnpm patchy list <patch> <table> --json` to check keys and types,
+   optionality, explicit defaults, ref targets, indexes, sharing and schema
+   revision. These commands inspect definitions, never rows or file contents.
+4. Choose a table marked `declarable: true` in patch detail, then run
+   `pnpm patchy add shared-table <patchId>/<table> --as <alias>` with the returned
+   canonical id. Branch on `declarable` and `reason`, not the human `hint`.
+   Unshared tables name their owner, stores are not shareable, and off sources
+   need restoration before use.
+
+`list` runs anywhere under the saved login and never reads `patchy.json`.
+It uses normal instance selection, not the repo's binding; pass `--api-url`
+when needed. `--state live|retired|all` defaults to `live` at all three patch
+levels. Keep `--state retired` on a retired candidate's drill-down. Deleted
+patches need their id and `--state all` at both detail levels, never a name.
+An API `wrong_state` refusal is exit 2 with the actual state and flag guidance.
+Its JSON failure includes the patch's actual `state` beside `code`.
+`--mine` applies only to `list` and `list patches`; `--all` applies only to
+`list connections`, not connection detail. Patch flags do not apply to
+connections. Wrong-level flags are local errors, exit 1.
+Every level accepts `--json`: the top merges `{ patches, connections }`;
+all other levels print the wire body with no added `ok` wrapper.
+
+For Postgres, run `pnpm patchy list connections`, then
+`pnpm patchy list connections <handle>` for its schema snapshot and `takenAt`.
+`list connections --all` adds offered integrations. A null snapshot is
+unavailable, not an empty database. Only connected entries carry an `add` hint;
+disconnected entries point to `/company/connections`. Discovery grants no access.
+
 ## Commands and ownership
 
-- `pnpm patchy catalog` lists company connections and their state, with copy-ready `add` and `uses` lines only for connected ones. `--all` adds offered integrations and their state. Disconnected entries point to `/company/connections`. It does not list shared tables or grant access.
-- `pnpm patchy add postgres/warehouse --as sales` or `pnpm patchy add shared-table <patchId>/<table> --as contacts` edits `uses` and generates its client, context, fixture stub and skill. Choose connection handles from catalog. For shared tables, use the bearer-protected `GET /api/patches`, then `GET /api/patches/:patchRef`; choose an inventory table marked `declarable: true` and use the response's canonical patch id. Connection setup belongs to an admin at `/company/connections`; keep credentials out of the repo and transcript.
+- `pnpm patchy add postgres/<handle> --as sales` or `pnpm patchy add shared-table <patchId>/<table> --as contacts` edits `uses` and generates its client, context, fixture stub and skill. Choose the target through discovery above. `add postgres` chooses a sole connected Postgres connection; with several it lists choices from `list connections` and stops. Connection setup belongs to an admin at `/company/connections`; keep credentials out of the repo and transcript.
 - `pnpm patchy remove sales` reverses the declaration and its generated output, and removes its declaration skill when no declaration of that kind remains. It leaves the fixture for you and says so.
 - An uneditable `uses` expression fails with its exact source line and, for add, the exact literal declaration line to insert. Either make `uses` an explicit object literal while preserving its meaning and retry, or add the declaration yourself and run `pnpm patchy refresh`. Do not bypass the refusal by editing generated metadata.
 - `pnpm patchy refresh` fetches one release, updates the pin and installs if needed, re-execs that CLI, executes config, generates, and activates the managed set transactionally. Failure retains the previous set. It refreshes every present skill and adds config-implied skills; presence is sticky. If a present skill is no longer offered, refresh fails rather than leaving stale instructions.
-- Every command accepts `--json`: success is one stdout document; failure is `{ ok: false, error, kind, code? }` on stderr. Exit 1 is locally fixable, 2 an instance refusal, 3 no usable answer, 130 interrupted. Branch on a returned `code`, not prose. Missing key: `Run: patchy login`; an agent relays the login URL and code to the person, never signs in for them.
+- Every command accepts `--json`: success is one stdout document; failure is `{ ok: false, error, kind, code?, state? }` on stderr. A discovery `wrong_state` refusal includes the actual patch `state`. Exit 1 is locally fixable, 2 an instance refusal, 3 no usable answer, 130 interrupted. Branch on a returned `code`, not prose. Missing key: `Run: patchy login`; an agent relays the login URL and code to the person, never signs in for them.
 - Repo publish writes the returned id into `patchy.json` on a create. Preserve `.patchy/publish/` after interruption or failed id writes and rerun as the same owning user: recovery precedes release checks and rebuilding. `pnpm patchy share company|public` and `pnpm patchy delete` use that id. Keep it on `not_owner`, `patch_retired` or `patch_deleted`; arrange reassignment or restoration. Only a gone patch's 404 calls for removing `patch` when intentionally starting a new patch.
 - `pnpm patchy dev status`, `stop`, `logs` and `reset` inspect or control this repo and instance only. `reset` stops and wipes disposable local state without changing published resources; start again afterwards to fetch the published inventory. `--foreground` stays attached and streams logs; interrupting a session it started stops it. On `release_mismatch`, run `pnpm patchy refresh`; an existing session is not killed by an upgrade.
 

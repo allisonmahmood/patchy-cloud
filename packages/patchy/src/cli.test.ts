@@ -2238,13 +2238,359 @@ describe("patchy status", async () => {
   });
 });
 
+describe("patchy list", () => {
+  it("merges discovery under a saved login without reading patchy.json", async () => {
+    const patches = [Struct.omit(projectSource, ["title", "inventory", "reads"])];
+    const instance = await stubInstance((request, respond) => {
+      const url = new URL(request.url, "http://instance.test");
+      if (url.pathname === "/api/patches") return respond(200, { patches });
+      if (url.pathname === "/api/connections") return respond(200, projectConnections);
+      respond(404, { ok: false, error: "Not found." });
+    });
+    const stateDir = tempDir();
+    const saved = await runCli(["auth", "set", "--token-stdin", "--api-url", instance.url], {
+      stateDir,
+      input: "pp_discovery\n"
+    });
+    expect(saved.status).toBe(0);
+    writeFileSync(path.join(stateDir, "patchy.json"), "not JSON");
+    const result = await runCli(["list", "--json"], { stateDir });
+    expect(result).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(result.stdout)).toEqual({
+      patches,
+      connections: projectConnections.connections
+    });
+    expect(
+      instance.requests.every((request) => request.authorization === "Bearer pp_discovery")
+    ).toBe(true);
+  });
+
+  const env = { PATCHY_API_TOKEN: "pp_discovery" };
+  const summary = Struct.omit(projectSource, ["title", "inventory", "reads"]);
+  const primitive = {
+    kind: "table",
+    name: "people",
+    description: "One person per id.",
+    shared: true,
+    schemaRevision: 7,
+    columns: [
+      { name: "id", kind: "text", optional: false },
+      { name: "nickname", kind: "text", optional: true, default: null },
+      { name: "active", kind: "boolean", optional: false, default: false },
+      { name: "count", kind: "integer", optional: false, default: 0 },
+      { name: "manager", kind: "ref", optional: true, ref: "people" }
+    ],
+    indexes: [{ name: "by_nickname", columns: ["nickname"], unique: true }]
+  };
+
+  it("groups ids before names and prints lifecycle, owner and description metadata", async () => {
+    const patches = [
+      { ...summary, description: "First line\nSecond line", currentVersion: 7 },
+      {
+        ...summary,
+        id: "zyxwvutsrqpo",
+        name: "archive",
+        mine: false,
+        description: "",
+        owner: { id: "other", name: "Sam", deactivated: true },
+        state: "deleted",
+        deletedAt: new Date().toISOString(),
+        purgeAt: new Date(Date.now() + 18 * 86_400_000).toISOString()
+      }
+    ];
+    const instance = await stubInstance((request, respond) => {
+      const url = new URL(request.url, "http://instance.test");
+      if (url.pathname === "/api/patches") {
+        expect(url.searchParams.get("state")).toBe("all");
+        return respond(200, { patches });
+      }
+      respond(200, projectConnections);
+    });
+    for (const args of [["list"], ["list", "patches"]]) {
+      const result = await runCli([...args, "--state", "all", "--api-url", instance.url], { env });
+      expect(result).toMatchObject({ status: 0, stderr: "" });
+      expect(result.stdout).toContain(`Yours:\n${summary.id}  directory  live`);
+      expect(result.stdout).toContain("v7  First line");
+      expect(result.stdout).not.toContain("Second line");
+      expect(result.stdout).toContain(
+        "Company:\nzyxwvutsrqpo  archive  deleted · gone in 18 days  Sam · deactivated"
+      );
+      expect(result.stdout).toContain("(no description)");
+      expect(result.stdout).toContain("Connections:\nsales-db");
+      expect(result.stdout).toContain("patchy add postgres/sales-db");
+      expect(result.stdout).not.toContain("patchy add postgres/archive-db");
+    }
+  });
+
+  it("passes top-level state and ownership filters without filtering connections", async () => {
+    const instance = await stubInstance((request, respond) => {
+      const url = new URL(request.url, "http://instance.test");
+      if (url.pathname === "/api/patches") {
+        expect(url.searchParams.get("state")).toBe("retired");
+        expect(url.searchParams.get("mine")).toBe("true");
+        return respond(200, { patches: [] });
+      }
+      expect(url.search).toBe("");
+      respond(200, projectConnections);
+    });
+    const result = await runCli(
+      ["list", "patches", "--mine", "--state", "retired", "--json", "--api-url", instance.url],
+      { env }
+    );
+    expect(result).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(result.stdout)).toEqual({
+      patches: [],
+      connections: projectConnections.connections
+    });
+  });
+
+  it("drills into a pasted address and preserves the inventory and retained reads", async () => {
+    const detail = {
+      ...projectSource,
+      inventory: {
+        tables: [
+          {
+            ...projectSource.inventory.tables[0],
+            hint: `patchy add shared-table ${summary.id}/people`
+          },
+          {
+            name: "private",
+            description: "Private notes",
+            shared: false,
+            declarable: false,
+            reason: "not_shared",
+            hint: "Not shared; ask Sam."
+          }
+        ],
+        stores: [
+          {
+            name: "photos",
+            description: "Profile photos",
+            declarable: false,
+            reason: "not_shareable",
+            hint: "Not shareable yet."
+          }
+        ]
+      },
+      reads: [{ alias: "old", patchId: "zyxwvutsrqpo", table: "orders", state: "gone" }]
+    };
+    const instance = await stubInstance((request, respond) => {
+      expect(new URL(request.url, "http://instance.test").pathname).toBe("/api/patches/directory");
+      respond(200, detail);
+    });
+    for (const json of [false, true]) {
+      const result = await runCli(
+        [
+          "list",
+          "https://patchy.test/company/directory/?view=1#read",
+          ...(json ? ["--json"] : []),
+          "--api-url",
+          instance.url
+        ],
+        { env }
+      );
+      expect(result).toMatchObject({ status: 0, stderr: "" });
+      if (json) expect(JSON.parse(result.stdout)).toEqual(detail);
+      else {
+        expect(result.stdout).toContain(`${summary.id}  directory`);
+        expect(result.stdout).toContain("Company directory");
+        expect(result.stdout).toContain("Tables:");
+        expect(result.stdout).toContain(`patchy add shared-table ${summary.id}/people`);
+        expect(result.stdout).toContain("Not shared; ask Sam.");
+        expect(result.stdout).toContain("Stores:\n  photos: Profile photos");
+        expect(result.stdout).toContain("Not shareable yet.");
+        expect(result.stdout).toContain("Reads:\n  old: zyxwvutsrqpo orders  gone");
+      }
+    }
+  });
+
+  it("distinguishes an unavailable inventory from an empty patch", async () => {
+    const instance = await stubInstance((_, respond) =>
+      respond(200, { ...projectSource, inventory: null })
+    );
+    const result = await runCli(["list", "directory", "--api-url", instance.url], { env });
+    expect(result).toMatchObject({ status: 0, stderr: "" });
+    expect(result.stdout).toContain("Tables: unavailable");
+    expect(result.stdout).toContain("Stores: unavailable");
+    expect(result.stdout).not.toContain("none");
+    const json = await runCli(["list", "directory", "--json", "--api-url", instance.url], { env });
+    expect(JSON.parse(json.stdout).inventory).toBeNull();
+  });
+
+  it.each(["table", "store"])(
+    "prints a %s's schema without losing explicit defaults",
+    async (kind) => {
+      const body =
+        kind === "table"
+          ? primitive
+          : { ...primitive, kind, name: "photos", shared: false, columns: [], indexes: [] };
+      const instance = await stubInstance((request, respond) => {
+        expect(new URL(request.url, "http://instance.test").pathname).toBe(
+          `/api/patches/${summary.id}/primitives/${body.name}`
+        );
+        respond(200, body);
+      });
+      const args = ["list", summary.id, body.name, "--api-url", instance.url];
+      const result = await runCli(args, { env });
+      expect(result).toMatchObject({ status: 0, stderr: "" });
+      expect(result.stdout).toContain(`Shared: ${body.shared}`);
+      expect(result.stdout).toContain("Schema revision: 7");
+      if (kind === "table") {
+        expect(result.stdout).toContain("id: text required\n");
+        expect(result.stdout).toContain("nickname: text optional default null");
+        expect(result.stdout).toContain("active: boolean required default false");
+        expect(result.stdout).toContain("count: integer required default 0");
+        expect(result.stdout).toContain("manager: ref optional ref people");
+        expect(result.stdout).toContain("by_nickname (nickname) unique");
+      }
+      const json = await runCli([...args, "--json"], { env });
+      expect(json).toMatchObject({ status: 0, stderr: "" });
+      expect(JSON.parse(json.stdout)).toEqual(body);
+    }
+  );
+
+  it.each([
+    ["directory", "--mine"],
+    ["directory", "people", "--mine"],
+    ["connections", "--mine"],
+    ["--all"],
+    ["patches", "--all"],
+    ["directory", "--all"],
+    ["directory", "people", "--all"],
+    ["connections", "sales-db", "--all"],
+    ["connections", "--state", "live"],
+    ["connections", "sales-db", "--state", "all"],
+    ["patches", "people"],
+    ["directory/people"]
+  ])("refuses wrong-level flags or paths locally: %s", async (...args) => {
+    const instance = await stubInstance((_, respond) => respond(500, {}));
+    const result = await runCli(["list", ...args, "--json", "--api-url", instance.url], { env });
+    expect(result).toMatchObject({ status: 1, stdout: "" });
+    expect(JSON.parse(result.stderr)).toMatchObject({ ok: false, kind: "local" });
+    expect(instance.requests).toEqual([]);
+  });
+
+  it.each([
+    { state: "retired", ref: "directory", filter: "retired" },
+    { state: "deleted", ref: summary.id, filter: "all" }
+  ])(
+    "preserves $state refusals and applies --state at both patch depths",
+    async ({ state, ref, filter }) => {
+      const detail = { ...projectSource, state, retiredAt: "2026-09-01T00:00:00.000Z" };
+      const instance = await stubInstance((request, respond) => {
+        const url = new URL(request.url, "http://instance.test");
+        if (url.searchParams.get("state") !== filter)
+          return respond(409, {
+            ok: false,
+            error: `Patch is ${state}.`,
+            code: "wrong_state",
+            state
+          });
+        respond(200, url.pathname.includes("/primitives/") ? primitive : detail);
+      });
+      for (const path of [[ref], [ref, "people"]]) {
+        const args = ["list", ...path, "--api-url", instance.url];
+        const refused = await runCli(args, { env });
+        expect(refused).toMatchObject({ status: 2, stdout: "" });
+        expect(refused.stderr).toContain(`${state}; pass --state ${filter}`);
+        const refusedJson = await runCli([...args, "--json"], { env });
+        expect(refusedJson).toMatchObject({ status: 2, stdout: "" });
+        expect(JSON.parse(refusedJson.stderr)).toMatchObject({
+          kind: "rejected",
+          code: "wrong_state",
+          state
+        });
+        const accepted = await runCli([...args, "--state", filter, "--json"], { env });
+        expect(accepted).toMatchObject({ status: 0, stderr: "" });
+        expect(JSON.parse(accepted.stdout)).toEqual(path.length === 1 ? detail : primitive);
+      }
+    }
+  );
+
+  it("lists connections and offered integrations, preserving wire JSON and server hints", async () => {
+    const instance = await stubInstance(projectHandler);
+    const args = ["list", "connections", "--all", "--api-url", instance.url];
+    const result = await runCli([...args, "--json"], { env });
+    expect(result).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(result.stdout)).toEqual({
+      ...projectConnections,
+      offered: [{ integration: "postgres", connected: true }]
+    });
+    const text = await runCli(args, { env });
+    expect(text).toMatchObject({ status: 0, stderr: "" });
+    for (const connection of projectConnections.connections)
+      expect(text.stdout).toContain(connection.hint);
+    expect(text.stdout).toContain("postgres: connected");
+    expect(text.stdout).not.toContain("patchy add postgres/archive-db");
+  });
+
+  it("prints connection snapshots with keys and taken-at, or explicitly unavailable", async () => {
+    const snapshot = {
+      version: 1,
+      revision: 3,
+      takenAt: "2026-09-01T00:00:00.000Z",
+      relations: [
+        {
+          schema: "public",
+          name: "people",
+          kind: "table",
+          columns: [
+            {
+              name: "id",
+              nullable: false,
+              type: {
+                schema: "pg_catalog",
+                name: "int4",
+                sql: "integer",
+                baseSchema: "pg_catalog",
+                baseName: "int4",
+                kind: "base"
+              }
+            }
+          ],
+          primaryKey: { name: "people_pkey", columns: ["id"] },
+          foreignKeys: []
+        }
+      ],
+      enums: [],
+      exclusions: [{ schema: "private", relation: "salaries", reason: "access_denied" }]
+    };
+    for (const available of [true, false]) {
+      const detail = {
+        handle: "sales-db",
+        description: "Sales database",
+        status: "connected",
+        snapshot: available ? snapshot : null
+      };
+      const instance = await stubInstance((request, respond) => {
+        expect(request.url).toBe("/api/connections/sales-db");
+        respond(200, detail);
+      });
+      const args = ["list", "connections", "sales-db", "--api-url", instance.url];
+      const result = await runCli(args, { env });
+      expect(result).toMatchObject({ status: 0, stderr: "" });
+      if (available) {
+        expect(result.stdout).toContain("Taken at: 2026-09-01T00:00:00.000Z");
+        expect(result.stdout).toContain("Schema revision: 3");
+        expect(result.stdout).toContain("public.people (table)");
+        expect(result.stdout).toContain("id: integer required");
+        expect(result.stdout).toContain("Primary key: people_pkey (id)");
+        expect(result.stdout).toContain("Excluded private.salaries: access_denied");
+      } else expect(result.stdout).toContain("Snapshot: unavailable");
+      const json = await runCli([...args, "--json"], { env });
+      expect(json).toMatchObject({ status: 0, stderr: "" });
+      expect(JSON.parse(json.stdout)).toEqual(detail);
+    }
+  });
+});
+
 describe("patch-repo commands", () => {
   const env = { PATCHY_API_TOKEN: "pp_project" };
 
   it.each([
     ["init", "--purpose", "Synthetic notes"],
     ["refresh"],
-    ["catalog"],
+    ["list"],
     ["add", "postgres/sales-db"],
     ["remove", "salesDb"]
   ])("refuses %s without a key before making a request", async (...args) => {
@@ -2257,29 +2603,31 @@ describe("patch-repo commands", () => {
     expect(instance.requests).toEqual([]);
   });
 
-  it("returns connections, including disconnected entries and offered integrations under --all", async () => {
-    const instance = await stubInstance(projectHandler);
-    const result = await runCli(["catalog", "--all", "--api-url", instance.url, "--json"], {
-      env
+  it("refuses ambiguous Postgres selection with discovered choices and leaves config unchanged", async () => {
+    const connections = [
+      projectConnections.connections[0],
+      {
+        ...projectConnections.connections[0],
+        id: "conn-other",
+        handle: "other-db",
+        description: "Other database",
+        hint: "patchy add postgres/other-db"
+      }
+    ];
+    const instance = await stubInstance((request, respond, disconnect) => {
+      if (request.url.split("?")[0] === "/api/connections") return respond(200, { connections });
+      projectHandler(request, respond, disconnect);
     });
-    expect(result).toMatchObject({ status: 0, stderr: "" });
-    expect(JSON.parse(result.stdout)).toEqual({
-      ...projectConnections,
-      offered: [{ integration: "postgres", connected: true }]
-    });
-  });
-
-  it("prints server hints without executable declarations for disconnected connections", async () => {
-    const instance = await stubInstance(projectHandler);
-    const result = await runCli(["catalog", "--api-url", instance.url], { env });
-    expect(result).toMatchObject({ status: 0, stderr: "" });
-    for (const connection of projectConnections.connections)
-      expect(result.stdout).toContain(connection.hint);
-    expect(result.stdout).toContain('postgres("sales-db")');
-    expect(result.stdout).toContain("patchy add postgres/sales-db");
-    expect(result.stdout).not.toContain('postgres("archive-db")');
-    expect(result.stdout).not.toContain("patchy add postgres/archive-db");
-    expect(result.stdout).not.toContain("shared-table");
+    const dir = projectTree(instance.url);
+    const result = await runCli(["add", "postgres", "--json"], { cwd: dir, env });
+    expect(result).toMatchObject({ status: 1, stdout: "" });
+    const failure = JSON.parse(result.stderr);
+    expect(failure.kind).toBe("local");
+    expect(failure.error).toContain("patchy list connections");
+    expect(failure.error).toContain("patchy add postgres/sales-db");
+    expect(failure.error).toContain("patchy add postgres/other-db");
+    expect(readFileSync(path.join(dir, "patchy.config.ts"), "utf8")).toBe(projectConfig);
+    expect(instance.requests.some((request) => request.url === "/api/sdk/generate")).toBe(false);
   });
 
   it("refuses a disconnected Postgres target without modifying the project", async () => {
@@ -2615,7 +2963,13 @@ describe("patch-repo commands", () => {
       exit: 2,
       kind: "rejected"
     },
-    { args: ["catalog"], route: "/api/connections", status: 403, exit: 2, kind: "rejected" },
+    {
+      args: ["list", "connections"],
+      route: "/api/connections",
+      status: 403,
+      exit: 2,
+      kind: "rejected"
+    },
     {
       args: ["add", "postgres/sales-db"],
       route: "/api/connections",
