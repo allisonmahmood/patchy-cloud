@@ -355,11 +355,7 @@ export const renderConfirmation = (input: {
 }): string => {
   const { card, viewer, all, action } = input;
   const { patch } = card;
-  const params = new URLSearchParams();
-  if (all) params.set("all", "1");
-  if (action === "reassign" && input.query !== "") params.set("q", input.query);
-  const query = params.toString();
-  const postPath = `${cardPath(patch, false, action)}${query === "" ? "" : `?${query}`}`;
+  const postPath = cardPath(patch, all, action);
   const cancelPath = cardPath(patch, all);
   const acknowledged = input.acknowledged === true;
   let verb: string;
@@ -430,7 +426,7 @@ export const renderConfirmation = (input: {
             `<li><label class="field-choice"><input class="field-radio" type="radio" name="user" value="${escapeAttribute(member.id)}" required aria-describedby="member-consequence-${index}"${member.id === selectedOwnerId ? " checked" : ""}><span>${escapeHtml(member.name)} (${escapeHtml(member.email)})${member.id === card.owner.id ? ", current owner" : ""}</span></label><p class="field-hint" id="member-consequence-${index}">${escapeHtml(member.name)} can publish, retire or delete it at once; you can reassign it again.</p></li>`
         )
         .join("");
-      fields = `${hidden("expectedOwnerUserId", card.owner.id)}${members.length === 0 ? '<p class="supporting-text">No active members match this filter.</p>' : `<ul class="confirmation-list" aria-label="New owner">${choices}</ul>`}`;
+      fields = `${hidden("expectedOwnerUserId", card.owner.id)}${members.length === 0 ? '<p class="supporting-text">No active members match this filter.</p>' : `<div role="radiogroup" aria-label="New owner"><ul class="confirmation-list">${choices}</ul></div>`}`;
       disabled = members.length === 0;
       break;
     }
