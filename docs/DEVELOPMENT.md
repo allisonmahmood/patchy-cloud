@@ -101,6 +101,14 @@ pre-merge instances that ran the old `0007_runtime_baseline` instead of
 `0006_runtime_baseline`. It deletes the database and published HTML; use it only
 for disposable dev data, never to repair a live migration ledger.
 
+Existing local instances created before the primitive-description change in #249
+also need `pnpm dev reset`. That change rewrites company-inventory initialization
+DDL in place: `patchy.tables` and `patchy.stores` now require a `description`
+column. Restarting does not add those columns to an existing company database;
+inventory reads and writes fail until the disposable dev databases are recreated.
+The reset deletes local published HTML, rows and file objects. Do not run it
+against data you need to keep.
+
 `--json` also works on `status`, `reset` and a plain start. The server is not
 watched; after a code change, `pnpm dev stop && pnpm dev`.
 
@@ -225,6 +233,10 @@ under `.patchy/dev/`. The next start fetches and materialises the full published
 inventory from the server before the current manifest is applied. Omitted columns
 and indexes stay provisioned, including unique constraints, so reset does not make
 a formerly rejected write succeed.
+
+Patch repos with local dev data created before #249 also need
+`pnpm patchy dev reset`, then `pnpm patchy dev`, to recreate their PGlite inventory
+with the required table and file-store description columns.
 
 For a runtime source change, stop the patch session and run the source CLI from
 inside the patch repo, substituting this checkout's absolute path for `cloud`:
