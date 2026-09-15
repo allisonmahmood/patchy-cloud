@@ -23,6 +23,13 @@ import {
   PatchName,
   Identity,
   Deleted,
+  Retired,
+  Restored,
+  RolledBack,
+  Described,
+  ForceRequest,
+  RollbackRequest,
+  DescriptionRequest,
   Shared,
   ShareRequest,
   SharingScope,
@@ -73,6 +80,10 @@ const runProject = <A, R>(handler: Effect.Effect<A, CliError, R>) =>
 const encodeIdentity = Schema.encodeSync(Identity);
 const encodeDeleted = Schema.encodeSync(Deleted);
 const encodeShared = Schema.encodeSync(Shared);
+const encodeRetired = Schema.encodeSync(Retired);
+const encodeRestored = Schema.encodeSync(Restored);
+const encodeRolledBack = Schema.encodeSync(RolledBack);
+const encodeDescribed = Schema.encodeSync(Described);
 const decodeSharingScope = Schema.decodeUnknownEffect(SharingScope);
 const decodePublishName = Schema.decodeUnknownEffect(PatchName);
 const scopeLines = {
@@ -104,7 +115,8 @@ const refused = (error: Api.ClientFailure, fallback: string) =>
     ) {
       return yield* new RejectedError({
         message: `${error.error}${defaultHostHint(apiUrl)}`,
-        ...(error.code === undefined ? {} : { code: error.code })
+        ...(error.code === undefined ? {} : { code: error.code }),
+        cause: error
       });
     }
     return yield* Api.classify(error, fallback);
@@ -345,6 +357,8 @@ const sendPublish = Effect.fn("sendPublish")(function* (
   replay: boolean,
   repoRoot?: string
 ) {
+  const warnings = attempt.warnings ?? [];
+  yield* Output.rememberWarnings(warnings);
   const repo = attempt.target.mode === "repo" ? repoRoot : undefined;
   if (attempt.target.mode === "repo" && repo === undefined)
     return yield* new LocalError({
@@ -360,69 +374,66 @@ const sendPublish = Effect.fn("sendPublish")(function* (
   const state = yield* State.State;
   const { published, document } = yield* Api.publish(token, attempt.request, replay).pipe(
     Effect.catch((error) =>
-      refused(error, "Publish failed.").pipe(
-        Effect.catchTags({
-          RejectedError: (refusal) =>
-            Effect.gen(function* () {
-              // Admission refusals (including authentication, quota and rate
-              // limits) cannot tell us whether an earlier send committed.
-              const definitive =
-                Api.isRefusal(error) &&
-                (error.status === 413 ||
-                  (error.status === 422 &&
-                    (error.code === "release_mismatch" ||
-                      error.code === "invalid_manifest" ||
-                      error.code === "tier_mismatch" ||
-                      error.code === "has_primitives" ||
-                      error.code === "patch_not_openable" ||
-                      error.code === "connection_not_connected" ||
-                      error.code === "stale_generated" ||
-                      error.code === "not_additive" ||
-                      error.code === "reserved_name" ||
-                      error.code === "invalid_description" ||
-                      error.errors !== undefined)) ||
-                  (error.status === 409 &&
-                    (error.code === "publish_key_conflict" ||
-                      error.code === "name_taken" ||
-                      error.code === "has_dependants" ||
-                      error.code === "patch_retired" ||
-                      error.code === "patch_deleted")) ||
-                  (error.status === 403 && error.code === "not_owner") ||
-                  (error.status === 404 &&
-                    attempt.request.patchId !== undefined &&
-                    error.error === PATCH_NOT_FOUND));
-              if (definitive) {
-                yield* state.forgetPendingPublish(
-                  instance.apiUrl,
-                  attempt.request.publishKey,
-                  repo
-                );
-              }
-              if (
-                attempt.request.patchId !== undefined &&
-                Api.isRefusal(error) &&
-                error.status === 404 &&
-                error.error === PATCH_NOT_FOUND
-              ) {
-                return yield* new RejectedError({
-                  message:
-                    attempt.target.mode === "repo"
-                      ? "Patch is unavailable for update. Remove patch from patchy.json to create a new patch."
-                      : attempt.target.explicitPatch
-                        ? "Patch is unavailable for update. --patch never creates a new patch."
-                        : "Cached patch is unavailable for update. Use --new to create a new patch.",
-                  ...(refusal.code === undefined ? {} : { code: refusal.code })
-                });
-              }
-              return yield* refusal;
-            })
-        })
-      )
+      Effect.gen(function* () {
+        // Admission refusals (including authentication, quota and rate
+        // limits) cannot tell us whether an earlier send committed.
+        const definitive =
+          Api.isRefusal(error) &&
+          (error.status === 413 ||
+            (error.status === 422 &&
+              (error.code === "release_mismatch" ||
+                error.code === "invalid_manifest" ||
+                error.code === "tier_mismatch" ||
+                error.code === "has_primitives" ||
+                error.code === "patch_not_openable" ||
+                error.code === "connection_not_connected" ||
+                error.code === "stale_generated" ||
+                error.code === "not_additive" ||
+                error.code === "reserved_name" ||
+                error.code === "invalid_description" ||
+                error.errors !== undefined)) ||
+            (error.status === 409 &&
+              (error.code === "publish_key_conflict" ||
+                error.code === "name_taken" ||
+                error.code === "has_dependants" ||
+                error.code === "patch_retired" ||
+                error.code === "patch_deleted")) ||
+            (error.status === 403 && error.code === "not_owner") ||
+            (error.status === 404 &&
+              attempt.request.patchId !== undefined &&
+              error.error === PATCH_NOT_FOUND));
+        if (definitive) {
+          yield* state.forgetPendingPublish(instance.apiUrl, attempt.request.publishKey, repo);
+        }
+        if (
+          attempt.request.patchId !== undefined &&
+          Api.isRefusal(error) &&
+          error.status === 404 &&
+          error.error === PATCH_NOT_FOUND
+        ) {
+          return yield* new RejectedError({
+            message:
+              attempt.target.mode === "repo"
+                ? "Patch is unavailable for update. Remove patch from patchy.json to create a new patch."
+                : attempt.target.explicitPatch
+                  ? "Patch is unavailable for update. --patch never creates a new patch."
+                  : "Cached patch is unavailable for update. Use --new to create a new patch.",
+            ...(error.code === undefined ? {} : { code: error.code }),
+            cause: error
+          });
+        }
+        return yield* refused(error, "Publish failed.");
+      })
     )
   );
   // Reapply creates and updates before clearing; failed local writes remain recoverable.
   if (repo !== undefined) {
-    yield* Project.recordPublish(repo, published.patchId, instance.apiUrl);
+    yield* Project.recordPublish(
+      repo,
+      published.patchId,
+      instance.apiUrl,
+      published.descriptionUpdatedAt
+    );
   } else if (attempt.target.mode === "file") {
     yield* state.cachePatch(
       instance.apiUrl,
@@ -436,21 +447,26 @@ const sendPublish = Effect.fn("sendPublish")(function* (
     );
   }
   yield* state.forgetPendingPublish(instance.apiUrl, attempt.request.publishKey, repo);
-  yield* Output.report(document, [
-    attempt.request.patchId !== undefined ? "Updated patch" : "Published patch",
-    `URL: ${published.address}`,
-    scopeLines[published.scope],
-    `Patch ID: ${published.patchId}`,
-    `Tier: ${published.tier}`,
-    `Version: ${published.versionNumber}`,
-    ...(["provisioned", "unused"] as const).flatMap((kind) =>
-      Object.entries(published[kind]).map(
-        ([resource, names]) =>
-          `${kind === "provisioned" ? "Provisioned" : "Unused"} ${resource}: ${names.length ? names.join(", ") : "none"}.`
+  const allWarnings =
+    warnings.length === 0 ? published.warnings : [...published.warnings, ...warnings];
+  yield* Output.report(
+    warnings.length === 0 ? document : Object.assign({}, document, { warnings: allWarnings }),
+    [
+      attempt.request.patchId !== undefined ? "Updated patch" : "Published patch",
+      `URL: ${published.address}`,
+      scopeLines[published.scope],
+      `Patch ID: ${published.patchId}`,
+      `Tier: ${published.tier}`,
+      `Version: ${published.versionNumber}`,
+      ...(["provisioned", "unused"] as const).flatMap((kind) =>
+        Object.entries(published[kind]).map(
+          ([resource, names]) =>
+            `${kind === "provisioned" ? "Provisioned" : "Unused"} ${resource}: ${names.length ? names.join(", ") : "none"}.`
+        )
       )
-    )
-  ]);
-  for (const warning of published.warnings) yield* Output.warn(`Warning: ${warning}`);
+    ]
+  );
+  for (const warning of allWarnings) yield* Output.warn(`Warning: ${warning}`);
 });
 
 const publish = Command.make(
@@ -469,6 +485,11 @@ const publish = Command.make(
       Flag.withDescription("Who can open the patch: your company or anyone with the link"),
       Flag.optional
     ),
+    description: Flag.string("description").pipe(
+      Flag.withDescription("Set the description when publishing an HTML file"),
+      Flag.optional
+    ),
+    force: Flag.boolean("force").pipe(Flag.withDefault(false)),
     new: Flag.boolean("new").pipe(
       Flag.withDescription("Always create a new patch"),
       Flag.withDefault(false)
@@ -494,6 +515,11 @@ const publish = Command.make(
         }
 
         if (repo !== undefined) {
+          if (Option.isSome(options.description))
+            return yield* new LocalError({
+              message:
+                "Repo descriptions live in patchy.json. Edit its description field instead of passing --description."
+            });
           if (options.new || Option.isSome(options.patch) || Option.isSome(options.name))
             return yield* new LocalError({
               message:
@@ -502,16 +528,18 @@ const publish = Command.make(
           yield* Output.notice(
             `Publishing to ${instance.apiUrl} (target came from ${Instance.describeSource(instance.source)}).`
           );
-          const { manifest, html } = yield* prepareRepoPublish(repo, apiToken);
+          const { manifest, html, warnings } = yield* prepareRepoPublish(repo, apiToken);
           const project = yield* Project.readRepo(repo);
           const attempt = new State.PendingPublish({
             ownerUserId: identity.user.id,
             target: { mode: "repo" },
+            warnings,
             request: new PublishRequest({
               manifest,
               html,
               ...(project.patch === undefined ? {} : { patchId: project.patch }),
               ...(Option.isSome(options.share) ? { scope: options.share.value } : {}),
+              ...(options.force ? { force: true } : {}),
               publishKey: newInternalId("pub"),
               metadata: new PublishMetadata({
                 ...(yield* Git.metadata(repo)),
@@ -533,6 +561,9 @@ const publish = Command.make(
         if (Option.isSome(options.patch) && options.new) {
           return yield* new LocalError({ message: "--patch and --new cannot be used together." });
         }
+        const description = Option.isSome(options.description)
+          ? yield* Project.normalizeDescription(options.description.value, "--description")
+          : undefined;
         const name = Option.isSome(options.name)
           ? yield* decodePublishName(options.name.value).pipe(
               Effect.mapError(
@@ -585,9 +616,11 @@ const publish = Command.make(
             html,
             ...(patchId !== null ? { patchId } : {}),
             ...(Option.isSome(options.share) ? { scope: options.share.value } : {}),
+            ...(options.force ? { force: true } : {}),
             publishKey: newInternalId("pub"),
             metadata: new PublishMetadata({
               ...(yield* Git.metadata(path.dirname(resolved))),
+              ...(description === undefined ? {} : { description }),
               filename: path.basename(resolved),
               cliVersion: RELEASE,
               fileSha256: sha256(html)
@@ -711,7 +744,9 @@ const del = Command.make(
     patch: Flag.string("patch").pipe(
       Flag.withDescription("Delete this patch by ID instead of by file"),
       Flag.optional
-    )
+    ),
+    yes: Flag.boolean("yes").pipe(Flag.withDefault(false)),
+    force: Flag.boolean("force").pipe(Flag.withDefault(false))
   },
   (options) =>
     (Option.isNone(options.file) && Option.isNone(options.patch) ? runProject : run)(
@@ -720,21 +755,39 @@ const del = Command.make(
         const instance = yield* Instance.Instance;
         const state = yield* State.State;
         const token = yield* requiredToken();
+        if (!options.yes) {
+          if ((yield* Login.notWaitingBecause) !== null)
+            return yield* new LocalError({
+              message:
+                "Delete requires confirmation. Ask the person you are working for, then pass --yes for non-interactive use."
+            });
+          const confirmed = yield* Prompt.run(
+            Prompt.confirm({
+              message: `Delete patch ${patchId}? It will be kept for 30 days, then reclaimed.`,
+              initial: false
+            })
+          ).pipe(Effect.catchTags({ QuitError: () => Effect.interrupt }));
+          if (!confirmed)
+            return yield* new LocalError({ message: "Deletion cancelled. Nothing was done." });
+        }
         yield* Output.notice(
           `Deleting from ${instance.apiUrl} (target came from ${Instance.describeSource(instance.source)}).`
         );
         const client = yield* Api.client(token);
-        const deleted = yield* client.delete({ params: { patchId }, query: {} }).pipe(
-          Effect.catch((error) => {
-            if (Api.isRefusal(error) && error.error === PATCH_NOT_FOUND) {
-              return new RejectedError({
-                message: `Patch ${patchId} is unavailable for deletion: it is not on ${instance.apiUrl}, or this publishing key does not own it.`,
-                ...(error.code === undefined ? {} : { code: error.code })
-              });
-            }
-            return refused(error, "Delete failed.");
-          })
-        );
+        const deleted = yield* client
+          .delete({ params: { patchId }, query: options.force ? { force: true } : {} })
+          .pipe(
+            Effect.catch((error) => {
+              if (Api.isRefusal(error) && error.error === PATCH_NOT_FOUND) {
+                return new RejectedError({
+                  message: `Patch ${patchId} is unavailable for deletion: it is not on ${instance.apiUrl}, or this publishing key does not own it.`,
+                  ...(error.code === undefined ? {} : { code: error.code }),
+                  cause: error
+                });
+              }
+              return refused(error, "Delete failed.");
+            })
+          );
         yield* state.forgetPatch(instance.apiUrl, patchId);
         yield* Output.report(encodeDeleted(deleted), [
           "Deleted patch",
@@ -747,6 +800,147 @@ const del = Command.make(
   Command.withDescription(
     "Delete a patch with a 30-day recovery window. Confirm with the user first."
   )
+);
+
+// --- retire, restore, rollback and describe ----------------------------------
+
+const lifecycleTarget = {
+  file: fileArgument.pipe(Argument.optional),
+  patch: Flag.string("patch").pipe(Flag.optional)
+};
+
+const retire = Command.make(
+  "retire",
+  { ...lifecycleTarget, force: Flag.boolean("force").pipe(Flag.withDefault(false)) },
+  (options) =>
+    (Option.isNone(options.file) && Option.isNone(options.patch) ? runProject : run)(
+      Effect.gen(function* () {
+        const patchId = yield* patchTarget(options.file, options.patch);
+        const client = yield* Api.client(yield* requiredToken());
+        const retired = yield* client
+          .retire({
+            params: { patchId },
+            payload: new ForceRequest(options.force ? { force: true } : {})
+          })
+          .pipe(Effect.catch((error) => refused(error, "Retire failed.")));
+        yield* Output.report(encodeRetired(retired), [
+          "Retired patch",
+          `Patch ID: ${retired.patchId}`,
+          `Retired at: ${retired.retiredAt}`,
+          "Restore it with: patchy restore --patch " + retired.patchId
+        ]);
+      })
+    )
+).pipe(Command.withDescription("Retire a live patch, keeping its data, versions and address."));
+
+const restore = Command.make(
+  "restore",
+  { ...lifecycleTarget, force: Flag.boolean("force").pipe(Flag.withDefault(false)) },
+  (options) =>
+    (Option.isNone(options.file) && Option.isNone(options.patch) ? runProject : run)(
+      Effect.gen(function* () {
+        const patchId = yield* patchTarget(options.file, options.patch);
+        const client = yield* Api.client(yield* requiredToken());
+        const restored = yield* client
+          .restore({
+            params: { patchId },
+            payload: new ForceRequest(options.force ? { force: true } : {})
+          })
+          .pipe(Effect.catch((error) => refused(error, "Restore failed.")));
+        yield* Output.report(encodeRestored(restored), [
+          "Restored patch",
+          `Patch ID: ${restored.patchId}`,
+          "State: live"
+        ]);
+      })
+    )
+).pipe(
+  Command.withDescription(
+    "Restore a retired patch or a deleted patch still in its recovery window."
+  )
+);
+
+const rollback = Command.make(
+  "rollback",
+  { version: Argument.integer("n"), ...lifecycleTarget },
+  (options) =>
+    (Option.isNone(options.file) && Option.isNone(options.patch) ? runProject : run)(
+      Effect.gen(function* () {
+        if (options.version <= 0 || !Number.isSafeInteger(options.version))
+          return yield* new LocalError({
+            message: "The rollback version must be a positive integer."
+          });
+        const patchId = yield* patchTarget(options.file, options.patch);
+        const client = yield* Api.client(yield* requiredToken());
+        const rolledBack = yield* client
+          .rollback({
+            params: { patchId },
+            payload: new RollbackRequest({ versionNumber: options.version })
+          })
+          .pipe(Effect.catch((error) => refused(error, "Rollback failed.")));
+        yield* Output.report(encodeRolledBack(rolledBack), [
+          "Rolled back patch",
+          `Patch ID: ${rolledBack.patchId}`,
+          `Version: ${rolledBack.currentVersion}`,
+          `URL: ${rolledBack.address}`,
+          "Data and description are unchanged."
+        ]);
+      })
+    )
+).pipe(
+  Command.withDescription("Serve a retained version of a live patch without changing its data.")
+);
+
+const describe = Command.make(
+  "describe",
+  {
+    fileOrText: Argument.string("file-or-text").pipe(Argument.optional),
+    text: Argument.string("text").pipe(Argument.optional),
+    patch: Flag.string("patch").pipe(Flag.optional),
+    clear: Flag.boolean("clear").pipe(Flag.withDefault(false))
+  },
+  (options) => {
+    const file =
+      options.clear || Option.isSome(options.text) ? options.fileOrText : Option.none<string>();
+    const text = options.clear
+      ? options.text
+      : Option.orElse(options.text, () => options.fileOrText);
+    const repo = Option.isNone(file) && Option.isNone(options.patch);
+    return (repo ? runProject : run)(
+      Effect.gen(function* () {
+        if (options.clear && Option.isSome(text))
+          return yield* new LocalError({ message: "Pass description text or --clear, not both." });
+        if (!options.clear && Option.isNone(text))
+          return yield* new LocalError({
+            message: "Pass description text, or --clear to remove it."
+          });
+        const description = options.clear
+          ? ""
+          : yield* Project.normalizeDescription(Option.getOrThrow(text));
+        const patchId = yield* patchTarget(file, options.patch);
+        const client = yield* Api.client(yield* requiredToken());
+        const described = yield* client
+          .describe({
+            params: { patchId },
+            payload: new DescriptionRequest({ description })
+          })
+          .pipe(Effect.catch((error) => refused(error, "Description change failed.")));
+        if (repo)
+          yield* Project.recordDescription(
+            yield* Cwd,
+            described,
+            (yield* Instance.Instance).apiUrl
+          );
+        yield* Output.report(encodeDescribed(described), [
+          "Changed patch description",
+          `Patch ID: ${described.patchId}`,
+          described.description || "(no description)"
+        ]);
+      })
+    );
+  }
+).pipe(
+  Command.withDescription("Change a published patch's description, or remove it with --clear.")
 );
 
 // --- patch repos ------------------------------------------------------------
@@ -926,6 +1120,10 @@ export const root = Command.make("patchy").pipe(
     publish,
     share,
     del,
+    retire,
+    restore,
+    rollback,
+    describe,
     init,
     dev,
     refresh,

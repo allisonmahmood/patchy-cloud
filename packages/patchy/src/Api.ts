@@ -13,12 +13,29 @@ import * as HttpApiMiddleware from "effect/unstable/httpapi/HttpApiMiddleware";
 import {
   Authorization,
   authorizationClient,
+  HasDependants,
   makeClient,
+  NotOwner,
+  PatchDeleted,
+  PatchRetired,
   PublishCreated,
   type PublishRequest,
-  PublishUpdated
+  PublishUpdated,
+  SourcesOff,
+  WrongState
 } from "@patchy/api";
-import { LocalError, RejectedError, UnreachableError } from "./CliError.js";
+import {
+  HasDependantsError,
+  LocalError,
+  NotOwnerError,
+  PatchDeletedError,
+  PatchRetiredError,
+  type Rejected,
+  RejectedError,
+  SourcesOffError,
+  UnreachableError,
+  WrongStateError
+} from "./CliError.js";
 import * as Instance from "./Instance.js";
 
 /** Retained receipts predate description metadata; validate it only when present. */
@@ -93,11 +110,34 @@ export type ClientFailure = Refusal | HttpClientError.HttpClientError | Schema.S
 
 export const isRefusal = (error: ClientFailure): error is Refusal => "ok" in error;
 
-/** The refusal's own sentence, or the 422's list. */
+/** Generic refusal text includes the wire's optional validation errors. */
 export const refusalMessage = (refusal: Refusal, fallback: string): string => {
   const errors = refusal.errors ?? [];
   const details = errors.length > 0 ? `\n- ${errors.join("\n- ")}` : "";
   return `${refusal.error ?? fallback}${details}`;
+};
+
+const isNotOwner = Schema.is(NotOwner);
+const isPatchRetired = Schema.is(PatchRetired);
+const isPatchDeleted = Schema.is(PatchDeleted);
+const isHasDependants = Schema.is(HasDependants);
+const isSourcesOff = Schema.is(SourcesOff);
+const isWrongState = Schema.is(WrongState);
+
+/** Both wire responses and installed CLI failures carry the same refusal context. */
+export const fromRefusal = (error: Refusal, fallback: string): Rejected => {
+  if (isNotOwner(error)) return new NotOwnerError({ owner: error.owner, cause: error });
+  if (isPatchRetired(error)) return new PatchRetiredError({ cause: error });
+  if (isPatchDeleted(error)) return new PatchDeletedError({ purgeAt: error.purgeAt, cause: error });
+  if (isHasDependants(error))
+    return new HasDependantsError({ dependants: error.dependants, cause: error });
+  if (isSourcesOff(error)) return new SourcesOffError({ sources: error.sources, cause: error });
+  if (isWrongState(error)) return new WrongStateError({ state: error.state, cause: error });
+  return new RejectedError({
+    message: refusalMessage(error, fallback),
+    ...(error.code === undefined ? {} : { code: error.code }),
+    cause: error
+  });
 };
 
 /**
@@ -108,15 +148,10 @@ export const refusalMessage = (refusal: Refusal, fallback: string): string => {
 export const classify = (
   error: ClientFailure,
   fallback: string
-): Effect.Effect<never, RejectedError | UnreachableError | LocalError, Instance.Instance> =>
+): Effect.Effect<never, Rejected | UnreachableError | LocalError, Instance.Instance> =>
   Effect.gen(function* () {
     const { apiUrl } = yield* Instance.Instance;
-    if (isRefusal(error)) {
-      return yield* new RejectedError({
-        message: refusalMessage(error, fallback),
-        ...(error.code === undefined ? {} : { code: error.code })
-      });
-    }
+    if (isRefusal(error)) return yield* fromRefusal(error, fallback);
     if (error._tag === "SchemaError") {
       return yield* new UnreachableError({
         instanceUrl: apiUrl,

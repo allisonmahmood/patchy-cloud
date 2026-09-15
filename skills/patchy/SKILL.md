@@ -1,13 +1,13 @@
 ---
 name: patchy
-description: Publish a static HTML page on Patchy Cloud, start a patch repo with init, find an existing company tool or data source, read a Patchy link, or run onboarding.
+description: Publish a static HTML page on Patchy Cloud, start a patch repo, find company tools or data sources, manage a patch's lifecycle or description, read a Patchy link, or run onboarding.
 ---
 
 # Patchy
 
 Use this global skill to publish a static page, start a tool's patch repo, discover
-company tools and data sources, read a patch, or sign the machine in. Inside a
-patch repo, its project skills govern building.
+company tools and data sources, manage a patch, read one, or sign the machine in.
+Inside a patch repo, its project skills govern building.
 
 ## Onboarding
 
@@ -78,6 +78,10 @@ Use the user's actual purpose and chosen directory. Initialization authenticates
 first; without a key it exits 1 with `Run: patchy login`, not a half-created repo.
 It installs the pinned package and generates client, context, fixture stubs and
 project skills; it refuses a second initialization there. Do not reinstall.
+The purpose also initializes `description` in `patchy.json`, at most 500 Unicode
+code points after whitespace normalization. Front-load what the tool does.
+The purpose in `AGENTS.md` is independent; edit `patchy.json` for the published
+description and `patchy.config.ts` for table/store descriptions.
 
 Inside that repo read `AGENTS.md`, `.agents/skills/patchy-loop/SKILL.md` and
 `patchy/_generated/index.json`, then use `pnpm patchy`, the pinned copy.
@@ -92,12 +96,12 @@ generated files and present skills transactionally; never manually edit
 
 Publish from the repo root with `pnpm patchy publish [--share company|public]`.
 It checks release, declaration stamps, types, the single-file build and tier,
-then publishes and records only the patch id in `patchy.json`, preserving its
-authoritative instance. On `instance_mismatch`, correct the effective URL
+then publishes and records the patch id and description sync stamp in `patchy.json`,
+preserving its authoritative instance. On `instance_mismatch`, correct the effective URL
 override to match the stored instance; the refusal names both URLs before any
 HTTP request. Keep the instance binding and patch id intact.
 On `stale_generated`, run `pnpm patchy refresh`; on `invalid_manifest`, fix the
-config and its imports. On a build failure, fix the repo rather than publishing
+config and its imports, or the named `patchy.json.description` field. On a build failure, fix the repo rather than publishing
 `dist/index.html` as a static file.
 `too_large` means reduce the largest contributors reported: the local HTML cap
 is 512 KiB at tier 0 and 10 MiB at tier 1. `tier_mismatch` instead means remove
@@ -125,8 +129,52 @@ skills carry the complete runtime limits and the local-only workflow.
 Repo recovery lives under `.patchy/publish/`. Keep it after interruptions or a
 failed `patchy.json` write and rerun `pnpm patchy publish` as the same owning user.
 Recovery precedes release checks and rebuilding, returning the original result.
-`pnpm patchy share public` / `company` and `pnpm patchy delete` use the repo id.
+Untargeted sharing and lifecycle commands use the repo id.
 Keep the patch id on `not_owner`, `patch_retired` or `patch_deleted`. Ask for reassignment or restoration rather than creating another patch. Only a gone patch's 404 calls for intentionally removing `patch` before a new create.
+
+## Managing a patch
+
+Use the pinned `pnpm patchy` in a repo; its id is the default target. Outside a
+repo, use the HTML file it was published from or `--patch <id>`, never both.
+These commands never create a patch and require its owner's publishing key.
+
+- `retire [file] [--patch <id>]` takes a live patch off indefinitely, keeping its data and versions.
+- `delete [file] [--patch <id>] --yes` takes a live or retired patch off for 30 days. Ask the user first. Without `--yes`, only a human terminal can confirm; an agent gets local exit 1.
+- `restore [file] [--patch <id>]` brings it back at the same address before the returned `purgeAt`. A deleted file's cache entry is forgotten, so restore it by id.
+- `rollback <n> [file] [--patch <id>]` serves retained version n of a live patch. Data, sharing, description and name stay unchanged.
+- `describe "<text>"`, `describe <file> "<text>"` or `describe "<text>" --patch <id>` edits a live or retired patch's description. Use `describe [file] --clear [--patch <id>]` to empty it. Repo-targeted describe also rewrites `patchy.json`.
+
+Every verb accepts `--json`. Branch on `code`; refusal documents preserve
+`owner`, `state`, `dependants`, `sources` or `purgeAt` when applicable.
+`has_dependants` lists the live tools that retire, delete or an unshare would
+break. `sources_off` lists sources that a restored tool would fail to read.
+Ask the person you are working for before retrying with `--force`.
+`--yes` confirms deletion, not breakage; `--force` accepts breakage, not deletion.
+Publish also accepts `--force` for an unshare.
+
+`wrong_state` means the act does not apply to the current state. `not_owner`
+names the owner; ask them or an admin to reassign it. `patch_retired` and
+`patch_deleted` on publish mean restore it or ask an admin. Past `purgeAt`,
+restoration is refused. Keep the repo id on all these refusals; they never call
+for a fork.
+
+## Keeping descriptions current
+
+Repo publish requires a nonempty `patchy.json.description`. File publishing uses
+`publish page.html --description "What this page does"`; omitted, the cloud value
+stands. That flag is refused in repo mode.
+
+`refresh`, a new `dev` start and fresh `publish` pull cloud description edits into
+`patchy.json` when their timestamp is newer than `descriptionSyncedAt`. Relay
+the "changed in the portal" notice and check the text; it quotes replaced local
+text when different. Publish sends the pulled text and records its returned
+stamp. A local edit does not advance the stamp.
+
+These commands also remind you when a table/store definition changed since its
+last generation but its description did not. Check what one row or object means,
+its keys and units, and update the config description if needed. Notices do not
+block commands; under `--json`, read `warnings` on success or failure. Publish
+recovery retains the saved attempt's notices.
 
 ## Good fits
 
@@ -253,12 +301,12 @@ browser sign-out is a separate control on **Your machines**.
   matching overrides retain their source and credential behavior.
   Settle the instance before publishing — `status --json` reports its own
   resolved target and source, and text-mode `publish` prints the publish target.
-- List, publish, share, delete and whoami require a publishing key. With no key, they exit
+- Discovery, publish, lifecycle, description, sharing and whoami require a publishing key. With no key, they exit
   `1` (`local`), `Run: patchy login`; follow the login handoff above, then retry the
   original command. A local-state error needs the named repair first; `status`
   can report no key when a credential file is unreadable or malformed.
   No command starts a login on the caller's behalf.
-- List, publish, share, delete, whoami and `status` use the same credential chain:
+- Protected commands and `status` use the same credential chain:
   `PATCHY_API_TOKEN`, then the key stored for this instance (`login` or `auth-set`),
   then the dev env's seeded key.
   A login outranks the seed; an environment key overrides both.
@@ -278,8 +326,8 @@ browser sign-out is a separate control on **Your machines**.
   with the same instance, state and owning user: it authenticates that user before
   resending the saved content, then applies the original result without another version.
   After moving a repo with its `.patchy/`, recover from its new root. Creates and
-  updates record only the returned patch id, preserving the stored instance
-  spelling. A conflicting patch id or late instance edit retains the attempt:
+  updates record the returned patch id and description sync stamp, preserving the
+  stored instance spelling. A conflicting patch id or late instance edit retains the attempt:
   restore an unintended target edit before retrying, rather than rebinding
   the repo to apply a result.
   A replacement token for the same user works; another account is refused locally.

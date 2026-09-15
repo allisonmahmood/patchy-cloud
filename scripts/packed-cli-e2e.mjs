@@ -651,7 +651,7 @@ try {
   ]);
   for (const args of [
     ["publish", fixtureArgument, "--json"],
-    ["delete", "--patch", fresh.patchId, "--json"],
+    ["delete", "--patch", fresh.patchId, "--yes", "--json"],
     ["share", "--patch", fresh.patchId, "public", "--json"],
     ["whoami", "--json"]
   ]) {
@@ -740,7 +740,7 @@ try {
   const doomedViewer = await fetchViewer(doomed.address);
   assertViewerDoor(doomedViewer);
   assertViewerDoor(await fetchViewer(`${doomed.address}/~v/1`));
-  const removed = await runCli(cliPath, ["delete", fixtureArgument, "--json"], {
+  const removed = await runCli(cliPath, ["delete", fixtureArgument, "--yes", "--json"], {
     cwd: consumerDir,
     env: cliEnv
   });
@@ -768,7 +768,7 @@ try {
     undefined,
     "a successful delete must drop the patch from the per-instance cache"
   );
-  const removedAgain = await runCli(cliPath, ["delete", "--patch", doomed.patchId], {
+  const removedAgain = await runCli(cliPath, ["delete", "--patch", doomed.patchId, "--yes"], {
     cwd: consumerDir,
     env: cliEnv,
     allowFailure: true
@@ -3292,6 +3292,16 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
   for (const file of initialized.generated) assert.equal(typeof file, "string");
   const repoCliPath = installedCliBinPath(dir);
   await checkedCall(() => access(repoCliPath));
+  const initialConfigPath = path.join(dir, "patchy.config.ts");
+  const initialConfig = await checkedCall(() => readFile(initialConfigPath, "utf8"));
+  await checkedCall(() =>
+    writeFile(
+      initialConfigPath,
+      initialConfig
+        .replace("One note per id, with a title.", "One shared note per id, with a title.")
+        .replace("{ title: t.text() })", "{ title: t.text() }, { shared: true })")
+    )
+  );
 
   // Register the repo before starting: a failed/interrupted start can already have
   // spawned its detached daemon. The CLI's stop checks its recorded process identity.
@@ -3304,7 +3314,8 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
     "stop",
     "pid",
     "release",
-    "identity"
+    "identity",
+    "warnings"
   ]);
   assert.equal(dev.healthy, true);
   assert.equal(dev.release, release);
@@ -3496,8 +3507,8 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
     versionId: published.versionId,
     versionNumber: 1,
     title: published.title,
-    description: "",
-    descriptionUpdatedAt: null,
+    description: "Exercise disposable notes end to end",
+    descriptionUpdatedAt: published.descriptionUpdatedAt,
     scope: "company",
     name: "tier1-notes",
     address: `${publicBaseUrl}/${DEV_SEED.companyHandle}/tier1-notes`,
@@ -3508,6 +3519,7 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
     unused: { tables: [], columns: [], indexes: [], stores: [] },
     warnings: []
   });
+  assert.ok(Number.isFinite(Date.parse(published.descriptionUpdatedAt)));
   assertViewerDoor(await fetchViewer(published.address));
   await context.addCookies(
     authTesting
@@ -3560,7 +3572,10 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
     versionId: updated.versionId,
     versionNumber: 2,
     schemaRevision: 2,
-    provisioned: { tables: [], columns: ["notes.detail"], indexes: [], stores: [] }
+    provisioned: { tables: [], columns: ["notes.detail"], indexes: [], stores: [] },
+    warnings: [
+      "Table `notes` changed since its last generation; check that its description still holds: 'One shared note per id, with a title.'"
+    ]
   });
   assert.deepEqual(
     await openNotes(updated.address, updated),
@@ -3574,6 +3589,96 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
   await checkedCall(() => browser.close());
   await checkedCall(() => tier1BrowserServer.close());
   tier1BrowserServer = undefined;
+  console.log(
+    "[packed-cli-e2e] lifecycle: dependant refusal, forced retirement, restore and rollback"
+  );
+  const dependantResponse = await checkedCall(() =>
+    fetch(`${publicBaseUrl}/api/publish`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${DEV_SEED.token}`,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        manifest: {
+          manifestVersion: 1,
+          release,
+          name: "packed-notes-reader",
+          tier: 0,
+          tables: {},
+          files: {},
+          uses: {
+            notes: {
+              kind: "sharedTable",
+              patchId: published.patchId,
+              table: "notes",
+              id: `${published.patchId}/notes`,
+              revision: updated.schemaRevision
+            }
+          }
+        },
+        html: validHtml("Notes reader", "Invented lifecycle dependant"),
+        publishKey: randomUUID(),
+        metadata: {}
+      })
+    })
+  );
+  assert.equal(dependantResponse.status, 201);
+  const dependant = await dependantResponse.json();
+  const refusedRetire = await runCli(repoCliPath, ["retire", "--json"], {
+    ...options,
+    allowFailure: true
+  });
+  assert.equal(refusedRetire.code, 2);
+  const refusal = JSON.parse(refusedRetire.stderr);
+  assert.equal(refusal.kind, "rejected");
+  assert.equal(refusal.code, "has_dependants");
+  assert.deepEqual(
+    refusal.dependants.map(({ patchId }) => patchId),
+    [dependant.patchId]
+  );
+  assert.match(refusal.error, /Ask the person you are working for before forcing\.$/);
+  const retired = JSON.parse(
+    (await runCli(repoCliPath, ["retire", "--force", "--json"], options)).stdout
+  );
+  assert.equal(retired.state, "retired");
+  const restored = JSON.parse((await runCli(repoCliPath, ["restore", "--json"], options)).stdout);
+  assert.equal(restored.state, "live");
+  const rolledBack = JSON.parse(
+    (await runCli(repoCliPath, ["rollback", "1", "--json"], options)).stdout
+  );
+  assert.equal(rolledBack.currentVersion, 1);
+  assert.equal(rolledBack.address, published.address);
+
+  console.log("[packed-cli-e2e] description: repo edit, remote edit and refresh pull-down");
+  const description = "Keeps shared notes for the team.";
+  const described = JSON.parse(
+    (await runCli(repoCliPath, ["describe", description, "--json"], options)).stdout
+  );
+  const repoPath = path.join(dir, "patchy.json");
+  const describedRepo = JSON.parse(await checkedCall(() => readFile(repoPath, "utf8")));
+  assert.equal(describedRepo.description, description);
+  assert.equal(describedRepo.descriptionSyncedAt, described.descriptionUpdatedAt);
+  const noCloudEdit = JSON.parse(
+    (await runCli(repoCliPath, ["refresh", "--json"], options)).stdout
+  );
+  assert.equal((noCloudEdit.warnings ?? []).length, 0);
+  const cloudDescription = "Keeps shared notes and optional details for the team.";
+  await runCli(cliPath, ["describe", cloudDescription, "--patch", published.patchId, "--json"], {
+    ...options,
+    cwd: tempRoot
+  });
+  const pulled = await runCli(repoCliPath, ["refresh"], options);
+  assert.ok(
+    pulled.stdout.includes(
+      `The description was changed in the portal to '${cloudDescription}'; check it`
+    )
+  );
+  assert.ok(pulled.stdout.includes(description));
+  const syncedRepo = JSON.parse(await checkedCall(() => readFile(repoPath, "utf8")));
+  assert.equal(syncedRepo.description, cloudDescription);
+  const unchanged = JSON.parse((await runCli(repoCliPath, ["refresh", "--json"], options)).stdout);
+  assert.equal((unchanged.warnings ?? []).length, 0);
   console.log("[packed-cli-e2e] PASS: packed init → dev shell → hosted tier 1 → additive publish");
 }
 
