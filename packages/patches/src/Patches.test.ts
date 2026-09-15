@@ -63,7 +63,14 @@ const tableManifest = (name: string, shared = true): typeof Manifest.Type => ({
   ...Fixtures.manifest,
   name,
   tier: 1,
-  tables: { notes: { columns: { body: { kind: "text" } }, indexes: {}, shared } }
+  tables: {
+    notes: {
+      description: "Notes keyed by id.",
+      columns: { body: { kind: "text" } },
+      indexes: {},
+      shared
+    }
+  }
 });
 const declaration = (patchId: string, revision = 1) => ({
   kind: "sharedTable" as const,
@@ -494,6 +501,7 @@ it.layer(Patches.layer.pipe(Layer.provideMerge(Fixtures.database)))("Patches", (
           ...tableManifest(source.name, false),
           tables: {
             notes: {
+              description: "Notes keyed by id.",
               columns: { body: { kind: "text" }, extra: { kind: "text", optional: true } },
               indexes: {},
               shared: false
@@ -589,6 +597,7 @@ it.layer(Patches.layer.pipe(Layer.provideMerge(Fixtures.database)))("Patches", (
           ...tableManifest("lifecycle-renamed", false),
           tables: {
             notes: {
+              description: "Notes keyed by id.",
               columns: { body: { kind: "text" }, extra: { kind: "text", optional: true } },
               indexes: {},
               shared: false

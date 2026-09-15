@@ -74,11 +74,16 @@ for (const [name, database] of [
                 Effect.gen(function* () {
                   yield* sql.unsafe('CREATE TABLE "p_sweep_orphan"."notes" (value text)');
                   yield* inventory.putTable({
+                    description: "Notes identified by their row id.",
                     patchId: "sweep_orphan",
                     name: "notes",
                     shared: false
                   });
-                  yield* inventory.putStore({ patchId: "sweep_orphan", name: "documents" });
+                  yield* inventory.putStore({
+                    description: "Documents identified by file name.",
+                    patchId: "sweep_orphan",
+                    name: "documents"
+                  });
                 })
               );
               yield* sql`UPDATE patchy.patches SET created_at = '2035-01-01'
@@ -175,7 +180,11 @@ for (const [name, database] of [
               Effect.gen(function* () {
                 const sql = yield* SqlClient.SqlClient;
                 yield* inventory.ensurePatch("sweep_files");
-                yield* inventory.putStore({ patchId: "sweep_files", name: "docs" });
+                yield* inventory.putStore({
+                  description: "Documents identified by file name.",
+                  patchId: "sweep_files",
+                  name: "docs"
+                });
                 yield* sql`INSERT INTO patchy.files (patch_id, store, name, object_id, size, content_type, sha256)
           VALUES ('sweep_files', 'docs', 'report.txt', 'referenced', 5, 'text/plain', 'hash')`;
               })
@@ -262,7 +271,11 @@ for (const [name, database] of [
               companies.withPatchLock(patchId)(
                 Effect.gen(function* () {
                   yield* inventory.ensurePatch(patchId);
-                  yield* inventory.putStore({ patchId, name: "docs" });
+                  yield* inventory.putStore({
+                    description: "Documents identified by file name.",
+                    patchId,
+                    name: "docs"
+                  });
                 })
               )
             );

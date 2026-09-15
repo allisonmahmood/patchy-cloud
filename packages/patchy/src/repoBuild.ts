@@ -10,7 +10,7 @@ import * as parse5 from "parse5";
 import * as Api from "./Api.js";
 import * as Instance from "./Instance.js";
 import { LocalError, ReleaseMismatch } from "./CliError.js";
-import { executeConfig, StaleGenerated } from "./executeConfig.js";
+import { configFailure, executeConfig } from "./executeConfig.js";
 import { safePath } from "./ManagedProject.js";
 import { checkRelease } from "./ReleaseCheck.js";
 import { RELEASE } from "./release.js";
@@ -212,15 +212,7 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
   const path = yield* Path.Path;
   const manifest = yield* Effect.tryPromise({
     try: async () => decodeManifest(await executeConfig(path.join(cwd, "patchy.config.ts"))),
-    catch: (cause) =>
-      new LocalError({
-        message:
-          cause instanceof StaleGenerated
-            ? "declarations changed; run `patchy refresh`"
-            : "Could not execute patchy.config.ts. Check the config and its imports.",
-        code: cause instanceof StaleGenerated ? cause.code : "invalid_manifest",
-        cause
-      })
+    catch: configFailure
   });
   // Definitions can change without generation; only index.json owns declaration stamps.
   const destination = yield* Effect.tryPromise({

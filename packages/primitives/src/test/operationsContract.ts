@@ -33,6 +33,7 @@ export const manifest: typeof Manifest.Type = {
   uses: {},
   tables: {
     notes: {
+      description: "Notes identified by their row id.",
       columns: {
         title: { kind: "text" },
         slug: { kind: "text" },

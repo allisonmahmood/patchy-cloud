@@ -17,6 +17,7 @@ export class Patch extends Schema.Class<Patch>("Inventory.Patch")({
 export class Table extends Schema.Class<Table>("Inventory.Table")({
   patchId: Schema.String,
   name: Schema.String,
+  description: Schema.String,
   shared: Schema.Boolean,
   createdAt: Schema.Date
 }) {}
@@ -42,7 +43,8 @@ export class Index extends Schema.Class<Index>("Inventory.Index")({
 
 export class Store extends Schema.Class<Store>("Inventory.Store")({
   patchId: Schema.String,
-  name: Schema.String
+  name: Schema.String,
+  description: Schema.String
 }) {}
 
 export class Snapshot extends Schema.Class<Snapshot>("Inventory.Snapshot")({
@@ -105,7 +107,7 @@ const findTables = SqlSchema.findAll({
   Result: Table,
   execute: Effect.fn("Inventory.findTables")(function* (patchId) {
     const sql = yield* SqlClient.SqlClient;
-    return yield* sql`SELECT "patch_id" AS "patchId", "name", "shared", "created_at" AS "createdAt"
+    return yield* sql`SELECT "patch_id" AS "patchId", "name", "description", "shared", "created_at" AS "createdAt"
       FROM "patchy"."tables" WHERE "patch_id" = ${patchId} ORDER BY "name"`;
   })
 });
@@ -136,7 +138,7 @@ const findStores = SqlSchema.findAll({
   Result: Store,
   execute: Effect.fn("Inventory.findStores")(function* (patchId) {
     const sql = yield* SqlClient.SqlClient;
-    return yield* sql`SELECT "patch_id" AS "patchId", "name" FROM "patchy"."stores"
+    return yield* sql`SELECT "patch_id" AS "patchId", "name", "description" FROM "patchy"."stores"
       WHERE "patch_id" = ${patchId} ORDER BY "name"`;
   })
 });
@@ -198,9 +200,10 @@ const read = Effect.fn("Inventory.read")(
 
 const putTable = Effect.fn("Inventory.putTable")(function* (row: Omit<Table, "createdAt">) {
   const sql = yield* lockedClient(row.patchId);
-  yield* sql`INSERT INTO "patchy"."tables" ("patch_id", "name", "shared")
-      VALUES (${row.patchId}, ${row.name}, ${row.shared})
-      ON CONFLICT ("patch_id", "name") DO UPDATE SET "shared" = EXCLUDED."shared"`;
+  yield* sql`INSERT INTO "patchy"."tables" ("patch_id", "name", "description", "shared")
+      VALUES (${row.patchId}, ${row.name}, ${row.description}, ${row.shared})
+      ON CONFLICT ("patch_id", "name") DO UPDATE SET
+        "description" = EXCLUDED."description", "shared" = EXCLUDED."shared"`;
 });
 
 const putColumn = Effect.fn("Inventory.putColumn")(function* (row: Column) {
@@ -221,8 +224,9 @@ const putIndex = Effect.fn("Inventory.putIndex")(function* (row: Index) {
 
 const putStore = Effect.fn("Inventory.putStore")(function* (row: Store) {
   const sql = yield* lockedClient(row.patchId);
-  yield* sql`INSERT INTO "patchy"."stores" ("patch_id", "name") VALUES (${row.patchId}, ${row.name})
-      ON CONFLICT ("patch_id", "name") DO NOTHING`;
+  yield* sql`INSERT INTO "patchy"."stores" ("patch_id", "name", "description")
+      VALUES (${row.patchId}, ${row.name}, ${row.description})
+      ON CONFLICT ("patch_id", "name") DO UPDATE SET "description" = EXCLUDED."description"`;
 });
 
 const bumpRevision = Effect.fn("Inventory.bumpRevision")(function* (patchId: string) {
@@ -261,6 +265,7 @@ export const initialize = Effect.gen(function* () {
   yield* sql.unsafe(`CREATE TABLE IF NOT EXISTS "patchy"."tables" (
     "patch_id" text NOT NULL REFERENCES "patchy"."patches" ("patch_id") ON DELETE CASCADE,
     "name" text NOT NULL,
+    "description" text NOT NULL,
     "shared" boolean NOT NULL,
     "created_at" timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY ("patch_id", "name")
@@ -290,6 +295,7 @@ export const initialize = Effect.gen(function* () {
   yield* sql.unsafe(`CREATE TABLE IF NOT EXISTS "patchy"."stores" (
     "patch_id" text NOT NULL REFERENCES "patchy"."patches" ("patch_id") ON DELETE CASCADE,
     "name" text NOT NULL,
+    "description" text NOT NULL,
     PRIMARY KEY ("patch_id", "name")
   )`);
   yield* sql.unsafe(`CREATE TABLE IF NOT EXISTS "patchy"."files" (

@@ -17,7 +17,7 @@ A patch's physical home inside its company database. It groups the patch's resou
 _Avoid_: database, company schema
 
 **Inventory**:
-The cumulative record of resources provisioned for a patch, including its schema revision and table sharing. A published version describes what it uses; the inventory describes what still exists.
+The cumulative record of resources provisioned for a patch, including their descriptions, its schema revision and table sharing. A published version describes what it uses; the inventory describes what still exists.
 _Avoid_: active manifest, catalog snapshot
 
 **Patch lock**:

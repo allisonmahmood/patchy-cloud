@@ -15,6 +15,7 @@ const manifest = (tables: (typeof Manifest.Type)["tables"]): typeof Manifest.Typ
   uses: {}
 });
 const base: typeof TableDefinition.Type = {
+  description: "Notes identified by their row id.",
   columns: {
     title: { kind: "text" },
     memo: { kind: "text", optional: true },
@@ -47,6 +48,7 @@ export const additions = Effect.fn("ProvisioningContract.additions")(function* (
       );
       const expanded: typeof TableDefinition.Type = {
         ...base,
+        description: "Notes with publication timestamps and numeric scores.",
         columns: {
           ...base.columns,
           optionalNumber: { kind: "number", optional: true },
@@ -105,6 +107,7 @@ export const additions = Effect.fn("ProvisioningContract.additions")(function* (
         "notes"
       );
       const recovered = Tables.inventoryManifest(snapshot);
+      assert.strictEqual(recovered.tables.notes?.description, expanded.description);
       const replay = yield* databases.withPatchLock(patchId)(
         tables.provision(patchId, { ...nextManifest, ...recovered })
       );
@@ -126,6 +129,24 @@ export const additions = Effect.fn("ProvisioningContract.additions")(function* (
         }
       });
       assert.strictEqual((yield* tables.diff(reordered, snapshot)).schemaRevision, 2);
+      const described = manifest({
+        notes: {
+          ...expanded,
+          description: "Published notes, identified by title; scores in points."
+        }
+      });
+      assert.strictEqual((yield* tables.diff(described, snapshot)).schemaRevision, 2);
+      const descriptionUpdate = yield* databases.withPatchLock(patchId)(
+        tables.provision(patchId, described)
+      );
+      assert.strictEqual(descriptionUpdate.schemaRevision, 2);
+      const describedSnapshot = yield* inventory.read(patchId);
+      assert.strictEqual(
+        describedSnapshot?.tables[0]?.description,
+        described.tables.notes!.description
+      );
+      yield* databases.withPatchLock(patchId)(tables.provision(patchId, manifest({})));
+      assert.deepStrictEqual(yield* inventory.read(patchId), describedSnapshot);
     })
   );
 });
@@ -141,7 +162,12 @@ export const omissions = Effect.fn("ProvisioningContract.omissions")(function* (
       const sql = yield* SqlClient.SqlClient;
       yield* databases.withPatchLock(patchId)(tables.provision(patchId, manifest({ notes: base })));
       const omitted = manifest({
-        notes: { columns: { title: base.columns.title! }, indexes: {}, shared: true }
+        notes: {
+          description: "Notes identified by their row id.",
+          columns: { title: base.columns.title! },
+          indexes: {},
+          shared: true
+        }
       });
       const report = yield* databases.withPatchLock(patchId)(tables.provision(patchId, omitted));
       assert.strictEqual(report.schemaRevision, 1);
@@ -171,7 +197,13 @@ export const omissions = Effect.fn("ProvisioningContract.omissions")(function* (
       const rename = yield* databases.withPatchLock(patchId)(
         tables.provision(
           patchId,
-          manifest({ memos: { columns: { title: { kind: "text" } }, indexes: {} } })
+          manifest({
+            memos: {
+              description: "Notes identified by their row id.",
+              columns: { title: { kind: "text" } },
+              indexes: {}
+            }
+          })
         )
       );
       assert.deepStrictEqual(rename.provisioned.tables, ["memos"]);
@@ -217,7 +249,13 @@ export const stores = Effect.fn("ProvisioningContract.stores")(function* (compan
   const tables = yield* Tables.Tables;
   const inventory = yield* Inventory.Inventory;
   const patchId = "store-additions";
-  const definition = { ...manifest({}), files: { attachments: {}, constructor: {} } };
+  const definition = {
+    ...manifest({}),
+    files: {
+      attachments: { description: "Documents attached to notes, identified by file name." },
+      constructor: { description: "Construction drawings identified by file name." }
+    }
+  };
   yield* databases.ensureReady(companyId);
   yield* databases.withCompany(companyId)(
     Effect.gen(function* () {
@@ -243,6 +281,21 @@ export const stores = Effect.fn("ProvisioningContract.stores")(function* (compan
       assert.strictEqual(repeated.schemaRevision, 1);
       assert.deepStrictEqual(repeated.provisioned.stores, []);
       assert.deepStrictEqual(repeated.unused.stores, []);
+      const described = {
+        ...definition,
+        files: {
+          ...definition.files,
+          attachments: {
+            description: "Reference documents, identified by their original file names."
+          }
+        }
+      };
+      const updated = yield* databases.withPatchLock(patchId)(tables.provision(patchId, described));
+      assert.strictEqual(updated.schemaRevision, 1);
+      assert.deepStrictEqual(
+        Tables.inventoryManifest((yield* inventory.read(patchId))!).files,
+        described.files
+      );
 
       const omitted = yield* databases.withPatchLock(patchId)(
         tables.provision(patchId, manifest({}))
@@ -251,13 +304,23 @@ export const stores = Effect.fn("ProvisioningContract.stores")(function* (compan
       assert.deepStrictEqual(omitted.unused.stores, ["attachments", "constructor"]);
       const snapshot = yield* inventory.read(patchId);
       assert.isNotNull(snapshot);
-      assert.deepStrictEqual(Tables.inventoryManifest(snapshot!).files, definition.files);
+      assert.deepStrictEqual(Tables.inventoryManifest(snapshot!).files, described.files);
 
-      const expanded = { ...definition, files: { ...definition.files, images: {} } };
+      const expanded = {
+        ...definition,
+        files: {
+          ...definition.files,
+          images: { description: "Images identified by file name." }
+        }
+      };
       const added = yield* databases.withPatchLock(patchId)(tables.provision(patchId, expanded));
       assert.strictEqual(added.schemaRevision, 2);
       assert.deepStrictEqual(added.provisioned.stores, ["images"]);
       assert.deepStrictEqual(added.unused.stores, []);
+      assert.deepStrictEqual(
+        Tables.inventoryManifest((yield* inventory.read(patchId))!).files,
+        expanded.files
+      );
       const older = yield* databases.withPatchLock(patchId)(tables.provision(patchId, definition));
       assert.strictEqual(older.schemaRevision, 2);
       assert.deepStrictEqual(older.provisioned.stores, []);
@@ -272,7 +335,10 @@ export const stores = Effect.fn("ProvisioningContract.stores")(function* (compan
           Effect.gen(function* () {
             yield* tables.provision(patchId, {
               ...expanded,
-              files: { ...expanded.files, aborted: {} }
+              files: {
+                ...expanded.files,
+                aborted: { description: "Files from an aborted publish." }
+              }
             });
             return yield* Effect.fail("abort");
           })
@@ -299,7 +365,13 @@ export const refusals = Effect.fn("ProvisioningContract.refusals")(function* (co
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* databases.withPatchLock(patchId)(
-        tables.provision(patchId, manifest({ notes: base, targets: { columns: {}, indexes: {} } }))
+        tables.provision(
+          patchId,
+          manifest({
+            notes: base,
+            targets: { description: "Notes identified by their row id.", columns: {}, indexes: {} }
+          })
+        )
       );
       const before = yield* inventory.read(patchId);
       const cases: ReadonlyArray<{
@@ -410,7 +482,14 @@ export const refusals = Effect.fn("ProvisioningContract.refusals")(function* (co
             const error = yield* tables
               .provision(
                 patchId,
-                manifest({ shouldNotExist: { columns: {}, indexes: {} }, notes: test.definition })
+                manifest({
+                  shouldNotExist: {
+                    description: "Notes identified by their row id.",
+                    columns: {},
+                    indexes: {}
+                  },
+                  notes: test.definition
+                })
               )
               .pipe(Effect.flip);
             assert.instanceOf(error, Tables.NotAdditive);
@@ -469,7 +548,7 @@ export const emptyAndRollback = Effect.fn("ProvisioningContract.emptyAndRollback
           Effect.gen(function* () {
             yield* tables.provision("aborted-tables", {
               ...manifest({ notes: base }),
-              files: { attachments: {} }
+              files: { attachments: { description: "Documents attached to notes." } }
             });
             return yield* Effect.fail("abort");
           })
@@ -486,6 +565,7 @@ export const emptyAndRollback = Effect.fn("ProvisioningContract.emptyAndRollback
           prototypeId,
           manifest({
             constructor: {
+              description: "Notes identified by their row id.",
               columns: { body: { kind: "text" } },
               indexes: { byBody: { columns: ["body"] } }
             }
@@ -525,13 +605,22 @@ export const columnLimit = Effect.fn("ProvisioningContract.columnLimit")(functio
         ])
       );
       yield* databases.withPatchLock(patchId)(
-        tables.provision(patchId, manifest({ wide: { columns, indexes: {} } }))
+        tables.provision(
+          patchId,
+          manifest({
+            wide: { description: "Rows for the cumulative column limit.", columns, indexes: {} }
+          })
+        )
       );
       const atLimit = yield* databases.withPatchLock(patchId)(
         tables.provision(
           patchId,
           manifest({
-            wide: { columns: { last: { kind: "text", optional: true } }, indexes: {} }
+            wide: {
+              description: "Notes identified by their row id.",
+              columns: { last: { kind: "text", optional: true } },
+              indexes: {}
+            }
           })
         )
       );
@@ -541,7 +630,11 @@ export const columnLimit = Effect.fn("ProvisioningContract.columnLimit")(functio
           .provision(
             patchId,
             manifest({
-              wide: { columns: { overflow: { kind: "text", optional: true } }, indexes: {} }
+              wide: {
+                description: "Notes identified by their row id.",
+                columns: { overflow: { kind: "text", optional: true } },
+                indexes: {}
+              }
             })
           )
           .pipe(Effect.flip)
@@ -568,6 +661,7 @@ export const indexKeyLimit = Effect.fn("ProvisioningContract.indexKeyLimit")(fun
     createHash("sha256").update(`index-key-${index}`).digest("hex")
   ).join("");
   const initial: typeof TableDefinition.Type = {
+    description: "Notes identified by their row id.",
     columns: {
       title: { kind: "text" },
       metadata: { kind: "json", default: { value: long } },
@@ -587,8 +681,13 @@ export const indexKeyLimit = Effect.fn("ProvisioningContract.indexKeyLimit")(fun
       ]);
       const before = yield* inventory.read(patchId);
       const expanded = manifest({
-        shouldNotExist: { columns: {}, indexes: {} },
+        shouldNotExist: {
+          description: "Notes identified by their row id.",
+          columns: {},
+          indexes: {}
+        },
         notes: {
+          description: "Notes identified by their row id.",
           columns: {
             ...initial.columns,
             defaulted: { kind: "text", default: long },
@@ -637,6 +736,7 @@ export const indexKeyLimit = Effect.fn("ProvisioningContract.indexKeyLimit")(fun
           patchId,
           manifest({
             notes: {
+              description: "Notes identified by their row id.",
               columns: {
                 ...initial.columns,
                 parent: { kind: "ref", table: "notes", optional: true }
@@ -702,6 +802,7 @@ export const rowExpansionLimit = Effect.fn("ProvisioningContract.rowExpansionLim
   const patchId = "row-expansion-limit";
   const retained = "r".repeat(600_000);
   const initial: typeof TableDefinition.Type = {
+    description: "Notes identified by their row id.",
     columns: {
       title: { kind: "text", default: "kept" },
       retained: { kind: "text", optional: true }
@@ -720,8 +821,13 @@ export const rowExpansionLimit = Effect.fn("ProvisioningContract.rowExpansionLim
       ]);
       const before = yield* inventory.read(patchId);
       const expanded = manifest({
-        shouldNotExist: { columns: {}, indexes: {} },
+        shouldNotExist: {
+          description: "Notes identified by their row id.",
+          columns: {},
+          indexes: {}
+        },
         notes: {
+          description: "Notes identified by their row id.",
           // Omitted cumulative values and indexes still count.
           columns: { added: { kind: "text", default: "n".repeat(600_000) } },
           indexes: {}

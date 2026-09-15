@@ -12,7 +12,7 @@ import { InstanceMismatch, LocalError, RejectedError, UnreachableError } from ".
 import * as Instance from "./Instance.js";
 import * as Login from "./Login.js";
 import * as Output from "./Output.js";
-import { executeConfig } from "./executeConfig.js";
+import { configFailure, executeConfig } from "./executeConfig.js";
 import type { Declaration } from "./config.js";
 import {
   ConfigEdit,
@@ -284,9 +284,10 @@ export const generate = Effect.fn("Project.generate")(function* (
         )
       );
     if (change.kind === "remove") {
-      const before = yield* localIO("Execute config", () =>
-        executeConfig(configPath, { resolve: false, source })
-      );
+      const before = yield* Effect.tryPromise({
+        try: () => executeConfig(configPath, { resolve: false, source }),
+        catch: configFailure
+      });
       const declaration = before.uses[change.alias];
       if (!declaration)
         return yield* new LocalError({ message: `No declaration named ${change.alias}.` });
@@ -307,12 +308,14 @@ export const generate = Effect.fn("Project.generate")(function* (
     });
     configEdit = { before: source, after: edited };
   }
-  const manifest = yield* localIO("Execute config", () =>
-    executeConfig(configPath, {
-      resolve: false,
-      ...(configEdit ? { source: configEdit.after } : {})
-    })
-  );
+  const manifest = yield* Effect.tryPromise({
+    try: () =>
+      executeConfig(configPath, {
+        resolve: false,
+        ...(configEdit ? { source: configEdit.after } : {})
+      }),
+    catch: configFailure
+  });
   if (
     removedKind &&
     !Object.values(manifest.uses).some((declaration) => declaration.kind === removedKind)

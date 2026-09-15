@@ -46,14 +46,14 @@ describe("executeConfig", () => {
       const tier: 1 = 1;
       console.log("config output is not the result channel");
       export default defineConfig({ name: "config-test", tier, tables: {
-        notes: table({
+        notes: table("Notes identified by id; count is a whole-number tally.", {
           title: t.text().default(title), body: t.text().optional(),
           count: t.integer().default(0), score: t.number().default(1.5),
           active: t.boolean().default(false), at: t.timestamp().default("now"),
           data: t.json().default({ nested: [null, true] }),
           parent: t.ref("notes").optional()
         }, { indexes: { byCount: ["count"], byTitle: { columns: ["title"], unique: true } }, shared: true })
-      }, files: { attachments: files() }, uses: {
+      }, files: { attachments: files("Note attachments keyed by filename.") }, uses: {
         sales: postgres("warehouse"), contacts: sharedTable("abcdefghijkl", "contacts")
       } });
     `,
@@ -97,6 +97,7 @@ describe("executeConfig", () => {
       tier: 1,
       tables: {
         notes: {
+          description: "Notes identified by id; count is a whole-number tally.",
           columns: {
             title: { kind: "text", default: "hello" },
             body: { kind: "text", optional: true },
@@ -114,7 +115,7 @@ describe("executeConfig", () => {
           shared: true
         }
       },
-      files: { attachments: {} },
+      files: { attachments: { description: "Note attachments keyed by filename." } },
       uses: {
         sales: { kind: "postgres", handle: "warehouse", id: "connection-real", revision: 7 },
         contacts: {
@@ -161,10 +162,40 @@ describe("executeConfig", () => {
     '{ score: { kind: "number", default: Infinity } }'
   ])("refuses invalid definitions instead of silently changing them: %s", async (columns) => {
     const path = await fixture(
-      `export default { name: "invalid-config", tier: 1, tables: { notes: { columns: ${columns}, indexes: {} } }, files: {}, uses: {} };`
+      `export default { name: "invalid-config", tier: 1, tables: { notes: { description: "Notes identified by id.", columns: ${columns}, indexes: {} } }, files: {}, uses: {} };`
     );
     await expect(executeConfig(path)).rejects.toThrow();
   });
+
+  it.each([
+    'tables: { notes: table("", { title: t.text() }) }',
+    'files: { attachments: files(" \\t\\n") }',
+    "tables: { notes: { columns: {}, indexes: {} } }",
+    "files: { attachments: {} }",
+    'tables: { notes: { description: " \\t\\n", columns: {}, indexes: {} } }',
+    'files: { attachments: { description: "" } }'
+  ])("refuses missing or blank descriptions during config execution: %s", async (definition) => {
+    const path = await fixture(
+      `export default defineConfig({ name: "invalid-description", tier: 1, ${definition} });`
+    );
+    await expect(executeConfig(path)).rejects.toThrow(/description/i);
+  });
+
+  it.each([true, false])(
+    "refuses table/store name collisions with resolution %s",
+    async (resolve) => {
+      const path = await fixture(
+        `export default defineConfig({ name: "name-collision", tier: 1,
+        tables: { notes: table("Notes identified by id.", { title: t.text() }) },
+        files: { notes: files("Note attachments keyed by filename.") }
+      });`
+      );
+      const result = resolve
+        ? executeConfig(path)
+        : ConfigExecution.executeConfig(path, { resolve: false });
+      await expect(result).rejects.toThrow(/(?=.*table)(?=.*file)(?=.*notes)/i);
+    }
+  );
 
   it("refuses declarations without generated stamps instead of inventing ids or revisions", async () => {
     const path = await fixture(

@@ -46,7 +46,13 @@ it.live(
           release: RELEASE,
           manifestVersion: MANIFEST_VERSION,
           tier: 1,
-          tables: { notes: { columns: { title: { kind: "text" } }, indexes: {} } },
+          tables: {
+            notes: {
+              description: "Notes identified by id.",
+              columns: { title: { kind: "text" } },
+              indexes: {}
+            }
+          },
           files: {},
           uses: {}
         },

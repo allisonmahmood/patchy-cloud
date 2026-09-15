@@ -79,6 +79,7 @@ const baselineSnapshot = (
         new Inventory.Table({
           patchId,
           name,
+          description: definition.description,
           shared: definition.shared === true,
           createdAt: epoch
         })
@@ -114,7 +115,10 @@ const baselineSnapshot = (
           })
       )
     ),
-    stores: Object.keys(baseline.files).map((name) => new Inventory.Store({ patchId, name }))
+    stores: Object.entries(baseline.files).map(
+      ([name, definition]) =>
+        new Inventory.Store({ patchId, name, description: definition.description })
+    )
   });
 
 interface LocalState {

@@ -45,7 +45,12 @@ it.layer(NodeFileSystem.layer)("PgliteCompanyDatabases", (it) => {
             Effect.gen(function* () {
               const sql = yield* SqlClient.SqlClient;
               yield* inventory.ensurePatch("legacy");
-              yield* inventory.putTable({ patchId: "legacy", name: "notes", shared: true });
+              yield* inventory.putTable({
+                description: "Notes identified by their row id.",
+                patchId: "legacy",
+                name: "notes",
+                shared: true
+              });
               yield* inventory.putColumn({
                 patchId: "legacy",
                 table: "notes",
@@ -117,7 +122,12 @@ it.layer(NodeFileSystem.layer)("PgliteCompanyDatabases", (it) => {
                 const sql = yield* SqlClient.SqlClient;
                 yield* sql.unsafe('CREATE TABLE "p_persisted"."notes" ("body" text)');
                 yield* sql`INSERT INTO "p_persisted"."notes" ("body") VALUES ('survives reopen')`;
-                yield* inventory.putTable({ patchId: "persisted", name: "notes", shared: false });
+                yield* inventory.putTable({
+                  description: "Notes identified by their row id.",
+                  patchId: "persisted",
+                  name: "notes",
+                  shared: false
+                });
                 yield* inventory.putColumn({
                   patchId: "persisted",
                   table: "notes",
@@ -128,7 +138,11 @@ it.layer(NodeFileSystem.layer)("PgliteCompanyDatabases", (it) => {
                   defaultKind: null,
                   defaultValue: null
                 });
-                yield* inventory.putStore({ patchId: "persisted", name: "attachments" });
+                yield* inventory.putStore({
+                  description: "Documents identified by file name.",
+                  patchId: "persisted",
+                  name: "attachments"
+                });
                 yield* inventory.bumpRevision("persisted");
                 return yield* inventory.read("persisted");
               })
