@@ -65,7 +65,9 @@ import {
   PublishRefused,
   PublishKeyConflict,
   Release,
-  Catalog,
+  Connections,
+  ConnectionDetail,
+  ConnectionUnavailable,
   GenerateRequest,
   Generated
 } from "./schemas.js";
@@ -424,6 +426,38 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
   .middleware(Authorization)
   .prefix("/api") {}
 
+export class ConnectionsGroup extends HttpApiGroup.make("connections", { topLevel: true })
+  .add(
+    HttpApiEndpoint.get("listConnections", "/connections", {
+      query: { all: Schema.optionalKey(queryFlag) },
+      success: Connections,
+      error: [ConnectionUnavailable, ...protectedErrors]
+    }).annotateMerge(
+      describe(
+        "List the caller's company connections, including disconnected ones, for any active member. " +
+          "Connected entries carry a copy-ready add hint; disconnected entries carry reason " +
+          "`not_connected` and a /company/connections hint. A bare all or all=true also includes " +
+          "every offered integration's connected state. No snapshots, credentials or business rows. " +
+          "Responses are private, no-store."
+      )
+    ),
+    HttpApiEndpoint.get("getConnection", "/connections/:handle", {
+      params: { handle: Schema.String },
+      success: ConnectionDetail,
+      error: [ConnectionUnavailable, ...protectedErrors]
+    }).annotateMerge(
+      describe(
+        "Read one company connection by its exact handle, for any active member. " +
+          "The current immutable snapshot includes its revision and ISO takenAt timestamp, " +
+          "including when the connection is disconnected. A missing snapshot is null, never an " +
+          "empty database. Unknown handles and another company's connections answer the same 404. " +
+          "Never returns credentials or business rows. Responses are private, no-store."
+      )
+    )
+  )
+  .middleware(Authorization)
+  .prefix("/api") {}
+
 export class SdkGroup extends HttpApiGroup.make("sdk", { topLevel: true })
   .add(
     HttpApiEndpoint.get("release", "/release", { success: Release }).annotateMerge(
@@ -434,19 +468,6 @@ export class SdkGroup extends HttpApiGroup.make("sdk", { topLevel: true })
           "Subresource Integrity digest. Discovery is no-store; only the exact GET tarball path is reserved."
       )
     ),
-    HttpApiEndpoint.get("catalog", "/sdk/catalog", {
-      query: Schema.Struct({ all: Schema.optionalKey(queryFlag) }),
-      success: Catalog,
-      error: [PublishUnavailable, ...protectedErrors]
-    })
-      .middleware(Authorization)
-      .annotateMerge(
-        describe(
-          "Company metadata only: connected Postgres connections and live same-company shared tables. " +
-            "With all=true, include disconnected connections and every offered integration's connected state. " +
-            "Never returns credentials or business rows. Responses are private, no-store."
-        )
-      ),
     HttpApiEndpoint.post("generate", "/sdk/generate", {
       payload: GenerateRequest,
       success: Generated,
@@ -640,7 +661,7 @@ export class RuntimeGroup extends HttpApiGroup.make("runtime", { topLevel: true 
   .prefix("/api") {}
 
 export class PatchyApi extends HttpApi.make("patchy")
-  .add(AuthGroup, PatchesGroup, SdkGroup, RuntimeGroup)
+  .add(AuthGroup, PatchesGroup, ConnectionsGroup, SdkGroup, RuntimeGroup)
   .annotateMerge(
     OpenApi.annotations({
       title: "Patchy Cloud API",

@@ -26,7 +26,7 @@ import { CURRENT_RELEASE, MANIFEST_VERSION, Release, SdkGroup, WIRE_VERSION } fr
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlError from "effect/unstable/sql/SqlError";
-import { Catalog, Generated, Manifest, isManagedOutputPath } from "@patchy/api";
+import { Generated, Manifest, isManagedOutputPath } from "@patchy/api";
 import { Patches } from "@patchy/patches";
 import { ConnectionStore } from "@patchy/integrations";
 import { ConnectionStoreDev } from "@patchy/integrations/dev";
@@ -258,7 +258,6 @@ void [inserted, changed, at, createClient, PatchyError, executeConfig, dev];
   );
 });
 
-const decodeCatalog = Schema.decodeUnknownEffect(Catalog);
 const decodeGenerated = Schema.decodeUnknownEffect(Generated);
 const decodeManifest = Schema.decodeUnknownEffect(Manifest);
 const identity = Fixtures.identities.uploader;
@@ -312,16 +311,7 @@ it.layer(layer)("SDK company generation", (it) => {
     () =>
       Effect.gen(function* () {
         const client = yield* HttpClient.HttpClient;
-        assert.strictEqual((yield* client.get("/api/sdk/catalog")).status, 401);
         assert.strictEqual((yield* client.post("/api/sdk/generate")).status, 401);
-        const catalog = yield* client.get("/api/sdk/catalog", {
-          headers: { authorization: `Bearer ${identity.machine.id}` }
-        });
-        assert.strictEqual(catalog.status, 200);
-        assert.deepStrictEqual(yield* decodeCatalog(yield* catalog.json), {
-          connections: [],
-          sharedTables: []
-        });
         const generated = yield* client.execute(
           HttpClientRequest.post("/api/sdk/generate").pipe(
             HttpClientRequest.bearerToken(identity.machine.id),
@@ -377,7 +367,7 @@ it.layer(layer)("SDK company generation", (it) => {
   );
 
   it.effect(
-    "filters disconnected connections and generates their current snapshot without credential access",
+    "generates the current connection snapshot without credential access and rejects disconnected connections",
     () =>
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
@@ -423,18 +413,6 @@ it.layer(layer)("SDK company generation", (it) => {
           VALUES (${id}, ${identity.company.id}, 4, ${sql.json(snapshot)})`;
         }
         const client = yield* HttpClient.HttpClient;
-        for (const all of [false, true]) {
-          const response = yield* client.get(`/api/sdk/catalog${all ? "?all=true" : ""}`, {
-            headers: { authorization: `Bearer ${identity.machine.id}` }
-          });
-          const catalog = yield* decodeCatalog(yield* response.json);
-          assert.deepStrictEqual(
-            catalog.connections.map(({ handle }) => handle),
-            all ? ["archive", "warehouse"] : ["warehouse"]
-          );
-          if (all)
-            assert.deepStrictEqual(catalog.offered, [{ integration: "postgres", connected: true }]);
-        }
         const response = yield* client.execute(
           HttpClientRequest.post("/api/sdk/generate").pipe(
             HttpClientRequest.bearerToken(identity.machine.id),
@@ -495,186 +473,183 @@ it.layer(layer)("SDK company generation", (it) => {
       })
   );
 
-  it.effect("reads cumulative shared inventory and hides sources the member cannot open", () =>
-    Effect.gen(function* () {
-      const patchId = "sdkshared001";
-      const definition = {
-        description: "Contacts identified by id; member links their membership.",
-        columns: {
-          title: { kind: "text" as const },
-          member: { kind: "ref" as const, table: "members" }
-        },
-        indexes: { byTitle: { columns: ["title"] } },
-        shared: true
-      };
-      const members = {
-        description: "Members identified by id; team links their team.",
-        columns: { team: { kind: "ref" as const, table: "teams" } },
-        indexes: {},
-        shared: false
-      };
-      const teams = {
-        description: "Teams identified by id; lead identifies a member.",
-        columns: {
-          lead: { kind: "ref" as const, table: "members", optional: true },
-          external: { kind: "ref" as const, table: "sdktarget001/people", optional: true }
-        },
-        indexes: {},
-        shared: false
-      };
-      yield* (yield* CompanyDatabases.CompanyDatabases).ensureReady(identity.company.id);
-      const source: Patches.RecordInput = {
-        ...Fixtures.publishRecord(),
-        manifest: {
-          ...Fixtures.manifest,
-          name: "sdk-shared-source",
-          tables: {
-            contacts: definition,
-            members,
-            teams,
-            unrelated: {
-              description: "Unrelated records identified by id.",
-              columns: { title: { kind: "text" } },
-              indexes: {}
+  it.effect(
+    "generates cumulative shared inventory and rejects sources the member cannot open",
+    () =>
+      Effect.gen(function* () {
+        const patchId = "sdkshared001";
+        const definition = {
+          description: "Contacts identified by id; member links their membership.",
+          columns: {
+            title: { kind: "text" as const },
+            member: { kind: "ref" as const, table: "members" }
+          },
+          indexes: { byTitle: { columns: ["title"] } },
+          shared: true
+        };
+        const members = {
+          description: "Members identified by id; team links their team.",
+          columns: { team: { kind: "ref" as const, table: "teams" } },
+          indexes: {},
+          shared: false
+        };
+        const teams = {
+          description: "Teams identified by id; lead identifies a member.",
+          columns: {
+            lead: { kind: "ref" as const, table: "members", optional: true },
+            external: { kind: "ref" as const, table: "sdktarget001/people", optional: true }
+          },
+          indexes: {},
+          shared: false
+        };
+        yield* (yield* CompanyDatabases.CompanyDatabases).ensureReady(identity.company.id);
+        const source: Patches.RecordInput = {
+          ...Fixtures.publishRecord(),
+          manifest: {
+            ...Fixtures.manifest,
+            name: "sdk-shared-source",
+            tables: {
+              contacts: definition,
+              members,
+              teams,
+              unrelated: {
+                description: "Unrelated records identified by id.",
+                columns: { title: { kind: "text" } },
+                indexes: {}
+              }
+            },
+            uses: {
+              people: {
+                kind: "sharedTable",
+                patchId: "sdktarget001",
+                table: "people",
+                id: "sdktarget001/people",
+                revision: 1
+              }
             }
           },
-          uses: {
-            people: {
-              kind: "sharedTable",
-              patchId: "sdktarget001",
-              table: "people",
-              id: "sdktarget001/people",
-              revision: 1
+          intent: "create",
+          patchId,
+          companyId: identity.company.id,
+          ownerUserId: identity.user.id,
+          versionId: "sdk-shared-version",
+          machineTokenId: identity.machine.id,
+          title: "SDK shared source",
+          objectKey: `patches/${patchId}/versions/1.html`,
+          contentHash: "sdk-shared",
+          fileSize: 1,
+          filename: null,
+          repoOrg: null,
+          repoName: null,
+          cliVersion: null,
+          gitBranch: null,
+          gitCommitSha: null,
+          sourceIp: null,
+          userAgent: null
+        };
+        yield* Fixtures.record({
+          ...source,
+          ...Fixtures.publishRecord(),
+          patchId: "sdktarget001",
+          versionId: "sdk-ref-target-version",
+          objectKey: "patches/sdktarget001/versions/1.html",
+          manifest: {
+            ...Fixtures.manifest,
+            name: "sdk-ref-target",
+            tables: {
+              people: {
+                description: "People identified by id.",
+                columns: { name: { kind: "text" } },
+                indexes: {},
+                shared: true
+              }
             }
           }
-        },
-        intent: "create",
-        patchId,
-        companyId: identity.company.id,
-        ownerUserId: identity.user.id,
-        versionId: "sdk-shared-version",
-        machineTokenId: identity.machine.id,
-        title: "SDK shared source",
-        objectKey: `patches/${patchId}/versions/1.html`,
-        contentHash: "sdk-shared",
-        fileSize: 1,
-        filename: null,
-        repoOrg: null,
-        repoName: null,
-        cliVersion: null,
-        gitBranch: null,
-        gitCommitSha: null,
-        sourceIp: null,
-        userAgent: null
-      };
-      yield* Fixtures.record({
-        ...source,
-        ...Fixtures.publishRecord(),
-        patchId: "sdktarget001",
-        versionId: "sdk-ref-target-version",
-        objectKey: "patches/sdktarget001/versions/1.html",
-        manifest: {
-          ...Fixtures.manifest,
-          name: "sdk-ref-target",
-          tables: {
-            people: {
-              description: "People identified by id.",
-              columns: { name: { kind: "text" } },
-              indexes: {},
-              shared: true
-            }
-          }
-        }
-      });
-      yield* Fixtures.record(source);
-      const platform = yield* SqlClient.SqlClient;
-      // The catalog and consumers retain omitted tables; the active manifest is not their authority.
-      yield* platform`UPDATE patch_versions SET manifest = ${platform.json(Fixtures.manifest)} WHERE id = 'sdk-shared-version'`;
-      const client = yield* HttpClient.HttpClient;
-      const response = yield* client.execute(
-        HttpClientRequest.post("/api/sdk/generate").pipe(
-          HttpClientRequest.bearerToken(Fixtures.identities.reader.machine.id),
-          HttpClientRequest.bodyJsonUnsafe({
-            ...generateRequest(),
-            manifest: {
-              ...Fixtures.manifest,
-              uses: { contacts: { kind: "sharedTable", patchId, table: "contacts" } }
-            }
-          })
-        )
-      );
-      assert.strictEqual(response.status, 200);
-      const output = yield* decodeGenerated(yield* response.json);
-      assert.deepStrictEqual(output.uses, [
-        { alias: "contacts", id: `${patchId}/contacts`, revision: 1 }
-      ]);
-      const shared = output.metadata.shared.contacts!;
-      assert.deepStrictEqual(Object.keys(shared.tables).sort(), ["contacts", "members", "teams"]);
-      assert.deepStrictEqual(shared.tables.contacts!.columns, definition.columns);
-      assert.deepStrictEqual(shared.tables.members, members);
-      assert.deepStrictEqual(shared.tables.teams, teams);
-      assert.deepStrictEqual(
-        Object.values(shared.uses).map(({ id }) => id),
-        ["sdktarget001/people"]
-      );
-      // The generated fixture schema must provision without the source's omitted use.
-      const databases = yield* CompanyDatabases.CompanyDatabases;
-      const provisioner = yield* Tables.Tables;
-      const replayManifest = yield* decodeManifest({
-        ...Fixtures.manifest,
-        tables: shared.tables,
-        uses: shared.uses
-      });
-      yield* databases.withCompany(identity.company.id)(
-        databases.withPatchLock("sdkrefreplay")(
-          provisioner.provision("sdkrefreplay", replayManifest)
-        )
-      );
-      for (const path of [
-        "patchy/_generated/uses/contacts.ts",
-        "patchy/_generated/context/contacts.md",
-        "fixtures/shared-contacts.sql",
-        ".agents/skills/patchy-shared-tables/SKILL.md"
-      ])
-        assert.isTrue(
-          output.files.some((file) => file.path === path),
-          path
+        });
+        yield* Fixtures.record(source);
+        const platform = yield* SqlClient.SqlClient;
+        // Consumers retain omitted tables; the active manifest is not their authority.
+        yield* platform`UPDATE patch_versions SET manifest = ${platform.json(Fixtures.manifest)} WHERE id = 'sdk-shared-version'`;
+        const client = yield* HttpClient.HttpClient;
+        const response = yield* client.execute(
+          HttpClientRequest.post("/api/sdk/generate").pipe(
+            HttpClientRequest.bearerToken(Fixtures.identities.reader.machine.id),
+            HttpClientRequest.bodyJsonUnsafe({
+              ...generateRequest(),
+              manifest: {
+                ...Fixtures.manifest,
+                uses: { contacts: { kind: "sharedTable", patchId, table: "contacts" } }
+              }
+            })
+          )
         );
-      const sql = yield* SqlClient.SqlClient;
-      yield* sql`UPDATE patches SET disabled_at = now(), disabled_reason = 'test' WHERE id = ${patchId}`;
-      const catalogResponse = yield* client.get("/api/sdk/catalog", {
-        headers: { authorization: `Bearer ${Fixtures.identities.reader.machine.id}` }
-      });
-      const catalog = yield* decodeCatalog(yield* catalogResponse.json);
-      assert.isFalse(catalog.sharedTables.some((table) => table.patchId === patchId));
-      const refused = yield* client.execute(
-        HttpClientRequest.post("/api/sdk/generate").pipe(
-          HttpClientRequest.bearerToken(Fixtures.identities.reader.machine.id),
-          HttpClientRequest.bodyJsonUnsafe({
-            ...generateRequest(),
-            manifest: {
-              ...Fixtures.manifest,
-              uses: { contacts: { kind: "sharedTable", patchId, table: "contacts" } }
-            }
-          })
-        )
-      );
-      assert.strictEqual(refused.status, 422);
-      assert.include(yield* refused.json, { code: "patch_not_openable" });
-      const error = yield* Generation.generate(identity.company.id, {
-        ...generateRequest(),
-        manifest: {
+        assert.strictEqual(response.status, 200);
+        const output = yield* decodeGenerated(yield* response.json);
+        assert.deepStrictEqual(output.uses, [
+          { alias: "contacts", id: `${patchId}/contacts`, revision: 1 }
+        ]);
+        const shared = output.metadata.shared.contacts!;
+        assert.deepStrictEqual(Object.keys(shared.tables).sort(), ["contacts", "members", "teams"]);
+        assert.deepStrictEqual(shared.tables.contacts!.columns, definition.columns);
+        assert.deepStrictEqual(shared.tables.members, members);
+        assert.deepStrictEqual(shared.tables.teams, teams);
+        assert.deepStrictEqual(
+          Object.values(shared.uses).map(({ id }) => id),
+          ["sdktarget001/people"]
+        );
+        // The generated fixture schema must provision without the source's omitted use.
+        const databases = yield* CompanyDatabases.CompanyDatabases;
+        const provisioner = yield* Tables.Tables;
+        const replayManifest = yield* decodeManifest({
           ...Fixtures.manifest,
-          uses: { contacts: { kind: "sharedTable", patchId, table: "contacts" } }
-        }
-      }).pipe(Effect.flip);
-      assert.instanceOf(error, Generation.PatchNotOpenable);
-      if (error._tag === "SdkPatchNotOpenable")
-        assert.instanceOf(error.cause, Patches.PatchNotOpenable);
-    })
+          tables: shared.tables,
+          uses: shared.uses
+        });
+        yield* databases.withCompany(identity.company.id)(
+          databases.withPatchLock("sdkrefreplay")(
+            provisioner.provision("sdkrefreplay", replayManifest)
+          )
+        );
+        for (const path of [
+          "patchy/_generated/uses/contacts.ts",
+          "patchy/_generated/context/contacts.md",
+          "fixtures/shared-contacts.sql",
+          ".agents/skills/patchy-shared-tables/SKILL.md"
+        ])
+          assert.isTrue(
+            output.files.some((file) => file.path === path),
+            path
+          );
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`UPDATE patches SET disabled_at = now(), disabled_reason = 'test' WHERE id = ${patchId}`;
+        const refused = yield* client.execute(
+          HttpClientRequest.post("/api/sdk/generate").pipe(
+            HttpClientRequest.bearerToken(Fixtures.identities.reader.machine.id),
+            HttpClientRequest.bodyJsonUnsafe({
+              ...generateRequest(),
+              manifest: {
+                ...Fixtures.manifest,
+                uses: { contacts: { kind: "sharedTable", patchId, table: "contacts" } }
+              }
+            })
+          )
+        );
+        assert.strictEqual(refused.status, 422);
+        assert.include(yield* refused.json, { code: "patch_not_openable" });
+        const error = yield* Generation.generate(identity.company.id, {
+          ...generateRequest(),
+          manifest: {
+            ...Fixtures.manifest,
+            uses: { contacts: { kind: "sharedTable", patchId, table: "contacts" } }
+          }
+        }).pipe(Effect.flip);
+        assert.instanceOf(error, Generation.PatchNotOpenable);
+        if (error._tag === "SdkPatchNotOpenable")
+          assert.instanceOf(error.cause, Patches.PatchNotOpenable);
+      })
   );
 
-  it.effect("keeps company capacity and unavailable metadata distinct on both SDK routes", () =>
+  it.effect("keeps company capacity and unavailable metadata distinct during generation", () =>
     Effect.gen(function* () {
       const payload = yield* failureSource("sdkfailure01");
       const companies = yield* CompanyDatabases.CompanyDatabases;
@@ -698,44 +673,30 @@ it.layer(layer)("SDK company generation", (it) => {
           ),
           Layer.fresh
         );
-        for (const [stage, resource, operation] of [
-          [
-            "shared-table-list",
-            identity.company.id,
-            Generation.catalog(identity.company.id, false)
-          ],
-          [
-            "shared-table",
-            "sdkfailure01/contacts",
-            Generation.generate(identity.company.id, payload)
-          ]
-        ] as const) {
-          const error = yield* operation.pipe(Effect.provide(dependencies), Effect.flip);
-          if (cause === busy) assert.strictEqual(error, busy);
-          else {
-            assert.instanceOf(error, Generation.GenerationUnavailable);
-            if (error._tag === "GenerationUnavailable") {
-              assert.strictEqual(error.cause, cause);
-              assert.strictEqual(error.stage, stage);
-              assert.strictEqual(error.resource, resource);
-              assert.notInclude(error.message, "secret-provider-diagnostic");
-              assert.isBelow(error.message.length, 512);
-            }
+        const error = yield* Generation.generate(identity.company.id, payload).pipe(
+          Effect.provide(dependencies),
+          Effect.flip
+        );
+        if (cause === busy) assert.strictEqual(error, busy);
+        else {
+          assert.instanceOf(error, Generation.GenerationUnavailable);
+          if (error._tag === "GenerationUnavailable") {
+            assert.strictEqual(error.cause, cause);
+            assert.strictEqual(error.stage, "shared-table");
+            assert.strictEqual(error.resource, "sdkfailure01/contacts");
+            assert.notInclude(error.message, "secret-provider-diagnostic");
+            assert.isBelow(error.message.length, 512);
           }
         }
         const api = yield* sdkOver(dependencies);
-        for (const response of [
-          yield* api.catalog({ query: {}, responseMode: "response-only" }),
-          yield* api.generate({ payload, responseMode: "response-only" })
-        ]) {
-          assert.strictEqual(response.status, 503);
-          assert.strictEqual(response.headers["cache-control"], "private, no-store");
-          assert.include(yield* response.json, {
-            ok: false,
-            code: cause === busy ? "busy" : "source_unavailable"
-          });
-          assert.notInclude(yield* response.text, "secret-provider-diagnostic");
-        }
+        const response = yield* api.generate({ payload, responseMode: "response-only" });
+        assert.strictEqual(response.status, 503);
+        assert.strictEqual(response.headers["cache-control"], "private, no-store");
+        assert.include(yield* response.json, {
+          ok: false,
+          code: cause === busy ? "busy" : "source_unavailable"
+        });
+        assert.notInclude(yield* response.text, "secret-provider-diagnostic");
       }
     })
   );
@@ -751,11 +712,9 @@ it.layer(layer)("SDK company generation", (it) => {
         const dependencies = Layer.succeed(Patches.Patches, {
           ...patches,
           find: () => Effect.fail(sqlError),
-          sharedTables: () => Effect.fail(sqlError),
           sharedTable: () => Effect.fail(sqlError)
         });
         for (const operation of [
-          Generation.catalog(identity.company.id, false),
           Generation.generate(identity.company.id, {
             ...generateRequest(),
             patchId: "sdksqlfail01"
@@ -792,16 +751,14 @@ it.layer(layer)("SDK company generation", (it) => {
           ),
           Layer.fresh
         );
-        for (const operation of [
-          Generation.catalog(identity.company.id, false),
-          Generation.generate(identity.company.id, payload)
-        ]) {
-          const exit = yield* operation.pipe(Effect.provide(isolated), Effect.exit);
-          assert.isTrue(Exit.isFailure(exit));
-          if (Exit.isFailure(exit)) {
-            assert.isTrue(Cause.hasDies(exit.cause));
-            assert.strictEqual(Cause.squash(exit.cause), mismatch);
-          }
+        const exit = yield* Generation.generate(identity.company.id, payload).pipe(
+          Effect.provide(isolated),
+          Effect.exit
+        );
+        assert.isTrue(Exit.isFailure(exit));
+        if (Exit.isFailure(exit)) {
+          assert.isTrue(Cause.hasDies(exit.cause));
+          assert.strictEqual(Cause.squash(exit.cause), mismatch);
         }
       })
   );
@@ -821,30 +778,24 @@ it.layer(layer)("SDK company generation", (it) => {
         ...Fixtures.manifest,
         uses: { sales: { kind: "postgres", handle: "warehouse" } }
       });
-      for (const operation of [
-        Generation.catalog(identity.company.id, false),
-        Generation.generate(identity.company.id, payload)
-      ]) {
-        const error = yield* operation.pipe(Effect.provide(dependencies), Effect.flip);
-        assert.instanceOf(error, Generation.GenerationUnavailable);
-        if (error._tag === "GenerationUnavailable") {
-          assert.strictEqual(error.cause, cause);
-          assert.strictEqual(error.stage, "connection-list");
-          assert.strictEqual(error.resource, identity.company.id);
-        }
+      const error = yield* Generation.generate(identity.company.id, payload).pipe(
+        Effect.provide(dependencies),
+        Effect.flip
+      );
+      assert.instanceOf(error, Generation.GenerationUnavailable);
+      if (error._tag === "GenerationUnavailable") {
+        assert.strictEqual(error.cause, cause);
+        assert.strictEqual(error.stage, "connection-list");
+        assert.strictEqual(error.resource, identity.company.id);
       }
       const api = yield* sdkOver(dependencies);
-      for (const response of [
-        yield* api.catalog({ query: {}, responseMode: "response-only" }),
-        yield* api.generate({ payload, responseMode: "response-only" })
-      ]) {
-        assert.strictEqual(response.status, 503);
-        assert.include(yield* response.json, { ok: false, code: "source_unavailable" });
-        const body = yield* response.text;
-        assert.include(body, "connection-list");
-        assert.notInclude(body, "private-connection-diagnostic");
-        assert.isBelow(body.length, 512);
-      }
+      const response = yield* api.generate({ payload, responseMode: "response-only" });
+      assert.strictEqual(response.status, 503);
+      assert.include(yield* response.json, { ok: false, code: "source_unavailable" });
+      const body = yield* response.text;
+      assert.include(body, "connection-list");
+      assert.notInclude(body, "private-connection-diagnostic");
+      assert.isBelow(body.length, 512);
     })
   );
 

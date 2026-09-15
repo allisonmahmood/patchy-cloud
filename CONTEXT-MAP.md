@@ -11,10 +11,10 @@ Patchy Cloud is one deployment: the hosting server on one side, the `patchy` CLI
 - [Auth](./packages/auth/CONTEXT.md) — `packages/auth`. Clerk session verification and viewers, user-owned machine tokens, device login, identity, revocation and bearer parsing, the sign-in and sign-out pages, Your machines, the `auth` API group and the shared dev seed
 - [Runtime](./packages/runtime/CONTEXT.md) — `packages/runtime`. Browser-only operation admission, loaded-version binding, acting identity, wire versions, dispatch and the runtime log. Admits `me`, owned-table operations, shared-table reads, file operations and Postgres calls supplied by their capabilities
 - [Primitives](./packages/primitives/CONTEXT.md) — `packages/primitives`. Patch-owned table and file-store definitions, one additive diff and provisioning, schema revisions, system columns, refs, bounded row operations and immutable file objects over Postgres and PGlite. Shared-table declarations grant no authority: reads check the source's live access and cumulative inventory
-- [Integrations](./packages/integrations/CONTEXT.md) — `packages/integrations`. Company Postgres connections, encrypted credentials, immutable schema snapshots, constrained runtime reads, generated relation clients, local fixtures and admin connection pages with recent calls. Publish binds connected identities and exact metadata revisions
+- [Integrations](./packages/integrations/CONTEXT.md): `packages/integrations`. Company Postgres connections, encrypted credentials, immutable schema snapshots, the member-readable `connections` API group, constrained runtime reads, generated relation clients, local fixtures and admin connection pages with recent calls. Publish binds connected identities and exact metadata revisions
 - [Publishing](./packages/patchy/CONTEXT.md) — `packages/patchy` and `packages/sdk`, sharing one glossary:
   - `packages/patchy`: the single `patchy` package's CLI, config builders, browser client and local PGlite dev runtime; patch-repo initialization and publishing, transactional refresh, catalog and declaration editing, managed files, global and project skills, and fixtures
-  - `packages/sdk`: the instance's current release metadata, immutable package artifact, bearer-protected catalog and finished-file generation, and canonical project skill sources. SDK distribution is part of Publishing, separate from page serving
+  - `packages/sdk`: the instance's current release metadata, immutable package artifact, bearer-protected finished-file generation, and canonical project skill sources. SDK distribution is part of Publishing, separate from page serving
 
 ## Shared kernel
 
@@ -35,7 +35,7 @@ Supporting packages rather than product contexts; their glossaries define only t
 ## Relationships
 
 - **Publishing → `api`**: publishes through the shared wire contract using a user-owned machine token
-- **Publishing (`sdk`) → Primitives, Integrations, Patches, `api`**: distributes the packed release, composes generated clients and context from primitive definitions and integration snapshots, and catalogs only connections and shared sources the caller may use
+- **Publishing (`sdk`) → Primitives, Integrations, Patches, `api`**: distributes the packed release and composes generated clients and context from primitive definitions and integration snapshots the caller may use
 - **Publishing (`patchy/dev`) → Runtime, Primitives, Integrations, Company database, Content store, Limits**: supplies local loaded versions and the handler map, composing the real capabilities over PGlite and a filesystem store with the machine's user identity and synthetic fixtures
 - **`patchy/dev` → `serving/shell`**: serves the production renderer, broker and sandbox policies through the infrastructure-free shell export
 - **Serving → Patches, Auth**: relies on Patches for content, sharing and visits, and on Auth for viewer identity and session admission
