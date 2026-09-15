@@ -17,7 +17,7 @@ Where a patch's code runs, not who may open it or what pricing plan it uses. Tie
 _Avoid_: runtime (the thing a tier names), level, plan (tiers are capability, not pricing)
 
 **Owner**:
-The one user in a company a patch belongs to, and the only one who publishes to it. Any machine token acting as that user can manage the patch; an admin may manage or reassign any company patch but cannot publish without becoming its owner.
+The one user in a company a patch belongs to, and the only one who publishes to it. Any machine token acting as that user can manage the patch; an admin may manage any company patch in the portal or reassign it to an active company member, but cannot publish without becoming its owner.
 _Avoid_: creator (a version has a creating machine; ownership belongs to the user), editor, author
 
 **Sharing scope**:

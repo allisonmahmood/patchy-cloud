@@ -1,6 +1,6 @@
 # Portal
 
-Where a signed-in person finds and manages their company's patches. The patch, its states and its owner belong to [Patches](../patches/CONTEXT.md); the viewer to [Auth](../auth/CONTEXT.md); users and roles to [Companies](../companies/CONTEXT.md). The portal, index, cards, inline management, versions and stale-action refusals are built. Destructive confirmations and deactivation/reactivation choices remain decided work from [#247](https://github.com/allisonmahmood/patchy-cloud/issues/247).
+Where a signed-in person finds and manages their company's patches. The patch, its states and its owner belong to [Patches](../patches/CONTEXT.md); the viewer to [Auth](../auth/CONTEXT.md); users and roles to [Companies](../companies/CONTEXT.md). The portal, index, cards, inline management, versions, confirmation pages and stale-action refusals are built. Deactivation/reactivation choices remain decided work from [#247](https://github.com/allisonmahmood/patchy-cloud/issues/247).
 
 ## Language
 
@@ -17,15 +17,15 @@ One patch's page at `/patches/<name>`: its address, description, owner, current 
 _Avoid_: patch page (the patch is the page at the address), detail view, dossier
 
 **Manage**:
-The owner or admin's controls on a card: description, who can open it, served version and restore are built inline. Retire, delete, restore with off sources and reassign lead to the decided confirmation pages, which are not yet built.
+The owner or admin's controls on a card: description, who can open it, served version and uncomplicated restore stay inline. Retire, delete, restore with off sources and admin-only reassign lead to confirmation pages.
 _Avoid_: settings, admin panel, edit mode
 
 **Confirmation page**:
-The decided page under a card's URL for an act that breaks someone else's tool or that the actor cannot undo alone: the consequence, what breaks, the acknowledgement and the way back. These pages are not yet built; an inline restore that discovers off sources displays their warning without performing the act.
+The page under a card's URL for an act that breaks someone else's tool or that the actor cannot undo alone: the consequence, what breaks, the acknowledgement and the way back. Retire, delete, restore with off sources and reassign each have one.
 _Avoid_: modal, dialog, are-you-sure
 
 **Acknowledgement**:
-The actor's explicit acceptance, on a confirmation page, of the breakage an act causes to listed dependants; absent when nothing breaks. In the CLI its counterpart is `--force`.
+The actor's explicit acceptance, on a confirmation page, of the breakage to listed dependants or the errors a restored patch encounters when reading off sources; absent when nothing breaks. In the CLI its counterpart is `--force`.
 _Avoid_: consent, override, warning (what precedes it)
 
 **Pick page**:

@@ -717,7 +717,8 @@ export class Patches extends Context.Service<
     readonly reassign: (
       patchId: string,
       actor: Actor,
-      newOwnerUserId: string
+      newOwnerUserId: string,
+      expectedOwnerUserId?: string
     ) => Effect.Effect<Patch, LifecycleError | AdminRequired | SqlError>;
     readonly setDescription: (
       patchId: string,
@@ -1903,10 +1904,13 @@ export const make = Effect.gen(function* () {
   const reassign = Effect.fn("Patches.reassign")(function* (
     patchId: string,
     actor: Actor,
-    newOwnerUserId: string
+    newOwnerUserId: string,
+    expectedOwnerUserId?: string
   ) {
     const row = yield* manageable(patchId, actor);
     if (!actor.admin) return yield* new AdminRequired({ userId: actor.userId });
+    if (expectedOwnerUserId !== undefined && row.ownerUserId !== expectedOwnerUserId)
+      return yield* new StaleAction({ patchId });
     const target = yield* sql`SELECT id FROM users
         WHERE id = ${newOwnerUserId} AND company_id = ${row.companyId} AND deactivated_at IS NULL
         FOR SHARE`;
