@@ -40,8 +40,9 @@ export const notFound = HttpServerResponse.html(renderNotFound()).pipe(
 );
 
 /**
- * On every address and content answer, the 404 included: a patch URL is never
- * indexed or handed on as a referrer, whether or not it currently serves.
+ * Patch documents, redirects and refusals are never indexed or sent as referrers.
+ * Address notices stay unindexed but use pageResponse's same-origin referrer
+ * policy so their Restore form can submit with a valid Origin.
  */
 const patchUrlHeaders = {
   "x-robots-tag": PATCH_ROBOTS_TAG,
@@ -93,6 +94,7 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (kind: "address" | "c
     served.value.patch.state === "live" &&
     served.value.patch.scope === "public" &&
     served.value.version.id === served.value.patch.currentVersionId;
+  const isAlias = Option.isSome(resolved) && !resolved.value.current;
   // Finish a verified sign-in before serving a public document, but never require
   // a public reader to start a handshake or pass company admission.
   if (!isPublic || completedHandshake) {
@@ -108,39 +110,38 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (kind: "address" | "c
     if (served.value.patch.companyId !== admission.company.id) {
       return withCookies(HttpServerResponse.setHeaders(notFound, patchUrlHeaders), cookies);
     }
+    if (served.value.patch.state !== "live" && !isAlias) {
+      const canOpen = yield* Patches.Openability;
+      const notice = yield* patches
+        .addressNotice(served.value.patch.id, {
+          companyId: admission.company.id,
+          userId: admission.user.id,
+          canOpen: (patch) => canOpen(patch, admission.user.id)
+        })
+        .pipe(Effect.catchTags({ SqlError: Effect.die }));
+      if (Option.isNone(notice)) {
+        return withCookies(HttpServerResponse.setHeaders(notFound, patchUrlHeaders), cookies);
+      }
+      const now = yield* Clock.currentTimeMillis;
+      return withCookies(
+        pageResponse(
+          {
+            title: `${notice.value.patch.name} is ${notice.value.patch.state}`,
+            body: renderAddressNotice({ ...notice.value, viewer: admission, now }),
+            app: { viewer: admission, section: "patches" }
+          },
+          session
+        ).pipe(HttpServerResponse.setHeader("x-robots-tag", PATCH_ROBOTS_TAG)),
+        cookies
+      );
+    }
   }
-  if (url !== undefined && Option.isSome(resolved) && !resolved.value.current) {
+  if (url !== undefined && isAlias) {
     const response = HttpServerResponse.redirect(
       `/${served.value.patch.companyHandle}/${served.value.patch.name}${suffix}${url.search}`,
       { status: 308, headers: patchUrlHeaders }
     );
     return isPublic ? response : withCookies(response, cookies);
-  }
-  if (served.value.patch.state !== "live") {
-    if (HttpServerResponse.isHttpServerResponse(admission)) return admission;
-    const canOpen = yield* Patches.Openability;
-    const notice = yield* patches
-      .addressNotice(served.value.patch.id, {
-        companyId: admission.company.id,
-        userId: admission.user.id,
-        canOpen: (patch) => canOpen(patch, admission.user.id)
-      })
-      .pipe(Effect.catchTags({ SqlError: Effect.die }));
-    if (Option.isNone(notice)) {
-      return withCookies(HttpServerResponse.setHeaders(notFound, patchUrlHeaders), cookies);
-    }
-    const now = yield* Clock.currentTimeMillis;
-    return withCookies(
-      pageResponse(
-        {
-          title: `${notice.value.patch.name} is ${notice.value.patch.state}`,
-          body: renderAddressNotice({ ...notice.value, viewer: admission, now }),
-          app: { viewer: admission, section: "patches" }
-        },
-        session
-      ).pipe(HttpServerResponse.setHeader("x-robots-tag", PATCH_ROBOTS_TAG)),
-      cookies
-    );
   }
   if (served.value.version.tier >= 1 && served.value.version.wireVersion !== WIRE_VERSION) {
     return withCookies(

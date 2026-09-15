@@ -342,6 +342,8 @@ Every patch has an address at `/<company>/<patch>`, for every tier and sharing s
 
 A patch's **name** is 3–32 lowercase letters, digits or hyphens, with no leading or trailing hyphen. `patches` and `connections` are reserved. A requested name must be free on create or rename; otherwise publishing returns `name_taken`. File creates without a name normalise the filename and append a suffix on collision. Updates preserve the name unless explicitly renamed. Renaming leaves a 308 redirect until another patch takes the old name. Retire and delete reserve every name until reclamation. The patch's identity remains its id.
 
+Company sharing protects patch content, not address existence. A signed-out request for a retained company patch or an off patch gets the 401 login door; a missing, disabled or reclaimed patch gets 404. Someone probing names can therefore distinguish a retained address from an absent one. This follows the requirement that reclamation leaves no row or name and answers 404 for everyone: a reclaimed address cannot be distinguished from one that never existed.
+
 Only the current public version is public and caches for at most a minute at both its address and its numbered version URL; older versions stay behind the company door. `/~content/<patchId>/<versionId>` is an internal, non-redirecting **content URL**, never the link to share: it serves that version's bytes with that version's tier and content security policy, the same door and sharing-based caching as the address. Tier 0 keeps its script-free `srcdoc` frame with `sandbox=""`; tier 1 frames that content URL with a document nonce and `sandbox="allow-scripts allow-modals"`. Historical pages always render with their own version's tier.
 
 ### The operator
