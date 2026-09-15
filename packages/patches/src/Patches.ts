@@ -893,7 +893,7 @@ export const make = Effect.gen(function* () {
       JOIN users owner ON owner.id = patches.owner_user_id
       JOIN patch_versions current_version ON current_version.id = patches.current_version_id
         AND current_version.patch_id = patches.id
-      WHERE patches.company_id = ${companyId} AND patches.disabled_at IS NULL
+      WHERE patches.company_id = ${companyId}
       ORDER BY (patches.owner_user_id = ${userId}) DESC, patches.name, patches.id`
   });
 
@@ -1132,10 +1132,13 @@ export const make = Effect.gen(function* () {
 
   const read = Effect.fn("Patches.read")(function* (options: ReadOptions) {
     const rows = yield* companyPatchRows(options);
+    const sourceStates = new Map<string, PatchState>();
     const openable = new Map<string, { row: ReadPatchRow; patch: Patch }>();
     for (const row of rows) {
       const patch = toPatch(row);
-      if (options.canOpen(patch)) openable.set(patch.id, { row, patch });
+      sourceStates.set(patch.id, patch.state);
+      if (patch.disabledAt === null && options.canOpen(patch))
+        openable.set(patch.id, { row, patch });
     }
     let selected: Array<{ row: ReadPatchRow; patch: Patch }>;
     if (options.patchRef !== undefined) {
@@ -1195,9 +1198,11 @@ export const make = Effect.gen(function* () {
       inventory: inventories?.get(patch.id) ?? null,
       reads: row.reads.map((declaration): ReadPatch["reads"][number] => {
         const source = openable.get(declaration.patchId)?.patch;
-        return source === undefined
-          ? { ...declaration, state: "gone" }
-          : { ...declaration, name: source.name, state: source.state };
+        return {
+          ...declaration,
+          state: sourceStates.get(declaration.patchId) ?? "gone",
+          ...(source === undefined ? {} : { name: source.name })
+        };
       }),
       dependants: dependants
         .get(patch.id)!

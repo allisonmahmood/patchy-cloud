@@ -280,8 +280,11 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "Unknown, unopenable, disabled, foreign, gone and deleted-by-name references answer the same 404. " +
           "The summary gains `title`, a cumulative `inventory: { tables, stores } | null`, and `reads` " +
           "across every retained version, including declarations dropped by the current version. " +
-          "A gone source has state `gone` and no name. An unavailable company database means null " +
-          "inventory, never fabricated empty arrays. Live shared tables are declarable and carry " +
+          "Existing in-company sources retain their lifecycle state even when disabled or unopenable; " +
+          "only openable sources expose a name. Source state does not imply permission to read it. " +
+          "Sources absent from the company lookup are `gone` without a name; foreign metadata is never queried. " +
+          "An unavailable company database means null inventory, never fabricated empty arrays. " +
+          "Live shared tables are declarable and carry " +
           "`patchy add shared-table <patchId>/<table>`; unshared tables carry `not_shared` and an " +
           "owner-name hint. Off tables carry `source_off`; stores carry `not_shareable`. " +
           "No versions, dependants or business rows are returned. Machine tokens only. " +

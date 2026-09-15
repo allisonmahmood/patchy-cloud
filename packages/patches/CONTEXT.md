@@ -65,7 +65,7 @@ Moving a live patch's current version to any retained version, without creating 
 _Avoid_: revert, redeploy, undo
 
 **Dependant**:
-A live, enabled patch that declares one of this patch's shared tables in any retained version, even when its current version dropped that declaration. Retire, delete and unshare list these distinct patch-and-table dependencies before the actor accepts breaking their reads.
+A live, enabled patch that declares one of this patch's shared tables in any retained version, even when its current version dropped that declaration. Lifecycle warnings identify distinct dependant patches and their owners; discovery also associates each openable dependant with the tables it reads.
 _Avoid_: consumer (a runtime word), subscriber
 
 **Description**:
