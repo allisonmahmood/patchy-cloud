@@ -15,6 +15,8 @@ import { safePath } from "./ManagedProject.js";
 import { checkRelease } from "./ReleaseCheck.js";
 import { RELEASE } from "./release.js";
 import { processResult } from "./processResult.js";
+import * as Project from "./Project.js";
+import { primitiveReminders } from "./primitiveReminders.js";
 
 const decodePackage = Schema.decodeUnknownSync(
   Schema.fromJsonString(
@@ -210,10 +212,26 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
   yield* checkRepoRelease(cwd, token);
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const { repo, warnings: syncWarnings } = yield* Project.syncDescription(cwd, token, true);
+  if (repo.description === undefined)
+    return yield* new LocalError({
+      message: "patchy.json must contain a nonempty description before publishing.",
+      code: "invalid_manifest"
+    });
+  const description = yield* Project.normalizeDescription(
+    repo.description,
+    "patchy.json description",
+    "invalid_manifest"
+  );
   const manifest = yield* Effect.tryPromise({
-    try: async () => decodeManifest(await executeConfig(path.join(cwd, "patchy.config.ts"))),
+    try: async () =>
+      decodeManifest({
+        ...(await executeConfig(path.join(cwd, "patchy.config.ts"))),
+        description
+      }),
     catch: configFailure
   });
+  const warnings = [...syncWarnings, ...(yield* primitiveReminders(cwd, manifest))];
   // Definitions can change without generation; only index.json owns declaration stamps.
   const destination = yield* Effect.tryPromise({
     try: () => safePath(cwd, "patchy/_generated/manifest.json"),
@@ -278,7 +296,7 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
     )
   );
   yield* validateRepoBundle(cwd, manifest, html);
-  return { manifest, html };
+  return { manifest, html, warnings };
 });
 
 /** Publish and watched dev builds enforce the same artifact and tier contract. */

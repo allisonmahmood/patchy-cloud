@@ -196,12 +196,12 @@ Use the instance-installed CLI outside a repo and the pinned `pnpm patchy` insid
 The private package is not available as `npx patchy@latest` yet; use the
 instance's release tarball as described above.
 
-| command                                                                                                     | behaviour                                                                                                                                                                                                                                                                | `--json` success                                                               |
-| ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------ |
-| `patchy init [dir] [--tier 0\|1] [--purpose <text>]`                                                        | Authenticates first, prints instance and identity, asks purpose when interactive, installs the pinned release and generates a new repo. Tier 1 is the default; an initialized target is refused.                                                                         | `{ ok, dir, release, tier, generated, skills, installed }`                     |
-| `patchy refresh`                                                                                            | Refreshes the managed set as one release-bound transaction, installing and re-executing a new CLI if the pin changes.                                                                                                                                                    | `{ ok, release: { from, to }, changed: { pin, generated, skills, fixtures } }` |
-| `patchy add postgres/<handle> [--as <alias>]` or `patchy add shared-table <patchId>/<table> [--as <alias>]` | Inserts one literal declaration into `uses` by TypeScript AST without changing imports, then generates client, context, missing fixture and skill. An uneditable block fails naming its exact source line and the exact declaration line to add yourself before refresh. | `{ ok, alias, declaration, generated, skills }`                                |
-| `patchy remove <alias>`                                                                                     | Reverses the declaration and generated output; removes its declaration skill when no declaration of that kind remains. Leaves the fixture and says so.                                                                                                                   | `{ ok, alias, removed }`                                                       |
+| command                                                                                                     | behaviour                                                                                                                                                                                                                         | `--json` success                                                                         |
+| ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `patchy init [dir] [--tier 0\|1] [--purpose <text>]`                                                        | Authenticates first, prints instance and identity, asks purpose when interactive, installs the pinned release and generates a new repo. Tier 1 is the default; an initialized target is refused.                                  | `{ ok, dir, release, tier, generated, skills, installed }`                               |
+| `patchy refresh`                                                                                            | Refreshes the managed set as one release-bound transaction, installing and re-executing a new CLI if the pin changes.                                                                                                             | `{ ok, release: { from, to }, changed: { pin, generated, skills, fixtures }, warnings }` |
+| `patchy add postgres/<handle> [--as <alias>]` or `patchy add shared-table <patchId>/<table> [--as <alias>]` | Inserts one literal declaration into `uses` by TypeScript AST without changing imports, then generates client, context, missing fixture and skill. An uneditable block names its source line and the declaration to add manually. | `{ ok, alias, declaration, generated, skills, warnings }`                                |
+| `patchy remove <alias>`                                                                                     | Reverses the declaration and generated output; removes an unused declaration skill. Leaves the fixture and says so.                                                                                                               | `{ ok, alias, removed, warnings }`                                                       |
 
 `patchy add postgres` selects the sole connected Postgres connection; with several
 it lists copy-ready choices from `list connections` and stops. With none, it names `/company/connections`.
@@ -236,7 +236,7 @@ The generated repo includes:
 
 ```text
 patchy.config.ts              definitions and uses declarations
-patchy.json                   instance; optional patch id, never credentials
+patchy.json                   instance, patch description and sync stamp; optional patch id
 package.json, pnpm-lock.yaml   pinned package; install already ran
 index.html, src/main.ts        starter insert/list through the generated client
 vite.config.ts, tsconfig.json  single-file build, pinned server.host, typechecking
@@ -252,7 +252,33 @@ index, and says to test with `patchy dev`. The repo typechecks without added set
 and `pnpm patchy --help` runs its pinned copy. Use `pnpm patchy dev` to
 exercise the generated client locally before publishing.
 
-Managed writes are exactly the package pin, `patchy/_generated/`,
+`init --purpose` writes the initial description to `patchy.json` and the purpose
+to `AGENTS.md`. They are independent after initialization. Descriptions are one
+paragraph, at most 500 Unicode code points after trimming and collapsing
+whitespace, with no control characters. An overlong purpose reports its count
+and the bound; the interactive prompt asks again.
+
+`patchy.json` is `{ instance, patch?, description, descriptionSyncedAt? }`.
+Edit `description` there, front-loading what the tool does. Repo publish requires
+nonempty text and reports `invalid_manifest` if it is missing or invalid.
+The manifest carries that text; a successful publish records the returned
+`descriptionUpdatedAt` as `descriptionSyncedAt`.
+
+At `refresh`, a new `dev` start and `publish`, a newer cloud description stamp
+pulls the cloud text into `patchy.json` and records the stamp. The notice says
+"The description was changed in the portal to '…'; check it" and quotes the
+replaced local text when different. Publish sends the pulled text. A local edit
+does not change the stamp, so it is kept unless the cloud has changed too.
+
+Those three commands also compare executed table and store definitions against
+`patchy/_generated/manifest.json`. A changed definition with byte-identical
+description produces a reminder to check that text. New definitions and changes
+to both definition and description do not. Writing an omitted boolean default
+as `false` does not change the definition. Notices do not block the command;
+JSON includes them in `warnings`, including in the failure document if a later
+step fails. Text mode prints those notices before the error.
+
+Managed generation writes are exactly the package pin, `patchy/_generated/`,
 `.agents/skills/patchy-*/`, missing fixture stubs, the lockfile through install,
 and one `uses` edit for add/remove. The CLI writes `manifest.json` from local
 config execution; the server never returns that file. Server paths are checked
@@ -260,6 +286,8 @@ against the managed roots. Existing fixtures, app source and agent instructions
 are not overwritten. Deleting `.patchy/` destroys local rows and files.
 Generation returns typed declaration metadata for the local runtime alongside
 the managed files; full snapshots are not written into `patchy/_generated/`.
+Description sync separately updates `patchy.json`; the pulled text remains
+there if a later generation or build step fails, with its notice in the failure.
 
 Refresh fetches one release, updates and installs the pin if needed, re-execs
 that CLI before executing config, requests generation, then stages and activates
@@ -291,12 +319,12 @@ by a whole-shell reload at the current route. Failed rebuilds leave the last
 successful bundle served and write the error to the log. Config and fixture
 changes need `dev stop` followed by `dev`.
 
-| command             | behaviour                                                                                      | `--json` success                                                    |
-| ------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| `dev`, `dev status` | Start or inspect; status exits 1 with `not_running` unless healthy.                            | `{ ok, healthy: true, url, logPath, stop, pid, release, identity }` |
-| `dev stop`          | Stop this repo and instance, keeping local data. Stale process identities are never signalled. | `{ ok, healthy: false, reset: false }`                              |
-| `dev logs`          | Print the dev log.                                                                             | `{ ok, log, text }`                                                 |
-| `dev reset`         | Stop and wipe disposable local state. Published resources are unchanged; run `dev` afterwards. | `{ ok, healthy: false, reset: true }`                               |
+| command             | behaviour                                                                                      | `--json` success                                                              |
+| ------------------- | ---------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `dev`, `dev status` | Start or inspect; status exits 1 with `not_running` unless healthy.                            | `{ ok, healthy: true, url, logPath, stop, pid, release, identity, warnings }` |
+| `dev stop`          | Stop this repo and instance, keeping local data. Stale process identities are never signalled. | `{ ok, healthy: false, reset: false }`                                        |
+| `dev logs`          | Print the dev log.                                                                             | `{ ok, log, text }`                                                           |
+| `dev reset`         | Stop and wipe disposable local state. Published resources are unchanged; run `dev` afterwards. | `{ ok, healthy: false, reset: true }`                                         |
 
 `--foreground` waits and streams logs; Ctrl-C stops a session it started.
 Joining an existing session leaves it running on interruption. Under `--json`
@@ -500,16 +528,21 @@ Validate an HTML file locally without publishing. Exits non-zero if validation f
 patchy validate ./plan.html
 ```
 
-### `patchy publish [file] [--name <name>] [--share company|public] [--patch <patch-id>] [--new] [--api-url <url>]`
+### `patchy publish [file] [--name <name>] [--share company|public] [--patch <patch-id>] [--new] [--description <text>] [--force] [--api-url <url>]`
 
 First recover the pending publish in this mode's instance-scoped attempt directory. Otherwise check the executing CLI release against `GET /api/release`, validate the file, and publish it with a tier 0 manifest and empty `tables`, `files` and `uses`. File mode never reads `patchy.json`. On success it prints the address, patch ID, tier, version number, provisioned and unused resources, and sharing scope. The JSON response includes `name`, `address`, `scope: "company" | "public"`, `tier`, `schemaRevision`, `provisioned`, `unused` and `warnings`. `publicUrl` equals `address`; the scope, not that field name, controls who may read it.
 
 Without a file, run from the patch repo root. The config supplies its name and
-tier; `patchy.json` supplies its authoritative instance and optional patch id.
+tier; `patchy.json` supplies its instance, description and optional patch id.
 A different effective `--api-url`, dev env or `PATCHY_API_URL` fails locally with
 `instance_mismatch`, naming both URLs before any HTTP request. Correct the
 override rather than removing the patch id or rebinding the repo.
 `--share` works in either mode; `--name`, `--patch` and `--new` are file-only.
+File publishing accepts `--description <text>`; omitted, the cloud description
+stands. Repo mode refuses that flag and points at `patchy.json`.
+`--force` accepts an unshare that breaks live dependants. Without it, the instance
+returns `has_dependants` with their names and owners. Ask the person you are
+working for before forcing.
 
 Repo publish first recovers `.patchy/publish/<instance-hash>/attempt/<key-hash>.json`.
 Otherwise it checks the exact pin, executing CLI and installed runtime against
@@ -527,9 +560,10 @@ The local HTML cap is 512 KiB at tier 0 and 10 MiB at tier 1; either excess is
 requires unsupported tier 2; scripts require at least tier 1. A failed repo
 build never falls back to a static file.
 
-The complete request and owner are persisted in an atomically selected attempt
-directory before sending. Creates and updates apply only the returned patch id
-to `patchy.json`, preserving the stored instance and its spelling. A conflicting
+The complete request, owner and local notices are persisted in an atomically
+selected attempt directory before sending; recovery retains those notices.
+Creates and updates apply the returned patch id and
+description sync stamp to `patchy.json`, preserving the stored instance and its spelling. A conflicting
 existing patch id or a late instance edit refuses local application and retains
 the attempt. A moved repo recovers at its current root, even if its tree or
 release changed. Preserve `.patchy/publish/` until recovery succeeds; replacement
@@ -618,27 +652,40 @@ Share uses the same credential chain as publish. With no key it exits 1 (`local`
 
 Only the current version of a public patch is public; older versions stay behind the company door. Read company pages through the user's signed-in browser. The current public version has `Cache-Control: public, max-age=60` at both `/<company>/<name>` and `/<company>/<name>/~v/<current n>`. Older versions, and all versions after changing to company, have origin responses of `private, no-store` and answer 401 to a cookie-free fetch. A previously cached public copy may remain reachable for up to 60 seconds; already downloaded copies cannot be recalled.
 
-### `patchy delete <file> | --patch <patch-id>`
+### Lifecycle and description commands
 
-Delete a patch with a 30-day recovery window. The origin stops serving it at once, so confirm with the user first. A still-fresh public cache entry may remain for up to 60 seconds, and downloaded copies cannot be recalled. Name the file the patch was published from, or pass `--patch <patch-id>`, not both. Success forgets matching file-cache entries but reserves the patch's names until reclamation. The owner can restore it through the API before the returned `purgeAt`; the lifecycle CLI verbs are later work.
+All commands below accept `--json`. Omit the target in a published repo to use
+its `patchy.json` id, pass the original HTML file to use its per-instance cache,
+or pass `--patch <id>`. A file and `--patch` conflict. An unpublished repo is a
+local refusal. These acts never create patches.
 
-From a published repo, `patchy delete` uses `patchy.json` without an argument.
-The id remains there. A later publish receives `patch_deleted` with `purgeAt`;
-keep the id to restore the patch. Only a gone patch requires a new create.
+| command                                                                        | behaviour                                                                                                                                       | `--json` success                                        |
+| ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `patchy retire [file] [--patch <id>] [--force]`                                | Retire a live owned patch indefinitely, preserving everything.                                                                                  | `{ ok, patchId, state: "retired", retiredAt }`          |
+| `patchy delete [file] [--patch <id>] [--yes] [--force]`                        | Delete from live or retired for a fixed 30-day recovery window. Confirm interactively or pass `--yes`; non-interactive calls without it exit 1. | `{ ok, patchId, state: "deleted", deletedAt, purgeAt }` |
+| `patchy restore [file] [--patch <id>] [--force]`                               | Bring a retired or deleted patch back live at its existing address before `purgeAt`.                                                            | `{ ok, patchId, state: "live" }`                        |
+| `patchy rollback <n> [file] [--patch <id>]`                                    | Serve retained version `n` of a live patch. Tables, files, sharing, description and name do not move.                                           | `{ ok, patchId, currentVersion, address }`              |
+| `patchy describe "<text>" [--patch <id>]` or `patchy describe <file> "<text>"` | Set the description while live or retired; repo mode rewrites `patchy.json` in the same run.                                                    | `{ ok, patchId, description, descriptionUpdatedAt }`    |
+| `patchy describe [file] --clear [--patch <id>]`                                | Clear the cloud description, rather than passing empty or whitespace-only text. A cleared repo description must be filled before publishing.    | Same description response.                              |
 
-```sh
-patchy delete ./plan.html
-# Deleting from https://pages.example.com (target came from the saved config).
-# Deleted patch
-# Patch ID: k7f2m9x1a3b8
-# Recoverable until: 2026-10-15T12:00:00.000Z
-```
+Retire and delete from live refuse with `has_dependants` unless forced; delete
+from retired needs no dependant acknowledgement. Restore refuses with
+`sources_off` when its current version reads retired, deleted or gone sources.
+Both refusals print the full list and end with "Ask the person you are working
+for before forcing." `--yes` confirms deletion; it does not accept dependant
+breakage. `--force` accepts breakage; it does not confirm deletion.
 
-Delete uses the same credential chain as publish. Any machine token for the owner user can delete the patch. With no key it exits 1 (`local`), `Run: patchy login`; a missing or unowned patch is `rejected`, and the cache keeps its entry until the instance says yes.
+Refusals are `rejected`, exit 2. The failure document preserves `code` and the
+applicable `dependants`, `sources`, `state`, `owner` or `purgeAt` fields.
+`wrong_state` reports the current state; `version_unavailable` refuses a missing
+rollback version. `not_owner` names the owner and asks for reassignment, never a
+new patch. Publishing off patches returns `patch_retired` or `patch_deleted`,
+with restoration or admin guidance. Restore past `purgeAt` is `patch_deleted`.
 
-`delete --json` returns `{ ok, patchId, state: "deleted", deletedAt, purgeAt }`.
-A repeated delete is `wrong_state`; live dependants refuse deletion with
-`has_dependants`. CLI `--force` and confirmation flags are not implemented yet.
+A successful delete forgets matching file-cache entries only after the response.
+It keeps the repo id and reserves every name until reclamation. Restore a deleted
+file patch by id because its cache entry is gone. A still-fresh public cache may
+serve for up to 60 seconds; downloaded copies cannot be recalled.
 
 ## Exit codes
 
@@ -712,7 +759,7 @@ writes in a worktree, then `PATCHY_API_URL`, then saved `config.json`, then the
 default.
 
 Repo commands (`refresh`, `add`, `remove`, `dev` and its subcommands,
-no-file `publish`, untargeted `share`/`delete` and private generation) treat the
+no-file `publish`, untargeted lifecycle/description/sharing commands and private generation) treat the
 instance in `patchy.json` as authoritative. The effective override follows
 `--api-url` > dev env > `PATCHY_API_URL`; if present it must match the stored URL
 after normalization, otherwise `instance_mismatch` refuses before any HTTP

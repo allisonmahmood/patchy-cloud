@@ -598,6 +598,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
               new PatchDetail({
                 ...summary(row, identity.user.id, publicBaseUrl),
                 title: row.patch.title,
+                descriptionUpdatedAt: row.patch.descriptionUpdatedAt,
                 inventory:
                   row.inventory === null
                     ? null

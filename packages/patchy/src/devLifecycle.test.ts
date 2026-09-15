@@ -19,9 +19,11 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as TestConsole from "effect/testing/TestConsole";
+import * as GlobalFlag from "effect/unstable/cli/GlobalFlag";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import { generateClient } from "../../sdk/src/generateClient.js";
+import { LocalError } from "./CliError.js";
 import * as DevLifecycle from "./devLifecycle.js";
 import * as Instance from "./Instance.js";
 import * as Output from "./Output.js";
@@ -169,6 +171,10 @@ const fixture = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const root = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-lifecycle-" });
   const requests: string[] = [];
+  const cloudDescription: { description: string; descriptionUpdatedAt: string | null } = {
+    description: "",
+    descriptionUpdatedAt: null
+  };
   const server = yield* Effect.acquireRelease(
     Effect.sync(() =>
       createServer((request, response) => {
@@ -190,6 +196,26 @@ const fixture = Effect.gen(function* () {
             });
           if (url === "/api/me") return respond(identity);
           if (url === `/api/patches/${patchId}/inventory`) return respond(inventory);
+          if (url === `/api/patches/${patchId}?state=all`)
+            return respond({
+              id: patchId,
+              name: "lifecycle-test",
+              address: `http://localhost/lifecycle/lifecycle-test`,
+              owner: { id: identity.user.id, name: identity.user.name, deactivated: false },
+              mine: true,
+              tier: 1,
+              scope: "company",
+              ...cloudDescription,
+              state: "live",
+              retiredAt: null,
+              deletedAt: null,
+              purgeAt: null,
+              currentVersion: 1,
+              publishedAt: "2026-09-01T00:00:00.000Z",
+              title: "Lifecycle",
+              inventory: { tables: [], stores: [] },
+              reads: []
+            });
           if (url === "/api/sdk/generate") {
             try {
               const { manifest } = decodeGenerate(
@@ -239,7 +265,12 @@ const fixture = Effect.gen(function* () {
   const instance = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   yield* fs.writeFileString(
     path.join(root, "patchy.json"),
-    JSON.stringify({ instance, patch: patchId })
+    JSON.stringify({
+      instance,
+      patch: patchId,
+      description: "Local purpose",
+      custom: { keep: true }
+    })
   );
   yield* fs.writeFileString(
     path.join(root, "package.json"),
@@ -278,7 +309,7 @@ const fixture = Effect.gen(function* () {
       }
     })
   );
-  return { root, instance, stateDir, requests };
+  return { root, instance, stateDir, requests, cloudDescription };
 });
 const nodeFsLink = (from: string, to: string) =>
   Effect.promise(() => nodeFs.symlink(from, to, "dir"));
@@ -379,6 +410,164 @@ it.live(
       assert.strictEqual(requests.filter((url) => url.endsWith("/inventory")).length, 3);
     }).pipe(Effect.provide(NodeHttpClient.layerNodeHttp), Effect.provide(NodeServices.layer)),
   { timeout: 60_000 }
+);
+
+it.live(
+  "new dev sessions pull newer cloud descriptions and remind only about unchanged primitive text",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { root, instance, requests, cloudDescription } = yield* fixture;
+      const repoPath = path.join(root, "patchy.json");
+      const configPath = path.join(root, "patchy.config.ts");
+      const originalConfig = yield* fs.readFileString(configPath);
+      const first = yield* command(root, instance, []);
+      assert.deepStrictEqual(first.warnings, []);
+      assert.strictEqual(
+        JSON.parse(yield* fs.readFileString(repoPath)).description,
+        "Local purpose"
+      );
+
+      cloudDescription.description = "Portal purpose";
+      cloudDescription.descriptionUpdatedAt = "2026-09-15T12:00:00.000Z";
+      const requested = requests.length;
+      const joined = yield* command(root, instance, []);
+      assert.strictEqual(joined.pid, first.pid);
+      assert.deepStrictEqual(joined.warnings, []);
+      assert.strictEqual(requests.length, requested);
+      assert.strictEqual(
+        JSON.parse(yield* fs.readFileString(repoPath)).description,
+        "Local purpose"
+      );
+      yield* command(root, instance, ["stop"]);
+
+      const changedConfig = originalConfig.replace(
+        "{ title: t.text() }",
+        "{ title: t.text(), category: t.text().optional() }"
+      );
+      yield* fs.writeFileString(configPath, changedConfig);
+      const changed = yield* command(root, instance, []);
+      assert.strictEqual(changed.warnings.length, 2);
+      assert.include(changed.warnings[0], "Portal purpose");
+      assert.include(changed.warnings[0], "Local purpose");
+      assert.include(changed.warnings[1], "Table `notes` changed since its last generation");
+      assert.include(changed.warnings[1], "Notes identified by id.");
+      const synced = JSON.parse(yield* fs.readFileString(repoPath));
+      assert.deepStrictEqual(synced, {
+        instance,
+        patch: patchId,
+        description: "Portal purpose",
+        descriptionSyncedAt: cloudDescription.descriptionUpdatedAt,
+        custom: { keep: true }
+      });
+      yield* command(root, instance, ["stop"]);
+
+      yield* fs.writeFileString(
+        repoPath,
+        JSON.stringify({ ...synced, description: "Local revision" })
+      );
+      yield* fs.writeFileString(
+        configPath,
+        changedConfig
+          .replace("Notes identified by id.", "Notes identified by id, with a category and label.")
+          .replace(
+            "category: t.text().optional()",
+            "category: t.text().optional(), label: t.text().optional()"
+          )
+      );
+      const local = yield* command(root, instance, []);
+      assert.deepStrictEqual(local.warnings, []);
+      assert.strictEqual(
+        JSON.parse(yield* fs.readFileString(repoPath)).description,
+        "Local revision"
+      );
+      yield* command(root, instance, ["stop"]);
+
+      cloudDescription.descriptionUpdatedAt = "2026-09-14T12:00:00.000Z";
+      const unchanged = yield* command(root, instance, []);
+      assert.deepStrictEqual(unchanged.warnings, []);
+      assert.strictEqual(
+        JSON.parse(yield* fs.readFileString(repoPath)).description,
+        "Local revision"
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  { timeout: 90_000 }
+);
+
+it.live(
+  "dev preparation failures retain pulled-description notices in JSON and text",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { root, instance, cloudDescription } = yield* fixture;
+      const repoPath = path.join(root, "patchy.json");
+      const configPath = path.join(root, "patchy.config.ts");
+      yield* fs.writeFileString(
+        configPath,
+        (yield* fs.readFileString(configPath))
+          .replace("defineConfig, table", "defineConfig, postgres, table")
+          .replace("uses: {}", 'uses: { sales: postgres("warehouse") }')
+      );
+      cloudDescription.description = "Portal purpose";
+      cloudDescription.descriptionUpdatedAt = "2026-09-15T12:00:00.000Z";
+
+      const json = yield* cli(root, instance, ["--json"]);
+      assert.strictEqual((yield* exited(json)).code, 1);
+      assert.strictEqual(json.stdout(), "");
+      const failure = JSON.parse(json.stderr());
+      assert.strictEqual(failure.ok, false);
+      assert.strictEqual(failure.kind, "local");
+      assert.include(failure.error, "fixtures/postgres-warehouse.sql");
+      assert.strictEqual(failure.warnings.length, 1);
+      assert.include(failure.warnings[0], "Portal purpose");
+      assert.include(failure.warnings[0], "Local purpose");
+      const synced = JSON.parse(yield* fs.readFileString(repoPath));
+      assert.strictEqual(synced.description, cloudDescription.description);
+      assert.strictEqual(synced.descriptionSyncedAt, cloudDescription.descriptionUpdatedAt);
+
+      const retry = yield* cli(root, instance, ["--json"]);
+      assert.strictEqual((yield* exited(retry)).code, 1);
+      assert.strictEqual(retry.stdout(), "");
+      const repeatedFailure = JSON.parse(retry.stderr());
+      assert.strictEqual(repeatedFailure.error, failure.error);
+      assert.notProperty(repeatedFailure, "warnings");
+
+      cloudDescription.description = "Updated portal purpose";
+      cloudDescription.descriptionUpdatedAt = "2026-09-15T13:00:00.000Z";
+      const text = yield* cli(root, instance, []);
+      assert.strictEqual((yield* exited(text)).code, 1);
+      assert.strictEqual(text.stdout(), "");
+      const lines = text.stderr().trim().split("\n");
+      assert.strictEqual(lines.length, 2);
+      assert.include(lines[0], "Updated portal purpose");
+      assert.include(lines[0], "Portal purpose");
+      assert.strictEqual(lines[1], failure.error);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  { timeout: 45_000 }
+);
+
+it.effect("failure notices are deduplicated and confined to each command", () =>
+  Effect.gen(function* () {
+    const fail = new LocalError({ message: "Preparation failed." });
+    yield* Output.rememberWarnings(["Outside a command"]);
+    yield* Output.contract(
+      Effect.gen(function* () {
+        yield* Output.rememberWarnings(["Pulled description"]);
+        yield* Output.rememberWarnings(["Pulled description"]);
+        return yield* fail;
+      })
+    ).pipe(Effect.exit);
+    yield* Output.contract(fail).pipe(Effect.exit);
+    const failures = (yield* TestConsole.errorLines).map((line) => JSON.parse(String(line)));
+    assert.deepStrictEqual(failures, [
+      { ok: false, error: fail.message, kind: "local", warnings: ["Pulled description"] },
+      { ok: false, error: fail.message, kind: "local" }
+    ]);
+  }).pipe(
+    Effect.provideService(Output.JsonFlag, true),
+    Effect.provideService(GlobalFlag.LogLevel, Option.none()),
+    Effect.provide(TestConsole.layer)
+  )
 );
 
 it.live(

@@ -13,6 +13,29 @@ description: Build in a Patchy repo, discover company tools and data sources, re
 4. Run `pnpm patchy dev --json`. Open its `url` and exercise an insert and a list through the actual local shell; inspect file and declaration behavior when used. The command returns only when healthy and is idempotent. Code rebuilds reload the whole shell at its current route. After config or fixture changes, stop and start dev again. A standalone Vite preview cannot exercise declared capabilities.
 5. When asked to publish, run `pnpm patchy publish` from the repo root. It recovers any saved attempt first; otherwise checks the release, executes config, verifies declaration stamps, typechecks and builds a single HTML bundle. Fix `stale_generated` with `pnpm patchy refresh`, build errors in source, and `not_additive` using the reported object/change/fix. Report the address, scope, tier, version, provisioned and unused resources.
 
+## Description notices
+
+`patchy.json.description` is the patch's published description; front-load what
+the tool does. The purpose in `AGENTS.md` stays independent, and table/store
+descriptions live in `patchy.config.ts`.
+
+At refresh, new dev starts and fresh publish, a newer cloud description stamp
+pulls that text into `patchy.json`, recording `descriptionSyncedAt`. Relay the
+"The description was changed in the portal to '…'; check it" notice and check
+the text; it quotes replaced local text when different. A local edit leaves
+the stamp unchanged. Publish sends the pulled text and records the returned stamp.
+Repo publish requires a nonempty description of at most 500 normalized Unicode
+code points. Use `pnpm patchy describe "<text>"` to update both cloud and repo
+without publishing. `describe --clear` explicitly empties it; refill before publish.
+`publish --description` is file-only, not a repo override.
+
+Refresh, new dev starts and publish also compare executed definitions with the
+last generated manifest. If a table or store changed but its description did
+not, check the reminder against what one row or object means, its keys and units.
+Update its config description if needed. These notices do not stop commands;
+under `--json` they are entries in `warnings`, including when a later step
+fails. Relay them even on failure; a publish retry retains the saved notices.
+
 ## Discover before declaring
 
 1. Run `pnpm patchy list --json` and choose candidate patches by description.
@@ -57,13 +80,14 @@ disconnected entries point to `/company/connections`. Discovery grants no access
 - `pnpm patchy remove sales` reverses the declaration and its generated output, and removes its declaration skill when no declaration of that kind remains. It leaves the fixture for you and says so.
 - An uneditable `uses` expression fails with its exact source line and, for add, the exact literal declaration line to insert. Either make `uses` an explicit object literal while preserving its meaning and retry, or add the declaration yourself and run `pnpm patchy refresh`. Do not bypass the refusal by editing generated metadata.
 - `pnpm patchy refresh` fetches one release, updates the pin and installs if needed, re-execs that CLI, executes config, generates, and activates the managed set transactionally. Failure retains the previous set. It refreshes every present skill and adds config-implied skills; presence is sticky. If a present skill is no longer offered, refresh fails rather than leaving stale instructions.
-- Every command accepts `--json`: success is one stdout document; failure is `{ ok: false, error, kind, code?, state? }` on stderr. A discovery `wrong_state` refusal includes the actual patch `state`. Exit 1 is locally fixable, 2 an instance refusal, 3 no usable answer, 130 interrupted. Branch on a returned `code`, not prose. Missing key: `Run: patchy login`; an agent relays the login URL and code to the person, never signs in for them.
-- Repo publish writes the returned id into `patchy.json` on a create. Preserve `.patchy/publish/` after interruption or failed id writes and rerun as the same owning user: recovery precedes release checks and rebuilding. `pnpm patchy share company|public` and `pnpm patchy delete` use that id. Keep it on `not_owner`, `patch_retired` or `patch_deleted`; arrange reassignment or restoration. Only a gone patch's 404 calls for removing `patch` when intentionally starting a new patch.
+- Every command accepts `--json`: success is one stdout document; failure is `{ ok: false, error, kind, code?, state?, owner?, dependants?, sources?, purgeAt?, warnings? }` on stderr. Inspect and relay `warnings` even on failure. Exit 1 is locally fixable, 2 an instance refusal, 3 no usable answer, 130 interrupted. Branch on a returned `code`, not prose. Missing key: `Run: patchy login`; relay the login URL and code to the person.
+- Repo publish writes its returned id and description sync stamp into `patchy.json`. Preserve `.patchy/publish/` after interruption or failed writes and rerun as the same owning user; recovery precedes release checks and rebuilding. Untargeted `share`, `retire`, `delete --yes`, `restore`, `rollback <n>` and `describe` use that id. Keep it on `not_owner`, `patch_retired` or `patch_deleted`; arrange reassignment or restoration. Only a gone patch's 404 calls for removing `patch` when intentionally starting a new patch.
+- Retire and delete from live refuse with `has_dependants`; restore with unavailable sources refuses with `sources_off`. Relay the list and ask the person you are working for before forcing. `--force` accepts breakage, including an unshare at publish; `--yes` only confirms deletion. Delete keeps everything for 30 days until `purgeAt`, retire indefinitely. Rollback changes only the live served version, not data, sharing, description or name.
 - `pnpm patchy dev status`, `stop`, `logs` and `reset` inspect or control this repo and instance only. `reset` stops and wipes disposable local state without changing published resources; start again afterwards to fetch the published inventory. `--foreground` stays attached and streams logs; interrupting a session it started stops it. On `release_mismatch`, run `pnpm patchy refresh`; an existing session is not killed by an upgrade.
 
-Managed files are exactly the `patchy` pin, `patchy/_generated/`, `.agents/skills/patchy-*/`, missing fixture stubs, the lockfile through installation and one `uses` edit for add/remove. Never manually edit `_generated/`, the managed skills or revision stamps. The CLI writes `manifest.json` from local config execution; the instance returns finished files and resolved declaration stamps, never executable config. `AGENTS.md`, `CLAUDE.md`, application source and existing fixtures remain yours after initialization.
+Managed generation files are exactly the `patchy` pin, `patchy/_generated/`, `.agents/skills/patchy-*/`, missing fixture stubs, the lockfile through installation and one `uses` edit for add/remove. Description sync separately updates `patchy.json`; pulled text remains there if a later step fails, with its notice in the failure. Never manually edit `_generated/`, the managed skills or revision stamps. The CLI writes `manifest.json` from local config execution; the instance returns finished files and resolved declaration stamps, never executable config. `AGENTS.md`, `CLAUDE.md`, application source and existing fixtures remain yours after initialization.
 
-Commit config, `patchy.json` (instance and optional patch id), generated output, skills, fixtures and lockfile. Keep personal credentials outside the repo. `.patchy/`, `node_modules/` and `dist/` are ignored. Deleting `.patchy/` destroys local rows and files; it is not an innocuous cache cleanup.
+Commit config, `patchy.json` with its description and sync stamp, generated output, skills, fixtures and lockfile. Keep personal credentials outside the repo. `.patchy/`, `node_modules/` and `dist/` are ignored. Deleting `.patchy/` destroys local rows and files; it is not an innocuous cache cleanup.
 
 ## Data boundary
 

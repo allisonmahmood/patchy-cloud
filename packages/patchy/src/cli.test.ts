@@ -35,6 +35,8 @@ import {
   type DeclarationMetadata,
   type Generated,
   GenerateRequest,
+  ForceRequest,
+  DescriptionRequest,
   MANIFEST_VERSION,
   PublishRequest,
   WIRE_VERSION
@@ -177,28 +179,50 @@ const runCli = (
     stateDir?: string;
     env?: Record<string, string>;
     input?: string;
+    terminalInput?: string;
     cwd?: string;
     onSpawn?: (child: ChildProcess) => void;
   } = {}
 ) =>
   new Promise<CliResult>((resolve, reject) => {
     const stateDir = options.stateDir ?? tempDir();
-    const child = spawn(process.execPath, [cliPath, ...args], {
-      cwd: options.cwd ?? stateDir,
-      env: {
-        PATH: process.env.PATH ?? "",
-        HOME: stateDir,
-        PATCHY_STATE_DIR: stateDir,
-        ...options.env
+    const command = [process.execPath, cliPath, ...args];
+    const terminal = options.terminalInput !== undefined;
+    const child = spawn(
+      terminal ? "script" : process.execPath,
+      terminal
+        ? [
+            "-q",
+            "-e",
+            "-c",
+            command.map((value) => `'${value.replaceAll("'", "'\\''")}'`).join(" "),
+            "/dev/null"
+          ]
+        : [cliPath, ...args],
+      {
+        cwd: options.cwd ?? stateDir,
+        env: {
+          PATH: process.env.PATH ?? "",
+          HOME: stateDir,
+          PATCHY_STATE_DIR: stateDir,
+          ...options.env
+        }
       }
-    });
+    );
     let stdout = "";
     let stderr = "";
-    child.stdout.setEncoding("utf8").on("data", (chunk: string) => (stdout += chunk));
+    let answered = false;
+    child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+      stdout += chunk;
+      if (terminal && !answered && stdout.includes("It will be kept for 30 days")) {
+        answered = true;
+        child.stdin.write(options.terminalInput!);
+      }
+    });
     child.stderr.setEncoding("utf8").on("data", (chunk: string) => (stderr += chunk));
     child.on("error", reject);
     child.on("close", (status) => resolve({ status, stdout, stderr, stateDir }));
-    child.stdin.end(options.input ?? "");
+    if (!terminal) child.stdin.end(options.input ?? "");
     options.onSpawn?.(child);
   });
 
@@ -229,6 +253,8 @@ const requestBarrier = () => {
 const exec = promisify(execFile);
 const require = createRequire(import.meta.url);
 const decodeGenerateRequest = Schema.decodeUnknownSync(GenerateRequest);
+const decodeForceRequest = Schema.decodeUnknownSync(ForceRequest);
+const decodeDescriptionRequest = Schema.decodeUnknownSync(DescriptionRequest);
 const decodePackageFixture = Schema.decodeUnknownSync(
   Schema.Struct({
     name: Schema.String,
@@ -274,6 +300,7 @@ const projectSource = {
   tier: 1,
   scope: "company",
   description: "Company directory",
+  descriptionUpdatedAt: null,
   state: "live",
   retiredAt: null,
   deletedAt: null,
@@ -359,7 +386,10 @@ const projectHandler: Handler = (request, respond) => {
 
 const projectTree = (instance: string, source = projectConfig) => {
   const dir = tempDir();
-  writeFileSync(path.join(dir, "patchy.json"), JSON.stringify({ instance }));
+  writeFileSync(
+    path.join(dir, "patchy.json"),
+    JSON.stringify({ instance, description: "Synthetic notes" })
+  );
   writeFileSync(path.join(dir, "patchy.config.ts"), source);
   writeFileSync(
     path.join(dir, "package.json"),
@@ -2162,7 +2192,7 @@ describe("patchy delete", async () => {
       (await runCli(["publish", copy, "--patch", "abcdefghijkl"], { stateDir: dir, env })).status
     ).toBe(0);
 
-    const deleted = await runCli(["delete", file, "--json"], { stateDir: dir, env });
+    const deleted = await runCli(["delete", file, "--yes", "--json"], { stateDir: dir, env });
     expect(deleted).toMatchObject({ status: 0, stderr: "" });
     expect(JSON.parse(deleted.stdout)).toEqual(deletion);
     expect(instance.requests[6]).toMatchObject({
@@ -2181,13 +2211,918 @@ describe("patchy delete", async () => {
     expect(forgotten.stderr).toMatch(/^No patch on .* was published from /);
     expect(instance.requests).toHaveLength(7);
 
-    const repeated = await runCli(["delete", "--patch", "abcdefghijkl", "--json"], {
+    const repeated = await runCli(["delete", "--patch", "abcdefghijkl", "--yes", "--json"], {
       stateDir: dir,
       env
     });
     expect(repeated.status).toBe(2);
     expect(JSON.parse(repeated.stderr)).toMatchObject({ kind: "rejected", code: "wrong_state" });
   });
+});
+
+describe("patch lifecycle commands", () => {
+  const patchId = "abcdefghijkl";
+  const owner = { id: "usr_other", name: "Sam" };
+  const dependants = [{ patchId: "mnopqrstuvwx", name: "office-map", owner }];
+  const sources = [
+    { patchId: "mnopqrstuvwx", name: "orders", table: "orders", state: "retired" },
+    { patchId: "zyxwvutsrqpo", table: "people", state: "gone" }
+  ];
+  const purgeAt = "2026-10-15T00:00:00.000Z";
+  const cases = [
+    {
+      verb: "retire",
+      args: [],
+      method: "POST",
+      suffix: "/retire",
+      response: { ok: true, patchId, state: "retired", retiredAt: "2026-09-15T00:00:00.000Z" },
+      text: "Retired patch"
+    },
+    {
+      verb: "delete",
+      args: ["--yes"],
+      method: "DELETE",
+      suffix: "",
+      response: {
+        ok: true,
+        patchId,
+        state: "deleted",
+        deletedAt: "2026-09-15T00:00:00.000Z",
+        purgeAt
+      },
+      text: purgeAt
+    },
+    {
+      verb: "restore",
+      args: [],
+      method: "POST",
+      suffix: "/restore",
+      response: { ok: true, patchId, state: "live" },
+      text: "Restored patch"
+    },
+    {
+      verb: "rollback",
+      args: ["1"],
+      method: "POST",
+      suffix: "/rollback",
+      response: {
+        ok: true,
+        patchId,
+        currentVersion: 1,
+        address: "http://instance.test/company/page"
+      },
+      text: "Version: 1"
+    },
+    {
+      verb: "describe",
+      args: ["A useful tool"],
+      method: "PUT",
+      suffix: "/description",
+      response: {
+        ok: true,
+        patchId,
+        description: "A useful tool",
+        descriptionUpdatedAt: "2026-09-15T00:00:00.000Z"
+      },
+      text: "A useful tool"
+    }
+  ];
+
+  it.each(cases)(
+    "reports $verb in text and JSON using repo, file and explicit targets",
+    async ({ verb, args, method, suffix, response, text }) => {
+      const instance = await stubInstance((request, respond) => {
+        if (request.method !== method || request.url !== `/api/patches/${patchId}${suffix}`)
+          return respond(404, { ok: false, error: "Patch not found." });
+        respond(200, response);
+      });
+      const dir = projectTree(instance.url);
+      const config = {
+        instance: instance.url,
+        patch: patchId,
+        description: "Old description",
+        authorField: 7
+      };
+      writeFileSync(path.join(dir, "patchy.json"), JSON.stringify(config));
+      const file = path.join(dir, "page.html");
+      const cache = {
+        hosts: {
+          [instance.url]: {
+            files: {
+              [file]: {
+                patchId,
+                publicUrl: "http://instance.test/company/page",
+                latestVersionNumber: 3,
+                updatedAt: "unchanged"
+              }
+            }
+          }
+        }
+      };
+      const options = {
+        cwd: dir,
+        stateDir: dir,
+        env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" }
+      };
+      for (const target of ["repo", "file", "explicit"]) {
+        writeFileSync(path.join(dir, "patches.json"), JSON.stringify(cache));
+        const selected =
+          target === "explicit"
+            ? [...args, "--patch", patchId]
+            : target === "file"
+              ? verb === "describe"
+                ? [file, ...args]
+                : [...args, file]
+              : args;
+        const result = await runCli(
+          [verb, ...selected, ...(target === "repo" ? [] : ["--json"])],
+          options
+        );
+        expect(result, result.stderr).toMatchObject({ status: 0, stderr: "" });
+        if (target === "repo") expect(result.stdout).toContain(text);
+        else expect(JSON.parse(result.stdout)).toEqual(response);
+        if (verb !== "delete") expect(readJson(path.join(dir, "patches.json"))).toEqual(cache);
+      }
+      expect(readJson(path.join(dir, "patchy.json"))).toEqual(
+        verb === "describe"
+          ? {
+              ...config,
+              description: "A useful tool",
+              descriptionSyncedAt: "2026-09-15T00:00:00.000Z"
+            }
+          : config
+      );
+    }
+  );
+
+  it.each([
+    {
+      verb: "retire",
+      args: [],
+      status: 409,
+      code: "has_dependants",
+      fields: { dependants },
+      text: "office-map"
+    },
+    {
+      verb: "delete",
+      args: ["--yes"],
+      status: 409,
+      code: "has_dependants",
+      fields: { dependants },
+      text: "Sam"
+    },
+    {
+      verb: "restore",
+      args: [],
+      status: 409,
+      code: "sources_off",
+      fields: { sources },
+      text: "gone"
+    },
+    {
+      verb: "restore",
+      args: [],
+      status: 409,
+      code: "patch_deleted",
+      fields: { purgeAt },
+      text: purgeAt
+    },
+    {
+      verb: "rollback",
+      args: ["1"],
+      status: 409,
+      code: "wrong_state",
+      fields: { state: "retired" },
+      text: "retired"
+    },
+    {
+      verb: "rollback",
+      args: ["99"],
+      status: 422,
+      code: "version_unavailable",
+      fields: {},
+      text: "refused"
+    },
+    {
+      verb: "describe",
+      args: ["New description"],
+      status: 409,
+      code: "wrong_state",
+      fields: { state: "deleted" },
+      text: "deleted"
+    },
+    {
+      verb: "describe",
+      args: ["New description"],
+      status: 422,
+      code: "invalid_description",
+      fields: {},
+      text: "refused"
+    },
+    ...cases.map(({ verb, args }) => ({
+      verb,
+      args,
+      status: 403,
+      code: "not_owner",
+      fields: { owner },
+      text: "Sam"
+    }))
+  ])(
+    "preserves $verb $code refusal details and actionable text",
+    async ({ verb, args, status, code, fields, text }) => {
+      const instance = await stubInstance((_, respond) =>
+        respond(status, {
+          ok: false,
+          code,
+          error: `Action refused: ${"state" in fields ? fields.state : code}.`,
+          ...fields
+        })
+      );
+      const dir = tempDir();
+      const file = path.join(dir, "page.html");
+      const cache = JSON.stringify({
+        hosts: {
+          [instance.url]: {
+            files: {
+              [file]: {
+                patchId,
+                publicUrl: "http://instance.test/page",
+                latestVersionNumber: 1,
+                updatedAt: "unchanged"
+              }
+            }
+          }
+        }
+      });
+      writeFileSync(path.join(dir, "patches.json"), cache);
+      const options = {
+        stateDir: dir,
+        env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" }
+      };
+      for (const json of [false, true]) {
+        const result = await runCli(
+          [verb, ...args, "--patch", patchId, ...(json ? ["--json"] : [])],
+          options
+        );
+        expect(result.status).toBe(2);
+        if (json) {
+          expect(result.stdout).toBe("");
+          expect(JSON.parse(result.stderr)).toMatchObject({
+            ok: false,
+            kind: "rejected",
+            code,
+            ...fields
+          });
+        }
+        const message = json ? JSON.parse(result.stderr).error : result.stderr.trim();
+        expect(message).toContain(text);
+        if (code === "has_dependants" || code === "sources_off")
+          expect(message).toMatch(/Ask the person you are working for before forcing\.$/);
+        if (code === "not_owner") {
+          expect(message).toContain("reassign");
+          expect(message).not.toMatch(/new patch|--new|Remove patch/i);
+        }
+        expect(readFileSync(path.join(dir, "patches.json"), "utf8")).toBe(cache);
+      }
+    }
+  );
+
+  it.each(["retire", "delete", "restore"])(
+    "requires --force to proceed past %s dependency checks",
+    async (verb) => {
+      const instance = await stubInstance((request, respond) => {
+        const forced =
+          verb === "delete"
+            ? request.url.endsWith("?force=true")
+            : decodeForceRequest(request.body).force;
+        if (!forced)
+          return respond(409, {
+            ok: false,
+            code: verb === "restore" ? "sources_off" : "has_dependants",
+            error: "Readers would break.",
+            ...(verb === "restore" ? { sources } : { dependants })
+          });
+        respond(200, cases.find((entry) => entry.verb === verb)!.response);
+      });
+      const options = { env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" } };
+      const args = [verb, "--patch", patchId, ...(verb === "delete" ? ["--yes"] : []), "--json"];
+      expect((await runCli(args, options)).status).toBe(2);
+      expect((await runCli([...args, "--force"], options)).status).toBe(0);
+    }
+  );
+
+  it("refuses noninteractive deletion without --yes, including redirected yes and --force", async () => {
+    const instance = await stubInstance((_, respond) => respond(500, {}));
+    for (const extra of [[], ["--force"], ["--json"]]) {
+      const result = await runCli(["delete", "--patch", patchId, ...extra], {
+        input: "yes\n",
+        env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" }
+      });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("--yes");
+    }
+    const agent = await runCli(["delete", "--patch", patchId], {
+      terminalInput: "",
+      env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner", AI_AGENT: "" }
+    });
+    expect(agent.status).toBe(1);
+    expect(agent.stdout).toContain("--yes");
+    expect(instance.requests).toEqual([]);
+  });
+
+  it.each(["y\n", "n\n"])("confirms interactive delete before any request: %j", async (answer) => {
+    const instance = await stubInstance((_, respond) => respond(200, cases[1]!.response));
+    const result = await runCli(["delete", "--patch", patchId], {
+      terminalInput: answer,
+      env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" }
+    });
+    expect(result.status).toBe(answer === "y\n" ? 0 : 1);
+    expect(instance.requests).toHaveLength(answer === "y\n" ? 1 : 0);
+    if (answer === "n\n") expect(result.stdout).toContain("Nothing was done");
+  });
+
+  it.each(cases)(
+    "refuses conflicting and unpublished $verb targets locally",
+    async ({ verb, args }) => {
+      const instance = await stubInstance((_, respond) => respond(500, {}));
+      const dir = projectTree(instance.url);
+      const options = {
+        cwd: dir,
+        env: { PATCHY_API_TOKEN: "pp_owner", PATCHY_API_URL: instance.url }
+      };
+      const conflicting = verb === "describe" ? ["page.html", ...args] : [...args, "page.html"];
+      for (const selected of [args, [...conflicting, "--patch", patchId]]) {
+        const result = await runCli([verb, ...selected, "--json"], options);
+        expect(result.status).toBe(1);
+        expect(JSON.parse(result.stderr)).toMatchObject({ kind: "local" });
+      }
+      expect(instance.requests).toEqual([]);
+    }
+  );
+
+  it("clears descriptions explicitly and refuses empty text, controls and overlong text locally", async () => {
+    const instance = await stubInstance((request, respond) =>
+      respond(200, {
+        ok: true,
+        patchId,
+        description: decodeDescriptionRequest(request.body).description,
+        descriptionUpdatedAt: null
+      })
+    );
+    const options = { env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" } };
+    for (const args of [
+      [],
+      [""],
+      [" \n "],
+      ["text\u0007"],
+      ["x".repeat(501)],
+      ["page.html", "text", "--clear"]
+    ]) {
+      const result = await runCli(["describe", ...args, "--patch", patchId, "--json"], options);
+      expect(result.status).toBe(1);
+    }
+    expect(instance.requests).toEqual([]);
+    const cleared = await runCli(["describe", "--clear", "--patch", patchId], options);
+    expect(cleared).toMatchObject({ status: 0, stderr: "" });
+    expect(cleared.stdout).toContain("(no description)");
+    const normalized = await runCli(
+      ["describe", "  A \n useful   tool  ", "--patch", patchId, "--json"],
+      options
+    );
+    expect(JSON.parse(normalized.stdout)).toMatchObject({ description: "A useful tool" });
+  });
+
+  it("preserves a repo target changed while describe was in flight", async () => {
+    let repoFile = "";
+    let changed = "";
+    const instance = await stubInstance((_, respond) => {
+      changed = JSON.stringify({
+        instance: instance.url,
+        patch: "mnopqrstuvwx",
+        description: "Other patch",
+        authorField: 8
+      });
+      writeFileSync(repoFile, changed);
+      respond(200, {
+        ok: true,
+        patchId,
+        description: "Cloud text",
+        descriptionUpdatedAt: "2026-09-15T00:00:00.000Z"
+      });
+    });
+    const dir = projectTree(instance.url);
+    repoFile = path.join(dir, "patchy.json");
+    writeFileSync(
+      repoFile,
+      JSON.stringify({ instance: instance.url, patch: patchId, description: "Original" })
+    );
+    const result = await runCli(["describe", "Cloud text", "--json"], {
+      cwd: dir,
+      env: { PATCHY_API_TOKEN: "pp_owner" }
+    });
+    expect(result.status).toBe(1);
+    expect(readFileSync(repoFile, "utf8")).toBe(changed);
+  });
+
+  it.each(["0", "-1", "1.5"])(
+    "refuses invalid rollback version %s before HTTP",
+    async (version) => {
+      const instance = await stubInstance((_, respond) => respond(500, {}));
+      const result = await runCli(["rollback", version, "--patch", patchId, "--json"], {
+        env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" }
+      });
+      expect(result.status).toBe(1);
+      expect(instance.requests).toEqual([]);
+    }
+  );
+});
+
+describe("publish description and lifecycle recovery", () => {
+  it("sends file metadata and force, but replays the saved request before today's flags", async () => {
+    let lost = true;
+    const instance = await stubPublishingInstance((request, respond, disconnect) => {
+      if (lost) return disconnect();
+      const sent = Schema.decodeUnknownSync(PublishRequest)(request.body);
+      respond(201, {
+        ...publish(201, "abcdefghijkl", 1),
+        description: sent.metadata.description,
+        descriptionUpdatedAt: "2026-09-15T00:00:00.000Z"
+      });
+    });
+    const dir = tempDir();
+    const file = htmlFile(dir, "page.html", validHtml);
+    const options = {
+      stateDir: dir,
+      env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" }
+    };
+    expect(
+      (
+        await runCli(
+          ["publish", file, "--description", "  Original \n text ", "--force", "--json"],
+          options
+        )
+      ).status
+    ).toBe(3);
+    lost = false;
+    const recovered = await runCli(
+      ["publish", "missing.html", "--description", "x".repeat(501), "--json"],
+      options
+    );
+    expect(recovered).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(recovered.stdout)).toMatchObject({
+      description: "Original text",
+      descriptionUpdatedAt: "2026-09-15T00:00:00.000Z"
+    });
+    const sent = instance.requests.filter((request) => request.url === "/api/publish");
+    expect(sent[0]!.body).toEqual(sent[1]!.body);
+    expect(sent[0]!.body).toMatchObject({
+      force: true,
+      metadata: { description: "Original text" }
+    });
+    expect(instance.requests.map((request) => request.url)).toEqual([
+      "/api/me",
+      "/api/release",
+      "/api/publish",
+      "/api/me",
+      "/api/publish"
+    ]);
+  });
+
+  it("refuses --description in repo mode and invalid file descriptions without publishing", async () => {
+    const instance = await stubInstance(projectHandler);
+    const dir = projectTree(instance.url);
+    const file = htmlFile(dir, "page.html", validHtml);
+    const options = {
+      cwd: dir,
+      env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" }
+    };
+    const repo = await runCli(["publish", "--description", "Wrong home", "--json"], options);
+    expect(repo.status).toBe(1);
+    expect(JSON.parse(repo.stderr).error).toContain("patchy.json");
+    for (const description of ["  ", "x".repeat(501), "bad\u0007"]) {
+      const result = await runCli(
+        ["publish", file, "--description", description, "--json"],
+        options
+      );
+      expect(result.status).toBe(1);
+      expect(JSON.parse(result.stderr)).toMatchObject({
+        code: "invalid_description",
+        kind: "local"
+      });
+    }
+    expect(instance.requests.every((request) => request.url === "/api/me")).toBe(true);
+  });
+
+  it.each([
+    {
+      status: 403,
+      code: "not_owner",
+      fields: { owner: { id: "other", name: "Sam" } },
+      text: "Sam"
+    },
+    { status: 409, code: "patch_retired", fields: {}, text: "Restore" },
+    {
+      status: 409,
+      code: "patch_deleted",
+      fields: { purgeAt: "2026-10-15T00:00:00.000Z" },
+      text: "2026-10-15"
+    },
+    {
+      status: 409,
+      code: "has_dependants",
+      fields: {
+        dependants: [
+          { patchId: "mnopqrstuvwx", name: "reader", owner: { id: "other", name: "Sam" } }
+        ]
+      },
+      text: "reader"
+    },
+    { status: 422, code: "reserved_name", fields: {}, text: "Refused" }
+  ])(
+    "clears definitive $code retries without changing the repo identity",
+    async ({ status, code, fields, text }) => {
+      const instance = await stubPublishingInstance((_, respond) =>
+        respond(status, { ok: false, code, error: "Refused.", ...fields })
+      );
+      const dir = projectTree(instance.url);
+      const repoFile = path.join(dir, "patchy.json");
+      const repo = JSON.stringify({
+        instance: instance.url,
+        patch: "abcdefghijkl",
+        description: "Local description",
+        authorField: 7
+      });
+      writeFileSync(repoFile, repo);
+      const attemptPath = path.join(dir, ".patchy/publish", sha256(instance.url), "attempt");
+      for (const json of [false, true]) {
+        mkdirSync(attemptPath, { recursive: true });
+        writeFileSync(
+          path.join(attemptPath, `${sha256("lifecycle-retry")}.json`),
+          JSON.stringify({
+            ownerUserId: identity.user.id,
+            target: { mode: "repo" },
+            request: {
+              publishKey: "lifecycle-retry",
+              patchId: "abcdefghijkl",
+              html: validHtml,
+              metadata: {},
+              manifest: {
+                manifestVersion: MANIFEST_VERSION,
+                release: CURRENT_RELEASE,
+                tier: 0,
+                tables: {},
+                files: {},
+                uses: {}
+              }
+            }
+          })
+        );
+        const result = await runCli(
+          [
+            "publish",
+            "--description",
+            "ignored during recovery",
+            "--force",
+            ...(json ? ["--json"] : [])
+          ],
+          { cwd: dir, env: { PATCHY_API_TOKEN: "pp_owner" } }
+        );
+        expect(result.status).toBe(2);
+        const message = json ? JSON.parse(result.stderr).error : result.stderr;
+        expect(message).toContain(text);
+        expect(message).not.toMatch(/new patch|--new|Remove patch/i);
+        if (json)
+          expect(JSON.parse(result.stderr)).toMatchObject({ kind: "rejected", code, ...fields });
+        expect(existsSync(attemptPath)).toBe(false);
+        expect(readFileSync(repoFile, "utf8")).toBe(repo);
+      }
+      expect(instance.requests.map((request) => request.url)).toEqual([
+        "/api/me",
+        "/api/publish",
+        "/api/me",
+        "/api/publish"
+      ]);
+    }
+  );
+});
+
+describe("repo description sync and change notices", () => {
+  it("pulls only newer cloud descriptions on refresh, then publishes the pulled text and records its stamp", async () => {
+    let cloud = {
+      description: "Portal description",
+      descriptionUpdatedAt: "2026-09-15T00:00:00.000Z"
+    };
+    const instance = await stubInstance((request, respond, disconnect) => {
+      if (request.url === "/api/patches/abcdefghijkl?state=all")
+        return respond(200, { ...projectSource, ...cloud });
+      if (request.url === "/api/publish") {
+        const sent = Schema.decodeUnknownSync(PublishRequest)(request.body);
+        return respond(200, {
+          ...publish(200, "abcdefghijkl", 2),
+          tier: 1,
+          description: sent.manifest.description,
+          descriptionUpdatedAt: "2026-09-17T00:00:00.000Z"
+        });
+      }
+      projectHandler(request, respond, disconnect);
+    });
+    const dir = publishTree(instance.url);
+    const repoFile = path.join(dir, "patchy.json");
+    writeFileSync(
+      repoFile,
+      JSON.stringify({
+        instance: instance.url,
+        patch: "abcdefghijkl",
+        description: "Replaced local text",
+        descriptionSyncedAt: "2026-09-14T00:00:00.000Z",
+        authorField: 7
+      })
+    );
+    const options = { cwd: dir, env: { PATCHY_API_TOKEN: "pp_owner" } };
+    const refreshed = await runCli(["refresh"], options);
+    expect(refreshed.status, refreshed.stderr).toBe(0);
+    expect(refreshed.stdout).toContain(
+      "The description was changed in the portal to 'Portal description'; check it"
+    );
+    expect(refreshed.stdout).toContain("Replaced local text");
+    expect(readJson(repoFile)).toEqual({
+      instance: instance.url,
+      patch: "abcdefghijkl",
+      description: cloud.description,
+      descriptionSyncedAt: cloud.descriptionUpdatedAt,
+      authorField: 7
+    });
+    writeFileSync(
+      repoFile,
+      JSON.stringify({
+        instance: instance.url,
+        patch: "abcdefghijkl",
+        description: "Local edit",
+        descriptionSyncedAt: cloud.descriptionUpdatedAt,
+        authorField: 7
+      })
+    );
+    const local = await runCli(["refresh", "--json"], options);
+    expect(local).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(local.stdout).warnings).toEqual([]);
+    expect(readJson(repoFile)).toMatchObject({ description: "Local edit" });
+    cloud = { description: "New portal text", descriptionUpdatedAt: "2026-09-16T00:00:00.000Z" };
+    const published = await runCli(["publish", "--force", "--json"], options);
+    expect(published, published.stderr).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(published.stdout)).toMatchObject({
+      description: "New portal text",
+      warnings: [expect.stringContaining("New portal text")]
+    });
+    expect(instance.requests.find((request) => request.url === "/api/publish")!.body).toMatchObject(
+      { force: true, manifest: { description: "New portal text" } }
+    );
+    expect(readJson(repoFile)).toEqual({
+      instance: instance.url,
+      patch: "abcdefghijkl",
+      description: "New portal text",
+      descriptionSyncedAt: "2026-09-17T00:00:00.000Z",
+      authorField: 7
+    });
+  }, 30_000);
+
+  it("carries definition-only reminders through refresh and publish without blocking either command", async () => {
+    const instance = await stubInstance((request, respond, disconnect) => {
+      if (request.url === "/api/publish")
+        return respond(201, { ...publish(201, "abcdefghijkl", 1), tier: 1 });
+      projectHandler(request, respond, disconnect);
+    });
+    const dir = publishTree(instance.url);
+    const config = path.join(dir, "patchy.config.ts");
+    const original = readFileSync(config, "utf8");
+    const options = { cwd: dir, env: { PATCHY_API_TOKEN: "pp_owner" } };
+    expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
+    writeFileSync(
+      config,
+      original.replace("title: t.text()", "title: t.text(), extra: t.text().optional()")
+    );
+    const published = await runCli(["publish", "--json"], options);
+    expect(published, published.stderr).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(published.stdout).warnings).toContainEqual(
+      expect.stringContaining("Table `notes` changed since its last generation")
+    );
+    writeFileSync(
+      config,
+      original.replace(
+        "title: t.text()",
+        "title: t.text(), extra: t.text().optional(), other: t.text().optional()"
+      )
+    );
+    const refreshed = await runCli(["refresh", "--json"], options);
+    expect(refreshed, refreshed.stderr).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(refreshed.stdout).warnings).toContainEqual(
+      expect.stringContaining("Table `notes` changed since its last generation")
+    );
+    const unchanged = await runCli(["refresh", "--json"], options);
+    expect(JSON.parse(unchanged.stdout).warnings).toEqual([]);
+    writeFileSync(
+      config,
+      original
+        .replace(
+          "title: t.text()",
+          "title: t.text(), extra: t.text().optional(), other: t.text().optional(), another: t.text().optional()"
+        )
+        .replace("One note", "A revised note")
+    );
+    const described = await runCli(["refresh", "--json"], options);
+    expect(described.status, described.stderr).toBe(0);
+    expect(JSON.parse(described.stdout).warnings).toEqual([]);
+  }, 30_000);
+
+  it("recovers a lost repo publish response with the original primitive reminder", async () => {
+    let lost = true;
+    const response = { ...publish(201, "abcdefghijkl", 1), tier: 1 };
+    const instance = await stubInstance((request, respond, disconnect) => {
+      if (request.url === "/api/publish") {
+        if (lost) return disconnect();
+        return respond(201, response);
+      }
+      projectHandler(request, respond, disconnect);
+    });
+    const dir = publishTree(instance.url);
+    const config = path.join(dir, "patchy.config.ts");
+    const options = { cwd: dir, env: { PATCHY_API_TOKEN: "pp_owner" } };
+    expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
+    writeFileSync(
+      config,
+      readFileSync(config, "utf8").replace(
+        "title: t.text()",
+        "title: t.text(), extra: t.text().optional()"
+      )
+    );
+    const failed = await runCli(["publish", "--json"], options);
+    expect(failed).toMatchObject({ status: 3, stdout: "" });
+    const failure = JSON.parse(failed.stderr);
+    expect(failure).toMatchObject({
+      ok: false,
+      kind: "unreachable",
+      warnings: [expect.stringContaining("Table `notes` changed since its last generation")]
+    });
+    const attemptPath = path.join(dir, ".patchy/publish", sha256(instance.url), "attempt");
+    expect(readJson(pendingFile(attemptPath))).toMatchObject({ warnings: failure.warnings });
+    writeFileSync(config, "broken config");
+    lost = false;
+    const recovered = await runCli(["publish", "--json"], options);
+    expect(recovered).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(recovered.stdout)).toEqual({
+      ...response,
+      warnings: [...response.warnings, ...failure.warnings]
+    });
+    const sent = instance.requests.filter((request) => request.url === "/api/publish");
+    expect(sent).toHaveLength(2);
+    expect(sent[1]!.body).toEqual(sent[0]!.body);
+    expect(existsSync(attemptPath)).toBe(false);
+  }, 30_000);
+
+  it.each([
+    ["src/main.ts", "const title: string = 42;", "Typecheck"],
+    [
+      "vite.config.ts",
+      'throw new Error("synthetic build failure"); export default {};',
+      "Vite build"
+    ]
+  ])(
+    "reports discovered notices when %s fails before sending",
+    async (file, source, stage) => {
+      let cloud = { description: "Synthetic notes", descriptionUpdatedAt: null as string | null };
+      const instance = await stubInstance((request, respond, disconnect) => {
+        if (request.url === "/api/patches/abcdefghijkl?state=all")
+          return respond(200, { ...projectSource, ...cloud });
+        projectHandler(request, respond, disconnect);
+      });
+      const dir = publishTree(instance.url);
+      const repoFile = path.join(dir, "patchy.json");
+      writeFileSync(
+        repoFile,
+        JSON.stringify({
+          instance: instance.url,
+          patch: "abcdefghijkl",
+          description: "Synthetic notes"
+        })
+      );
+      const options = { cwd: dir, env: { PATCHY_API_TOKEN: "pp_owner" } };
+      expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
+      cloud = {
+        description: "Changed portal description",
+        descriptionUpdatedAt: "2026-09-15T00:00:00.000Z"
+      };
+      const config = path.join(dir, "patchy.config.ts");
+      writeFileSync(
+        config,
+        readFileSync(config, "utf8").replace(
+          "title: t.text()",
+          "title: t.text(), extra: t.text().optional()"
+        )
+      );
+      writeFileSync(path.join(dir, file), source);
+      const failed = await runCli(["publish", "--json"], options);
+      expect(failed).toMatchObject({ status: 1, stdout: "" });
+      expect(JSON.parse(failed.stderr)).toMatchObject({
+        ok: false,
+        kind: "local",
+        error: expect.stringContaining(stage),
+        warnings: [
+          expect.stringContaining("Changed portal description"),
+          expect.stringContaining("Table `notes` changed since its last generation")
+        ]
+      });
+      expect(readJson(repoFile)).toMatchObject({
+        description: cloud.description,
+        descriptionSyncedAt: cloud.descriptionUpdatedAt
+      });
+      expect(instance.requests.filter((request) => request.url === "/api/publish")).toEqual([]);
+      expect(existsSync(path.join(dir, ".patchy/publish", sha256(instance.url), "attempt"))).toBe(
+        false
+      );
+    },
+    30_000
+  );
+
+  it("reports the unshare reminder at refusal before a fresh forced publish", async () => {
+    const dependants = [
+      { patchId: "mnopqrstuvwx", name: "reader", owner: { id: "other", name: "Sam" } }
+    ];
+    const instance = await stubInstance((request, respond, disconnect) => {
+      if (request.url === "/api/publish") {
+        if (!decodeForceRequest(request.body).force)
+          return respond(409, {
+            ok: false,
+            code: "has_dependants",
+            error: "Readers would break.",
+            dependants
+          });
+        return respond(200, { ...publish(200, "abcdefghijkl", 2), tier: 1 });
+      }
+      projectHandler(request, respond, disconnect);
+    });
+    const dir = publishTree(instance.url);
+    const config = path.join(dir, "patchy.config.ts");
+    const privateConfig = readFileSync(config, "utf8");
+    writeFileSync(
+      config,
+      privateConfig.replace("{ title: t.text() })", "{ title: t.text() }, { shared: true })")
+    );
+    writeFileSync(
+      path.join(dir, "patchy.json"),
+      JSON.stringify({
+        instance: instance.url,
+        patch: "abcdefghijkl",
+        description: "Synthetic notes"
+      })
+    );
+    const options = { cwd: dir, env: { PATCHY_API_TOKEN: "pp_owner" } };
+    expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
+    writeFileSync(config, privateConfig);
+    const refused = await runCli(["publish", "--json"], options);
+    expect(refused).toMatchObject({ status: 2, stdout: "" });
+    expect(JSON.parse(refused.stderr)).toMatchObject({
+      ok: false,
+      kind: "rejected",
+      code: "has_dependants",
+      dependants,
+      warnings: [expect.stringContaining("Table `notes` changed since its last generation")]
+    });
+    const attemptPath = path.join(dir, ".patchy/publish", sha256(instance.url), "attempt");
+    expect(existsSync(attemptPath)).toBe(false);
+    const forced = await runCli(["publish", "--force", "--json"], options);
+    expect(forced, forced.stderr).toMatchObject({ status: 0, stderr: "" });
+    const sent = instance.requests.filter((request) => request.url === "/api/publish");
+    expect(sent).toHaveLength(2);
+    expect(sent[1]!.body).toMatchObject({ force: true });
+    expect(existsSync(attemptPath)).toBe(false);
+  }, 30_000);
+
+  it("refuses a missing repo description on publish and a 501-code-point init purpose", async () => {
+    const instance = await stubInstance(projectHandler);
+    const dir = publishTree(instance.url);
+    const options = {
+      cwd: dir,
+      env: { PATCHY_API_TOKEN: "pp_owner", PATCHY_API_URL: instance.url }
+    };
+    expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
+    writeFileSync(path.join(dir, "patchy.json"), JSON.stringify({ instance: instance.url }));
+    const missing = await runCli(["publish", "--json"], options);
+    expect(missing.status).toBe(1);
+    expect(JSON.parse(missing.stderr)).toMatchObject({
+      kind: "local",
+      code: "invalid_manifest",
+      error: expect.stringContaining("description")
+    });
+    const init = await runCli(
+      ["init", "too-long", "--purpose", "𐐀".repeat(501), "--json"],
+      options
+    );
+    expect(init.status).toBe(1);
+    expect(JSON.parse(init.stderr).error).toContain("501");
+    expect(JSON.parse(init.stderr).error).toContain("500");
+    expect(existsSync(path.join(dir, "too-long"))).toBe(false);
+    expect(instance.requests.filter((request) => request.url === "/api/publish")).toEqual([]);
+  }, 30_000);
 });
 
 describe("patchy status", async () => {
@@ -2240,7 +3175,9 @@ describe("patchy status", async () => {
 
 describe("patchy list", () => {
   it("merges discovery under a saved login without reading patchy.json", async () => {
-    const patches = [Struct.omit(projectSource, ["title", "inventory", "reads"])];
+    const patches = [
+      Struct.omit(projectSource, ["title", "inventory", "reads", "descriptionUpdatedAt"])
+    ];
     const instance = await stubInstance((request, respond) => {
       const url = new URL(request.url, "http://instance.test");
       if (url.pathname === "/api/patches") {
@@ -2269,7 +3206,12 @@ describe("patchy list", () => {
   });
 
   const env = { PATCHY_API_TOKEN: "pp_discovery" };
-  const summary = Struct.omit(projectSource, ["title", "inventory", "reads"]);
+  const summary = Struct.omit(projectSource, [
+    "title",
+    "inventory",
+    "reads",
+    "descriptionUpdatedAt"
+  ]);
   const primitive = {
     kind: "table",
     name: "people",
@@ -2767,7 +3709,7 @@ describe("patch-repo commands", () => {
     );
     const result = await runCli(["refresh", "--json"], { cwd: dir, env });
     expect(result).toMatchObject({ status: 0, stderr: "" });
-    expect(JSON.parse(result.stdout)).toEqual({
+    expect(JSON.parse(result.stdout)).toMatchObject({
       ok: true,
       release: { from: `${instance.url}/sdk/patchy.tgz`, to: CURRENT_RELEASE },
       changed: {
@@ -2805,7 +3747,7 @@ describe("patch-repo commands", () => {
     writeFileSync(path.join(dir, "fixtures/postgres-sales-db.sql"), fixture);
     const result = await runCli(["add", "postgres", "--json"], { cwd: dir, env });
     expect(result).toMatchObject({ status: 0, stderr: "" });
-    expect(JSON.parse(result.stdout)).toEqual({
+    expect(JSON.parse(result.stdout)).toMatchObject({
       ok: true,
       alias: "salesDb",
       declaration: { kind: "postgres", handle: "sales-db" },
@@ -2840,7 +3782,7 @@ describe("patch-repo commands", () => {
     writeFileSync(path.join(dir, "fixtures/postgres-sales-db.sql"), fixture);
     const result = await runCli(["remove", "salesDb", "--json"], { cwd: dir, env });
     expect(result).toMatchObject({ status: 0, stderr: "" });
-    expect(JSON.parse(result.stdout)).toEqual({
+    expect(JSON.parse(result.stdout)).toMatchObject({
       ok: true,
       alias: "salesDb",
       removed: ["salesDb"]
@@ -3077,7 +4019,10 @@ describe("patch-repo commands", () => {
       cwd: dir,
       env: { PATH: process.env.PATH, HOME: stateDir, ...registry }
     });
-    expect(readJson(path.join(dir, "patchy.json"))).toEqual({ instance: instance.url });
+    expect(readJson(path.join(dir, "patchy.json"))).toEqual({
+      instance: instance.url,
+      description: "Synthetic notes for CLI tests"
+    });
     const repeated = await runCli(args, options);
     expect(repeated).toMatchObject({ status: 1, stdout: "" });
     expect(JSON.parse(repeated.stderr)).toMatchObject({ ok: false, kind: "local" });
@@ -3493,6 +4438,7 @@ describe("repo publish recovery", () => {
       JSON.stringify({
         instance: instance.url,
         patch: response.patchId,
+        description: "Synthetic notes",
         authorField: 8
       })
     );
@@ -3507,7 +4453,10 @@ describe("repo publish recovery", () => {
     renameSync(dir, moved);
     options.cwd = moved;
     const attemptPath = path.join(moved, ".patchy/publish", sha256(instance.url), "attempt");
-    const original = readFileSync(pendingFile(attemptPath), "utf8");
+    const legacyAttempt = JSON.parse(readFileSync(pendingFile(attemptPath), "utf8"));
+    delete legacyAttempt.warnings;
+    const original = JSON.stringify(legacyAttempt);
+    writeFileSync(pendingFile(attemptPath), original);
     writeFileSync(path.join(moved, "patchy.config.ts"), "broken config");
     writeFileSync(
       path.join(moved, "patchy.json"),
@@ -3690,7 +4639,8 @@ describe("repo publish recovery", () => {
     expect(readJson(path.join(dir, "patchy.json"))).toEqual({
       instance: `${instance.url}/`,
       authorField: 7,
-      patch: response.patchId
+      patch: response.patchId,
+      descriptionSyncedAt: null
     });
     expect(existsSync(attemptPath)).toBe(false);
     expect(instance.requests.filter((r) => r.url === "/api/publish").map((r) => r.body)).toEqual([
@@ -3728,7 +4678,7 @@ describe("repo publish recovery", () => {
     );
     const options = { cwd: dir, env: { PATCHY_API_TOKEN: "pp_owner" } };
     expect((await runCli(["share", "public", "--json"], options)).status).toBe(0);
-    expect((await runCli(["delete", "--json"], options)).status).toBe(0);
+    expect((await runCli(["delete", "--yes", "--json"], options)).status).toBe(0);
     const attemptPath = path.join(dir, ".patchy/publish", sha256(instance.url), "attempt");
     mkdirSync(attemptPath, { recursive: true });
     writeFileSync(

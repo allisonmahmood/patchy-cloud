@@ -563,6 +563,12 @@ it.layer(Layer.fresh(publishLayer))("owner lifecycle over machine tokens", (it) 
         payload: new DescriptionRequest({ description: "<b>Tracks</b>\n\torders." })
       });
       assert.strictEqual(described.description, "<b>Tracks</b> orders.");
+      const detail = yield* owner.detail({
+        params: { patchRef: first.patchId },
+        query: { state: "all" }
+      });
+      assert.strictEqual(detail.description, "<b>Tracks</b> orders.");
+      assert.strictEqual(detail.descriptionUpdatedAt, "2026-01-01T00:01:00.000Z");
       expect(yield* owner.restore({ params, payload: new ForceRequest({}) })).toMatchObject({
         ok: true,
         ...params,

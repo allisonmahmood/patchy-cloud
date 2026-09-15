@@ -87,7 +87,7 @@ const recorded = Effect.fn("Dev.recorded")(function* (
   return record;
 });
 
-const report = (record: Daemon, stateDir: string) => {
+const report = (record: Daemon, stateDir: string, warnings: readonly string[] = []) => {
   const stop = `pnpm patchy dev stop --api-url '${record.instance.replaceAll("'", "'\\''")}'`;
   return Output.report(
     {
@@ -98,9 +98,10 @@ const report = (record: Daemon, stateDir: string) => {
       stop,
       pid: record.pid,
       release: record.release,
-      identity: record.identity
+      identity: record.identity,
+      warnings
     },
-    [record.url!, `Log: ${logPath(stateDir)}`, `Stop: ${stop}`]
+    [...warnings, record.url!, `Log: ${logPath(stateDir)}`, `Stop: ${stop}`]
   );
 };
 
@@ -137,7 +138,7 @@ export const start = Effect.fn("Dev.start")(function* <R>(
     Effect.gen(function* () {
       yield* lock(stateDir);
       const prior = yield* recorded(root, stateDir, instance.apiUrl);
-      if (prior && (yield* healthy(prior))) return { record: prior, started: false };
+      if (prior && (yield* healthy(prior))) return { record: prior, started: false, warnings: [] };
       if (prior && (yield* io("Could not inspect the dev process.", () => sameProcess(prior))))
         return yield* new LocalError({
           message:
@@ -250,10 +251,10 @@ export const start = Effect.fn("Dev.start")(function* <R>(
       const ready = yield* waiting.pipe(
         Effect.onError(() => stopRecorded(child).pipe(Effect.orDie))
       );
-      return { record: ready, started: true };
+      return { record: ready, started: true, warnings: prepared.warnings };
     })
   );
-  yield* report(result.record, stateDir);
+  yield* report(result.record, stateDir, result.warnings);
   if (!foreground) return;
   yield* Effect.scoped(
     Effect.gen(function* () {

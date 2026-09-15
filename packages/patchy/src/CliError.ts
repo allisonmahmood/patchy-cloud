@@ -8,7 +8,14 @@
  * (docs/adr/ADR-0004).
  */
 import * as Schema from "effect/Schema";
-import { PatchState } from "@patchy/api";
+import {
+  HasDependants,
+  NotOwner,
+  PatchDeleted,
+  PatchState,
+  SourcesOff,
+  WrongState
+} from "@patchy/api";
 
 export type Kind = "local" | "rejected" | "unreachable";
 
@@ -27,9 +34,86 @@ export class LocalError extends Schema.TaggedError<LocalError>()("LocalError", f
   readonly kind = "local";
 }
 
-/** The instance answered and said no: 4xx, with the sentence it used. */
+/** Structured details at the CLI output boundary, including installed CLI failures. */
+export const refusalFields = {
+  owner: Schema.optionalKey(NotOwner.fields.owner),
+  dependants: Schema.optionalKey(HasDependants.fields.dependants),
+  sources: Schema.optionalKey(SourcesOff.fields.sources),
+  state: Schema.optionalKey(PatchState),
+  purgeAt: Schema.optionalKey(PatchDeleted.fields.purgeAt)
+};
+
+/** Generic refusals unrelated to patch ownership or lifecycle. */
 export class RejectedError extends Schema.TaggedError<RejectedError>()("RejectedError", fields) {
   readonly kind = "rejected";
+}
+
+export class NotOwnerError extends Schema.TaggedError<NotOwnerError>()("NotOwnerError", {
+  owner: NotOwner.fields.owner,
+  cause: Schema.Defect()
+}) {
+  readonly kind = "rejected";
+  override get message() {
+    return `This patch belongs to ${this.owner.name}. Ask them, or an admin, to reassign it.`;
+  }
+}
+
+export class PatchRetiredError extends Schema.TaggedError<PatchRetiredError>()(
+  "PatchRetiredError",
+  {
+    cause: Schema.Defect()
+  }
+) {
+  readonly kind = "rejected";
+  override get message() {
+    return "This patch is retired. Restore it (patchy restore) or ask an admin.";
+  }
+}
+
+export class PatchDeletedError extends Schema.TaggedError<PatchDeletedError>()(
+  "PatchDeletedError",
+  {
+    purgeAt: PatchDeleted.fields.purgeAt,
+    cause: Schema.Defect()
+  }
+) {
+  readonly kind = "rejected";
+  override get message() {
+    return `This patch is deleted. Reclaim date: ${this.purgeAt}. Restore it before that date (patchy restore) or ask an admin.`;
+  }
+}
+
+export class HasDependantsError extends Schema.TaggedError<HasDependantsError>()(
+  "HasDependantsError",
+  {
+    dependants: HasDependants.fields.dependants,
+    cause: Schema.Defect()
+  }
+) {
+  readonly kind = "rejected";
+  override get message() {
+    return `Other live patches read these tables.\n${this.dependants.map((patch) => `- ${patch.patchId} ${patch.name} (${patch.owner.name})`).join("\n")}\nAsk the person you are working for before forcing.`;
+  }
+}
+
+export class SourcesOffError extends Schema.TaggedError<SourcesOffError>()("SourcesOffError", {
+  sources: SourcesOff.fields.sources,
+  cause: Schema.Defect()
+}) {
+  readonly kind = "rejected";
+  override get message() {
+    return `This patch reads sources that are off.\n${this.sources.map((source) => `- ${source.patchId}${source.name === undefined ? "" : ` ${source.name}`} / ${source.table}: ${source.state}`).join("\n")}\nAsk the person you are working for before forcing.`;
+  }
+}
+
+export class WrongStateError extends Schema.TaggedError<WrongStateError>()("WrongStateError", {
+  state: WrongState.fields.state,
+  cause: Schema.Defect()
+}) {
+  readonly kind = "rejected";
+  override get message() {
+    return `This patch is ${this.state}; this action is not available in that state.`;
+  }
 }
 
 /** Discovery resolved a patch outside the requested lifecycle filter. */
@@ -38,11 +122,43 @@ export class WrongPatchState extends Schema.TaggedError<WrongPatchState>()("Wron
   cause: Schema.Defect()
 }) {
   readonly kind = "rejected";
-  readonly code = "wrong_state";
   override get message() {
     return `Patch is ${this.state}; pass --state ${this.state === "deleted" ? "all" : this.state}.`;
   }
 }
+
+export const Rejected = Schema.Union([
+  RejectedError,
+  NotOwnerError,
+  PatchRetiredError,
+  PatchDeletedError,
+  HasDependantsError,
+  SourcesOffError,
+  WrongStateError,
+  WrongPatchState
+]);
+export type Rejected = typeof Rejected.Type;
+
+/** Wire codes belong to output, not to the tagged domain errors. */
+export const refusalDetails = (error: Rejected) => {
+  switch (error._tag) {
+    case "RejectedError":
+      return error.code === undefined ? {} : { code: error.code };
+    case "NotOwnerError":
+      return { code: "not_owner", owner: error.owner };
+    case "PatchRetiredError":
+      return { code: "patch_retired" };
+    case "PatchDeletedError":
+      return { code: "patch_deleted", purgeAt: error.purgeAt };
+    case "HasDependantsError":
+      return { code: "has_dependants", dependants: error.dependants };
+    case "SourcesOffError":
+      return { code: "sources_off", sources: error.sources };
+    case "WrongStateError":
+    case "WrongPatchState":
+      return { code: "wrong_state", state: error.state };
+  }
+};
 
 /** No usable answer from the instance: connect, timeout, 5xx, an unparseable body. */
 export class UnreachableError extends Schema.TaggedError<UnreachableError>()("UnreachableError", {
@@ -98,8 +214,7 @@ export class InstanceMismatch extends Schema.TaggedError<InstanceMismatch>()("In
 
 export const CliError = Schema.Union([
   LocalError,
-  RejectedError,
-  WrongPatchState,
+  Rejected,
   UnreachableError,
   ReleaseMismatch,
   InstanceMismatch

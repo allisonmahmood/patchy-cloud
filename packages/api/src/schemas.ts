@@ -6,6 +6,7 @@
  * this package was created, ahead of the tables and the code.
  */
 import * as Schema from "effect/Schema";
+import * as SchemaGetter from "effect/SchemaGetter";
 import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
 import { isPatchId } from "@patchy/core";
 import { Snapshot } from "./postgresSnapshot.js";
@@ -19,6 +20,38 @@ export const PatchId = Schema.String.check(
   Schema.makeFilter((value: string) => isPatchId(value) || "Invalid patch ID.", {
     title: "PatchId"
   })
+);
+
+export const normalizeDescriptionText = (text: string): string => text.replace(/\s+/gu, " ").trim();
+
+/** A normalized description, with an empty string reserved for explicit clearing. */
+export const DescriptionText = Schema.String.check(
+  // Whitespace controls become spaces; all other controls are refused.
+  Schema.makeFilter(
+    (text) =>
+      !/[\u0000-\u0008\u000e-\u001f\u007f-\u009f]/u.test(text) ||
+      "Description contains control characters."
+  ),
+  Schema.makeFilter(
+    (text) => text === "" || /\S/u.test(text) || "Description must not contain only whitespace."
+  )
+).pipe(
+  Schema.decodeTo(
+    Schema.String.check(
+      Schema.makeFilter((text) => {
+        let length = 0;
+        for (let offset = 0; offset < text.length;) {
+          if (++length > 500) return "Description must contain at most 500 Unicode code points.";
+          offset += text.codePointAt(offset)! > 0xffff ? 2 : 1;
+        }
+        return true;
+      })
+    ),
+    {
+      decode: SchemaGetter.transform(normalizeDescriptionText),
+      encode: SchemaGetter.transform((text) => text)
+    }
+  )
 );
 
 /** A request field a client may leave out or send as null. */
@@ -522,6 +555,7 @@ export const PatchRead = Schema.Struct({
 export class PatchDetail extends Schema.Class<PatchDetail>("PatchDetail")({
   ...PatchSummary.fields,
   title: Schema.String,
+  descriptionUpdatedAt: Schema.NullOr(IsoTimestamp),
   inventory: Schema.NullOr(
     Schema.Struct({
       tables: Schema.Array(PatchTableSummary),
