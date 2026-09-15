@@ -1,6 +1,6 @@
 # Portal
 
-Where a signed-in person finds and manages their company's patches. The patch, its states and its owner belong to [Patches](../patches/CONTEXT.md); the viewer to [Auth](../auth/CONTEXT.md); users and roles to [Companies](../companies/CONTEXT.md). The portal, index, cards, inline management, versions, confirmation pages and stale-action refusals are built. Deactivation/reactivation choices remain decided work from [#247](https://github.com/allisonmahmood/patchy-cloud/issues/247).
+Where a signed-in person finds and manages their company's patches. The patch, its states and its owner belong to [Patches](../patches/CONTEXT.md); the viewer to [Auth](../auth/CONTEXT.md); users and roles to [Companies](../companies/CONTEXT.md). The portal, index, cards, inline management, versions, confirmation pages, stale-action refusals and deactivation/reactivation pick pages are built.
 
 ## Language
 
@@ -21,7 +21,7 @@ The owner or admin's controls on a card: description, who can open it, served ve
 _Avoid_: settings, admin panel, edit mode
 
 **Confirmation page**:
-The page under a card's URL for an act that breaks someone else's tool or that the actor cannot undo alone: the consequence, what breaks, the acknowledgement and the way back. Retire, delete, restore with off sources and reassign each have one.
+The page for an act that breaks another tool or that the actor cannot undo alone: the consequence, what breaks, the acknowledgement and the way back. Patch management confirmations live under the card's URL; deactivation and reactivation confirmations follow the user's pick page and describe the exact selection.
 _Avoid_: modal, dialog, are-you-sure
 
 **Acknowledgement**:
@@ -29,7 +29,7 @@ The actor's explicit acceptance, on a confirmation page, of the breakage to list
 _Avoid_: consent, override, warning (what precedes it)
 
 **Pick page**:
-The decided, not-yet-built deactivation or reactivation step that lists a user's patches with what each depends on, for the admin to leave alone, act on a selection, or act on all before confirmation.
+The deactivation or reactivation step that lists a user's patches for the admin to leave alone, act on a selection, or act on all. Deactivation shows each live patch's dependants; confirmation excludes dependants or restored sources inside the selection.
 _Avoid_: bulk action, checklist, wizard
 
 **Stale action**:
