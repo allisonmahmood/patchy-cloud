@@ -41,5 +41,5 @@ The shared frame for the portal, Company, Connections and Your machines: the hea
 _Avoid_: layout, template, theme
 
 **Component set**:
-The built vocabulary of controls every first-party page composes: buttons, fields, fact lists, notices, headings, pills and confirmation forms, styled once in the shell so they look and scale the same everywhere. Page styles carry layout only; patches are exempt.
+The built vocabulary of controls every first-party page composes: buttons, fields, fact lists, compact selectable lists, version tables, copyable addresses, notices, headings, pills and confirmation forms, styled once in the shell so they look and scale the same everywhere. Page styles carry layout only; patches are exempt.
 _Avoid_: design system (there is one theme and no library), component library, utility classes

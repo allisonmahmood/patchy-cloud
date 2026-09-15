@@ -170,9 +170,14 @@ const dependantsFact = (groups: readonly DependantGroup[], all: boolean): string
   return `<p>${escapeHtml(groups.length)} ${groups.length === 1 ? "patch" : "patches"}</p><ul class="list list-compact">${shown}</ul>${groups.length > 3 ? `<p class="supporting-text">and ${escapeHtml(groups.length - 3)} more</p>` : ""}`;
 };
 
-const descriptionForm = (card: Patches.PortalCard, all: boolean, submitted?: string): string =>
+const descriptionForm = (
+  card: Patches.PortalCard,
+  all: boolean,
+  submitted?: string,
+  error?: string
+): string =>
   // Native maxlength counts UTF-16 units, not the server's Unicode code-point bound.
-  `<section class="section"><h3 class="section-heading" id="description-heading">Description</h3><form method="post" action="${escapeAttribute(cardPath(card.patch, all, "description"))}">${hidden("expectedDescriptionUpdatedAt", card.patch.descriptionUpdatedAt)}<textarea class="field" id="description" name="description" rows="4" aria-labelledby="description-heading" aria-describedby="description-hint"${submitted === undefined ? "" : ' aria-invalid="true"'}>${escapeHtml(submitted ?? card.patch.description)}</textarea><p class="field-hint" id="description-hint">The repo pulls this change in the next time it runs <code>patchy dev</code> or publishes. Start with what the tool does. Up to 500 characters.</p><div class="actions"><button class="btn" type="submit">Save description</button></div></form></section>`;
+  `<section class="section"><form method="post" action="${escapeAttribute(cardPath(card.patch, all, "description"))}">${hidden("expectedDescriptionUpdatedAt", card.patch.descriptionUpdatedAt)}<label class="field-label" for="description">Description</label><textarea class="field" id="description" name="description" rows="4" aria-describedby="description-hint${error === undefined ? "" : " description-error"}"${error === undefined ? "" : ' aria-invalid="true"'}>${escapeHtml(submitted ?? card.patch.description)}</textarea><p class="field-hint" id="description-hint">The repo pulls this change in the next time it runs <code>patchy dev</code> or publishes. Start with what the tool does. Up to 500 characters.</p>${error === undefined ? "" : `<p class="field-error" id="description-error" role="alert">${escapeHtml(error)}</p>`}<div class="actions"><button class="btn" type="submit">Save description</button></div></form></section>`;
 
 const scopeForm = (card: Patches.PortalCard, all: boolean): string => {
   const radio = (scope: Patches.Patch["scope"], label: string) =>
@@ -238,6 +243,7 @@ const renderCard = (input: {
   readonly now: number;
   readonly publicBaseUrl: string;
   readonly submittedDescription?: string;
+  readonly descriptionError?: string;
 }): string => {
   const { card, viewer, all, now } = input;
   const { patch } = card;
@@ -260,7 +266,10 @@ const renderCard = (input: {
   const stateFact = live
     ? ""
     : `<dt>State</dt><dd>${patch.state === "retired" ? "Retired" : "Deleted"}${stateActor === null ? "" : ` by ${escapeHtml(stateActor)}`}${stateAt === null ? "" : `, ${escapeHtml(dateLabel(stateAt))}`}</dd>`;
-  const facts = `<dl class="facts">${stateFact}<dt>Owner</dt><dd>${owner}</dd><dt>Current version</dt><dd>${escapeHtml(versionFact)}</dd>${live ? `<dt>Who can open it</dt><dd>${escapeHtml(audience)}</dd>` : ""}<dt>Used by other patches</dt><dd>${dependantsFact(groups, all)}</dd></dl>`;
+  const facts =
+    !live && !manage
+      ? `<dl class="facts">${stateFact}</dl>`
+      : `<dl class="facts">${stateFact}<dt>Owner</dt><dd>${owner}</dd><dt>Current version</dt><dd>${escapeHtml(versionFact)}</dd>${live ? `<dt>Who can open it</dt><dd>${escapeHtml(audience)}</dd>` : ""}<dt>Used by other patches</dt><dd>${dependantsFact(groups, all)}</dd></dl>`;
   const offNote = live
     ? ""
     : patch.state === "retired"
@@ -276,10 +285,10 @@ const renderCard = (input: {
       : "";
   const stop =
     live && manage
-      ? `<section class="note note-warn"><h3 class="section-heading">Stop serving</h3><p>${groups.length === 0 ? "Nothing else reads this patch." : `${escapeHtml(groups.length)} ${groups.length === 1 ? "patch reads" : "patches read"} this patch's tables and will break until it is restored. You will be asked to confirm.`}</p><div class="actions portal-stop-actions"><div><a class="btn btn-danger" href="${escapeAttribute(cardPath(patch, all, "retire"))}">Retire…</a><p class="supporting-text">Keeps everything indefinitely. Nobody can open it until it is restored.</p></div><div><a class="btn btn-danger" href="${escapeAttribute(cardPath(patch, all, "delete"))}">Delete…</a><p class="supporting-text">Keeps it 30 days, then it is gone for good.</p></div></div></section>`
+      ? `<section class="note note-warn"><span class="note-title">Stop serving</span><p>${groups.length === 0 ? "Nothing else reads this patch." : `${escapeHtml(groups.length)} ${groups.length === 1 ? "patch reads" : "patches read"} this patch's tables and will break until it is restored. You will be asked to confirm.`}</p><div class="actions portal-stop-actions"><div><a class="btn btn-danger" href="${escapeAttribute(cardPath(patch, all, "retire"))}">Retire…</a><p class="supporting-text">Keeps everything indefinitely. Nobody can open it until it is restored.</p></div><div><a class="btn btn-danger" href="${escapeAttribute(cardPath(patch, all, "delete"))}">Delete…</a><p class="supporting-text">Keeps it 30 days, then it is gone for good.</p></div></div></section>`
       : "";
   const management = manage
-    ? `${adminLine}<section class="section" aria-labelledby="manage-heading"><h2 class="section-heading" id="manage-heading">Manage</h2>${live ? "" : restoreActions(card, all, now)}${patch.state === "deleted" ? "" : descriptionForm(card, all, input.submittedDescription)}${live ? scopeForm(card, all) + versionsSection(card, viewer, all, now) + stop : ""}</section>`
+    ? `${adminLine}<section class="section" aria-labelledby="manage-heading"><h2 class="section-heading" id="manage-heading">Manage</h2>${live ? "" : restoreActions(card, all, now)}${patch.state === "deleted" ? "" : descriptionForm(card, all, input.submittedDescription, input.descriptionError)}${live ? scopeForm(card, all) + versionsSection(card, viewer, all, now) + stop : ""}</section>`
     : "";
   return `<article class="portal-card"><p class="supporting-text">${escapeHtml(patch.companyHandle)} / ${escapeHtml(patch.name)}</p><h1 class="page-heading">${escapeHtml(patch.name)}</h1>${titleLine(patch)}${descriptionBlock(card)}${open}${facts}${offNote}${deactivated}${management}</article>`;
 };
@@ -293,6 +302,7 @@ export const renderPortal = (input: {
   readonly publicBaseUrl: string;
   readonly notice?: string;
   readonly submittedDescription?: string;
+  readonly descriptionError?: string;
 }): string => {
   if (input.rows.length === 0 && input.card === null) {
     return `${refusal(input.notice)}<article><h1 class="page-heading">No patches yet</h1><p>The first one published lists here for everyone at ${escapeHtml(input.viewer.company.name)}.</p><div class="note"><span class="note-title">Publish the first one</span>Ask your agent to publish a page with Patchy, or run <code>patchy publish page.html</code> from a terminal that has done <code>patchy login</code>.</div></article>`;
@@ -316,7 +326,6 @@ export const renderRestoreConflict = (input: {
   readonly card: Patches.PortalCard;
   readonly viewer: RequireSession.Viewer["Service"];
   readonly all: boolean;
-  readonly now: number;
 }): string => {
   const { card, viewer, all } = input;
   const sources = card.offSources

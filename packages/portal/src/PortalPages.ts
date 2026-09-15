@@ -81,6 +81,7 @@ const render = Effect.fn("PortalPages.render")(function* (
     status?: number;
     notice?: string;
     submittedDescription?: string;
+    descriptionError?: string;
     versions?: boolean;
     restoreConflict?: boolean;
   } = {}
@@ -111,7 +112,7 @@ const render = Effect.fn("PortalPages.render")(function* (
     options.versions && card
       ? renderVersions({ card, viewer, all, now })
       : options.restoreConflict && card
-        ? renderRestoreConflict({ card, viewer, all, now })
+        ? renderRestoreConflict({ card, viewer, all })
         : renderPortal({
             rows,
             card,
@@ -122,7 +123,10 @@ const render = Effect.fn("PortalPages.render")(function* (
             ...(options.notice === undefined ? {} : { notice: options.notice }),
             ...(options.submittedDescription === undefined
               ? {}
-              : { submittedDescription: options.submittedDescription })
+              : { submittedDescription: options.submittedDescription }),
+            ...(options.descriptionError === undefined
+              ? {}
+              : { descriptionError: options.descriptionError })
           });
   return pageResponse(
     {
@@ -202,7 +206,7 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Acti
       }
     );
   });
-  const stale = Effect.gen(function* () {
+  const stale = Effect.fn("PortalPages.stale")(function* (state?: Patches.Patch["state"]) {
     const fresh = yield* patches.portalCard(selected.patch.id, access);
     const when =
       fresh.patch.lastChangedAt === null
@@ -210,20 +214,21 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Acti
         : ` ${ago(fresh.patch.lastChangedAt, yield* Clock.currentTimeMillis)}`;
     return yield* render(name, {
       status: 409,
-      notice: `This patch changed while you had this page open: ${fresh.lastChangedAction ?? "updated"} by ${fresh.actorNames.lastChanged ?? fresh.owner.name}${when}. Nothing was done.`
+      notice: `${state === undefined ? "" : `This patch is ${state}. `}This patch changed while you had this page open: ${fresh.lastChangedAction ?? "updated"} by ${fresh.actorNames.lastChanged ?? fresh.owner.name}${when}. Nothing was done.`
     });
   });
   const invalid = (notice: string) =>
     render(name, {
       status: 422,
-      notice,
-      ...(action === "description" ? { submittedDescription: form.description ?? "" } : {})
+      ...(action === "description"
+        ? { submittedDescription: form.description ?? "", descriptionError: notice }
+        : { notice })
     });
   return yield* run.pipe(
     Effect.catchTags({
-      StaleAction: () => stale,
+      StaleAction: () => stale(),
       NotOwner: () => render(name, { status: 403, notice: forbidden }),
-      WrongState: () => stale,
+      WrongState: (error) => stale(error.state),
       PatchDeleted: (error) =>
         render(name, { status: 409, notice: `${error.message} Nothing was done.` }),
       PatchRetired: (error) =>
