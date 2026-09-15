@@ -28,6 +28,10 @@ import {
   NameTaken,
   NotAdditive,
   PatchInventory,
+  PatchSummary,
+  PatchDetail,
+  PatchStateFilter,
+  PrimitiveDetail,
   PublishUnavailable,
   NotOwner,
   WrongState,
@@ -92,13 +96,15 @@ export class Authorization extends HttpApiMiddleware.Service<
 const protectedErrors = [BadRequest, NotFound, RateLimited] as const;
 
 /**
- * The routes that take a patch id in the path also answer 414 to an overlong
- * one. The id is a plain string here on purpose: an unknown or malformed id
- * is a 404 from the handler, not a 400 from the path.
+ * The routes that take a patch id or name also answer 414 to an overlong
+ * reference. Parameters are plain strings here on purpose: unknown or malformed
+ * references are a 404 from the handler, not a 400 from the path.
  */
 const patchRouteErrors = [...protectedErrors, RequestTargetTooLong] as const;
 const patchParams = { patchId: Schema.String };
 const ownerRouteErrors = [...patchRouteErrors, NotOwner, WrongState] as const;
+const readParams = { patchRef: Schema.String };
+const readQuery = { state: Schema.optionalKey(PatchStateFilter) };
 /** A bare query flag is true; clients encode booleans as true/false. */
 const queryFlag = Schema.Literals(["", "true", "false"]).pipe(
   Schema.decodeTo(Schema.Boolean, {
@@ -241,6 +247,63 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "no control characters, and are returned with `descriptionUpdatedAt`. " +
           "`address` and `publicUrl` both name the absolute `/<company>/<name>` address. " +
           "The JSON body cap is three times the larger configured HTML or bundle cap."
+      )
+    ),
+    HttpApiEndpoint.get("list", "/patches", {
+      query: { ...readQuery, mine: Schema.optionalKey(queryFlag) },
+      success: Schema.Struct({ patches: Schema.Array(PatchSummary) }),
+      error: protectedErrors
+    }).annotateMerge(
+      describe(
+        "List the bearer credential's openable company patches, including public patches but never another " +
+          "company's. Machine tokens only; browser sessions do not grant API access. " +
+          "`state` is live by default, retired for retired patches, or all for live, retired and deleted " +
+          "patches not yet reclaimed. The recovery deadline limits restore; the deletion sweep makes a patch gone. " +
+          "A bare `?mine` or `mine=true` restricts the list to the " +
+          "token's owner; `mine=false` does not. Results are yours first, then the company's, sorted by " +
+          "name within each group. Each row includes the canonical id, address, owner and deactivated " +
+          "mark, description, lifecycle stamps, current version, tier and publish time. `purgeAt` is " +
+          "30 days after deletion. Unopenable, disabled and gone patches are absent. " +
+          "No connections, table names or business rows are returned. Responses are private, no-store."
+      )
+    ),
+    HttpApiEndpoint.get("detail", "/patches/:patchRef", {
+      params: readParams,
+      query: readQuery,
+      success: PatchDetail,
+      error: [...patchRouteErrors, WrongState]
+    }).annotateMerge(
+      describe(
+        "Read one openable company patch by canonical id or exact name, using the same state filter as " +
+          "the list. Names resolve only non-deleted patches; ids resolve any retained state. " +
+          "A resolved patch outside the requested state answers 409 `wrong_state` with its actual state. " +
+          "Unknown, unopenable, disabled, foreign, gone and deleted-by-name references answer the same 404. " +
+          "The summary gains `title`, a cumulative `inventory: { tables, stores } | null`, and `reads` " +
+          "across every retained version, including declarations dropped by the current version. " +
+          "A gone source has state `gone` and no name. An unavailable company database means null " +
+          "inventory, never fabricated empty arrays. Live shared tables are declarable and carry " +
+          "`patchy add shared-table <patchId>/<table>`; unshared tables carry `not_shared` and an " +
+          "owner-name hint. Off tables carry `source_off`; stores carry `not_shareable`. " +
+          "No versions, dependants or business rows are returned. Machine tokens only. " +
+          "Overlong references answer 414. Responses are private, no-store."
+      )
+    ),
+    HttpApiEndpoint.get("primitive", "/patches/:patchRef/primitives/:name", {
+      params: { ...readParams, name: Schema.String },
+      query: readQuery,
+      success: PrimitiveDetail,
+      error: [...patchRouteErrors, WrongState, PublishUnavailable]
+    }).annotateMerge(
+      describe(
+        "Read one table or file store from a patch's cumulative inventory with the detail route's " +
+          "id-or-name resolution, openability gate and state filter. Returns kind, name, description, " +
+          "sharing, schema revision, columns and indexes, never rows or contents. Columns report " +
+          "their name, kind, optional flag, an optional ref target and a default only when present; " +
+          "an explicit null default stays present. Indexes report name, columns and uniqueness. " +
+          "Stores have `kind: store`, `shared: false` and empty columns and indexes. " +
+          "A missing table or store answers 404; an unavailable inventory answers 503 " +
+          "`source_unavailable`, not a missing primitive. Machine tokens only. " +
+          "Overlong patch references answer 414. Responses are private, no-store."
       )
     ),
     HttpApiEndpoint.get("inventory", "/patches/:patchId/inventory", {

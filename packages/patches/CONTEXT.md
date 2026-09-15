@@ -24,6 +24,10 @@ _Avoid_: creator (a version has a creating machine; ownership belongs to the use
 Who may open a patch: `company` means signed-in colleagues in its company; `public` means anyone with the link to its current version, without signing in. Older versions stay behind the company door; new patches default to company sharing, and the owner or an admin may change a live patch's scope without publishing.
 _Avoid_: visibility, token scope (a publishing key does not grant reading access)
 
+**Openable patch**:
+A patch in the credential's company, within its sharing reach and neither disabled nor gone, eligible for discovery and inventory reads in any lifecycle state. Today every company member has that reach; openability grants neither ownership nor permission to serve an off patch.
+_Avoid_: serving (requires live), publishable (requires the live patch's owner), manageable (owner or admin)
+
 **Patch repo**:
 The local working copy for one patch: its source tree, definitions, declarations, explicit tier and target instance. Once published, its identity ties later publishes to that same patch.
 _Avoid_: project, workspace, source (a repo holds the source; it is also the unit)
@@ -61,7 +65,7 @@ Moving a live patch's current version to any retained version, without creating 
 _Avoid_: revert, redeploy, undo
 
 **Dependant**:
-A patch with a live declaration of one of this patch's shared tables. Retiring, deleting or unsharing denies dependants on their next read, so those acts list them and refuse until the actor accepts the breakage.
+A live, enabled patch that declares one of this patch's shared tables in any retained version, even when its current version dropped that declaration. Retire, delete and unshare list these distinct patch-and-table dependencies before the actor accepts breaking their reads.
 _Avoid_: consumer (a runtime word), subscriber
 
 **Description**:
@@ -81,7 +85,7 @@ The serializable description of one version's name, release, tier, owned tables 
 _Avoid_: config (the source from which a manifest is produced), inventory (the cumulative provisioned definitions)
 
 **Inventory**:
-See **Inventory** in [Company database](../company-database/CONTEXT.md), its owning glossary.
+The cumulative provisioned definitions, company-readable through the openable gate rather than ownership and preserved when a current version omits them. Unavailable inventory is unknown, not empty; see **Inventory** in [Company database](../company-database/CONTEXT.md), its owning glossary.
 _Avoid_: manifest, current schema
 
 **Unused definition**:
