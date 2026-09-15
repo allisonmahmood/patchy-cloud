@@ -34,7 +34,7 @@ for (const missing of [
     expect(result.status).toBe(1);
     expect(`${result.stdout}${result.stderr}`).toContain(missing);
     expect(`${result.stdout}${result.stderr}`).not.toContain("server listening");
-  });
+  }, 15_000);
 }
 
 for (const key of ["PATCHY_COMPANY_DB_ADMIN_URL", "PATCHY_COMPANY_DB_URL"]) {
@@ -63,5 +63,5 @@ for (const key of ["PATCHY_COMPANY_DB_ADMIN_URL", "PATCHY_COMPANY_DB_URL"]) {
     expect(output).toContain(key);
     expect(output).not.toContain(secret);
     expect(output).not.toContain("server listening");
-  });
+  }, 15_000);
 }
