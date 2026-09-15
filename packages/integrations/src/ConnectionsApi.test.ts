@@ -14,6 +14,7 @@ import * as HttpApiMiddleware from "effect/unstable/httpapi/HttpApiMiddleware";
 import * as HttpApiTest from "effect/unstable/httpapi/HttpApiTest";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as ConnectionsApi from "./ConnectionsApi.js";
+import * as ConnectionStore from "./ConnectionStore.js";
 import * as SqlConnectionStore from "./SqlConnectionStore.js";
 import * as CredentialKeys from "./CredentialKeys.js";
 import * as Source from "./postgres/Source.js";
@@ -274,5 +275,51 @@ it.layer(layer)("connections group", (it) => {
           404
         );
       })
+  );
+
+  it.effect("reports storage outages as private 503s without leaking SQL diagnostics", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const api = yield* memberClient;
+      const store = yield* ConnectionStore.ConnectionStore;
+      yield* Effect.acquireUseRelease(
+        sql`ALTER TABLE connection_snapshots RENAME TO private_missing_snapshots`,
+        () =>
+          Effect.gen(function* () {
+            const response = yield* api.getConnection({
+              params: { handle: "warehouse" },
+              responseMode: "response-only"
+            });
+            assert.strictEqual(response.status, 503);
+            assert.strictEqual(response.headers["cache-control"], "private, no-store");
+            assert.include(yield* response.json, { ok: false, code: "connection_storage_failed" });
+            assert.notInclude(yield* response.text, "connection_snapshots");
+            assert.notInclude(yield* response.text, "private_missing_snapshots");
+            const failure = yield* store.detail(DEV_SEED.companyId, "warehouse").pipe(Effect.flip);
+            assert.instanceOf(failure, ConnectionStore.ConnectionStorageFailed);
+            if (failure._tag === "ConnectionStorageFailed")
+              assert.strictEqual(failure.operation, "detail");
+          }),
+        () =>
+          sql`ALTER TABLE private_missing_snapshots RENAME TO connection_snapshots`.pipe(
+            Effect.orDie
+          )
+      );
+      yield* Effect.acquireUseRelease(
+        sql`ALTER TABLE connections RENAME TO private_missing_connections`,
+        () =>
+          Effect.gen(function* () {
+            const listing = yield* api.listConnections({
+              query: {},
+              responseMode: "response-only"
+            });
+            assert.strictEqual(listing.status, 503);
+            assert.strictEqual(listing.headers["cache-control"], "private, no-store");
+            assert.include(yield* listing.json, { ok: false, code: "connection_storage_failed" });
+            assert.notInclude(yield* listing.text, "private_missing_connections");
+          }),
+        () => sql`ALTER TABLE private_missing_connections RENAME TO connections`.pipe(Effect.orDie)
+      );
+    })
   );
 });

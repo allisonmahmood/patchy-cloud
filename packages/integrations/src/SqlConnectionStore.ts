@@ -116,7 +116,8 @@ export const make = Effect.gen(function* () {
   const detail = Effect.fn("ConnectionStore.detail")(
     function* (companyId: string, handle: string) {
       const found = yield* detailRow({ companyId, handle });
-      if (Option.isNone(found)) return yield* new ConnectionNotFound({ companyId, id: handle });
+      if (Option.isNone(found))
+        return yield* new ConnectionNotFound({ companyId, lookup: { handle } });
       const { description, status, snapshot, revision, takenAt } = found.value;
       return {
         handle,
@@ -125,12 +126,12 @@ export const make = Effect.gen(function* () {
         snapshot: snapshot === null || takenAt === null ? null : { ...snapshot, revision, takenAt }
       };
     },
-    Effect.catchTags(safe("get"))
+    Effect.catchTags(safe("detail"))
   );
   const get = Effect.fn("ConnectionStore.get")(
     function* (companyId: string, id: string) {
       const found = yield* connectionRow({ companyId, id, locked: false });
-      if (Option.isNone(found)) return yield* new ConnectionNotFound({ companyId, id });
+      if (Option.isNone(found)) return yield* new ConnectionNotFound({ companyId, lookup: { id } });
       return found.value;
     },
     Effect.catchTags(safe("get"))
@@ -138,7 +139,10 @@ export const make = Effect.gen(function* () {
   const stored = Effect.fn("ConnectionStore.stored")(function* (input: Identity) {
     const found = yield* storedRow({ ...input, locked: false });
     if (Option.isNone(found))
-      return yield* new ConnectionNotFound({ companyId: input.companyId, id: input.id });
+      return yield* new ConnectionNotFound({
+        companyId: input.companyId,
+        lookup: { id: input.id }
+      });
     return found.value;
   });
   const lock = Effect.fn("ConnectionStore.lock")(function* (
@@ -147,7 +151,10 @@ export const make = Effect.gen(function* () {
   ) {
     const found = yield* connectionRow({ ...input, locked: true });
     if (Option.isNone(found))
-      return yield* new ConnectionNotFound({ companyId: input.companyId, id: input.id });
+      return yield* new ConnectionNotFound({
+        companyId: input.companyId,
+        lookup: { id: input.id }
+      });
     if (
       expected !== undefined &&
       (found.value.credentialRevision !== expected.credentialRevision ||
@@ -210,7 +217,8 @@ export const make = Effect.gen(function* () {
   const snapshot = Effect.fn("ConnectionStore.snapshot")(
     function* (companyId: string, id: string, revision: number) {
       const found = yield* snapshotRow({ companyId, id, revision });
-      if (Option.isNone(found)) return yield* new ConnectionNotFound({ companyId, id, revision });
+      if (Option.isNone(found))
+        return yield* new ConnectionNotFound({ companyId, lookup: { id, revision } });
       return found.value.snapshot;
     },
     Effect.catchTags(safe("snapshot"))

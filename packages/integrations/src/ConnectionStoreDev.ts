@@ -8,6 +8,8 @@ export interface DevConnection {
   readonly snapshots: ReadonlyArray<{
     readonly revision: number;
     readonly snapshot: typeof Snapshot.Type;
+    /** Absent when local generated metadata does not carry the immutable row's timestamp. */
+    readonly takenAt?: string;
   }>;
 }
 
@@ -28,7 +30,7 @@ export const layer = (metadata: ReadonlyArray<DevConnection> = []) => {
           (item) => item.connection.companyId === companyId && item.connection.id === id
         );
         return item === undefined
-          ? Effect.fail(new ConnectionStore.ConnectionNotFound({ companyId, id }))
+          ? Effect.fail(new ConnectionStore.ConnectionNotFound({ companyId, lookup: { id } }))
           : Effect.succeed(item.connection);
       },
       detail: (companyId, handle) => {
@@ -36,22 +38,19 @@ export const layer = (metadata: ReadonlyArray<DevConnection> = []) => {
           (item) => item.connection.companyId === companyId && item.connection.handle === handle
         );
         if (item === undefined)
-          return Effect.fail(new ConnectionStore.ConnectionNotFound({ companyId, id: handle }));
-        const {
-          description,
-          status,
-          metadataRevision: revision,
-          lastDiscoveredAt: takenAt
-        } = item.connection;
+          return Effect.fail(
+            new ConnectionStore.ConnectionNotFound({ companyId, lookup: { handle } })
+          );
+        const { description, status, metadataRevision: revision } = item.connection;
         const snapshot = item.snapshots.find((snapshot) => snapshot.revision === revision);
         return Effect.succeed({
           handle,
           description,
           status,
           snapshot:
-            snapshot === undefined || takenAt === null
+            snapshot?.takenAt === undefined
               ? null
-              : { ...snapshot.snapshot, revision, takenAt }
+              : { ...snapshot.snapshot, revision, takenAt: snapshot.takenAt }
         });
       },
       snapshot: (companyId, id, revision) => {
@@ -60,7 +59,9 @@ export const layer = (metadata: ReadonlyArray<DevConnection> = []) => {
         );
         const snapshot = item?.snapshots.find((snapshot) => snapshot.revision === revision);
         return snapshot === undefined
-          ? Effect.fail(new ConnectionStore.ConnectionNotFound({ companyId, id, revision }))
+          ? Effect.fail(
+              new ConnectionStore.ConnectionNotFound({ companyId, lookup: { id, revision } })
+            )
           : Effect.succeed(snapshot.snapshot);
       },
       resolve: (companyId, declaration) => {
