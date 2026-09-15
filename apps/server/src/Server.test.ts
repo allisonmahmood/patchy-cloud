@@ -77,6 +77,62 @@ it.layer(
     })
   );
 
+  it.effect(
+    "opens the portal at the root and keeps its signed-out door separate from the fallback",
+    () =>
+      Effect.gen(function* () {
+        const created = yield* publish(DEV_SEED.token, { html: html("Landing document") });
+        const { name } = (yield* created.json) as { name: string };
+        for (const request of [
+          HttpClientRequest.get("/"),
+          HttpClientRequest.get("/").pipe(HttpClientRequest.bearerToken(DEV_SEED.token))
+        ]) {
+          const door = yield* send(request);
+          assert.strictEqual(door.status, 401);
+          assert.strictEqual(door.headers["cache-control"], "private, no-store");
+          assert.strictEqual(door.headers["content-type"], "text/html");
+          assert.isUndefined(door.headers.location);
+          assert.isUndefined(door.headers["www-authenticate"]);
+          assert.strictEqual(
+            new URL(door.headers["x-patchy-sign-in-url"]!).searchParams.get("redirect_url"),
+            `${publicBaseUrl}/`
+          );
+          const body = yield* door.text;
+          assert.strictEqual(body.match(/<a\b/g)?.length, 1);
+          assert.notInclude(body, `/patches/${name}`);
+        }
+        const portal = yield* send(signedRequest("/"));
+        assert.strictEqual(portal.status, 200);
+        assert.strictEqual(portal.headers["cache-control"], "private, no-store");
+        assert.isUndefined(portal.headers["x-patchy-sign-in-url"]);
+        const body = yield* portal.text;
+        assert.include(body, `href="/patches/${name}"`);
+        assert.include(body, 'href="/company"');
+        assert.include(body, 'action="/logout"');
+        assert.notInclude(body, "<iframe");
+
+        for (const headers of [{}, { cookie: sessionCookie() }]) {
+          const head = yield* send(
+            HttpClientRequest.head("/").pipe(HttpClientRequest.setHeaders(headers))
+          );
+          assert.strictEqual(head.status, "cookie" in headers ? 200 : 401);
+          assert.strictEqual(head.headers["cache-control"], "private, no-store");
+          assert.strictEqual(yield* head.text, "");
+          for (const request of [
+            HttpClientRequest.get("/not-a-route"),
+            HttpClientRequest.post("/"),
+            HttpClientRequest.post("/not/a/route")
+          ]) {
+            const missing = yield* send(request.pipe(HttpClientRequest.setHeaders(headers)));
+            assert.strictEqual(missing.status, 404, `${request.method} ${request.url}`);
+            assert.strictEqual(missing.headers["content-type"], "text/html");
+            assert.isUndefined(missing.headers["x-patchy-sign-in-url"]);
+            assert.notInclude(yield* missing.text, `/patches/${name}`);
+          }
+        }
+      })
+  );
+
   it.effect("publishes through the API and serves the page, attributed through the proxy", () =>
     Effect.gen(function* () {
       const created = yield* send(
@@ -188,12 +244,7 @@ it.layer(
       const created = yield* publish(DEV_SEED.token, { html: html("Company secret") });
       const { address } = (yield* created.json) as { address: string };
       const patchPath = new URL(address).pathname;
-      for (const path of [
-        patchPath,
-        `${patchPath}/~v/1`,
-        `/${DEV_SEED.companyHandle}/missing12345`,
-        `/${DEV_SEED.companyHandle}/missing12345/~v/1`
-      ]) {
+      for (const path of [patchPath, `${patchPath}/~v/1`]) {
         const door = yield* send(HttpClientRequest.get(path));
         assert.strictEqual(door.status, 401);
         assert.strictEqual(door.headers["cache-control"], "private, no-store");
@@ -302,17 +353,12 @@ it.layer(
         const missingPath = `/${DEV_SEED.companyHandle}/missing12345/~v/${version}`;
         const door = yield* send(HttpClientRequest.get(path));
         const missingDoor = yield* send(HttpClientRequest.get(missingPath));
-        assert.strictEqual(door.status, 401);
-        assert.strictEqual(missingDoor.status, 401);
+        assert.strictEqual(door.status, version === "2147483647" ? 401 : 404);
+        assert.strictEqual(missingDoor.status, 404);
         assert.strictEqual(door.headers["cache-control"], "private, no-store");
         assert.strictEqual(missingDoor.headers["cache-control"], "private, no-store");
-        assert.strictEqual(
-          (yield* door.text).replaceAll(encodeURIComponent(path).replaceAll("~", "%7E"), "PATCH"),
-          (yield* missingDoor.text).replaceAll(
-            encodeURIComponent(missingPath).replaceAll("~", "%7E"),
-            "PATCH"
-          )
-        );
+        assert.notInclude(yield* door.text, "Version boundary secret");
+        assert.notInclude(yield* missingDoor.text, "Version boundary secret");
         const foreign = yield* send(signedRequest(path, foreignCookie));
         const missing = yield* send(signedRequest(missingPath, foreignCookie));
         assert.strictEqual(foreign.status, 404);
@@ -420,19 +466,10 @@ it.layer(
 
           const noSession = yield* send(HttpClientRequest.get(patchPath));
           const missingNoSession = yield* send(HttpClientRequest.get(missingPath));
-          assert.strictEqual(noSession.status, missingNoSession.status);
+          assert.strictEqual(missingNoSession.status, 404);
           assert.strictEqual(noSession.status, 401);
-          // Only the return URL varies; neither response may reveal patch existence.
-          assert.strictEqual(
-            (yield* noSession.text).replaceAll(
-              encodeURIComponent(patchPath).replaceAll("~", "%7E"),
-              "PATCH"
-            ),
-            (yield* missingNoSession.text).replaceAll(
-              encodeURIComponent(missingPath).replaceAll("~", "%7E"),
-              "PATCH"
-            )
-          );
+          assert.notInclude(yield* noSession.text, "Restricted content");
+          assert.notInclude(yield* missingNoSession.text, "Restricted content");
 
           const unenrolled = yield* send(signedRequest(patchPath, unenrolledCookie));
           assert.strictEqual(unenrolled.status, 303);

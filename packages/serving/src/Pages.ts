@@ -6,6 +6,7 @@
  * the HTML only after admission. The serving guarantees these routes answer
  * under are `serving-headers.ts`.
  */
+import * as Clock from "effect/Clock";
 import type { ConfigError } from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -13,13 +14,14 @@ import * as Option from "effect/Option";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
-import { Session, withCookies, sessionScripts, returnPath } from "@patchy/auth";
+import { Session, withCookies, sessionScripts, returnPath, pageResponse } from "@patchy/auth";
 import { WIRE_VERSION } from "@patchy/api";
 import { newInternalId } from "@patchy/core";
 import type { Companies, Users } from "@patchy/companies";
 import { Content, Patches, PatchesConfig } from "@patchy/patches";
 import * as Door from "./Door.js";
 import { renderNotFound } from "./render.js";
+import { renderAddressNotice } from "./address-notice.js";
 import { renderPatchWrapper, renderShellNotice, isShellNotice, brokerScript } from "./shell.js";
 import {
   NO_REFERRER_POLICY,
@@ -77,14 +79,18 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (kind: "address" | "c
     patchId === undefined
       ? Option.none()
       : yield* patches
-          .find(
+          .findRetained(
             patchId,
             selection?.versionNumber ?? undefined,
             kind === "content" ? params.versionId : undefined
           )
           .pipe(Effect.catchTags({ SqlError: Effect.die }));
+  // Gone and operator-disabled patches are absent even before sign-in.
+  if (Option.isNone(served) || served.value.patch.disabledAt !== null) {
+    return withCookies(HttpServerResponse.setHeaders(notFound, patchUrlHeaders), cookies);
+  }
   const isPublic =
-    Option.isSome(served) &&
+    served.value.patch.state === "live" &&
     served.value.patch.scope === "public" &&
     served.value.version.id === served.value.patch.currentVersionId;
   // Finish a verified sign-in before serving a public document, but never require
@@ -99,18 +105,42 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (kind: "address" | "c
         cookies
       );
     }
-    if (Option.isNone(served) || served.value.patch.companyId !== admission.company.id) {
+    if (served.value.patch.companyId !== admission.company.id) {
       return withCookies(HttpServerResponse.setHeaders(notFound, patchUrlHeaders), cookies);
     }
   }
-  if (Option.isNone(served))
-    return withCookies(HttpServerResponse.setHeaders(notFound, patchUrlHeaders), cookies);
   if (url !== undefined && Option.isSome(resolved) && !resolved.value.current) {
     const response = HttpServerResponse.redirect(
       `/${served.value.patch.companyHandle}/${served.value.patch.name}${suffix}${url.search}`,
       { status: 308, headers: patchUrlHeaders }
     );
     return isPublic ? response : withCookies(response, cookies);
+  }
+  if (served.value.patch.state !== "live") {
+    if (HttpServerResponse.isHttpServerResponse(admission)) return admission;
+    const canOpen = yield* Patches.Openability;
+    const notice = yield* patches
+      .addressNotice(served.value.patch.id, {
+        companyId: admission.company.id,
+        userId: admission.user.id,
+        canOpen: (patch) => canOpen(patch, admission.user.id)
+      })
+      .pipe(Effect.catchTags({ SqlError: Effect.die }));
+    if (Option.isNone(notice)) {
+      return withCookies(HttpServerResponse.setHeaders(notFound, patchUrlHeaders), cookies);
+    }
+    const now = yield* Clock.currentTimeMillis;
+    return withCookies(
+      pageResponse(
+        {
+          title: `${notice.value.patch.name} is ${notice.value.patch.state}`,
+          body: renderAddressNotice({ ...notice.value, viewer: admission, now }),
+          app: { viewer: admission, section: "patches" }
+        },
+        session
+      ).pipe(HttpServerResponse.setHeader("x-robots-tag", PATCH_ROBOTS_TAG)),
+      cookies
+    );
   }
   if (served.value.version.tier >= 1 && served.value.version.wireVersion !== WIRE_VERSION) {
     return withCookies(

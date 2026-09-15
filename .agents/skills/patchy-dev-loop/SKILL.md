@@ -197,9 +197,10 @@ Published content and the database survive the restart.
 `pnpm dev reset` wipes `.local/dev/` (published content, the database, the log) and
 starts fresh with the same seeded token, selecting available ports again.
 Use it for disposable data when a baseline, including `0003_patches_baseline` or
-`0006_runtime_baseline`, changes shape or the data is suspect. Earlier patches are then missing: an active
-signed-in reader gets 404, while a cookie-free fetch still gets the same 401
-door. The CLI's state directory is separate and survives a dev reset.
+`0006_runtime_baseline`, changes shape or the data is suspect. Earlier patches
+are then missing and answer 404, with or without a browser session. Retained
+company patches still give signed-out readers the login door. The CLI's state
+directory is separate and survives a dev reset.
 
 ## 5. Stop
 

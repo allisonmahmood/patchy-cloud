@@ -6,6 +6,7 @@ import { sessionScripts } from "@patchy/auth";
 import { htmlPage } from "@patchy/core";
 import { renderHome } from "./render.js";
 import { renderPatchWrapper, renderShellNotice } from "./shell.js";
+import { renderAddressNotice } from "./address-notice.js";
 
 describe("renderHome", () => {
   it("keeps markup in the sign-in destination inert", () => {
@@ -83,7 +84,7 @@ describe("renderShellNotice", () => {
   });
 });
 
-describe("renderPatchWrapper", () => {
+describe("patch pages", () => {
   const patch: Patches.Patch = {
     id: "patch12345ab",
     companyId: DEV_SEED.companyId,
@@ -144,6 +145,24 @@ describe("renderPatchWrapper", () => {
     originalFilename: null,
     createdAt: "2026-01-01T00:00:00.000Z"
   };
+
+  it("keeps address notice names and actor markup inert", () => {
+    const markup = '<img src=x onerror="alert(1)">';
+    const html = renderAddressNotice({
+      patch: { ...patch, name: markup, state: "retired", retiredAt: "2026-01-01T00:00:00.000Z" },
+      actorName: markup,
+      sourcesOff: false,
+      viewer: {
+        user: { id: DEV_SEED.userId, email: "dev@patchy.local", name: "Owner" },
+        company: { id: DEV_SEED.companyId, handle: DEV_SEED.companyHandle, name: "Company" },
+        role: "member"
+      },
+      now: Date.UTC(2026, 0, 1)
+    });
+    expect(html).toContain("&lt;img src=x onerror=&quot;alert(1)&quot;&gt;");
+    expect(html).not.toContain("<img");
+    expect(html).toContain(`action="/patches/${encodeURIComponent(markup)}/restore"`);
+  });
 
   it("keeps a public patch in a script-free sandboxed frame", () => {
     const html = renderPatchWrapper({
