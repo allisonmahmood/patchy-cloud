@@ -131,7 +131,6 @@ it.layer(server({ PATCHY_PROTECTED_API_RATE_LIMIT_PER_MINUTE: "3" }))(
           for (const request of [
             HttpClientRequest.put("/api/publish"),
             HttpClientRequest.get("/api/does-not-exist"),
-            HttpClientRequest.get("/api/sdk/catalog"),
             HttpClientRequest.get("/api")
           ]) {
             yield* TestClock.adjust("61 seconds");

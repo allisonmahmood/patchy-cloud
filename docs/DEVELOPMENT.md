@@ -516,6 +516,13 @@ tier 1 CSP, and a row round-trip through the hosted shell's
 own row rather than treating publish as a data migration. A second publish adds
 an optional column and checks the provisioning report. Each CLI step checks its
 JSON result and exit code.
+Discovery seeds two table-bearing patches through that disposable server's publish
+API, one owned by the seed user and one by a colleague. The installed CLI runs
+`list`, `list <patch>` and `list <patch> <table>` in text and JSON from outside a
+patch repo. It checks descriptions and ownership, name and address resolution,
+canonical ids in shared-table hints and reads, and column types, optional fields,
+defaults, references, indexes and schema revisions. These checks use the saved
+login and invented definitions, never a developer's instance or company data.
 The packed flow also reads the stored version's tier, release and server-stamped
 wire version. File mode synthesises a tier 0 manifest with empty `tables`, `files`
 and `uses`; the API admits tier 0 and tier 1 manifests with tables, file stores, shared-table declarations and resolved Postgres declarations. Tier 1 bundles are stored raw and served in the sandbox; tiers 2 and above remain refused. Tier 0 keeps `PATCHY_MAX_HTML_BYTES` (512 KiB), tier 1 uses `PATCHY_MAX_BUNDLE_BYTES` (10 MiB), and the enclosing JSON request cap is three times the larger value.

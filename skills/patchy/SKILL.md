@@ -1,12 +1,13 @@
 ---
 name: patchy
-description: Publish a static HTML page on Patchy Cloud, start a patch repo with init, read a Patchy link, or run onboarding. Use when the user asks to publish with Patchy, build a Patchy tool, open a patch, or set up Patchy.
+description: Publish a static HTML page on Patchy Cloud, start a patch repo with init, find an existing company tool or data source, read a Patchy link, or run onboarding.
 ---
 
 # Patchy
 
-Use this global skill to publish a static page, start a tool's patch repo, read a
-patch, or sign the machine in. Inside a patch repo, its project skills govern building.
+Use this global skill to publish a static page, start a tool's patch repo, discover
+company tools and data sources, read a patch, or sign the machine in. Inside a
+patch repo, its project skills govern building.
 
 ## Onboarding
 
@@ -15,6 +16,52 @@ Patchy Cloud's onboarding or asks to redo their Patchy setup.
 That reference owns the whole flow —
 the one style question, the welcome patch, the probe's key names, and the words to say to
 the user, which are the source of truth for user-facing copy anywhere in this skill.
+
+## Finding tools and data sources
+
+For an existing tool or reusable data source, settle the instance and identity
+as described under Publishing, then use the discovery chain:
+
+1. Run `patchy list --json` and choose candidate patches by their descriptions.
+   `list patches` is identical, including the connections group. No match means
+   "none you can use"; run `patchy list --state retired --json` before concluding
+   a tool does not exist.
+2. Run `patchy list <patch> --json` for each candidate's tables, stores and reads.
+   Use its name or canonical id; a pasted URL resolves by its final path segment.
+   Null `inventory` means unavailable, not no tables.
+3. Run `patchy list <patch> <table> --json` to check keys, types, optional columns,
+   explicit defaults, ref targets, indexes, sharing and schema revision without
+   reading rows. Choose only tables marked `declarable: true` in patch detail.
+   In a consuming repo, use `pnpm patchy add shared-table <patchId>/<table>`,
+   carrying the canonical id returned by discovery, not the name or address.
+
+`list` runs anywhere under the saved login and never reads `patchy.json`.
+Inside a repo use the pinned `pnpm patchy`; its discovery target still comes
+from the normal instance selection, not the repo binding.
+`--state live|retired|all` defaults to `live` and applies at all three patch
+levels. Keep `--state retired` when drilling into a retired candidate. A deleted
+patch needs its id and `--state all` at both detail levels; it never resolves by
+name. An API `wrong_state` refusal is exit 2 and names the needed state flag,
+such as `retired; pass --state retired` or `deleted; pass --state all`.
+Its JSON failure includes the actual patch `state` beside `code`.
+`--mine` is top level only. `--all` is only for `list connections`; neither patch
+flag applies to connections. Wrong-level flags are local errors, exit 1.
+
+For a company connection, run `patchy list connections`, then
+`patchy list connections <handle>` to inspect its snapshot and `takenAt`.
+`list connections --all` also shows offered integrations. A null snapshot means
+unavailable, not an empty database. Select a connected handle and add it from
+the consuming repo with `pnpm patchy add postgres/<handle> --as <alias>`.
+`add postgres` selects a sole connected Postgres connection; with several, it
+lists choices from `list connections` and stops.
+
+All levels accept `--json`. Top-level success is `{ patches, connections }`
+merged from two routes; the other levels print the wire body with no `ok`
+wrapper. Branch on `declarable` and `reason`, never parse the human `hint`.
+Unshared tables name their owner, file stores are not shareable, and off sources
+need restoration before use. Disconnected connections point to the admin's
+browser at `/company/connections`. Listing grants no access and reads no rows
+or file contents.
 
 ## Building a tool
 
@@ -35,9 +82,8 @@ project skills; it refuses a second initialization there. Do not reinstall.
 Inside that repo read `AGENTS.md`, `.agents/skills/patchy-loop/SKILL.md` and
 `patchy/_generated/index.json`, then use `pnpm patchy`, the pinned copy.
 The project skills teach tables, files and declarations in Patchy's own terms.
-`pnpm patchy catalog` shows company connections and their state; `--all` also
-shows offered integrations. Shared-table discovery uses the patch API as described
-in the core `patchy-loop` skill. `pnpm patchy add postgres/<handle> --as <alias>`
+Use the discovery chain above before adding a dependency.
+`pnpm patchy add postgres/<handle> --as <alias>`
 or `pnpm patchy add shared-table <patchId>/<table> --as <alias>` adds a declaration
 and generates its client, context, fixture stub and skill. `pnpm patchy remove <alias>`
 reverses it while leaving its fixture. `pnpm patchy refresh` updates the pin,
@@ -196,7 +242,7 @@ browser sign-out is a separate control on **Your machines**.
 
 ### Publishing behavior
 
-- For file mode and `init`, instance selection follows `--api-url`, the
+- For `list`, file mode and `init`, instance selection follows `--api-url`, the
   `.local/dev/env` a `pnpm dev` wrote in this checkout, `PATCHY_API_URL`, then
   saved config. With none set, the CLI tries `http://localhost:3000`, requiring
   a running local server. Repo commands instead bind to `patchy.json`'s
@@ -207,12 +253,12 @@ browser sign-out is a separate control on **Your machines**.
   matching overrides retain their source and credential behavior.
   Settle the instance before publishing — `status --json` reports its own
   resolved target and source, and text-mode `publish` prints the publish target.
-- Publish, share, delete and whoami require a publishing key. With no key, they exit
+- List, publish, share, delete and whoami require a publishing key. With no key, they exit
   `1` (`local`), `Run: patchy login`; follow the login handoff above, then retry the
   original command. A local-state error needs the named repair first; `status`
   can report no key when a credential file is unreadable or malformed.
   No command starts a login on the caller's behalf.
-- Publish, share, delete, whoami and `status` use the same credential chain:
+- List, publish, share, delete, whoami and `status` use the same credential chain:
   `PATCHY_API_TOKEN`, then the key stored for this instance (`login` or `auth-set`),
   then the dev env's seeded key.
   A login outranks the seed; an environment key overrides both.
@@ -293,7 +339,7 @@ browser sign-out is a separate control on **Your machines**.
   (network failure, undecodable body or unmodelled 5xx) — try later or contact
   Patchy about the unavailable instance. `130` is an interruption.
 - Every command takes `--json`: one JSON document on stdout on success, `{ "ok": false,
-"error", "kind", "code"? }` on stderr on failure, where `kind` is `local`, `rejected` or
+"error", "kind", "code"?, "state"? }` on stderr on failure, where `kind` is `local`, `rejected` or
   `unreachable` and matches the exit code. Branch on `kind`/exit first, then
   `code` when present. Repo checks emit local `instance_mismatch`,
   `release_mismatch`, `stale_generated`, `invalid_manifest`, `too_large` and

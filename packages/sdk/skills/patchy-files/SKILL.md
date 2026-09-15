@@ -7,6 +7,16 @@ description: Define a Patchy file store, save or retrieve bytes, page stored fil
 
 Read `../patchy-loop/SKILL.md` first. Every readable row and stored file is available to whoever can open the patch: file names and hidden UI controls are not access rules. Tier 1 has no outbound access or client storage. Use local invented files while building, never download production bytes to seed development, and never edit generated output.
 
+## Discover stores without reading files
+
+Use the loop skill's discovery chain to find a tool by description with
+`pnpm patchy list`, inspect its stores and reads with `list <patch>`, and inspect
+a store's definition with `list <patch> <store>`. No match means none you can
+use; check retired patches before concluding absence. These commands return
+metadata, not file names or bytes. A store is `declarable: false` with
+`reason: "not_shareable"`; there is no file-store `add` path. Define a store
+owned by this patch when it needs to save files.
+
 ## Define and use a store
 
 Import `files` from `patchy/config` and add
