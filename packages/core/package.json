@@ -25,6 +25,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "effect": "catalog:",
     "parse5": "catalog:"
   }
 }

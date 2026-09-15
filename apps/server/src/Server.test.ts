@@ -27,6 +27,18 @@ const sessionCookie = (sub: string = DEV_SEED.clerkUserId, email: string = DEV_S
   signedInCookies(signSession({ sub, email, azp: publicBaseUrl }));
 const signedRequest = (path: string, cookie = sessionCookie()) =>
   HttpClientRequest.get(path).pipe(HttpClientRequest.setHeader("cookie", cookie));
+const attributes = (tag: string): Record<string, string> =>
+  Object.fromEntries(
+    [...tag.matchAll(/\s([\w-]+)(?:="([^"]*)")?/g)].map(([, name, value]) => [
+      name!,
+      (value ?? "")
+        .replaceAll("&quot;", '"')
+        .replaceAll("&#39;", "'")
+        .replaceAll("&lt;", "<")
+        .replaceAll("&gt;", ">")
+        .replaceAll("&amp;", "&")
+    ])
+  );
 
 it.effect("refuses startup without an explicit public base URL", () =>
   Effect.gen(function* () {
@@ -39,6 +51,79 @@ it.effect("refuses startup without an explicit public base URL", () =>
     assert.include(error.message, "PATCHY_PUBLIC_BASE_URL");
   })
 );
+
+it.layer(
+  server({ PATCHY_PUBLIC_BASE_URL: publicBaseUrl }).pipe(
+    Layer.provideMerge(Layer.succeed(FetchHttpClient.RequestInit)({ redirect: "manual" }))
+  )
+)("address notice restore contract", (it) => {
+  it.effect("restores retired and deleted patches through their address notice forms", () =>
+    Effect.gen(function* () {
+      const document = html("Restored through the address notice");
+      const created = yield* publish(DEV_SEED.token, { html: document });
+      assert.strictEqual(created.status, 201);
+      const { patchId, address } = (yield* created.json) as { patchId: string; address: string };
+      const patchPath = new URL(address).pathname;
+      const cookie = sessionCookie();
+
+      for (const state of ["retired", "deleted"] as const) {
+        const request =
+          state === "retired"
+            ? HttpClientRequest.post(`/api/patches/${patchId}/retire`).pipe(
+                HttpClientRequest.bodyJsonUnsafe({})
+              )
+            : HttpClientRequest.delete(`/api/patches/${patchId}`);
+        const changed = yield* send(request.pipe(HttpClientRequest.bearerToken(DEV_SEED.token)));
+        assert.strictEqual(changed.status, 200, state);
+
+        const notice = yield* send(signedRequest(patchPath, cookie));
+        assert.strictEqual(notice.status, 200);
+        const noticeHtml = yield* notice.text;
+        assert.notInclude(noticeHtml, "<iframe");
+        const form = [...noticeHtml.matchAll(/<form\b([^>]*)>([\s\S]*?)<\/form>/g)].find((match) =>
+          /<button\b[^>]*>\s*Restore\s*<\/button>/.test(match[2]!)
+        );
+        assert.isDefined(form, `${state} notice offers Restore`);
+        const formAttributes = attributes(form![1]!);
+        assert.strictEqual(formAttributes.method?.toLowerCase(), "post");
+        assert.isString(formAttributes.action);
+        const fields = new URLSearchParams();
+        for (const [tag] of form![2]!.matchAll(/<input\b[^>]*>/g)) {
+          const input = attributes(tag);
+          if (
+            input.type?.toLowerCase() === "hidden" &&
+            input.name &&
+            !Object.hasOwn(input, "disabled")
+          ) {
+            fields.append(input.name, input.value ?? "");
+          }
+        }
+
+        const restored = yield* send(
+          HttpClientRequest.post(formAttributes.action!).pipe(
+            HttpClientRequest.setHeaders({ cookie, origin: publicBaseUrl }),
+            HttpClientRequest.bodyText(fields.toString(), "application/x-www-form-urlencoded")
+          )
+        );
+        assert.strictEqual(restored.status, 303, `${state} notice form restores the patch`);
+        assert.isString(restored.headers.location);
+        const card = yield* send(signedRequest(restored.headers.location!, cookie));
+        assert.strictEqual(card.status, 200);
+        const open = [...(yield* card.text).matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/g)].find(
+          (match) => match[2]?.trim() === "Open"
+        );
+        assert.isDefined(open, "the restored patch card offers Open");
+        const href = attributes(open![1]!).href;
+        assert.isString(href);
+        const page = yield* send(signedRequest(href!, cookie));
+        assert.strictEqual(page.status, 200);
+        const frame = (yield* page.text).match(/<iframe\b[^>]*>/)?.[0];
+        assert.isDefined(frame, "the restored patch opens its document");
+        assert.strictEqual(attributes(frame!).srcdoc, document);
+      }
+    })
+  );
+});
 
 it.layer(
   server({
@@ -75,6 +160,62 @@ it.layer(
         body: { ok: false, error: "Missing or invalid API token." }
       });
     })
+  );
+
+  it.effect(
+    "opens the portal at the root and keeps its signed-out door separate from the fallback",
+    () =>
+      Effect.gen(function* () {
+        const created = yield* publish(DEV_SEED.token, { html: html("Landing document") });
+        const { name } = (yield* created.json) as { name: string };
+        for (const request of [
+          HttpClientRequest.get("/"),
+          HttpClientRequest.get("/").pipe(HttpClientRequest.bearerToken(DEV_SEED.token))
+        ]) {
+          const door = yield* send(request);
+          assert.strictEqual(door.status, 401);
+          assert.strictEqual(door.headers["cache-control"], "private, no-store");
+          assert.strictEqual(door.headers["content-type"], "text/html");
+          assert.isUndefined(door.headers.location);
+          assert.isUndefined(door.headers["www-authenticate"]);
+          assert.strictEqual(
+            new URL(door.headers["x-patchy-sign-in-url"]!).searchParams.get("redirect_url"),
+            `${publicBaseUrl}/`
+          );
+          const body = yield* door.text;
+          assert.strictEqual(body.match(/<a\b/g)?.length, 1);
+          assert.notInclude(body, `/patches/${name}`);
+        }
+        const portal = yield* send(signedRequest("/"));
+        assert.strictEqual(portal.status, 200);
+        assert.strictEqual(portal.headers["cache-control"], "private, no-store");
+        assert.isUndefined(portal.headers["x-patchy-sign-in-url"]);
+        const body = yield* portal.text;
+        assert.include(body, `href="/patches/${name}"`);
+        assert.include(body, 'href="/company"');
+        assert.include(body, 'action="/logout"');
+        assert.notInclude(body, "<iframe");
+
+        for (const headers of [{}, { cookie: sessionCookie() }]) {
+          const head = yield* send(
+            HttpClientRequest.head("/").pipe(HttpClientRequest.setHeaders(headers))
+          );
+          assert.strictEqual(head.status, "cookie" in headers ? 200 : 401);
+          assert.strictEqual(head.headers["cache-control"], "private, no-store");
+          assert.strictEqual(yield* head.text, "");
+          for (const request of [
+            HttpClientRequest.get("/not-a-route"),
+            HttpClientRequest.post("/"),
+            HttpClientRequest.post("/not/a/route")
+          ]) {
+            const missing = yield* send(request.pipe(HttpClientRequest.setHeaders(headers)));
+            assert.strictEqual(missing.status, 404, `${request.method} ${request.url}`);
+            assert.strictEqual(missing.headers["content-type"], "text/html");
+            assert.isUndefined(missing.headers["x-patchy-sign-in-url"]);
+            assert.notInclude(yield* missing.text, `/patches/${name}`);
+          }
+        }
+      })
   );
 
   it.effect("publishes through the API and serves the page, attributed through the proxy", () =>
@@ -188,12 +329,7 @@ it.layer(
       const created = yield* publish(DEV_SEED.token, { html: html("Company secret") });
       const { address } = (yield* created.json) as { address: string };
       const patchPath = new URL(address).pathname;
-      for (const path of [
-        patchPath,
-        `${patchPath}/~v/1`,
-        `/${DEV_SEED.companyHandle}/missing12345`,
-        `/${DEV_SEED.companyHandle}/missing12345/~v/1`
-      ]) {
+      for (const path of [patchPath, `${patchPath}/~v/1`]) {
         const door = yield* send(HttpClientRequest.get(path));
         assert.strictEqual(door.status, 401);
         assert.strictEqual(door.headers["cache-control"], "private, no-store");
@@ -302,17 +438,12 @@ it.layer(
         const missingPath = `/${DEV_SEED.companyHandle}/missing12345/~v/${version}`;
         const door = yield* send(HttpClientRequest.get(path));
         const missingDoor = yield* send(HttpClientRequest.get(missingPath));
-        assert.strictEqual(door.status, 401);
-        assert.strictEqual(missingDoor.status, 401);
+        assert.strictEqual(door.status, version === "2147483647" ? 401 : 404);
+        assert.strictEqual(missingDoor.status, 404);
         assert.strictEqual(door.headers["cache-control"], "private, no-store");
         assert.strictEqual(missingDoor.headers["cache-control"], "private, no-store");
-        assert.strictEqual(
-          (yield* door.text).replaceAll(encodeURIComponent(path).replaceAll("~", "%7E"), "PATCH"),
-          (yield* missingDoor.text).replaceAll(
-            encodeURIComponent(missingPath).replaceAll("~", "%7E"),
-            "PATCH"
-          )
-        );
+        assert.notInclude(yield* door.text, "Version boundary secret");
+        assert.notInclude(yield* missingDoor.text, "Version boundary secret");
         const foreign = yield* send(signedRequest(path, foreignCookie));
         const missing = yield* send(signedRequest(missingPath, foreignCookie));
         assert.strictEqual(foreign.status, 404);
@@ -392,6 +523,7 @@ it.layer(
     () =>
       Effect.gen(function* () {
         const created = yield* publish(DEV_SEED.token, { html: html("Restricted content") });
+        assert.strictEqual(created.status, 201);
         const { patchId, address } = (yield* created.json) as { patchId: string; address: string };
         const addressPath = new URL(address).pathname;
         const sql = yield* SqlClient.SqlClient;
@@ -420,19 +552,10 @@ it.layer(
 
           const noSession = yield* send(HttpClientRequest.get(patchPath));
           const missingNoSession = yield* send(HttpClientRequest.get(missingPath));
-          assert.strictEqual(noSession.status, missingNoSession.status);
+          assert.strictEqual(missingNoSession.status, 404);
           assert.strictEqual(noSession.status, 401);
-          // Only the return URL varies; neither response may reveal patch existence.
-          assert.strictEqual(
-            (yield* noSession.text).replaceAll(
-              encodeURIComponent(patchPath).replaceAll("~", "%7E"),
-              "PATCH"
-            ),
-            (yield* missingNoSession.text).replaceAll(
-              encodeURIComponent(missingPath).replaceAll("~", "%7E"),
-              "PATCH"
-            )
-          );
+          assert.notInclude(yield* noSession.text, "Restricted content");
+          assert.notInclude(yield* missingNoSession.text, "Restricted content");
 
           const unenrolled = yield* send(signedRequest(patchPath, unenrolledCookie));
           assert.strictEqual(unenrolled.status, 303);

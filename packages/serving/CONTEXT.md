@@ -45,11 +45,11 @@ A network whose forwarded client address the host trusts when attributing reques
 _Avoid_: hop count (cannot verify the connecting peer, and is rejected), `X-Real-IP`
 
 **Address notice**:
-The decided first-party page at the address of a retired or deleted patch: it tells an active colleague who took the patch off and when, offers restore to whoever may, and keeps the login door for a signed-out reader and the absence for another company.
+The first-party page at the address, numbered version URLs and content URL of a retired or deleted patch: it tells an active colleague who took the patch off and when, and the time left to recover a deletion. It offers Restore to the owner or an admin and links to the card; signed-out readers keep the login door, while foreign, disabled and gone patches remain absent.
 _Avoid_: 404 (the answer for a gone or foreign patch), door (a notice admits nothing), tombstone
 
 **Login door**:
-The admission in front of a company patch and the signed-out root: an active colleague enters, a signed-out reader signs in and returns, and a reader from another company gets the same absence as a missing patch. A signed-in person without a company first goes through create-or-join; a deactivated user sees the deactivated page.
+The admission in front of a retained company patch and the signed-out root: an active colleague enters, a signed-out reader signs in and returns, and a reader from another company gets the same absence as a missing patch. A missing, disabled or reclaimed patch has no door, so a signed-out reader can distinguish a retained address from an absent one, but cannot read its content. A signed-in person without a company first goes through create-or-join; a deactivated user sees the deactivated page.
 _Avoid_: auth wall, login page (the door is a moment on the way to the patch, not a destination), paywall
 
 **Connect door**:
