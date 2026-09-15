@@ -34,8 +34,8 @@ it("caches blob URLs until replacement/deletion and revokes them on close", asyn
   const config = defineConfig({
     name: "notes",
     tier: 1,
-    tables: { notes: table({ title: t.text() }) },
-    files: { images: files() }
+    tables: { notes: table("Notes identified by id.", { title: t.text() }) },
+    files: { images: files("Images keyed by filename.") }
   });
   const calls: string[] = [];
   let bytes = new Uint8Array([1]);
@@ -71,7 +71,11 @@ it("caches blob URLs until replacement/deletion and revokes them on close", asyn
 it.each(["put", "delete", "close"] as const)(
   "rejects an in-flight file URL invalidated by %s instead of returning revoked bytes",
   async (action) => {
-    const config = defineConfig({ name: "notes", tier: 1, files: { images: files() } });
+    const config = defineConfig({
+      name: "notes",
+      tier: 1,
+      files: { images: files("Images keyed by filename.") }
+    });
     const read = Promise.withResolvers<{ bytes: Uint8Array<ArrayBuffer>; contentType: string }>();
     let first = true;
     const transport: Transport = {
@@ -153,10 +157,10 @@ const operationsConform: Equal<Operation, "route.set" | "download" | ${Object.ke
     .map((name) => JSON.stringify(name))
     .join(" | ")}> = true;
 const config = defineConfig({ name: "notes", tier: 1, tables: {
-  notes: table({ title: t.text(), body: t.text().optional(), count: t.integer().default(0), parent: t.ref("notes").optional() }, { indexes: { byTitle: ["title"] } }),
-  people: table({ name: t.text() }),
-  data: table({ required: t.json(), defaulted: t.json().default({}), optional: t.json().optional() })
-}, files: { images: files() }, uses: { team: sharedTable("source", "notes"), sales: postgres("warehouse") } });
+  notes: table("Notes identified by id; parent links another note.", { title: t.text(), body: t.text().optional(), count: t.integer().default(0), parent: t.ref("notes").optional() }, { indexes: { byTitle: ["title"] } }),
+  people: table("People identified by id.", { name: t.text() }),
+  data: table("JSON records identified by id.", { required: t.json(), defaulted: t.json().default({}), optional: t.json().optional() })
+}, files: { images: files("Images keyed by filename.") }, uses: { team: sharedTable("source", "notes"), sales: postgres("warehouse") } });
 const shared = { team: (alias: string, call: Call) => createSharedTable<{ id: Id<"source/notes">; title: string }>(alias, call) };
 const connections = { sales: (alias: string, call: Call) => ({ count: async () => 42 }) };
 const client = createClient<typeof config, typeof shared, typeof connections>(config, { shared, connections });

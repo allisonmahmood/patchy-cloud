@@ -152,7 +152,7 @@ it.layer(layer)("the packed SDK release", (it) => {
             `
 import { defineConfig, table, t } from "patchy/config";
 export default defineConfig({ name: "packed-config", tier: 0, tables: {
-  notes: table({ title: t.text(), at: t.timestamp().default("now") })
+  notes: table("Notes identified by id; at is an ISO timestamp.", { title: t.text(), at: t.timestamp().default("now") })
 }, files: {}, uses: {} });
 `
           )
@@ -499,6 +499,7 @@ it.layer(layer)("SDK company generation", (it) => {
     Effect.gen(function* () {
       const patchId = "sdkshared001";
       const definition = {
+        description: "Contacts identified by id; member links their membership.",
         columns: {
           title: { kind: "text" as const },
           member: { kind: "ref" as const, table: "members" }
@@ -507,11 +508,13 @@ it.layer(layer)("SDK company generation", (it) => {
         shared: true
       };
       const members = {
+        description: "Members identified by id; team links their team.",
         columns: { team: { kind: "ref" as const, table: "teams" } },
         indexes: {},
         shared: false
       };
       const teams = {
+        description: "Teams identified by id; lead identifies a member.",
         columns: {
           lead: { kind: "ref" as const, table: "members", optional: true },
           external: { kind: "ref" as const, table: "sdktarget001/people", optional: true }
@@ -529,7 +532,11 @@ it.layer(layer)("SDK company generation", (it) => {
             contacts: definition,
             members,
             teams,
-            unrelated: { columns: { title: { kind: "text" } }, indexes: {} }
+            unrelated: {
+              description: "Unrelated records identified by id.",
+              columns: { title: { kind: "text" } },
+              indexes: {}
+            }
           },
           uses: {
             people: {
@@ -570,7 +577,12 @@ it.layer(layer)("SDK company generation", (it) => {
           ...Fixtures.manifest,
           name: "sdk-ref-target",
           tables: {
-            people: { columns: { name: { kind: "text" } }, indexes: {}, shared: true }
+            people: {
+              description: "People identified by id.",
+              columns: { name: { kind: "text" } },
+              indexes: {},
+              shared: true
+            }
           }
         }
       });

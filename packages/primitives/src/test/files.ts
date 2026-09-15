@@ -20,7 +20,10 @@ export const manifest: typeof Manifest.Type = {
   name: "file-test",
   tier: 0,
   tables: {},
-  files: { docs: {}, images: {} },
+  files: {
+    docs: { description: "Documents identified by file name." },
+    images: { description: "Images identified by file name." }
+  },
   uses: {}
 };
 export const filesystem = Layer.unwrap(

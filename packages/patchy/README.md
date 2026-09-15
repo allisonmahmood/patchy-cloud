@@ -38,6 +38,7 @@ export default defineConfig({
   tier: 1,
   tables: {
     notes: table(
+      "One team note per id; parent identifies another note.",
       {
         title: t.text(),
         body: t.text().optional(),
@@ -48,13 +49,22 @@ export default defineConfig({
       { indexes: { byDone: ["done"] }, shared: true }
     )
   },
-  files: { attachments: files() },
+  files: { attachments: files("Note attachments keyed by note id and filename.") },
   uses: {
     sales: postgres("warehouse"),
     contacts: sharedTable("abcdefghijkl", "contacts")
   }
 });
 ```
+
+`table(description, columns, options?)` and `files(description)` require a
+nonblank description. Say what one row or object represents, its identifying
+keys, and units where relevant, such as integer cents or elapsed seconds.
+Config execution refuses missing or blank descriptions and a name shared by a
+table and a file store. CLI commands report these failures as `invalid_manifest`.
+Descriptions are config-owned metadata: publishing a definition replaces its
+description, omission keeps it, and rollback leaves it unchanged. A
+description-only publish does not advance the schema revision.
 
 `Row<typeof config, "notes">`, `Insert<typeof config, "notes">` and
 `Update<typeof config, "notes">` infer the owned table contract. Rows include

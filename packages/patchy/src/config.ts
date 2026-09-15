@@ -71,6 +71,7 @@ export type Columns = Readonly<Record<string, Column>>;
 export type IndexDefinition = { readonly columns: readonly string[]; readonly unique?: boolean };
 export type Indexes = Readonly<Record<string, IndexDefinition>>;
 export interface TableDefinition<C extends Columns = Columns, I extends Indexes = Indexes> {
+  readonly description: string;
   readonly columns: C;
   readonly indexes: I;
   readonly shared?: boolean;
@@ -87,23 +88,46 @@ type NormalizeIndexes<I> = {
       : never;
 };
 
+export type NonEmptyString<S extends string> = S extends "" ? never : S;
+export interface FileStoreDefinition {
+  readonly description: string;
+}
+
+const validateDescription = (description: string): void => {
+  if (typeof description !== "string" || description.trim().length === 0)
+    throw new Error("A table or file store description must be a nonblank string.");
+};
+
 export const table = <
+  const Description extends string,
   const C extends Columns,
   const I extends Readonly<Record<string, IndexInput<C>>> = Record<never, never>
 >(
+  description: NonEmptyString<Description>,
   columns: C & { readonly [Name in SystemColumn]?: never },
   options: { readonly indexes?: I; readonly shared?: boolean } = {}
 ): TableDefinition<C, NormalizeIndexes<I>> => {
+  validateDescription(description);
   const indexes = Object.fromEntries(
     Object.entries(options.indexes ?? {}).map(([name, index]) => [
       name,
       Array.isArray(index) ? { columns: index } : index
     ])
   ) as NormalizeIndexes<I>;
-  return { columns, indexes, ...(options.shared === undefined ? {} : { shared: options.shared }) };
+  return {
+    description,
+    columns,
+    indexes,
+    ...(options.shared === undefined ? {} : { shared: options.shared })
+  };
 };
 
-export const files = (): Readonly<Record<string, never>> => ({});
+export const files = <const Description extends string>(
+  description: NonEmptyString<Description>
+): FileStoreDefinition => {
+  validateDescription(description);
+  return { description };
+};
 export const postgres = <const Handle extends string>(handle: Handle) => ({
   kind: "postgres" as const,
   handle
@@ -123,7 +147,7 @@ export interface Config {
   readonly name: string;
   readonly tier: 0 | 1 | 2 | 3;
   readonly tables: Readonly<Record<string, TableDefinition>>;
-  readonly files: Readonly<Record<string, Readonly<Record<string, never>>>>;
+  readonly files: Readonly<Record<string, FileStoreDefinition>>;
   readonly uses: Readonly<Record<string, Declaration>>;
 }
 

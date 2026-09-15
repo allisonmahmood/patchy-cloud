@@ -58,16 +58,19 @@ it.live(
               declaration,
               tables: {
                 contacts: {
+                  description: "Contacts identified by id; member links their membership.",
                   columns: { title: { kind: "text" }, member: { kind: "ref", table: "members" } },
                   indexes: {},
                   shared: true
                 },
                 members: {
+                  description: "Members identified by id; team links their team.",
                   columns: { team: { kind: "ref", table: "teams" } },
                   indexes: {},
                   shared: false
                 },
                 teams: {
+                  description: "Teams identified by id; lead identifies a member.",
                   columns: { lead: { kind: "ref", table: "members", optional: true } },
                   indexes: {},
                   shared: false
@@ -145,6 +148,7 @@ it.live(
           tier: 1,
           tables: {
             contacts: {
+              description: "Contacts identified by id and email.",
               columns: {
                 email: { kind: "text" },
                 note: { kind: "text", optional: true }
@@ -159,6 +163,7 @@ it.live(
           schemaRevision: 4,
           tables: {
             contacts: {
+              description: "Contacts identified by id and email.",
               columns: {
                 email: { kind: "text" },
                 legacy: { kind: "text", default: "published default" },
@@ -166,9 +171,13 @@ it.live(
               },
               indexes: { email: { columns: ["email"], unique: true } }
             },
-            archive: { columns: { title: { kind: "text" } }, indexes: {} }
+            archive: {
+              description: "Archived notes identified by id.",
+              columns: { title: { kind: "text" } },
+              indexes: {}
+            }
           },
-          files: { attachments: {} }
+          files: { attachments: { description: "Attachments keyed by filename." } }
         }),
         identity: new Identity({
           user: { id: "local-user", email: "local@example.test", name: "Local" },

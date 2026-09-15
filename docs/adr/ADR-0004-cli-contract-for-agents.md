@@ -195,6 +195,11 @@ tree includes `patchy.config.ts`, `patchy.json`, the package pin and lockfile,
 app/build/typecheck sources, generated client and declaration metadata, project
 skills and fixtures. Write-once `AGENTS.md` records purpose, layout, completed
 installation, the generated index and `patchy dev`; `CLAUDE.md` imports it.
+The starter config defines notes with `table(description, columns, options?)`;
+file stores use `files(description)`. Each description is required and nonblank,
+and explains one row or object, its identifying keys, and relevant units.
+Config execution refuses blank descriptions and table/store name collisions
+as `invalid_manifest`, naming both conflicting definitions.
 The tree typechecks without more setup. Nothing identifying the person is committed.
 
 `patchy add postgres` chooses the sole connected Postgres connection; with

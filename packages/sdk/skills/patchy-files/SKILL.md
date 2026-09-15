@@ -9,7 +9,17 @@ Read `../patchy-loop/SKILL.md` first. Every readable row and stored file is avai
 
 ## Define and use a store
 
-Import `files` from `patchy/config` and add `files: { attachments: files() }` to the config, then run `pnpm patchy refresh`. A store belongs to the patch, not a version, and needs no bucket configuration.
+Import `files` from `patchy/config` and add
+`files: { attachments: files("Note attachments keyed by note id and filename.") }`
+to the config, then run `pnpm patchy refresh`. A store belongs to the patch, not
+a version, and needs no bucket configuration.
+
+The required first argument is a nonblank description of one stored object,
+its key convention, and relevant units or formats. For example, "Daily
+temperature exports keyed by YYYY-MM-DD.csv; readings are degrees Celsius."
+Use distinct names for tables and file stores. Publishing a store definition
+replaces its description; omission and rollback preserve it. Description-only
+changes do not advance the schema revision.
 
 From `src/main.ts`:
 

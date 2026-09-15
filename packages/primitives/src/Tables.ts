@@ -253,9 +253,14 @@ export const inventoryManifest = (
       if (index.table === table.name)
         indexes[index.name] = { columns: index.columns, unique: index.unique };
     }
-    tables[table.name] = { columns, indexes, shared: table.shared };
+    tables[table.name] = { description: table.description, columns, indexes, shared: table.shared };
   }
-  return { tables, files: Object.fromEntries(snapshot.stores.map((store) => [store.name, {}])) };
+  return {
+    tables,
+    files: Object.fromEntries(
+      snapshot.stores.map((store) => [store.name, { description: store.description }])
+    )
+  };
 };
 const decodeColumn = Schema.decodeUnknownSync(ColumnDefinition);
 
@@ -504,84 +509,114 @@ export const make = Effect.gen(function* () {
     const snapshot = yield* inventory.read(patchId);
     // Never execute even the first DDL statement until the entire diff has passed.
     const plan = yield* diff(manifest, snapshot);
-    if (plan.schemaRevision === (snapshot?.schemaRevision ?? 0)) return plan;
-    const sql = lock.sql;
-    const namespace = quote(Inventory.namespace(patchId));
-    const qualified = (table: string) => `${namespace}.${quote(table)}`;
-    const indexes = indexBudgets(manifest, snapshot, plan);
-    const existingTables = new Set(snapshot?.tables.map((table) => table.name));
-    const affectedTables = new Set([
-      ...indexes.map((index) => index.table),
-      ...plan.newColumns.map((column) => column.table)
-    ]);
-    // Writers must not race the data checks; acquire all locks before checking or issuing DDL.
-    for (const table of [...affectedTables].filter((table) => existingTables.has(table)).sort())
-      yield* sql.unsafe(`LOCK TABLE ${qualified(table)} IN SHARE MODE`);
-    yield* validateData(patchId, manifest, snapshot, plan, indexes, rowBytes).pipe(
-      Effect.provideService(SqlClient.SqlClient, sql)
-    );
-    yield* inventory.ensurePatch(patchId);
-    if (plan.newTables.length > 0) {
-      yield* sql.unsafe(
-        `CREATE OR REPLACE FUNCTION ${namespace}."_patchy_updated_at"() RETURNS trigger LANGUAGE plpgsql AS $patchy$ BEGIN NEW."updatedAt" = statement_timestamp(); RETURN NEW; END; $patchy$`
+    const schemaChanged = plan.schemaRevision !== (snapshot?.schemaRevision ?? 0);
+    if (schemaChanged) {
+      const sql = lock.sql;
+      const namespace = quote(Inventory.namespace(patchId));
+      const qualified = (table: string) => `${namespace}.${quote(table)}`;
+      const indexes = indexBudgets(manifest, snapshot, plan);
+      const existingTables = new Set(snapshot?.tables.map((table) => table.name));
+      const affectedTables = new Set([
+        ...indexes.map((index) => index.table),
+        ...plan.newColumns.map((column) => column.table)
+      ]);
+      // Writers must not race the data checks; acquire all locks before checking or issuing DDL.
+      for (const table of [...affectedTables].filter((table) => existingTables.has(table)).sort())
+        yield* sql.unsafe(`LOCK TABLE ${qualified(table)} IN SHARE MODE`);
+      yield* validateData(patchId, manifest, snapshot, plan, indexes, rowBytes).pipe(
+        Effect.provideService(SqlClient.SqlClient, sql)
       );
-    }
-    for (const table of plan.newTables) {
-      const definition = manifest.tables[table]!;
-      const columns = Object.entries(definition.columns).map(([name, column]) =>
-        columnSql(name, column)
-      );
-      yield* sql.unsafe(
-        `CREATE TABLE ${qualified(table)} ("id" text PRIMARY KEY, "createdAt" timestamptz NOT NULL DEFAULT statement_timestamp(), "updatedAt" timestamptz NOT NULL DEFAULT statement_timestamp()${columns.length === 0 ? "" : `, ${columns.join(", ")}`})`
-      );
-      yield* sql.unsafe(
-        `CREATE TRIGGER "_patchy_updated_at" BEFORE UPDATE ON ${qualified(table)} FOR EACH ROW EXECUTE FUNCTION ${namespace}."_patchy_updated_at"()`
-      );
-      yield* sql.unsafe(
-        `CREATE INDEX ${quote(indexName(table, "system", "createdAt"))} ON ${qualified(table)} ("createdAt", "id")`
-      );
-      yield* inventory.putTable({ patchId, name: table, shared: definition.shared === true });
-    }
-    const createdTables = new Set(plan.newTables);
-    for (const { table, name } of plan.newColumns) {
-      const column = manifest.tables[table]!.columns[name]!;
-      if (!createdTables.has(table))
-        yield* sql.unsafe(`ALTER TABLE ${qualified(table)} ADD COLUMN ${columnSql(name, column)}`);
-      const kind = defaultKind(column);
-      yield* inventory.putColumn({
-        patchId,
-        table,
-        name,
-        kind: column.kind,
-        refTable: column.kind === "ref" ? column.table : null,
-        optional: column.optional === true,
-        defaultKind: kind,
-        defaultValue: kind === "constant" ? column.default : null
-      });
-    }
-    for (const { table, name, kind } of indexes) {
-      const index = kind === "declared" ? manifest.tables[table]!.indexes[name]! : undefined;
-      const columns = index?.columns ?? [name, "id"];
-      yield* sql.unsafe(
-        `CREATE ${index?.unique === true ? "UNIQUE " : ""}INDEX ${quote(indexName(table, kind, name))} ON ${qualified(table)} (${columns.map(quote).join(", ")})`
-      );
-      if (index)
-        yield* inventory.putIndex({
+      yield* inventory.ensurePatch(patchId);
+      if (plan.newTables.length > 0) {
+        yield* sql.unsafe(
+          `CREATE OR REPLACE FUNCTION ${namespace}."_patchy_updated_at"() RETURNS trigger LANGUAGE plpgsql AS $patchy$ BEGIN NEW."updatedAt" = statement_timestamp(); RETURN NEW; END; $patchy$`
+        );
+      }
+      for (const table of plan.newTables) {
+        const definition = manifest.tables[table]!;
+        const columns = Object.entries(definition.columns).map(([name, column]) =>
+          columnSql(name, column)
+        );
+        yield* sql.unsafe(
+          `CREATE TABLE ${qualified(table)} ("id" text PRIMARY KEY, "createdAt" timestamptz NOT NULL DEFAULT statement_timestamp(), "updatedAt" timestamptz NOT NULL DEFAULT statement_timestamp()${columns.length === 0 ? "" : `, ${columns.join(", ")}`})`
+        );
+        yield* sql.unsafe(
+          `CREATE TRIGGER "_patchy_updated_at" BEFORE UPDATE ON ${qualified(table)} FOR EACH ROW EXECUTE FUNCTION ${namespace}."_patchy_updated_at"()`
+        );
+        yield* sql.unsafe(
+          `CREATE INDEX ${quote(indexName(table, "system", "createdAt"))} ON ${qualified(table)} ("createdAt", "id")`
+        );
+        yield* inventory.putTable({
+          patchId,
+          name: table,
+          description: definition.description,
+          shared: definition.shared === true
+        });
+      }
+      const createdTables = new Set(plan.newTables);
+      for (const { table, name } of plan.newColumns) {
+        const column = manifest.tables[table]!.columns[name]!;
+        if (!createdTables.has(table))
+          yield* sql.unsafe(
+            `ALTER TABLE ${qualified(table)} ADD COLUMN ${columnSql(name, column)}`
+          );
+        const kind = defaultKind(column);
+        yield* inventory.putColumn({
           patchId,
           table,
           name,
-          columns: index.columns,
-          unique: index.unique === true
+          kind: column.kind,
+          refTable: column.kind === "ref" ? column.table : null,
+          optional: column.optional === true,
+          defaultKind: kind,
+          defaultValue: kind === "constant" ? column.default : null
+        });
+      }
+      for (const { table, name, kind } of indexes) {
+        const index = kind === "declared" ? manifest.tables[table]!.indexes[name]! : undefined;
+        const columns = index?.columns ?? [name, "id"];
+        yield* sql.unsafe(
+          `CREATE ${index?.unique === true ? "UNIQUE " : ""}INDEX ${quote(indexName(table, kind, name))} ON ${qualified(table)} (${columns.map(quote).join(", ")})`
+        );
+        if (index)
+          yield* inventory.putIndex({
+            patchId,
+            table,
+            name,
+            columns: index.columns,
+            unique: index.unique === true
+          });
+      }
+    }
+    for (const table of snapshot?.tables ?? []) {
+      if (!Object.hasOwn(manifest.tables, table.name)) continue;
+      const definition = manifest.tables[table.name]!;
+      if (
+        table.description !== definition.description ||
+        table.shared !== (definition.shared === true)
+      )
+        yield* inventory.putTable({
+          patchId,
+          name: table.name,
+          description: definition.description,
+          shared: definition.shared === true
         });
     }
-    for (const table of plan.sharing)
-      yield* inventory.putTable({
-        patchId,
-        name: table,
-        shared: manifest.tables[table]!.shared === true
-      });
-    for (const name of plan.newStores) yield* inventory.putStore({ patchId, name });
-    const schemaRevision = yield* inventory.bumpRevision(patchId);
+    for (const name of plan.newStores)
+      yield* inventory.putStore({ patchId, name, description: manifest.files[name]!.description });
+    for (const store of snapshot?.stores ?? []) {
+      if (!Object.hasOwn(manifest.files, store.name)) continue;
+      const definition = manifest.files[store.name]!;
+      if (store.description !== definition.description)
+        yield* inventory.putStore({
+          patchId,
+          name: store.name,
+          description: definition.description
+        });
+    }
+    const schemaRevision = schemaChanged
+      ? yield* inventory.bumpRevision(patchId)
+      : plan.schemaRevision;
     return {
       provisioned: plan.provisioned,
       unused: plan.unused,

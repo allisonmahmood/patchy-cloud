@@ -49,8 +49,14 @@ const patchId = "localdev0000";
 const versionId = "ver_000000000000000000000000";
 const inventory = new PatchInventory({
   schemaRevision: 1,
-  tables: { notes: { columns: { title: { kind: "text" } }, indexes: {} } },
-  files: { attachments: {} }
+  tables: {
+    notes: {
+      description: "Notes identified by id.",
+      columns: { title: { kind: "text" } },
+      indexes: {}
+    }
+  },
+  files: { attachments: { description: "Attachments keyed by filename." } }
 });
 const idleProcess =
   "require('node:net').createServer().listen(0, '127.0.0.1', () => console.log('ready'));";
@@ -247,7 +253,7 @@ const fixture = Effect.gen(function* () {
   yield* fs.writeFileString(
     path.join(root, "patchy.config.ts"),
     'import { defineConfig, table, t } from "patchy/config";\n' +
-      'export default defineConfig({ name: "lifecycle-test", tier: 1, tables: { notes: table({ title: t.text() }) }, files: { attachments: {} }, uses: {} });\n'
+      'export default defineConfig({ name: "lifecycle-test", tier: 1, tables: { notes: table("Notes identified by id.", { title: t.text() }) }, files: { attachments: { description: "Attachments keyed by filename." } }, uses: {} });\n'
   );
   yield* fs.writeFileString(
     path.join(root, "index.html"),
