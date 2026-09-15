@@ -6,7 +6,6 @@ import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import * as UrlParams from "effect/unstable/http/UrlParams";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { pageResponse, RequireSession, Session } from "@patchy/auth";
 import { Users } from "@patchy/companies";
 import { escapeAttribute, escapeHtml } from "@patchy/core";
@@ -105,7 +104,6 @@ export const handle = Effect.fn("UserLifecyclePage.handle")(function* (id: strin
   const request = yield* HttpServerRequest.HttpServerRequest;
   const users = yield* Users.Users;
   const patches = yield* Patches.Patches;
-  const sql = yield* SqlClient.SqlClient;
   const canOpen = yield* Patches.Openability;
   const access = {
     companyId: viewer.company.id,
@@ -217,9 +215,8 @@ export const handle = Effect.fn("UserLifecyclePage.handle")(function* (id: strin
       !Option.contains(UrlParams.getFirst(fields, "ack"), "1")
     )
       return confirm("Acknowledge what breaks before confirming. Nothing was done.", 409);
-    const transaction = Option.getOrThrow(yield* Effect.serviceOption(sql.transactionService));
-    if (action === "deactivate") yield* users.deactivate(ref, transaction);
-    else yield* users.reactivate(ref, transaction);
+    if (action === "deactivate") yield* users.deactivate(ref);
+    else yield* users.reactivate(ref);
     const actor = { userId: viewer.user.id, admin: true };
     for (const row of selected) {
       if (action === "deactivate") yield* patches.retire(row.patch.id, actor, true);

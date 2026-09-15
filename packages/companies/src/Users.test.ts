@@ -1,8 +1,6 @@
 import { assert, it } from "@effect/vitest";
-import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as Testing from "@patchy/sql/testing";
@@ -228,7 +226,7 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(Te
       })
     );
 
-    it.effect("commits or rolls back lifecycle changes with the supplied outer transaction", () =>
+    it.effect("commits or rolls back lifecycle changes with the ambient outer transaction", () =>
       Effect.gen(function* () {
         const users = yield* Users.Users;
         const sql = yield* SqlClient.SqlClient;
@@ -237,19 +235,11 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(Te
         yield* sql`
           INSERT INTO machine_tokens (id, user_id, name, token_hash, created_at, expires_at, last_used_at)
           VALUES ('tok_lifecycle_outer', ${member.id}, 'Laptop', 'lifecycle-outer-hash', now(), now() + interval '90 days', now())`;
-        // Remove inheritance so only the explicit connection can keep these writes in the transaction.
-        const withoutAmbientTransaction = Effect.updateContext((context: Context.Context<never>) =>
-          Context.omit(sql.transactionService)(context)
-        );
-
         assert.strictEqual(
           yield* sql
             .withTransaction(
               Effect.gen(function* () {
-                const transaction = Option.getOrThrow(
-                  yield* Effect.serviceOption(sql.transactionService)
-                );
-                yield* users.deactivate(input, transaction).pipe(withoutAmbientTransaction);
+                yield* users.deactivate(input);
                 return yield* Effect.fail("abort deactivation");
               })
             )
@@ -262,14 +252,7 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(Te
           [{ live: true }]
         );
 
-        const deactivated = yield* sql.withTransaction(
-          Effect.gen(function* () {
-            const transaction = Option.getOrThrow(
-              yield* Effect.serviceOption(sql.transactionService)
-            );
-            return yield* users.deactivate(input, transaction).pipe(withoutAmbientTransaction);
-          })
-        );
+        const deactivated = yield* sql.withTransaction(users.deactivate(input));
         assert.isNotNull(deactivated.deactivatedAt);
         assert.deepStrictEqual(yield* users.findByClerkId(member.clerkUserId), deactivated);
         assert.deepStrictEqual(
@@ -281,10 +264,7 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(Te
           yield* sql
             .withTransaction(
               Effect.gen(function* () {
-                const transaction = Option.getOrThrow(
-                  yield* Effect.serviceOption(sql.transactionService)
-                );
-                yield* users.reactivate(input, transaction).pipe(withoutAmbientTransaction);
+                yield* users.reactivate(input);
                 return yield* Effect.fail("abort reactivation");
               })
             )
@@ -293,14 +273,7 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(Te
         );
         assert.deepStrictEqual(yield* users.findByClerkId(member.clerkUserId), deactivated);
 
-        yield* sql.withTransaction(
-          Effect.gen(function* () {
-            const transaction = Option.getOrThrow(
-              yield* Effect.serviceOption(sql.transactionService)
-            );
-            return yield* users.reactivate(input, transaction).pipe(withoutAmbientTransaction);
-          })
-        );
+        yield* sql.withTransaction(users.reactivate(input));
         assert.deepStrictEqual(yield* users.findByClerkId(member.clerkUserId), member);
         assert.deepStrictEqual(
           yield* sql`SELECT revoked_at IS NOT NULL AS revoked FROM machine_tokens WHERE id = 'tok_lifecycle_outer'`,
