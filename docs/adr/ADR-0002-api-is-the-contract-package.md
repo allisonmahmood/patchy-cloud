@@ -28,11 +28,12 @@ The wire contract is its own package, `@patchy/api`, beside neither context.
    A publish success is encoded once when its version is recorded. Both the
    initial response and later replays return the stored JSONB representation;
    a replay never applies today's schema to a historical response.
-2. **The `HttpApi` lives with the schemas.** `PatchyApi` — the `auth`, `patches`,
-   `sdk` and `runtime` groups, the bearer middleware _definition_, the derived
-   `HttpApiClient` — belongs here. Release discovery is an unauthenticated SDK
-   endpoint; runtime admission is browser-only, not bearer middleware. The package
-   imports only `@patchy/core` and Effect, and no server or CLI code. Each
+2. **The `HttpApi` lives with the schemas.** `PatchyApi` defines the `auth`,
+   `patches`, `connections`, `sdk` and `runtime` groups. It belongs here with the
+   bearer middleware _definition_ and the derived `HttpApiClient`. Release
+   discovery is an unauthenticated SDK endpoint; runtime admission is browser-only,
+   not bearer middleware. The package imports only `@patchy/core` and Effect,
+   and no server or CLI code. Each
    capability package implements its own group; none defines one.
 3. **Refusals are wire data, not internal errors.** A failure is
    `{ ok: false, error }`, with a `code` and supporting fields where a client

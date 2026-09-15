@@ -109,10 +109,10 @@ inventory reads and writes fail until the disposable dev databases are recreated
 The reset deletes local published HTML, rows and file objects. Do not run it
 against data you need to keep.
 
-Issue #255 adds `last_changed_action` to the unmerged `0008_patches_lifecycle`
-migration for precise portal stale-action notices. An existing disposable dev
-database from before this change needs `pnpm dev reset`; restarting does not
-reapply a migration. This deletes local data, not a production migration path.
+The `0008_patches_lifecycle` migration includes `last_changed_action` for precise
+portal stale-action notices. An existing disposable dev database created before
+the #255 change needs `pnpm dev reset`; restarting does not reapply a migration.
+This deletes local data, not a production migration path.
 
 `--json` also works on `status`, `reset` and a plain start. The server is not
 watched; after a code change, `pnpm dev stop && pnpm dev`.
@@ -295,6 +295,15 @@ and active state, clears the seeded machine token's revocation, and resets its
 90-day lifetime and last-use timestamp. Machine tokens also stop working after
 30 idle days.
 
+This shared seed creates identity rows only, not example patches or connections.
+A fresh instance's portal therefore shows **No patches yet**. The optional
+`pnpm seed:dev` command publishes the accepted HTML fixtures as live, company-shared
+tier 0 patches with empty descriptions. It creates no retired, deleted or
+deactivated-owner examples. Use the CLI or portal to make those states when
+checking them; restarting reapplies the identity seed, not patch lifecycle moves.
+Published patches stay live until someone retires or deletes them. Retirement
+keeps them indefinitely; only deletion starts the 30-day recovery window.
+
 The dev seed and vitest template then run `Patches.backfillNames`: patches without
 a current name entry receive names derived from their titles in creation order,
 with suffixes on collision. Already named patches keep their names; deleted
@@ -456,12 +465,47 @@ signed-in browser for company pages and older versions of public patches.
 The company shell permits only the configured Clerk Frontend API host and
 Patchy's external session initializer; the published document's sandbox is unchanged.
 
+### Portal and patch lifecycle
+
+Sign in as a member of the publishing company and open `/` for the index, then
+`/patches/<name>` for a card. The card is separate from the served patch at
+`/<company>/<name>`. Owners and admins see Manage; other members see facts only.
+Use **Show retired and deleted** to include off patches. Admins can reassign a
+patch to an active company member; they must become its owner before publishing.
+
+For an owned patch, exercise `pnpm patchy retire --patch <id> --json`, then open
+its address in the same browser. Expect the retired notice, actor and card link,
+not its bundle. A signed-out request still gets the login door. Restore with
+`pnpm patchy restore --patch <id> --json`; the address serves again.
+Use `pnpm patchy delete --patch <id> --yes --json` to check the deleted notice
+and returned `purgeAt`. Restore before that deadline; retired patches have no
+deadline. These actions keep versions and resources until deletion reclamation.
+
+Use a source with a shared table and a published consumer to check refusal and
+recovery. Retire or delete from live must list that consumer and exit 2 with
+`has_dependants`; ask before adding `--force`. Its shared reads then fail with
+`access_denied` until the source is restored. Restoring a consumer whose current
+sources are off similarly requires acknowledgement of `sources_off`.
+
+After two publishes, `pnpm patchy rollback 1 --patch <id> --json` must serve v1
+without changing the data, cumulative schema, sharing or description. Edit the
+description on the card or with `describe "<text>" --patch <id>` outside the repo,
+then run `pnpm patchy refresh --json` in the repo. Check the notice and the pulled
+text and sync stamp in `patchy.json`.
+
 ### Company management
 
 The company page lists users, roles, active/deactivated state and pending
 invites. Admins invite, revoke, resend, change roles, deactivate and reactivate;
 members read the same page without management actions. Both roles can **Sign out**
 there. The last active admin cannot be demoted or deactivated.
+
+Deactivate and Reactivate link to portal pick pages. Choose whether to leave
+the user's patches alone, retire selected or all live patches, or restore
+selected or all retired patches. Confirm the recomputed dependant or off-source
+warnings. The user's access change and selected patch moves commit together.
+Deactivation alone leaves patches serving with an **owner deactivated** mark;
+reactivation needs fresh machine tokens, and deleted patches stay deleted.
 
 **Inviting on a dev instance sends real email through your Clerk development
 application.** Patchy keeps the invitation even if Clerk cannot send it; the
@@ -489,7 +533,10 @@ establish the locking invariants.
 The block covers competing first publishes, whole-publish serialization and
 cumulative inventory, rollback versus publish, old-bundle writes during additive
 DDL, unique batches, same-name file writes, and patch-row lost-update prevention.
-The existing package suites retain their focused primitive concurrency cases.
+Lifecycle races cover a publish against retire, reassignment against publish,
+and the deletion sweep against restore. They check the refused or committed
+result and retained rows and resources, not SQL text. The existing package suites
+retain their focused primitive concurrency cases.
 
 `pnpm test:all` runs package tests through Turbo, the real-Postgres concurrency
 block and the packed e2e, but not the live Clerk tiers. It attempts all three even
@@ -513,14 +560,21 @@ an explicit `--share public` publish's 200 with `public, max-age=60`, no
 `Set-Cookie` and the locked CSP, and `share … company` returning it to the 401 door.
 It also drives the login handoff through confirmation with an offline-signed
 session, completion, saved-login precedence, logout and seed fallback.
-The tier 1 flow initializes a repo with the packed CLI, starts `patchy dev`,
-inserts through the generated client in the real headless shell, stops dev and
-publishes. It checks the anonymous 401 door, a seeded-session bundle under the
-tier 1 CSP, and a row round-trip through the hosted shell's
-`POST /api/runtime/call`. Dev rows stay local: the hosted round-trip inserts its
-own row rather than treating publish as a data migration. A second publish adds
-an optional column and checks the provisioning report. Each CLI step checks its
-JSON result and exit code.
+The tier 1 flow initializes a source repo with the packed CLI, defines notes
+and shared orders tables, starts `patchy dev`, inserts through the generated
+client in the real headless shell, stops dev and publishes. It checks the
+anonymous 401 door, a seeded-session bundle under the tier 1 CSP, and a hosted
+row round-trip through `POST /api/runtime/call`. Dev rows stay local: the hosted
+round-trip inserts its own row rather than treating publish as a data migration.
+A second publish adds an optional column and checks the provisioning report.
+The CLI initializes and publishes a second tier 1 repo that declares the source's
+orders table and reads it through its generated browser client. The flow checks
+`list`, `list <source>` and `list <source> orders`, the seeded session's portal
+root and card, and retirement refused with the dependant before `--force`.
+The retired address shows its notice and shared reads fail; restore brings both
+back. `rollback 1` serves v1 while preserving the hosted row and additive column.
+An external `describe` edit pulls into `patchy.json` with its notice and sync
+stamp on the next `refresh`. Each CLI step checks its JSON result and exit code.
 Discovery seeds two table-bearing patches through that disposable server's publish
 API, one owned by the seed user and one by a colleague. The installed CLI runs
 `list`, `list <patch>` and `list <patch> <table>` in text and JSON from outside a
