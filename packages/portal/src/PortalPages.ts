@@ -68,7 +68,7 @@ const context = Effect.gen(function* () {
     viewer,
     session,
     all: query.get("all") === "1",
-    query: query.get("q") ?? "",
+    query: request.method === "GET" ? (query.get("q") ?? "") : "",
     access: {
       companyId: viewer.company.id,
       userId: viewer.user.id,
@@ -173,15 +173,11 @@ const render = Effect.fn("PortalPages.render")(function* (
             action,
             members,
             query,
-            ...(options.notice === undefined ? {} : { notice: options.notice }),
-            ...(options.submittedName === undefined
-              ? {}
-              : { submittedName: options.submittedName }),
-            ...(options.nameError === undefined ? {} : { nameError: options.nameError }),
-            ...(options.selectedOwnerId === undefined
-              ? {}
-              : { selectedOwnerId: options.selectedOwnerId }),
-            ...(options.acknowledged === undefined ? {} : { acknowledged: options.acknowledged })
+            notice: options.notice,
+            submittedName: options.submittedName,
+            nameError: options.nameError,
+            selectedOwnerId: options.selectedOwnerId,
+            acknowledged: options.acknowledged
           })
         : renderPortal({
             rows,
@@ -200,7 +196,9 @@ const render = Effect.fn("PortalPages.render")(function* (
           });
   return pageResponse(
     {
-      title: card ? `${card.patch.name}${options.versions ? " versions" : ""}` : "Patches",
+      title: card
+        ? `${card.patch.name}${options.versions ? " versions" : action ? ` ${action}` : ""}`
+        : "Patches",
       heading: "",
       body,
       styles,

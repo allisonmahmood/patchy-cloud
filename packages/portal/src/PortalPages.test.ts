@@ -1215,12 +1215,10 @@ it.layer(layer)("portal pages on a socket", (it) => {
           assert.strictEqual(refused.status, 409);
           const fresh = yield* refused.text;
           assert.notStrictEqual(heading(fresh), patch.name);
-          assert.strictEqual(hidden(fresh, "q"), "Alex");
-          assert.deepStrictEqual(radioValues(fresh), []);
-          const submitUrl = forms(fresh)
-            .map((action) => new URL(action.replaceAll("&amp;", "&"), PUBLIC_BASE_URL))
-            .find((url) => url.pathname === path && url.searchParams.get("q") === "Alex");
-          assert.strictEqual(submitUrl?.searchParams.get("all"), "1");
+          assert.strictEqual(hidden(fresh, "q"), "");
+          assert.sameMembers(radioValues(fresh), [workspace.owner.id, workspace.admin.id]);
+          assert.notMatch(fresh, /<button\b[^>]*\bdisabled/);
+          assert.include(forms(fresh), `${path}?all=1`);
           assert.include(
             links(fresh).map((link) => link.href),
             `${cardPath(patch.name)}?all=1`
@@ -1232,6 +1230,15 @@ it.layer(layer)("portal pages on a socket", (it) => {
           workspace.owner.id,
           workspace.admin.id
         ]);
+        const recovered = yield* post(`${path}?all=1`, workspace.admin, {
+          expectedOwnerUserId: workspace.owner.id,
+          user: workspace.admin.id
+        });
+        assert.strictEqual(recovered.status, 303);
+        assert.strictEqual(
+          (yield* readPatch(workspace.admin, patch.patchId)).owner.id,
+          workspace.admin.id
+        );
       })
   );
 
