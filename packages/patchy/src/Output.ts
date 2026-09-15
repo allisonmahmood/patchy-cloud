@@ -3,9 +3,9 @@
  * the contract every command's failure is rendered through. In text mode a
  * result is the lines agents already read and a failure follows any warnings on
  * stderr. Under `--json` a result is exactly one document on stdout and a
- * failure is `{ ok: false, error, kind, code?, state?, warnings? }` on stderr, with the other
- * stream empty. Discovery's wrong-state refusals include `state`. The exit code
- * comes from the failure's kind and from nowhere else.
+ * failure is `{ ok: false, error, kind, code?, state?, owner?, dependants?,
+ * sources?, purgeAt?, warnings? }` on stderr, with the other stream empty.
+ * The exit code comes from the failure's kind and from nowhere else.
  */
 import * as Console from "effect/Console";
 import * as Context from "effect/Context";

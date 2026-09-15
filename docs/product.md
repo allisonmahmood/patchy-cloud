@@ -417,8 +417,8 @@ one row or object is, its identifying keys and units. The manifest and cumulativ
 include it. A publish that defines the primitive replaces its description; omission and rollback
 preserve it. A description-only change does not advance the schema revision. A table and file store
 cannot have the same name. `patchy list <patch>` exposes the cumulative inventory
-to agents. The CLI's reminder to re-check unchanged descriptions when definitions
-change remains future work.
+to agents. On refresh, a new dev start and publish, the CLI reminds agents to
+re-check unchanged descriptions when their definitions change.
 
 This **company database** is Patchy's storage for the company's patch resources,
 not a Postgres connection to an outside source. Platform records — users, patches,
