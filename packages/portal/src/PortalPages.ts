@@ -23,6 +23,7 @@ import {
 import * as UserLifecyclePage from "./UserLifecyclePage.js";
 
 const isName = Schema.is(PatchName);
+export const maxNameLength = 32;
 const decodeDescription = Schema.decodeUnknownEffect(
   Schema.Struct({
     description: Schema.String,
@@ -96,6 +97,12 @@ const errorPage = Effect.fn("PortalPages.errorPage")(function* (
   );
 });
 
+const overlongName = errorPage(
+  414,
+  "Patch name is too long",
+  `Patch names have at most ${maxNameLength} characters.`
+);
+
 const render = Effect.fn("PortalPages.render")(function* (
   name?: string,
   options: {
@@ -112,12 +119,7 @@ const render = Effect.fn("PortalPages.render")(function* (
   } = {}
 ) {
   const { viewer, session, all, access, query } = yield* context;
-  if (name !== undefined && name.length > 32)
-    return yield* errorPage(
-      414,
-      "Patch name is too long",
-      "Patch names have at most 32 characters."
-    );
+  if (name !== undefined && name.length > maxNameLength) return yield* overlongName;
   if (name !== undefined && !isName(name))
     return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
   const patches = yield* Patches.Patches;
@@ -212,12 +214,7 @@ const render = Effect.fn("PortalPages.render")(function* (
 });
 
 const post = Effect.fn("PortalPages.post")(function* (name: string, action: Action) {
-  if (name.length > 32)
-    return yield* errorPage(
-      414,
-      "Patch name is too long",
-      "Patch names have at most 32 characters."
-    );
+  if (name.length > maxNameLength) return yield* overlongName;
   if (!isName(name))
     return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
   const { viewer, all, access } = yield* context;
@@ -403,6 +400,37 @@ const pageErrors = <E, R>(app: Effect.Effect<HttpServerResponse.HttpServerRespon
 /** The server owns GET / and its signed-out door alongside the catch-all. */
 export const index = render().pipe(pageErrors);
 
+/** The guard uses the same browser admission and response as the routed pages. */
+export const nameTooLong = errors(
+  RequireSession.sameOrigin(RequireSession.withViewer(overlongName))
+);
+
+/** Concrete patch routes are shared with the server's request-target guard. */
+export const patchRoutes = [
+  {
+    method: "GET" as const,
+    path: "/patches/:name" as const,
+    handle: (name: string) => render(name)
+  },
+  {
+    method: "GET" as const,
+    path: "/patches/:name/versions" as const,
+    handle: (name: string) => render(name, { versions: true })
+  },
+  ...(["retire", "delete", "restore", "reassign"] as const).map((action) => ({
+    method: "GET" as const,
+    path: `/patches/:name/${action}` as const,
+    handle: (name: string) => render(name, { confirmation: action })
+  })),
+  ...(["description", "scope", "rollback", "retire", "delete", "restore", "reassign"] as const).map(
+    (action) => ({
+      method: "POST" as const,
+      path: `/patches/:name/${action}` as const,
+      handle: (name: string) => post(name, action)
+    })
+  )
+];
+
 export const layer: Layer.Layer<
   never,
   never,
@@ -427,37 +455,16 @@ export const layer: Layer.Layer<
         );
       }
     }
-    yield* router.add(
-      "GET",
-      "/patches/:name",
-      errors(
-        RequireSession.withViewer(
-          Effect.flatMap(HttpRouter.params, (params) => render(params.name ?? "")).pipe(pageErrors)
+    for (const route of patchRoutes) {
+      const handler = RequireSession.withViewer(
+        Effect.flatMap(HttpRouter.params, (params) => route.handle(params.name ?? "")).pipe(
+          pageErrors
         )
-      )
-    );
-    yield* router.add(
-      "GET",
-      "/patches/:name/versions",
-      errors(
-        RequireSession.withViewer(
-          Effect.flatMap(HttpRouter.params, (params) =>
-            render(params.name ?? "", { versions: true })
-          ).pipe(pageErrors)
-        )
-      )
-    );
-    for (const action of ["retire", "delete", "restore", "reassign"] as const) {
+      );
       yield* router.add(
-        "GET",
-        `/patches/:name/${action}`,
-        errors(
-          RequireSession.withViewer(
-            Effect.flatMap(HttpRouter.params, (params) =>
-              render(params.name ?? "", { confirmation: action })
-            ).pipe(pageErrors)
-          )
-        )
+        route.method,
+        route.path,
+        errors(route.method === "POST" ? RequireSession.sameOrigin(handler) : handler)
       );
     }
     yield* router.add(
@@ -466,35 +473,12 @@ export const layer: Layer.Layer<
       errors(
         RequireSession.withViewer(
           Effect.flatMap(HttpRouter.params, (params) =>
-            (params["*"]?.split("/", 1)[0] ?? "").length > 32
-              ? errorPage(414, "Patch name is too long", "Patch names have at most 32 characters.")
+            (params["*"]?.split("/", 1)[0] ?? "").length > maxNameLength
+              ? overlongName
               : errorPage(404, "Patch not found", "The requested patch is unavailable.")
           ).pipe(pageErrors)
         )
       )
     );
-    for (const action of [
-      "description",
-      "scope",
-      "rollback",
-      "retire",
-      "delete",
-      "restore",
-      "reassign"
-    ] as const) {
-      yield* router.add(
-        "POST",
-        `/patches/:name/${action}`,
-        errors(
-          RequireSession.sameOrigin(
-            RequireSession.withViewer(
-              Effect.flatMap(HttpRouter.params, (params) => post(params.name ?? "", action)).pipe(
-                pageErrors
-              )
-            )
-          )
-        )
-      );
-    }
   })
 );

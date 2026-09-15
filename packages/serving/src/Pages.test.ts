@@ -14,7 +14,7 @@ import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { CURRENT_RELEASE, MANIFEST_VERSION, WIRE_VERSION } from "@patchy/api";
+import { CURRENT_RELEASE, MANIFEST_VERSION, WIRE_VERSION, type Manifest } from "@patchy/api";
 import { AuthPages, DeviceLogins, MachineTokens, Session } from "@patchy/auth";
 import { Analytics } from "@patchy/analytics";
 import { Limits } from "@patchy/limits";
@@ -120,7 +120,8 @@ const publish = (
   title: string,
   scope?: Patches.Patch["scope"],
   patchId: string | null = null,
-  name?: string
+  name?: string,
+  definitions?: Pick<typeof Manifest.Type, "tables" | "uses">
 ) =>
   Effect.flatMap(Content.Content, (content) =>
     content
@@ -132,7 +133,8 @@ const publish = (
           ...(name === undefined ? {} : { name }),
           tables: {},
           files: {},
-          uses: {}
+          uses: {},
+          ...definitions
         },
         publishKey: randomUUID(),
         payloadDigest: title,
@@ -159,6 +161,178 @@ const publish = (
   );
 
 it.layer(layer)("pages", (it) => {
+  it.effect(
+    "shows off notices only to active colleagues and limits Restore to owner or admin",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.UTC(2026, 0, 1));
+        const sql = yield* SqlClient.SqlClient;
+        const patches = yield* Patches.Patches;
+        const ownerId = "usr_notice_owner";
+        const memberId = "usr_notice_member";
+        for (const [id, name] of [
+          [ownerId, "Priya"],
+          [memberId, "Alex"]
+        ] as const) {
+          yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
+          VALUES (${id}, ${id}, ${DEV_SEED.companyId}, ${`${id}@example.com`}, ${name}, 'member')`;
+        }
+        yield* (yield* Companies.Companies).create({
+          name: "Notice outsider",
+          handle: "notice-outsider",
+          clerkUserId: "user_notice_outsider",
+          email: "outsider@example.com",
+          userName: "Outsider"
+        });
+        const people = [
+          {
+            cookie: signedInCookies(
+              signSession({ sub: ownerId, email: `${ownerId}@example.com`, name: "Priya" })
+            ),
+            manage: true
+          },
+          { cookie: signedInCookies(), manage: true },
+          {
+            cookie: signedInCookies(
+              signSession({ sub: memberId, email: `${memberId}@example.com`, name: "Alex" })
+            ),
+            manage: false
+          }
+        ];
+        const foreign = {
+          cookie: signedInCookies(
+            signSession({ sub: "user_notice_outsider", email: "outsider@example.com" })
+          )
+        };
+        const patch = yield* publish("Hidden patch content", "public", null, "notice-patch");
+        const latest = yield* publish("Latest hidden content", undefined, patch.patchId);
+        yield* patches.reassign(patch.patchId, { userId: DEV_SEED.userId, admin: true }, ownerId);
+        const actor = { userId: ownerId, admin: false };
+        const paths = [
+          patch.path,
+          `${patch.path}/~v/1`,
+          `/~content/${patch.patchId}/${patch.versionId}`,
+          `${patch.path}/~v/2`,
+          `/~content/${patch.patchId}/${latest.versionId}`
+        ];
+        for (const state of ["retired", "deleted"] as const) {
+          if (state === "retired") yield* patches.retire(patch.patchId, actor);
+          else yield* patches.delete(patch.patchId, actor);
+          yield* TestClock.adjust(12 * DAY);
+          for (const path of paths) {
+            for (const person of people) {
+              const response = yield* get(path, { cookie: person.cookie });
+              assert.strictEqual(response.status, 200, path);
+              assert.strictEqual(response.headers["cache-control"], "private, no-store");
+              assert.strictEqual(response.headers["referrer-policy"], "same-origin");
+              assert.include(response.headers["content-security-policy"], "form-action 'self'");
+              assert.include(response.headers["content-security-policy"], "frame-ancestors 'none'");
+              const html = yield* response.text;
+              assert.include(html, 'aria-label="Primary"');
+              assert.include(html, 'href="/patches/notice-patch"');
+              assert.include(html, `${state === "retired" ? "Retired" : "Deleted"} by Priya`);
+              assert.include(
+                html,
+                `datetime="2026-01-${state === "retired" ? "01" : "13"}T00:00:00.000Z"`
+              );
+              assert.notInclude(html, "<iframe");
+              assert.notInclude(html, "Hidden patch content");
+              assert.notInclude(html, "Latest hidden content");
+              assert.strictEqual(
+                html.includes('action="/patches/notice-patch/restore"'),
+                person.manage
+              );
+              if (person.manage) assert.include(html, `name="expectedState" value="${state}"`);
+              if (state === "deleted") assert.include(html, "Gone for good in 18 days");
+            }
+            const door = yield* get(path, {});
+            assert.strictEqual(door.status, 401);
+            assert.strictEqual(door.headers["cache-control"], "private, no-store");
+            assert.include(yield* door.text, ">Sign in</a>");
+            const denied = yield* get(path, foreign);
+            assert.strictEqual(denied.status, 404);
+            assert.strictEqual(denied.headers["cache-control"], "private, no-store");
+            assert.notInclude(yield* denied.text, "notice-patch");
+          }
+        }
+        yield* TestClock.adjust(18 * DAY);
+        const expired = yield* get(patch.path);
+        const expiredHtml = yield* expired.text;
+        assert.include(expiredHtml, "Gone for good in 0 days");
+        assert.notInclude(expiredHtml, 'action="/patches/notice-patch/restore"');
+        yield* patches.purgeDeleted(patch.patchId);
+        for (const path of paths) {
+          for (const headers of [{}, foreign, { cookie: people[0]!.cookie }]) {
+            assert.strictEqual((yield* get(path, headers)).status, 404);
+          }
+        }
+        const disabled = yield* publish("Disabled content", "public", null, "disabled-notice");
+        yield* patches.retire(disabled.patchId, { userId: DEV_SEED.userId, admin: false });
+        yield* sql`UPDATE patches SET disabled_at = now() WHERE id = ${disabled.patchId}`;
+        for (const path of [
+          disabled.path,
+          `${disabled.path}/~v/1`,
+          `/~content/${disabled.patchId}/${disabled.versionId}`
+        ]) {
+          for (const headers of [{}, foreign, { cookie: signedInCookies() }]) {
+            assert.strictEqual((yield* get(path, headers)).status, 404);
+          }
+        }
+      })
+  );
+
+  it.effect(
+    "chooses restore confirmation from the current version's sources even at historical URLs",
+    () =>
+      Effect.gen(function* () {
+        const patches = yield* Patches.Patches;
+        const actor = { userId: DEV_SEED.userId, admin: false };
+        const source = yield* publish("Notice source", undefined, null, "notice-source", {
+          tables: {
+            notes: {
+              description: "Notes",
+              columns: { body: { kind: "text" } },
+              indexes: {},
+              shared: true
+            }
+          },
+          uses: {}
+        });
+        const consumer = yield* publish("Notice consumer", undefined, null, "notice-consumer", {
+          tables: {},
+          uses: {
+            source: {
+              kind: "sharedTable",
+              patchId: source.patchId,
+              table: "notes",
+              id: `${source.patchId}/notes`,
+              revision: 1
+            }
+          }
+        });
+        yield* publish("No current sources", undefined, consumer.patchId, "notice-consumer");
+        yield* patches.retire(source.patchId, actor, true);
+        yield* patches.retire(consumer.patchId, actor);
+        const paths = [
+          consumer.path,
+          `${consumer.path}/~v/1`,
+          `/~content/${consumer.patchId}/${consumer.versionId}`
+        ];
+        for (const path of paths) {
+          const html = yield* (yield* get(path)).text;
+          assert.include(html, 'action="/patches/notice-consumer/restore"');
+        }
+        yield* patches.restore(consumer.patchId, actor);
+        yield* patches.rollback(consumer.patchId, actor, 1);
+        yield* patches.retire(consumer.patchId, actor);
+        for (const path of paths) {
+          const html = yield* (yield* get(path)).text;
+          assert.include(html, 'href="/patches/notice-consumer/restore"');
+          assert.notInclude(html, 'action="/patches/notice-consumer/restore"');
+        }
+      })
+  );
+
   it.effect("keeps company patches behind the login door without accepting machine tokens", () =>
     Effect.gen(function* () {
       const { path, patchId, versionId } = yield* publish("Company only");
@@ -338,10 +512,10 @@ it.layer(layer)("pages", (it) => {
 
         yield* patches.delete(replacement.patchId, { userId: DEV_SEED.userId, admin: false });
         for (const suffix of suffixes) {
-          const gone = yield* get(`${oldPath}${suffix}`);
-          assert.strictEqual(gone.status, 404);
-          assert.isUndefined(gone.headers.location);
-          assert.notInclude(yield* gone.text, originalTitle);
+          const deleted = yield* get(`${oldPath}${suffix}`);
+          assert.strictEqual(deleted.status, 200);
+          assert.isUndefined(deleted.headers.location);
+          assert.notInclude(yield* deleted.text, originalTitle);
         }
         const original = yield* get(newPath);
         assert.strictEqual(original.status, 200);
@@ -415,26 +589,35 @@ it.layer(layer)("pages", (it) => {
     })
   );
 
-  it.effect("keeps an unvisited patch serving until its owner takes it off", () =>
-    Effect.gen(function* () {
-      yield* TestClock.setTime(Date.UTC(2026, 0, 1));
-      const { path, patchId } = yield* publish("Still available");
-      yield* TestClock.adjust(365 * DAY);
-      assert.strictEqual((yield* get(path)).status, 200);
-      assert.strictEqual((yield* get(`${path}/~v/1`)).status, 200);
-      yield* (yield* Patches.Patches).retire(patchId, { userId: DEV_SEED.userId, admin: false });
-      assert.strictEqual((yield* get(path)).status, 404);
-      assert.strictEqual((yield* get(`${path}/~v/1`)).status, 404);
-      const patches = yield* Patches.Patches;
-      const actor = { userId: DEV_SEED.userId, admin: false };
-      yield* patches.restore(patchId, actor);
-      assert.strictEqual((yield* get(path)).status, 200);
-      yield* patches.delete(patchId, actor);
-      assert.strictEqual((yield* get(path)).status, 404);
-      assert.strictEqual((yield* get(`${path}/~v/1`)).status, 404);
-      yield* patches.restore(patchId, actor);
-      assert.strictEqual((yield* get(`${path}/~v/1`)).status, 200);
-    })
+  it.effect(
+    "keeps an unvisited patch serving and replaces off content with a restorable notice",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.UTC(2026, 0, 1));
+        const { path, patchId } = yield* publish("Still available");
+        yield* TestClock.adjust(365 * DAY);
+        assert.strictEqual((yield* get(path)).status, 200);
+        assert.strictEqual((yield* get(`${path}/~v/1`)).status, 200);
+        yield* (yield* Patches.Patches).retire(patchId, { userId: DEV_SEED.userId, admin: false });
+        const retired = yield* get(path);
+        assert.strictEqual(retired.status, 200);
+        const notice = yield* retired.text;
+        assert.include(notice, 'action="/patches/still-available/restore"');
+        assert.include(notice, 'name="expectedState" value="retired"');
+        assert.notInclude(notice, 'class="patch-frame"');
+        assert.strictEqual((yield* get(`${path}/~v/1`)).status, 200);
+        const patches = yield* Patches.Patches;
+        const actor = { userId: DEV_SEED.userId, admin: false };
+        yield* patches.restore(patchId, actor);
+        assert.strictEqual((yield* get(path)).status, 200);
+        yield* patches.delete(patchId, actor);
+        const deleted = yield* get(path);
+        assert.strictEqual(deleted.status, 200);
+        assert.include(yield* deleted.text, 'name="expectedState" value="deleted"');
+        assert.strictEqual((yield* get(`${path}/~v/1`)).status, 200);
+        yield* patches.restore(patchId, actor);
+        assert.strictEqual((yield* get(`${path}/~v/1`)).status, 200);
+      })
   );
 
   it.effect("serves the page when recording a visit fails", () =>
@@ -513,23 +696,17 @@ it.layer(services)("pages in memory", (it) => {
         }
       ]) {
         const response = yield* send(path, { headers });
-        const missing = yield* send(`/${DEV_SEED.companyHandle}/notthere`, { headers });
         assert.strictEqual(response.status, "cookie" in headers ? 404 : 401);
-        assert.strictEqual(response.status, missing.status);
-        assert.strictEqual(
-          response.headers.get("cache-control"),
-          missing.headers.get("cache-control")
-        );
-        assert.strictEqual(
-          (yield* Effect.promise(() => response.text())).replaceAll(
-            encodeURIComponent(path),
-            "PATCH"
-          ),
-          (yield* Effect.promise(() => missing.text())).replaceAll(
-            encodeURIComponent(`/${DEV_SEED.companyHandle}/notthere`),
-            "PATCH"
-          )
-        );
+        assert.strictEqual(response.headers.get("cache-control"), "private, no-store");
+        const body = yield* Effect.promise(() => response.text());
+        assert.notInclude(body, "Missing private bytes");
+        if ("cookie" in headers) {
+          const missing = yield* send(`/${DEV_SEED.companyHandle}/notthere`, { headers });
+          assert.strictEqual(missing.status, 404);
+          assert.strictEqual(body, yield* Effect.promise(() => missing.text()));
+        } else {
+          assert.include(body, ">Sign in</a>");
+        }
       }
     })
   );
@@ -548,15 +725,10 @@ it.layer(services)("pages in memory", (it) => {
     })
   );
 
-  it.effect("uses the login template without disclosing whether a company patch exists", () =>
+  it.effect("uses the login template without disclosing a retained company patch's content", () =>
     Effect.gen(function* () {
       const { path: patchPath } = yield* publish("Hidden title");
-      for (const path of [
-        patchPath,
-        `${patchPath}/~v/1`,
-        `/${DEV_SEED.companyHandle}/missingpatch`,
-        `${patchPath}/~v/nope`
-      ]) {
+      for (const path of [patchPath, `${patchPath}/~v/1`]) {
         const door = yield* send(path, { headers: { authorization: "Bearer patchy-dev-token" } });
         const login = yield* send(`/login?return=${encodeURIComponent(path)}`);
         assert.strictEqual(door.status, 401);
@@ -581,7 +753,8 @@ it.layer(services)("pages in memory", (it) => {
     "returns from a failed handshake to the patch without replaying handshake parameters",
     () =>
       Effect.gen(function* () {
-        const path = `/${DEV_SEED.companyHandle}/missingpatch?view=chart`;
+        const patch = yield* publish("Failed handshake");
+        const path = `${patch.path}?view=chart`;
         const handshake = signHandshake(["__session=; Max-Age=0; Path=/"]);
         const response = yield* send(`${path}&__clerk_handshake=${encodeURIComponent(handshake)}`);
         assert.strictEqual(response.status, 401);

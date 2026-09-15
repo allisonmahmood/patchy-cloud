@@ -614,6 +614,14 @@ export class Patches extends Context.Service<
       patchId: string,
       access: ReadAccess
     ) => Effect.Effect<PortalCard, PatchUnavailable | SqlError>;
+    /** Retained metadata for the address notice, never content or inventory. */
+    readonly addressNotice: (
+      patchId: string,
+      access: ReadAccess
+    ) => Effect.Effect<
+      Option.Option<{ patch: Patch; actorName: string | null; sourcesOff: boolean }>,
+      SqlError
+    >;
     /** Lock the acting user's company before a cross-context user/patch lifecycle commit. */
     readonly withCompanyLifecycleLock: (
       actorUserId: string
@@ -677,7 +685,7 @@ export class Patches extends Context.Service<
       { scope: Patch["scope"]; name: string; companyHandle: string },
       LifecycleError | SqlError
     >;
-    /** A current name or a redirect to the destination patch's current name. */
+    /** A retained name or redirect, including off and operator-disabled patches. */
     readonly resolveName: (
       companyHandle: string,
       name: string
@@ -690,6 +698,12 @@ export class Patches extends Context.Service<
      * numbered one asked for. Retired, deleted and disabled patches are absent.
      */
     readonly find: (
+      patchId: string,
+      versionNumber?: number,
+      versionId?: string
+    ) => Effect.Effect<Option.Option<{ patch: Patch; version: PatchVersion }>, SqlError>;
+    /** Address admission inspects retained metadata before choosing a notice, door or 404. */
+    readonly findRetained: (
       patchId: string,
       versionNumber?: number,
       versionId?: string
@@ -907,7 +921,7 @@ export const make = Effect.gen(function* () {
     execute: (patchId) => sql`
       SELECT ${sql.unsafe(PATCH_COLUMNS)}
       FROM patches JOIN companies ON companies.id = patches.company_id
-      WHERE patches.id = ${patchId} AND ${serving}`
+      WHERE patches.id = ${patchId}`
   });
 
   const sharedSources = SqlSchema.findAll({
@@ -1016,8 +1030,7 @@ export const make = Effect.gen(function* () {
       FROM patch_names
       JOIN companies ON companies.id = patch_names.company_id
       JOIN patches ON patches.id = patch_names.patch_id
-      WHERE companies.handle = ${companyHandle} AND patch_names.name = ${name}
-        AND ${serving}`
+      WHERE companies.handle = ${companyHandle} AND patch_names.name = ${name}`
   });
 
   const companyHandleRow = SqlSchema.findOne({
@@ -1129,7 +1142,7 @@ export const make = Effect.gen(function* () {
       Effect.catchTags({ ...dieOnSchemaError, NoSuchElementError: Effect.die })
     )
   );
-  const find = Effect.fn("Patches.find")(function* (
+  const findRetained = Effect.fn("Patches.findRetained")(function* (
     patchId: string,
     versionNumber?: number,
     versionId?: string
@@ -1145,6 +1158,16 @@ export const make = Effect.gen(function* () {
           : yield* findVersionById({ patchId, versionId: selectedId });
     return Option.map(version, (row) => ({ patch: toPatch(patch.value), version: toVersion(row) }));
   }, Effect.catchTags(dieOnSchemaError));
+
+  const find = Effect.fn("Patches.find")(function* (
+    patchId: string,
+    versionNumber?: number,
+    versionId?: string
+  ) {
+    return (yield* findRetained(patchId, versionNumber, versionId)).pipe(
+      Option.filter(({ patch }) => patch.state === "live" && patch.disabledAt === null)
+    );
+  });
 
   const authorizePublish = Effect.fn("Patches.authorizePublish")((target: PublishTarget) =>
     sql.withTransaction(
@@ -1456,6 +1479,24 @@ export const make = Effect.gen(function* () {
         AND (source.id IS NULL OR source.deleted_at IS NOT NULL OR source.retired_at IS NOT NULL)
       ORDER BY "patchId", "table"`
   });
+
+  const addressNotice = Effect.fn("Patches.addressNotice")(function* (
+    patchId: string,
+    access: ReadAccess
+  ) {
+    const row = yield* companyPatchRow({ patchId, companyId: access.companyId });
+    if (Option.isNone(row)) return Option.none();
+    const patch = toPatch(row.value);
+    if (patch.state === "live" || !access.canOpen(patch)) return Option.none();
+    const metadata = yield* portalMetadataRow({ patchId, companyId: access.companyId });
+    if (Option.isNone(metadata)) return Option.none();
+    const sources = yield* offSources({ patchId, companyId: access.companyId });
+    return Option.some({
+      patch,
+      actorName: patch.state === "retired" ? metadata.value.retired : metadata.value.deleted,
+      sourcesOff: sources.length > 0
+    });
+  }, Effect.catchTags(dieOnSchemaError));
 
   const portalCard = Effect.fn("Patches.portalCard")(
     function* (patchId: string, access: ReadAccess) {
@@ -2035,6 +2076,7 @@ export const make = Effect.gen(function* () {
     inventory,
     read,
     portalCard,
+    addressNotice,
     withCompanyLifecycleLock,
     companyInventory,
     sharedTable,
@@ -2046,6 +2088,7 @@ export const make = Effect.gen(function* () {
     setScope,
     resolveName,
     find,
+    findRetained,
     recordVisit,
     retire,
     restore,

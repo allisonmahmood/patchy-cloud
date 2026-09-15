@@ -655,8 +655,10 @@ it.layer(Patches.layer.pipe(Layer.provideMerge(Fixtures.database)))("Patches", (
         const deleted = yield* service.delete(patch.patchId, owner);
         assert.isNotNull(deleted.retiredAt);
         assert.strictEqual(Date.parse(deleted.purgeAt!) - Date.parse(deleted.deletedAt!), 30 * DAY);
-        assert.isTrue(
-          Option.isNone(yield* service.resolveName(uploader.company.handle, patch.name))
+        assert.strictEqual(
+          Option.getOrThrow(yield* service.resolveName(uploader.company.handle, patch.name))
+            .patchId,
+          patch.patchId
         );
         yield* TestClock.adjust(30 * DAY - 1);
         const restored = yield* service.restore(patch.patchId, owner);
@@ -702,8 +704,11 @@ it.layer(Patches.layer.pipe(Layer.provideMerge(Fixtures.database)))("Patches", (
             { patchId, name, current: true }
           );
         }
-        assert.isTrue(
-          Option.isNone(yield* service.resolveName(uploader.company.handle, "backfill-report-4"))
+        assert.strictEqual(
+          Option.getOrThrow(
+            yield* service.resolveName(uploader.company.handle, "backfill-report-4")
+          ).patchId,
+          deleted.patchId
         );
       }
     })

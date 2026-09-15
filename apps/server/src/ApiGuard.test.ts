@@ -15,6 +15,13 @@ const LIMITED = {
   code: "rate_limited",
   retryAfterSeconds: 60
 };
+const cookie = signedInCookies(
+  signSession({
+    sub: DEV_SEED.clerkUserId,
+    email: DEV_SEED.email,
+    azp: "https://patchy.example"
+  })
+);
 
 describe("classify", () => {
   it("guards every target under /api, however it is spelled, and nothing else", () => {
@@ -76,6 +83,32 @@ describe("classify", () => {
     });
     assert.deepStrictEqual(classify("POST", `/api/unmatched/${long}`), { kind: "route" });
   });
+
+  it("bounds portal names on concrete routes without treating them as API references", () => {
+    const long = "x".repeat(33);
+    for (const [method, target] of [
+      ["GET", `/patches/${long}`],
+      ["GET", `/patches/${long}?all=1`],
+      ["GET", `/%70atches/${"%78".repeat(33)}/versions`],
+      ["GET", `/patches//${long}//restore/`],
+      ["GET", `/patches/${"x".repeat(16)}%2F${"x".repeat(16)}`],
+      ["HEAD", `/patches/${long}/versions`],
+      ["POST", `/patches/${long}/restore`],
+      ["POST", `/patches/${"x".repeat(101)}/description`]
+    ] as const) {
+      assert.deepStrictEqual(classify(method, target), { kind: "portal-name-too-long" }, target);
+    }
+    for (const [method, target] of [
+      ["GET", `/patches/${"x".repeat(32)}`],
+      ["GET", `/patches/${long}/versions/extra`],
+      ["POST", `/patches/${long}`],
+      ["POST", `/patches/${long}/versions`],
+      ["PUT", `/patches/${long}/restore`]
+    ] as const) {
+      assert.deepStrictEqual(classify(method, target), { kind: "public" }, target);
+    }
+    assert.deepStrictEqual(classify("GET", `/api/patches/${long}`), { kind: "route" });
+  });
 });
 
 it.layer(server({ PATCHY_PROTECTED_API_RATE_LIMIT_PER_MINUTE: "3" }))(
@@ -98,6 +131,15 @@ it.layer(server({ PATCHY_PROTECTED_API_RATE_LIMIT_PER_MINUTE: "3" }))(
         // The limit is the API's alone: pages answer on.
         assert.strictEqual((yield* send(HttpClientRequest.get("/healthz"))).status, 200);
         assert.strictEqual((yield* send(HttpClientRequest.get("/apix"))).status, 404);
+        assert.strictEqual(
+          (yield* send(
+            HttpClientRequest.get(`/patches/${long}`).pipe(
+              HttpClientRequest.setHeader("cookie", cookie)
+            )
+          )).status,
+          414,
+          "portal refusals do not spend the exhausted API limit"
+        );
 
         yield* TestClock.adjust("61 seconds");
         const as = (method: "get" | "post" | "delete", target: string) =>
@@ -236,13 +278,6 @@ it.layer(server())("the guard: anonymous and token-only routes", (it) => {
   it.effect("requires a machine token at every discovery level, not a browser session", () =>
     Effect.gen(function* () {
       yield* TestClock.adjust("61 seconds");
-      const cookie = signedInCookies(
-        signSession({
-          sub: DEV_SEED.clerkUserId,
-          email: DEV_SEED.email,
-          azp: "https://patchy.example"
-        })
-      );
       for (const target of [
         "/api/patches",
         "/api/patches/guard-patch",
@@ -269,10 +304,14 @@ it.layer(server())("the guard: anonymous and token-only routes", (it) => {
         `/api/patches/${long}`,
         `/api/patches/${long}/primitives/orders?state=all`
       ]) {
-        assert.deepStrictEqual(yield* answer(yield* send(HttpClientRequest.get(target))), {
-          status: 401,
-          body: UNAUTHORIZED
-        });
+        for (const headers of [{}, { cookie }]) {
+          assert.deepStrictEqual(
+            yield* answer(
+              yield* send(HttpClientRequest.get(target).pipe(HttpClientRequest.setHeaders(headers)))
+            ),
+            { status: 401, body: UNAUTHORIZED }
+          );
+        }
         assert.deepStrictEqual(
           yield* answer(
             yield* send(
@@ -292,6 +331,80 @@ it.layer(server())("the guard: anonymous and token-only routes", (it) => {
         ),
         { status: 404, body: NOT_FOUND }
       );
+    })
+  );
+
+  it.effect("keeps portal name refusals on browser admission, even beyond the router's bound", () =>
+    Effect.gen(function* () {
+      const long = "x".repeat(101);
+      for (const request of [
+        HttpClientRequest.get(`/patches/${"x".repeat(32)}`),
+        HttpClientRequest.post(`/patches/${long}`),
+        HttpClientRequest.put(`/patches/${long}/restore`),
+        HttpClientRequest.post(`/patches/${long}/versions`)
+      ]) {
+        const response = yield* send(
+          request.pipe(HttpClientRequest.setHeaders({ cookie, origin: "https://patchy.example" }))
+        );
+        assert.strictEqual(response.status, 404, `${request.method} ${request.url}`);
+      }
+
+      for (const request of [
+        HttpClientRequest.get(`/patches/${"x".repeat(33)}`),
+        HttpClientRequest.post(`/patches/${"x".repeat(33)}/restore`),
+        ...["", "/versions", "/retire", "/delete", "/restore", "/reassign"].map((suffix) =>
+          HttpClientRequest.get(`/patches/${long}${suffix}`)
+        ),
+        ...["description", "scope", "rollback", "retire", "delete", "restore", "reassign"].map(
+          (action) => HttpClientRequest.post(`/patches/${long}/${action}`)
+        ),
+        HttpClientRequest.get(`/%70atches/${"%78".repeat(33)}/versions`)
+      ]) {
+        const response = yield* send(
+          request.pipe(HttpClientRequest.setHeaders({ cookie, origin: "https://patchy.example" }))
+        );
+        assert.strictEqual(response.status, 414, `${request.method} ${request.url}`);
+        assert.strictEqual(response.headers["content-type"], "text/html");
+        assert.strictEqual(response.headers["cache-control"], "private, no-store");
+        assert.include(yield* response.text, 'href="/company"');
+        assert.isUndefined(response.headers["x-patchy-sign-in-url"]);
+      }
+
+      for (const request of [
+        HttpClientRequest.get(`/patches/${long}`),
+        HttpClientRequest.post(`/patches/${long}/restore`)
+      ]) {
+        for (const headers of [{}, { authorization: `Bearer ${DEV_SEED.token}` }]) {
+          const door = yield* send(
+            request.pipe(
+              HttpClientRequest.setHeaders({ ...headers, origin: "https://patchy.example" })
+            )
+          );
+          assert.strictEqual(door.status, 401);
+          assert.strictEqual(door.headers["content-type"], "text/html");
+          assert.strictEqual(door.headers["cache-control"], "private, no-store");
+          assert.isString(door.headers["x-patchy-sign-in-url"]);
+          assert.isUndefined(door.headers["www-authenticate"]);
+        }
+      }
+      for (const headers of [{ cookie }, { cookie, origin: "https://foreign.example" }]) {
+        assert.strictEqual(
+          (yield* send(
+            HttpClientRequest.post(`/patches/${long}/restore`).pipe(
+              HttpClientRequest.setHeaders(headers)
+            )
+          )).status,
+          403
+        );
+      }
+      const head = yield* send(
+        HttpClientRequest.head(`/patches/${long}/versions`).pipe(
+          HttpClientRequest.setHeader("cookie", cookie)
+        )
+      );
+      assert.strictEqual(head.status, 414);
+      assert.strictEqual(head.headers["cache-control"], "private, no-store");
+      assert.strictEqual(yield* head.text, "");
     })
   );
 
