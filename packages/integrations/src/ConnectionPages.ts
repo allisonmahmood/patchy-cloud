@@ -31,7 +31,11 @@ const page = Effect.fn("ConnectionPages.page")(function* (action: ConnectionPage
         headers: { "cache-control": "private, no-store" }
       })
     : pageResponse(
-        { ...content, styles: ConnectionPage.styles, body: `${content.body}${signOutForm()}` },
+        {
+          ...content,
+          styles: ConnectionPage.styles,
+          body: content.app ? content.body : `${content.body}${signOutForm()}`
+        },
         session
       );
 });

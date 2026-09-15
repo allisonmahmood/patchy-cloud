@@ -1,6 +1,6 @@
 # Portal
 
-Where a signed-in person finds and manages their company's patches: the landing at `/`, one patch's card, its management acts, and the deactivation and reactivation choices about a user's patches. The patch, its states and its owner belong to [Patches](../patches/CONTEXT.md); the viewer to [Auth](../auth/CONTEXT.md); users and roles to [Companies](../companies/CONTEXT.md). Decided on [the portal map](https://github.com/allisonmahmood/patchy-cloud/issues/230) and specified in [#247](https://github.com/allisonmahmood/patchy-cloud/issues/247); the package does not exist yet.
+Where a signed-in person finds and manages their company's patches: the landing at `/`, one patch's card, its management acts, and the deactivation and reactivation choices about a user's patches. The patch, its states and its owner belong to [Patches](../patches/CONTEXT.md); the viewer to [Auth](../auth/CONTEXT.md); users and roles to [Companies](../companies/CONTEXT.md). Decided on [the portal map](https://github.com/allisonmahmood/patchy-cloud/issues/230) and specified in [#247](https://github.com/allisonmahmood/patchy-cloud/issues/247). The app shell and component set are built; the portal itself is not yet built.
 
 ## Language
 
@@ -37,9 +37,9 @@ An act posted from a page whose patch has since changed in the way the act depen
 _Avoid_: conflict, optimistic lock, revision mismatch
 
 **App shell**:
-The frame every page a signed-in member reaches renders through: the header bar with the sections, the viewer and sign-out, over the page. Doors (sign-in, create-or-join, device confirmation, errors) keep the card shell instead.
+The shared frame for signed-in pages, built for Company, Connections and Your machines: the header bar with the sections, viewer and sign-out, over the page. Doors (sign-in, create-or-join, device confirmation, errors) keep the card shell instead.
 _Avoid_: layout, template, theme
 
 **Component set**:
-The one vocabulary of controls every first-party page composes: buttons, fields, fact lists, notices, headings and pills, styled once in the shell so they look and scale the same everywhere. Page styles carry layout only; patches are exempt.
+The built vocabulary of controls every first-party page composes: buttons, fields, fact lists, notices, headings, pills and confirmation forms, styled once in the shell so they look and scale the same everywhere. Page styles carry layout only; patches are exempt.
 _Avoid_: design system (there is one theme and no library), component library, utility classes
