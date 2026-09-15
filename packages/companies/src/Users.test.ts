@@ -249,7 +249,6 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(Te
                 const transaction = Option.getOrThrow(
                   yield* Effect.serviceOption(sql.transactionService)
                 );
-                yield* users.checkDeactivation(input, transaction).pipe(withoutAmbientTransaction);
                 yield* users.deactivate(input, transaction).pipe(withoutAmbientTransaction);
                 return yield* Effect.fail("abort deactivation");
               })

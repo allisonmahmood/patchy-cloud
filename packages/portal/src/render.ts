@@ -55,9 +55,9 @@ const cardPath = (patch: Patches.Patch, all: boolean, action = "") =>
   `/patches/${encodeURIComponent(patch.name)}${action ? `/${action}` : ""}${all ? "?all=1" : ""}`;
 const canManage = (card: Patches.ReadPatch, viewer: RequireSession.Viewer["Service"]) =>
   card.owner.id === viewer.user.id || viewer.role === "admin";
-const hidden = (name: string, value: string | number | null) =>
+export const hidden = (name: string, value: string | number | null) =>
   `<input type="hidden" name="${escapeAttribute(name)}" value="${escapeAttribute(value ?? "")}">`;
-const refusal = (notice: string | undefined) =>
+export const refusal = (notice: string | undefined) =>
   notice === undefined
     ? ""
     : `<div class="note note-refused" role="alert">${escapeHtml(notice)}</div>`;
@@ -336,7 +336,7 @@ const confirmationDependants = (groups: readonly DependantGroup[]): string =>
         )
         .join("")}</ul>`;
 
-const confirmationAcknowledgement = (text: string, checked: boolean): string =>
+export const confirmationAcknowledgement = (text: string, checked: boolean): string =>
   `<label class="confirmation-acknowledgement"><input class="field-checkbox" type="checkbox" name="ack" value="1" required${checked ? " checked" : ""}><span>${escapeHtml(text)}</span></label>`;
 
 export const renderConfirmation = (input: {
