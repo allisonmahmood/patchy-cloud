@@ -9,7 +9,7 @@ Read `../patchy-loop/SKILL.md` first. Every readable row is available to whoever
 
 ## Declare, seed locally, read
 
-1. Run `pnpm patchy catalog`. It lists only shared tables whose source patch you can open. Copy the actual source patch id and table, not its address or name.
+1. Obtain the source's canonical patch id and table name from its owner or the bearer-protected patch discovery API: `GET /api/patches`, then `GET /api/patches/:patchRef`. Choose a table marked `declarable: true` in its cumulative inventory, using the response's patch id rather than its address or name. `pnpm patchy catalog` lists connections only.
 2. Run `pnpm patchy add shared-table <patchId>/<table> --as contacts`. It inserts `contacts: { kind: "sharedTable", patchId: "<patchId>", table: "<table>" }` into `uses` without changing imports, and generates client, context, fixture stub and this skill. When hand-editing config, you may instead import `sharedTable` from `patchy/config` and write the equivalent `contacts: sharedTable("<patchId>", "<table>")`; run `pnpm patchy refresh` afterwards.
 3. Read the `contacts` entry in `patchy/_generated/index.json` and its context file. They identify the source definition, revision and indexes; use these fields rather than guessing the source's current application schema.
 4. Fill `fixtures/shared-contacts.sql` with invented `INSERT` rows. Use the exact local namespace, quoted table and columns from the stub header, not the source patch's production namespace. For a stub listing a `title` column, include an invented value such as `'Local contact'` alongside any other required columns the header names. These inserts populate the local copy, not the source patch; runtime reads stay read-only.

@@ -390,29 +390,40 @@ export const GenerationManifest = Schema.Struct({
   .check(distinctPrimitiveNames)
   .annotate({ parseOptions: { onExcessProperty: "error" } });
 
-export const Catalog = Schema.Struct({
-  connections: Schema.Array(
-    Schema.Struct({
-      id: Schema.String,
-      handle: Schema.String,
-      integration: Schema.Literal("postgres"),
-      description: Schema.String,
-      status: Schema.Literals(["connected", "disconnected"])
-    })
-  ),
-  sharedTables: Schema.Array(
-    Schema.Struct({
-      patchId: PatchId,
-      name: Schema.String,
-      table: DefinitionName,
-      schemaRevision: Revision
-    })
-  ),
+export const ConnectionSummary = Schema.Struct({
+  id: Schema.String,
+  handle: Schema.String,
+  integration: Schema.Literal("postgres"),
+  description: Schema.String,
+  status: Schema.Literals(["connected", "disconnected"]),
+  hint: Schema.String,
+  reason: Schema.optionalKey(Schema.Literal("not_connected"))
+});
+
+export const Connections = Schema.Struct({
+  connections: Schema.Array(ConnectionSummary),
   offered: Schema.optionalKey(
     Schema.Array(
       Schema.Struct({ integration: Schema.Literal("postgres"), connected: Schema.Boolean })
     )
   )
+});
+
+export const ConnectionDetail = Schema.Struct({
+  handle: ConnectionSummary.fields.handle,
+  description: ConnectionSummary.fields.description,
+  status: ConnectionSummary.fields.status,
+  snapshot: Schema.NullOr(
+    Schema.Struct({
+      ...Snapshot.fields,
+      revision: Revision,
+      takenAt: Schema.String
+    })
+  )
+});
+
+export const ConnectionUnavailable = failure(503, {
+  code: Schema.Literal("connection_storage_failed")
 });
 
 export const GenerateRequest = Schema.Struct({

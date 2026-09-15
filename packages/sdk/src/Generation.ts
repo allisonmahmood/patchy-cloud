@@ -5,7 +5,6 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { fileURLToPath } from "node:url";
 import {
-  Catalog,
   CURRENT_RELEASE,
   type DeclarationMetadata,
   Generated,
@@ -90,7 +89,6 @@ export class GenerationUnavailable extends Schema.TaggedError<GenerationUnavaila
   {
     stage: Schema.Literals([
       "connection-list",
-      "shared-table-list",
       "connection-snapshot",
       "shared-table",
       "release-skill"
@@ -151,71 +149,6 @@ export function createClient(alias: string, call: Call) { return createSharedTab
 const definitionContext = (title: string, definition: unknown) =>
   `# ${title}\n\nThis is generated metadata, never business rows. Edit patchy.config.ts for owned definitions, then run patchy refresh.\n\n\`\`\`json\n${json(definition)}\`\`\`\n`;
 
-export const catalog = Effect.fn("Generation.catalog")(function* (
-  companyId: string,
-  all: boolean
-): Effect.fn.Return<
-  typeof Catalog.Type,
-  CompanyDatabases.Busy | GenerationUnavailable,
-  ConnectionStore.ConnectionStore | Patches.Patches
-> {
-  const connections = yield* ConnectionStore.ConnectionStore;
-  const patches = yield* Patches.Patches;
-  const connected = yield* connections.list(companyId).pipe(
-    Effect.mapError(
-      (cause) =>
-        new GenerationUnavailable({
-          stage: "connection-list",
-          resource: companyId.slice(0, 256),
-          cause
-        })
-    )
-  );
-  const sharedTables = yield* patches.sharedTables(companyId).pipe(
-    Effect.catchTags({
-      SqlError: Effect.die,
-      CompanyIdentityMismatch: Effect.die,
-      CompanyDatabaseError: (cause) =>
-        Effect.fail(
-          new GenerationUnavailable({
-            stage: "shared-table-list",
-            resource: companyId.slice(0, 256),
-            cause
-          })
-        ),
-      CompanyDatabaseNotReady: (cause) =>
-        Effect.fail(
-          new GenerationUnavailable({
-            stage: "shared-table-list",
-            resource: companyId.slice(0, 256),
-            cause
-          })
-        )
-    })
-  );
-  return {
-    connections: connected
-      .filter((entry) => all || entry.status === "connected")
-      .map(({ id, handle, integration, description, status }) => ({
-        id,
-        handle,
-        integration,
-        description,
-        status
-      })),
-    sharedTables,
-    ...(all
-      ? {
-          offered: [
-            {
-              integration: "postgres" as const,
-              connected: connected.some((entry) => entry.status === "connected")
-            }
-          ]
-        }
-      : {})
-  } satisfies typeof Catalog.Type;
-});
 export const generate = Effect.fn("Generation.generate")(function* (
   companyId: string,
   request: typeof GenerateRequest.Type

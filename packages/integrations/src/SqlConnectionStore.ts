@@ -1,4 +1,4 @@
-import { PostgresDeclaration } from "@patchy/api";
+import { ConnectionDetail, PostgresDeclaration } from "@patchy/api";
 import { Snapshot } from "@patchy/api/postgres-snapshot";
 import * as Companies from "@patchy/companies/Companies";
 import { newInternalId } from "@patchy/core";
@@ -44,6 +44,14 @@ const StoredConnection = Schema.Struct({
   keyId: Schema.String
 });
 type StoredConnection = typeof StoredConnection.Type;
+const SnapshotDetail = Schema.Struct({
+  handle: ConnectionDetail.fields.handle,
+  description: ConnectionDetail.fields.description,
+  status: ConnectionDetail.fields.status,
+  snapshot: Schema.NullOr(Snapshot),
+  revision: Schema.Int,
+  takenAt: Schema.NullOr(Schema.String)
+});
 const Lookup = Schema.Struct({
   companyId: Schema.String,
   id: Schema.String,
@@ -94,10 +102,36 @@ export const make = Effect.gen(function* () {
     execute: ({ companyId, id, revision }) => sql`SELECT snapshot FROM connection_snapshots
       WHERE company_id = ${companyId} AND connection_id = ${id} AND revision = ${revision}`
   });
+  const detailRow = SqlSchema.findOneOption({
+    Request: Schema.Struct({ companyId: Schema.String, handle: Schema.String }),
+    Result: SnapshotDetail,
+    execute: ({ companyId, handle }) => sql`SELECT c.handle, c.description, c.status,
+      c.metadata_revision AS revision, s.snapshot,
+      to_char(s.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "takenAt"
+      FROM connections c LEFT JOIN connection_snapshots s
+        ON s.connection_id = c.id AND s.company_id = c.company_id AND s.revision = c.metadata_revision
+      WHERE c.company_id = ${companyId} AND c.handle = ${handle}`
+  });
+  // The current revision's immutable row supplies both metadata and its timestamp.
+  const detail = Effect.fn("ConnectionStore.detail")(
+    function* (companyId: string, handle: string) {
+      const found = yield* detailRow({ companyId, handle });
+      if (Option.isNone(found))
+        return yield* new ConnectionNotFound({ companyId, lookup: { handle } });
+      const { description, status, snapshot, revision, takenAt } = found.value;
+      return {
+        handle,
+        description,
+        status,
+        snapshot: snapshot === null || takenAt === null ? null : { ...snapshot, revision, takenAt }
+      };
+    },
+    Effect.catchTags(safe("detail"))
+  );
   const get = Effect.fn("ConnectionStore.get")(
     function* (companyId: string, id: string) {
       const found = yield* connectionRow({ companyId, id, locked: false });
-      if (Option.isNone(found)) return yield* new ConnectionNotFound({ companyId, id });
+      if (Option.isNone(found)) return yield* new ConnectionNotFound({ companyId, lookup: { id } });
       return found.value;
     },
     Effect.catchTags(safe("get"))
@@ -105,7 +139,10 @@ export const make = Effect.gen(function* () {
   const stored = Effect.fn("ConnectionStore.stored")(function* (input: Identity) {
     const found = yield* storedRow({ ...input, locked: false });
     if (Option.isNone(found))
-      return yield* new ConnectionNotFound({ companyId: input.companyId, id: input.id });
+      return yield* new ConnectionNotFound({
+        companyId: input.companyId,
+        lookup: { id: input.id }
+      });
     return found.value;
   });
   const lock = Effect.fn("ConnectionStore.lock")(function* (
@@ -114,7 +151,10 @@ export const make = Effect.gen(function* () {
   ) {
     const found = yield* connectionRow({ ...input, locked: true });
     if (Option.isNone(found))
-      return yield* new ConnectionNotFound({ companyId: input.companyId, id: input.id });
+      return yield* new ConnectionNotFound({
+        companyId: input.companyId,
+        lookup: { id: input.id }
+      });
     if (
       expected !== undefined &&
       (found.value.credentialRevision !== expected.credentialRevision ||
@@ -177,7 +217,8 @@ export const make = Effect.gen(function* () {
   const snapshot = Effect.fn("ConnectionStore.snapshot")(
     function* (companyId: string, id: string, revision: number) {
       const found = yield* snapshotRow({ companyId, id, revision });
-      if (Option.isNone(found)) return yield* new ConnectionNotFound({ companyId, id, revision });
+      if (Option.isNone(found))
+        return yield* new ConnectionNotFound({ companyId, lookup: { id, revision } });
       return found.value.snapshot;
     },
     Effect.catchTags(safe("snapshot"))
@@ -384,6 +425,7 @@ export const make = Effect.gen(function* () {
   return ConnectionStore.ConnectionStore.of({
     list,
     get,
+    detail,
     snapshot,
     connect,
     test,

@@ -1,6 +1,6 @@
 ---
 name: patchy-loop
-description: Build in a Patchy repo, refresh generated files, choose declarations from the catalog, or diagnose release and local-development boundaries. Read before changing patch code.
+description: Build in a Patchy repo, refresh generated files, choose declarations, or diagnose release and local-development boundaries. Read before changing patch code.
 ---
 
 # Build in a patch repo
@@ -15,8 +15,8 @@ description: Build in a Patchy repo, refresh generated files, choose declaration
 
 ## Commands and ownership
 
-- `pnpm patchy catalog` shows connected company connections and shared tables you can open, with copy-ready `add` and `uses` lines. `--all` also shows offered integrations and their state. A catalog entry grants no extra access.
-- `pnpm patchy add postgres/warehouse --as sales` or `pnpm patchy add shared-table <patchId>/<table> --as contacts` edits `uses` and generates its client, context, fixture stub and skill. Choose actual names from the catalog. Connection setup belongs to an admin at `/company/connections`; keep credentials out of the repo and transcript.
+- `pnpm patchy catalog` lists company connections and their state, with copy-ready `add` and `uses` lines only for connected ones. `--all` adds offered integrations and their state. Disconnected entries point to `/company/connections`. It does not list shared tables or grant access.
+- `pnpm patchy add postgres/warehouse --as sales` or `pnpm patchy add shared-table <patchId>/<table> --as contacts` edits `uses` and generates its client, context, fixture stub and skill. Choose connection handles from catalog. For shared tables, use the bearer-protected `GET /api/patches`, then `GET /api/patches/:patchRef`; choose an inventory table marked `declarable: true` and use the response's canonical patch id. Connection setup belongs to an admin at `/company/connections`; keep credentials out of the repo and transcript.
 - `pnpm patchy remove sales` reverses the declaration and its generated output, and removes its declaration skill when no declaration of that kind remains. It leaves the fixture for you and says so.
 - An uneditable `uses` expression fails with its exact source line and, for add, the exact literal declaration line to insert. Either make `uses` an explicit object literal while preserving its meaning and retry, or add the declaration yourself and run `pnpm patchy refresh`. Do not bypass the refusal by editing generated metadata.
 - `pnpm patchy refresh` fetches one release, updates the pin and installs if needed, re-execs that CLI, executes config, generates, and activates the managed set transactionally. Failure retains the previous set. It refreshes every present skill and adds config-implied skills; presence is sticky. If a present skill is no longer offered, refresh fails rather than leaving stale instructions.

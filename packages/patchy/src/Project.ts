@@ -6,7 +6,8 @@ import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Prompt from "effect/unstable/cli/Prompt";
-import { Catalog, DefinitionName, Generated, Manifest, PatchName } from "@patchy/api";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import { Connections, DefinitionName, Generated, Manifest, PatchName } from "@patchy/api";
 import * as Api from "./Api.js";
 import { InstanceMismatch, LocalError, RejectedError, UnreachableError } from "./CliError.js";
 import * as Instance from "./Instance.js";
@@ -67,7 +68,7 @@ const decodeChange = Schema.decodeUnknownSync(Schema.fromJsonString(changeSchema
 const decodeSkills = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Array(Schema.String)));
 const decodeChild = Schema.decodeUnknownSync(Schema.fromJsonString(childSchema));
 const decodeFailure = Schema.decodeUnknownOption(Schema.fromJsonString(failureSchema));
-const encodeCatalog = Schema.encodeSync(Catalog);
+const encodeConnections = Schema.encodeSync(Connections);
 const decodeName = Schema.decodeUnknownSync(PatchName);
 const isDefinitionName = Schema.is(DefinitionName);
 const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
@@ -229,27 +230,25 @@ export const catalog = Effect.fn("Project.catalog")(function* (
 ) {
   const client = yield* Api.client(token);
   const result = yield* client
-    .catalog({ query: { all } })
+    .listConnections({ query: { all } })
     .pipe(Effect.catch((error) => refusal(error, "Could not read the catalog.")));
   const lines: string[] = [];
   for (const connection of result.connections) {
-    const alias = connectionAlias(connection.handle);
     lines.push(
-      `${connection.integration}/${connection.handle} — ${connection.description} (${connection.status})`,
-      `  patchy add ${connection.integration}/${connection.handle}`,
-      `  uses: { ${Output.toJson(alias)}: postgres(${Output.toJson(connection.handle)}) }`
+      `${connection.integration}/${connection.handle}: ${connection.description} (${connection.status})`,
+      `  ${connection.hint}`
     );
+    if (connection.status === "connected") {
+      const alias = connectionAlias(connection.handle);
+      lines.push(
+        `  uses: { ${Output.toJson(alias)}: postgres(${Output.toJson(connection.handle)}) }`
+      );
+    }
   }
-  for (const shared of result.sharedTables)
-    lines.push(
-      `${shared.name}: ${shared.table} (${shared.patchId}, revision ${shared.schemaRevision})`,
-      `  patchy add shared-table ${shared.patchId}/${shared.table}`,
-      `  uses: { ${Output.toJson(shared.table)}: sharedTable(${Output.toJson(shared.patchId)}, ${Output.toJson(shared.table)}) }`
-    );
   for (const offered of result.offered ?? [])
     lines.push(`${offered.integration}: ${offered.connected ? "connected" : "not connected"}`);
   if (!all) lines.push("Run patchy catalog --all to see every offered integration and its state.");
-  yield* Output.report(encodeCatalog(result), lines);
+  yield* Output.report(encodeConnections(result), lines);
 });
 
 /** Private subprocess entry: this is executed by the installed release, never the old CLI. */
@@ -480,9 +479,6 @@ export const add = Effect.fn("Project.add")(function* (
         "--as must be a camelCase alias starting with a lowercase letter, containing only letters and digits, and at most 63 characters. For example: --as salesDb"
     });
   const client = yield* Api.client(token);
-  const available = yield* client
-    .catalog({ query: { all: false } })
-    .pipe(Effect.catch((error) => refusal(error, "Could not read the catalog.")));
   const instance = yield* Instance.Instance;
   let declaration: Declaration;
   let defaultAlias: string;
@@ -490,6 +486,9 @@ export const add = Effect.fn("Project.add")(function* (
     if (Option.isSome(target))
       return yield* new LocalError({ message: "Use patchy add postgres/<handle> [--as <alias>]." });
     const handle = integration === "postgres" ? undefined : integration.slice("postgres/".length);
+    const available = yield* client
+      .listConnections({ query: {} })
+      .pipe(Effect.catch((error) => refusal(error, "Could not read the connections.")));
     const connections = available.connections.filter(
       (connection) =>
         connection.integration === "postgres" &&
@@ -513,16 +512,41 @@ export const add = Effect.fn("Project.add")(function* (
       return yield* new LocalError({
         message: "Use patchy add shared-table <patchId>/<table> [--as <alias>]."
       });
-    const shared = available.sharedTables.find(
-      (table) => table.patchId === parts[0] && table.table === parts[1]
+    const notOpenable = {
+      code: "patch_not_openable",
+      message: `That shared table is not available to you. Ask an admin at ${instance.apiUrl}/company.`
+    };
+    const observed: { status?: number } = {};
+    const http = yield* HttpClient.HttpClient;
+    const sourceClient = yield* Api.client(token).pipe(
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.tap(http, (response) =>
+          Effect.sync(() => {
+            observed.status = response.status;
+          })
+        )
+      )
     );
-    if (!shared)
-      return yield* new RejectedError({
-        code: "patch_not_openable",
-        message: `That shared table is not available to you. Ask an admin at ${instance.apiUrl}/company.`
+    const source = yield* sourceClient
+      .detail({ params: { patchRef: parts[0] }, query: { state: "all" } })
+      .pipe(
+        Effect.catch((error) =>
+          observed.status === 404
+            ? Effect.fail(new RejectedError({ ...notOpenable, cause: error }))
+            : refusal(error, "Could not read the shared source.")
+        )
+      );
+    if (source.inventory === null)
+      return yield* new UnreachableError({
+        instanceUrl: instance.apiUrl,
+        code: "source_unavailable",
+        message: "The shared source's inventory is unavailable. Try again later."
       });
-    declaration = { kind: "sharedTable", patchId: shared.patchId, table: shared.table };
-    defaultAlias = shared.table;
+    const shared = source.inventory.tables.find((table) => table.name === parts[1]);
+    if (!shared?.declarable) return yield* new RejectedError(notOpenable);
+    declaration = { kind: "sharedTable", patchId: source.id, table: shared.name };
+    defaultAlias = shared.name;
   } else
     return yield* new LocalError({
       message: "Use patchy add postgres/<handle> or patchy add shared-table <patchId>/<table>."
