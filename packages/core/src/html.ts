@@ -445,6 +445,14 @@ export function htmlPage(options: {
     .list-row, .confirmation-list > li { padding: 20px 0; border-bottom: 1px solid var(--line-strong); overflow-wrap: anywhere; }
     .list-row p { margin: 0 0 8px; }
     .list-row summary { margin: 12px 0; cursor: pointer; }
+    .list-compact .list-row { padding: 4px 0; border-bottom: 0; }
+    .list-link { display: block; min-height: 44px; padding: 8px 10px; border: 2px solid transparent; border-radius: var(--field-radius); color: var(--ink); text-decoration: none; }
+    .list-link:hover { background: var(--paper-blue); }
+    .list-link[aria-current="page"] { border-color: var(--ink); background: var(--yellow); box-shadow: 2px 2px 0 var(--ink); }
+    .table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: .9rem; overflow-wrap: anywhere; }
+    .table th, .table td { padding: 10px 8px; border-bottom: 1px solid var(--line-strong); text-align: left; vertical-align: top; }
+    .table th { color: var(--muted); font-weight: 750; }
+    .copy-address { user-select: all; overflow-wrap: anywhere; }
     .code-panel { max-height: 18rem; white-space: pre-wrap; overflow-wrap: anywhere; }
     .actions, .confirmation-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
     .facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px 24px; margin: 20px 0; font-size: .9rem; overflow-wrap: anywhere; }

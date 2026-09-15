@@ -128,6 +128,13 @@ export class WrongState extends Schema.TaggedError<WrongState>()("WrongState", {
     return `This patch is ${this.state}; this action is not available in that state.`;
   }
 }
+export class StaleAction extends Schema.TaggedError<StaleAction>()("StaleAction", {
+  patchId: Schema.String
+}) {
+  override get message() {
+    return "This patch changed while you had this page open. Nothing was done.";
+  }
+}
 export class PatchRetired extends Schema.TaggedError<PatchRetired>()("PatchRetired", {}) {
   override get message() {
     return "This patch is retired. Restore it through the lifecycle API or ask an admin.";
@@ -195,6 +202,7 @@ export type LifecycleError =
   | PatchUnavailable
   | NotOwner
   | WrongState
+  | StaleAction
   | PatchRetired
   | PatchDeleted
   | HasDependants
@@ -273,6 +281,28 @@ export interface ReadPatch {
     readonly owner: { readonly id: string; readonly name: string };
     readonly table: string;
   }[];
+}
+
+export interface PortalCard extends ReadPatch {
+  readonly versions: readonly {
+    readonly id: string;
+    readonly versionNumber: number;
+    readonly createdAt: string;
+    readonly publisherName: string;
+  }[];
+  readonly offSources: readonly {
+    readonly patchId: string;
+    readonly name?: string;
+    readonly table: string;
+    readonly state: "live" | "retired" | "deleted" | "gone";
+  }[];
+  readonly actorNames: {
+    readonly description: string | null;
+    readonly retired: string | null;
+    readonly deleted: string | null;
+    readonly lastChanged: string | null;
+  };
+  readonly lastChangedAction: string | null;
 }
 
 /** Credential reach narrows the mandatory same-company, not-disabled read gate. */
@@ -523,6 +553,19 @@ class ReadPatchRow extends Schema.Class<ReadPatchRow>("ReadPatchRow")({
     Schema.Struct({ alias: Schema.String, patchId: Schema.String, table: Schema.String })
   )
 }) {}
+class PortalMetadataRow extends Schema.Class<PortalMetadataRow>("PortalMetadataRow")({
+  description: Schema.NullOr(Schema.String),
+  retired: Schema.NullOr(Schema.String),
+  deleted: Schema.NullOr(Schema.String),
+  lastChanged: Schema.NullOr(Schema.String),
+  lastChangedAction: Schema.NullOr(Schema.String)
+}) {}
+class PortalVersionRow extends Schema.Class<PortalVersionRow>("PortalVersionRow")({
+  id: Schema.String,
+  versionNumber: Schema.Int,
+  createdAt: Stamp,
+  publisherName: Schema.String
+}) {}
 class NameRow extends Schema.Class<NameRow>("NameRow")({ name: PatchName }) {}
 class ResolvedName extends Schema.Class<ResolvedName>("ResolvedName")({
   patchId: Schema.String,
@@ -567,6 +610,10 @@ export class Patches extends Context.Service<
     readonly read: (
       options: ReadOptions
     ) => Effect.Effect<readonly ReadPatch[], PatchUnavailable | WrongState | SqlError>;
+    readonly portalCard: (
+      patchId: string,
+      access: ReadAccess
+    ) => Effect.Effect<PortalCard, PatchUnavailable | SqlError>;
     readonly companyInventory: (
       patchId: string,
       access: ReadAccess
@@ -620,7 +667,8 @@ export class Patches extends Context.Service<
     readonly setScope: (
       patchId: string,
       actor: Actor,
-      scope: Patch["scope"]
+      scope: Patch["scope"],
+      expectedScope?: Patch["scope"]
     ) => Effect.Effect<
       { scope: Patch["scope"]; name: string; companyHandle: string },
       LifecycleError | SqlError
@@ -657,12 +705,14 @@ export class Patches extends Context.Service<
     readonly restore: (
       patchId: string,
       actor: Actor,
-      force?: boolean
+      force?: boolean,
+      expectedState?: PatchState
     ) => Effect.Effect<Patch, LifecycleError | SqlError>;
     readonly rollback: (
       patchId: string,
       actor: Actor,
-      versionNumber: number
+      versionNumber: number,
+      expectedCurrentVersionId?: string | null
     ) => Effect.Effect<{ patch: Patch; currentVersion: number }, LifecycleError | SqlError>;
     readonly reassign: (
       patchId: string,
@@ -672,7 +722,8 @@ export class Patches extends Context.Service<
     readonly setDescription: (
       patchId: string,
       actor: Actor,
-      description: string
+      description: string,
+      expectedDescriptionUpdatedAt?: string | null
     ) => Effect.Effect<Patch, LifecycleError | SqlError>;
     readonly listDeleted: (limit: number) => Effect.Effect<ReadonlyArray<string>, SqlError>;
     /** Locks platform then company inventory; reclamation follows the platform commit. */
@@ -903,6 +954,34 @@ export const make = Effect.gen(function* () {
       FROM patches JOIN companies ON companies.id = patches.company_id
       WHERE patches.id = ${patchId} AND patches.company_id = ${companyId}
         AND patches.disabled_at IS NULL`
+  });
+
+  const portalMetadataRow = SqlSchema.findOneOption({
+    Request: Schema.Struct({ companyId: Schema.String, patchId: Schema.String }),
+    Result: PortalMetadataRow,
+    execute: ({ companyId, patchId }) => sql`
+      SELECT description_actor.name AS description, retired_actor.name AS retired,
+        deleted_actor.name AS deleted, last_actor.name AS "lastChanged",
+        patches.last_changed_action AS "lastChangedAction"
+      FROM patches
+      LEFT JOIN users description_actor ON description_actor.id = patches.description_updated_by
+      LEFT JOIN users retired_actor ON retired_actor.id = patches.retired_by
+      LEFT JOIN users deleted_actor ON deleted_actor.id = patches.deleted_by
+      LEFT JOIN users last_actor ON last_actor.id = patches.last_changed_by
+      WHERE patches.id = ${patchId} AND patches.company_id = ${companyId}
+        AND patches.disabled_at IS NULL`
+  });
+
+  const portalVersionRows = SqlSchema.findAll({
+    Request: Schema.String,
+    Result: PortalVersionRow,
+    execute: (patchId) => sql`
+      SELECT version.id, version.version_number AS "versionNumber",
+        version.created_at AS "createdAt", publisher.name AS "publisherName"
+      FROM patch_versions version
+      JOIN users publisher ON publisher.id = version.owner_user_id
+      WHERE version.patch_id = ${patchId}
+      ORDER BY version.version_number DESC`
   });
 
   const findVersionByNumber = SqlSchema.findOneOption({
@@ -1361,6 +1440,30 @@ export const make = Effect.gen(function* () {
       ORDER BY "patchId", "table"`
   });
 
+  const portalCard = Effect.fn("Patches.portalCard")(
+    function* (patchId: string, access: ReadAccess) {
+      const [card] = yield* read({ ...access, state: "all", patchRef: patchId });
+      if (card === undefined) return yield* new PatchUnavailable({ patchId });
+      const metadata = yield* portalMetadataRow({ companyId: access.companyId, patchId });
+      if (Option.isNone(metadata)) return yield* new PatchUnavailable({ patchId });
+      const versions = yield* portalVersionRows(patchId);
+      const sources = yield* offSources({ patchId, companyId: access.companyId });
+      const { lastChangedAction, ...actorNames } = metadata.value;
+      return {
+        ...card,
+        versions: versions.map((version) => ({ ...version, createdAt: iso(version.createdAt) })),
+        offSources: sources.map(({ patchId: sourceId, table, state }) => {
+          const name = card.reads.find((read) => read.patchId === sourceId)?.name;
+          const source = { patchId: sourceId, table, state };
+          return name === undefined ? source : { ...source, name };
+        }),
+        actorNames,
+        lastChangedAction
+      } satisfies PortalCard;
+    },
+    Effect.catchTags({ ...dieOnSchemaError, WrongState: Effect.die })
+  );
+
   const preflight = Effect.fn("Patches.preflight")(function* (input: PublishPreflight) {
     yield* authorizePublish(input);
     const description = input.description ?? input.manifest.description;
@@ -1670,7 +1773,8 @@ export const make = Effect.gen(function* () {
               description_updated_at = ${descriptionUpdatedAt}::timestamptz,
               description_updated_by = ${descriptionUpdatedBy},
               updated_at = ${stamp(millis)}, last_changed_at = ${stamp(millis)},
-              last_changed_by = ${input.ownerUserId}
+              last_changed_by = ${input.ownerUserId},
+              last_changed_action = ${`published v${versionNumber}`}
           WHERE id = ${input.patchId}`;
 
           return { ...response, status, responseBody: inserted.responseBody } satisfies Recorded;
@@ -1695,13 +1799,17 @@ export const make = Effect.gen(function* () {
   const setScope = Effect.fn("Patches.setScope")(function* (
     patchId: string,
     actor: Actor,
-    scope: Patch["scope"]
+    scope: Patch["scope"],
+    expectedScope?: Patch["scope"]
   ) {
     const row = yield* manageable(patchId, actor);
     if (stateOf(row) !== "live") return yield* new WrongState({ state: stateOf(row) });
+    if (expectedScope !== undefined && row.scope !== expectedScope)
+      return yield* new StaleAction({ patchId });
     const at = yield* now;
     yield* sql`UPDATE patches SET scope = ${scope}, updated_at = ${at},
-        last_changed_at = ${at}, last_changed_by = ${actor.userId} WHERE id = ${patchId}`;
+        last_changed_at = ${at}, last_changed_by = ${actor.userId},
+        last_changed_action = 'sharing changed' WHERE id = ${patchId}`;
     return { scope, name: row.name, companyHandle: row.companyHandle };
   }, sql.withTransaction);
 
@@ -1716,7 +1824,8 @@ export const make = Effect.gen(function* () {
     yield* refuseDependants(patchId, row.companyId, force);
     const at = yield* now;
     yield* sql`UPDATE patches SET retired_at = ${at}, retired_by = ${actor.userId},
-        updated_at = ${at}, last_changed_at = ${at}, last_changed_by = ${actor.userId}
+        updated_at = ${at}, last_changed_at = ${at}, last_changed_by = ${actor.userId},
+        last_changed_action = 'retired'
         WHERE id = ${patchId}`;
     return yield* afterChange(patchId);
   }, sql.withTransaction);
@@ -1732,14 +1841,16 @@ export const make = Effect.gen(function* () {
     if (state === "live") yield* refuseDependants(patchId, row.companyId, force);
     const at = yield* now;
     yield* sql`UPDATE patches SET deleted_at = ${at}, deleted_by = ${actor.userId},
-        updated_at = ${at}, last_changed_at = ${at}, last_changed_by = ${actor.userId}
+        updated_at = ${at}, last_changed_at = ${at}, last_changed_by = ${actor.userId},
+        last_changed_action = 'deleted'
         WHERE id = ${patchId}`;
     return yield* afterChange(patchId);
   }, sql.withTransaction);
   const restore = Effect.fn("Patches.restore")(function* (
     patchId: string,
     actor: Actor,
-    force?: boolean
+    force?: boolean,
+    expectedState?: PatchState
   ) {
     yield* lockDependencies(actor.userId);
     const row = yield* manageable(patchId, actor);
@@ -1751,6 +1862,8 @@ export const make = Effect.gen(function* () {
       return yield* new PatchDeleted({
         purgeAt: DateTime.formatIso(DateTime.makeUnsafe(purgeMillis))
       });
+    if (expectedState !== undefined && stateOf(row) !== expectedState)
+      return yield* new StaleAction({ patchId });
     if (!force) {
       const rows = yield* offSources({ patchId, companyId: row.companyId }).pipe(
         Effect.catchTags(dieOnSchemaError)
@@ -1763,23 +1876,28 @@ export const make = Effect.gen(function* () {
     const at = stamp(millis);
     yield* sql`UPDATE patches SET retired_at = NULL, retired_by = NULL,
         deleted_at = NULL, deleted_by = NULL, updated_at = ${at},
-        last_changed_at = ${at}, last_changed_by = ${actor.userId} WHERE id = ${patchId}`;
+        last_changed_at = ${at}, last_changed_by = ${actor.userId},
+        last_changed_action = 'restored' WHERE id = ${patchId}`;
     return yield* afterChange(patchId);
   }, sql.withTransaction);
   const rollback = Effect.fn("Patches.rollback")(function* (
     patchId: string,
     actor: Actor,
-    versionNumber: number
+    versionNumber: number,
+    expectedCurrentVersionId?: string | null
   ) {
     const row = yield* manageable(patchId, actor);
     if (stateOf(row) !== "live") return yield* new WrongState({ state: stateOf(row) });
+    if (expectedCurrentVersionId !== undefined && row.currentVersionId !== expectedCurrentVersionId)
+      return yield* new StaleAction({ patchId });
     const version = yield* findVersionByNumber({ patchId, versionNumber }).pipe(
       Effect.catchTags(dieOnSchemaError)
     );
     if (Option.isNone(version)) return yield* new VersionUnavailable({ versionNumber });
     const at = yield* now;
     yield* sql`UPDATE patches SET current_version_id = ${version.value.id}, updated_at = ${at},
-        last_changed_at = ${at}, last_changed_by = ${actor.userId} WHERE id = ${patchId}`;
+        last_changed_at = ${at}, last_changed_by = ${actor.userId},
+        last_changed_action = ${`rolled back to v${versionNumber}`} WHERE id = ${patchId}`;
     return { patch: yield* afterChange(patchId), currentVersion: versionNumber };
   }, sql.withTransaction);
   const reassign = Effect.fn("Patches.reassign")(function* (
@@ -1797,22 +1915,30 @@ export const make = Effect.gen(function* () {
     const at = yield* now;
     yield* sql`UPDATE patches SET owner_user_id = ${newOwnerUserId},
         reassigned_at = ${at}, reassigned_by = ${actor.userId}, updated_at = ${at},
-        last_changed_at = ${at}, last_changed_by = ${actor.userId} WHERE id = ${patchId}`;
+        last_changed_at = ${at}, last_changed_by = ${actor.userId},
+        last_changed_action = 'reassigned' WHERE id = ${patchId}`;
     return yield* afterChange(patchId);
   }, sql.withTransaction);
   const setDescription = Effect.fn("Patches.setDescription")(function* (
     patchId: string,
     actor: Actor,
-    description: string
+    description: string,
+    expectedDescriptionUpdatedAt?: string | null
   ) {
     const row = yield* manageable(patchId, actor);
     if (stateOf(row) === "deleted") return yield* new WrongState({ state: "deleted" });
+    if (
+      expectedDescriptionUpdatedAt !== undefined &&
+      isoOrNull(row.descriptionUpdatedAt) !== expectedDescriptionUpdatedAt
+    )
+      return yield* new StaleAction({ patchId });
     const normalized = yield* normalizeDescription(description);
     if (row.description === normalized) return toPatch(row);
     const at = yield* now;
     yield* sql`UPDATE patches SET description = ${normalized},
         description_updated_at = ${at}, description_updated_by = ${actor.userId},
-        updated_at = ${at}, last_changed_at = ${at}, last_changed_by = ${actor.userId}
+        updated_at = ${at}, last_changed_at = ${at}, last_changed_by = ${actor.userId},
+        last_changed_action = 'description changed'
         WHERE id = ${patchId}`;
     return yield* afterChange(patchId);
   }, sql.withTransaction);
@@ -1888,6 +2014,7 @@ export const make = Effect.gen(function* () {
     preflight,
     inventory,
     read,
+    portalCard,
     companyInventory,
     sharedTable,
     sharedTables,

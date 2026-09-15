@@ -69,6 +69,7 @@ A Turborepo monorepo managed with pnpm. [AGENTS.md](AGENTS.md) is the guide to w
 - `packages/companies` — companies, users, roles, invites and membership lifecycle (`@patchy/companies`).
 - `packages/auth` — browser sessions, the shared login door, device login, machine tokens, Your machines, bearer identity, revocation, the shared development seed and the `auth` API group (`@patchy/auth`).
 - `packages/patches`: user-owned patches and versions, names and addresses, replay-safe file/repo publishing, provisioning coordination, sharing, lifecycle moves and actor stamps, visits and quotas, the deletion sweep, and the `patches` API group (`@patchy/patches`).
+- `packages/portal`: the signed-in index and patch cards, versions, inline management and stale-action refusals (`@patchy/portal`).
 - `packages/serving` — tier-scoped page/content routes, the login and needs-rebuild doors, sandboxed frame, shell broker and route bridge, sharing-aware CSP and caching, and trusted-proxy attribution (`@patchy/serving`).
 - `packages/runtime` — browser-only admission, loaded-version binding, operation dispatch and the attributed runtime log (`@patchy/runtime`).
 - `packages/primitives` — additive table/store provisioning, schema revisions, bounded owned-table operations, read-only shared-table operations and immutable file operations over Postgres and PGlite (`@patchy/primitives`).

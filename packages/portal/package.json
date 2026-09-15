@@ -1,0 +1,39 @@
+{
+  "name": "@patchy/portal",
+  "version": "0.0.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "description": "The signed-in patch index, cards and inline management pages.",
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@patchy/api": "workspace:*",
+    "@patchy/auth": "workspace:*",
+    "@patchy/companies": "workspace:*",
+    "@patchy/core": "workspace:*",
+    "@patchy/patches": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/platform-node": "catalog:",
+    "@effect/vitest": "catalog:",
+    "@patchy/company-database": "workspace:*",
+    "@patchy/integrations": "workspace:*",
+    "@patchy/primitives": "workspace:*",
+    "vitest": "^4.1.11"
+  }
+}

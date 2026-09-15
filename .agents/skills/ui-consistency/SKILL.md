@@ -14,8 +14,8 @@ First-party pages compose the server-rendered shell and inline `<style>` block i
 
 Three page kinds:
 
-- **App shell**: signed-in Company, Connections and Your machines pages, and the portal when it lands. `htmlPage` renders the shared header with brand, Patches, Company, Connections, Your machines, viewer and sign-out, marks the current section, and places the content in a wide card. Auth's `pageResponse` takes the viewer and section in app mode.
-- **First-party doors and static pages**: sign-in, create-or-join, device-login confirmation, deactivated and error pages keep the card rather than app navigation. The existing marketing home remains unchanged until the portal lands. All compose `htmlPage`.
+- **App shell**: the portal, Company, Connections and Your machines pages. `htmlPage` renders the shared header with brand, Patches, Company, Connections, Your machines, viewer and sign-out, marks the current section, and places the content in a wide card. Auth's `pageResponse` takes the viewer and section in app mode. Portal not-found pages also keep this shell.
+- **First-party doors and static pages**: sign-in, create-or-join, device-login confirmation, deactivated and error doors keep the card rather than app navigation. The signed-out root is a sign-in door. All compose `htmlPage`.
 - **Served patches**: `renderPatchWrapper` is user content and deliberately does not compose `htmlPage`.
 
 ## The shell and its one exception
@@ -32,8 +32,9 @@ Three page kinds:
 - Buttons: `btn`, with `btn-primary`, `btn-quiet` or `btn-danger`; links that act as buttons use the same classes.
 - Fields: `field` for input, select and textarea; `field-label`, `field-hint`, `field-error`, `field-choice`, `field-checkbox` and `field-radio`. Keep labels, hint/error associations and native disabled and keyboard behavior.
 - Supporting text: `supporting-text` for metadata and page-level guidance; reserve `field-hint` for a field's hint.
-- Fact lists: `facts` on a `dl` with `dt`/`dd`; item lists: `list` and `list-row`.
+- Fact lists: `facts` on a `dl` with `dt`/`dd`; item lists: `list` and `list-row`, with `list-compact` for dense rows and `list-link` for selectable linked rows. `aria-current="page"` marks the selected row.
 - Code panels: `code-panel` on `pre` preserves wrapping and caps long content at a scrollable height. Expandable list rows use the shell's `summary` spacing and pointer.
+- Tables: `table` with native `th`, `td` and `scope` semantics. `copy-address` makes an address selectable as a whole.
 - Notices: `note`, `note-warn`, `note-refused`, `note-ok` and `note-title`. Refusals use `role="alert"`; completed actions use `role="status"`.
 - Headings and sections: `page-heading`, `section-heading`, `section`; `verification-code` is the device confirmation's code display, not a page-specific heading scale.
 - Pills: `pill`, `pill-progress` and `pill-done`.
