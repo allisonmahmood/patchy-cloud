@@ -263,7 +263,7 @@ it.layer(services)("company connection pages", (it) => {
         assert.include(html, 'aria-labelledby="connection-calls"');
         assert.include(
           html,
-          `<pre class="connection-sql"><code>SELECT '&lt;/code&gt;&lt;/pre&gt;&lt;script&gt;alert(&quot;query&quot;)&lt;/script&gt;&amp;'</code></pre>`
+          `<code>SELECT '&lt;/code&gt;&lt;/pre&gt;&lt;script&gt;alert(&quot;query&quot;)&lt;/script&gt;&amp;'</code>`
         );
         assert.include(html, "patch-&lt;/code&gt;&lt;script&gt;patch&lt;/script&gt;");
         assert.include(html, "<code>version-one</code>");
@@ -351,6 +351,13 @@ it.layer(services)("company connection pages", (it) => {
           assert.notInclude(html, escapedCredentials);
           assert.notInclude(html, "page-secret-escaped");
           assert.include(html, 'action="/logout"');
+          for (const document of [list, html]) {
+            assert.match(document, /<nav\b[^>]*aria-label="Primary"/);
+            assert.include(document, '<a href="/company/connections" aria-current="page">');
+            assert.include(document, 'href="/company">Company</a>');
+            assert.include(document, 'href="/machines">Your machines</a>');
+            assert.strictEqual(document.match(/action="\/logout"/g)?.length, 1);
+          }
           if (viewer.role === "admin") {
             assert.include(list, 'action="/company/connections/connect"');
             assert.include(html, `action="${path}/rotate"`);
@@ -471,6 +478,7 @@ it.layer(services)("company connection pages", (it) => {
         assert.strictEqual(badConnect.status, 503);
         const connectHtml = yield* Effect.promise(() => badConnect.text());
         assert.include(connectHtml, "source_unavailable");
+        assert.include(connectHtml, '<a href="/company/connections" aria-current="page">');
         assert.notInclude(connectHtml, "page-secret-rejected");
         assert.notInclude(connectHtml, "driver rejected");
         assert.include(connectHtml, 'action="/company/connections/connect"');
@@ -551,7 +559,10 @@ it.layer(services)("company connection pages", (it) => {
               post(other.user, { ...fields, companyId: owner.company.id, userId: owner.user.id })
             );
             assert.strictEqual(foreign.status, 404);
-            assert.notInclude(yield* Effect.promise(() => foreign.text()), "Sales warehouse");
+            const foreignHtml = yield* Effect.promise(() => foreign.text());
+            assert.notInclude(foreignHtml, "Sales warehouse");
+            assert.notMatch(foreignHtml, /<nav\b/);
+            assert.include(foreignHtml, 'action="/logout"');
           }
         }
         assert.strictEqual(

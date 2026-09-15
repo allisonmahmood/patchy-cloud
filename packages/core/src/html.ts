@@ -3,7 +3,7 @@ export interface AppShell {
     readonly user: { readonly name: string };
     readonly company: { readonly name: string };
   };
-  readonly section: "patches" | "company" | "connections" | "machines" | null;
+  readonly section: "patches" | "company" | "connections" | "machines";
 }
 
 function appBody(app: AppShell, body: string): string {
@@ -444,7 +444,8 @@ export function htmlPage(options: {
     .list, .confirmation-list { list-style: none; padding: 0; margin: 16px 0; }
     .list-row, .confirmation-list > li { padding: 20px 0; border-bottom: 1px solid var(--line-strong); overflow-wrap: anywhere; }
     .list-row p { margin: 0 0 8px; }
-    .list-row summary { cursor: pointer; }
+    .list-row summary { margin: 12px 0; cursor: pointer; }
+    .code-panel { max-height: 18rem; white-space: pre-wrap; overflow-wrap: anywhere; }
     .actions, .confirmation-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
     .facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px 24px; margin: 20px 0; font-size: .9rem; overflow-wrap: anywhere; }
     .facts dt { color: var(--muted); font-weight: 750; }

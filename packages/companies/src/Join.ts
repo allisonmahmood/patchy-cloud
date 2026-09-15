@@ -29,7 +29,6 @@ export interface JoinPage {
 
 export const styles = `
     .join-invite { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; }
-    .join-invite p { margin: 0; }
 `;
 
 /** Server-side suggestion: plain forms need no client code to create a company. */
