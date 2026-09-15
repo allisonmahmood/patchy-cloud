@@ -1,6 +1,6 @@
 /**
  * The `patches` group of the Patchy API, implemented over `Content`,
- * `Patches`, `Limits` and `Analytics`: publish and owner lifecycle actions. The
+ * `Patches`, `Limits` and `Analytics`: discovery, publish and owner lifecycle actions. The
  * identity comes from the bearer middleware the group declares; this
  * package never authenticates anyone.
  * The hosting server mounts the group with the rest of the API.
@@ -44,6 +44,10 @@ import {
   PatchQuotaExceeded,
   PatchyApi,
   PatchInventory,
+  PatchSummary,
+  PatchDetail,
+  PrimitiveDetail,
+  type PatchTableSummary,
   PayloadTooLarge,
   rateLimited,
   readBody,
@@ -71,6 +75,54 @@ const databaseUnavailable = () =>
     error: "Company database is unavailable."
   });
 const encodeInventory = Schema.encodeSync(PatchInventory);
+const encodeSummaries = Schema.encodeSync(Schema.Array(PatchSummary));
+const encodeDetail = Schema.encodeSync(PatchDetail);
+const encodePrimitive = Schema.encodeSync(PrimitiveDetail);
+const readHeaders = { "cache-control": "private, no-store" };
+const summary = (row: Patches.ReadPatch, userId: string, publicBaseUrl: string) =>
+  new PatchSummary({
+    id: row.patch.id,
+    name: row.patch.name,
+    address: Patches.address(publicBaseUrl, row.patch.companyHandle, row.patch.name),
+    owner: row.owner,
+    mine: row.owner.id === userId,
+    tier: row.tier,
+    scope: row.patch.scope,
+    description: row.patch.description,
+    state: row.patch.state,
+    retiredAt: row.patch.retiredAt,
+    deletedAt: row.patch.deletedAt,
+    purgeAt: row.patch.purgeAt,
+    currentVersion: row.currentVersion,
+    publishedAt: row.publishedAt
+  });
+const tableSummary = (
+  row: Patches.ReadPatch,
+  name: string,
+  table: (typeof PatchInventory.Type.tables)[string]
+): typeof PatchTableSummary.Type => {
+  const common = { name, description: table.description, shared: table.shared === true };
+  if (row.patch.state !== "live") {
+    return {
+      ...common,
+      declarable: false,
+      reason: "source_off",
+      hint: `This source is ${row.patch.state}. Ask ${row.owner.name} or an admin to restore it.`
+    };
+  }
+  return table.shared
+    ? {
+        ...common,
+        declarable: true,
+        hint: `patchy add shared-table ${row.patch.id}/${name}`
+      }
+    : {
+        ...common,
+        declarable: false,
+        reason: "not_shared",
+        hint: `Not shared. Ask ${row.owner.name} to share this table.`
+      };
+};
 const lifecycleFailures = {
   NotOwner: (error: Patches.NotOwner) =>
     Effect.succeed(
@@ -156,6 +208,19 @@ const ownerFailures = {
   PatchUnavailable: () => Effect.succeed(notFound()),
   SqlError: Effect.die
 };
+const readFailures = {
+  PatchUnavailable: ownerFailures.PatchUnavailable,
+  WrongState: (error: Patches.WrongState) =>
+    Effect.succeed(
+      refuse(WrongState, {
+        ok: false,
+        code: "wrong_state",
+        state: error.state,
+        error: `This patch is ${error.state}; pass --state ${error.state === "deleted" ? "all" : error.state}.`
+      })
+    ),
+  SqlError: Effect.die
+};
 const isPatchId = Schema.is(PatchId);
 
 const decodePublish = decodeBody(PublishRequest);
@@ -228,6 +293,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
   Effect.gen(function* () {
     const content = yield* Content.Content;
     const patches = yield* Patches.Patches;
+    const openability = yield* Patches.Openability;
     const limits = yield* Limits.Limits;
     const analytics = yield* Analytics.Analytics;
     const publicBaseUrl = yield* PatchesConfig.publicBaseUrl;
@@ -240,6 +306,23 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
     const maxShareBodyBytes = maxHtmlBytes * 3;
     const currentRelease = yield* PatchesConfig.release;
     const livePatchesPerUser = yield* PatchesConfig.livePatchesPerUser;
+
+    const readOne = Effect.fn("PatchesApi.readOne")(function* (
+      patchRef: string,
+      state: Patches.ReadOptions["state"],
+      identity: CurrentIdentity["Service"]
+    ) {
+      const rows = yield* patches
+        .read({
+          companyId: identity.company.id,
+          userId: identity.user.id,
+          canOpen: (patch) => openability(patch, identity.user.id),
+          state,
+          patchRef
+        })
+        .pipe(Effect.catchTags(readFailures));
+      return HttpServerResponse.isHttpServerResponse(rows) ? rows : (rows[0] ?? notFound());
+    });
 
     return handlers
       .handleRaw("publish", () =>
@@ -478,6 +561,110 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             status: recorded.status,
             contentType: "application/json"
           });
+        })
+      )
+      .handleRaw(
+        "list",
+        Effect.fn("PatchesApi.list")(function* ({ query }) {
+          const identity = yield* CurrentIdentity;
+          const rows = yield* patches
+            .read({
+              companyId: identity.company.id,
+              userId: identity.user.id,
+              canOpen: (patch) => openability(patch, identity.user.id),
+              state: query.state ?? "live",
+              mine: query.mine
+            })
+            .pipe(Effect.catchTags(readFailures));
+          if (HttpServerResponse.isHttpServerResponse(rows)) return rows;
+          return HttpServerResponse.jsonUnsafe(
+            {
+              patches: encodeSummaries(
+                rows.map((row) => summary(row, identity.user.id, publicBaseUrl))
+              )
+            },
+            { headers: readHeaders }
+          );
+        })
+      )
+      .handleRaw(
+        "detail",
+        Effect.fn("PatchesApi.detail")(function* ({ params, query }) {
+          const identity = yield* CurrentIdentity;
+          const row = yield* readOne(params.patchRef, query.state ?? "live", identity);
+          if (HttpServerResponse.isHttpServerResponse(row)) return row;
+          return HttpServerResponse.jsonUnsafe(
+            encodeDetail(
+              new PatchDetail({
+                ...summary(row, identity.user.id, publicBaseUrl),
+                title: row.patch.title,
+                inventory:
+                  row.inventory === null
+                    ? null
+                    : {
+                        tables: Object.entries(row.inventory.tables).map(([name, table]) =>
+                          tableSummary(row, name, table)
+                        ),
+                        stores: Object.entries(row.inventory.files).map(([name, store]) => ({
+                          name,
+                          description: store.description,
+                          declarable: false as const,
+                          reason: "not_shareable" as const,
+                          hint: "File stores are not shareable yet."
+                        }))
+                      },
+                reads: row.reads
+              })
+            ),
+            { headers: readHeaders }
+          );
+        })
+      )
+      .handleRaw(
+        "primitive",
+        Effect.fn("PatchesApi.primitive")(function* ({ params, query }) {
+          const identity = yield* CurrentIdentity;
+          const row = yield* readOne(params.patchRef, query.state ?? "live", identity);
+          if (HttpServerResponse.isHttpServerResponse(row)) return row;
+          if (row.inventory === null) return databaseUnavailable();
+          const table = Object.hasOwn(row.inventory.tables, params.name)
+            ? row.inventory.tables[params.name]
+            : undefined;
+          const store = Object.hasOwn(row.inventory.files, params.name)
+            ? row.inventory.files[params.name]
+            : undefined;
+          if (table === undefined && store === undefined)
+            return refuse(NotFound, { ok: false, error: "Primitive not found." });
+          return HttpServerResponse.jsonUnsafe(
+            encodePrimitive(
+              new PrimitiveDetail({
+                kind: table === undefined ? "store" : "table",
+                name: params.name,
+                description: (table ?? store)!.description,
+                shared: table?.shared === true,
+                schemaRevision: row.inventory.schemaRevision,
+                columns:
+                  table === undefined
+                    ? []
+                    : Object.entries(table.columns).map(([name, column]) => ({
+                        name,
+                        kind: column.kind,
+                        optional: column.optional === true,
+                        ...(Object.hasOwn(column, "default") ? { default: column.default! } : {}),
+                        ...(column.kind === "ref" ? { ref: column.table } : {})
+                      })),
+                indexes:
+                  table === undefined
+                    ? []
+                    : Object.entries(table.indexes).map(([name, index]) => ({
+                        name,
+                        columns: index.columns,
+                        unique: index.unique === true
+                      }))
+              })
+            ),
+            { headers: readHeaders }
+          );
         })
       )
       .handleRaw("inventory", ({ params }) =>

@@ -243,6 +243,46 @@ export interface Patch {
   readonly disabledReason: string | null;
 }
 
+export interface ReadAccess {
+  readonly companyId: string;
+  readonly userId: string;
+  readonly canOpen: (patch: Patch) => boolean;
+}
+
+export interface ReadOptions extends ReadAccess {
+  readonly state: "live" | "retired" | "all";
+  readonly mine?: boolean;
+  readonly patchRef?: string;
+}
+
+export interface ReadPatch {
+  readonly patch: Patch;
+  readonly owner: { readonly id: string; readonly name: string; readonly deactivated: boolean };
+  readonly currentVersion: number;
+  readonly tier: number;
+  readonly publishedAt: string;
+  readonly inventory: PatchInventory | null;
+  readonly reads: readonly {
+    readonly alias: string;
+    readonly patchId: string;
+    readonly name?: string;
+    readonly table: string;
+    readonly state: "live" | "retired" | "deleted" | "gone";
+  }[];
+  readonly dependants: readonly {
+    readonly patchId: string;
+    readonly name: string;
+    readonly owner: { readonly id: string; readonly name: string };
+    readonly table: string;
+  }[];
+}
+
+/** Credential reach narrows the mandatory same-company, not-disabled read gate. */
+export const Openability = Context.Reference<(patch: Patch, userId: string) => boolean>(
+  "@patchy/patches/Openability",
+  { defaultValue: () => () => true }
+);
+
 export interface PatchVersion {
   readonly id: string;
   readonly patchId: string;
@@ -406,6 +446,100 @@ const Replay = Schema.Struct({
   status: Schema.Literals([200, 201])
 });
 
+// Today's client hands back a Date; when it becomes epoch ms only these lines move.
+const Stamp = Schema.Date;
+const NullableStamp = Schema.NullOr(Schema.Date);
+
+class PatchRow extends Schema.Class<PatchRow>("PatchRow")({
+  id: Schema.String,
+  companyId: Schema.String,
+  companyHandle: Schema.String,
+  name: PatchName,
+  ownerUserId: Schema.String,
+  scope: SharingScope,
+  title: Schema.String,
+  currentVersionId: Schema.NullOr(Schema.String),
+  repoOrg: Schema.NullOr(Schema.String),
+  repoName: Schema.NullOr(Schema.String),
+  createdAt: Stamp,
+  updatedAt: Stamp,
+  retiredAt: NullableStamp,
+  retiredBy: Schema.NullOr(Schema.String),
+  deletedAt: NullableStamp,
+  deletedBy: Schema.NullOr(Schema.String),
+  reassignedAt: NullableStamp,
+  reassignedBy: Schema.NullOr(Schema.String),
+  description: Schema.String,
+  descriptionUpdatedAt: NullableStamp,
+  descriptionUpdatedBy: Schema.NullOr(Schema.String),
+  lastChangedAt: NullableStamp,
+  lastChangedBy: Schema.NullOr(Schema.String),
+  disabledAt: NullableStamp,
+  disabledReason: Schema.NullOr(Schema.String)
+}) {}
+
+class VersionRow extends Schema.Class<VersionRow>("VersionRow")({
+  id: Schema.String,
+  patchId: Schema.String,
+  versionNumber: Schema.Int,
+  objectKey: Schema.String,
+  contentHash: Schema.String,
+  fileSize: Schema.Int,
+  createdByMachineTokenId: Schema.String,
+  sourceIp: Schema.NullOr(Schema.String),
+  userAgent: Schema.NullOr(Schema.String),
+  cliVersion: Schema.NullOr(Schema.String),
+  gitBranch: Schema.NullOr(Schema.String),
+  gitCommitSha: Schema.NullOr(Schema.String),
+  originalFilename: Schema.NullOr(Schema.String),
+  tier: Schema.Int,
+  release: Schema.String,
+  manifestVersion: Schema.Int,
+  wireVersion: Schema.Int,
+  schemaRevision: Schema.Int,
+  manifest: Manifest,
+  publishKey: Schema.String,
+  payloadDigest: Schema.String,
+  createdAt: Stamp
+}) {}
+
+class Id extends Schema.Class<Id>("Id")({ id: Schema.String }) {}
+class Count extends Schema.Class<Count>("Count")({ count: Schema.Int }) {}
+class NextVersion extends Schema.Class<NextVersion>("NextVersion")({ nextVersion: Schema.Int }) {}
+class ObjectKey extends Schema.Class<ObjectKey>("ObjectKey")({ objectKey: Schema.String }) {}
+class DeclaringPatches extends Schema.Class<DeclaringPatches>("DeclaringPatches")({
+  table: Schema.String,
+  count: Schema.Int
+}) {}
+class ManagedPatchRow extends Schema.Class<ManagedPatchRow>("ManagedPatchRow")({
+  ...PatchRow.fields,
+  ownerName: Schema.String
+}) {}
+class ReadPatchRow extends Schema.Class<ReadPatchRow>("ReadPatchRow")({
+  ...ManagedPatchRow.fields,
+  ownerDeactivated: Schema.Boolean,
+  currentVersion: Schema.Int,
+  tier: Schema.Int,
+  publishedAt: Stamp,
+  reads: Schema.Array(
+    Schema.Struct({ alias: Schema.String, patchId: Schema.String, table: Schema.String })
+  )
+}) {}
+class NameRow extends Schema.Class<NameRow>("NameRow")({ name: PatchName }) {}
+class ResolvedName extends Schema.Class<ResolvedName>("ResolvedName")({
+  patchId: Schema.String,
+  name: PatchName,
+  current: Schema.Boolean
+}) {}
+class CompanyHandle extends Schema.Class<CompanyHandle>("CompanyHandle")({
+  handle: Schema.String
+}) {}
+class UnnamedPatch extends Schema.Class<UnnamedPatch>("UnnamedPatch")({
+  id: Schema.String,
+  companyId: Schema.String,
+  title: Schema.String
+}) {}
+
 export class Patches extends Context.Service<
   Patches,
   {
@@ -432,6 +566,13 @@ export class Patches extends Context.Service<
       patchId: string,
       actorUserId: string
     ) => Effect.Effect<PatchInventory, PatchUnavailable | DatabaseError | SqlError>;
+    readonly read: (
+      options: ReadOptions
+    ) => Effect.Effect<readonly ReadPatch[], PatchUnavailable | WrongState | SqlError>;
+    readonly companyInventory: (
+      patchId: string,
+      access: ReadAccess
+    ) => Effect.Effect<PatchInventory | null, PatchUnavailable | SqlError>;
     /** Cumulative metadata from live same-company shared inventory. */
     readonly sharedTable: (
       patchId: string,
@@ -545,90 +686,6 @@ export class Patches extends Context.Service<
     >;
   }
 >()("@patchy/patches/Patches") {}
-
-// Today's client hands back a Date; when it becomes epoch ms only these lines move.
-const Stamp = Schema.Date;
-const NullableStamp = Schema.NullOr(Schema.Date);
-
-class PatchRow extends Schema.Class<PatchRow>("PatchRow")({
-  id: Schema.String,
-  companyId: Schema.String,
-  companyHandle: Schema.String,
-  name: PatchName,
-  ownerUserId: Schema.String,
-  scope: SharingScope,
-  title: Schema.String,
-  currentVersionId: Schema.NullOr(Schema.String),
-  repoOrg: Schema.NullOr(Schema.String),
-  repoName: Schema.NullOr(Schema.String),
-  createdAt: Stamp,
-  updatedAt: Stamp,
-  retiredAt: NullableStamp,
-  retiredBy: Schema.NullOr(Schema.String),
-  deletedAt: NullableStamp,
-  deletedBy: Schema.NullOr(Schema.String),
-  reassignedAt: NullableStamp,
-  reassignedBy: Schema.NullOr(Schema.String),
-  description: Schema.String,
-  descriptionUpdatedAt: NullableStamp,
-  descriptionUpdatedBy: Schema.NullOr(Schema.String),
-  lastChangedAt: NullableStamp,
-  lastChangedBy: Schema.NullOr(Schema.String),
-  disabledAt: NullableStamp,
-  disabledReason: Schema.NullOr(Schema.String)
-}) {}
-
-class VersionRow extends Schema.Class<VersionRow>("VersionRow")({
-  id: Schema.String,
-  patchId: Schema.String,
-  versionNumber: Schema.Int,
-  objectKey: Schema.String,
-  contentHash: Schema.String,
-  fileSize: Schema.Int,
-  createdByMachineTokenId: Schema.String,
-  sourceIp: Schema.NullOr(Schema.String),
-  userAgent: Schema.NullOr(Schema.String),
-  cliVersion: Schema.NullOr(Schema.String),
-  gitBranch: Schema.NullOr(Schema.String),
-  gitCommitSha: Schema.NullOr(Schema.String),
-  originalFilename: Schema.NullOr(Schema.String),
-  tier: Schema.Int,
-  release: Schema.String,
-  manifestVersion: Schema.Int,
-  wireVersion: Schema.Int,
-  schemaRevision: Schema.Int,
-  manifest: Manifest,
-  publishKey: Schema.String,
-  payloadDigest: Schema.String,
-  createdAt: Stamp
-}) {}
-
-class Id extends Schema.Class<Id>("Id")({ id: Schema.String }) {}
-class Count extends Schema.Class<Count>("Count")({ count: Schema.Int }) {}
-class NextVersion extends Schema.Class<NextVersion>("NextVersion")({ nextVersion: Schema.Int }) {}
-class ObjectKey extends Schema.Class<ObjectKey>("ObjectKey")({ objectKey: Schema.String }) {}
-class DeclaringPatches extends Schema.Class<DeclaringPatches>("DeclaringPatches")({
-  table: Schema.String,
-  count: Schema.Int
-}) {}
-class ManagedPatchRow extends Schema.Class<ManagedPatchRow>("ManagedPatchRow")({
-  ...PatchRow.fields,
-  ownerName: Schema.String
-}) {}
-class NameRow extends Schema.Class<NameRow>("NameRow")({ name: PatchName }) {}
-class ResolvedName extends Schema.Class<ResolvedName>("ResolvedName")({
-  patchId: Schema.String,
-  name: PatchName,
-  current: Schema.Boolean
-}) {}
-class CompanyHandle extends Schema.Class<CompanyHandle>("CompanyHandle")({
-  handle: Schema.String
-}) {}
-class UnnamedPatch extends Schema.Class<UnnamedPatch>("UnnamedPatch")({
-  id: Schema.String,
-  companyId: Schema.String,
-  title: Schema.String
-}) {}
 
 const iso = (date: Date) => date.toISOString();
 const isoOrNull = (date: Date | null) => (date === null ? null : date.toISOString());
@@ -810,6 +867,46 @@ export const make = Effect.gen(function* () {
       ORDER BY patches.name, patches.id`
   });
 
+  const companyPatchRows = SqlSchema.findAll({
+    Request: Schema.Struct({ companyId: Schema.String, userId: Schema.String }),
+    Result: ReadPatchRow,
+    execute: ({ companyId, userId }) => sql`
+      SELECT ${sql.unsafe(PATCH_COLUMNS)}, owner.name AS "ownerName",
+        owner.deactivated_at IS NOT NULL AS "ownerDeactivated",
+        current_version.version_number AS "currentVersion", current_version.tier,
+        current_version.created_at AS "publishedAt",
+        COALESCE((
+          SELECT jsonb_agg(declarations ORDER BY declarations.alias, declarations."patchId", declarations."table")
+          FROM (
+            SELECT DISTINCT declaration.key AS alias,
+              declaration.value->>'patchId' AS "patchId", declaration.value->>'table' AS "table"
+            FROM patch_versions
+            CROSS JOIN LATERAL jsonb_each(patch_versions.manifest->'uses') AS declaration
+            WHERE patch_versions.patch_id = patches.id
+              AND declaration.value->>'kind' = 'sharedTable'
+              AND declaration.value->>'id' =
+                (declaration.value->>'patchId') || '/' || (declaration.value->>'table')
+          ) declarations
+        ), '[]'::jsonb) AS reads
+      FROM patches
+      JOIN companies ON companies.id = patches.company_id
+      JOIN users owner ON owner.id = patches.owner_user_id
+      JOIN patch_versions current_version ON current_version.id = patches.current_version_id
+        AND current_version.patch_id = patches.id
+      WHERE patches.company_id = ${companyId} AND patches.disabled_at IS NULL
+      ORDER BY (patches.owner_user_id = ${userId}) DESC, patches.name, patches.id`
+  });
+
+  const companyPatchRow = SqlSchema.findOneOption({
+    Request: Schema.Struct({ companyId: Schema.String, patchId: Schema.String }),
+    Result: PatchRow,
+    execute: ({ companyId, patchId }) => sql`
+      SELECT ${sql.unsafe(PATCH_COLUMNS)}
+      FROM patches JOIN companies ON companies.id = patches.company_id
+      WHERE patches.id = ${patchId} AND patches.company_id = ${companyId}
+        AND patches.disabled_at IS NULL`
+  });
+
   const findVersionByNumber = SqlSchema.findOneOption({
     Request: Schema.Struct({ patchId: Schema.String, versionNumber: Schema.Number }),
     Result: VersionRow,
@@ -985,6 +1082,133 @@ export const make = Effect.gen(function* () {
         })
       )
   );
+
+  // Acquire one company lease for the entire read, not one platform placement
+  // lookup per patch. Platform patch-query failures remain outside this recovery.
+  const companyInventories = Effect.fn("Patches.companyInventories")(
+    function* (companyId: string, patchIds: readonly string[]) {
+      return yield* databases.withCompany(companyId)(
+        Effect.gen(function* () {
+          const inventories = new Map<string, PatchInventory | null>();
+          for (const patchId of patchIds) {
+            const inventory = yield* inventoryStore.read(patchId).pipe(
+              Effect.map(
+                (snapshot) =>
+                  new PatchInventory(
+                    snapshot === null
+                      ? { schemaRevision: 0, tables: {}, files: {} }
+                      : {
+                          schemaRevision: snapshot.schemaRevision,
+                          ...Tables.inventoryManifest(snapshot)
+                        }
+                  )
+              ),
+              Effect.catchTags({ SqlError: () => Effect.succeed(null) })
+            );
+            inventories.set(patchId, inventory);
+          }
+          return inventories;
+        })
+      );
+    },
+    Effect.catchTags({
+      Busy: () => Effect.succeed(null),
+      CompanyDatabaseNotReady: () => Effect.succeed(null),
+      CompanyDatabaseError: () => Effect.succeed(null),
+      CompanyIdentityMismatch: Effect.die
+    })
+  );
+
+  const companyInventory = Effect.fn("Patches.companyInventory")(function* (
+    patchId: string,
+    access: ReadAccess
+  ) {
+    const row = yield* companyPatchRow({ companyId: access.companyId, patchId });
+    if (Option.isNone(row) || !access.canOpen(toPatch(row.value)))
+      return yield* new PatchUnavailable({ patchId });
+    const inventories = yield* companyInventories(access.companyId, [patchId]);
+    return inventories?.get(patchId) ?? null;
+  }, Effect.catchTags(dieOnSchemaError));
+
+  const read = Effect.fn("Patches.read")(function* (options: ReadOptions) {
+    const rows = yield* companyPatchRows(options);
+    const openable = new Map<string, { row: ReadPatchRow; patch: Patch }>();
+    for (const row of rows) {
+      const patch = toPatch(row);
+      if (options.canOpen(patch)) openable.set(patch.id, { row, patch });
+    }
+    let selected: Array<{ row: ReadPatchRow; patch: Patch }>;
+    if (options.patchRef !== undefined) {
+      const resolved =
+        rows.find((row) => row.id === options.patchRef) ??
+        rows.find((row) => row.name === options.patchRef && row.deletedAt === null);
+      const found = resolved === undefined ? undefined : openable.get(resolved.id);
+      if (found === undefined) return yield* new PatchUnavailable({ patchId: options.patchRef });
+      if (options.state !== "all" && found.patch.state !== options.state)
+        return yield* new WrongState({ state: found.patch.state });
+      selected = [found];
+    } else {
+      selected = [];
+      for (const entry of openable.values()) {
+        if (
+          (options.state === "all" || entry.patch.state === options.state) &&
+          (!options.mine || entry.patch.ownerUserId === options.userId)
+        )
+          selected.push(entry);
+      }
+    }
+    if (selected.length === 0) return [];
+
+    const dependants = new Map<string, Array<ReadPatch["dependants"][number]>>();
+    for (const { patch } of selected) dependants.set(patch.id, []);
+    for (const { row, patch } of openable.values()) {
+      if (patch.state !== "live" || row.reads.length === 0) continue;
+      const seen = new Set<string>();
+      for (const declaration of row.reads) {
+        const edges = dependants.get(declaration.patchId);
+        if (edges === undefined) continue;
+        const key = sharedTableId(declaration.patchId, declaration.table);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        edges.push({
+          patchId: patch.id,
+          name: patch.name,
+          owner: { id: patch.ownerUserId, name: row.ownerName },
+          table: declaration.table
+        });
+      }
+    }
+    const inventories = yield* companyInventories(
+      options.companyId,
+      selected.map(({ patch }) => patch.id)
+    );
+    return selected.map(({ row, patch }): ReadPatch => ({
+      patch,
+      owner: {
+        id: patch.ownerUserId,
+        name: row.ownerName,
+        deactivated: row.ownerDeactivated
+      },
+      currentVersion: row.currentVersion,
+      tier: row.tier,
+      publishedAt: iso(row.publishedAt),
+      inventory: inventories?.get(patch.id) ?? null,
+      reads: row.reads.map((declaration): ReadPatch["reads"][number] => {
+        const source = openable.get(declaration.patchId)?.patch;
+        return source === undefined
+          ? { ...declaration, state: "gone" }
+          : { ...declaration, name: source.name, state: source.state };
+      }),
+      dependants: dependants
+        .get(patch.id)!
+        .sort(
+          (a, b) =>
+            a.name.localeCompare(b.name) ||
+            a.patchId.localeCompare(b.patchId) ||
+            a.table.localeCompare(b.table)
+        )
+    }));
+  }, Effect.catchTags(dieOnSchemaError));
 
   const sharedTable = Effect.fn("Patches.sharedTable")(function* (
     patchId: string,
@@ -1660,6 +1884,8 @@ export const make = Effect.gen(function* () {
     replay,
     preflight,
     inventory,
+    read,
+    companyInventory,
     sharedTable,
     sharedTables,
     prepareObject,

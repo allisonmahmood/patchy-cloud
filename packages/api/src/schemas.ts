@@ -467,6 +467,84 @@ export class PatchInventory extends Schema.Class<PatchInventory>("PatchInventory
   files: definitions(FileStoreDefinition)
 }) {}
 
+/** Discovery uses the cumulative inventory, not just the served manifest. */
+export const PatchStateFilter = Schema.Literals(["live", "retired", "all"]);
+export class PatchSummary extends Schema.Class<PatchSummary>("PatchSummary")({
+  id: PatchId,
+  name: Schema.String,
+  address: Schema.String,
+  owner: Schema.Struct({ ...PatchOwner.fields, deactivated: Schema.Boolean }),
+  mine: Schema.Boolean,
+  tier: Schema.Int,
+  scope: SharingScope,
+  description: Schema.String,
+  state: PatchState,
+  retiredAt: Schema.NullOr(IsoTimestamp),
+  deletedAt: Schema.NullOr(IsoTimestamp),
+  purgeAt: Schema.NullOr(IsoTimestamp),
+  currentVersion: Schema.Int,
+  publishedAt: IsoTimestamp
+}) {}
+
+export const PatchTableSummary = Schema.Struct({
+  name: Schema.String,
+  description: Schema.String,
+  shared: Schema.Boolean,
+  declarable: Schema.Boolean,
+  reason: Schema.optionalKey(Schema.Literals(["not_shared", "source_off"])),
+  hint: Schema.optionalKey(Schema.String)
+});
+export const PatchStoreSummary = Schema.Struct({
+  name: Schema.String,
+  description: Schema.String,
+  declarable: Schema.Literal(false),
+  reason: Schema.Literal("not_shareable"),
+  hint: Schema.String
+});
+export const PatchRead = Schema.Struct({
+  alias: Schema.String,
+  patchId: PatchId,
+  name: Schema.optionalKey(Schema.String),
+  table: Schema.String,
+  state: PatchSourceState
+});
+export class PatchDetail extends Schema.Class<PatchDetail>("PatchDetail")({
+  ...PatchSummary.fields,
+  title: Schema.String,
+  inventory: Schema.NullOr(
+    Schema.Struct({
+      tables: Schema.Array(PatchTableSummary),
+      stores: Schema.Array(PatchStoreSummary)
+    })
+  ),
+  reads: Schema.Array(PatchRead)
+}) {}
+
+/** A missing default differs from an explicit JSON null. Stores have no columns or indexes. */
+export class PrimitiveDetail extends Schema.Class<PrimitiveDetail>("PrimitiveDetail")({
+  kind: Schema.Literals(["table", "store"]),
+  name: Schema.String,
+  description: Schema.String,
+  shared: Schema.Boolean,
+  schemaRevision: Revision,
+  columns: Schema.Array(
+    Schema.Struct({
+      name: Schema.String,
+      kind: Schema.Literals(["text", "integer", "number", "boolean", "timestamp", "json", "ref"]),
+      optional: Schema.Boolean,
+      default: Schema.optionalKey(Schema.Json),
+      ref: Schema.optionalKey(Schema.String)
+    })
+  ),
+  indexes: Schema.Array(
+    Schema.Struct({
+      name: Schema.String,
+      columns: Schema.Array(Schema.String),
+      unique: Schema.Boolean
+    })
+  )
+}) {}
+
 /** The package integrity is the sha512 SRI of the bytes at the immutable tarball URL. */
 export class Release extends Schema.Class<Release>("Release")({
   release: NonEmptyText,

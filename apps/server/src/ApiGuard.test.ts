@@ -4,6 +4,7 @@ import { TestClock } from "effect/testing";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import { classify } from "./ApiGuard.js";
 import { DEV_SEED } from "@patchy/auth/seed";
+import { signedInCookies, signSession } from "@patchy/auth/testing";
 import { answer, html, send, server, publish, publishBody } from "./test/server.js";
 
 const UNAUTHORIZED = { ok: false, error: "Missing or invalid API token." };
@@ -45,13 +46,25 @@ describe("classify", () => {
     });
     for (const [method, target] of [
       ["DELETE", `/api/patches/${"x".repeat(60)}%2F${"x".repeat(60)}`],
-      ["DELETE", `/api/patches/${long}`]
+      ["DELETE", `/api/patches/${long}`],
+      ["GET", `/api/patches/${long}`],
+      ["GET", `/api/patches/${long}?state=all`],
+      ["GET", `/api/patches/${long}/primitives/orders`],
+      ["GET", `/api/patches/${long}/primitives/${long}`],
+      ["GET", `/api/patches/${long}/`],
+      ["GET", `/api//patches/${long}`],
+      ["GET", `/api/patches/${long}//primitives/orders/`],
+      ["GET", `/api/patches/${long}/inventory`]
     ] as const) {
       assert.deepStrictEqual(classify(method, target), { kind: "refused", status: 414 }, target);
     }
     for (const [method, target] of [
       ["POST", `/api/patches/${long}`],
-      ["GET", `/api/patches/${long}`],
+      ["GET", `/api/patches/${long}/primitives`],
+      ["GET", `/api/patches/${long}/primitives/`],
+      ["GET", `/api/patches/${long}/primitives/orders/extra`],
+      ["GET", `/api/patches/${long}/other/orders`],
+      ["POST", `/api/patches/${long}/primitives/orders`],
       ["PUT", `/api/patches/${long}`]
     ] as const) {
       assert.deepStrictEqual(classify(method, target), { kind: "refused", status: 404 }, target);
@@ -161,7 +174,7 @@ it.layer(server({ PATCHY_PROTECTED_API_RATE_LIMIT_PER_MINUTE: "3" }))(
   }
 );
 
-it.layer(server())("the guard: release and device-login routes are anonymous", (it) => {
+it.layer(server())("the guard: anonymous and token-only routes", (it) => {
   it.effect("admits a start and poll without a credential, even with an invalid bearer", () =>
     Effect.gen(function* () {
       for (const authorization of [undefined, "Bearer invalid-machine-token"]) {
@@ -217,6 +230,68 @@ it.layer(server())("the guard: release and device-login routes are anonymous", (
       for (const path of ["/api/login/device", "/api/login/device/token"]) {
         assert.strictEqual((yield* send(HttpClientRequest.head(path))).status, 401);
       }
+    })
+  );
+
+  it.effect("requires a machine token at every discovery level, not a browser session", () =>
+    Effect.gen(function* () {
+      yield* TestClock.adjust("61 seconds");
+      const cookie = signedInCookies(
+        signSession({
+          sub: DEV_SEED.clerkUserId,
+          email: DEV_SEED.email,
+          azp: "https://patchy.example"
+        })
+      );
+      for (const target of [
+        "/api/patches",
+        "/api/patches/guard-patch",
+        "/api/patches/guard-patch/primitives/orders"
+      ]) {
+        for (const headers of [{}, { cookie }]) {
+          assert.deepStrictEqual(
+            yield* answer(
+              yield* send(HttpClientRequest.get(target).pipe(HttpClientRequest.setHeaders(headers)))
+            ),
+            { status: 401, body: UNAUTHORIZED },
+            target
+          );
+        }
+      }
+    })
+  );
+
+  it.effect("answers 414 on overlong discovery references only after authenticating", () =>
+    Effect.gen(function* () {
+      yield* TestClock.adjust("61 seconds");
+      const long = "x".repeat(101);
+      for (const target of [
+        `/api/patches/${long}`,
+        `/api/patches/${long}/primitives/orders?state=all`
+      ]) {
+        assert.deepStrictEqual(yield* answer(yield* send(HttpClientRequest.get(target))), {
+          status: 401,
+          body: UNAUTHORIZED
+        });
+        assert.deepStrictEqual(
+          yield* answer(
+            yield* send(
+              HttpClientRequest.get(target).pipe(HttpClientRequest.bearerToken(DEV_SEED.token))
+            )
+          ),
+          { status: 414, body: { ok: false, error: "Request target is too long." } }
+        );
+      }
+      assert.deepStrictEqual(
+        yield* answer(
+          yield* send(
+            HttpClientRequest.get(`/api/patches/${long}/primitives/orders/extra`).pipe(
+              HttpClientRequest.bearerToken(DEV_SEED.token)
+            )
+          )
+        ),
+        { status: 404, body: NOT_FOUND }
+      );
     })
   );
 
