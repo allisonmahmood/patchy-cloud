@@ -722,7 +722,21 @@ warning after the local logout succeeds, never exit 3.
 Every command takes these, before or after the subcommand:
 
 - `--api-url <url>` — the highest-precedence instance override; for repo commands it must match the authoritative stored instance. See [precedence](#environment-variables).
-- `--json` prints one result document on stdout. Command success shapes are documented above; `auth set` prints `{ "ok": true, "instanceUrl" }`, `validate` prints `{ "ok": true, "warnings" }`, and `whoami`, `publish`, `share` and `delete` print the API shapes in [`docs/API.md`](../../docs/API.md). Publish and share include `scope`. A failure is `{ "ok": false, "error", "kind", "code"?, "state"? }` on stderr, ordinarily empty stdout, with the exit code for `kind`. A discovery `wrong_state` refusal includes the patch's actual `state`. `code` preserves wire refusals and also identifies local repo checks: `instance_mismatch`, `release_mismatch`, `stale_generated`, `invalid_manifest`, `too_large` and `tier_mismatch`. Their meanings and remedies are in the [local-code contract](../../docs/adr/ADR-0004-cli-contract-for-agents.md#local-repo-refusal-codes). Local dev also exposes `not_additive` and `not_running`. Local checks are exit 1, `local`; the same code on a wire refusal is exit 2, `rejected`. Other local failures may have no code; terminal login refusals currently use `kind` and `error` without a code. Stderr is otherwise empty; warnings belong in success documents. `status` prints JSON either way.
+- `--json` prints one result document on stdout. Command success shapes are documented above; `auth set` prints `{ "ok": true, "instanceUrl" }`, `validate` prints `{ "ok": true, "warnings" }`, and `whoami`, `publish`, `share`, `retire`, `delete`, `restore`, `rollback` and `describe` print the API shapes in [`docs/API.md`](../../docs/API.md). Publish and share include `scope`. `status` prints JSON either way.
+
+A failure is `{ ok: false, error, kind, code?, state?, owner?, dependants?, sources?, purgeAt?, warnings? }`
+on stderr, ordinarily with empty stdout and the exit code for `kind`. Lifecycle
+refusals retain the affected owner, patch state, dependant/source lists or reclaim
+date. Notices discovered before a later failure remain in `warnings`; success
+warnings stay in the stdout document. There is no separate JSON-mode warning output.
+
+Branch on `kind`/exit first, then `code`. Codes preserve wire refusals and identify
+local checks, including repo validation, `invalid_description`, and dev's
+`not_additive` and `not_running`. Local checks are exit 1, `local`; the same code
+on a wire refusal is exit 2, `rejected`. Meanings and remedies are in the
+[local-code contract](../../docs/adr/ADR-0004-cli-contract-for-agents.md#local-repo-refusal-codes).
+Other local failures may have no code; terminal login refusals currently use
+`kind` and `error` without a code.
 
 Argument parse failures can print usage on stdout before the error, as
 ADR-0004 records. Check the exit code before parsing stdout as a success document.
@@ -736,7 +750,11 @@ ADR-0004 records. Check the exit code before parsing stdout as a success documen
 - `--share company|public` — on `publish`, explicitly set who may read the patch. Without it, creates default to company and updates preserve scope.
 - `--new` — on `publish`, always create a new patch with a server-generated ID instead of updating the one previously published from this path. It cannot be combined with `--patch`.
 - `--patch <patch-id>` — on `publish`, update a specific existing patch. This is update-only and never creates a new patch. It cannot be combined with `--new`.
-- `--patch <patch-id>` — on `share` and `delete`, name the patch outright instead of finding it from the file it was published from. It cannot be combined with a file argument.
+- `--patch <patch-id>`: on `share`, `retire`, `delete`, `restore`, `rollback` and `describe`, name the patch instead of using the repo id or file cache. It cannot be combined with a file argument.
+- `--force`: on `retire`, `delete`, `restore` and `publish`, accept the reported dependant/source breakage. Ask the person you are working for first.
+- `--yes`: on `delete`, confirm deletion without an interactive prompt. Required for agent, JSON and non-terminal calls; it does not imply `--force`.
+- `--clear`: on `describe`, remove the description instead of supplying text.
+- `--description <text>`: on file-mode `publish`, set the description. Repo mode refuses the flag and points at `patchy.json`.
 - `--tier 0|1` — on `init`, the new repo's declared tier; default 1.
 - `--purpose <text>` — on `init`, required for agent, JSON and non-terminal invocations; asked at an interactive human terminal otherwise.
 - `--as <alias>` — on `add`, override the default camelCased Postgres-handle or shared-table name.
@@ -748,7 +766,7 @@ ADR-0004 records. Check the exit code before parsing stdout as a success documen
 ## Environment variables
 
 - `PATCHY_API_URL` — API base URL. Overrides saved CLI config; overridden by `--api-url` and by a dev env. An effective override must match a repo's stored instance. Default outside repo mode: `http://localhost:3000`.
-- `PATCHY_API_TOKEN` — machine token for authenticated commands such as `whoami`, `publish`, `share` and `delete`. It overrides every other token; `auth set` does not read it, and `logout` does not remove or revoke it. No configured key means a local error naming `patchy login`.
+- `PATCHY_API_TOKEN`: machine token used by authenticated commands, including discovery, repo preparation, publishing and lifecycle management. It overrides every other token; `auth set` does not read it, and `logout` does not remove or revoke it. No configured key means a local error naming `patchy login`.
 - `PATCHY_STATE_DIR` — directory for the CLI's config, credentials, pending logins, patch cache and default style. Default: `~/.patchy`.
 
 Setting any of these to the empty string means the same thing as leaving it unset.

@@ -142,9 +142,9 @@ These commands never create a patch and require its owner's publishing key.
 - `delete [file] [--patch <id>] --yes` takes a live or retired patch off for 30 days. Ask the user first. Without `--yes`, only a human terminal can confirm; an agent gets local exit 1.
 - `restore [file] [--patch <id>]` brings it back at the same address before the returned `purgeAt`. A deleted file's cache entry is forgotten, so restore it by id.
 - `rollback <n> [file] [--patch <id>]` serves retained version n of a live patch. Data, sharing, description and name stay unchanged.
-- `describe "<text>"`, `describe <file> "<text>"` or `describe "<text>" --patch <id>` edits a live or retired patch's description. Use `describe [file] --clear [--patch <id>]` to empty it. Repo-targeted describe also rewrites `patchy.json`.
+- `describe "<text>"`, `describe <file> "<text>"` or `describe "<text>" --patch <id>` edits a live or retired patch's description. Use `describe [file] --clear [--patch <id>]` to empty it. Without a file or `--patch`, describe uses the repo id and rewrites `patchy.json`; explicit targets do not change the local repo.
 
-Every verb accepts `--json`. Branch on `code`; refusal documents preserve
+Every verb accepts `--json`. Branch on `kind`/exit first, then `code`; refusal documents preserve
 `owner`, `state`, `dependants`, `sources` or `purgeAt` when applicable.
 `has_dependants` lists the live tools that retire, delete or an unshare would
 break. `sources_off` lists sources that a restored tool would fail to read.
@@ -371,10 +371,10 @@ browser sign-out is a separate control on **Your machines**.
   Older versions, and all versions after taking a patch back to company, have origin responses
   of `private, no-store` and answer 401 without a session. Previously public copies may remain
   cached for up to 60 seconds; already downloaded copies cannot be recalled.
-- "Take that page down" is `patchy delete './plan.html'`, using its original
-  file, or `patchy delete --patch <id>`. Confirm with the user first. Deletion
-  reserves the name and keeps the patch recoverable through the API until `purgeAt`,
-  30 days after deletion. New lifecycle CLI verbs are not implemented yet.
+- For take-down and recovery, follow [Managing a patch](#managing-a-patch).
+  If the user chooses deletion, confirm first, then use
+  `patchy delete './plan.html' --yes` or `patchy delete --patch <id> --yes`.
+  Restore by id before the returned `purgeAt`, 30 days after deletion.
   The origin stops serving it immediately, but a public copy may remain cached
   for up to 60 seconds; downloaded copies cannot be recalled.
 - CLI state lives in the state dir, `~/.patchy` by default. The `status --json` probe
@@ -386,13 +386,16 @@ browser sign-out is a separate control on **Your machines**.
   `busy` or `source_unavailable`), and `3` means there was no usable answer
   (network failure, undecodable body or unmodelled 5xx) — try later or contact
   Patchy about the unavailable instance. `130` is an interruption.
-- Every command takes `--json`: one JSON document on stdout on success, `{ "ok": false,
-"error", "kind", "code"?, "state"? }` on stderr on failure, where `kind` is `local`, `rejected` or
-  `unreachable` and matches the exit code. Branch on `kind`/exit first, then
-  `code` when present. Repo checks emit local `instance_mismatch`,
-  `release_mismatch`, `stale_generated`, `invalid_manifest`, `too_large` and
-  `tier_mismatch` (exit 1); the same code from the instance is `rejected`
-  (exit 2). Other local failures may have no code. For machine-branching remedies,
+- Every command takes `--json`: one JSON document on stdout on success;
+  `{ ok: false, error, kind, code?, state?, owner?, dependants?, sources?, purgeAt?, warnings? }`
+  on stderr on failure. `kind` is `local`, `rejected` or `unreachable` and matches
+  the exit code. Branch on `kind`/exit first, then `code` when present.
+  Relay `warnings` even when a later step fails. Repo checks emit local
+  `instance_mismatch`, `release_mismatch`, `stale_generated`, `invalid_manifest`,
+  `too_large` and `tier_mismatch` (exit 1). Invalid description text caught before
+  sending a request is local `invalid_description`; the same code from the
+  instance is `rejected` (exit 2). Other local failures may have no code.
+  For machine-branching remedies,
   read the [local-code contract](https://github.com/allisonmahmood/patchy-cloud/blob/main/docs/adr/ADR-0004-cli-contract-for-agents.md#local-repo-refusal-codes).
   `publish --json` prints the instance's response as it is on the wire
   (`patchId`, `name`, `address`, `publicUrl`, `scope`, `tier`, `versionNumber`, `schemaRevision`,

@@ -78,6 +78,11 @@ instance is `rejected` (exit 2). Not every local failure has a structured code
 | `too_large`         | The HTML bundle exceeds its tier's local cap: 512 KiB at tier 0, 10 MiB at tier 1. Reduce the resources named in the largest-contributor report; size alone is not a tier mismatch.                                                                                                                                                                  |
 | `tier_mismatch`     | The evident capabilities do not fit the declared or supported tier. Remove unsupported server code/tier 2+, or use tier 1 for browser code; at tier 0 correct the reported core static-HTML policy violations.                                                                                                                                       |
 
+Description preflight in `init --purpose`, `describe` and file publishing with
+`--description` can also emit `invalid_description` locally (exit 1), before any
+description request is sent. Repair the text using the reported constraint.
+An instance's HTTP 422 `invalid_description` is still `rejected` (exit 2).
+
 ### Instance, credentials and local state
 
 For `list`, `init` and file-oriented commands, the instance is resolved once per command:
@@ -368,10 +373,12 @@ relaxes that baseline. A standalone Vite preview does not execute capabilities.
 Inside a published repo, untargeted share, retire, delete, restore, rollback and
 describe use `patchy.json`. An unpublished repo is a local refusal. A file and
 `--patch` conflict; each verb uses the same per-instance file cache.
+Only untargeted `describe` rewrites this repo's description and sync stamp.
+An explicit file or `--patch` target does not mutate the local repo binding.
 Delete leaves its repo id in place. A later publish returns `patch_deleted`
 with `purgeAt`; preserve the id for restoration. Only a gone patch's 404
 requires intentionally creating another patch.
-`--name`, `--patch` and `--new` are file-mode flags; a failed repo build never
+On `publish`, `--name`, `--patch` and `--new` are file-mode flags; a failed repo build never
 falls back to file mode. An unavailable cached file target likewise never
 creates silently; use `--new`. Any machine key for the owner can manage the
 patch; company membership or an admin role alone does not confer ownership.
