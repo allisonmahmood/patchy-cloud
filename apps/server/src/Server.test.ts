@@ -27,6 +27,18 @@ const sessionCookie = (sub: string = DEV_SEED.clerkUserId, email: string = DEV_S
   signedInCookies(signSession({ sub, email, azp: publicBaseUrl }));
 const signedRequest = (path: string, cookie = sessionCookie()) =>
   HttpClientRequest.get(path).pipe(HttpClientRequest.setHeader("cookie", cookie));
+const attributes = (tag: string): Record<string, string> =>
+  Object.fromEntries(
+    [...tag.matchAll(/\s([\w-]+)(?:="([^"]*)")?/g)].map(([, name, value]) => [
+      name!,
+      (value ?? "")
+        .replaceAll("&quot;", '"')
+        .replaceAll("&#39;", "'")
+        .replaceAll("&lt;", "<")
+        .replaceAll("&gt;", ">")
+        .replaceAll("&amp;", "&")
+    ])
+  );
 
 it.effect("refuses startup without an explicit public base URL", () =>
   Effect.gen(function* () {
@@ -39,6 +51,79 @@ it.effect("refuses startup without an explicit public base URL", () =>
     assert.include(error.message, "PATCHY_PUBLIC_BASE_URL");
   })
 );
+
+it.layer(
+  server({ PATCHY_PUBLIC_BASE_URL: publicBaseUrl }).pipe(
+    Layer.provideMerge(Layer.succeed(FetchHttpClient.RequestInit)({ redirect: "manual" }))
+  )
+)("address notice restore contract", (it) => {
+  it.effect("restores retired and deleted patches through their address notice forms", () =>
+    Effect.gen(function* () {
+      const document = html("Restored through the address notice");
+      const created = yield* publish(DEV_SEED.token, { html: document });
+      assert.strictEqual(created.status, 201);
+      const { patchId, address } = (yield* created.json) as { patchId: string; address: string };
+      const patchPath = new URL(address).pathname;
+      const cookie = sessionCookie();
+
+      for (const state of ["retired", "deleted"] as const) {
+        const request =
+          state === "retired"
+            ? HttpClientRequest.post(`/api/patches/${patchId}/retire`).pipe(
+                HttpClientRequest.bodyJsonUnsafe({})
+              )
+            : HttpClientRequest.delete(`/api/patches/${patchId}`);
+        const changed = yield* send(request.pipe(HttpClientRequest.bearerToken(DEV_SEED.token)));
+        assert.strictEqual(changed.status, 200, state);
+
+        const notice = yield* send(signedRequest(patchPath, cookie));
+        assert.strictEqual(notice.status, 200);
+        const noticeHtml = yield* notice.text;
+        assert.notInclude(noticeHtml, "<iframe");
+        const form = [...noticeHtml.matchAll(/<form\b([^>]*)>([\s\S]*?)<\/form>/g)].find((match) =>
+          /<button\b[^>]*>\s*Restore\s*<\/button>/.test(match[2]!)
+        );
+        assert.isDefined(form, `${state} notice offers Restore`);
+        const formAttributes = attributes(form![1]!);
+        assert.strictEqual(formAttributes.method?.toLowerCase(), "post");
+        assert.isString(formAttributes.action);
+        const fields = new URLSearchParams();
+        for (const [tag] of form![2]!.matchAll(/<input\b[^>]*>/g)) {
+          const input = attributes(tag);
+          if (
+            input.type?.toLowerCase() === "hidden" &&
+            input.name &&
+            !Object.hasOwn(input, "disabled")
+          ) {
+            fields.append(input.name, input.value ?? "");
+          }
+        }
+
+        const restored = yield* send(
+          HttpClientRequest.post(formAttributes.action!).pipe(
+            HttpClientRequest.setHeaders({ cookie, origin: publicBaseUrl }),
+            HttpClientRequest.bodyText(fields.toString(), "application/x-www-form-urlencoded")
+          )
+        );
+        assert.strictEqual(restored.status, 303, `${state} notice form restores the patch`);
+        assert.isString(restored.headers.location);
+        const card = yield* send(signedRequest(restored.headers.location!, cookie));
+        assert.strictEqual(card.status, 200);
+        const open = [...(yield* card.text).matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/g)].find(
+          (match) => match[2]?.trim() === "Open"
+        );
+        assert.isDefined(open, "the restored patch card offers Open");
+        const href = attributes(open![1]!).href;
+        assert.isString(href);
+        const page = yield* send(signedRequest(href!, cookie));
+        assert.strictEqual(page.status, 200);
+        const frame = (yield* page.text).match(/<iframe\b[^>]*>/)?.[0];
+        assert.isDefined(frame, "the restored patch opens its document");
+        assert.strictEqual(attributes(frame!).srcdoc, document);
+      }
+    })
+  );
+});
 
 it.layer(
   server({
@@ -438,6 +523,7 @@ it.layer(
     () =>
       Effect.gen(function* () {
         const created = yield* publish(DEV_SEED.token, { html: html("Restricted content") });
+        assert.strictEqual(created.status, 201);
         const { patchId, address } = (yield* created.json) as { patchId: string; address: string };
         const addressPath = new URL(address).pathname;
         const sql = yield* SqlClient.SqlClient;

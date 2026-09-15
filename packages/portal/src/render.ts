@@ -2,7 +2,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import type { RequireSession } from "@patchy/auth";
 import type { Users } from "@patchy/companies";
-import { escapeAttribute, escapeHtml } from "@patchy/core";
+import { dateLabel, daysLeft, escapeAttribute, escapeHtml, renderOffPatch } from "@patchy/core";
 import { Patches } from "@patchy/patches";
 
 export const styles = `
@@ -24,12 +24,7 @@ export const styles = `
   }
 `;
 
-const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const epochMillis = (iso: string) => DateTime.toEpochMillis(DateTime.makeUnsafe(iso));
-const dateLabel = (iso: string): string => {
-  const parts = DateTime.toPartsUtc(DateTime.makeUnsafe(iso));
-  return `${parts.day} ${months[parts.month - 1]} ${parts.year}`;
-};
 
 export const ago = (iso: string, now: number): string => {
   const seconds = Math.max(0, Math.round((now - epochMillis(iso)) / 1000));
@@ -39,9 +34,6 @@ export const ago = (iso: string, now: number): string => {
   if (seconds < 86_400) return unit(Math.round(seconds / 3600), "hour");
   return unit(Math.round(seconds / 86_400), "day");
 };
-
-const daysLeft = (purgeAt: string, now: number) =>
-  Math.max(0, Math.ceil((epochMillis(purgeAt) - now) / 86_400_000));
 
 const firstClause = (description: string): string => {
   const text = description.trim();
@@ -76,7 +68,7 @@ const indexGroup = (
       patch.state === "retired"
         ? "retired"
         : patch.state === "deleted"
-          ? `deleted · gone in ${daysLeft(patch.purgeAt!, now)} days`
+          ? `deleted · gone in ${daysLeft(epochMillis(patch.purgeAt!), now)} days`
           : "";
     const clause = firstClause(patch.description);
     return `<li class="list-row"><a class="list-link" href="${escapeAttribute(cardPath(patch, all))}"${card?.patch.id === patch.id ? ' aria-current="page"' : ""}><span class="portal-index-line">${escapeHtml(patch.name)}</span><span class="supporting-text portal-index-line">${escapeHtml(clause || "No description")}</span>${state ? `<span class="pill">${escapeHtml(state)}</span>` : ""}${row.owner.deactivated ? '<span class="pill">owner deactivated</span>' : ""}</a></li>`;
@@ -222,22 +214,6 @@ const versionsSection = (
   return `<section class="section"><h3 class="section-heading">Versions</h3>${versionsTable(card, shown, viewer, all, now)}<p class="supporting-text">The address changes for everyone now. Tables and the description do not move.</p><p><a href="${escapeAttribute(cardPath(card.patch, all, "versions"))}">All ${escapeHtml(card.versions.length)} versions</a></p></section>`;
 };
 
-const restoreActions = (card: Patches.PortalCard, all: boolean, now: number): string => {
-  const { patch } = card;
-  if (patch.state === "deleted" && (patch.purgeAt === null || epochMillis(patch.purgeAt) <= now)) {
-    return '<p class="supporting-text">The recovery window has ended. This patch can no longer be restored.</p>';
-  }
-  const restore =
-    card.offSources.length === 0
-      ? `<form method="post" action="${escapeAttribute(cardPath(patch, all, "restore"))}">${hidden("expectedState", patch.state)}<button class="btn btn-primary" type="submit">Restore</button></form>`
-      : `<a class="btn btn-primary" href="${escapeAttribute(cardPath(patch, all, "restore"))}">Restore…</a>`;
-  const hint =
-    card.offSources.length === 0
-      ? `Restore brings it back live at v${card.currentVersion} with the same address.`
-      : "It reads tables from patches that are off. Review those sources before restoring it.";
-  return `<div class="actions">${restore}${patch.state === "retired" ? `<a class="btn btn-danger" href="${escapeAttribute(cardPath(patch, all, "delete"))}">Delete…</a>` : ""}</div><p class="supporting-text">${escapeHtml(hint)}${patch.state === "retired" ? " Delete starts the 30-day clock." : ""}</p>`;
-};
-
 const renderCard = (input: {
   readonly card: Patches.PortalCard;
   readonly viewer: RequireSession.Viewer["Service"];
@@ -263,20 +239,41 @@ const renderCard = (input: {
     patch.scope === "company"
       ? `Anyone at ${viewer.company.name} who signs in. Not the public.`
       : "Anyone on the internet. No sign-in.";
-  const stateActor = patch.state === "retired" ? card.actorNames.retired : card.actorNames.deleted;
-  const stateAt = patch.state === "retired" ? patch.retiredAt : patch.deletedAt;
-  const stateFact = live
-    ? ""
-    : `<dt>State</dt><dd>${patch.state === "retired" ? "Retired" : "Deleted"}${stateActor === null ? "" : ` by ${escapeHtml(stateActor)}`}${stateAt === null ? "" : `, ${escapeHtml(dateLabel(stateAt))}`}</dd>`;
+  const off =
+    patch.state === "live"
+      ? null
+      : renderOffPatch({
+          name: patch.name,
+          state: patch.state,
+          actorName: patch.state === "retired" ? card.actorNames.retired : card.actorNames.deleted,
+          stateAt: patch.state === "retired" ? patch.retiredAt : patch.deletedAt,
+          purgeAt: patch.purgeAt,
+          now,
+          restore: manage
+            ? {
+                href: cardPath(patch, all, "restore"),
+                sourcesOff: card.offSources.length > 0,
+                currentVersion: card.currentVersion
+              }
+            : null
+        });
+  const stateFact = off?.stateFact ?? "";
   const facts =
     !live && !manage
       ? `<dl class="facts">${stateFact}</dl>`
       : `<dl class="facts">${stateFact}<dt>Owner</dt><dd>${owner}</dd><dt>Current version</dt><dd>${escapeHtml(versionFact)}</dd>${live ? `<dt>Who can open it</dt><dd>${escapeHtml(audience)}</dd>` : ""}<dt>Used by other patches</dt><dd>${dependantsFact(groups, all)}</dd></dl>`;
-  const offNote = live
-    ? ""
-    : patch.state === "retired"
-      ? `<div class="note"><span class="note-title">Off the shelf, kept as it was</span>Its tables, files and all its versions are kept for as long as you like; nobody can open <code>${escapeHtml(patch.name)}</code> until it is restored.</div>`
-      : `<div class="note note-warn"><span class="note-title">Gone for good in ${escapeHtml(daysLeft(patch.purgeAt!, now))} days</span>Until then the owner or an admin can restore it; after that the page, its versions, tables, files and the name are all reclaimed.</div>`;
+  const offNote = off?.note ?? "";
+  let restoreActions = "";
+  if (manage && off !== null) {
+    const deleteLink =
+      patch.state === "retired"
+        ? `<a class="btn btn-danger" href="${escapeAttribute(cardPath(patch, all, "delete"))}">Delete…</a>`
+        : "";
+    const deleteHint = patch.state === "retired" ? " Delete starts the 30-day clock." : "";
+    restoreActions =
+      off.recoveryEnded ||
+      `<div class="actions">${off.restoreControl}${deleteLink}</div><p class="supporting-text">${off.restoreHint}${deleteHint}</p>`;
+  }
   const deactivated =
     viewer.role === "admin" && card.owner.deactivated
       ? `<div class="note note-warn">Nobody can publish to this patch. Its owner is deactivated.${live ? " Reassign it or retire it." : ""}</div>`
@@ -290,7 +287,7 @@ const renderCard = (input: {
       ? `<section class="note note-warn"><span class="note-title">Stop serving</span><p>${groups.length === 0 ? "Nothing else reads this patch." : `${escapeHtml(groups.length)} ${groups.length === 1 ? "patch reads" : "patches read"} this patch's tables and will break until it is restored. You will be asked to confirm.`}</p><div class="actions portal-stop-actions"><div><a class="btn btn-danger" href="${escapeAttribute(cardPath(patch, all, "retire"))}">Retire…</a><p class="supporting-text">Keeps everything indefinitely. Nobody can open it until it is restored.</p></div><div><a class="btn btn-danger" href="${escapeAttribute(cardPath(patch, all, "delete"))}">Delete…</a><p class="supporting-text">Keeps it 30 days, then it is gone for good.</p></div></div></section>`
       : "";
   const management = manage
-    ? `${adminLine}<section class="section" aria-labelledby="manage-heading"><h2 class="section-heading" id="manage-heading">Manage</h2>${live ? "" : restoreActions(card, all, now)}${patch.state === "deleted" ? "" : descriptionForm(card, all, input.submittedDescription, input.descriptionError)}${live ? scopeForm(card, all) + versionsSection(card, viewer, all, now) + stop : ""}</section>`
+    ? `${adminLine}<section class="section" aria-labelledby="manage-heading"><h2 class="section-heading" id="manage-heading">Manage</h2>${restoreActions}${patch.state === "deleted" ? "" : descriptionForm(card, all, input.submittedDescription, input.descriptionError)}${live ? scopeForm(card, all) + versionsSection(card, viewer, all, now) + stop : ""}</section>`
     : "";
   return `<article class="portal-card"><p class="supporting-text">${escapeHtml(patch.companyHandle)} / ${escapeHtml(patch.name)}</p><h1 class="page-heading">${escapeHtml(patch.name)}</h1>${titleLine(patch)}${descriptionBlock(card)}${open}${facts}${offNote}${deactivated}${management}</article>`;
 };

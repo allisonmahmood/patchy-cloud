@@ -164,6 +164,52 @@ describe("patch pages", () => {
     expect(html).toContain(`action="/patches/${encodeURIComponent(markup)}/restore"`);
   });
 
+  it("formats off-state dates in UTC with stable month labels", () => {
+    const retiredAt = "2026-08-31T23:30:00.000-02:00";
+    const html = renderAddressNotice({
+      patch: { ...patch, state: "retired", retiredAt },
+      actorName: null,
+      sourcesOff: false,
+      viewer: {
+        user: { id: DEV_SEED.userId, email: "dev@patchy.local", name: "Owner" },
+        company: { id: DEV_SEED.companyId, handle: DEV_SEED.companyHandle, name: "Company" },
+        role: "member"
+      },
+      now: Date.UTC(2026, 8, 1, 2)
+    });
+    expect(html).toContain(`<time datetime="${retiredAt}">1 Sep 2026</time>`);
+  });
+
+  it("removes source-review restore controls and hints at the recovery deadline", () => {
+    const purgeAt = "2026-10-01T00:00:00.000Z";
+    const input = {
+      patch: {
+        ...patch,
+        state: "deleted" as const,
+        deletedAt: "2026-09-01T00:00:00.000Z",
+        purgeAt
+      },
+      actorName: null,
+      sourcesOff: true,
+      viewer: {
+        user: { id: DEV_SEED.userId, email: "dev@patchy.local", name: "Owner" },
+        company: { id: DEV_SEED.companyId, handle: DEV_SEED.companyHandle, name: "Company" },
+        role: "member" as const
+      }
+    };
+    const before = renderAddressNotice({ ...input, now: Date.parse(purgeAt) - 1 });
+    expect(before).toContain('href="/patches/render-fixture/restore"');
+    expect(before).toContain("Gone for good in 1 days");
+    expect(before).toContain("Review those sources before restoring it.");
+
+    const ended = renderAddressNotice({ ...input, now: Date.parse(purgeAt) });
+    expect(ended).not.toContain("/patches/render-fixture/restore");
+    expect(ended).not.toContain("Review those sources before restoring it.");
+    expect(ended).toContain("Gone for good in 0 days");
+    expect(ended).toContain("This patch can no longer be restored.");
+    expect(ended).toContain('href="/patches/render-fixture"');
+  });
+
   it("keeps a public patch in a script-free sandboxed frame", () => {
     const html = renderPatchWrapper({
       patch,
