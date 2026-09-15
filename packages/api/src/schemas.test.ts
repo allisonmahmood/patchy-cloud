@@ -8,6 +8,7 @@ import {
   PatchId,
   PatchQuotaExceeded,
   PatchInventory,
+  PrimitiveDetail,
   NotAdditive,
   RateLimited,
   Shared,
@@ -34,6 +35,25 @@ const manifest = {
 };
 const attempt = { manifest, publishKey: "test-key", metadata: {} };
 describe("wire schemas", () => {
+  it("distinguishes an absent primitive default from an explicit null default", () => {
+    const wire = {
+      kind: "table" as const,
+      name: "notes",
+      description: "Notes keyed by id.",
+      shared: true,
+      schemaRevision: 2,
+      columns: [
+        { name: "title", kind: "text" as const, optional: false },
+        { name: "metadata", kind: "json" as const, optional: false, default: null }
+      ],
+      indexes: []
+    };
+    const result = roundTrip(PrimitiveDetail, wire);
+    expect(result).toEqual(wire);
+    expect(Object.hasOwn(result.columns[0]!, "default")).toBe(false);
+    expect(Object.hasOwn(result.columns[1]!, "default")).toBe(true);
+  });
+
   it("preserves cumulative definitions and structured additive refusals on the wire", () => {
     const inventory = {
       schemaRevision: 3,
