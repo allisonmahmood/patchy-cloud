@@ -299,8 +299,13 @@ it.layer(layer)("portal pages on a socket", (it) => {
           assert.notInclude(html, `${cardPath(patch.name)}/rollback`);
           assert.notInclude(html, `${cardPath(patch.name)}/retire`);
           const controls = forms(html).filter((path) => path.startsWith(cardPath(patch.name)));
-          if (person === workspace.member) assert.deepStrictEqual(controls, []);
-          else {
+          if (person === workspace.member) {
+            assert.deepStrictEqual(controls, []);
+            assert.deepStrictEqual(
+              [...html.matchAll(/<dt>(.*?)<\/dt>/g)].map((match) => text(match[1]!)),
+              ["State"]
+            );
+          } else {
             assert.include(controls, `${cardPath(patch.name)}/restore`);
             assert.strictEqual(hidden(html, "expectedState"), state);
             if (state === "retired") {
@@ -678,6 +683,12 @@ it.layer(layer)("portal pages on a socket", (it) => {
           /<textarea\b[^>]*>[\s\S]*&lt;script&gt;x{501}&lt;\/script&gt;[\s\S]*<\/textarea>/
         );
         assert.notInclude(html, invalid);
+        assert.match(html, /<label\b[^>]*for="description"[^>]*>Description<\/label>/);
+        assert.match(
+          html,
+          /<textarea\b[^>]*aria-describedby="description-hint description-error"[^>]*aria-invalid="true"/
+        );
+        assert.match(html, /<p\b[^>]*id="description-error"[^>]*>[^<]*500[^<]*<\/p>/);
         assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), before);
         const valid = "\u{10400}".repeat(500);
         assert.strictEqual(
@@ -720,6 +731,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
       const service = yield* Patches.Patches;
       const patch = yield* publish(workspace.owner, "retired-act");
       yield* service.retire(patch.patchId, actor(workspace.admin));
+      yield* service.setDescription(patch.patchId, actor(workspace.admin), "Edited after retire");
       const before = yield* readPatch(workspace.owner, patch.patchId);
       for (const [action, fields] of [
         ["scope", { scope: "public", expectedScope: "company" }],
@@ -730,7 +742,11 @@ it.layer(layer)("portal pages on a socket", (it) => {
         const html = yield* response.text;
         assert.strictEqual(heading(html), patch.name);
         assert.notInclude(html, `${cardPath(patch.name)}/${action}`);
-        assert.include(text(html).toLowerCase(), "retired");
+        const notice = text(
+          html.match(/<div\b[^>]*role="alert"[^>]*>([\s\S]*?)<\/div>/)?.[1] ?? ""
+        );
+        assert.include(notice, "description changed by Sam");
+        assert.match(notice, /\bretired\b/);
         assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), before);
       }
     })
