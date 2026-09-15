@@ -1,6 +1,6 @@
 /**
  * The `patches` group of the Patchy API, implemented over `Content`,
- * `Patches`, `Limits` and `Analytics`: publish, owner-only sharing and delete. The
+ * `Patches`, `Limits` and `Analytics`: publish and owner lifecycle actions. The
  * identity comes from the bearer middleware the group declares; this
  * package never authenticates anyone.
  * The hosting server mounts the group with the rest of the API.
@@ -17,6 +17,8 @@ import {
   Conflict,
   CurrentIdentity,
   decodeBody,
+  DescriptionRequest,
+  ForceRequest,
   InvalidHtml,
   type MalformedBody,
   NotFound,
@@ -35,6 +37,7 @@ import {
   Deleted,
   Restored,
   RolledBack,
+  RollbackRequest,
   Described,
   NotAdditive,
   PublishUnavailable,
@@ -168,6 +171,15 @@ const decodeRelease = decodeBody(
 );
 const decodeManifest = Schema.decodeUnknownEffect(Manifest, { onExcessProperty: "error" });
 const decodeShare = decodeBody(ShareRequest);
+const decodeForce = decodeBody(ForceRequest);
+const decodeRollback = decodeBody(RollbackRequest);
+const decodeDescription = decodeBody(DescriptionRequest);
+const bodyFailures = {
+  MalformedBody: () =>
+    Effect.succeed(refuse(BadRequest, { ok: false, error: "Malformed request body." })),
+  BodyTooLarge: () =>
+    Effect.succeed(refuse(PayloadTooLarge, { ok: false, error: "Request body is too large." }))
+};
 
 /**
  * Which field failed decides the answer, as it always has: no usable document
@@ -224,7 +236,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
     const createRateLimitPerMinute = yield* PatchesConfig.patchCreateRateLimitPerMinute;
     const publishRateLimitPerMinute = yield* PatchesConfig.publishRateLimitPerMinute;
     const maxPublishBodyBytes = yield* PatchesConfig.maxPublishBodyBytes;
-    // Larger scripted bundles widen only publish; sharing keeps its existing request cap.
+    // Larger scripted bundles widen only publish; owner actions keep the sharing request cap.
     const maxShareBodyBytes = maxHtmlBytes * 3;
     const currentRelease = yield* PatchesConfig.release;
     const livePatchesPerUser = yield* PatchesConfig.livePatchesPerUser;
@@ -499,14 +511,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
           const identity = yield* CurrentIdentity;
           const payload = yield* readBody(maxShareBodyBytes).pipe(
             Effect.flatMap(decodeShare),
-            Effect.catchTags({
-              MalformedBody: () =>
-                Effect.succeed(refuse(BadRequest, { ok: false, error: "Malformed request body." })),
-              BodyTooLarge: () =>
-                Effect.succeed(
-                  refuse(PayloadTooLarge, { ok: false, error: "Request body is too large." })
-                )
-            })
+            Effect.catchTags(bodyFailures)
           );
           if (HttpServerResponse.isHttpServerResponse(payload)) return payload;
           const shared = yield* patches
@@ -521,9 +526,14 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
           });
         })
       )
-      .handle("retire", ({ params, payload }) =>
+      .handleRaw("retire", ({ params }) =>
         Effect.gen(function* () {
           const identity = yield* CurrentIdentity;
+          const payload = yield* readBody(maxShareBodyBytes).pipe(
+            Effect.flatMap(decodeForce),
+            Effect.catchTags(bodyFailures)
+          );
+          if (HttpServerResponse.isHttpServerResponse(payload)) return payload;
           const patch = yield* patches
             .retire(params.patchId, { userId: identity.user.id, admin: false }, payload.force)
             .pipe(Effect.catchTags(ownerFailures));
@@ -536,9 +546,14 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
           });
         })
       )
-      .handle("restore", ({ params, payload }) =>
+      .handleRaw("restore", ({ params }) =>
         Effect.gen(function* () {
           const identity = yield* CurrentIdentity;
+          const payload = yield* readBody(maxShareBodyBytes).pipe(
+            Effect.flatMap(decodeForce),
+            Effect.catchTags(bodyFailures)
+          );
+          if (HttpServerResponse.isHttpServerResponse(payload)) return payload;
           const patch = yield* patches
             .restore(params.patchId, { userId: identity.user.id, admin: false }, payload.force)
             .pipe(Effect.catchTags(ownerFailures));
@@ -546,9 +561,14 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
           return new Restored({ ok: true, patchId: patch.id, state: "live" });
         })
       )
-      .handle("rollback", ({ params, payload }) =>
+      .handleRaw("rollback", ({ params }) =>
         Effect.gen(function* () {
           const identity = yield* CurrentIdentity;
+          const payload = yield* readBody(maxShareBodyBytes).pipe(
+            Effect.flatMap(decodeRollback),
+            Effect.catchTags(bodyFailures)
+          );
+          if (HttpServerResponse.isHttpServerResponse(payload)) return payload;
           const result = yield* patches
             .rollback(
               params.patchId,
@@ -565,9 +585,14 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
           });
         })
       )
-      .handle("describe", ({ params, payload }) =>
+      .handleRaw("describe", ({ params }) =>
         Effect.gen(function* () {
           const identity = yield* CurrentIdentity;
+          const payload = yield* readBody(maxShareBodyBytes).pipe(
+            Effect.flatMap(decodeDescription),
+            Effect.catchTags(bodyFailures)
+          );
+          if (HttpServerResponse.isHttpServerResponse(payload)) return payload;
           const patch = yield* patches
             .setDescription(
               params.patchId,

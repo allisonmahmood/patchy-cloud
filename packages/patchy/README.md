@@ -501,6 +501,12 @@ Every patch has an address at `/<company>/<name>` and numbered versions at `/<co
 
 Before sending, the CLI authenticates the publishing key and saves the whole request, a fresh `publishKey`, the owning user ID, the original file path and cache application context in its instance-scoped state directory. The next `publish` authenticates again and recovers that attempt **before** checking today's file, cache, flags or release. A replacement token for the same owner can recover it; a different user is refused locally without sending the saved content or deleting the attempt. A successful replay updates the original file's cache and exits without another version, even if you passed a different file or `--new`.
 
+Recovery accepts retained receipts from before description metadata was added.
+It validates the receipt before applying its patch identity and clearing the
+attempt. Under `--json`, the retained fields are preserved without inventing
+`description` or `descriptionUpdatedAt`; fresh publishes still require both
+fields from the instance.
+
 Authentication failures, throttling, quota refusals, lost replies, server failures and failed cache writes keep the attempt recoverable. A definitive refusal clears it so you can correct the input or target state and start a fresh attempt. The complete [definitive-refusal clearing list in ADR-0004](../../docs/adr/ADR-0004-cli-contract-for-agents.md#definitive-publish-refusals) includes ownership and lifecycle refusals. Keep the state directory and sign in as the original owner when recovering; never discard an attempt merely because its result is unknown.
 
 Concurrent invocations through the same instance and state directory resend the same persisted attempt rather than replacing it or refusing contention. Each authenticates the attempt's original owner before sending, including an invocation that loses the race to create it. Killing a process leaves the attempt available for recovery. A response clears only its matching publish key, so a stale response cannot remove a newer attempt.

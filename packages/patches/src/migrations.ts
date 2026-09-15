@@ -83,6 +83,19 @@ export const migrations: Migrations = {
     CREATE UNIQUE INDEX patch_versions_owner_publish_key_idx ON patch_versions(owner_user_id, publish_key);
   `),
   "0008_patches_lifecycle": ddl(`
+    -- Deletes before this migration were irreversible and released their names.
+    -- Finalize those tombstones rather than offer restore at a reused address
+    -- or revive a namespace the old orphan sweep may already have removed.
+    INSERT INTO pending_patch_objects (object_key, expires_at, claimed)
+      SELECT versions.object_key, CURRENT_TIMESTAMP, false
+      FROM patch_versions versions JOIN patches ON patches.id = versions.patch_id
+      WHERE patches.deleted_at IS NOT NULL
+      ON CONFLICT (object_key) DO UPDATE
+        SET expires_at = EXCLUDED.expires_at, claimed = false;
+    DELETE FROM patch_versions
+      WHERE patch_id IN (SELECT id FROM patches WHERE deleted_at IS NOT NULL);
+    DELETE FROM patches WHERE deleted_at IS NOT NULL;
+
     ALTER TABLE patches
       DROP COLUMN expires_at,
       ADD COLUMN retired_at TIMESTAMPTZ,

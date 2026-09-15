@@ -365,6 +365,11 @@ changed before result application fails locally and keeps the attempt;
 publishing never rebinds the repo. Failed local application remains recoverable:
 retry returns the saved result without building or creating another version.
 
+Saved attempts may recover receipts written before description metadata existed.
+Recovery validates the receipt's identity and application fields, accepts absent
+description fields and preserves the retained JSON without inventing metadata.
+Fresh publishes still require the current response schema.
+
 ### Definitive publish refusals
 
 After decoding a publish-route refusal, these responses clear only its matching

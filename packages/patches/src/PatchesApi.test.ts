@@ -1,4 +1,5 @@
 import { assert, expect, it } from "@effect/vitest";
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
@@ -12,8 +13,12 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
+import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServer from "effect/unstable/http/HttpServer";
+import * as HttpApi from "effect/unstable/httpapi/HttpApi";
+import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import * as HttpApiMiddleware from "effect/unstable/httpapi/HttpApiMiddleware";
 import * as HttpApiTest from "effect/unstable/httpapi/HttpApiTest";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -21,6 +26,7 @@ import { Analytics } from "@patchy/analytics";
 import {
   Authorization,
   PatchyApi,
+  PatchesGroup,
   ShareRequest,
   ForceRequest,
   DescriptionRequest,
@@ -421,6 +427,107 @@ const publishLayer = Layer.mergeAll(PatchesApi.layer, HttpServer.layerServices).
   Layer.provideMerge(Fixtures.database),
   Layer.provide(publishConfig())
 );
+
+const lifecycleSocketLayer = HttpRouter.serve(
+  HttpApiBuilder.layer(HttpApi.make("patchy").add(PatchesGroup)),
+  { disableLogger: true, disableListenLog: true }
+).pipe(Layer.provideMerge(NodeHttpServer.layerTest), Layer.provideMerge(publishLayer));
+
+it.layer(Layer.fresh(lifecycleSocketLayer))("owner lifecycle body bounds on a socket", (it) => {
+  for (const route of ["retire", "restore", "rollback", "description"] as const) {
+    it.effect(`bounds ${route} bodies before mutation and accepts ordinary owner requests`, () =>
+      Effect.gen(function* () {
+        const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+        const first = yield* owner.publish({
+          payload: publishRequest({
+            html: html(`Bounded ${route} first`),
+            manifest: { ...Fixtures.manifest, description: "Original description" }
+          })
+        });
+        const params = { patchId: first.patchId };
+        const second = yield* owner.publish({
+          payload: publishRequest({ ...params, html: html(`Bounded ${route} second`) })
+        });
+        if (route === "restore") {
+          yield* owner.retire({ params, payload: new ForceRequest({}) });
+        }
+        const http = yield* HttpClient.HttpClient;
+        const sql = yield* SqlClient.SqlClient;
+        const patches = yield* Patches.Patches;
+        const snapshot = sql`
+          SELECT current_version_id, description, description_updated_at,
+            retired_at, deleted_at, last_changed_at
+          FROM patches WHERE id = ${first.patchId}`;
+        const before = yield* snapshot;
+        const description = String.fromCodePoint(0x20000).repeat(500);
+        const payload =
+          route === "description"
+            ? { description }
+            : route === "rollback"
+              ? { versionNumber: 1 }
+              : { force: true };
+        const padding = " ".repeat(4 * 1024 * 1024);
+        const padded =
+          route === "description"
+            ? JSON.stringify({ description: padding + description })
+            : JSON.stringify(payload) + padding;
+        const bytes = new TextEncoder().encode(padded);
+        const request = HttpClientRequest.make(route === "description" ? "PUT" : "POST")(
+          `/api/patches/${first.patchId}/${route}`
+        ).pipe(HttpClientRequest.bearerToken(uploader.machine.id));
+
+        const declared = yield* http.execute(
+          request.pipe(HttpClientRequest.bodyText(padded, "application/json"))
+        );
+        assert.strictEqual(declared.status, 413);
+        expect(yield* declared.json).toEqual({ ok: false, error: expect.any(String) });
+        assert.deepStrictEqual(yield* snapshot, before);
+
+        const chunked = request.pipe(
+          HttpClientRequest.bodyStream(
+            Stream.fromIterable([bytes.subarray(0, 1024), bytes.subarray(1024)]),
+            { contentType: "application/json" }
+          )
+        );
+        // Node closes the socket when an undeclared body crosses the cap.
+        const failure = yield* http.execute(chunked).pipe(Effect.flip);
+        assert.strictEqual(failure.reason._tag, "TransportError");
+        assert.deepStrictEqual(yield* snapshot, before);
+
+        for (const malformed of ["{", '{"force":"yes","versionNumber":0,"description":null}']) {
+          const response = yield* http.execute(
+            request.pipe(HttpClientRequest.bodyText(malformed, "application/json"))
+          );
+          assert.strictEqual(response.status, 400);
+          expect(yield* response.json).toEqual({ ok: false, error: expect.any(String) });
+        }
+        assert.deepStrictEqual(yield* snapshot, before);
+
+        const accepted = yield* http.execute(
+          request.pipe(HttpClientRequest.bodyJsonUnsafe(payload))
+        );
+        assert.strictEqual(accepted.status, 200);
+        expect(yield* accepted.json).toMatchObject({ ok: true, patchId: first.patchId });
+        if (route === "retire") {
+          assert.isTrue(Option.isNone(yield* patches.find(first.patchId)));
+          yield* owner.restore({ params, payload: new ForceRequest({}) });
+        }
+        const current = Option.getOrThrow(yield* patches.find(first.patchId));
+        assert.strictEqual(
+          current.version.id,
+          route === "rollback" ? first.versionId : second.versionId
+        );
+        assert.strictEqual(
+          current.patch.description,
+          route === "description" ? description : first.description
+        );
+        const versions = yield* sql<{ count: number }>`
+          SELECT count(*)::integer AS count FROM patch_versions WHERE patch_id = ${first.patchId}`;
+        assert.strictEqual(versions[0]!.count, 2);
+      })
+    );
+  }
+});
 
 it.layer(Layer.fresh(publishLayer))("owner lifecycle over machine tokens", (it) => {
   it.effect("retires, describes, restores, rolls back and deletes without replacing versions", () =>

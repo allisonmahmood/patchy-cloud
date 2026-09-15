@@ -26,10 +26,8 @@ import {
   Shared,
   ShareRequest,
   SharingScope,
-  PublishCreated,
   PublishMetadata,
-  PublishRequest,
-  PublishUpdated
+  PublishRequest
 } from "@patchy/api";
 import { newInternalId, sha256, validateHtml } from "@patchy/core";
 import * as Api from "./Api.js";
@@ -72,8 +70,6 @@ const runProject = <A, R>(handler: Effect.Effect<A, CliError, R>) =>
   );
 
 const encodeIdentity = Schema.encodeSync(Identity);
-// A create is 201, an update 200; the wire names them separately.
-const encodePublish = Schema.encodeSync(Schema.Union([PublishCreated, PublishUpdated]));
 const encodeDeleted = Schema.encodeSync(Deleted);
 const encodeShared = Schema.encodeSync(Shared);
 const decodeSharingScope = Schema.decodeUnknownEffect(SharingScope);
@@ -345,6 +341,7 @@ const sendPublish = Effect.fn("sendPublish")(function* (
   attempt: State.PendingPublish,
   token: Redacted.Redacted,
   ownerUserId: string,
+  replay: boolean,
   repoRoot?: string
 ) {
   const repo = attempt.target.mode === "repo" ? repoRoot : undefined;
@@ -360,7 +357,7 @@ const sendPublish = Effect.fn("sendPublish")(function* (
   }
   const instance = yield* Instance.Instance;
   const state = yield* State.State;
-  const published = yield* Api.publish(token, attempt.request).pipe(
+  const { published, document } = yield* Api.publish(token, attempt.request, replay).pipe(
     Effect.catch((error) =>
       refused(error, "Publish failed.").pipe(
         Effect.catchTags({
@@ -438,7 +435,7 @@ const sendPublish = Effect.fn("sendPublish")(function* (
     );
   }
   yield* state.forgetPendingPublish(instance.apiUrl, attempt.request.publishKey, repo);
-  yield* Output.report(encodePublish(published), [
+  yield* Output.report(document, [
     attempt.request.patchId !== undefined ? "Updated patch" : "Published patch",
     `URL: ${published.address}`,
     scopeLines[published.scope],
@@ -492,7 +489,7 @@ const publish = Command.make(
             Effect.catch((error) => refused(error, "Could not verify the publishing key's owner."))
           );
         if (Option.isSome(pending)) {
-          return yield* sendPublish(pending.value, apiToken, identity.user.id, repo);
+          return yield* sendPublish(pending.value, apiToken, identity.user.id, true, repo);
         }
 
         if (repo !== undefined) {
@@ -523,7 +520,13 @@ const publish = Command.make(
             })
           });
           const selected = yield* state.lockPublish(instance.apiUrl, attempt, repo);
-          return yield* sendPublish(selected, apiToken, identity.user.id, repo);
+          return yield* sendPublish(
+            selected,
+            apiToken,
+            identity.user.id,
+            selected.request.publishKey !== attempt.request.publishKey,
+            repo
+          );
         }
 
         if (Option.isSome(options.patch) && options.new) {
@@ -591,7 +594,12 @@ const publish = Command.make(
           })
         });
         const selected = yield* state.lockPublish(instance.apiUrl, attempt);
-        yield* sendPublish(selected, apiToken, identity.user.id);
+        yield* sendPublish(
+          selected,
+          apiToken,
+          identity.user.id,
+          selected.request.publishKey !== attempt.request.publishKey
+        );
       })
     )
 ).pipe(Command.withDescription("Publish the current patch repo, or an explicit static HTML file."));

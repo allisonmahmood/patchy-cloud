@@ -9,7 +9,7 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import * as CompanyDatabases from "./CompanyDatabases.js";
-import { reclaimNamespace as dropNamespace } from "./Reclamation.js";
+import * as Reclamation from "./Reclamation.js";
 
 const DAY = 24 * 60 * 60 * 1_000;
 const BATCH_SIZE = 100;
@@ -144,7 +144,7 @@ export const make = Effect.gen(function* () {
           Effect.catchTags({ SchemaError: Effect.die })
         );
         if (stillLive[0]!.exists) return false;
-        yield* dropNamespace();
+        yield* Reclamation.reclaimNamespace();
         return true;
       })
     );

@@ -13,7 +13,7 @@ The user, their company and role, and the machine acting for them on a bearer-au
 _Avoid_: account, principal (on the wire), permission set
 
 **Revocation**:
-Permanently ending a machine token's authority, whether by its user, replacement at login or the user's deactivation. Its provenance survives, patch retention is unchanged, and reactivation never restores it.
+Permanently ending a machine token's authority, whether by its user, replacement at login or the user's deactivation. Its provenance survives, its patches keep their lifecycle state, and reactivation never restores the token.
 _Avoid_: ban, token deletion
 
 **Bearer parsing**:

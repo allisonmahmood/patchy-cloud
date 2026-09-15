@@ -128,14 +128,14 @@ export class WrongState extends Schema.TaggedError<WrongState>()("WrongState", {
 }
 export class PatchRetired extends Schema.TaggedError<PatchRetired>()("PatchRetired", {}) {
   override get message() {
-    return "This patch is retired. Restore it (`patchy restore`) or ask an admin.";
+    return "This patch is retired. Restore it through the lifecycle API or ask an admin.";
   }
 }
 export class PatchDeleted extends Schema.TaggedError<PatchDeleted>()("PatchDeleted", {
   purgeAt: Schema.String
 }) {
   override get message() {
-    return `This patch is deleted and will be gone for good at ${this.purgeAt}. Restore it (\`patchy restore\`) before then or ask an admin.`;
+    return `This patch is deleted and will be gone for good at ${this.purgeAt}. Restore it through the lifecycle API before then or ask an admin.`;
   }
 }
 export class HasDependants extends Schema.TaggedError<HasDependants>()("HasDependants", {
@@ -884,7 +884,9 @@ export const make = Effect.gen(function* () {
       sql`SELECT object_key AS "objectKey" FROM patch_versions WHERE patch_id = ${patchId}`
   });
 
-  const lockTarget = SqlSchema.findOneOption({
+  // Company/public sharing admits every member of this company in any lifecycle
+  // state. Disabled patches remain hidden; serving reads use the stricter gate.
+  const lockOpenable = SqlSchema.findOneOption({
     Request: Schema.Struct({ patchId: Schema.String, userId: Schema.String }),
     Result: ManagedPatchRow,
     execute: ({ patchId, userId }) => sql`
@@ -903,7 +905,7 @@ export const make = Effect.gen(function* () {
       FROM users WHERE id = ${userId}`
   );
   const manageable = Effect.fn("Patches.manageable")(function* (patchId: string, actor: Actor) {
-    const row = yield* lockTarget({ patchId, userId: actor.userId });
+    const row = yield* lockOpenable({ patchId, userId: actor.userId });
     if (Option.isNone(row)) return yield* new PatchUnavailable({ patchId });
     if (row.value.ownerUserId !== actor.userId && !actor.admin)
       return yield* new NotOwner({
@@ -1180,7 +1182,7 @@ export const make = Effect.gen(function* () {
   const inventory = Effect.fn("Patches.inventory")((patchId: string, actorUserId: string) =>
     sql.withTransaction(
       Effect.gen(function* () {
-        const locked = yield* lockTarget({ patchId, userId: actorUserId });
+        const locked = yield* lockOpenable({ patchId, userId: actorUserId });
         if (Option.isNone(locked)) return yield* new PatchUnavailable({ patchId });
         const snapshot = yield* readInventory(locked.value.companyId, patchId);
         return new PatchInventory(

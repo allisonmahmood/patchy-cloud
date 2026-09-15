@@ -113,7 +113,7 @@ Responses:
 
 ### `POST /api/patches/:patchId/retire`
 
-Retire an owned live patch. It stops serving and its shared tables stop answering readers. Everything is retained indefinitely, including its names. Live dependants refuse with `has_dependants` unless `force` is true. Ask the person you are working for before forcing.
+Retire an owned live patch. It stops serving and its shared tables stop answering readers. Everything is retained indefinitely, including its names. Live dependants refuse with `has_dependants` unless `force` is true. Ask the person you are working for before forcing. The JSON body is bounded by three times `PATCHY_MAX_HTML_BYTES`, before decoding. An oversized declared body answers 413; streaming bodies are cut off at the cap. Rejected requests leave the patch unchanged.
 
 Request body: [ForceRequest](#forcerequest)
 
@@ -125,6 +125,7 @@ Responses:
 - `403` { ok: false, error: string, code: "not_owner", owner: { id: string, name: string } }
 - `404` { ok: false, error: string }
 - `409` { ok: false, error: string, code: "wrong_state", state: "live" | "retired" | "deleted" } | { ok: false, error: string, code: "has_dependants", dependants: { patchId: string, name: string, owner: { id: string, name: string } }[] }
+- `413` { ok: false, error: string }
 - `414` { ok: false, error: string }
 - `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
 
@@ -145,7 +146,7 @@ Responses:
 
 ### `POST /api/patches/:patchId/restore`
 
-Restore an owned retired or deleted patch to live, preserving its address and description. Deleted patches require the current time to be before `purgeAt`, otherwise `patch_deleted`. The current version's off sources refuse with `sources_off`, listing each source's table and state, including gone, unless `force` is true. Ask the person you are working for before forcing.
+Restore an owned retired or deleted patch to live, preserving its address and description. Recovery applies only to deletions after the lifecycle migration; legacy deleted patch IDs remain 404. Deleted patches require the current time to be before `purgeAt`, otherwise `patch_deleted`. The current version's off sources refuse with `sources_off`, listing each source's table and state, including gone, unless `force` is true. Ask the person you are working for before forcing. The JSON body is bounded by three times `PATCHY_MAX_HTML_BYTES`, before decoding. An oversized declared body answers 413; streaming bodies are cut off at the cap. Rejected requests leave the patch unchanged.
 
 Request body: [ForceRequest](#forcerequest)
 
@@ -157,12 +158,13 @@ Responses:
 - `403` { ok: false, error: string, code: "not_owner", owner: { id: string, name: string } }
 - `404` { ok: false, error: string }
 - `409` { ok: false, error: string, code: "wrong_state", state: "live" | "retired" | "deleted" } | { ok: false, error: string, code: "sources_off", sources: { patchId: string, name?: string, table: string, state: "live" | "retired" | "deleted" | "gone" }[] } | { ok: false, error: string, code: "patch_deleted", purgeAt: string }
+- `413` { ok: false, error: string }
 - `414` { ok: false, error: string }
 - `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
 
 ### `POST /api/patches/:patchId/rollback`
 
-Move an owned live patch's address to a retained `versionNumber`, creating no version. Tables, files, sharing, name and description do not change. A missing version answers 422 `version_unavailable`; an off patch answers `wrong_state`.
+Move an owned live patch's address to a retained `versionNumber`, creating no version. Tables, files, sharing, name and description do not change. A missing version answers 422 `version_unavailable`; an off patch answers `wrong_state`. The JSON body is bounded by three times `PATCHY_MAX_HTML_BYTES`, before decoding. An oversized declared body answers 413; streaming bodies are cut off at the cap. Rejected requests leave the patch unchanged.
 
 Request body: [RollbackRequest](#rollbackrequest)
 
@@ -174,13 +176,14 @@ Responses:
 - `403` { ok: false, error: string, code: "not_owner", owner: { id: string, name: string } }
 - `404` { ok: false, error: string }
 - `409` { ok: false, error: string, code: "wrong_state", state: "live" | "retired" | "deleted" }
+- `413` { ok: false, error: string }
 - `414` { ok: false, error: string }
 - `422` { ok: false, error: string, code: "version_unavailable" }
 - `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
 
 ### `PUT /api/patches/:patchId/description`
 
-Set an owned live or retired patch's description without publishing a version. Whitespace runs collapse to spaces and surrounding whitespace is trimmed. The result is one paragraph of at most 500 Unicode code points with no control characters; invalid text answers 422 `invalid_description`. An empty string clears it. Markup is stored literally. A no-op save does not change its timestamp. Deleted patches answer `wrong_state`.
+Set an owned live or retired patch's description without publishing a version. Whitespace runs collapse to spaces and surrounding whitespace is trimmed. The result is one paragraph of at most 500 Unicode code points with no control characters; invalid text answers 422 `invalid_description`. An empty string clears it. Markup is stored literally. A no-op save does not change its timestamp. Deleted patches answer `wrong_state`. The JSON body is bounded by three times `PATCHY_MAX_HTML_BYTES`, before decoding. An oversized declared body answers 413; streaming bodies are cut off at the cap. Rejected requests leave the patch unchanged.
 
 Request body: [DescriptionRequest](#descriptionrequest)
 
@@ -192,6 +195,7 @@ Responses:
 - `403` { ok: false, error: string, code: "not_owner", owner: { id: string, name: string } }
 - `404` { ok: false, error: string }
 - `409` { ok: false, error: string, code: "wrong_state", state: "live" | "retired" | "deleted" }
+- `413` { ok: false, error: string }
 - `414` { ok: false, error: string }
 - `422` { ok: false, error: string, code: "invalid_description" }
 - `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }

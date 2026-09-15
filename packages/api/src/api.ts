@@ -277,12 +277,15 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
       params: patchParams,
       payload: ForceRequest,
       success: Retired,
-      error: [...ownerRouteErrors, HasDependants]
+      error: [...ownerRouteErrors, HasDependants, PayloadTooLarge]
     }).annotateMerge(
       describe(
         "Retire an owned live patch. It stops serving and its shared tables stop answering readers. " +
           "Everything is retained indefinitely, including its names. Live dependants refuse with " +
-          "`has_dependants` unless `force` is true. Ask the person you are working for before forcing."
+          "`has_dependants` unless `force` is true. Ask the person you are working for before forcing. " +
+          "The JSON body is bounded by three times `PATCHY_MAX_HTML_BYTES`, before decoding. " +
+          "An oversized declared body answers 413; streaming bodies are cut off at the cap. " +
+          "Rejected requests leave the patch unchanged."
       )
     ),
     HttpApiEndpoint.delete("delete", "/patches/:patchId", {
@@ -302,39 +305,49 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
       params: patchParams,
       payload: ForceRequest,
       success: Restored,
-      error: [...ownerRouteErrors, SourcesOff, PatchDeleted]
+      error: [...ownerRouteErrors, SourcesOff, PatchDeleted, PayloadTooLarge]
     }).annotateMerge(
       describe(
         "Restore an owned retired or deleted patch to live, preserving its address and description. " +
+          "Recovery applies only to deletions after the lifecycle migration; legacy deleted patch IDs remain 404. " +
           "Deleted patches require the current time to be before `purgeAt`, otherwise `patch_deleted`. " +
           "The current version's off sources refuse with `sources_off`, listing each source's table and " +
-          "state, including gone, unless `force` is true. Ask the person you are working for before forcing."
+          "state, including gone, unless `force` is true. Ask the person you are working for before forcing. " +
+          "The JSON body is bounded by three times `PATCHY_MAX_HTML_BYTES`, before decoding. " +
+          "An oversized declared body answers 413; streaming bodies are cut off at the cap. " +
+          "Rejected requests leave the patch unchanged."
       )
     ),
     HttpApiEndpoint.post("rollback", "/patches/:patchId/rollback", {
       params: patchParams,
       payload: RollbackRequest,
       success: RolledBack,
-      error: [...ownerRouteErrors, VersionUnavailable]
+      error: [...ownerRouteErrors, VersionUnavailable, PayloadTooLarge]
     }).annotateMerge(
       describe(
         "Move an owned live patch's address to a retained `versionNumber`, creating no version. " +
           "Tables, files, sharing, name and description do not change. A missing version answers " +
-          "422 `version_unavailable`; an off patch answers `wrong_state`."
+          "422 `version_unavailable`; an off patch answers `wrong_state`. " +
+          "The JSON body is bounded by three times `PATCHY_MAX_HTML_BYTES`, before decoding. " +
+          "An oversized declared body answers 413; streaming bodies are cut off at the cap. " +
+          "Rejected requests leave the patch unchanged."
       )
     ),
     HttpApiEndpoint.put("describe", "/patches/:patchId/description", {
       params: patchParams,
       payload: DescriptionRequest,
       success: Described,
-      error: [...ownerRouteErrors, InvalidDescription]
+      error: [...ownerRouteErrors, InvalidDescription, PayloadTooLarge]
     }).annotateMerge(
       describe(
         "Set an owned live or retired patch's description without publishing a version. Whitespace runs " +
           "collapse to spaces and surrounding whitespace is trimmed. The result is one paragraph of at " +
           "most 500 Unicode code points with no control characters; invalid text answers 422 " +
           "`invalid_description`. An empty string clears it. Markup is stored literally. A no-op save " +
-          "does not change its timestamp. Deleted patches answer `wrong_state`."
+          "does not change its timestamp. Deleted patches answer `wrong_state`. " +
+          "The JSON body is bounded by three times `PATCHY_MAX_HTML_BYTES`, before decoding. " +
+          "An oversized declared body answers 413; streaming bodies are cut off at the cap. " +
+          "Rejected requests leave the patch unchanged."
       )
     )
   )
