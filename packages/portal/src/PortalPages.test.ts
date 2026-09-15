@@ -1483,6 +1483,39 @@ it.layer(layer)("portal pages on a socket", (it) => {
 });
 
 it.layer(layer)("user lifecycle pages on a socket", (it) => {
+  it.effect("renders lifecycle picks and previews while company mutation locks are held", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const patch = yield* publish(workspace.owner, "preview-without-locks");
+      const sql = yield* SqlClient.SqlClient;
+      const users = yield* Users.Users;
+      for (const action of ["deactivate", "reactivate"] as const) {
+        if (action === "reactivate") {
+          yield* (yield* Patches.Patches).retire(patch.patchId, actor(workspace.admin));
+          yield* users.deactivate({ companyId: workspace.id, userId: workspace.owner.id });
+        }
+        const before = yield* readUser(workspace.owner);
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`SELECT pg_advisory_xact_lock(hashtextextended('patchy:dependencies:' || ${workspace.id}, 0))`;
+            yield* sql`SELECT id FROM patches WHERE company_id = ${workspace.id} FOR UPDATE`;
+            yield* sql`SELECT id FROM companies WHERE id = ${workspace.id} FOR UPDATE`;
+            const path = userPath(workspace.owner, action);
+            const pick = yield* request(path, workspace.admin);
+            assert.strictEqual(pick.status, 200);
+            assert.sameMembers(inputValues(yield* pick.text, "patch", "checkbox"), [patch.patchId]);
+            const preview = yield* post(path, workspace.admin, { choice: "all" });
+            assert.strictEqual(preview.status, 200);
+            assert.sameMembers(inputValues(yield* preview.text, "patch", "hidden"), [
+              patch.patchId
+            ]);
+          })
+        );
+        assert.deepStrictEqual(yield* readUser(workspace.owner), before);
+      }
+    })
+  );
+
   it.effect(
     "lists live patch choices with their dependants and leaves off patches unselectable",
     () =>
@@ -1681,6 +1714,10 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
         const html = yield* page.text;
         assert.strictEqual(hidden(html, "choice"), "confirm");
         assert.deepStrictEqual(inputs(html, "patch", "checkbox"), []);
+        assert.deepStrictEqual(
+          links(html).filter((link) => link.text.startsWith("Back to")),
+          [{ href: "/company", text: "Back to Company" }]
+        );
         assert.include(text(html), "Nothing breaks");
         assert.isNull((yield* readUser(workspace.owner)).deactivatedAt);
         assert.strictEqual((yield* post(path, workspace.admin, { choice: "confirm" })).status, 303);

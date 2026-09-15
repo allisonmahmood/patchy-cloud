@@ -614,6 +614,10 @@ export class Patches extends Context.Service<
       patchId: string,
       access: ReadAccess
     ) => Effect.Effect<PortalCard, PatchUnavailable | SqlError>;
+    /** Lock the acting user's company before a cross-context user/patch lifecycle commit. */
+    readonly withCompanyLifecycleLock: (
+      actorUserId: string
+    ) => <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E | SqlError, R>;
     readonly companyInventory: (
       patchId: string,
       access: ReadAccess
@@ -1079,6 +1083,18 @@ export const make = Effect.gen(function* () {
       sql`SELECT pg_advisory_xact_lock(hashtextextended('patchy:dependencies:' || company_id, 0))
       FROM users WHERE id = ${userId}`
   );
+  const withCompanyLifecycleLock: Patches["Service"]["withCompanyLifecycleLock"] =
+    (actorUserId) => (effect) =>
+      sql.withTransaction(
+        Effect.gen(function* () {
+          yield* lockDependencies(actorUserId);
+          // Reassign locks a patch before its target user. Keep that order here too.
+          yield* sql`SELECT id FROM patches
+            WHERE company_id = (SELECT company_id FROM users WHERE id = ${actorUserId})
+            ORDER BY id FOR UPDATE`;
+          return yield* effect;
+        })
+      );
   const manageable = Effect.fn("Patches.manageable")(function* (patchId: string, actor: Actor) {
     const row = yield* lockOpenable({ patchId, userId: actor.userId });
     if (Option.isNone(row)) return yield* new PatchUnavailable({ patchId });
@@ -2019,6 +2035,7 @@ export const make = Effect.gen(function* () {
     inventory,
     read,
     portalCard,
+    withCompanyLifecycleLock,
     companyInventory,
     sharedTable,
     sharedTables,
