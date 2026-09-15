@@ -9,9 +9,16 @@ import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import { PatchName, PatchState, SharingScope } from "@patchy/api";
 import { pageResponse, RequireSession, Session } from "@patchy/auth";
 import { escapeHtml } from "@patchy/core";
-import type { Companies, Users } from "@patchy/companies";
+import { type Companies, Users } from "@patchy/companies";
 import { Patches } from "@patchy/patches";
-import { ago, renderPortal, renderRestoreConflict, renderVersions, styles } from "./render.js";
+import {
+  ago,
+  type ConfirmationAction,
+  renderConfirmation,
+  renderPortal,
+  renderVersions,
+  styles
+} from "./render.js";
 
 const isName = Schema.is(PatchName);
 const decodeDescription = Schema.decodeUnknownEffect(
@@ -37,19 +44,31 @@ const decodeRollback = Schema.decodeUnknownEffect(
   })
 );
 const decodeRestore = Schema.decodeUnknownEffect(Schema.Struct({ expectedState: PatchState }));
+const decodeRetire = Schema.decodeUnknownEffect(
+  Schema.Struct({ expectedState: Schema.Literal("live") })
+);
+const decodeDelete = Schema.decodeUnknownEffect(
+  Schema.Struct({ expectedState: Schema.Literal("not-deleted"), confirm: Schema.String })
+);
+const decodeReassign = Schema.decodeUnknownEffect(
+  Schema.Struct({ expectedOwnerUserId: Schema.String, user: Schema.String })
+);
 
-type Action = "description" | "scope" | "rollback" | "restore";
+type Action = "description" | "scope" | "rollback" | ConfirmationAction;
 const forbidden = "Only the owner or an admin can do that. Nothing was done.";
+const adminRequired = "Only an admin can reassign this patch. Nothing was done.";
 
 const context = Effect.gen(function* () {
   const viewer = yield* RequireSession.Viewer;
   const session = yield* Session.Session;
   const request = yield* HttpServerRequest.HttpServerRequest;
   const canOpen = yield* Patches.Openability;
+  const query = new URL(request.url, session.publicBaseUrl).searchParams;
   return {
     viewer,
     session,
-    all: new URL(request.url, session.publicBaseUrl).searchParams.get("all") === "1",
+    all: query.get("all") === "1",
+    query: query.get("q") ?? "",
     access: {
       companyId: viewer.company.id,
       userId: viewer.user.id,
@@ -83,10 +102,14 @@ const render = Effect.fn("PortalPages.render")(function* (
     submittedDescription?: string;
     descriptionError?: string;
     versions?: boolean;
-    restoreConflict?: boolean;
+    confirmation?: ConfirmationAction;
+    submittedName?: string;
+    nameError?: string;
+    selectedOwnerId?: string;
+    acknowledged?: boolean;
   } = {}
 ) {
-  const { viewer, session, all, access } = yield* context;
+  const { viewer, session, all, access, query } = yield* context;
   if (name !== undefined && name.length > 32)
     return yield* errorPage(
       414,
@@ -108,11 +131,58 @@ const render = Effect.fn("PortalPages.render")(function* (
     return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
   const card = selected ? yield* patches.portalCard(selected.patch.id, access) : null;
   const now = yield* Clock.currentTimeMillis;
+  let action = options.confirmation;
+  if (action && card) {
+    if (viewer.role !== "admin" && (action === "reassign" || card.owner.id !== viewer.user.id)) {
+      options = {
+        status: 403,
+        notice: action === "reassign" ? adminRequired : forbidden
+      };
+      action = undefined;
+    } else if (
+      action === "restore" &&
+      options.status === undefined &&
+      card.offSources.length === 0
+    ) {
+      return HttpServerResponse.redirect(
+        `/patches/${encodeURIComponent(card.patch.name)}${all ? "?all=1" : ""}`,
+        { status: 303, headers: { "cache-control": "private, no-store" } }
+      );
+    } else if (
+      (action === "retire" && card.patch.state !== "live") ||
+      (action === "delete" && card.patch.state === "deleted") ||
+      (action === "restore" && card.patch.state === "live")
+    ) {
+      options = {
+        status: 409,
+        notice: `This patch is ${card.patch.state}. This action is not available. Nothing was done.`
+      };
+      action = undefined;
+    }
+  }
+  const members = action === "reassign" ? yield* (yield* Users.Users).list(viewer.company.id) : [];
   const body =
     options.versions && card
       ? renderVersions({ card, viewer, all, now })
-      : options.restoreConflict && card
-        ? renderRestoreConflict({ card, viewer, all })
+      : action && card
+        ? renderConfirmation({
+            card,
+            viewer,
+            all,
+            now,
+            action,
+            members,
+            query,
+            ...(options.notice === undefined ? {} : { notice: options.notice }),
+            ...(options.submittedName === undefined
+              ? {}
+              : { submittedName: options.submittedName }),
+            ...(options.nameError === undefined ? {} : { nameError: options.nameError }),
+            ...(options.selectedOwnerId === undefined
+              ? {}
+              : { selectedOwnerId: options.selectedOwnerId }),
+            ...(options.acknowledged === undefined ? {} : { acknowledged: options.acknowledged })
+          })
         : renderPortal({
             rows,
             card,
@@ -156,8 +226,11 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Acti
   const selected = rows.find((row) => row.patch.name === name);
   if (!selected)
     return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
-  if (viewer.role !== "admin" && selected.owner.id !== viewer.user.id)
-    return yield* render(name, { status: 403, notice: forbidden });
+  if (viewer.role !== "admin" && (action === "reassign" || selected.owner.id !== viewer.user.id))
+    return yield* render(name, {
+      status: 403,
+      notice: action === "reassign" ? adminRequired : forbidden
+    });
   const actor = { userId: viewer.user.id, admin: viewer.role === "admin" };
   const request = yield* HttpServerRequest.HttpServerRequest;
   const form = Object.fromEntries(
@@ -165,6 +238,19 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Acti
       Effect.provideService(HttpServerRequest.MaxBodySize, FileSystem.Size(16_384))
     )
   );
+  const confirmation =
+    action === "retire" || action === "delete" || action === "restore" || action === "reassign"
+      ? action
+      : undefined;
+  const redisplay = (status: number, notice: string, nameError?: string) =>
+    render(name, {
+      status,
+      ...(nameError === undefined ? { notice } : { nameError }),
+      ...(confirmation === undefined ? {} : { confirmation }),
+      submittedName: form.confirm ?? "",
+      selectedOwnerId: form.user ?? "",
+      acknowledged: form.ack === "1"
+    });
   const run = Effect.gen(function* () {
     switch (action) {
       case "description": {
@@ -194,7 +280,26 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Acti
       }
       case "restore": {
         const fields = yield* decodeRestore(form);
-        yield* patches.restore(selected.patch.id, actor, false, fields.expectedState);
+        yield* patches.restore(selected.patch.id, actor, form.ack === "1", fields.expectedState);
+        break;
+      }
+      case "retire": {
+        yield* decodeRetire(form);
+        yield* patches.retire(selected.patch.id, actor, form.ack === "1");
+        break;
+      }
+      case "delete": {
+        const fields = yield* decodeDelete(form);
+        if (fields.confirm !== selected.patch.name) {
+          const message = `Type ${selected.patch.name} to confirm. Nothing was done.`;
+          return yield* redisplay(422, message, message);
+        }
+        yield* patches.delete(selected.patch.id, actor, form.ack === "1");
+        break;
+      }
+      case "reassign": {
+        const fields = yield* decodeReassign(form);
+        yield* patches.reassign(selected.patch.id, actor, fields.user, fields.expectedOwnerUserId);
         break;
       }
     }
@@ -218,28 +323,36 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Acti
     });
   });
   const invalid = (notice: string) =>
-    render(name, {
-      status: 422,
-      ...(action === "description"
-        ? { submittedDescription: form.description ?? "", descriptionError: notice }
-        : { notice })
-    });
+    confirmation === undefined
+      ? render(name, {
+          status: 422,
+          ...(action === "description"
+            ? { submittedDescription: form.description ?? "", descriptionError: notice }
+            : { notice })
+        })
+      : redisplay(422, notice);
   return yield* run.pipe(
     Effect.catchTags({
       StaleAction: () => stale(),
       NotOwner: () => render(name, { status: 403, notice: forbidden }),
+      AdminRequired: () => render(name, { status: 403, notice: adminRequired }),
       WrongState: (error) => stale(error.state),
       PatchDeleted: (error) =>
         render(name, { status: 409, notice: `${error.message} Nothing was done.` }),
       PatchRetired: (error) =>
         render(name, { status: 409, notice: `${error.message} Nothing was done.` }),
-      SourcesOff: () => render(name, { status: 409, restoreConflict: true }),
+      SourcesOff: () => redisplay(409, "Some sources are off. Nothing was done."),
       InvalidDescription: (error) => invalid(`${error.message} Nothing was done.`),
       SchemaError: () => invalid("Check the submitted fields and try again. Nothing was done."),
       VersionUnavailable: (error) => invalid(`${error.message} Nothing was done.`),
-      HasDependants: (error) => render(name, { status: 409, notice: error.message }),
+      HasDependants: () =>
+        redisplay(
+          409,
+          "These patches read this patch's tables. Acknowledge that they will break before continuing. Nothing was done."
+        ),
       ReservedName: (error) => invalid(error.message),
-      InvalidOwner: (error) => invalid(error.message)
+      InvalidOwner: () =>
+        redisplay(409, "Choose an active member of this company. Nothing was done.")
     })
   );
 });
@@ -320,6 +433,19 @@ export const layer: Layer.Layer<
         )
       )
     );
+    for (const action of ["retire", "delete", "restore", "reassign"] as const) {
+      yield* router.add(
+        "GET",
+        `/patches/:name/${action}`,
+        errors(
+          RequireSession.withViewer(
+            Effect.flatMap(HttpRouter.params, (params) =>
+              render(params.name ?? "", { confirmation: action })
+            ).pipe(pageErrors)
+          )
+        )
+      );
+    }
     yield* router.add(
       "GET",
       "/patches/*",
@@ -333,7 +459,15 @@ export const layer: Layer.Layer<
         )
       )
     );
-    for (const action of ["description", "scope", "rollback", "restore"] as const) {
+    for (const action of [
+      "description",
+      "scope",
+      "rollback",
+      "retire",
+      "delete",
+      "restore",
+      "reassign"
+    ] as const) {
       yield* router.add(
         "POST",
         `/patches/:name/${action}`,
