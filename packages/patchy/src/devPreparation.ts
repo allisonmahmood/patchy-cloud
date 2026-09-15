@@ -10,6 +10,7 @@ import { configFailure, executeConfig } from "./executeConfig.js";
 import { ManagedProject, isProjectChanged, presentSkills, safePath } from "./ManagedProject.js";
 import * as Project from "./Project.js";
 import { RELEASE } from "./release.js";
+import { primitiveReminders } from "./primitiveReminders.js";
 
 export const Prepared = Schema.Struct({
   manifest: Manifest,
@@ -50,7 +51,7 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
   const identity = yield* client
     .me()
     .pipe(Effect.catch((error) => Api.classify(error, "Authentication failed.")));
-  const repo = yield* Project.readRepo(root);
+  const { repo, warnings: syncWarnings } = yield* Project.syncDescription(root, token);
   const baseline =
     repo.patch === undefined
       ? undefined
@@ -65,10 +66,14 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
       Effect.gen(function* () {
         const configPath = yield* io("Read config path", () => safePath(root, "patchy.config.ts"));
         const source = yield* fs.readFileString(configPath);
-        const unresolved = yield* Effect.tryPromise({
+        const executed = yield* Effect.tryPromise({
           try: () => executeConfig(configPath, { resolve: false, source }),
           catch: configFailure
         });
+        const unresolved = {
+          ...executed,
+          ...(repo.description === undefined ? {} : { description: repo.description })
+        };
         for (const [alias, declaration] of Object.entries(unresolved.uses)) {
           const relative =
             declaration.kind === "postgres"
@@ -135,6 +140,7 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
               message: `Generation returned inconsistent metadata for ${alias}.`
             });
         }
+        const warnings = [...syncWarnings, ...(yield* primitiveReminders(root, manifest))];
         yield* io("Activate generated files", () =>
           transaction.activate(
             generated.files.filter((file) => !file.path.startsWith("fixtures/")),
@@ -148,12 +154,16 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
           catch: configFailure
         });
         return {
-          manifest: resolved,
+          manifest: {
+            ...resolved,
+            ...(repo.description === undefined ? {} : { description: repo.description })
+          },
           identity,
           patchId: repo.patch ?? "localdev0000",
           ...(baseline === undefined ? {} : { baseline }),
-          metadata
-        } satisfies Prepared;
+          metadata,
+          warnings
+        } satisfies Prepared & { readonly warnings: readonly string[] };
       }),
     (transaction, exit) =>
       io("Restore project transaction", () => transaction.finish(Exit.isSuccess(exit))).pipe(

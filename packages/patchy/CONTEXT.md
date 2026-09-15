@@ -64,6 +64,10 @@ _Avoid_: upload history, manifest
 A complete publish attempt whose outcome or local application remains unsettled, retaining its original content, owner and patch identity even when a repo moves. Concurrent invocations recover the same attempt only for its original owner, and settling it preserves the repo's instance binding.
 _Avoid_: queued publish, upload history
 
+**Description sync**:
+The reconciliation of a patch repo's description with cloud edits, using the last synchronized timestamp rather than remembered text. A newer cloud edit replaces local text with a notice; otherwise local edits remain authoritative for the next publish. The build purpose and primitive descriptions are independent. [ADR-0004](../../docs/adr/ADR-0004-cli-contract-for-agents.md) owns the command and file contract.
+_Avoid_: last synced text, purpose sync, generated description
+
 **Publish key**:
 See **Publish key** in [Patches](../patches/CONTEXT.md), distinct from the machine's publishing key.
 _Avoid_: publishing key, token

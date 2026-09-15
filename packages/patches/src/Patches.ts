@@ -18,6 +18,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import {
+  DescriptionText,
   Manifest,
   PatchInventory,
   PatchName,
@@ -37,6 +38,7 @@ import { ConnectionStore } from "@patchy/integrations";
 const encodeManifest = Schema.encodeSync(Schema.fromJsonString(Manifest));
 const encodePublishCreated = Schema.encodeSync(Schema.fromJsonString(PublishCreated));
 const encodePublishUpdated = Schema.encodeSync(Schema.fromJsonString(PublishUpdated));
+const decodeDescription = Schema.decodeUnknownEffect(DescriptionText);
 const decodeResponseBodies = Schema.decodeUnknownEffect(
   Schema.Array(Schema.Struct({ responseBody: Schema.String }))
 );
@@ -161,7 +163,7 @@ export class ReservedName extends Schema.TaggedError<ReservedName>()("ReservedNa
 }
 export class InvalidDescription extends Schema.TaggedError<InvalidDescription>()(
   "InvalidDescription",
-  {}
+  { cause: Schema.Defect() }
 ) {
   override get message() {
     return "Use one paragraph of at most 500 Unicode code points, without control characters.";
@@ -203,13 +205,9 @@ export type LifecycleError =
   | InvalidOwner;
 
 const normalizeDescription = Effect.fn("Patches.normalizeDescription")(function* (text: string) {
-  // Whitespace controls become spaces; all other controls are refused.
-  if (/[\u0000-\u0008\u000e-\u001f\u007f-\u009f]/u.test(text))
-    return yield* new InvalidDescription();
-  const normalized = text.replace(/\s+/gu, " ").trim();
-  if ((text !== "" && normalized === "") || [...normalized].length > 500)
-    return yield* new InvalidDescription();
-  return normalized;
+  return yield* decodeDescription(text).pipe(
+    Effect.mapError((cause) => new InvalidDescription({ cause }))
+  );
 });
 const reservedName = (name: string) => name === "patches" || name === "connections";
 

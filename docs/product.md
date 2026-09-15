@@ -12,7 +12,7 @@ A **patch** is the unit of what people build and deploy on Patchy Cloud — anyt
 
 A patch is a **file tree**. A **patch repo** is its local working copy, initialized by `patchy init` at tier 0 or tier 1. It contains application source and the single-file build, `patchy.config.ts`, `patchy.json`, the pinned `patchy` package, generated client and context, project skills and fixtures. `patchy.config.ts` holds the name and explicit tier, **defines** the tables and file stores the patch owns, and **declares** the connections and shared tables it uses. The CLI executes that config locally into a **manifest**; the server validates the manifest, never executable config.
 
-`patchy.json` records the instance and an optional patch id, never the builder's credentials. Decided on the portal map and not built yet: it also carries the patch's **description** and the time it was last synced with the cloud (see [Describing a patch](#describing-a-patch)). One repo is the working copy of exactly one patch: the first publish without an id creates the patch and writes its id back; later publishes update it. Cloning the repo preserves that target, but only its owner may publish to it. A single HTML file is the simpler tier 0 route, with no repo; its CLI cache remembers the published patch. A file-born patch can be adopted by putting its id in a repo's `patchy.json`.
+`patchy.json` records the instance, description, last description-sync timestamp and optional patch id, never credentials. One repo is the working copy of exactly one patch. The first publish without an id creates the patch and writes its id back; later publishes update it. Cloning preserves that target, but only its owner may publish to it. A single HTML file is the simpler tier 0 route with no repo; its CLI cache remembers the published patch. A file-born patch can be adopted by putting its id in a repo's `patchy.json`.
 
 Each version has exactly one tier. The CLI checks the tree and bundle; the server checks the manifest and bundle. Tier is about code, not data: a tier 0 repo may define tables and stores or declare dependencies even though its static page cannot call them. Tables and stores are provisioned with the patch; a declared connection must already be connected and a shared table must already be available (see [Primitives](#primitives) and [Integrations](#integrations)).
 
@@ -64,9 +64,11 @@ another setup or installation ritual. A second initialization refuses the same
 repo. A company without connections gets the core skills and empty declarations.
 
 `patchy.config.ts` defines what the patch owns and declares what it uses.
-`patchy.json` records the instance and optional patch id, never personal credentials.
-Write-once `AGENTS.md` records purpose, layout, skill paths, “test with `patchy dev`”
-and the generated-index pointer; `CLAUDE.md` imports it. The local dev runtime
+`patchy.json` records the instance, description, optional patch id and description
+sync stamp, never credentials. `init --purpose` writes the initial description
+there and the independent purpose into write-once `AGENTS.md`, alongside layout,
+skill paths, "test with `patchy dev`" and the generated-index pointer.
+`CLAUDE.md` imports it. The local dev runtime
 uses real handlers over local data, never a production-data shortcut.
 
 `patchy dev` checks the pin, CLI and runtime against the instance release, then
@@ -111,8 +113,12 @@ A deleted patch refuses publishing with `patch_deleted` and keeps its id in
 non-owner receives `not_owner`. These are definitive refusals, never advice to
 create another patch. Only a gone patch's 404 asks for the id to be removed.
 
-The new `retire`, `restore`, `rollback <n>` and `describe` CLI commands remain
-future work. Their owner API routes and the service's admin authority are built.
+Owners can retire, delete, restore, roll back and describe patches from the CLI.
+Each verb uses the repo id, original file cache or an explicit `--patch <id>`.
+Delete confirms interactively or requires `--yes` for agents. Retire, delete
+from live and unshare at publish list dependants and require `--force` to break
+them; restore lists off sources and requires `--force` to serve with broken reads.
+The CLI tells agents to ask their user before forcing.
 
 `patchy list` discovers company patches and connections, then drills into patch
 definitions and connection snapshots. It runs anywhere under the saved login
@@ -180,7 +186,7 @@ Patch detail returns cumulative inventory and reads across retained versions, no
 
 `list connections [--all]` lists the company's connections, with offered integrations when requested. Connected entries carry an `add` hint; disconnected ones carry `reason: not_connected` and a `/company/connections` pointer. `list connections <handle>` returns the current immutable snapshot with its revision and `takenAt`. A null snapshot is unavailable, not an empty database. Discovery reads no source rows or credentials.
 
-Every level accepts `--json`. The top level merges `{ patches, connections }` from `GET /api/patches` and `GET /api/connections`; other levels print their wire body without an `ok` wrapper. Agents filter those documents locally. The patch read query also carries live dependant edges for the future portal, while the agent detail exposes only inventory and reads. The owner inventory route remains available. Discovery is complete for agents; the portal and new lifecycle CLI verbs remain later work.
+Every discovery level accepts `--json`. The top level merges `{ patches, connections }` from `GET /api/patches` and `GET /api/connections`; other levels print their wire body without an `ok` wrapper. Agents filter those documents locally. Patch detail includes `descriptionUpdatedAt` for repo synchronization. The patch read query also carries live dependant edges for the future portal, while agent detail exposes inventory and reads. Discovery and lifecycle commands are built; the portal remains later work.
 
 ### Updating, retiring, deleting
 
@@ -192,13 +198,15 @@ Recovery applies to deletions made after the lifecycle migration. Earlier delete
 
 A retired or deleted patch denies shared-table consumers on their next read. Restore brings consumers back without changing their declarations. Retire, delete from live and a publish that unshares a table list live dependants by name and owner and refuse unless the API request carries `force`. Restore similarly warns about retired, deleted or gone sources declared by its current version. **Rollback** moves the served-version pointer to any retained version, creates no version, and leaves data, provisioning, sharing, description and name unchanged. Every version is kept.
 
-Owner machine tokens can call the lifecycle API. The service admits owner and same-company admin actors for management, but reassignment to an active company member is admin-only and publish stays owner-only. Every act records its actor and time. The existing CLI delete uses the recovery window; the new lifecycle CLI verbs, `--force` and `--yes`, portal controls and address notices are later work. Retired and deleted addresses currently answer 404 for admitted company readers; signed-out readers keep the login door. The planned portal will ask for a typed name on delete and an acknowledgement before breaking dependants. **Disable** remains the operator's separate take-down, never owner-restorable.
+Owner machine tokens can call the lifecycle API through `retire`, `delete`, `restore`, `rollback` and `describe`. The service admits owner and same-company admin actors for management, but reassignment to an active company member is admin-only and publish stays owner-only. Every act records its actor and time. CLI `--force` accepts reported breakage and `--yes` confirms deletion; both are required when deleting a live source with dependants. Portal controls and address notices are later work. Retired and deleted addresses currently answer 404 for admitted company readers; signed-out readers keep the login door. The planned portal will ask for a typed name on delete and an acknowledgement before breaking dependants. **Disable** remains the operator's separate take-down, never owner-restorable.
 
 ### Describing a patch
 
 The backend stores a patch's **description** with its editor and edit time. It accepts at most 500 Unicode code points after whitespace collapse and trimming, with no control characters. The owner can edit it over the API while live or retired; service admin actors can do the same. Publish accepts the manifest description or file metadata description and returns the stored value and stamp. Omitted descriptions preserve the cloud value, and existing patches start empty. Rollback and restore never change it; edits create no version.
 
-The local-owned sync from the portal map is still future work. `init --purpose` will write `patchy.json`, the CLI will send its description on publish and pull cloud edits back with a notice, and file publishing will gain `--description`. The portal card remains later work.
+The description sync is built. `init --purpose` writes `description` in `patchy.json` and refuses more than 500 normalized Unicode code points. Repo publish requires nonempty text, sends it in the manifest and saves the returned stamp as `descriptionSyncedAt`. At `refresh`, a new `dev` start and fresh `publish`, a newer cloud stamp pulls down the cloud text and prints a notice, including the replaced local text when different. Local edits do not move the stamp; unchanged cloud metadata leaves them alone. Publish sends the pulled text. `describe` updates the cloud and rewrites a targeted repo in one run; `--clear` explicitly empties it. File publish accepts `--description`; omitted, the cloud value stands. Repo mode refuses that flag and points at `patchy.json`. The portal card remains later work.
+
+Primitive descriptions stay in `patchy.config.ts`. At refresh, dev start and publish, a definition changed since its last generation with byte-identical description triggers a reminder to check the text. The command proceeds, with notices in `warnings` under `--json`. Purpose in `AGENTS.md` is independent of both description sources.
 
 ### Patches and other patches
 
@@ -409,8 +417,8 @@ one row or object is, its identifying keys and units. The manifest and cumulativ
 include it. A publish that defines the primitive replaces its description; omission and rollback
 preserve it. A description-only change does not advance the schema revision. A table and file store
 cannot have the same name. `patchy list <patch>` exposes the cumulative inventory
-to agents. The CLI's reminder to re-check unchanged descriptions when definitions
-change remains future work.
+to agents. On refresh, a new dev start and publish, the CLI reminds agents to
+re-check unchanged descriptions when their definitions change.
 
 This **company database** is Patchy's storage for the company's patch resources,
 not a Postgres connection to an outside source. Platform records — users, patches,

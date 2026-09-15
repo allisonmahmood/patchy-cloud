@@ -1,13 +1,14 @@
 /**
  * What an agent sees: the `--json` global flag, the two success shapes, and
  * the contract every command's failure is rendered through. In text mode a
- * result is the lines agents already read and a failure is one message on
+ * result is the lines agents already read and a failure follows any warnings on
  * stderr. Under `--json` a result is exactly one document on stdout and a
- * failure is `{ ok: false, error, kind, code?, state? }` on stderr, with the other
- * stream empty. Discovery's wrong-state refusals include `state`. The exit code
- * comes from the failure's kind and from nowhere else.
+ * failure is `{ ok: false, error, kind, code?, state?, owner?, dependants?,
+ * sources?, purgeAt?, warnings? }` on stderr, with the other stream empty.
+ * The exit code comes from the failure's kind and from nowhere else.
  */
 import * as Console from "effect/Console";
+import * as Context from "effect/Context";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Flag from "effect/unstable/cli/Flag";
@@ -15,7 +16,7 @@ import * as GlobalFlag from "effect/unstable/cli/GlobalFlag";
 import * as Option from "effect/Option";
 import * as Runtime from "effect/Runtime";
 import * as Schema from "effect/Schema";
-import { type CliError, exitCode } from "./CliError.js";
+import { type CliError, type Rejected, exitCode, refusalDetails } from "./CliError.js";
 
 export const JsonFlag = GlobalFlag.setting("json")({
   flag: Flag.boolean("json").pipe(
@@ -46,6 +47,18 @@ export const warn = (line: string) =>
     if (!(yield* JsonFlag)) yield* Console.error(line);
   });
 
+class WarningBuffer extends Context.Service<WarningBuffer, Set<string>>()(
+  "patchy/Output/WarningBuffer"
+) {}
+
+/** Retain discovered notices until this command can report them, even if it fails. */
+export const rememberWarnings = Effect.fn("Output.rememberWarnings")(function* (
+  lines: readonly string[]
+): Effect.fn.Return<void> {
+  const buffer = yield* Effect.serviceOption(WarningBuffer);
+  if (Option.isSome(buffer)) for (const line of lines) buffer.value.add(line);
+});
+
 /** Already rendered; carries only the exit code, so the runtime prints nothing more. */
 class Failed extends Data.Error<{ readonly code: number }> {
   readonly [Runtime.errorExitCode]: number;
@@ -68,27 +81,40 @@ export const contract = <A, R>(handler: Effect.Effect<A, CliError, R>) =>
   Effect.gen(function* () {
     const json = yield* JsonFlag;
     const debug = isDebug(yield* GlobalFlag.LogLevel);
-    const fail = (error: string, kind: CliError["kind"], code?: string, state?: string) =>
+    const warnings = new Set<string>();
+    const fail = (error: string, kind: CliError["kind"], details = {}) =>
       Console.error(
         json
           ? toJson({
               ok: false,
               error,
               kind,
-              ...(code === undefined ? {} : { code }),
-              ...(state === undefined ? {} : { state })
+              ...details,
+              ...(warnings.size === 0 ? {} : { warnings: [...warnings] })
             })
-          : error
+          : warnings.size === 0
+            ? error
+            : [...warnings, error].join("\n")
       ).pipe(Effect.andThen(new Failed({ code: exitCode(kind) })));
-    const failKnown = (error: CliError) => fail(error.message, error.kind, error.code);
+    const failKnown = (error: Exclude<CliError, Rejected>) =>
+      fail(error.message, error.kind, error.code === undefined ? {} : { code: error.code });
+    const failRejected = (error: Rejected) =>
+      fail(error.message, error.kind, refusalDetails(error));
     return yield* handler.pipe(
+      Effect.provideService(WarningBuffer, warnings),
       Effect.catchTags({
         LocalError: failKnown,
-        RejectedError: failKnown,
+        RejectedError: failRejected,
+        NotOwnerError: failRejected,
+        PatchRetiredError: failRejected,
+        PatchDeletedError: failRejected,
+        HasDependantsError: failRejected,
+        SourcesOffError: failRejected,
+        WrongStateError: failRejected,
+        WrongPatchState: failRejected,
         UnreachableError: failKnown,
         ReleaseMismatch: failKnown,
-        InstanceMismatch: failKnown,
-        WrongPatchState: (error) => fail(error.message, error.kind, error.code, error.state)
+        InstanceMismatch: failKnown
       }),
       Effect.catchDefect((defect) => {
         const message = defect instanceof Error ? defect.message : String(defect);

@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as DateTime from "effect/DateTime";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -7,9 +8,23 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Prompt from "effect/unstable/cli/Prompt";
 import * as HttpClient from "effect/unstable/http/HttpClient";
-import { DefinitionName, Generated, Manifest, PatchName } from "@patchy/api";
+import {
+  DefinitionName,
+  DescriptionText,
+  Generated,
+  IsoTimestamp,
+  Manifest,
+  normalizeDescriptionText,
+  PatchName
+} from "@patchy/api";
 import * as Api from "./Api.js";
-import { InstanceMismatch, LocalError, RejectedError, UnreachableError } from "./CliError.js";
+import {
+  InstanceMismatch,
+  LocalError,
+  RejectedError,
+  UnreachableError,
+  refusalFields
+} from "./CliError.js";
 import * as Instance from "./Instance.js";
 import * as Login from "./Login.js";
 import * as Output from "./Output.js";
@@ -25,10 +40,13 @@ import {
 import { activateStarter, starterFiles, writeInitialGeneration } from "./initProject.js";
 import { RELEASE } from "./release.js";
 import { processResult } from "./processResult.js";
+import { primitiveReminders } from "./primitiveReminders.js";
 
 const repoSchema = Schema.Struct({
   instance: Schema.String,
-  patch: Schema.optionalKey(Schema.String)
+  patch: Schema.optionalKey(Schema.String),
+  description: Schema.optionalKey(Schema.String),
+  descriptionSyncedAt: Schema.optionalKey(Schema.NullOr(IsoTimestamp))
 });
 const packageSchema = Schema.Record(Schema.String, Schema.Unknown);
 const dependenciesSchema = Schema.Record(Schema.String, Schema.String);
@@ -57,7 +75,9 @@ const failureSchema = Schema.Struct({
   ok: Schema.Literal(false),
   error: Schema.String,
   kind: Schema.Literals(["local", "rejected", "unreachable"]),
-  code: Schema.optionalKey(Schema.String)
+  code: Schema.optionalKey(Schema.String),
+  warnings: Schema.optionalKey(Schema.Array(Schema.String)),
+  ...refusalFields
 });
 const decodeRepo = Schema.decodeUnknownSync(Schema.fromJsonString(repoSchema), {
   onExcessProperty: "preserve"
@@ -69,6 +89,7 @@ const decodeSkills = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Array
 const decodeChild = Schema.decodeUnknownSync(Schema.fromJsonString(childSchema));
 const decodeFailure = Schema.decodeUnknownOption(Schema.fromJsonString(failureSchema));
 const decodeName = Schema.decodeUnknownSync(PatchName);
+const decodeDescription = Schema.decodeUnknownEffect(DescriptionText.check(Schema.isMinLength(1)));
 const isDefinitionName = Schema.is(DefinitionName);
 const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
 type Change = typeof changeSchema.Type;
@@ -105,21 +126,154 @@ export const readRepo = Effect.fn("Project.readRepo")(function* (cwd: string) {
         })
     )
   );
-  return yield* parse("Read patchy.json", () => decodeRepo(source));
+  return yield* Effect.try({
+    try: () => decodeRepo(source),
+    catch: (cause) =>
+      new LocalError({
+        message:
+          "patchy.json must contain an instance, with string values for description and patch when present, and a timestamp or null for descriptionSyncedAt.",
+        code: "invalid_manifest",
+        cause
+      })
+  });
 });
 
-/** Reapply a returned patch id only while the repo retains its original instance binding. */
-export const recordPublish = Effect.fn("Project.recordPublish")(function* (
+export const normalizeDescription = Effect.fn("Project.normalizeDescription")(function* (
+  text: string,
+  field = "The description",
+  code = "invalid_description"
+) {
+  return yield* decodeDescription(text).pipe(
+    Effect.mapError((cause) => {
+      const count = [...normalizeDescriptionText(text)].length;
+      return new LocalError({
+        message:
+          count === 0
+            ? `${field} must not be empty.`
+            : count > 500
+              ? `${field} is ${count} Unicode code points; the maximum is 500.`
+              : `${field} must not contain control characters.`,
+        code,
+        cause
+      });
+    })
+  );
+});
+
+export const recordDescription = Effect.fn("Project.recordDescription")(function* (
   cwd: string,
-  patchId: string,
+  description: {
+    readonly patchId: string;
+    readonly description: string;
+    readonly descriptionUpdatedAt: string | null;
+  },
   apiUrl: string
 ) {
   const fs = yield* FileSystem.FileSystem;
   const repo = yield* readRepo(cwd);
   if (Instance.normalizeApiUrl(repo.instance) !== Instance.normalizeApiUrl(apiUrl))
     return yield* InstanceMismatch.new({ stored: repo.instance, requested: apiUrl });
-  if (repo.patch === patchId) return;
-  if (repo.patch !== undefined)
+  if (repo.patch !== description.patchId)
+    return yield* new LocalError({
+      message: "patchy.json now names a different patch. Its description was not changed locally."
+    });
+  const destination = yield* localIO("Resolve patchy.json", () => safePath(cwd, "patchy.json"));
+  yield* Effect.scoped(
+    Effect.gen(function* () {
+      const staged = yield* fs.makeTempFileScoped({
+        directory: cwd,
+        prefix: ".patchy-description-"
+      });
+      yield* fs.writeFileString(
+        staged,
+        json({
+          ...repo,
+          description: description.description,
+          descriptionSyncedAt: description.descriptionUpdatedAt
+        })
+      );
+      yield* fs.rename(staged, destination);
+    })
+  ).pipe(
+    Effect.mapError(
+      (cause) =>
+        new LocalError({
+          message: "Could not write the cloud description into patchy.json.",
+          cause
+        })
+    )
+  );
+});
+
+/** A local text edit does not move the last acknowledged cloud timestamp. */
+export const syncDescription = Effect.fn("Project.syncDescription")(function* (
+  cwd: string,
+  token: Redacted.Redacted,
+  publishing = false
+) {
+  const repo = yield* readRepo(cwd);
+  const warnings: string[] = [];
+  if (repo.patch === undefined) return { repo, warnings };
+  const instance = yield* Instance.Instance;
+  const client = yield* Api.client(token);
+  const cloud = yield* client
+    .detail({ params: { patchRef: repo.patch }, query: { state: "all" } })
+    .pipe(
+      Effect.catch((error) => {
+        if (publishing && Api.isRefusal(error) && error.error === "Patch not found.")
+          return new RejectedError({
+            message:
+              "Patch is unavailable for update. Remove patch from patchy.json to create a new patch.",
+            cause: error
+          });
+        return Api.classify(error, "Could not read the patch description.");
+      })
+    );
+  if (cloud.descriptionUpdatedAt === null) return { repo, warnings };
+  const cloudAt = DateTime.makeUnsafe(cloud.descriptionUpdatedAt);
+  const syncedAt =
+    repo.descriptionSyncedAt == null ? undefined : DateTime.makeUnsafe(repo.descriptionSyncedAt);
+  if (syncedAt !== undefined && !DateTime.isGreaterThan(cloudAt, syncedAt))
+    return { repo, warnings };
+  warnings.push(
+    `The description was changed in the portal to '${cloud.description}'; check it` +
+      (repo.description !== undefined && repo.description !== cloud.description
+        ? ` (replaced local description: '${repo.description}').`
+        : ".")
+  );
+  yield* Output.rememberWarnings(warnings);
+  yield* recordDescription(
+    cwd,
+    {
+      patchId: cloud.id,
+      description: cloud.description,
+      descriptionUpdatedAt: cloud.descriptionUpdatedAt
+    },
+    instance.apiUrl
+  );
+  return {
+    repo: {
+      ...repo,
+      description: cloud.description,
+      descriptionSyncedAt: cloud.descriptionUpdatedAt
+    },
+    warnings
+  };
+});
+
+/** Reapply a returned patch id only while the repo retains its original instance binding. */
+export const recordPublish = Effect.fn("Project.recordPublish")(function* (
+  cwd: string,
+  patchId: string,
+  apiUrl: string,
+  descriptionUpdatedAt?: string | null
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const repo = yield* readRepo(cwd);
+  if (Instance.normalizeApiUrl(repo.instance) !== Instance.normalizeApiUrl(apiUrl))
+    return yield* InstanceMismatch.new({ stored: repo.instance, requested: apiUrl });
+  if (repo.patch === patchId && descriptionUpdatedAt === undefined) return;
+  if (repo.patch !== undefined && repo.patch !== patchId)
     return yield* new LocalError({
       message:
         "patchy.json now names a different patch. Restore the original repo identity before recovering this publish; the attempt has been kept."
@@ -128,7 +282,16 @@ export const recordPublish = Effect.fn("Project.recordPublish")(function* (
   yield* Effect.scoped(
     Effect.gen(function* () {
       const staged = yield* fs.makeTempFileScoped({ directory: cwd, prefix: ".patchy-publish-" });
-      yield* fs.writeFileString(staged, json({ ...repo, patch: patchId }));
+      yield* fs.writeFileString(
+        staged,
+        json({
+          ...repo,
+          patch: patchId,
+          ...(descriptionUpdatedAt === undefined
+            ? {}
+            : { descriptionSyncedAt: descriptionUpdatedAt })
+        })
+      );
       yield* fs.rename(staged, destination);
     })
   ).pipe(
@@ -143,20 +306,25 @@ export const recordPublish = Effect.fn("Project.recordPublish")(function* (
   );
 });
 
-const installedFailure = (stderr: string, instanceUrl: string, fallback: string) => {
+const installedFailure = Effect.fn("Project.installedFailure")(function* (
+  stderr: string,
+  instanceUrl: string,
+  fallback: string
+) {
   const failure = decodeFailure(stderr.trim());
-  if (Option.isNone(failure)) return new LocalError({ message: fallback });
+  if (Option.isNone(failure)) return yield* new LocalError({ message: fallback });
   const error = failure.value;
+  if (error.warnings !== undefined) yield* Output.rememberWarnings(error.warnings);
   const fields = { message: error.error, ...(error.code ? { code: error.code } : {}) };
   switch (error.kind) {
     case "rejected":
-      return new RejectedError(fields);
+      return yield* Api.fromRefusal(error, error.error);
     case "unreachable":
-      return new UnreachableError({ ...fields, instanceUrl });
+      return yield* new UnreachableError({ ...fields, instanceUrl });
     case "local":
-      return new LocalError(fields);
+      return yield* new LocalError(fields);
   }
-};
+});
 
 const install = Effect.fn("Project.install")(function* (cwd: string) {
   const result = yield* processResult(cwd, "pnpm", [
@@ -237,7 +405,6 @@ export const generate = Effect.fn("Project.generate")(function* (
       code: "release_mismatch"
     });
   const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
   const configPath = yield* localIO("Read config path", () => safePath(cwd, "patchy.config.ts"));
   let skills = yield* parse("Read skill names", () => decodeSkills(skillsText));
   const removedSkills: string[] = [];
@@ -279,7 +446,7 @@ export const generate = Effect.fn("Project.generate")(function* (
     });
     configEdit = { before: source, after: edited };
   }
-  const manifest = yield* Effect.tryPromise({
+  const executed = yield* Effect.tryPromise({
     try: () =>
       executeConfig(configPath, {
         resolve: false,
@@ -287,6 +454,11 @@ export const generate = Effect.fn("Project.generate")(function* (
       }),
     catch: configFailure
   });
+  const repo = yield* readRepo(cwd);
+  const manifest = {
+    ...executed,
+    ...(repo.description === undefined ? {} : { description: repo.description })
+  };
   if (
     removedKind &&
     !Object.values(manifest.uses).some((declaration) => declaration.kind === removedKind)
@@ -295,12 +467,6 @@ export const generate = Effect.fn("Project.generate")(function* (
     if (skills.includes(skill)) removedSkills.push(skill);
     skills = skills.filter((name) => name !== skill);
   }
-  const repoText = yield* fs
-    .readFileString(path.join(cwd, "patchy.json"))
-    .pipe(
-      Effect.mapError((cause) => new LocalError({ message: "Could not read patchy.json.", cause }))
-    );
-  const repo = yield* parse("Read patchy.json", () => decodeRepo(repoText));
   const client = yield* Api.client(token);
   const generated = yield* client
     .generate({
@@ -347,9 +513,10 @@ export const refresh = Effect.fn("Project.refresh")(function* (
   const release = yield* client
     .release()
     .pipe(Effect.catch((error) => Api.classify(error, "Could not read the instance release.")));
+  const { warnings: syncWarnings } = yield* syncDescription(cwd, token);
   const tarball = new URL(release.package.tarball, `${instance.apiUrl}/`).href;
   const executable = path.join(cwd, "node_modules/patchy/dist/index.js");
-  const { changed, from, pinChanged } = yield* Effect.acquireUseRelease(
+  const { changed, from, pinChanged, warnings } = yield* Effect.acquireUseRelease(
     localIO("Begin project transaction", () => ManagedProject.begin(cwd)),
     (transaction) =>
       Effect.gen(function* () {
@@ -391,6 +558,7 @@ export const refresh = Effect.fn("Project.refresh")(function* (
           yield* install(cwd);
         }
         const result = yield* runInstalledGenerate(cwd, token, release.release, skills, change);
+        const warnings = [...syncWarnings, ...(yield* primitiveReminders(cwd, result.manifest))];
         const changed = yield* localIO("Activate generated files", () =>
           transaction.activate(
             result.generated.files,
@@ -399,7 +567,7 @@ export const refresh = Effect.fn("Project.refresh")(function* (
             result.configEdit
           )
         ).pipe(Effect.uninterruptible);
-        return { changed, from, pinChanged };
+        return { changed, from, pinChanged, warnings };
       }),
     (transaction, exit) =>
       localIO("Restore project transaction", () => transaction.finish(Exit.isSuccess(exit))).pipe(
@@ -413,12 +581,14 @@ export const refresh = Effect.fn("Project.refresh")(function* (
         alias: change.alias,
         declaration: change.declaration,
         generated: changed.generated,
-        skills: changed.skills
+        skills: changed.skills,
+        warnings
       },
-      [`Added ${change.alias}.`, ...changed.generated, ...changed.fixtures]
+      [...warnings, `Added ${change.alias}.`, ...changed.generated, ...changed.fixtures]
     );
   } else if (change?.kind === "remove") {
-    yield* Output.report({ ok: true, alias: change.alias, removed: [change.alias] }, [
+    yield* Output.report({ ok: true, alias: change.alias, removed: [change.alias], warnings }, [
+      ...warnings,
       `Removed ${change.alias} and its generated declaration files. The fixture was left in fixtures/.`
     ]);
   } else
@@ -426,9 +596,11 @@ export const refresh = Effect.fn("Project.refresh")(function* (
       {
         ok: true,
         release: { from, to: release.release },
-        changed: { pin: pinChanged, ...changed }
+        changed: { pin: pinChanged, ...changed },
+        warnings
       },
       [
+        ...warnings,
         `Refreshed ${from} → ${release.release}.`,
         ...(pinChanged ? ["Updated the patchy pin and installed the new release."] : []),
         ...changed.generated,
@@ -546,17 +718,27 @@ export const init = Effect.fn("Project.init")(function* (
     `Instance: ${instance.apiUrl}\nUser: ${identity.user.name} (${identity.user.email})\nCompany: ${identity.company.name} (${identity.company.handle})`
   );
   let purpose = Option.getOrUndefined(purposeOption);
-  if (!purpose) {
-    if ((yield* Login.notWaitingBecause) !== null)
-      return yield* new LocalError({
-        message: "Supply --purpose <text> when initializing non-interactively."
-      });
-    purpose = yield* Prompt.run(Prompt.text({ message: "What is this patch for?" })).pipe(
-      Effect.catchTags({ QuitError: () => Effect.interrupt })
+  while (true) {
+    if (purpose === undefined) {
+      if ((yield* Login.notWaitingBecause) !== null)
+        return yield* new LocalError({
+          message: "Supply --purpose <text> when initializing non-interactively."
+        });
+      purpose = yield* Prompt.run(Prompt.text({ message: "What is this patch for?" })).pipe(
+        Effect.catchTags({ QuitError: () => Effect.interrupt })
+      );
+    }
+    const normalized = yield* normalizeDescription(purpose, "The patch's purpose").pipe(
+      Effect.result
     );
+    if (normalized._tag === "Success") {
+      purpose = normalized.success;
+      break;
+    }
+    if ((yield* Login.notWaitingBecause) !== null) return yield* normalized.failure;
+    yield* Output.notice(normalized.failure.message);
+    purpose = undefined;
   }
-  if (!purpose.trim())
-    return yield* new LocalError({ message: "The patch's purpose must not be empty." });
   const dir = path.resolve(
     cwd,
     Option.getOrElse(directory, () => ".")

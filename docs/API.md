@@ -596,6 +596,7 @@ Responses:
   currentVersion: integer,
   publishedAt: string,
   title: string,
+  descriptionUpdatedAt: string | null,
   inventory: { tables: { name: string, description: string, shared: boolean, declarable: boolean, reason?: "not_shared" | "source_off", hint?: string }[], stores: { name: string, description: string, declarable: false, reason: "not_shareable", hint: string }[] } | null,
   reads: { alias: string, patchId: string, name?: string, table: string, state: "live" | "retired" | "deleted" | "gone" }[]
 }
