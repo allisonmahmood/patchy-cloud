@@ -139,6 +139,57 @@ PGlite runtime. The same tier 1 shell supplies the broker in the cloud and
 
 ## Commands
 
+### Discovery
+
+`patchy list` runs anywhere with the saved login and normal instance overrides.
+It is not a repo command and never reads `patchy.json`, even inside a patch repo.
+Use the pinned `pnpm patchy` there; pass `--api-url` when discovery should target
+an instance other than the normally resolved one.
+
+| command                                | behaviour                                                                                                                                             | `--json` success                                                                                                    |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `patchy list` or `patchy list patches` | Lists patches grouped Yours, Company, then Connections. Both forms include connections.                                                               | `{ patches, connections }`, merged from `GET /api/patches` and `GET /api/connections`.                              |
+| `patchy list <patch>`                  | Prints the patch row, full description, cumulative Tables and Stores, then Reads across retained versions, with declaration hints or refusal reasons. | Patch detail wire body with `inventory` and `reads`.                                                                |
+| `patchy list <patch> <primitive>`      | Describes one table or file store, never rows or file contents.                                                                                       | Primitive detail wire body with `kind`, `name`, `description`, `shared`, `schemaRevision`, `columns` and `indexes`. |
+| `patchy list connections [--all]`      | Lists company connections and their state; `--all` also shows offered integrations.                                                                   | Connections wire body `{ connections, offered? }`.                                                                  |
+| `patchy list connections <handle>`     | Prints the current immutable schema snapshot with its revision and `takenAt`.                                                                         | Connection detail wire body `{ handle, description, status, snapshot }`.                                            |
+
+Every level accepts `--json`; success has no added `ok` wrapper. Filter JSON
+locally when choosing candidates by description. Flags apply only at these levels:
+
+- `--state live|retired|all` defaults to `live`. It filters patches at the top
+  level and governs patch resolution at both detail levels. `all` includes
+  deleted patches not yet reclaimed, including those past `purgeAt` awaiting the sweep.
+- `--mine` applies only to `list` and `list patches`, restricting their patches.
+- `--all` applies only to `list connections`, not one connection's detail.
+  Patch flags do not apply to connections. A flag at the wrong level is a
+  local error, exit 1.
+
+Patch rows lead with the canonical id, then name, state, owner, current version
+such as `v7`, and the description's first line or `(no description)`. Deactivated
+owners carry `· deactivated`; deleted patches show `deleted · gone in N days`
+from the server's `purgeAt`. A null inventory prints `Tables: unavailable`,
+not an empty inventory. A null connection snapshot is unavailable, not an empty
+database. Table detail includes each column's kind, optionality, explicit default
+including `null`, ref target, indexes with `unique`, sharing and schema revision.
+
+Find candidates with `list`, inspect their tables, stores and reads with
+`list <patch>`, then check keys and types with `list <patch> <table>`. Choose
+only a table marked `declarable: true` and carry the canonical patch id into
+`patchy add shared-table <patchId>/<table>`. Unshared tables name the owner;
+file stores are not shareable, and retired or deleted sources must be restored.
+Agents branch on `declarable` and `reason`, not the human `hint`.
+
+Names and canonical ids are accepted; a pasted URL resolves by its final path
+segment. Names resolve only non-deleted patches. A deleted patch needs its id
+and `--state all` at both detail levels. A resolved patch outside the requested
+state is the API's `wrong_state` refusal, exit 2: a retired patch says
+`retired; pass --state retired`, a deleted patch says
+`deleted; pass --state all`, and a live patch needs `--state live` or `all`.
+In JSON, `wrong_state` carries the actual `state` beside `code`.
+Only patches the credential can open appear. "No match" means "none you can use";
+check `list --state retired` before concluding a tool does not exist.
+
 ### Patch repo commands
 
 Use the instance-installed CLI outside a repo and the pinned `pnpm patchy` inside.
@@ -149,12 +200,11 @@ instance's release tarball as described above.
 | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------ |
 | `patchy init [dir] [--tier 0\|1] [--purpose <text>]`                                                        | Authenticates first, prints instance and identity, asks purpose when interactive, installs the pinned release and generates a new repo. Tier 1 is the default; an initialized target is refused.                                                                         | `{ ok, dir, release, tier, generated, skills, installed }`                     |
 | `patchy refresh`                                                                                            | Refreshes the managed set as one release-bound transaction, installing and re-executing a new CLI if the pin changes.                                                                                                                                                    | `{ ok, release: { from, to }, changed: { pin, generated, skills, fixtures } }` |
-| `patchy catalog [--all]`                                                                                    | Temporarily lists company connections, including disconnected ones, with server hints. Only connected entries include copy-ready `add` and `uses` lines. `--all` adds offered integrations and their state. No shared tables.                                            | Connections wire response: `{ connections, offered? }` (no `ok` wrapper).      |
 | `patchy add postgres/<handle> [--as <alias>]` or `patchy add shared-table <patchId>/<table> [--as <alias>]` | Inserts one literal declaration into `uses` by TypeScript AST without changing imports, then generates client, context, missing fixture and skill. An uneditable block fails naming its exact source line and the exact declaration line to add yourself before refresh. | `{ ok, alias, declaration, generated, skills }`                                |
 | `patchy remove <alias>`                                                                                     | Reverses the declaration and generated output; removes its declaration skill when no declaration of that kind remains. Leaves the fixture and says so.                                                                                                                   | `{ ok, alias, removed }`                                                       |
 
 `patchy add postgres` selects the sole connected Postgres connection; with several
-it lists copy-ready choices and stops. With none, it names `/company/connections`.
+it lists copy-ready choices from `list connections` and stops. With none, it names `/company/connections`.
 The default Postgres alias camel-cases the handle's hyphens; a shared-table alias
 defaults to its table name. `--as` overrides either.
 
@@ -165,16 +215,16 @@ and non-terminal invocations must supply the flag:
 ```sh
 patchy init ./team-notes --tier 1 --purpose "Track our team's notes" --json
 # Inside ./team-notes:
-pnpm patchy catalog
+pnpm patchy list connections
 pnpm patchy add postgres/warehouse --as sales
 pnpm patchy refresh --json
 pnpm typecheck
 pnpm patchy remove sales --json
 ```
 
-Use actual connection handles from the catalog. Shared-table targets come from
-the source patch's discovery detail, not the catalog. This temporary command
-reads `GET /api/connections` until the replacement discovery CLI lands.
+Use actual connection handles from `list connections`; inspect one with
+`list connections <handle>`. Shared-table targets come from the discovery
+chain above, using the response's canonical patch id.
 Connection setup and reconnection belong to an admin's browser at
 `/company/connections`; no CLI command accepts a
 connection string. A shared source must be openable; restore its access with its
@@ -625,7 +675,7 @@ warning after the local logout succeeds, never exit 3.
 Every command takes these, before or after the subcommand:
 
 - `--api-url <url>` — the highest-precedence instance override; for repo commands it must match the authoritative stored instance. See [precedence](#environment-variables).
-- `--json` — one result document on stdout. Command success shapes are documented above; `auth set` prints `{ "ok": true, "instanceUrl" }`, `validate` prints `{ "ok": true, "warnings" }`, and `whoami`, `publish`, `share` and `delete` print the API shapes in [`docs/API.md`](../../docs/API.md). Publish and share include `scope`. A failure is `{ "ok": false, "error", "kind", "code"? }` on stderr, ordinarily empty stdout, with the exit code for `kind`. `code` preserves wire refusals and also identifies local repo checks: `instance_mismatch`, `release_mismatch`, `stale_generated`, `invalid_manifest`, `too_large` and `tier_mismatch`. Their meanings and remedies are in the [local-code contract](../../docs/adr/ADR-0004-cli-contract-for-agents.md#local-repo-refusal-codes). Local dev also exposes `not_additive` and `not_running`. Local checks are exit 1, `local`; the same code on a wire refusal is exit 2, `rejected`. Other local failures may have no code; terminal login refusals currently use `kind` and `error` without a code. Stderr is otherwise empty; warnings belong in success documents. `status` prints JSON either way.
+- `--json` prints one result document on stdout. Command success shapes are documented above; `auth set` prints `{ "ok": true, "instanceUrl" }`, `validate` prints `{ "ok": true, "warnings" }`, and `whoami`, `publish`, `share` and `delete` print the API shapes in [`docs/API.md`](../../docs/API.md). Publish and share include `scope`. A failure is `{ "ok": false, "error", "kind", "code"?, "state"? }` on stderr, ordinarily empty stdout, with the exit code for `kind`. A discovery `wrong_state` refusal includes the patch's actual `state`. `code` preserves wire refusals and also identifies local repo checks: `instance_mismatch`, `release_mismatch`, `stale_generated`, `invalid_manifest`, `too_large` and `tier_mismatch`. Their meanings and remedies are in the [local-code contract](../../docs/adr/ADR-0004-cli-contract-for-agents.md#local-repo-refusal-codes). Local dev also exposes `not_additive` and `not_running`. Local checks are exit 1, `local`; the same code on a wire refusal is exit 2, `rejected`. Other local failures may have no code; terminal login refusals currently use `kind` and `error` without a code. Stderr is otherwise empty; warnings belong in success documents. `status` prints JSON either way.
 
 Argument parse failures can print usage on stdout before the error, as
 ADR-0004 records. Check the exit code before parsing stdout as a success document.
@@ -643,7 +693,9 @@ ADR-0004 records. Check the exit code before parsing stdout as a success documen
 - `--tier 0|1` — on `init`, the new repo's declared tier; default 1.
 - `--purpose <text>` — on `init`, required for agent, JSON and non-terminal invocations; asked at an interactive human terminal otherwise.
 - `--as <alias>` — on `add`, override the default camelCased Postgres-handle or shared-table name.
-- `--all` — on `catalog`, include offered integrations and their connected state.
+- `--state live|retired|all` filters top-level patches and governs patch resolution at both detail levels of `list`; the default is `live`.
+- `--mine` restricts patches to yours on `list` and `list patches` only.
+- `--all` includes offered integrations and their state on `list connections` only, not connection detail.
 - `--foreground` — on `dev`, wait and stream logs after readiness; interruption stops only a session this invocation started.
 
 ## Environment variables
@@ -654,12 +706,12 @@ ADR-0004 records. Check the exit code before parsing stdout as a success documen
 
 Setting any of these to the empty string means the same thing as leaving it unset.
 
-For `init` and file-oriented commands, the instance is resolved once per command,
+For `list`, `init` and file-oriented commands, the instance is resolved once per command,
 in this order: `--api-url`, then the nearest upward `.local/dev/env` that `pnpm dev`
 writes in a worktree, then `PATCHY_API_URL`, then saved `config.json`, then the
 default.
 
-Repo commands (`refresh`, `catalog`, `add`, `remove`, `dev` and its subcommands,
+Repo commands (`refresh`, `add`, `remove`, `dev` and its subcommands,
 no-file `publish`, untargeted `share`/`delete` and private generation) treat the
 instance in `patchy.json` as authoritative. The effective override follows
 `--api-url` > dev env > `PATCHY_API_URL`; if present it must match the stored URL
@@ -668,7 +720,7 @@ request. Only the effective override is compared: ignored lower-precedence
 settings cannot cause a mismatch. With no override, the repo instance has source
 `project` and wins over saved config and the default. A matching override keeps
 its usual URL source and credential behavior; publishing never rewrites the
-stored instance. `init` and file mode do not read this repo binding.
+stored instance. `list`, `init` and file mode do not read this repo binding.
 
 The dev seed is available only when the URL source is `dev-env`. An explicit
 `--api-url` selects `flag` even for the same URL: use a stored credential or

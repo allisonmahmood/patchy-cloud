@@ -7,6 +7,17 @@ description: Define Patchy-owned tables, read or mutate rows, add indexes, or ch
 
 Read `../patchy-loop/SKILL.md` first for the local-only workflow and tier 1 limits. Every readable row is available to whoever can open the patch; a browser filter is not authorization. Tier 1 has no outbound access or client storage. Use invented local rows, never production data, and leave generated files untouched.
 
+## Check existing tables first
+
+Before duplicating company data, use the loop skill's discovery chain:
+`pnpm patchy list` for descriptions, `list <patch>` for tables and reads, then
+`list <patch> <table>` for keys, types, defaults, refs, indexes and revision.
+Check retired patches before concluding absence; no match means none you can
+use. If a table is `declarable: true`, add it with
+`pnpm patchy add shared-table <patchId>/<table>` using its canonical id and
+follow the generated shared-table skill. Define an owned table when the patch
+needs its own writes; another patch's shared table stays read-only.
+
 ## Define, refresh, use
 
 In `patchy.config.ts`, import `table` and `t` from `patchy/config` and put the definition in `tables`:

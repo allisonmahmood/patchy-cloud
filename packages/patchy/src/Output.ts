@@ -3,8 +3,9 @@
  * the contract every command's failure is rendered through. In text mode a
  * result is the lines agents already read and a failure is one message on
  * stderr. Under `--json` a result is exactly one document on stdout and a
- * failure is `{ ok: false, error, kind, code? }` on stderr, with the other stream
- * empty. The exit code comes from the failure's kind and from nowhere else.
+ * failure is `{ ok: false, error, kind, code?, state? }` on stderr, with the other
+ * stream empty. Discovery's wrong-state refusals include `state`. The exit code
+ * comes from the failure's kind and from nowhere else.
  */
 import * as Console from "effect/Console";
 import * as Data from "effect/Data";
@@ -67,12 +68,28 @@ export const contract = <A, R>(handler: Effect.Effect<A, CliError, R>) =>
   Effect.gen(function* () {
     const json = yield* JsonFlag;
     const debug = isDebug(yield* GlobalFlag.LogLevel);
-    const fail = (error: string, kind: CliError["kind"], code?: string) =>
+    const fail = (error: string, kind: CliError["kind"], code?: string, state?: string) =>
       Console.error(
-        json ? toJson({ ok: false, error, kind, ...(code === undefined ? {} : { code }) }) : error
+        json
+          ? toJson({
+              ok: false,
+              error,
+              kind,
+              ...(code === undefined ? {} : { code }),
+              ...(state === undefined ? {} : { state })
+            })
+          : error
       ).pipe(Effect.andThen(new Failed({ code: exitCode(kind) })));
+    const failKnown = (error: CliError) => fail(error.message, error.kind, error.code);
     return yield* handler.pipe(
-      Effect.catch((error) => fail(error.message, error.kind, error.code)),
+      Effect.catchTags({
+        LocalError: failKnown,
+        RejectedError: failKnown,
+        UnreachableError: failKnown,
+        ReleaseMismatch: failKnown,
+        InstanceMismatch: failKnown,
+        WrongPatchState: (error) => fail(error.message, error.kind, error.code, error.state)
+      }),
       Effect.catchDefect((defect) => {
         const message = defect instanceof Error ? defect.message : String(defect);
         const stack = debug && defect instanceof Error && defect.stack ? `\n${defect.stack}` : "";
