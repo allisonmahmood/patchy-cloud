@@ -13,6 +13,7 @@ In `patchy.config.ts`, import `table` and `t` from `patchy/config` and put the d
 
 ```ts
 notes: table(
+  "One team note per id; parent identifies another note.",
   {
     title: t.text(),
     body: t.text().optional(),
@@ -22,6 +23,13 @@ notes: table(
   { indexes: { byDone: ["done"] } }
 );
 ```
+
+The first argument is a required nonblank description. State what one row
+represents, which keys identify or link it, and the units of numeric values
+when applicable. For example, an expense table could say "One expense per id;
+employeeId identifies the submitter; amount is integer USD cents." A label
+like "expenses table" does not explain the data. Table and file-store names
+must be distinct across the config.
 
 Run `pnpm patchy refresh`, then use the generated client from application source:
 
@@ -69,3 +77,7 @@ Add new tables, stores, optional/defaulted columns or non-unique indexes. Existi
 Retyping, changing optionality or defaults, adding a required column or uniqueness to an existing table, changing an existing index, and omitting a required column are `not_additive`. Follow the refusal's object, change and fix: keep the old column and add a compatible new one.
 
 Omitting a table, store, optional/defaulted column or index keeps its data and reports it unused; it does not delete it. A rename adds a new empty table beside the kept old one. Omitted defaults and unique indexes continue to apply. A compatible redefinition can expose the kept table again. `shared: true` lets other patches declare read-only access; see `../patchy-shared-tables/SKILL.md` when available. Omission does not unshare a table, and changing a version pointer does not change live sharing.
+
+Publishing a table definition replaces its description. Omitting the table
+preserves its description, and rollback leaves it unchanged. Description-only
+changes do not advance the schema revision.

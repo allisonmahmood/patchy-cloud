@@ -5,7 +5,7 @@ The resources a patch defines and owns, and the operations its admitted viewers 
 ## Language
 
 **Definition**:
-The description of a resource a patch owns. A version's manifest says which definitions that version uses; omitting a definition does not erase the resource or its data.
+The specification of a resource a patch owns, including a required description of what its rows or files represent. A version's manifest says which definitions that version uses. Publishing a definition replaces its description; omitting one preserves the resource, description and data.
 _Avoid_: declaration (a connection or shared table the patch uses but does not own), inventory (the cumulative authority)
 
 **Table**:
@@ -17,7 +17,7 @@ A compatible extension of cumulative definitions that preserves existing rows an
 _Avoid_: migration (destructive changes are not offered), replacement, synchronization
 
 **Schema revision**:
-The patch's cumulative definition revision, advanced when provisioning changes its owned resources or table-sharing state. It is independent of a published version and the runtime wire version.
+The patch's cumulative schema revision, advanced when provisioning changes its owned schema or table-sharing state. It is independent of a published version and the runtime wire version. Description changes do not advance it.
 _Avoid_: version number, release
 
 **System column**:

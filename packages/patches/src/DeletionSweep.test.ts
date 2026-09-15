@@ -29,7 +29,11 @@ const publish = (name: string, resources = false) =>
   Effect.flatMap(Content.Content, (content) =>
     content.publish({
       ...Fixtures.publishRecord(),
-      manifest: { ...Fixtures.manifest, name, files: resources ? { docs: {} } : {} },
+      manifest: {
+        ...Fixtures.manifest,
+        name,
+        files: resources ? { docs: { description: "Documents keyed by file name." } } : {}
+      },
       patchId: null,
       companyId: uploader.company.id,
       ownerUserId: uploader.user.id,

@@ -195,6 +195,8 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "`publish_key_conflict`. New attempts require the exact current release and manifest " +
           "version from `GET /api/release`. Tiers 0 and 1 may define tables and file stores, provisioned additively; " +
           "tiers 2 and above answer `tier_mismatch`. " +
+          "Every table and file store requires a nonblank description; missing or blank descriptions " +
+          "and table/store name collisions answer `invalid_manifest`. " +
           'Postgres uses carry `{ kind: "postgres", handle, id, revision }`, keyed by alias. ' +
           "The handle and id must name the same connected company connection, otherwise " +
           "`connection_not_connected`; the revision must equal its current schema snapshot, " +
@@ -215,7 +217,8 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "over 2,000 bytes, and added columns that expand existing rows over the row limit. " +
           "`not_additive` names every refused object, change and fix. Omitted tables and stores remain in " +
           "the cumulative inventory with their data and appear as `unused`; a required column cannot be omitted. " +
-          "The schema revision advances only when provisioning changes something, never for a new bundle alone. " +
+          "A publish replaces descriptions of the primitives it defines; omission and rollback preserve them. " +
+          "Description-only changes do not advance the schema revision. The revision advances for schema or sharing changes, never for a new bundle alone. " +
           "File mode (empty definitions and no repo name, or file metadata) onto cumulative inventory " +
           "answers `has_primitives`; an empty named repo manifest may omit all tables. " +
           "Reports and schema revision are persisted for replay. " +
@@ -247,7 +250,8 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
     }).annotateMerge(
       describe(
         "Read the cumulative table and file-store definitions and schema revision for an openable " +
-          "same-company patch in any lifecycle state. Omitted definitions remain here. Unknown, disabled, " +
+          "same-company patch in any lifecycle state, including each primitive's stored description. " +
+          "Omitted definitions and their descriptions remain here. Unknown, disabled, " +
           "gone and foreign patches answer 404. A primitive-free patch answers empty definitions and revision zero. " +
           "An existing ready company database is probed for inventory even when the current version " +
           "declares none: a failed platform commit may have left cumulative definitions. An unavailable " +

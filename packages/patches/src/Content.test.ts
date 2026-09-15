@@ -162,7 +162,11 @@ it.layer(
       const sql = yield* SqlClient.SqlClient;
       assert.deepStrictEqual(yield* sql`SELECT company_id FROM company_databases`, []);
       const created = yield* publish("<p>file store</p>", null, {
-        manifest: { ...Fixtures.manifest, name: "first-store", files: { attachments: {} } }
+        manifest: {
+          ...Fixtures.manifest,
+          name: "first-store",
+          files: { attachments: { description: "Attachments keyed by file name." } }
+        }
       });
       assert.strictEqual(created.schemaRevision, 1);
       assert.deepStrictEqual(created.provisioned.stores, ["attachments"]);
@@ -172,7 +176,7 @@ it.layer(
       );
       assert.deepStrictEqual(
         (yield* (yield* patches).inventory(created.patchId, uploader.user.id)).files,
-        { attachments: {} }
+        { attachments: { description: "Attachments keyed by file name." } }
       );
     })
   );
@@ -182,7 +186,7 @@ it.layer(
       const manifest = {
         ...Fixtures.manifest,
         name: "serialized-stores",
-        files: { attachments: {} }
+        files: { attachments: { description: "Attachments keyed by file name." } }
       };
       const created = yield* publish("<p>initial</p>", null, { manifest });
       const ready = yield* Deferred.make<void>();
@@ -194,7 +198,10 @@ it.layer(
       const results = yield* Effect.all(
         ["one", "two"].map((title) =>
           publish(`<p>${title}</p>`, created.patchId, {
-            manifest: { ...manifest, files: { ...manifest.files, images: {} } }
+            manifest: {
+              ...manifest,
+              files: { ...manifest.files, images: { description: "Images keyed by file name." } }
+            }
           })
         ),
         { concurrency: "unbounded" }
@@ -216,7 +223,10 @@ it.layer(
       );
       const cumulative = yield* (yield* patches).inventory(created.patchId, uploader.user.id);
       assert.strictEqual(cumulative.schemaRevision, 2);
-      assert.deepStrictEqual(cumulative.files, { attachments: {}, images: {} });
+      assert.deepStrictEqual(cumulative.files, {
+        attachments: { description: "Attachments keyed by file name." },
+        images: { description: "Images keyed by file name." }
+      });
     })
   );
 
@@ -227,7 +237,7 @@ it.layer(
         const manifest = {
           ...Fixtures.manifest,
           name: "retained-files",
-          files: { attachments: {} }
+          files: { attachments: { description: "Attachments keyed by file name." } }
         };
         const created = yield* publish("<p>initial</p>", null, { manifest });
         const bytes = new Uint8Array([0, 255, 128, 1]);
@@ -253,7 +263,10 @@ it.layer(
           })
         );
         const failed = yield* publish("<p>not committed</p>", created.patchId, {
-          manifest: { ...manifest, files: { ...manifest.files, images: {} } },
+          manifest: {
+            ...manifest,
+            files: { ...manifest.files, images: { description: "Images keyed by file name." } }
+          },
           machineTokenId: "missing-machine-token"
         }).pipe(Effect.flip);
         assert.strictEqual(failed._tag, "SqlError");
@@ -264,7 +277,10 @@ it.layer(
         );
         const cumulative = yield* service.inventory(created.patchId, uploader.user.id);
         assert.strictEqual(cumulative.schemaRevision, 2);
-        assert.deepStrictEqual(cumulative.files, { attachments: {}, images: {} });
+        assert.deepStrictEqual(cumulative.files, {
+          attachments: { description: "Attachments keyed by file name." },
+          images: { description: "Images keyed by file name." }
+        });
         yield* TestClock.adjust(Patches.PENDING_OBJECT_LEASE);
         yield* sweep;
         assert.deepStrictEqual(yield* store.service.getBytes(key), bytes);
@@ -314,7 +330,12 @@ it.layer(
         ...Fixtures.manifest,
         name: "shared-racing-source",
         tables: {
-          contacts: { columns: { name: { kind: "text" as const } }, indexes: {}, shared: true }
+          contacts: {
+            description: "Notes keyed by id.",
+            columns: { name: { kind: "text" as const } },
+            indexes: {},
+            shared: true
+          }
         }
       };
       const source = yield* publish("<p>source</p>", null, { manifest });
@@ -408,7 +429,9 @@ it.layer(
         const manifest = {
           ...Fixtures.manifest,
           name: "shared-rollback-source",
-          tables: { contacts: { columns: {}, indexes: {}, shared: true } }
+          tables: {
+            contacts: { description: "Notes keyed by id.", columns: {}, indexes: {}, shared: true }
+          }
         };
         const source = yield* publish("<p>source</p>", null, { manifest });
         const unsharedManifest = {
@@ -472,7 +495,13 @@ it.layer(
       const manifest = {
         ...Fixtures.manifest,
         name: "serialized-tables",
-        tables: { notes: { columns: { title: { kind: "text" as const } }, indexes: {} } }
+        tables: {
+          notes: {
+            description: "Records keyed by id.",
+            columns: { title: { kind: "text" as const } },
+            indexes: {}
+          }
+        }
       };
       const created = yield* publish("<p>initial</p>", null, { manifest });
       const ready = yield* Deferred.make<void>();
@@ -529,7 +558,13 @@ it.layer(
       const manifest = {
         ...Fixtures.manifest,
         name: "data-preflight",
-        tables: { notes: { columns: { title: { kind: "text" as const } }, indexes: {} } }
+        tables: {
+          notes: {
+            description: "Records keyed by id.",
+            columns: { title: { kind: "text" as const } },
+            indexes: {}
+          }
+        }
       };
       const created = yield* publish("<p>initial</p>", null, { manifest });
       const databases = yield* CompanyDatabases.CompanyDatabases;
@@ -634,7 +669,13 @@ it.layer(
       const manifest = {
         ...Fixtures.manifest,
         name: "interrupted-company-ddl",
-        tables: { notes: { columns: { title: { kind: "text" as const } }, indexes: {} } }
+        tables: {
+          notes: {
+            description: "Records keyed by id.",
+            columns: { title: { kind: "text" as const } },
+            indexes: {}
+          }
+        }
       };
       const created = yield* publish("<p>original</p>", null, { manifest });
       const service = yield* patches;
@@ -672,7 +713,7 @@ it.layer(
               }
             }
           },
-          files: { attachments: {} }
+          files: { attachments: { description: "Attachments keyed by file name." } }
         }
       };
       const before = yield* store.keys;
@@ -788,7 +829,13 @@ it.layer(
         const manifest = {
           ...Fixtures.manifest,
           name: "adopted-table-repo",
-          tables: { notes: { columns: { title: { kind: "text" as const } }, indexes: {} } }
+          tables: {
+            notes: {
+              description: "Records keyed by id.",
+              columns: { title: { kind: "text" as const } },
+              indexes: {}
+            }
+          }
         };
         const publishKey = crypto.randomUUID();
         const failed = yield* publish("<p>adopted</p>", created.patchId, {
@@ -839,7 +886,7 @@ it.layer(
       const manifest = {
         ...Fixtures.manifest,
         name: "orphan-table-repo",
-        tables: { notes: { columns: {}, indexes: {} } }
+        tables: { notes: { description: "Records keyed by id.", columns: {}, indexes: {} } }
       };
       const publishKey = crypto.randomUUID();
       const failed = yield* publish("<p>orphan</p>", null, {

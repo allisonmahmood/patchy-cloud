@@ -6,7 +6,7 @@ import type * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Api from "./Api.js";
 import { LocalError } from "./CliError.js";
-import { executeConfig } from "./executeConfig.js";
+import { configFailure, executeConfig } from "./executeConfig.js";
 import { ManagedProject, isProjectChanged, presentSkills, safePath } from "./ManagedProject.js";
 import * as Project from "./Project.js";
 import { RELEASE } from "./release.js";
@@ -65,9 +65,10 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
       Effect.gen(function* () {
         const configPath = yield* io("Read config path", () => safePath(root, "patchy.config.ts"));
         const source = yield* fs.readFileString(configPath);
-        const unresolved = yield* io("Execute config", () =>
-          executeConfig(configPath, { resolve: false, source })
-        );
+        const unresolved = yield* Effect.tryPromise({
+          try: () => executeConfig(configPath, { resolve: false, source }),
+          catch: configFailure
+        });
         for (const [alias, declaration] of Object.entries(unresolved.uses)) {
           const relative =
             declaration.kind === "postgres"
@@ -142,7 +143,10 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
             { before: source, after: source }
           )
         ).pipe(Effect.uninterruptible);
-        const resolved = yield* io("Execute resolved config", () => executeConfig(configPath));
+        const resolved = yield* Effect.tryPromise({
+          try: () => executeConfig(configPath),
+          catch: configFailure
+        });
         return {
           manifest: resolved,
           identity,

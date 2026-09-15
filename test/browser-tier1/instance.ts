@@ -20,8 +20,14 @@ export const manifest = {
   manifestVersion: 1,
   release: "",
   tier: 1,
-  tables: { rows: { columns: { label: { kind: "text" } }, indexes: {} } },
-  files: { assets: {} },
+  tables: {
+    rows: {
+      description: "Labeled records keyed by id.",
+      columns: { label: { kind: "text" } },
+      indexes: {}
+    }
+  },
+  files: { assets: { description: "Browser fixture assets keyed by file name." } },
   uses: {}
 };
 export interface Published {

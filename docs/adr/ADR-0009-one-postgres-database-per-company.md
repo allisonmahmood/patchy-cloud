@@ -43,7 +43,7 @@ or sharing authority.
 
 ## Inventory and reclamation
 
-The company database's `patchy` schema holds the cumulative provisioning authority: patches and their schema revisions, tables, columns, indexes, stores, and the file index. Physical namespaces are `p_<patchId>`; table and column identifiers are quoted as written. Inventory commits with DDL and is never rolled back merely because the active patch version is rolled back. Table-definition changes and new stores advance the revision; a new patch version or a file-content mutation alone does not.
+The company database's `patchy` schema holds the cumulative provisioning authority: patches and their schema revisions, tables, columns, indexes, stores, and the file index. Tables and stores have required descriptions. Publishing a definition replaces its description; omission preserves it. Physical namespaces are `p_<patchId>`; table and column identifiers are quoted as written. Inventory commits with DDL and is never rolled back merely because the active patch version is rolled back. Table-schema and sharing changes and new stores advance the revision; description changes, a new patch version or a file-content mutation alone do not.
 
 Inventory reads acquire the same patch lock as provisioning, so their revision
 and component queries cannot straddle a writer's commit. These metadata reads

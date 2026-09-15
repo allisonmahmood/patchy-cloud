@@ -186,7 +186,7 @@ Owner machine tokens can call the lifecycle API. The service admits owner and sa
 
 The backend stores a patch's **description** with its editor and edit time. It accepts at most 500 Unicode code points after whitespace collapse and trimming, with no control characters. The owner can edit it over the API while live or retired; service admin actors can do the same. Publish accepts the manifest description or file metadata description and returns the stored value and stamp. Omitted descriptions preserve the cloud value, and existing patches start empty. Rollback and restore never change it; edits create no version.
 
-The local-owned sync from the portal map is still future work. `init --purpose` will write `patchy.json`, the CLI will send its description on publish and pull cloud edits back with a notice, and file publishing will gain `--description`. The portal card and primitive descriptions remain later work.
+The local-owned sync from the portal map is still future work. `init --purpose` will write `patchy.json`, the CLI will send its description on publish and pull cloud edits back with a notice, and file publishing will gain `--description`. The portal card remains later work.
 
 ### Patches and other patches
 
@@ -391,10 +391,13 @@ version uses, while the company's cumulative **inventory** records everything
 provisioned for the patch. The owner can fetch that metadata and its schema
 revision from `GET /api/patches/:patchId/inventory`; it contains no row data.
 
-Decided on the portal map, not built: every table and file store carries a **description** as the first
-argument of `table()` and `files()`, required, saying what one row or object is, its identifying keys
-and units; a publish that defines the primitive replaces it, omission keeps it, and the CLI reminds the
-agent to re-check it when a definition changes while its text does not. `patchy list <patch>` shows it.
+Every table and file store carries a required, nonblank **description** as the first
+argument of `table(description, columns, options?)` and `files(description)`. It says what
+one row or object is, its identifying keys and units. The manifest and cumulative inventory
+include it. A publish that defines the primitive replaces its description; omission and rollback
+preserve it. A description-only change does not advance the schema revision. A table and file store
+cannot have the same name. The CLI's reminder to re-check unchanged descriptions when definitions
+change, and discovery through `patchy list <patch>`, remain future work.
 
 This **company database** is Patchy's storage for the company's patch resources,
 not a Postgres connection to an outside source. Platform records — users, patches,
@@ -472,7 +475,7 @@ tables. An unavailable company database is not evidence of empty inventory:
 that update refuses rather than risking a file-mode overwrite.
 
 The inventory's **schema revision** advances only when its table definitions
-change or a store is added, not on every version or file write. The inventory's `shared` flag changes only when
+change structurally, sharing changes or a store is added, not on description edits, every version or file write. The inventory's `shared` flag changes only when
 a publish defines that table with a different flag; omission does not revoke
 sharing and rolling back a version will not restore it.
 
