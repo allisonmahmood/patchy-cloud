@@ -101,7 +101,9 @@ describe("wire schemas", () => {
       schemaRevision: 0,
       provisioned: { tables: [], columns: [], indexes: [], stores: [] },
       unused: { tables: [], columns: [], indexes: [], stores: [] },
-      warnings: ["Missing <title>."]
+      warnings: ["Missing <title>."],
+      description: "Tracks delivery plans.",
+      descriptionUpdatedAt: "2026-01-01T00:00:00.000Z"
     };
     expect(roundTrip(PublishCreated, published)).toEqual(published);
 

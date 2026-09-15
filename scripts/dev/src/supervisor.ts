@@ -158,10 +158,10 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
   yield* migrate({
     ...companiesMigrations,
     ...authMigrations,
-    ...patchesMigrations,
     ...companyDatabaseMigrations,
     ...runtimeMigrations,
-    ...integrationsMigrations
+    ...integrationsMigrations,
+    ...patchesMigrations
   }).pipe(Effect.provide(layerFromUrl(Redacted.make(plan.databaseUrl))));
   const inherited = yield* Config.all({
     PATH: Config.string("PATH"),

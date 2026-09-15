@@ -13,7 +13,7 @@ import { migrations } from "./migrations.js";
 const previous: Migrations = {
   ...companiesMigrations,
   ...authMigrations,
-  ...patchesMigrations,
+  "0003_patches_baseline": patchesMigrations["0003_patches_baseline"]!,
   ...companyDatabaseMigrations
 };
 const withRuntime: Migrations = { ...previous, ...migrations };
@@ -21,6 +21,7 @@ const withIntegrations: Migrations = {
   ...withRuntime,
   ...integrationsMigrations
 };
+const withLifecycle: Migrations = { ...withIntegrations, ...patchesMigrations };
 
 const company = Effect.flatMap(
   SqlClient.SqlClient,
@@ -47,7 +48,7 @@ const useMigratedTables = Effect.gen(function* () {
   yield* sql`
     UPDATE runtime_calls SET outcome = 'success', duration_ms = 12, row_count = 1
     WHERE correlation_id = 'correlation_migration'`;
-  assert.deepStrictEqual(yield* migrate(withIntegrations), []);
+  assert.deepStrictEqual(yield* migrate(withLifecycle), []);
   return yield* sql`
     SELECT c.name AS company, i.id AS connection, r.outcome,
       r.duration_ms AS duration, r.row_count AS rows
@@ -58,19 +59,20 @@ const useMigratedTables = Effect.gen(function* () {
 });
 
 it.effect(
-  "lands Runtime before Integrations on upgrade and fresh install, then stays idempotent",
+  "lands Runtime, Integrations and the patch lifecycle in order, then stays idempotent",
   () =>
     Effect.gen(function* () {
       const upgraded = yield* Effect.gen(function* () {
         yield* company;
         assert.deepStrictEqual(yield* migrate(withRuntime), [[6, "runtime_baseline"]]);
         assert.deepStrictEqual(yield* migrate(withIntegrations), [[7, "integrations_baseline"]]);
+        assert.deepStrictEqual(yield* migrate(withLifecycle), [[8, "patches_lifecycle"]]);
         return yield* useMigratedTables;
       }).pipe(Effect.provide(Testing.emptyLayer(previous)));
       const fresh = yield* Effect.gen(function* () {
         yield* company;
         return yield* useMigratedTables;
-      }).pipe(Effect.provide(Testing.emptyLayer(withIntegrations)));
+      }).pipe(Effect.provide(Testing.emptyLayer(withLifecycle)));
       assert.deepStrictEqual(upgraded, [
         {
           company: "Existing company",

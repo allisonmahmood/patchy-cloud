@@ -4,7 +4,6 @@
  * What each route does is its package's test; this proves the wiring.
  */
 import { assert, expect, it } from "@effect/vitest";
-import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -404,10 +403,7 @@ it.layer(
         const foreignCookie = sessionCookie("user_socket_foreign", "foreign@example.com");
         const inactiveCookie = sessionCookie("user_socket_inactive", "inactive@example.com");
         const unenrolledCookie = sessionCookie("user_socket_unenrolled", "unenrolled@example.com");
-        // Leave a day on the retention window so an unauthorized visit would visibly top it up.
-        const expiresAt = new Date((yield* Clock.currentTimeMillis) + 86_400_000).toISOString();
-        yield* sql`UPDATE patches SET expires_at = ${expiresAt} WHERE id = ${patchId}`;
-        const [before] = yield* sql`SELECT expires_at FROM patches WHERE id = ${patchId}`;
+        const [before] = yield* sql`SELECT visit_count FROM patches WHERE id = ${patchId}`;
         for (const suffix of ["", "/~v/1"]) {
           const patchPath = `${addressPath}${suffix}`;
           const missingPath = `/${DEV_SEED.companyHandle}/missing12345${suffix}`;
@@ -468,8 +464,8 @@ it.layer(
           assert.strictEqual(head.headers["cache-control"], "private, no-store");
           assert.strictEqual(yield* head.text, "");
         }
-        const [after] = yield* sql`SELECT expires_at FROM patches WHERE id = ${patchId}`;
-        assert.deepStrictEqual(after, before, "refused visits must not keep a patch alive");
+        const [after] = yield* sql`SELECT visit_count FROM patches WHERE id = ${patchId}`;
+        assert.deepStrictEqual(after, before, "refused requests must not count as visits");
         for (const path of ["/healthz", "/login", "/auth/session.js", "/not-a-route"]) {
           const get = yield* send(HttpClientRequest.get(path));
           const head = yield* send(HttpClientRequest.head(path));

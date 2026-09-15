@@ -1,7 +1,7 @@
 /**
  * The one place a patch's bytes are touched on the way in and the way out:
  * the publish contract, and the read a served page is built from. Everything
- * else in the capability handles rows; `ExpirySweep` reclaims unreachable
+ * else in the capability handles rows; `DeletionSweep` reclaims unreachable
  * objects through durable pending-object intents.
  *
  * Register an intent, put the object, then consume the intent and record the
@@ -44,6 +44,7 @@ export class Content extends Context.Service<
       | Patches.PatchQuotaReached
       | Patches.PendingObjectExpired
       | Patches.ResourceError
+      | Patches.LifecycleError
       | SqlError
       | ContentStore.InvalidObjectKey
       | ContentStore.StoreUnavailable

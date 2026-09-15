@@ -181,7 +181,11 @@ it.layer(layer)("pages", (it) => {
       Effect.gen(function* () {
         const { patchId, path, versionId: olderVersionId } = yield* publish("Company-only history");
         const current = yield* publish("Serving Guarantees", undefined, patchId);
-        yield* (yield* Patches.Patches).setScope(patchId, DEV_SEED.userId, "public");
+        yield* (yield* Patches.Patches).setScope(
+          patchId,
+          { userId: DEV_SEED.userId, admin: false },
+          "public"
+        );
         for (const [url, content] of [
           [path, false],
           [`${path}/~v/2`, false],
@@ -331,7 +335,7 @@ it.layer(layer)("pages", (it) => {
           assert.notInclude(body, renamedTitle);
         }
 
-        yield* patches.delete(replacement.patchId, DEV_SEED.userId);
+        yield* patches.delete(replacement.patchId, { userId: DEV_SEED.userId, admin: false });
         for (const suffix of suffixes) {
           const gone = yield* get(`${oldPath}${suffix}`);
           assert.strictEqual(gone.status, 404);
@@ -412,50 +416,47 @@ it.layer(layer)("pages", (it) => {
     })
   );
 
-  it.effect("a visit keeps a patch alive, and it goes once the visits stop", () =>
+  it.effect("keeps an unvisited patch serving until its owner takes it off", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(Date.UTC(2026, 0, 1));
-      const { path } = yield* publish("Still visited");
-
-      // Ten days left on the upload's window: this visit tops it up to thirty.
-      yield* TestClock.adjust(80 * DAY);
+      const { path, patchId } = yield* publish("Still available");
+      yield* TestClock.adjust(365 * DAY);
       assert.strictEqual((yield* get(path)).status, 200);
-
-      // Day 95, past where the upload alone would have ended it, and visited again.
-      yield* TestClock.adjust(15 * DAY);
-      assert.strictEqual((yield* get(path)).status, 200);
-
-      // Thirty-one days without a visit, and both URLs are gone.
-      yield* TestClock.adjust(31 * DAY);
+      assert.strictEqual((yield* get(`${path}/~v/1`)).status, 200);
+      yield* (yield* Patches.Patches).retire(patchId, { userId: DEV_SEED.userId, admin: false });
       assert.strictEqual((yield* get(path)).status, 404);
       assert.strictEqual((yield* get(`${path}/~v/1`)).status, 404);
+      const patches = yield* Patches.Patches;
+      const actor = { userId: DEV_SEED.userId, admin: false };
+      yield* patches.restore(patchId, actor);
+      assert.strictEqual((yield* get(path)).status, 200);
+      yield* patches.delete(patchId, actor);
+      assert.strictEqual((yield* get(path)).status, 404);
+      assert.strictEqual((yield* get(`${path}/~v/1`)).status, 404);
+      yield* patches.restore(patchId, actor);
+      assert.strictEqual((yield* get(`${path}/~v/1`)).status, 200);
     })
   );
 
-  it.effect("serves the page when the visit top-up fails, without moving the clock", () =>
+  it.effect("serves the page when recording a visit fails", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(Date.UTC(2026, 0, 1));
-      const { path } = yield* publish("Survives a failed top-up");
+      const { path, patchId } = yield* publish("Survives a failed visit");
       const sql = yield* SqlClient.SqlClient;
-      // From here every move of a retention anchor fails inside the database.
       yield* sql.unsafe(`
         CREATE FUNCTION fail_visit() RETURNS trigger AS $$
-          BEGIN RAISE EXCEPTION 'Forced visit top-up failure.'; END
+          BEGIN RAISE EXCEPTION 'Forced visit recording failure.'; END
         $$ LANGUAGE plpgsql;
-        CREATE TRIGGER fail_visit BEFORE UPDATE OF expires_at ON patches
+        CREATE TRIGGER fail_visit BEFORE UPDATE OF visit_count ON patches
           FOR EACH ROW EXECUTE FUNCTION fail_visit();
       `);
 
-      // Ten days left, so this visit is one the clock would move — and the
-      // write throws. The reader still gets the page.
-      yield* TestClock.adjust(80 * DAY);
+      const [before] = yield* sql`SELECT visit_count FROM patches WHERE id = ${patchId}`;
       const served = yield* get(path);
       assert.strictEqual(served.status, 200);
-      assert.include(yield* served.text, "Survives a failed top-up");
-
-      // Best-effort means exactly that: the clock genuinely did not move.
-      yield* TestClock.adjust(11 * DAY);
-      assert.strictEqual((yield* get(path)).status, 404);
+      assert.include(yield* served.text, "Survives a failed visit");
+      const [after] = yield* sql`SELECT visit_count FROM patches WHERE id = ${patchId}`;
+      assert.deepStrictEqual(after, before);
     })
   );
 });
@@ -665,7 +666,7 @@ it.layer(services)("pages in memory", (it) => {
         const { patchId, path: patchPath } = yield* publish("Sharing boundary");
         const patches = yield* Patches.Patches;
         for (const scope of ["company", "public", "company"] as const) {
-          yield* patches.setScope(patchId, DEV_SEED.userId, scope);
+          yield* patches.setScope(patchId, { userId: DEV_SEED.userId, admin: false }, scope);
           for (const path of [patchPath, `${patchPath}/~v/1`]) {
             const response = yield* send(path, { headers: { cookie: signedInCookies() } });
             assert.strictEqual(response.status, 200);

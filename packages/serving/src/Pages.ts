@@ -129,24 +129,12 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (kind: "address" | "c
           .pipe(Effect.catchTags({ InvalidObjectKey: Effect.die, StoreUnavailable: Effect.die }))
       : "";
 
-  // The page is real and already fetched, so this is a visit — the thing that
-  // keeps a patch people still visit from ageing out. The database decides
-  // whether the clock actually moves and writes nothing when it does not.
-  //
-  // Best-effort on purpose: this is a read path, and a reader who is one header
-  // away from their page should get it even if the top-up write fails. Losing a
-  // clock extension costs at most some retention; turning a fetched page into a
-  // 500 costs the reader the page itself.
-  //
-  // Only requests that reach the server are visits, and the cache headers below
-  // mean repeat reads inside the address's window may not. That undercount is
-  // harmless: topping up needs one visit somewhere in the final stretch of a
-  // 30-day window, not a true read count — this is a retention clock, not
-  // analytics.
+  // Count only successful requests that reach the origin. Cached reads may
+  // undercount visits. A failed counter write must not deny the fetched page.
   yield* patches.recordVisit(served.value.patch.id).pipe(
     Effect.catchTags({
       SqlError: (error) =>
-        Effect.logWarning("Patch visit top-up failed.", error).pipe(
+        Effect.logWarning("Patch visit recording failed.", error).pipe(
           Effect.annotateLogs({ patchId: served.value.patch.id })
         )
     })

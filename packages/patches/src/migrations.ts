@@ -1,7 +1,6 @@
 /**
- * The patches capability's schema: id 3 of the global migration sequence
- * (`packages/sql/CONTEXT.md`), the baseline for `patches`, `patch_versions`
- * and their pending objects. Companies holds 1 and Auth holds 2.
+ * The patches capability's schema: baseline 3 and lifecycle migration 8 of
+ * the global migration sequence (`packages/sql/CONTEXT.md`).
  */
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -11,11 +10,8 @@ const ddl = (statement: string) =>
   Effect.flatMap(SqlClient.SqlClient, (sql) => sql.unsafe(statement));
 
 export const migrations: Migrations = {
-  // A patch is the runtime-agnostic record: who holds it, what it is called,
-  // which version serves, and the clocks that decide whether it is up —
-  // the retention anchor (`expires_at`), and the deleted / disabled stamps
-  // that take it out of service. A version is one publication: its bundle,
-  // manifest, contract versions and replay record.
+  // A patch owns its address and served-version pointer. Versions retain
+  // immutable bundles, manifests, contract versions and publish replay records.
   "0003_patches_baseline": ddl(`
     CREATE TABLE patches (
       id TEXT PRIMARY KEY,
@@ -85,5 +81,35 @@ export const migrations: Migrations = {
     CREATE INDEX patches_owner_user_id_idx ON patches(owner_user_id);
     CREATE INDEX patch_versions_patch_id_idx ON patch_versions(patch_id);
     CREATE UNIQUE INDEX patch_versions_owner_publish_key_idx ON patch_versions(owner_user_id, publish_key);
+  `),
+  "0008_patches_lifecycle": ddl(`
+    -- Deletes before this migration were irreversible and released their names.
+    -- Finalize those tombstones rather than offer restore at a reused address
+    -- or revive a namespace the old orphan sweep may already have removed.
+    INSERT INTO pending_patch_objects (object_key, expires_at, claimed)
+      SELECT versions.object_key, CURRENT_TIMESTAMP, false
+      FROM patch_versions versions JOIN patches ON patches.id = versions.patch_id
+      WHERE patches.deleted_at IS NOT NULL
+      ON CONFLICT (object_key) DO UPDATE
+        SET expires_at = EXCLUDED.expires_at, claimed = false;
+    DELETE FROM patch_versions
+      WHERE patch_id IN (SELECT id FROM patches WHERE deleted_at IS NOT NULL);
+    DELETE FROM patches WHERE deleted_at IS NOT NULL;
+
+    ALTER TABLE patches
+      DROP COLUMN expires_at,
+      ADD COLUMN retired_at TIMESTAMPTZ,
+      ADD COLUMN retired_by TEXT REFERENCES users(id),
+      ADD COLUMN deleted_by TEXT REFERENCES users(id),
+      ADD COLUMN reassigned_at TIMESTAMPTZ,
+      ADD COLUMN reassigned_by TEXT REFERENCES users(id),
+      ADD COLUMN description TEXT NOT NULL DEFAULT '',
+      ADD COLUMN description_updated_at TIMESTAMPTZ,
+      ADD COLUMN description_updated_by TEXT REFERENCES users(id),
+      ADD COLUMN last_changed_at TIMESTAMPTZ,
+      ADD COLUMN last_changed_by TEXT REFERENCES users(id),
+      ADD COLUMN visit_count BIGINT NOT NULL DEFAULT 0;
+    CREATE INDEX patches_deleted_at_idx ON patches(deleted_at)
+      WHERE deleted_at IS NOT NULL;
   `)
 };

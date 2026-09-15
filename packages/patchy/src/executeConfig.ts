@@ -36,6 +36,7 @@ export interface ExecutedManifest {
   readonly manifestVersion: number;
   readonly release: string;
   readonly name?: string;
+  readonly description?: string;
   readonly tier: 0 | 1 | 2 | 3;
   readonly tables: Readonly<
     Record<

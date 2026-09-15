@@ -5,6 +5,7 @@
  * files. What the commands do between those edges is the commands' own tests.
  */
 import { execFile, spawn, type ChildProcess } from "node:child_process";
+import * as Struct from "effect/Struct";
 import {
   existsSync,
   mkdirSync,
@@ -135,6 +136,8 @@ const publish = (
   versionId: `${patchId}-v${versionNumber}`,
   versionNumber,
   title: "Page",
+  description: "",
+  descriptionUpdatedAt: null,
   name,
   address: `http://instance.test/${DEV_SEED.companyHandle}/${name}`,
   publicUrl: `http://instance.test/${DEV_SEED.companyHandle}/${name}`,
@@ -1031,12 +1034,15 @@ describe("patchy publish", async () => {
     },
     { status: 400, route: "/api/publish", body: "undecodable admission refusal" }
   ])(
-    "keeps one lost-success key through $status on $route and same-owner token rotation",
+    "recovers a legacy receipt through $status on $route and same-owner token rotation",
     async ({ status, route, body }) => {
       const dir = tempDir();
       const file = htmlFile(dir, "page.html", validHtml);
       let phase: "lost" | "refused" | "recovered" = "lost";
-      const response = publish(201, "abcdefghijkl", 1);
+      const response = Struct.omit(publish(201, "abcdefghijkl", 1), [
+        "description",
+        "descriptionUpdatedAt"
+      ]);
       const instance = await stubInstance((request, respond, disconnect) => {
         if (phase === "refused" && request.url === route) return respond(status, body);
         if (request.url === "/api/me") return respond(200, identity);
@@ -1068,9 +1074,84 @@ describe("patchy publish", async () => {
       });
       for (const request of sent) expect(request.body).toEqual(sent[0]?.body);
       expect(instance.requests.filter((request) => request.url === "/api/release")).toHaveLength(1);
+      expect(readJson(path.join(dir, "patches.json"))).toMatchObject({
+        hosts: {
+          [instance.url]: {
+            files: {
+              [file]: {
+                patchId: response.patchId,
+                publicUrl: response.publicUrl,
+                latestVersionNumber: response.versionNumber
+              }
+            }
+          }
+        }
+      });
       expect(existsSync(attemptPath)).toBe(false);
     }
   );
+
+  it("requires current description fields on a fresh publish response", async () => {
+    const dir = tempDir();
+    const file = htmlFile(dir, "page.html", validHtml);
+    const response = Struct.omit(publish(201, "abcdefghijkl", 1), [
+      "description",
+      "descriptionUpdatedAt"
+    ]);
+    const instance = await stubPublishingInstance((_, respond) => respond(201, response));
+    const result = await runCli(["publish", file, "--json"], {
+      stateDir: dir,
+      env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" }
+    });
+    expect(result).toMatchObject({ status: 3, stdout: "" });
+    expect(JSON.parse(result.stderr)).toMatchObject({ kind: "unreachable" });
+    expect(existsSync(path.join(dir, "patches.json"))).toBe(false);
+    expect(existsSync(path.join(dir, "publish", sha256(instance.url), "attempt"))).toBe(true);
+  });
+
+  it("keeps an unreadable retained receipt pending until its identity and metadata are valid", async () => {
+    const dir = tempDir();
+    const file = htmlFile(dir, "page.html", validHtml);
+    const legacy = Struct.omit(publish(201, "abcdefghijkl", 1), [
+      "description",
+      "descriptionUpdatedAt"
+    ]);
+    const response = {
+      ...legacy,
+      receiptRelease: "before-descriptions",
+      provisioned: { ...legacy.provisioned, oldReceiptDetail: 17 }
+    };
+    let reply: unknown;
+    const instance = await stubPublishingInstance((_, respond, disconnect) => {
+      if (reply === undefined) return disconnect();
+      respond(201, reply);
+    });
+    const options = {
+      stateDir: dir,
+      env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" }
+    };
+    expect((await runCli(["publish", file, "--json"], options)).status).toBe(3);
+    const attemptPath = path.join(dir, "publish", sha256(instance.url), "attempt");
+    const original = readFileSync(pendingFile(attemptPath), "utf8");
+    for (const malformed of [
+      { ...response, patchId: "not-a-patch-id" },
+      { ...response, description: 42 }
+    ]) {
+      reply = malformed;
+      const rejected = await runCli(["publish", "missing.html", "--json"], options);
+      expect(rejected).toMatchObject({ status: 3, stdout: "" });
+      expect(JSON.parse(rejected.stderr)).toMatchObject({ kind: "unreachable" });
+      expect(readFileSync(pendingFile(attemptPath), "utf8")).toBe(original);
+      expect(existsSync(path.join(dir, "patches.json"))).toBe(false);
+    }
+    reply = response;
+    const recovered = await runCli(["publish", "missing.html", "--json"], options);
+    expect(recovered).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(recovered.stdout)).toEqual(response);
+    expect(existsSync(attemptPath)).toBe(false);
+    const sent = instance.requests.filter((request) => request.url === "/api/publish");
+    for (const request of sent) expect(request.body).toEqual(sent[0]?.body);
+  });
 
   it("never sends recovered HTML to another owner, but accepts a rotated key for the original owner", async () => {
     const dir = tempDir();
@@ -2003,9 +2084,16 @@ describe("patchy share", () => {
 });
 
 describe("patchy delete", async () => {
-  it("takes down the patch a file was published from with the key that published it, then the patch is gone", async () => {
-    // The stub remembers what is live, so a delete after a delete is a real 404.
+  it("forgets every cached file after deletion and reports a repeated delete as wrong_state", async () => {
     const live = new Set<string>();
+    const deletedPatches = new Set<string>();
+    const deletion = {
+      ok: true,
+      patchId: "abcdefghijkl",
+      state: "deleted",
+      deletedAt: "2026-01-01T00:00:00.000Z",
+      purgeAt: "2026-01-31T00:00:00.000Z"
+    };
     const instance = await stubPublishingInstance((request, respond) => {
       if (request.url === "/api/publish") {
         const body = request.body as { patchId?: string };
@@ -2018,7 +2106,17 @@ describe("patchy delete", async () => {
         return respond(201, publish(201, "abcdefghijkl", 1));
       }
       const patchId = request.url.replace("/api/patches/", "");
-      if (request.method === "DELETE" && live.delete(patchId)) return respond(200, { ok: true });
+      if (request.method === "DELETE" && live.delete(patchId)) {
+        deletedPatches.add(patchId);
+        return respond(200, deletion);
+      }
+      if (request.method === "DELETE" && deletedPatches.has(patchId))
+        return respond(409, {
+          ok: false,
+          code: "wrong_state",
+          state: "deleted",
+          error: "Patch is deleted."
+        });
       return respond(404, { ok: false, error: "Patch not found." });
     });
     const dir = tempDir();
@@ -2032,14 +2130,15 @@ describe("patchy delete", async () => {
     ).toBe(0);
 
     const deleted = await runCli(["delete", file, "--json"], { stateDir: dir, env });
-    expect(deleted).toMatchObject({ status: 0, stdout: '{"ok":true}\n', stderr: "" });
+    expect(deleted).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(deleted.stdout)).toEqual(deletion);
     expect(instance.requests[6]).toMatchObject({
       method: "DELETE",
       url: "/api/patches/abcdefghijkl",
       authorization: "Bearer pp_owner"
     });
     // Every file that pointed at the patch is forgotten, not only the one named,
-    // so no later publish tries to update a patch that is gone.
+    // so no later file publish tries to update the deleted patch.
     expect(readJson(path.join(dir, "patches.json"))).toEqual({
       hosts: { [instance.url]: { files: {} } }
     });
@@ -2049,11 +2148,12 @@ describe("patchy delete", async () => {
     expect(forgotten.stderr).toMatch(/^No patch on .* was published from /);
     expect(instance.requests).toHaveLength(7);
 
-    const gone = await runCli(["delete", "--patch", "abcdefghijkl"], { stateDir: dir, env });
-    expect(gone.status).toBe(2);
-    expect(gone.stderr).toBe(
-      `Patch abcdefghijkl is unavailable for deletion: it is not on ${instance.url}, or this publishing key does not own it.\n`
-    );
+    const repeated = await runCli(["delete", "--patch", "abcdefghijkl", "--json"], {
+      stateDir: dir,
+      env
+    });
+    expect(repeated.status).toBe(2);
+    expect(JSON.parse(repeated.stderr)).toMatchObject({ kind: "rejected", code: "wrong_state" });
   });
 });
 
@@ -2780,9 +2880,13 @@ describe("repo publish recovery", () => {
     );
   });
 
-  it("reapplies a moved update identity and retains a conflicting author selection", async () => {
+  it("reapplies a moved update's legacy receipt and retains a conflicting author selection", async () => {
     let lost = true;
-    const response = { ...publish(200, "abcdefghijkl", 2), tier: 1 };
+    const legacy = Struct.omit(publish(200, "abcdefghijkl", 2), [
+      "description",
+      "descriptionUpdatedAt"
+    ]);
+    const response = { ...legacy, tier: 1 };
     const instance = await stubInstance((request, respond, disconnect) => {
       if (request.url === "/api/publish") {
         if (lost) return disconnect();
@@ -2833,6 +2937,7 @@ describe("repo publish recovery", () => {
     );
     const recovered = await runCli(["publish", "--json"], options);
     expect(recovered).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(recovered.stdout)).toEqual(response);
     expect(readJson(path.join(moved, "patchy.json"))).toEqual({
       instance: instance.url,
       patch: response.patchId,
@@ -3004,7 +3109,7 @@ describe("repo publish recovery", () => {
     expect(instance.requests.filter((r) => r.url === "/api/release")).toHaveLength(2);
   }, 30_000);
 
-  it("uses the repo identity for share and delete, and a deleted update cannot become a create", async () => {
+  it("uses the repo identity for share and delete, and a missing update cannot become a create", async () => {
     const instance = await stubPublishingInstance((request, respond) => {
       if (request.url.endsWith("/share"))
         return respond(200, {
@@ -3013,7 +3118,14 @@ describe("repo publish recovery", () => {
           publicUrl: "http://instance.test/patchy-dev/page",
           scope: "public"
         });
-      if (request.method === "DELETE") return respond(200, { ok: true });
+      if (request.method === "DELETE")
+        return respond(200, {
+          ok: true,
+          patchId: "abcdefghijkl",
+          state: "deleted",
+          deletedAt: "2026-01-01T00:00:00.000Z",
+          purgeAt: "2026-01-31T00:00:00.000Z"
+        });
       respond(404, { ok: false, error: "Patch not found." });
     });
     const dir = projectTree(instance.url);
@@ -3050,7 +3162,7 @@ describe("repo publish recovery", () => {
     );
     const result = await runCli(["publish", "--json"], options);
     expect(result.status).toBe(2);
-    expect(JSON.parse(result.stderr).error).toContain("Remove patch from patchy.json");
+    expect(readJson(path.join(dir, "patchy.json"))).toMatchObject({ patch: "abcdefghijkl" });
     expect(existsSync(attemptPath)).toBe(false);
     expect(instance.requests.map((r) => [r.method, r.url])).toEqual([
       ["POST", "/api/patches/abcdefghijkl/share"],

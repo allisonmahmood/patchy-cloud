@@ -40,8 +40,8 @@ export const setup = Effect.fn("test.files.setup")(function* (patchId: string) {
   const platform = yield* SqlClient.SqlClient;
   const databases = yield* CompanyDatabases.CompanyDatabases;
   const tables = yield* Tables.Tables;
-  yield* platform`INSERT INTO patches (id, company_id, owner_user_id, title, name, expires_at)
-    VALUES (${patchId}, ${companyId}, 'usr_dev', 'File test', ${patchId}, '2040-01-01')`;
+  yield* platform`INSERT INTO patches (id, company_id, owner_user_id, title, name)
+    VALUES (${patchId}, ${companyId}, 'usr_dev', 'File test', ${patchId})`;
   yield* databases.ensureReady(companyId);
   yield* platform.withTransaction(
     Effect.gen(function* () {
