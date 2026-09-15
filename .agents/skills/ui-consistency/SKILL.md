@@ -10,19 +10,34 @@ metadata:
 
 Review changed page-rendering code and directly affected call sites against the rules below. Apply them when a change creates, moves, or modifies markup or styling on a served page. Do not demand unrelated repository-wide cleanup.
 
-First-party pages compose the server-rendered shell and inline `<style>` block in `packages/core/src/html.ts`; the served-patch renderer stays in `packages/serving/src/shell.ts`. There is no component library, utility-CSS framework, client-side framework, or second theme. Auth and Companies pages use plain forms. Company shells load Clerk's headless script and Patchy's external session initializer; tier 1 shells also load Patchy's external broker. Never inline shell script or analytics.
+First-party pages compose the server-rendered shell and inline `<style>` block in `packages/core/src/html.ts`; the served-patch renderer stays in `packages/serving/src/shell.ts`. The shell owns one named component set, not a client-side library or a second theme. Auth and Companies pages use plain forms. Company shells load Clerk's headless script and Patchy's external session initializer; tier 1 shells also load Patchy's external broker. Never inline shell script or analytics.
 
-Two page kinds, and the distinction drives most findings:
+Three page kinds:
 
-- **First-party chrome** — the home page, 404, sign-in, create-or-join and deactivated pages — all composed through `htmlPage`.
-- **Served patches** — `renderPatchWrapper`, which is user content and is deliberately _not_ `htmlPage`.
+- **App shell**: signed-in Company, Connections and Your machines pages, and the portal when it lands. `htmlPage` renders the shared header with brand, Patches, Company, Connections, Your machines, viewer and sign-out, marks the current section, and places the content in a wide card. Auth's `pageResponse` takes the viewer and section in app mode.
+- **First-party doors and static pages**: sign-in, create-or-join, device-login confirmation, deactivated and error pages keep the card rather than app navigation. The existing marketing home remains unchanged until the portal lands. All compose `htmlPage`.
+- **Served patches**: `renderPatchWrapper` is user content and deliberately does not compose `htmlPage`.
 
 ## The shell and its one exception
 
 - First-party pages compose `htmlPage`. A new page that re-emits its own `<head>`, base styles, or design tokens instead of composing the shell is a concrete finding.
 - `renderPatchWrapper` is the standing exception and stays one. It is a separate document on purpose: its own minimal `<head>`, no shell paper/grid/glyph styling, and `form-action 'none'`. Tier 0 public shells keep no script source; tier 1 public shells admit only Patchy's external broker and same-origin runtime calls. Only company shells admit Clerk's session sources. Do not fold the patch frame into `htmlPage`; notices and the needs-rebuild door are first-party `htmlPage` pages.
-- When first-party pages repeat the same durable treatment — pills, notes, compact code panels — prefer a named shared class in the shell. Keep contextual layout, width, and color at the call site.
-- Flag call-site overrides that replace a shared class's core height, radius, padding, focus ring, or base colors. Extend the shared contract instead when the pattern is genuinely shared.
+- A first-party page introduces no button, field, list, notice or heading style of its own. It composes the component set below and keeps only layout in page CSS. Patches are exempt.
+- A page-level override of a component's size, radius or colour is a finding. This includes height, padding, typography, focus ring and base colours. Extend the shared contract when a treatment is missing rather than overriding it.
+
+### Component set
+
+`packages/core/src/html.ts` owns these classes and their tokens:
+
+- Buttons: `btn`, with `btn-primary`, `btn-quiet` or `btn-danger`; links that act as buttons use the same classes.
+- Fields: `field` for input, select and textarea; `field-label`, `field-hint`, `field-error`, `field-choice`, `field-checkbox` and `field-radio`. Keep labels, hint/error associations and native disabled and keyboard behavior.
+- Supporting text: `supporting-text` for metadata and page-level guidance; reserve `field-hint` for a field's hint.
+- Fact lists: `facts` on a `dl` with `dt`/`dd`; item lists: `list` and `list-row`.
+- Code panels: `code-panel` on `pre` preserves wrapping and caps long content at a scrollable height. Expandable list rows use the shell's `summary` spacing and pointer.
+- Notices: `note`, `note-warn`, `note-refused`, `note-ok` and `note-title`. Refusals use `role="alert"`; completed actions use `role="status"`.
+- Headings and sections: `page-heading`, `section-heading`, `section`; `verification-code` is the device confirmation's code display, not a page-specific heading scale.
+- Pills: `pill`, `pill-progress` and `pill-done`.
+- Confirmation forms: `confirmation-form`, `confirmation-consequence`, `confirmation-list`, `confirmation-acknowledgement` and `confirmation-actions`; compose the shared fields and buttons for acknowledgement, submit and cancel. Ordinary action groups use `actions`.
 
 ## Served patches
 
@@ -34,7 +49,7 @@ Two page kinds, and the distinction drives most findings:
 
 ## CSS ownership
 
-- Ordinary one-owner presentation belongs with the page that renders it: local geometry, spacing, typography, backgrounds, borders, and page-only positioning. Shell CSS is for what is genuinely shared or behaviorally complex.
+- Page CSS owns layout only: local geometry, ordering, grid columns and positioning. The shell owns component spacing, typography, backgrounds, borders and colours.
 - Do not apply `filter` to `html`, `body`, or the page root: it also tints the embedded patch frame and user media.
 - Before calling a selector dead, trace the emitted class string and any class-valued field through to its DOM sink. A helper that returns a class is not proof that it is rendered.
 - Flag duplicate declarations only after comparing specificity, inheritance, and the final owning element. Textually identical declarations are not necessarily redundant.

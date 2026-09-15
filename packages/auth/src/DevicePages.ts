@@ -15,21 +15,11 @@ import * as DeviceLogins from "./DeviceLogins.js";
 import * as MachineTokens from "./MachineTokens.js";
 import * as RequireSession from "./RequireSession.js";
 import * as Session from "./Session.js";
-import { pageResponse, signOutForm, type Page } from "./page.js";
+import { pageResponse, type Page } from "./page.js";
 
 const styles = `
-    .auth-card { overflow-wrap: anywhere; }
     .device-lede { margin-bottom: 12px; }
-    .auth-card .device-code { font-family: var(--font-mono); font-size: clamp(1.65rem, 7vw, 3rem); letter-spacing: .04em; white-space: nowrap; }
-    .device-actions { display: flex; flex-wrap: wrap; gap: 12px; margin: 24px 0; }
-    .device-foot { margin-top: 24px; color: var(--muted); font-size: .85rem; }
-    .machines-list { list-style: none; padding: 0; }
-    .machine-row { padding: 20px 0; border-bottom: 1px solid var(--line-strong); }
-    .machine-row h2 { margin: 0 0 12px; font-size: 1.2rem; }
-    .machine-row dl { display: grid; grid-template-columns: auto 1fr; gap: 8px 16px; font-size: .85rem; }
-    .machine-row dt { color: var(--muted); }
-    .machine-row dd { margin: 0; }
-    .machines-all { margin-top: 24px; }
+    .device-foot { margin-top: 24px; }
 `;
 
 const MAX_FORM_BYTES = 4_096;
@@ -47,8 +37,7 @@ const decodeForm = Schema.decodeUnknownEffect(
 const message = (title: string, body: string, status = 200): Page => ({
   title,
   body,
-  status,
-  styles
+  status
 });
 
 const renderConfirm = Effect.fn("DevicePages.renderConfirm")(function* (
@@ -69,10 +58,10 @@ const renderConfirm = Effect.fn("DevicePages.renderConfirm")(function* (
   return pageResponse(
     {
       title: "Device login",
-      heading: `<p class="auth-kicker">Device login</p><p class="device-lede">Is this the code on your terminal?</p><h1 class="device-code">${escapeHtml(login.userCode)}</h1>`,
+      heading: `<p class="auth-kicker">Device login</p><p class="device-lede">Is this the code on your terminal?</p><h1 class="verification-code">${escapeHtml(login.userCode)}</h1>`,
       styles,
       status: fields?.invalid ? 422 : 200,
-      body: `${refreshed ? `<div class="note" role="status">${refreshNotice}</div>` : ""}<p>A terminal just ran <code>patchy login</code> and wants to publish at <strong>${escapeHtml(viewer.company.name)}</strong> as ${escapeHtml(viewer.user.name)} (<code>${escapeHtml(viewer.user.email)}</code>). If the code matches, name the machine and confirm. If you didn't run it, deny: nothing happens.</p>${fields?.invalid ? '<div class="note note-warn" role="alert" id="machine-name-error">Give the machine a name, up to 64 characters.</div>' : ""}<form method="post" action="/login/device"><input type="hidden" name="code" value="${escapeAttribute(login.userCode)}"><label for="machine-name">Machine name</label><input id="machine-name" name="machineName" value="${escapeAttribute(machineName)}" aria-required="true" autocomplete="off"${fields?.invalid ? ' aria-invalid="true" aria-describedby="machine-name-error"' : ""}>${login.oldMachineName === null ? "" : `<p class="auth-hint">Replaces the key named <code>${escapeHtml(login.oldMachineName)}</code>, which stops working once your terminal finishes logging in</p>`}<div class="device-actions"><button class="auth-action" type="submit" name="action" value="confirm">Confirm</button><button class="auth-action" type="submit" name="action" value="deny">Deny</button></div></form><p class="device-foot">The code expires in ${minutes} ${minutes === 1 ? "minute" : "minutes"}. The key it makes works for 90 days, or 30 days unused, and can be revoked any time on <a href="/machines">Your machines</a>.</p>`
+      body: `${refreshed ? `<div class="note" role="status">${refreshNotice}</div>` : ""}<p>A terminal just ran <code>patchy login</code> and wants to publish at <strong>${escapeHtml(viewer.company.name)}</strong> as ${escapeHtml(viewer.user.name)} (<code>${escapeHtml(viewer.user.email)}</code>). If the code matches, name the machine and confirm. If you didn't run it, deny: nothing happens.</p><form method="post" action="/login/device"><input type="hidden" name="code" value="${escapeAttribute(login.userCode)}"><label class="field-label" for="machine-name">Machine name</label><input class="field" id="machine-name" name="machineName" value="${escapeAttribute(machineName)}" aria-required="true" autocomplete="off"${fields?.invalid ? ' aria-invalid="true" aria-describedby="machine-name-error"' : ""}>${fields?.invalid ? '<p class="field-error" role="alert" id="machine-name-error">Give the machine a name, up to 64 characters.</p>' : ""}${login.oldMachineName === null ? "" : `<p class="field-hint">Replaces the key named <code>${escapeHtml(login.oldMachineName)}</code>, which stops working once your terminal finishes logging in</p>`}<div class="actions"><button class="btn btn-primary" type="submit" name="action" value="confirm">Confirm</button><button class="btn" type="submit" name="action" value="deny">Deny</button></div></form><p class="supporting-text device-foot">The code expires in ${minutes} ${minutes === 1 ? "minute" : "minutes"}. The key it makes works for 90 days, or 30 days unused, and can be revoked any time on <a href="/machines">Your machines</a>.</p>`
     },
     session
   );
@@ -152,13 +141,14 @@ const machines = Effect.gen(function* () {
     `<time datetime="${escapeAttribute(iso)}">${escapeHtml(iso.replace("T", " ").replace(/\.\d{3}Z$/, " UTC"))}</time>`;
   const rows = tokens.map(
     (token) =>
-      `<li class="machine-row"><h2>${escapeHtml(token.name)}</h2><dl><dt>Created</dt><dd>${time(token.createdAt)}</dd><dt>Last used</dt><dd>${time(token.lastUsedAt)}</dd><dt>Expires</dt><dd>${time(token.expiresAt)}</dd></dl><form method="post" action="/machines/${encodeURIComponent(token.id)}/revoke"><button class="auth-action" type="submit" aria-label="Revoke ${escapeAttribute(token.name)}">Revoke</button></form></li>`
+      `<li class="list-row"><h2 class="section-heading">${escapeHtml(token.name)}</h2><dl class="facts"><dt>Created</dt><dd>${time(token.createdAt)}</dd><dt>Last used</dt><dd>${time(token.lastUsedAt)}</dd><dt>Expires</dt><dd>${time(token.expiresAt)}</dd></dl><form class="actions" method="post" action="/machines/${encodeURIComponent(token.id)}/revoke"><button class="btn btn-danger" type="submit" aria-label="Revoke ${escapeAttribute(token.name)}">Revoke</button></form></li>`
   );
   return pageResponse(
-    message(
-      "Your machines",
-      `<p>Machines publishing at <strong>${escapeHtml(viewer.company.name)}</strong> as <span class="auth-email">${escapeHtml(viewer.user.email)}</span>.</p>${tokens.length === 0 ? "<p>No machines are logged in.</p>" : `<ul class="machines-list">${rows.join("")}</ul><form class="machines-all" method="post" action="/machines/revoke-all"><button class="auth-action" type="submit">Revoke all machines</button></form>`}${signOutForm()}`
-    ),
+    {
+      title: "Your machines",
+      app: { viewer, section: "machines" },
+      body: `<p>Machines publishing at <strong>${escapeHtml(viewer.company.name)}</strong> as <span class="auth-email">${escapeHtml(viewer.user.email)}</span>.</p>${tokens.length === 0 ? "<p>No machines are logged in.</p>" : `<ul class="list">${rows.join("")}</ul><form class="actions" method="post" action="/machines/revoke-all"><button class="btn btn-danger" type="submit">Revoke all machines</button></form>`}`
+    },
     session
   );
 });

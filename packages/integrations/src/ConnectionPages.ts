@@ -16,24 +16,35 @@ const page = Effect.fn("ConnectionPages.page")(function* (action: ConnectionPage
   const session = yield* Session.Session;
   const request = yield* HttpServerRequest.HttpServerRequest;
   const result = new URL(request.url, session.publicBaseUrl).searchParams.get("result");
-  const content: ConnectionPage.Page = yield* ConnectionPage.handle(viewer, action, result).pipe(
+  return yield* ConnectionPage.handle(viewer, action, result).pipe(
+    Effect.map((content) =>
+      content.redirect
+        ? HttpServerResponse.redirect(content.redirect, {
+            status: 303,
+            headers: { "cache-control": "private, no-store" }
+          })
+        : pageResponse(
+            {
+              ...content,
+              styles: ConnectionPage.styles,
+              app: { viewer, section: "connections" }
+            },
+            session
+          )
+    ),
     Effect.catch((error) =>
-      Effect.succeed({
-        title: "Connection unavailable",
-        body: `<div class="note note-warn" role="alert">${escapeHtml(error.message)}<br><code>${escapeHtml(error.code)}</code></div><p><a href="/company/connections">Return to connections</a> and try again.</p>`,
-        status: error.status
-      })
+      Effect.succeed(
+        pageResponse(
+          {
+            title: "Connection unavailable",
+            body: `<div class="note note-warn" role="alert">${escapeHtml(error.message)}<br><code>${escapeHtml(error.code)}</code></div><p><a href="/company/connections">Return to connections</a> and try again.</p>${signOutForm()}`,
+            status: error.status
+          },
+          session
+        )
+      )
     )
   );
-  return content.redirect
-    ? HttpServerResponse.redirect(content.redirect, {
-        status: 303,
-        headers: { "cache-control": "private, no-store" }
-      })
-    : pageResponse(
-        { ...content, styles: ConnectionPage.styles, body: `${content.body}${signOutForm()}` },
-        session
-      );
 });
 
 const errors = <E, R>(app: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>) =>

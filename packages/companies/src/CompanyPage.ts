@@ -38,13 +38,8 @@ export interface Page {
 }
 const decodeRole = Schema.decodeUnknownEffect(Schema.Struct({ role: Users.Role }));
 
-export const styles = `
-    .auth-card { width: min(800px, calc(100% - 32px)); }
-    .company-invite button { margin-top: 20px; }
-`;
-
-const actionForm = (path: string, label: string, fields = "") =>
-  `<form method="post" action="${escapeAttribute(path)}">${fields}<button class="auth-action" type="submit">${escapeHtml(label)}</button></form>`;
+const actionForm = (path: string, label: string, fields = "", danger = false) =>
+  `<form method="post" action="${escapeAttribute(path)}">${fields}<button class="btn${danger ? " btn-danger" : ""}" type="submit">${escapeHtml(label)}</button></form>`;
 
 const render = Effect.fn("CompanyPage.render")(function* (
   viewer: Viewer,
@@ -58,20 +53,20 @@ const render = Effect.fn("CompanyPage.render")(function* (
     const path = `/company/users/${encodeURIComponent(user.id)}`;
     const role = user.role === "admin" ? "member" : "admin";
     const actions = admin
-      ? `<div class="company-actions">${actionForm(`${path}/role`, role === "admin" ? "Promote to admin" : "Demote to member", `<input type="hidden" name="role" value="${role}">`)}${user.deactivatedAt ? actionForm(`${path}/reactivate`, "Reactivate") : user.id !== viewer.user.id ? actionForm(`${path}/deactivate`, "Deactivate") : ""}</div>`
+      ? `<div class="actions">${actionForm(`${path}/role`, role === "admin" ? "Promote to admin" : "Demote to member", `<input type="hidden" name="role" value="${role}">`)}${user.deactivatedAt ? actionForm(`${path}/reactivate`, "Reactivate") : user.id !== viewer.user.id ? actionForm(`${path}/deactivate`, "Deactivate", "", true) : ""}</div>`
       : "";
-    return `<li class="company-row"><p><strong>${escapeHtml(user.name)}</strong><br><span class="auth-email">${escapeHtml(user.email)}</span></p><p>${user.role === "admin" ? "Admin" : "Member"} · ${user.deactivatedAt ? "Deactivated" : "Active"}${user.id === viewer.user.id ? " · You" : ""}</p>${actions}</li>`;
+    return `<li class="list-row"><p><strong>${escapeHtml(user.name)}</strong><br><span class="auth-email">${escapeHtml(user.email)}</span></p><p>${user.role === "admin" ? "Admin" : "Member"} · ${user.deactivatedAt ? "Deactivated" : "Active"}${user.id === viewer.user.id ? " · You" : ""}</p>${actions}</li>`;
   });
   const inviteRows = invites.map((invite) => {
     const path = `/company/invites/${encodeURIComponent(invite.id)}`;
-    return `<li class="company-row"><p><span class="auth-email">${escapeHtml(invite.email)}</span><br>${invite.role === "admin" ? "Admin" : "Member"} · ${invite.expiresAt.getTime() <= now ? "Expired" : "Pending"}</p>${invite.clerkInvitationId === null ? '<p class="auth-hint">Invitation saved, but the email did not go out. An admin can resend it.</p>' : ""}${admin ? `<div class="company-actions">${actionForm(`${path}/resend`, "Resend invite")}${actionForm(`${path}/revoke`, "Revoke invite")}</div>` : ""}</li>`;
+    return `<li class="list-row"><p><span class="auth-email">${escapeHtml(invite.email)}</span><br>${invite.role === "admin" ? "Admin" : "Member"} · ${invite.expiresAt.getTime() <= now ? "Expired" : "Pending"}</p>${invite.clerkInvitationId === null ? '<div class="note note-warn">Invitation saved, but the email did not go out. An admin can resend it.</div>' : ""}${admin ? `<div class="actions">${actionForm(`${path}/resend`, "Resend invite")}${actionForm(`${path}/revoke`, "Revoke invite", "", true)}</div>` : ""}</li>`;
   });
   const notice = refusal
     ? `<div class="note note-warn" role="alert">${escapeHtml(refusal.message)}</div>`
     : "";
   return {
     title: viewer.company.name,
-    body: `<p>Company · ${escapeHtml(viewer.company.handle)}</p><p><a href="/company/connections">Connections</a></p>${notice}<section class="company-section" aria-labelledby="company-users"><h2 id="company-users">Users</h2><ul class="company-list">${userRows.join("")}</ul></section><section class="company-section" aria-labelledby="company-invites"><h2 id="company-invites">Pending invites</h2>${invites.length ? `<ul class="company-list">${inviteRows.join("")}</ul>` : "<p>No pending invites.</p>"}</section>${admin ? '<section class="company-section" aria-labelledby="company-invite"><h2 id="company-invite">Invite a user</h2><form class="company-invite" method="post" action="/company/invites"><label for="invite-email">Email</label><input id="invite-email" type="email" name="email" required maxlength="254" autocomplete="email"><label for="invite-role">Role</label><select id="invite-role" name="role"><option value="member">Member</option><option value="admin">Admin</option></select><button class="auth-action" type="submit">Send invite</button></form></section>' : ""}`,
+    body: `<p>Company · ${escapeHtml(viewer.company.handle)}</p>${notice}<section class="section" aria-labelledby="company-users"><h2 class="section-heading" id="company-users">Users</h2><ul class="list">${userRows.join("")}</ul></section><section class="section" aria-labelledby="company-invites"><h2 class="section-heading" id="company-invites">Pending invites</h2>${invites.length ? `<ul class="list">${inviteRows.join("")}</ul>` : "<p>No pending invites.</p>"}</section>${admin ? '<section class="section" aria-labelledby="company-invite"><h2 class="section-heading" id="company-invite">Invite a user</h2><form method="post" action="/company/invites"><label class="field-label" for="invite-email">Email</label><input class="field" id="invite-email" type="email" name="email" required maxlength="254" autocomplete="email"><label class="field-label" for="invite-role">Role</label><select class="field" id="invite-role" name="role"><option value="member">Member</option><option value="admin">Admin</option></select><div class="actions"><button class="btn btn-primary" type="submit">Send invite</button></div></form></section>' : ""}`,
     status: refusal?.status
   };
 });
