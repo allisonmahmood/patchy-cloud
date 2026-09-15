@@ -129,17 +129,17 @@ export const list = Effect.fn("Discovery.list")(function* (
 ) {
   const target = Option.getOrUndefined(options.target);
   const detail = Option.getOrUndefined(options.detail);
-  const top = target === undefined || target === "patches";
-  const connections = target === "connections";
-  if (top && detail !== undefined)
+  const isPatchList = target === undefined || target === "patches";
+  const isConnectionPath = target === "connections";
+  if (isPatchList && detail !== undefined)
     return yield* new LocalError({
       message: "Use list <patch> <primitive>, not list patches <primitive>."
     });
-  if (!top && Option.isSome(options.mine))
+  if (!isPatchList && Option.isSome(options.mine))
     return yield* new LocalError({ message: "--mine is only valid on list or list patches." });
-  if ((!connections || detail !== undefined) && Option.isSome(options.all))
+  if ((!isConnectionPath || detail !== undefined) && Option.isSome(options.all))
     return yield* new LocalError({ message: "--all is only valid on list connections." });
-  if (connections && Option.isSome(options.state))
+  if (isConnectionPath && Option.isSome(options.state))
     return yield* new LocalError({
       message: "--state is only valid when listing patches or their primitives."
     });
@@ -148,7 +148,7 @@ export const list = Effect.fn("Discovery.list")(function* (
       message: "Use separate names for list <patch> <primitive>; slashes belong in add targets."
     });
   const client = yield* Api.client(token);
-  if (connections) {
+  if (isConnectionPath) {
     if (detail !== undefined) {
       const result = yield* client
         .getConnection({ params: { handle: detail } })
@@ -161,7 +161,7 @@ export const list = Effect.fn("Discovery.list")(function* (
     return yield* Output.report(encodeConnections(result), connectionLines(result));
   }
   const state = Option.getOrElse(options.state, () => "live" as const);
-  if (top) {
+  if (isPatchList) {
     const [patches, connections] = yield* Effect.all(
       [
         client.list({ query: { state, mine: Option.getOrElse(options.mine, () => false) } }),

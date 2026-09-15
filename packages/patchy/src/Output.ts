@@ -80,15 +80,16 @@ export const contract = <A, R>(handler: Effect.Effect<A, CliError, R>) =>
             })
           : error
       ).pipe(Effect.andThen(new Failed({ code: exitCode(kind) })));
+    const failKnown = (error: CliError) => fail(error.message, error.kind, error.code);
     return yield* handler.pipe(
-      Effect.catch((error) =>
-        fail(
-          error.message,
-          error.kind,
-          error.code,
-          error._tag === "WrongPatchState" ? error.state : undefined
-        )
-      ),
+      Effect.catchTags({
+        LocalError: failKnown,
+        RejectedError: failKnown,
+        UnreachableError: failKnown,
+        ReleaseMismatch: failKnown,
+        InstanceMismatch: failKnown,
+        WrongPatchState: (error) => fail(error.message, error.kind, error.code, error.state)
+      }),
       Effect.catchDefect((defect) => {
         const message = defect instanceof Error ? defect.message : String(defect);
         const stack = debug && defect instanceof Error && defect.stack ? `\n${defect.stack}` : "";

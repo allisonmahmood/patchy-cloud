@@ -2243,7 +2243,10 @@ describe("patchy list", () => {
     const patches = [Struct.omit(projectSource, ["title", "inventory", "reads"])];
     const instance = await stubInstance((request, respond) => {
       const url = new URL(request.url, "http://instance.test");
-      if (url.pathname === "/api/patches") return respond(200, { patches });
+      if (url.pathname === "/api/patches") {
+        expect(url.searchParams.get("state")).toBe("live");
+        return respond(200, { patches });
+      }
       if (url.pathname === "/api/connections") return respond(200, projectConnections);
       respond(404, { ok: false, error: "Not found." });
     });
@@ -2471,11 +2474,12 @@ describe("patchy list", () => {
   });
 
   it.each([
-    { state: "retired", ref: "directory", filter: "retired" },
-    { state: "deleted", ref: summary.id, filter: "all" }
+    { state: "retired", ref: "directory", filter: "retired", refusedFlags: [] },
+    { state: "deleted", ref: summary.id, filter: "all", refusedFlags: [] },
+    { state: "live", ref: "directory", filter: "live", refusedFlags: ["--state", "retired"] }
   ])(
     "preserves $state refusals and applies --state at both patch depths",
-    async ({ state, ref, filter }) => {
+    async ({ state, ref, filter, refusedFlags }) => {
       const detail = { ...projectSource, state, retiredAt: "2026-09-01T00:00:00.000Z" };
       const instance = await stubInstance((request, respond) => {
         const url = new URL(request.url, "http://instance.test");
@@ -2490,12 +2494,14 @@ describe("patchy list", () => {
       });
       for (const path of [[ref], [ref, "people"]]) {
         const args = ["list", ...path, "--api-url", instance.url];
-        const refused = await runCli(args, { env });
+        const refused = await runCli([...args, ...refusedFlags], { env });
         expect(refused).toMatchObject({ status: 2, stdout: "" });
         expect(refused.stderr).toContain(`${state}; pass --state ${filter}`);
-        const refusedJson = await runCli([...args, "--json"], { env });
+        const refusedJson = await runCli([...args, ...refusedFlags, "--json"], { env });
         expect(refusedJson).toMatchObject({ status: 2, stdout: "" });
-        expect(JSON.parse(refusedJson.stderr)).toMatchObject({
+        expect(JSON.parse(refusedJson.stderr)).toEqual({
+          ok: false,
+          error: expect.stringContaining(`${state}; pass --state ${filter}`),
           kind: "rejected",
           code: "wrong_state",
           state
@@ -2507,22 +2513,26 @@ describe("patchy list", () => {
     }
   );
 
-  it("lists connections and offered integrations, preserving wire JSON and server hints", async () => {
-    const instance = await stubInstance(projectHandler);
-    const args = ["list", "connections", "--all", "--api-url", instance.url];
-    const result = await runCli([...args, "--json"], { env });
-    expect(result).toMatchObject({ status: 0, stderr: "" });
-    expect(JSON.parse(result.stdout)).toEqual({
-      ...projectConnections,
-      offered: [{ integration: "postgres", connected: true }]
-    });
-    const text = await runCli(args, { env });
-    expect(text).toMatchObject({ status: 0, stderr: "" });
-    for (const connection of projectConnections.connections)
-      expect(text.stdout).toContain(connection.hint);
-    expect(text.stdout).toContain("postgres: connected");
-    expect(text.stdout).not.toContain("patchy add postgres/archive-db");
-  });
+  it.each([false, true])(
+    "lists connections with offered integrations only under --all=%s",
+    async (all) => {
+      const instance = await stubInstance(projectHandler);
+      const args = ["list", "connections", ...(all ? ["--all"] : []), "--api-url", instance.url];
+      const result = await runCli([...args, "--json"], { env });
+      expect(result).toMatchObject({ status: 0, stderr: "" });
+      expect(JSON.parse(result.stdout)).toEqual({
+        ...projectConnections,
+        ...(all ? { offered: [{ integration: "postgres", connected: true }] } : {})
+      });
+      const text = await runCli(args, { env });
+      expect(text).toMatchObject({ status: 0, stderr: "" });
+      for (const connection of projectConnections.connections)
+        expect(text.stdout).toContain(connection.hint);
+      if (all) expect(text.stdout).toContain("postgres: connected");
+      else expect(text.stdout).not.toContain("postgres: connected");
+      expect(text.stdout).not.toContain("patchy add postgres/archive-db");
+    }
+  );
 
   it("prints connection snapshots with keys and taken-at, or explicitly unavailable", async () => {
     const snapshot = {
