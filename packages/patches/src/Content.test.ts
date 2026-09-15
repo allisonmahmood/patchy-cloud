@@ -19,7 +19,7 @@ import { CompanyDatabases, Inventory } from "@patchy/company-database";
 import * as CompanyTesting from "@patchy/company-database/testing";
 import { Tables } from "@patchy/primitives";
 import * as Content from "./Content.js";
-import * as ExpirySweep from "./ExpirySweep.js";
+import * as DeletionSweep from "./DeletionSweep.js";
 import * as Patches from "./Patches.js";
 import * as Fixtures from "./test/fixtures.js";
 
@@ -123,7 +123,7 @@ const over = (faulty: Layer.Layer<ContentStore.ContentStore>) =>
 
 const content = Effect.flatMap(Content.Content, Effect.succeed);
 const patches = Effect.flatMap(Patches.Patches, Effect.succeed);
-const sweep = Effect.flatMap(ExpirySweep.ExpirySweep, (service) => service.sweep);
+const sweep = Effect.flatMap(DeletionSweep.DeletionSweep, (service) => service.sweep);
 
 const publish = (
   html: string,
@@ -152,7 +152,7 @@ const publish = (
   );
 
 it.layer(
-  Layer.mergeAll(Content.layer, ExpirySweep.layer).pipe(
+  Layer.mergeAll(Content.layer, DeletionSweep.layer).pipe(
     Layer.provideMerge(Layer.mergeAll(Patches.layer, store.layer, Analytics.layerNoop)),
     Layer.provideMerge(Fixtures.database)
   )
@@ -284,15 +284,16 @@ it.layer(
         assert.deepStrictEqual(older.unused.stores, ["images"]);
         assert.deepStrictEqual(yield* store.service.getBytes(key), bytes);
 
-        const expiredAt = (yield* Clock.currentTimeMillis) / 1_000 - 1;
-        yield* sql`UPDATE patches SET expires_at = to_timestamp(${expiredAt}) WHERE id = ${created.patchId}`;
+        yield* service.delete(created.patchId, { userId: uploader.user.id, admin: false });
+        yield* sweep;
+        assert.deepStrictEqual(yield* store.service.getBytes(key), bytes);
+        yield* TestClock.adjust("30 days");
         yield* sweep;
         assert.isTrue(Option.isNone(yield* service.find(created.patchId)));
         assert.deepStrictEqual(
           (yield* store.keys).filter((object) => object.startsWith(`patches/${created.patchId}/`)),
           []
         );
-        assert.deepStrictEqual(yield* store.service.getBytes(key), bytes);
         assert.deepStrictEqual(
           yield* databases.withCompany(uploader.company.id)(
             Effect.flatMap(
@@ -302,7 +303,7 @@ it.layer(
                 WHERE patch_id = ${created.patchId}`
             )
           ),
-          [{ name: "kept.bin", objectId: "immutable-object" }]
+          []
         );
       })
   );
@@ -367,6 +368,7 @@ it.layer(
       store.control.afterPut = Effect.gen(function* () {
         store.control.afterPut = Effect.void;
         yield* publish("<p>source unshares</p>", source.patchId, {
+          force: true,
           manifest: {
             ...evolvedManifest,
             tables: { contacts: { ...evolvedManifest.tables.contacts, shared: false } }
@@ -860,12 +862,12 @@ it.layer(
       );
       const service = yield* patches;
       assert.isTrue(Option.isNone(yield* service.replay(uploader.user.id, publishKey)));
-      const beforeRetry = yield* service.countLive(uploader.user.id);
+      const beforeRetry = yield* service.countQuotaPatches(uploader.user.id);
       const retried = yield* publish("<p>orphan</p>", null, { manifest, publishKey });
       assert.notStrictEqual(retried.patchId, patchId);
       assert.strictEqual(retried.versionNumber, 1);
       assert.deepStrictEqual(retried.provisioned.tables, ["notes"]);
-      assert.strictEqual(yield* service.countLive(uploader.user.id), beforeRetry + 1);
+      assert.strictEqual(yield* service.countQuotaPatches(uploader.user.id), beforeRetry + 1);
       assert.strictEqual(
         Option.getOrThrow(yield* service.replay(uploader.user.id, publishKey)).response.patchId,
         retried.patchId
@@ -953,7 +955,9 @@ it.layer(
       const before = yield* store.keys;
       // The patch is taken down between the preflight and the row insert.
       store.control.afterPut = Effect.flatMap(patches, (service) =>
-        service.delete(created.patchId, uploader.user.id).pipe(Effect.orDie, Effect.asVoid)
+        service
+          .delete(created.patchId, { userId: uploader.user.id, admin: false })
+          .pipe(Effect.orDie, Effect.asVoid)
       );
       const refused = yield* publish("<p>rejected</p>", created.patchId).pipe(
         Effect.flip,
@@ -963,7 +967,7 @@ it.layer(
           })
         )
       );
-      assert.strictEqual(refused._tag, "PatchUnavailable");
+      assert.strictEqual(refused._tag, "PatchDeleted");
       yield* TestClock.adjust(Patches.PENDING_OBJECT_LEASE);
       yield* sweep;
       assert.deepStrictEqual(yield* store.keys, before);
@@ -971,6 +975,47 @@ it.layer(
         yield* store.service.get(Content.objectKey(created.patchId, created.versionId)),
         "<p>original</p>"
       );
+    })
+  );
+
+  it.effect("refuses an old owner's publish when reassigned during the content write", () =>
+    Effect.gen(function* () {
+      const created = yield* publish("<p>before reassignment</p>");
+      const service = yield* patches;
+      store.control.afterPut = service
+        .reassign(
+          created.patchId,
+          { userId: Fixtures.identities.admin.user.id, admin: true },
+          Fixtures.identities.reader.user.id
+        )
+        .pipe(Effect.orDie, Effect.asVoid);
+      const refused = yield* publish("<p>old owner's update</p>", created.patchId).pipe(
+        Effect.flip,
+        Effect.ensuring(
+          Effect.sync(() => {
+            store.control.afterPut = Effect.void;
+          })
+        )
+      );
+      assert.instanceOf(refused, Patches.NotOwner);
+      if (refused._tag === "NotOwner")
+        assert.deepStrictEqual(refused.owner, {
+          id: Fixtures.identities.reader.user.id,
+          name: Fixtures.identities.reader.user.name
+        });
+      const current = Option.getOrThrow(yield* service.find(created.patchId));
+      assert.strictEqual(current.version.id, created.versionId);
+      assert.strictEqual(
+        yield* (yield* content).read(current.version),
+        "<p>before reassignment</p>"
+      );
+      const newOwner = yield* publish("<p>new owner's update</p>", created.patchId, {
+        ownerUserId: Fixtures.identities.reader.user.id,
+        machineTokenId: Fixtures.identities.reader.machine.id
+      });
+      assert.strictEqual(newOwner.versionNumber, 2);
+      yield* TestClock.adjust(Patches.PENDING_OBJECT_LEASE);
+      yield* sweep;
     })
   );
 
@@ -1027,14 +1072,17 @@ it.layer(
   it.effect("retains live bytes and replay when commit succeeded but its reply failed", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
+      let bytesStored = false;
       const withTransaction: SqlClient.SqlClient["withTransaction"] = (effect) =>
         sql.withTransaction(effect).pipe(
-          Effect.andThen(
-            Effect.fail(
-              new SqlError.SqlError({
-                reason: new SqlError.ConnectionError({ cause: new Error("commit reply lost") })
-              })
-            )
+          Effect.tap(() =>
+            bytesStored
+              ? Effect.fail(
+                  new SqlError.SqlError({
+                    reason: new SqlError.ConnectionError({ cause: new Error("commit reply lost") })
+                  })
+                )
+              : Effect.void
           )
         );
       const uncertainSql = new Proxy(sql, {
@@ -1046,6 +1094,19 @@ it.layer(
           Layer.effect(Patches.Patches, Patches.make).pipe(
             Layer.provide(Layer.succeed(SqlClient.SqlClient, uncertainSql))
           )
+        ),
+        Layer.provide(
+          Layer.succeed(ContentStore.ContentStore, {
+            ...store.service,
+            put: (key, html) =>
+              store.service.put(key, html).pipe(
+                Effect.tap(() =>
+                  Effect.sync(() => {
+                    bytesStored = true;
+                  })
+                )
+              )
+          })
         )
       );
       const publishKey = crypto.randomUUID();
@@ -1078,7 +1139,9 @@ it.layer(
       yield* TestClock.adjust(Patches.PENDING_OBJECT_LEASE);
       const failed = yield* sweep.pipe(
         Effect.provide(
-          Layer.effect(ExpirySweep.ExpirySweep, ExpirySweep.make).pipe(Layer.provide(deleteFails))
+          Layer.effect(DeletionSweep.DeletionSweep, DeletionSweep.make).pipe(
+            Layer.provide(deleteFails)
+          )
         )
       );
       assert.strictEqual(failed.orphanedObjects, 1);
@@ -1126,11 +1189,14 @@ it.layer(
       const ready = yield* Deferred.make<void>();
       const resume = yield* Deferred.make<void>();
       const before = yield* store.keys;
+      let bytesStored = false;
       const withTransaction: SqlClient.SqlClient["withTransaction"] = (effect) =>
         sql.withTransaction(
           effect.pipe(
             Effect.tap(() =>
-              Deferred.succeed(ready, undefined).pipe(Effect.andThen(Deferred.await(resume)))
+              bytesStored
+                ? Deferred.succeed(ready, undefined).pipe(Effect.andThen(Deferred.await(resume)))
+                : Effect.void
             )
           )
         );
@@ -1151,6 +1217,7 @@ it.layer(
         yield* sql`
           UPDATE pending_patch_objects SET expires_at = expires_at - interval '4 minutes 59 seconds'
           WHERE object_key = ${key}`;
+        bytesStored = true;
       }).pipe(Effect.orDie);
       const publication = yield* publish("<p>committing</p>").pipe(
         Effect.provide(held),

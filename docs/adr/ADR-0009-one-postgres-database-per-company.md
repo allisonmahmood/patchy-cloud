@@ -13,8 +13,9 @@ Creation runs outside any transaction through `PATCHY_COMPANY_DB_ADMIN_URL`, a m
 The `CREATE DATABASE` statement is autocommit on the provisioning connection, never inside a PostgreSQL transaction block. A separate placement transaction holds the claim-row lock through creation and initialization to serialize replicas and make interrupted creation resumable; this does not make the admin statement transactional.
 
 The platform migration is `0005_company_database_baseline`; Companies retains
-`0004_invites_expiry`. Runtime follows at 0006 and Integrations at 0007.
-[ADR-0003](./ADR-0003-postgres-only.md) records the seven-entry platform ledger.
+`0004_invites_expiry`. Runtime follows at 0006, Integrations at 0007, and the
+Patches lifecycle at 0008. [ADR-0003](./ADR-0003-postgres-only.md) records the
+eight-entry platform ledger.
 
 ## Pools and locks
 
@@ -25,6 +26,8 @@ Placement queries use a separate pool of at most two connections with the platfo
 PgBouncer is deferred: the pinned Effect PostgreSQL adapter cancels via `pg_cancel_backend(client.processID)`, which is not a valid backend identity through its transaction pooler. Transaction advisory locks should remain on the same reserved transaction connection under transaction pooling, but that source-level inference is not a tested pooler guarantee. Schemas are qualified explicitly; no session `SET search_path`.
 
 Provisioning and reclamation callers take the platform patch-row lock first. Only existing inventory or an operation introducing resources opens a company transaction under `withPatchLock`. The lock uses a stable patch key with `pg_advisory_xact_lock`, and covers re-reading the inventory, DDL, definition-inventory writes and the revision. Company commit precedes platform commit; no distributed transaction is promised. Ordinary `CREATE INDEX` blocks writers for its duration; `CONCURRENTLY` cannot join this transaction and is not used.
+
+Publish commits, retire, delete and restore first take a company-keyed transaction advisory lock in the platform database. This serializes dependency admissions with source lifecycle and unshare checks: a new or restored consumer cannot commit behind a check that saw no live dependant. The order is dependency lock, platform patch row, then company patch lock. Publishes within a company serialize through commit; uploads and ordinary reads do not hold this dependency lock.
 
 `withCompany` supplies a typed company-connection capability. `withPatchLock` requires that capability and supplies a patch-lock capability tied to its patch id and transaction. Definition-inventory mutations require the latter and reject a mismatched patch id before writing; they do not quietly start independent transactions. Raw SQL for resource DDL follows the same outer lock protocol.
 
@@ -46,11 +49,19 @@ Inventory reads acquire the same patch lock as provisioning, so their revision
 and component queries cannot straddle a writer's commit. These metadata reads
 may wait for provisioning; they do not return a partly old, partly new inventory.
 
+The deletion sweep reclaims deleted patches after their 30-day recovery window.
+It locks the platform row, rechecks the delete deadline and takes the company
+patch lock when inventory exists. It durably queues version object keys and
+deletes versions, names and the patch row in one platform transaction, then
+reclaims the company namespace and its files. Restore takes the same row lock.
+A crash after platform commit leaves an orphan namespace for the existing sweep;
+retire and delete inside the recovery window change no physical resources.
+
 The existing startup/hourly sweep reclaims namespaces with no platform patch row after a day, and immutable `files/<patchId>/<store>/<objectId>` objects unnamed by any file index after a day. Namespace age is recorded with inventory; previously untracked schemas are first observed and given a full grace period. An unavailable company database is not evidence that a file is unreferenced. Version cleanup never owns file objects.
 
 Before deleting an unreferenced file belonging to an existing patch, the sweep locks its platform row, takes the owning company patch lock, and rechecks the file index. Both locks remain held through deletion. Absent patch rows cannot be gap-locked; their cleanup relies on immutable object keys, never-reused patch ids, and the one-day grace exceeding publication's deadline.
 
-Expiry and orphan passes run in independent scoped fibers. Each contains non-interruption failures per pass and retries at its next hourly tick; shutdown interruption still terminates both. A blocked or defective orphan pass cannot stop expiry.
+Deletion and orphan passes run in independent scoped fibers. Each contains non-interruption failures per pass and retries at its next hourly tick; shutdown interruption still terminates both. A blocked or defective orphan pass cannot stop deletion.
 
 The background orphan sweep scans file references in batches. On `busy`, it
 releases its lease and waits past the idle TTL before one retry; persistent

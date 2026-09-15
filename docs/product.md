@@ -24,7 +24,7 @@ Ownership: a patch belongs to a **user** in a company. The user holds a machine 
 
 ### Versions and publishing
 
-**Publish** is the act; each new publish is an immutable **version**, and the patch serves the version its pointer names. There is no working copy in the cloud and no unpublished patch — the working copy is local, and the act that creates a patch is the act that makes it live. `patchy publish <file>` synthesises a tier 0 **manifest** and sends one HTML **bundle**. Each version records its tier, release, manifest version, server-stamped wire version and schema revision. The publish API accepts tier 0 and tier 1 manifests with table and file-store definitions, shared-table declarations and resolved Postgres connections. Tier 0 obeys the safe-HTML policy; tier 1 bundles are stored raw and served in the sandbox. Tiers 2 and above remain refused. File-mode publishing onto a patch with cumulative inventory is refused with `has_primitives`; that patch must be published from its repo. **Rollback**, decided and not built, moves the pointer back to any retained version in place: no new version, and nothing else moves (see [Updating, retiring, deleting](#updating-retiring-deleting)).
+**Publish** creates an immutable **version** and moves the patch's served-version pointer. The working copy stays local; the cloud has no unpublished patch. File publishing sends a tier 0 manifest and one HTML bundle. Each version records its tier, release, manifest version, server-stamped wire version and schema revision. The API accepts tier 0 and tier 1 with tables, stores, shared tables and resolved Postgres connections. Tier 0 obeys the safe-HTML policy; tier 1 runs in the sandbox; higher tiers are refused. File-mode updates to a patch with cumulative inventory are `has_primitives` and must use its repo. Rollback moves the pointer to any retained version without creating a version or changing anything else, as described under [Updating, retiring, deleting](#updating-retiring-deleting).
 
 A **publish key** identifies one attempt for its owning user. Before sending, the CLI stages the complete request and owner in a key-named file, then atomically installs the nonempty `attempt/` directory as the active recovery slot. The next publish recovers that attempt first, using a current token for the same user. Concurrent CLI processes recover the existing attempt rather than overwriting it; an account switch cannot resend another user's saved content. A killed process leaves either no active attempt or a complete recoverable one. Clearing only the matching key prevents a stale response from removing a newer attempt. Repeating the same request returns the stored response without a new version, even after the instance's release changes; reusing the key with a different payload is a conflict. New publishes require an exact-current CLI release.
 
@@ -105,15 +105,14 @@ checking today's release or changed source. Success reports the address, tier,
 version, **provisioned** resources and **unused definitions** in text and JSON.
 An optional column is additive; a rename provisions a new table and reports the
 old one unused, preserving its data. A retype names the object, change and fix
-before any DDL. `share` and `delete` without a target use the repo id. Today a deleted
-patch refuses updates with a 404, and removing `patch` from `patchy.json` explicitly starts a new one.
+before any DDL. `share` and `delete` without a target use the repo id.
+A deleted patch refuses publishing with `patch_deleted` and keeps its id in
+`patchy.json`. A retired patch answers `patch_retired`, and a same-company
+non-owner receives `not_owner`. These are definitive refusals, never advice to
+create another patch. Only a gone patch's 404 asks for the id to be removed.
 
-Decided on the portal map, not built: `retire`, `restore`, `rollback <n>` and `describe`
-join `share` and `delete`, with the same targets, `--json` and exit codes. A publish to a
-retired or deleted-in-window patch is refused naming the state and the way back (restore it,
-or ask an admin); a publish by a colleague who is not the owner is refused naming the owner;
-neither ever suggests creating a new patch, and the id stays in `patchy.json`. Only a patch the
-sweep has reclaimed is the 404 that asks for the id to be removed.
+The new `retire`, `restore`, `rollback <n>` and `describe` CLI commands remain
+future work. Their owner API routes and the service's admin authority are built.
 
 Today the **catalog** shows connected company connections and shared tables the caller
 can open, with copy-ready `add` and `uses` lines. `--all` includes offered
@@ -163,7 +162,7 @@ client storage; durable data goes through Patchy.
 
 ### Sharing and finding
 
-A published patch is shared with **everyone in the company** by default, or made **public** on purpose: anyone with the link, without a login. Its owner chooses either scope with `patchy publish [file] --share company|public`. In a repo, `patchy share company|public` uses the id in `patchy.json`; file mode accepts `patchy share <file> company|public`, and `--patch <id>` selects a patch explicitly. A publish without `--share` preserves an existing patch's scope. Only the owner changes sharing. A current public tier 1 version exposes no company capabilities, even to a signed-in member. Narrower scopes — the owner plus named users, or one group — remain future work; who may open, change or use a patch is spelled out under [Identity and access](#access-to-a-patch).
+A published patch is shared with **everyone in the company** by default, or made **public** on purpose, so anyone can open its current version without a login. The owner chooses the scope with `patchy publish [file] --share company|public` or `patchy share`, using the repo id, file cache or explicit `--patch <id>`. A publish without `--share` preserves the scope. The service also permits admin actors to change a live patch's scope; portal controls remain future work. Public tier 1 versions expose no company capabilities, even to a signed-in member. Narrower sharing remains future work, as described under [Identity and access](#access-to-a-patch).
 
 Today a person finds a patch because someone shared its address. A patch's identity is its **id**, while its **name** is unique within the company. Two sales dashboards need different names, but renaming one never changes which patch it is (see [Addresses](#addresses)).
 
@@ -173,17 +172,19 @@ Today a person finds a patch because someone shared its address. A patch's ident
 
 ### Updating, retiring, deleting
 
-Updating is publishing again. Today each publish gives the patch 90 days of retention; a visit in its final 30 days moves expiry to 30 days out, never shorter and never reviving an expired patch. Revoking or replacing a machine token does not stop those top-ups. Expiry stops serving and updates, then the sweep removes the patch and its content. Today's owner **delete** stops serving immediately, with no restore action; its stored content remains until expiry and the sweep.
+Updating is publishing again. A patch stays live until someone retires or deletes it, or the operator disables it. Visits count successful origin requests; they do not change a patch's lifetime.
 
-The lifecycle decided on the [portal map](https://github.com/allisonmahmood/patchy-cloud/issues/230) replaces expiry and is not built yet. Patchy Cloud is paid, so nothing goes off by itself: a patch is **live**, **retired** or **deleted**, and only a person moves it. **Retire** is the shelf: off its address indefinitely, everything kept and paid for. **Delete** is the trash: off, reclaimed after a fixed **30-day recovery window**, there for "I deleted the wrong thing". **Restore** brings a retired or deleted patch back live, always live, at the same address. Retire from live; delete from live or retired; the sweep reclaims a deleted patch, its versions, tables, files and names when the window runs out, and after that there is nothing to restore. Names stay reserved until then, so restore always gets its address back and a publish under a reserved name is refused.
+The lifecycle backend from the [portal map](https://github.com/allisonmahmood/patchy-cloud/issues/230) is built. A patch is **live**, **retired** or **deleted**. Retire takes a live patch off its address indefinitely and keeps everything. Delete takes a live or retired patch off for a fixed **30-day recovery window**. Restore brings either state back live at the same address before that deadline. After the window, the deletion sweep reclaims the patch, its versions, tables, files and names. Names remain reserved until reclamation, and nothing can restore a patch after its recovery deadline.
 
-Off is off for everything: a retired or deleted patch's shared tables are denied to the patches that read them on their next read, exactly as a deleted source is today, and restore brings them back without any action on their side. Retire, delete and a publish that unshares a table therefore list the patches that would break, by name and owner, and refuse unless the actor accepts the breakage: an acknowledgement in the portal, `--force` in the CLI, where the refusal tells the agent to ask its user first. Restore warns the same way when the restored patch's own sources are off. **Rollback** moves the address to any retained version in place, creates no version, and never touches data, provisioning, sharing or the description; every version is kept.
+A retired or deleted patch denies shared-table consumers on their next read. Restore brings consumers back without changing their declarations. Retire, delete from live and a publish that unshares a table list live dependants by name and owner and refuse unless the API request carries `force`. Restore similarly warns about retired, deleted or gone sources declared by its current version. **Rollback** moves the served-version pointer to any retained version, creates no version, and leaves data, provisioning, sharing, description and name unchanged. Every version is kept.
 
-The owner does all of this from the CLI and the portal; an admin does it for any patch in the company from the portal (see [Access to a patch](#access-to-a-patch)). Delete asks for the patch's typed name in the portal and `--yes` in the CLI. A colleague opening the address of a retired or deleted patch sees a first-party notice saying who took it off and when, with **Restore** if they may; a signed-out reader still gets the login door and another company still gets nothing. **Disable** stays the operator's separate take-down, never owner-restorable.
+Owner machine tokens can call the lifecycle API. The service admits owner and same-company admin actors for management, but reassignment to an active company member is admin-only and publish stays owner-only. Every act records its actor and time. The existing CLI delete uses the recovery window; the new lifecycle CLI verbs, `--force` and `--yes`, portal controls and address notices are later work. Retired and deleted addresses currently answer 404 for admitted company readers; signed-out readers keep the login door. The planned portal will ask for a typed name on delete and an acknowledgement before breaking dependants. **Disable** remains the operator's separate take-down, never owner-restorable.
 
 ### Describing a patch
 
-Decided on the portal map, not built. Every patch carries a **description**, one paragraph of at most 500 characters, that says what the tool does, front-loaded: the index shows its first clause, and agents find tools by it. The repo's copy is the truth the agent edits: `init --purpose` writes it into `patchy.json`, every publish sends it, and the portal or `patchy describe` edits it in the cloud. The CLI pulls a cloud edit back into `patchy.json` the next time it talks to the cloud for that repo and says so, keyed on when the cloud copy changed, so the two never disagree for long. A single-file patch takes `publish --description`. Rollback and restore never touch it; edits create no version; the card shows who last edited it. Tables and file stores carry their own descriptions in the config (see [Primitives](#primitives)).
+The backend stores a patch's **description** with its editor and edit time. It accepts at most 500 Unicode code points after whitespace collapse and trimming, with no control characters. The owner can edit it over the API while live or retired; service admin actors can do the same. Publish accepts the manifest description or file metadata description and returns the stored value and stamp. Omitted descriptions preserve the cloud value, and existing patches start empty. Rollback and restore never change it; edits create no version.
+
+The local-owned sync from the portal map is still future work. `init --purpose` will write `patchy.json`, the CLI will send its description on publish and pull cloud edits back with a notice, and file publishing will gain `--description`. The portal card and primitive descriptions remain later work.
 
 ### Patches and other patches
 
@@ -278,7 +279,7 @@ A company comes to exist on **create-or-join**, after sign-in: a person without 
 
 A **user** is one individual with one account, in exactly one company. They sign in, and they hold expiring, rotatable tokens on the machines they build patches from — see [Identity and access](#identity-and-access).
 
-An **admin** is a user with the role that runs the company. Today that means invitations, roles, deactivation, reactivation and company Postgres connections. Decided and not built: an admin also does everything an owner can to any patch in the company except publish it, reassigning its owner included (see [Access to a patch](#access-to-a-patch)). Creating groups and setting their permissions are future powers.
+An **admin** runs the company's invitations, roles, deactivation, reactivation and Postgres connections. The lifecycle service admits admin actors for every owner act except publish, including reassignment; the portal controls for these powers remain future work. Creating groups and setting their permissions are future powers.
 
 Today `/company` lists users, roles, active/deactivated state and pending invites.
 Admins manage invitations, roles, deactivation and reactivation there; members
@@ -307,7 +308,7 @@ grants remain future work.
 
 Every patch has an address at `/<company>/<patch>`, for every tier and sharing scope. A numbered version opens at `/<company>/<patch>/~v/<n>`. A trailing route belongs to the patch at tier 1 and above and is ignored at tier 0; every segment starting with `~` belongs to Patchy. A company handle alone is not a page. The former `/d/*` routes are gone, not redirects; `d` remains a reserved company handle.
 
-A patch's **name** follows the company handle's grammar: 3–32 lowercase letters, digits or hyphens, no leading or trailing hyphen. Names share one per-company namespace, alongside future user and group handles. An explicit manifest name or file-mode `--name` must be free on create and rename alike (`name_taken`); without `--name`, file publishing normalises the filename and adds `-2`, `-3`, and so on when needed. Republishing a file preserves its name unless explicitly renamed. Renaming leaves a 308 redirect from the old name until another patch takes it; that claim removes the former redirect for good. Today deleting a patch frees all its names; decided and not built, names stay reserved through retirement and the recovery window and are freed only when the sweep reclaims the patch. The patch's identity remains its id, never its name.
+A patch's **name** is 3–32 lowercase letters, digits or hyphens, with no leading or trailing hyphen. `patches` and `connections` are reserved. A requested name must be free on create or rename; otherwise publishing returns `name_taken`. File creates without a name normalise the filename and append a suffix on collision. Updates preserve the name unless explicitly renamed. Renaming leaves a 308 redirect until another patch takes the old name. Retire and delete reserve every name until reclamation. The patch's identity remains its id.
 
 Only the current public version is public and caches for at most a minute at both its address and its numbered version URL; older versions stay behind the company door. `/~content/<patchId>/<versionId>` is an internal, non-redirecting **content URL**, never the link to share: it serves that version's bytes with that version's tier and content security policy, the same door and sharing-based caching as the address. Tier 0 keeps its script-free `srcdoc` frame with `sandbox=""`; tier 1 frames that content URL with a document nonce and `sandbox="allow-scripts allow-modals"`. Historical pages always render with their own version's tier.
 
@@ -347,13 +348,13 @@ Later, an admin may verify the company's **domain** — proven by email, never a
 
 ### Roles
 
-Two: **member** and **admin**. **Everyone in a company builds** — a member publishes patches with no gate and no permission to ask, because that is the point of the product. Today admin adds invitations, role changes, deactivation, reactivation and company connections; groups, domain and SSO and patch reassignment will come with those features. A company always has at least one active admin, who can neither be demoted nor deactivated. There is no builder role and no viewer role; if a company ever wants "can't publish", that is a setting to add, not a third role.
+Two roles, **member** and **admin**. Every company member may build and publish. Admins also manage invitations, roles, deactivation, reactivation and company connections. The lifecycle service admits admin actors for patch management, while the portal controls remain future work. Groups, domains and SSO remain future work. A company always has at least one active admin, who can neither be demoted nor deactivated. There is no separate builder or viewer role.
 
 ### Access to a patch
 
-Who may **open** a patch is its sharing scope: today the whole company or, by explicit choice, anyone with the link. Who may **change the patch itself** is its **owner**: publish a version, change sharing, describe, retire, delete, restore or roll back. There are no editors. Today admin status grants no extra patch-management permission; decided and not built, an admin does every one of those acts to any patch in the company **except publish**, which needs the repo and stays owner-only as accountability, not as a boundary: an admin takes a patch over by reassigning it to themself and publishing from the repo. This is separate from using its data: every admitted company viewer can read and write all its defined tables and file stores; a current public version grants no company-data access. Owner-plus-named-users and group sharing remain future work; when two people work on one patch, the owner publishes their shared local work.
+Sharing decides who may open a live patch. The owner may publish, change sharing, describe, retire, delete, restore or roll back. The service also admits same-company admin actors for every act except publish, including reassignment to an active member. Admin management is not admitted through machine tokens; its portal is later work. Publish stays owner-only for accountability, not protection against admins, who can reassign a patch before publishing. These powers are separate from data access: every admitted company viewer may read and write the patch's defined tables and stores; public versions grant no company-data access. Named-user and group sharing remain future work.
 
-**Admins will see everything.** The decided admin view is the portal: every patch in the company, owner-only ones included once those exist, with the owner's controls and **reassign** to any active member, the admin included. The portal and reassignment are not built today. The company owns what is built in it; future owner-only sharing is not a secret from the company. Making that more nuanced is a later decision.
+**Admins will see everything.** The planned portal shows every company patch with management and reassignment controls, including future owner-only patches. Reassignment is built in the service, but the portal is not. The company owns what is built in it; future owner-only sharing is not a secret from the company.
 
 Across the company line there is nothing but **public**: a patch is inside the company or it is anyone-with-the-link. Guests — a named outsider with a login — are not a thing Patchy does yet.
 
@@ -375,7 +376,7 @@ A machine token is **the user's**, shared by every agent using that machine's sa
 - **User** — one person's one account, in exactly one company. The subject of every permission.
 - **Agent** — software acting for a user, with that user's machine token. Never a who, always a how; it is indistinguishable from its user except by the token's machine name.
 - **Member**, **admin** — the two roles a user has in the company.
-- **Owner** — the one user a patch belongs to; the only one who publishes its code, and today the only one who changes its sharing or lifecycle (decided: admins share every act but publish), not the only one who writes its data.
+- **Owner**: the user a patch belongs to and the only user who publishes its code. Same-company admin actors may perform the other management acts; admitted viewers may write its data.
 - **Viewer** — the active signed-in user, company and role that Auth establishes for a first-party page or a company patch's door, without a machine credential. Tier 1 patch code acts within that viewer's permissions; a public runtime has no such acting identity, even for a signed-in reader.
 - **Operator** — Patchy, running the platform. Platform powers only, never a role inside a company, and never the word for whoever drives the CLI — that is the agent, the CLI's primary **driver**.
 
@@ -508,9 +509,9 @@ is `access_denied`, even for an empty id list. While authorized, `getMany`
 preserves input order, duplicates and nulls for dangling ids.
 
 Omitting a shared table from a source version keeps its identity, definition
-and sharing. Unsharing requires defining it with `shared: false`, and publish
-reports the number of distinct live declaring patches, including declarations
-in retained versions. Their next read is denied; their own rows are untouched.
+and sharing. Unsharing requires defining it with `shared: false`; publish
+lists distinct live declaring patches across retained versions and refuses
+unless forced. Their next read is denied; their own rows are untouched.
 Rolling back the source never changes sharing. Deleting the source and creating
 a new patch under its old name never rebinds existing consumers.
 

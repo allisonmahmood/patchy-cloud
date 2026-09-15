@@ -71,7 +71,7 @@ it.effect("reports an event on its principal without a person profile", () =>
 it.effect("reports an event no principal performed under the instance", () =>
   Effect.gen(function* () {
     const client = recording();
-    yield* track({ ...event, name: "patch.expired", principalId: null }).pipe(
+    yield* track({ ...event, name: "patch.purged", principalId: null }).pipe(
       Effect.provide(Analytics.layerPostHog.pipe(Layer.provide(client.layer)))
     );
     assert.strictEqual(client.messages[0]?.distinctId, Analytics.INSTANCE_DISTINCT_ID);

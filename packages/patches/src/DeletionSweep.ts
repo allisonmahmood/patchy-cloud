@@ -1,12 +1,9 @@
 /**
- * The expiry sweep — the job that makes patch expiry real.
+ * Reclaims deleted patches once their 30-day recovery window ends.
  *
- * A patch whose retention clock has run out already stops serving and
- * refuses updates; the row and its stored HTML are still there, still
- * costing storage, still counting against its creator's quota. The sweep is
- * what finishes the job: for each expired patch it hard-deletes the record
- * and durably queues the content behind it for removal. There is no recovery
- * — republishing is the way back.
+ * Patches rechecks eligibility under its row lock, queues version objects
+ * durably and removes the platform records. Failed object deletions remain
+ * queued for the next pass. Retired patches are kept indefinitely.
  *
  * It also reclaims expired publication intents. Claiming an intent fences
  * out a late version transaction; committing a version consumes its intent.
@@ -22,6 +19,8 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
+import { CompanyDatabases, Inventory, Reclamation } from "@patchy/company-database";
 import { Analytics } from "@patchy/analytics";
 import { ContentStore } from "@patchy/content-store";
 import * as Patches from "./Patches.js";
@@ -41,59 +40,93 @@ export interface SweepResult {
   readonly deleted: number;
   /** Patches no longer the sweep's to take — already swept. */
   readonly skipped: number;
-  /** Patches whose delete failed. They stay expired, and the next run retries. */
+  /** Patches whose purge failed. Their rows remain eligible for the next run. */
   readonly failed: number;
   /** Objects whose cleanup failed; their durable intents remain for retry. */
   readonly orphanedObjects: number;
 }
 
-export class ExpirySweep extends Context.Service<
-  ExpirySweep,
+export class DeletionSweep extends Context.Service<
+  DeletionSweep,
   {
-    /** Sweeps what is expired now. Never fails: a patch it cannot take is counted, not thrown. */
+    /** Reclaims eligible deleted patches, counting individual failures. */
     readonly sweep: Effect.Effect<SweepResult>;
   }
->()("@patchy/patches/ExpirySweep") {}
+>()("@patchy/patches/DeletionSweep") {}
 
 export const make = Effect.gen(function* () {
   const patches = yield* Patches.Patches;
   const store = yield* ContentStore.ContentStore;
   const analytics = yield* Analytics.Analytics;
+  const companies = yield* CompanyDatabases.CompanyDatabases;
+  const inventory = yield* Inventory.Inventory;
+
+  const reclaimResources = Effect.fn("DeletionSweep.reclaimResources")(function* (
+    companyId: string,
+    patchId: string
+  ) {
+    const reclaimed = yield* companies
+      .withCompany(companyId)(
+        Effect.gen(function* () {
+          if (!(yield* inventory.exists(patchId))) return false;
+          yield* companies.withPatchLock(patchId)(Reclamation.reclaimNamespace());
+          return true;
+        })
+      )
+      .pipe(
+        Effect.catchTags({
+          CompanyDatabaseNotReady: (error) =>
+            error.status === null ? Effect.succeed(false) : Effect.fail(error)
+        })
+      );
+    if (reclaimed) {
+      yield* store
+        .list(`files/${patchId}/`)
+        .pipe(Stream.runForEach((object) => store.delete(object.key)));
+    }
+  });
 
   /** One patch's share of a run: exactly one of `deleted`, `skipped` or `failed`. */
-  const sweepOne = Effect.fn("ExpirySweep.sweepOne")(function* (patchId: string) {
+  const sweepOne = Effect.fn("DeletionSweep.sweepOne")(function* (patchId: string) {
     // Some(None) is a patch no longer the sweep's to take; None is a delete that failed.
-    const taken = yield* patches.deleteExpired(patchId).pipe(
+    const taken = yield* patches.purgeDeleted(patchId).pipe(
       Effect.map(Option.some),
-      Effect.catchTags({
-        SqlError: (error) =>
-          Effect.logWarning("Expiry sweep could not delete a patch record.", error).pipe(
-            Effect.annotateLogs({ patchId }),
-            Effect.as(Option.none())
-          )
-      })
+      Effect.catch((error) =>
+        Effect.logWarning("Deletion sweep could not delete a patch record.", error._tag).pipe(
+          Effect.annotateLogs({ patchId }),
+          Effect.as(Option.none())
+        )
+      )
     );
     if (Option.isNone(taken)) return { deleted: 0, skipped: 0, failed: 1, orphanedObjects: 0 };
     if (Option.isNone(taken.value))
       return { deleted: 0, skipped: 1, failed: 0, orphanedObjects: 0 };
-    const keys = taken.value.value;
+    const { companyId, objectKeys } = taken.value.value;
+    yield* reclaimResources(companyId, patchId).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning(
+          "Deletion sweep left company resources for orphan reclamation.",
+          error._tag
+        ).pipe(Effect.annotateLogs({ patchId, companyId }))
+      )
+    );
 
     // Reported once the record is gone, which is the moment the patch stops
     // existing. No principal performed it — the clock ran out.
     yield* analytics.track({
-      name: "patch.expired",
+      name: "patch.purged",
       principalId: null,
-      properties: { patchId, versionsRemoved: keys.length }
+      properties: { patchId, versionsRemoved: objectKeys.length }
     });
 
     return { deleted: 1, skipped: 0, failed: 0, orphanedObjects: 0 } satisfies SweepResult;
   });
 
-  const reclaimObjects = Effect.fn("ExpirySweep.reclaimObjects")(function* () {
+  const reclaimObjects = Effect.fn("DeletionSweep.reclaimObjects")(function* () {
     const keys = yield* patches.claimObjects(MAX_PER_RUN).pipe(
       Effect.catchTags({
         SqlError: (error) =>
-          Effect.logWarning("Expiry sweep could not claim stored objects.", error).pipe(
+          Effect.logWarning("Deletion sweep could not claim stored objects.", error).pipe(
             Effect.as([])
           )
       })
@@ -104,7 +137,7 @@ export const make = Effect.gen(function* () {
       yield* store.delete(key).pipe(
         Effect.andThen(patches.completeObject(key)),
         Effect.catch((error) =>
-          Effect.logWarning("Expiry sweep could not reclaim a stored object.", error).pipe(
+          Effect.logWarning("Deletion sweep could not reclaim a stored object.", error).pipe(
             Effect.annotateLogs({ objectKey: key }),
             Effect.map(() => {
               failed += 1;
@@ -123,7 +156,7 @@ export const make = Effect.gen(function* () {
     while (attempted < MAX_PER_RUN) {
       const batchLimit = Math.min(BATCH_SIZE, MAX_PER_RUN - attempted);
       const patchIds = yield* patches
-        .listExpired(batchLimit)
+        .listDeleted(batchLimit)
         .pipe(Effect.catchTags({ SqlError: Effect.die }));
       if (patchIds.length === 0) break;
 
@@ -144,13 +177,13 @@ export const make = Effect.gen(function* () {
       // rather than spin on patches this run cannot take.
       if (patchIds.length < batchLimit || result.deleted === deletedBefore) break;
     }
-    result = { ...result, orphanedObjects: yield* reclaimObjects() };
+    result = { ...result, orphanedObjects: result.orphanedObjects + (yield* reclaimObjects()) };
 
     return result;
-  }).pipe(Effect.withSpan("ExpirySweep.sweep"));
+  }).pipe(Effect.withSpan("DeletionSweep.sweep"));
 
-  return ExpirySweep.of({ sweep });
+  return DeletionSweep.of({ sweep });
 });
 
 /** Over `Patches`, the content store and analytics. */
-export const layer = Layer.effect(ExpirySweep, make);
+export const layer = Layer.effect(DeletionSweep, make);

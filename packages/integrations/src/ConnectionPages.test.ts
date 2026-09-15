@@ -657,8 +657,8 @@ it.layer(services)("company connection pages", (it) => {
             }
           }
         });
-        yield* sql`INSERT INTO patches (id, company_id, owner_user_id, title, name, expires_at)
-      VALUES ('connection-declared-patch', ${owner.company.id}, ${owner.user.id}, 'Reports', 'reports', now())`;
+        yield* sql`INSERT INTO patches (id, company_id, owner_user_id, title, name)
+      VALUES ('connection-declared-patch', ${owner.company.id}, ${owner.user.id}, 'Reports', 'reports')`;
         yield* sql`INSERT INTO patch_versions (id, patch_id, version_number, object_key,
       content_hash, file_size, created_by_machine_token_id, owner_user_id, tier, release,
       manifest_version, wire_version, schema_revision, manifest, publish_key, payload_digest,

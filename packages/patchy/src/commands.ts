@@ -22,7 +22,7 @@ import * as Prompt from "effect/unstable/cli/Prompt";
 import {
   PatchName,
   Identity,
-  Ok,
+  Deleted,
   Shared,
   ShareRequest,
   SharingScope,
@@ -74,7 +74,7 @@ const runProject = <A, R>(handler: Effect.Effect<A, CliError, R>) =>
 const encodeIdentity = Schema.encodeSync(Identity);
 // A create is 201, an update 200; the wire names them separately.
 const encodePublish = Schema.encodeSync(Schema.Union([PublishCreated, PublishUpdated]));
-const encodeOk = Schema.encodeSync(Ok);
+const encodeDeleted = Schema.encodeSync(Deleted);
 const encodeShared = Schema.encodeSync(Shared);
 const decodeSharingScope = Schema.decodeUnknownEffect(SharingScope);
 const decodePublishName = Schema.decodeUnknownEffect(PatchName);
@@ -380,9 +380,16 @@ const sendPublish = Effect.fn("sendPublish")(function* (
                       error.code === "connection_not_connected" ||
                       error.code === "stale_generated" ||
                       error.code === "not_additive" ||
+                      error.code === "reserved_name" ||
+                      error.code === "invalid_description" ||
                       error.errors !== undefined)) ||
                   (error.status === 409 &&
-                    (error.code === "publish_key_conflict" || error.code === "name_taken")) ||
+                    (error.code === "publish_key_conflict" ||
+                      error.code === "name_taken" ||
+                      error.code === "has_dependants" ||
+                      error.code === "patch_retired" ||
+                      error.code === "patch_deleted")) ||
+                  (error.status === 403 && error.code === "not_owner") ||
                   (error.status === 404 &&
                     attempt.request.patchId !== undefined &&
                     error.error === PATCH_NOT_FOUND));
@@ -708,7 +715,7 @@ const del = Command.make(
           `Deleting from ${instance.apiUrl} (target came from ${Instance.describeSource(instance.source)}).`
         );
         const client = yield* Api.client(token);
-        const ok = yield* client.delete({ params: { patchId } }).pipe(
+        const deleted = yield* client.delete({ params: { patchId }, query: {} }).pipe(
           Effect.catch((error) => {
             if (Api.isRefusal(error) && error.error === PATCH_NOT_FOUND) {
               return new RejectedError({
@@ -720,12 +727,16 @@ const del = Command.make(
           })
         );
         yield* state.forgetPatch(instance.apiUrl, patchId);
-        yield* Output.report(encodeOk(ok), ["Deleted patch", `Patch ID: ${patchId}`]);
+        yield* Output.report(encodeDeleted(deleted), [
+          "Deleted patch",
+          `Patch ID: ${patchId}`,
+          `Recoverable until: ${deleted.purgeAt}`
+        ]);
       })
     )
 ).pipe(
   Command.withDescription(
-    "Delete a patch from the instance. Irreversible. Confirm with the user first."
+    "Delete a patch with a 30-day recovery window. Confirm with the user first."
   )
 );
 

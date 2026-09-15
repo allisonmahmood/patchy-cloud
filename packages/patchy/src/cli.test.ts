@@ -135,6 +135,8 @@ const publish = (
   versionId: `${patchId}-v${versionNumber}`,
   versionNumber,
   title: "Page",
+  description: "",
+  descriptionUpdatedAt: null,
   name,
   address: `http://instance.test/${DEV_SEED.companyHandle}/${name}`,
   publicUrl: `http://instance.test/${DEV_SEED.companyHandle}/${name}`,
@@ -2003,9 +2005,16 @@ describe("patchy share", () => {
 });
 
 describe("patchy delete", async () => {
-  it("takes down the patch a file was published from with the key that published it, then the patch is gone", async () => {
-    // The stub remembers what is live, so a delete after a delete is a real 404.
+  it("forgets every cached file after deletion and reports a repeated delete as wrong_state", async () => {
     const live = new Set<string>();
+    const deletedPatches = new Set<string>();
+    const deletion = {
+      ok: true,
+      patchId: "abcdefghijkl",
+      state: "deleted",
+      deletedAt: "2026-01-01T00:00:00.000Z",
+      purgeAt: "2026-01-31T00:00:00.000Z"
+    };
     const instance = await stubPublishingInstance((request, respond) => {
       if (request.url === "/api/publish") {
         const body = request.body as { patchId?: string };
@@ -2018,7 +2027,17 @@ describe("patchy delete", async () => {
         return respond(201, publish(201, "abcdefghijkl", 1));
       }
       const patchId = request.url.replace("/api/patches/", "");
-      if (request.method === "DELETE" && live.delete(patchId)) return respond(200, { ok: true });
+      if (request.method === "DELETE" && live.delete(patchId)) {
+        deletedPatches.add(patchId);
+        return respond(200, deletion);
+      }
+      if (request.method === "DELETE" && deletedPatches.has(patchId))
+        return respond(409, {
+          ok: false,
+          code: "wrong_state",
+          state: "deleted",
+          error: "Patch is deleted."
+        });
       return respond(404, { ok: false, error: "Patch not found." });
     });
     const dir = tempDir();
@@ -2032,14 +2051,15 @@ describe("patchy delete", async () => {
     ).toBe(0);
 
     const deleted = await runCli(["delete", file, "--json"], { stateDir: dir, env });
-    expect(deleted).toMatchObject({ status: 0, stdout: '{"ok":true}\n', stderr: "" });
+    expect(deleted).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(deleted.stdout)).toEqual(deletion);
     expect(instance.requests[6]).toMatchObject({
       method: "DELETE",
       url: "/api/patches/abcdefghijkl",
       authorization: "Bearer pp_owner"
     });
     // Every file that pointed at the patch is forgotten, not only the one named,
-    // so no later publish tries to update a patch that is gone.
+    // so no later file publish tries to update the deleted patch.
     expect(readJson(path.join(dir, "patches.json"))).toEqual({
       hosts: { [instance.url]: { files: {} } }
     });
@@ -2049,11 +2069,12 @@ describe("patchy delete", async () => {
     expect(forgotten.stderr).toMatch(/^No patch on .* was published from /);
     expect(instance.requests).toHaveLength(7);
 
-    const gone = await runCli(["delete", "--patch", "abcdefghijkl"], { stateDir: dir, env });
-    expect(gone.status).toBe(2);
-    expect(gone.stderr).toBe(
-      `Patch abcdefghijkl is unavailable for deletion: it is not on ${instance.url}, or this publishing key does not own it.\n`
-    );
+    const repeated = await runCli(["delete", "--patch", "abcdefghijkl", "--json"], {
+      stateDir: dir,
+      env
+    });
+    expect(repeated.status).toBe(2);
+    expect(JSON.parse(repeated.stderr)).toMatchObject({ kind: "rejected", code: "wrong_state" });
   });
 });
 
@@ -3004,7 +3025,7 @@ describe("repo publish recovery", () => {
     expect(instance.requests.filter((r) => r.url === "/api/release")).toHaveLength(2);
   }, 30_000);
 
-  it("uses the repo identity for share and delete, and a deleted update cannot become a create", async () => {
+  it("uses the repo identity for share and delete, and a missing update cannot become a create", async () => {
     const instance = await stubPublishingInstance((request, respond) => {
       if (request.url.endsWith("/share"))
         return respond(200, {
@@ -3013,7 +3034,14 @@ describe("repo publish recovery", () => {
           publicUrl: "http://instance.test/patchy-dev/page",
           scope: "public"
         });
-      if (request.method === "DELETE") return respond(200, { ok: true });
+      if (request.method === "DELETE")
+        return respond(200, {
+          ok: true,
+          patchId: "abcdefghijkl",
+          state: "deleted",
+          deletedAt: "2026-01-01T00:00:00.000Z",
+          purgeAt: "2026-01-31T00:00:00.000Z"
+        });
       respond(404, { ok: false, error: "Patch not found." });
     });
     const dir = projectTree(instance.url);
@@ -3050,7 +3078,7 @@ describe("repo publish recovery", () => {
     );
     const result = await runCli(["publish", "--json"], options);
     expect(result.status).toBe(2);
-    expect(JSON.parse(result.stderr).error).toContain("Remove patch from patchy.json");
+    expect(readJson(path.join(dir, "patchy.json"))).toMatchObject({ patch: "abcdefghijkl" });
     expect(existsSync(attemptPath)).toBe(false);
     expect(instance.requests.map((r) => [r.method, r.url])).toEqual([
       ["POST", "/api/patches/abcdefghijkl/share"],

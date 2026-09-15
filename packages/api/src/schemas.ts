@@ -47,6 +47,39 @@ export const Conflict = failure(409, {});
 export const PayloadTooLarge = failure(413, {});
 export const PublishKeyConflict = failure(409, { code: Schema.Literal("publish_key_conflict") });
 export const NameTaken = failure(409, { code: Schema.Literal("name_taken") });
+export const PatchState = Schema.Literals(["live", "retired", "deleted"]);
+export const PatchSourceState = Schema.Union([PatchState, Schema.Literal("gone")]);
+const PatchOwner = Schema.Struct({ id: Schema.String, name: Schema.String });
+export const NotOwner = failure(403, { code: Schema.Literal("not_owner"), owner: PatchOwner });
+export const WrongState = failure(409, {
+  code: Schema.Literal("wrong_state"),
+  state: PatchState
+});
+export const PatchRetired = failure(409, { code: Schema.Literal("patch_retired") });
+export const PatchDeleted = failure(409, {
+  code: Schema.Literal("patch_deleted"),
+  purgeAt: Schema.String
+});
+export const HasDependants = failure(409, {
+  code: Schema.Literal("has_dependants"),
+  dependants: Schema.Array(
+    Schema.Struct({ patchId: PatchId, name: Schema.String, owner: PatchOwner })
+  )
+});
+export const SourcesOff = failure(409, {
+  code: Schema.Literal("sources_off"),
+  sources: Schema.Array(
+    Schema.Struct({
+      patchId: PatchId,
+      name: Schema.optionalKey(Schema.String),
+      table: Schema.String,
+      state: PatchSourceState
+    })
+  )
+});
+export const ReservedName = failure(422, { code: Schema.Literal("reserved_name") });
+export const InvalidDescription = failure(422, { code: Schema.Literal("invalid_description") });
+export const VersionUnavailable = failure(422, { code: Schema.Literal("version_unavailable") });
 export const PublishRefused = failure(422, {
   code: Schema.Literals([
     "release_mismatch",
@@ -75,7 +108,7 @@ export const RateLimited = failure(429, {
   retryAfterSeconds: Schema.Int
 });
 
-/** The user already holds `quota` live patches. Delete one or let one expire. */
+/** The user already holds `quota` non-deleted patches. Delete one to free a slot. */
 export const PatchQuotaExceeded = failure(403, {
   code: Schema.Literal("live_patch_quota_exceeded"),
   quota: Schema.Int
@@ -310,6 +343,7 @@ export const Manifest = Schema.Struct({
   manifestVersion: Schema.Int.check(Schema.isGreaterThan(0)),
   release: NonEmptyText,
   name: Schema.optionalKey(PatchName),
+  description: Schema.optionalKey(Schema.String),
   tier: Schema.Literals([0, 1, 2, 3]),
   tables: definitions(TableDefinition),
   files: definitions(FileStoreDefinition),
@@ -431,7 +465,8 @@ export class PublishMetadata extends Schema.Class<PublishMetadata>("PublishMetad
   gitBranch: OptionalText,
   gitCommitSha: OptionalText,
   cliVersion: OptionalText,
-  fileSha256: OptionalText
+  fileSha256: OptionalText,
+  description: Schema.optionalKey(Schema.String)
 }) {}
 
 /** One durable attempt, resent unchanged after a lost acknowledgement. */
@@ -440,6 +475,7 @@ export class PublishRequest extends Schema.Class<PublishRequest>("PublishRequest
   html: Schema.String,
   patchId: Schema.optionalKey(PatchId),
   scope: Schema.optionalKey(SharingScope),
+  force: Schema.optionalKey(Schema.Boolean),
   publishKey: NonEmptyText,
   metadata: PublishMetadata
 }) {}
@@ -464,7 +500,9 @@ const publishFields = {
   schemaRevision: Schema.Int,
   provisioned: ProvisioningReport,
   unused: ProvisioningReport,
-  warnings: Schema.Array(Schema.String)
+  warnings: Schema.Array(Schema.String),
+  description: Schema.String,
+  descriptionUpdatedAt: Schema.NullOr(Schema.String)
 };
 
 export class PublishCreated extends Schema.Class<PublishCreated>("PublishCreated")(publishFields, {
@@ -482,6 +520,53 @@ export class Shared extends Schema.Class<Shared>("Shared")({
   patchId: PatchId,
   scope: SharingScope,
   publicUrl: Schema.String
+}) {}
+
+export class ForceRequest extends Schema.Class<ForceRequest>("ForceRequest")({
+  force: Schema.optionalKey(Schema.Boolean)
+}) {}
+
+export class Retired extends Schema.Class<Retired>("Retired")({
+  ok: Schema.Literal(true),
+  patchId: PatchId,
+  state: Schema.Literal("retired"),
+  retiredAt: Schema.String
+}) {}
+
+export class Deleted extends Schema.Class<Deleted>("Deleted")({
+  ok: Schema.Literal(true),
+  patchId: PatchId,
+  state: Schema.Literal("deleted"),
+  deletedAt: Schema.String,
+  purgeAt: Schema.String
+}) {}
+
+export class Restored extends Schema.Class<Restored>("Restored")({
+  ok: Schema.Literal(true),
+  patchId: PatchId,
+  state: Schema.Literal("live")
+}) {}
+
+export class RollbackRequest extends Schema.Class<RollbackRequest>("RollbackRequest")({
+  versionNumber: Schema.Int.check(Schema.isGreaterThan(0))
+}) {}
+
+export class RolledBack extends Schema.Class<RolledBack>("RolledBack")({
+  ok: Schema.Literal(true),
+  patchId: PatchId,
+  currentVersion: Schema.Int,
+  address: Schema.String
+}) {}
+
+export class DescriptionRequest extends Schema.Class<DescriptionRequest>("DescriptionRequest")({
+  description: Schema.String
+}) {}
+
+export class Described extends Schema.Class<Described>("Described")({
+  ok: Schema.Literal(true),
+  patchId: PatchId,
+  description: Schema.String,
+  descriptionUpdatedAt: Schema.NullOr(Schema.String)
 }) {}
 
 export class Ok extends Schema.Class<Ok>("Ok")({ ok: Schema.Literal(true) }) {}

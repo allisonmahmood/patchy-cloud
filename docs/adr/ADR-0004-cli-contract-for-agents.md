@@ -273,17 +273,19 @@ relaxes that baseline. A standalone Vite preview does not execute capabilities.
 | `patchy publish <file> [--name <name>] [--share company\|public] [--patch <id>] [--new]` | Static file, tier 0, empty definitions/declarations; never reads `patchy.json`. Update the cached file patch unless `--new` creates or `--patch` selects an update-only target. Those flags are mutually exclusive. | Publish wire response, including name/address, scope, tier, version, schemaRevision, provisioned, unused and warnings |
 | `patchy publish [--share company\|public]`                                               | Repo tier 0 or 1, config name and `patchy.json` identity. Recover first; otherwise check release, generation, types, bundle and tier before sending.                                                                | Same publish wire response                                                                                            |
 | `patchy share <file> <company\|public>` or `patchy share --patch <id> <company\|public>` | Change sharing without a new version; exactly one file/cache or explicit-id target.                                                                                                                                 | `{ ok, patchId, scope, publicUrl }`                                                                                   |
-| `patchy delete <file>` or `patchy delete --patch <id>`                                   | Delete an owned patch; confirm with the user first. Forget matching file-cache entries only after success.                                                                                                          | `{ ok }`                                                                                                              |
+| `patchy delete <file>` or `patchy delete --patch <id>`                                   | Delete an owned patch with a 30-day recovery window; confirm with the user first. Forget matching file-cache entries only after success.                                                                            | `{ ok, patchId, state: "deleted", deletedAt, purgeAt }`                                                               |
 
 Inside a published repo, `patchy share company|public` and `patchy delete` use
 `patchy.json` without another target. An unpublished repo is a local refusal.
-Delete leaves its repo id in place: a later publish returns 404 and says to
-remove `patch` from `patchy.json` before intentionally creating another patch.
+Delete leaves its repo id in place. A later publish returns `patch_deleted`
+with `purgeAt`; preserve the id for restoration. Only a gone patch's 404
+requires intentionally creating another patch.
 `--name`, `--patch` and `--new` are file-mode flags; a failed repo build never
 falls back to file mode. An unavailable cached file target likewise never
 creates silently; use `--new`. Any machine key for the owner can manage the
 patch; company membership or an admin role alone does not confer ownership.
-Unknown, unavailable and unowned targets share the generic 404 door.
+Same-company non-owners receive `not_owner`; a retired or deleted target receives
+`patch_retired` or `patch_deleted` on publish. Another company's target stays 404.
 
 Fresh file publishes require the exact executing CLI release; repo publishes
 and new dev starts also check the pin and installed runtime. A local mismatch
@@ -322,7 +324,7 @@ Names are 3–32 lowercase letters, digits or hyphens, with neither end a hyphen
 An explicit name collision is `name_taken`. File creates without a name normalize
 the filename, fall back to `patch` and append `-2`, `-3`, etc.; updates retain the
 name unless renamed. Rename leaves a 308 redirect until another patch takes the
-old name; delete frees every name. Id or cached file selects the patch, never its
+old name; retire and delete reserve every name until reclamation. Id or cached file selects the patch, never its
 name. Addresses are `/<company>/<name>` and `/<company>/<name>/~v/<n>`.
 
 New patches default to `company`; updates preserve scope unless `--share` sets
@@ -372,12 +374,19 @@ attempt. Any wire code is retained in the CLI's JSON failure document.
 - **413**, regardless of code: reduce the payload.
 - **422** with `release_mismatch`, `invalid_manifest`, `tier_mismatch`,
   `has_primitives`, `patch_not_openable`, `connection_not_connected`,
-  `stale_generated` or `not_additive`, or any 422 carrying `errors`: repair the
+  `stale_generated`, `not_additive`, `reserved_name` or `invalid_description`,
+  or any 422 carrying `errors`: repair the
   reported release, manifest, tier, inventory, declaration or HTML validation
   problem. File updates with inventory need repo publishing; non-additive
   changes must preserve the cumulative inventory.
 - **409** with `publish_key_conflict` or `name_taken`: use a fresh attempt for
   the corrected payload, or choose another name.
+- **403** with `not_owner`: preserve the patch id and ask its owner or an admin
+  to reassign it. Never suggest creating another patch.
+- **409** with `patch_retired` or `patch_deleted`: preserve the patch id and
+  restore it before publishing. `patch_deleted` supplies the recovery deadline.
+- **409** with `has_dependants`: ask the user before accepting the breakage.
+  The API supports `force`; CLI `--force` remains later work.
 - **404** on an update (the saved request has `patchId`) whose `error` is
   exactly `"Patch not found."`: the target is unavailable. Repo mode requires
   intentionally removing `patch` from `patchy.json` before a new create;

@@ -25,7 +25,7 @@ owns placement, pooling and the inventory; patch development runs the same
 capability services over PGlite.
 
 1. **Migrations belong to capabilities, with one platform ledger.** The original
-   baselines were rewritten before deployment. The current ledger has seven
+   baselines were rewritten before deployment. The current ledger has eight
    records across six owners:
 
    | id   | owner            | record                      |
@@ -37,6 +37,7 @@ capability services over PGlite.
    | 0005 | Company database | `company_database_baseline` |
    | 0006 | Runtime          | `runtime_baseline`          |
    | 0007 | Integrations     | `integrations_baseline`     |
+   | 0008 | Patches          | `patches_lifecycle`         |
 
    The patches baseline includes names, manifests, version stamps and publish
    recovery; `connection_snapshots` belongs to the integrations baseline.
@@ -57,10 +58,10 @@ capability services over PGlite.
 
 ## Consequences
 
-**Every retention rule has one home.** The not-expired predicate and the visit
-top-up are SQL fragments in `Patches.ts`; there is
-no TypeScript twin and no suite to keep the two honest. The Effect clock reads
-into the query as `to_timestamp(...)`, so a test still winds time.
+**The recovery window has one home.** `Patches.ts` derives `purgeAt` from the
+delete stamp and a fixed 30-day window. Restore and reclamation compare it with
+the Effect clock under the same platform row lock, so a patch cannot be restored
+after reclamation or kept past its recovery window by visits.
 
 **Running the server means having a Postgres.** `DATABASE_URL` is required;
 the runner is the path that provides one locally. A local metadata file is not

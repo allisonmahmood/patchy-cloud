@@ -1,6 +1,6 @@
 # Patches
 
-What the company holds and how it is published: patches and versions, user ownership, sharing, visits, retention and owner quotas. The vocabulary also names patch repos, tiers, primitives and the decided lifecycle (retire, restore, delete with a recovery window, rollback); their product decisions live in [the product](../../docs/product.md#patches).
+What the company holds and how it is published: patches and versions, user ownership, sharing, visits, owner quotas and the lifecycle. Product decisions live in [the product](../../docs/product.md#patches).
 
 ## Language
 
@@ -9,7 +9,7 @@ A built unit in a company's cloud, owned by one user and published as immutable 
 _Avoid_: draft, page (how a patch is served, not what it is), app (one possible patch), document (the HTML a version holds)
 
 **Name**:
-The human-readable label unique within a company's patch namespace, forming the patch's address rather than its identity. Renaming keeps the former name as a redirect until another patch takes it; today deleting the patch frees its names, and the decided lifecycle keeps them reserved until the patch is reclaimed.
+The human-readable label unique within a company's patch namespace, forming the patch's address rather than its identity. Retire and delete reserve its names until reclamation; renaming keeps the former name as a redirect until another patch takes it.
 _Avoid_: id (the stable identity), title (the document's display text), slug
 
 **Tier**:
@@ -17,11 +17,11 @@ Where a patch's code runs, not who may open it or what pricing plan it uses. Tie
 _Avoid_: runtime (the thing a tier names), level, plan (tiers are capability, not pricing)
 
 **Owner**:
-The one user in a company a patch belongs to, and the only one who publishes to it. Any machine token acting as that user can publish a version, change its sharing scope or delete the patch; changing the key never changes ownership. Decided: an admin does every owner act on any company patch except publish, and may reassign the owner.
+The one user in a company a patch belongs to, and the only one who publishes to it. Any machine token acting as that user can manage the patch; an admin may manage or reassign any company patch but cannot publish without becoming its owner.
 _Avoid_: creator (a version has a creating machine; ownership belongs to the user), editor, author
 
 **Sharing scope**:
-Who may open a patch: `company` means signed-in colleagues in its company; `public` means anyone with the link to its current version, without signing in. Only the current version of a public patch is public; older versions stay behind the company door. A new patch is shared with the company by default, and only its owner can change the scope in either direction; republishing preserves it unless the owner explicitly chooses another scope.
+Who may open a patch: `company` means signed-in colleagues in its company; `public` means anyone with the link to its current version, without signing in. Older versions stay behind the company door; new patches default to company sharing, and the owner or an admin may change a live patch's scope without publishing.
 _Avoid_: visibility, token scope (a publishing key does not grant reading access)
 
 **Patch repo**:
@@ -41,23 +41,23 @@ A future patch that plugs into another patch. The composition model is not yet d
 _Avoid_: plugin, module
 
 **Retire**:
-The decided kept-but-off state of a patch: off its address indefinitely with everything kept, restorable by its owner or an admin. Not built; its lifecycle is recorded in [the product](../../docs/product.md#updating-retiring-deleting).
+Taking a live patch off its address indefinitely with everything kept, restorable by its owner or an admin.
 _Avoid_: unpublish, archive, disable (the operator's take-down), deactivate (a user's state)
 
 **Delete**:
-Today the owner's removal of a patch from service, with no restore action, its content kept until its retention clock expires. Decided: the trash, off at once and restorable by its owner or an admin through the recovery window, then reclaimed by the deletion sweep. Recorded in [the product](../../docs/product.md#updating-retiring-deleting).
+Taking a live or retired patch off for a fixed recovery window, with its address and contents kept until the deletion sweep reclaims them. The owner or an admin may restore it before that window ends.
 _Avoid_: destroy, purge, retire (the shelf, with no clock)
 
 **Restore**:
-The decided move that brings a retired or deleted patch back live at its reserved address, by its owner or an admin, warning when the patch's own shared sources are off.
+Bringing a retired or deleted patch back live at its reserved address, by its owner or an admin, warning when its current version's shared sources are off.
 _Avoid_: undelete, republish (restore makes no version)
 
 **Recovery window**:
-The decided 30 days after a delete during which the patch can be restored; when it runs out the deletion sweep reclaims the patch, its versions, resources and names.
-_Avoid_: retention (the clock this replaces), grace period, trash (the state, not the clock)
+The 30 days after a delete during which the patch can be restored; when it runs out the deletion sweep reclaims the patch, its versions, resources and names.
+_Avoid_: grace period, trash (the state, not the clock)
 
 **Rollback**:
-The decided move of a patch's current version to any retained older version, in place: no new version, and the data, provisioning, sharing and description untouched.
+Moving a live patch's current version to any retained version, without creating a version or changing its data, provisioning, sharing, description or name.
 _Avoid_: revert, redeploy, undo
 
 **Dependant**:
@@ -96,30 +96,22 @@ _Avoid_: patch id, machine token, version id
 The self-contained HTML content of one version, paired with its manifest. A tier 0 bundle obeys the safe-HTML policy; a tier 1 bundle retains its scripts and runs only inside the sandbox.
 _Avoid_: source tree, manifest, patch (the entity that holds versions)
 
-**Retention clock**:
-The expiry anchor every patch carries today: a publish resets it to 90 days out, and a visit with less than 30 days left moves it to 30 days out, never shorter or back from expiry. Revoking a machine token does not change this clock. Decided to go: the recovery window is the only clock.
-_Avoid_: TTL, lease
-
-**Patch expiry**:
-The consequence of the retention clock running out: the patch stops serving and refuses updates, then the sweep removes its content and record with no recovery. The decision to remove expiry is recorded in [the product](../../docs/product.md#updating-retiring-deleting).
-_Avoid_: soft delete, archival, retention (that is the clock; expiry is the consequence)
-
-**Expiry sweep**:
-The removal of expired patches, their versions and stored content, together with unreferenced content left by failed or refused publishes, ending that storage cost and expired patches' contribution to the owner's quota. Content awaiting removal stays durably queued until removal succeeds. Decided to become the **deletion sweep**, reclaiming deleted patches past their recovery window instead.
+**Deletion sweep**:
+The reclamation of deleted patches past their recovery window, including their versions, resources and names, and unreferenced content left by failed publishes. Content awaiting removal stays durably queued until removal succeeds.
 _Avoid_: cleanup job, garbage collection, reaper, purge
 
 **Visit**:
-One successful serving of a patch from the instance, at its latest or a version URL. It extends retention best-effort, never costs the reader the page if recording fails, and is never an analytics event.
+One successful serving of a patch from the instance, at its latest or a version URL. Recording its count is best-effort and never costs the reader the page if it fails; it is never an analytics event.
 _Avoid_: view, hit, page load (a visit is a serving that succeeded, not a request that arrived)
 
 **Live patch**:
-A patch still counting against its owner's quota: neither deleted by its owner nor disabled through the operator's manual take-down. It leaves the tally the moment it is deleted or disabled, and for good when the sweep takes it — an expired patch still counts until then, because its row and bytes are still there.
+A patch that has been neither retired nor deleted. A separate operator take-down can prevent it serving without changing its lifecycle state.
 _Avoid_: active patch, published patch (every patch is published)
 
 **Patch quota**:
-The ceiling on live patches one owner user may hold, surviving a restart and a replacement machine token. It is separate from the per-machine rate limit on creating patches.
+The ceiling on non-deleted, non-disabled patches one owner user may hold, surviving a restart and a replacement machine token. Retired patches still count; it is separate from the per-machine rate limit on creating patches.
 _Avoid_: patch limit (the per-minute one), storage quota (this counts patches, not bytes)
 
 **Patch event**:
-A committed publish, update or owner deletion, attributed to the user who acted; expiry is attributed to the instance. Events contain ids, sizes, counts and states — never content, a filename, a URL or an address.
+A committed publish, update or owner deletion, attributed to the user who acted; reclamation belongs to the instance. Events contain ids, sizes, counts and states, never content, a filename, a URL or an address.
 _Avoid_: audit log, activity feed

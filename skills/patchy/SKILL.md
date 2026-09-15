@@ -79,7 +79,7 @@ Repo recovery lives under `.patchy/publish/`. Keep it after interruptions or a
 failed `patchy.json` write and rerun `pnpm patchy publish` as the same owning user.
 Recovery precedes release checks and rebuilding, returning the original result.
 `pnpm patchy share public` / `company` and `pnpm patchy delete` use the repo id.
-A deleted-patch 404 requires removing `patch` from `patchy.json` before a new create.
+Keep the patch id on `not_owner`, `patch_retired` or `patch_deleted`. Ask for reassignment or restoration rather than creating another patch. Only a gone patch's 404 calls for intentionally removing `patch` before a new create.
 
 ## Good fits
 
@@ -259,14 +259,14 @@ browser sign-out is a separate control on **Your machines**.
   digits or hyphens, no leading or trailing hyphen. Without it, a new patch derives
   its name from the filename and adds a suffix on collision; republishing keeps it.
   `name_taken` is a definitive refusal (exit 2): choose another name and retry.
-  Renaming leaves a 308 redirect until another patch takes the old name; deleting
-  frees every name. Names never select the patch to update; the file cache or id does.
+  Renaming leaves a 308 redirect until another patch takes the old name.
+  Retire and delete reserve every name until reclamation. Names never select an update target.
 - Set sharing during publish with `patchy publish './plan.html' --share public` or
   `--share company`. Change it without publishing a version with
   `patchy share './plan.html' public` or `patchy share './plan.html' company`;
   `patchy share --patch <id> public` (or `company`) selects an id instead of the cached
   file, exactly one target. Only the owner user may change sharing, through any of
-  their machine tokens; another user's patch answers 404.
+  their machine tokens. A same-company non-owner receives `not_owner`; another company gets 404.
 - Announce the returned `scope`, not an assumed default: `company` means signed-in
   colleagues in the user's company can open the link; `public` means anyone with
   the link can open it without signing in. Text output names both scope and readership.
@@ -276,9 +276,10 @@ browser sign-out is a separate control on **Your machines**.
   Older versions, and all versions after taking a patch back to company, have origin responses
   of `private, no-store` and answer 401 without a session. Previously public copies may remain
   cached for up to 60 seconds; already downloaded copies cannot be recalled.
-- "Take that page down" is `patchy delete './plan.html'` — the file it was published
-  from — or `patchy delete --patch <id>`. It is irreversible and only the owner
-  user can do it, through any of their machine tokens; confirm before running it.
+- "Take that page down" is `patchy delete './plan.html'`, using its original
+  file, or `patchy delete --patch <id>`. Confirm with the user first. Deletion
+  reserves the name and keeps the patch recoverable through the API until `purgeAt`,
+  30 days after deletion. New lifecycle CLI verbs are not implemented yet.
   The origin stops serving it immediately, but a public copy may remain cached
   for up to 60 seconds; downloaded copies cannot be recalled.
 - CLI state lives in the state dir, `~/.patchy` by default. The `status --json` probe
@@ -303,8 +304,8 @@ browser sign-out is a separate control on **Your machines**.
   `provisioned`, `unused`, `warnings`, …).
   `share --json` prints `{ "ok": true, "patchId", "scope", "publicUrl" }`.
   Stderr carries failures only.
-  `delete --json` prints `{ "ok": true }`. Prefer it when the URL or the patch id is going
-  into a script rather than to the user.
+  `delete --json` prints `{ "ok": true, "patchId", "state": "deleted", "deletedAt", "purgeAt" }`.
+  Prefer JSON when an address, id or recovery deadline is going into a script.
   Check the exit code first: argument parse failures can put usage on stdout,
   which is not a success document.
 

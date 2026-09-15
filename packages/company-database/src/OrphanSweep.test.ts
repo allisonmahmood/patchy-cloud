@@ -62,8 +62,8 @@ for (const [name, database] of [
           const inventory = yield* Inventory.Inventory;
           const sweeper = yield* OrphanSweep.OrphanSweep;
           yield* companies.ensureReady(COMPANY);
-          yield* platform`INSERT INTO patches (id, company_id, owner_user_id, title, name, expires_at)
-        VALUES ('sweep_live', ${COMPANY}, 'usr_dev', 'Live', 'sweep-live', '2040-01-01')`;
+          yield* platform`INSERT INTO patches (id, company_id, owner_user_id, title, name)
+        VALUES ('sweep_live', ${COMPANY}, 'usr_dev', 'Live', 'sweep-live')`;
           yield* companies.withCompany(COMPANY)(
             Effect.gen(function* () {
               const sql = yield* SqlClient.SqlClient;
@@ -168,8 +168,8 @@ for (const [name, database] of [
           const fs = yield* FileSystem.FileSystem;
           const root = yield* FilesystemContentStore.rootDir;
           yield* companies.ensureReady(COMPANY);
-          yield* platform`INSERT INTO patches (id, company_id, owner_user_id, title, name, expires_at)
-        VALUES ('sweep_files', ${COMPANY}, 'usr_dev', 'Files', 'sweep-files', '2040-01-01')`;
+          yield* platform`INSERT INTO patches (id, company_id, owner_user_id, title, name)
+        VALUES ('sweep_files', ${COMPANY}, 'usr_dev', 'Files', 'sweep-files')`;
           yield* companies.withCompany(COMPANY)(
             companies.withPatchLock("sweep_files")(
               Effect.gen(function* () {
@@ -256,8 +256,8 @@ for (const [name, database] of [
             const patchId = "sweep_reference_race";
             const key = `files/${patchId}/docs/old`;
             yield* companies.ensureReady(COMPANY);
-            yield* platform`INSERT INTO patches (id, company_id, owner_user_id, title, name, expires_at)
-            VALUES (${patchId}, ${COMPANY}, 'usr_dev', 'Race', 'sweep-reference-race', '2040-01-01')`;
+            yield* platform`INSERT INTO patches (id, company_id, owner_user_id, title, name)
+            VALUES (${patchId}, ${COMPANY}, 'usr_dev', 'Race', 'sweep-reference-race')`;
             yield* companies.withCompany(COMPANY)(
               companies.withPatchLock(patchId)(
                 Effect.gen(function* () {

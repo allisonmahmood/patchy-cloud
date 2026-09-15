@@ -395,7 +395,7 @@ The address is `/<company>/<name>`, for example `/patchy-dev/plan` for the seed'
 first `plan.html`. Without `--name`, file publishing derives a valid name and
 suffixes collisions; republishing preserves it. Use `--name quarterly-plan` to
 rename explicitly. The old name returns 308 until another patch claims it;
-delete frees its names. A company handle alone and the removed `/d/*` routes
+retire and delete reserve its names until reclamation. A company handle alone and the removed `/d/*` routes
 answer 404. `/~content/<patchId>/<versionId>` is an internal content URL with the
 same door and caching, not the link to hand a reader.
 
@@ -640,6 +640,10 @@ SIGTERM — tears the other down. Migrations run through Effect's Migrator in
 owns `0004_invites_expiry`, which adds and backfills invitation expiry.
 Company database owns `0005_company_database_baseline`; Runtime owns
 `0006_runtime_baseline`; Integrations owns `0007_integrations_baseline`.
+Patches adds `0008_patches_lifecycle`, with lifecycle and actor stamps, descriptions
+and visit counts. Published seed patches stay live until retired or deleted;
+only deletion starts their 30-day recovery window. Token and invitation expiry
+remain separate.
 Allocate migration ids monotonically in landing order:
 Effect's Migrator applies only ids above the ledger's highest applied id, so a
 later migration cannot fill a lower-numbered gap. The three migrator spreads are `apps/server/src/Server.ts`,

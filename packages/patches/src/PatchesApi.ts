@@ -21,7 +21,21 @@ import {
   type MalformedBody,
   NotFound,
   NameTaken,
-  Ok,
+  PatchId,
+  NotOwner,
+  WrongState,
+  PatchRetired,
+  PatchDeleted,
+  HasDependants,
+  SourcesOff,
+  ReservedName,
+  InvalidDescription,
+  VersionUnavailable,
+  Retired,
+  Deleted,
+  Restored,
+  RolledBack,
+  Described,
   NotAdditive,
   PublishUnavailable,
   PatchQuotaExceeded,
@@ -54,6 +68,92 @@ const databaseUnavailable = () =>
     error: "Company database is unavailable."
   });
 const encodeInventory = Schema.encodeSync(PatchInventory);
+const lifecycleFailures = {
+  NotOwner: (error: Patches.NotOwner) =>
+    Effect.succeed(
+      refuse(NotOwner, {
+        ok: false,
+        code: "not_owner",
+        error: error.message,
+        owner: error.owner
+      })
+    ),
+  WrongState: (error: Patches.WrongState) =>
+    Effect.succeed(
+      refuse(WrongState, {
+        ok: false,
+        code: "wrong_state",
+        error: error.message,
+        state: error.state
+      })
+    ),
+  PatchRetired: (error: Patches.PatchRetired) =>
+    Effect.succeed(
+      refuse(PatchRetired, {
+        ok: false,
+        code: "patch_retired",
+        error: error.message
+      })
+    ),
+  PatchDeleted: (error: Patches.PatchDeleted) =>
+    Effect.succeed(
+      refuse(PatchDeleted, {
+        ok: false,
+        code: "patch_deleted",
+        error: error.message,
+        purgeAt: error.purgeAt
+      })
+    ),
+  HasDependants: (error: Patches.HasDependants) =>
+    Effect.succeed(
+      refuse(HasDependants, {
+        ok: false,
+        code: "has_dependants",
+        error: error.message,
+        dependants: error.dependants
+      })
+    ),
+  SourcesOff: (error: Patches.SourcesOff) =>
+    Effect.succeed(
+      refuse(SourcesOff, {
+        ok: false,
+        code: "sources_off",
+        error: error.message,
+        sources: error.sources
+      })
+    ),
+  ReservedName: (error: Patches.ReservedName) =>
+    Effect.succeed(
+      refuse(ReservedName, {
+        ok: false,
+        code: "reserved_name",
+        error: error.message
+      })
+    ),
+  InvalidDescription: (error: Patches.InvalidDescription) =>
+    Effect.succeed(
+      refuse(InvalidDescription, {
+        ok: false,
+        code: "invalid_description",
+        error: error.message
+      })
+    ),
+  VersionUnavailable: (error: Patches.VersionUnavailable) =>
+    Effect.succeed(
+      refuse(VersionUnavailable, {
+        ok: false,
+        code: "version_unavailable",
+        error: error.message
+      })
+    ),
+  InvalidOwner: Effect.die
+};
+const ownerFailures = {
+  ...lifecycleFailures,
+  PatchUnavailable: () => Effect.succeed(notFound()),
+  SqlError: Effect.die
+};
+const isPatchId = Schema.is(PatchId);
 
 const decodePublish = decodeBody(PublishRequest);
 const decodeKey = decodeBody(
@@ -167,6 +267,26 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
           });
           const previous = yield* replay();
           if (previous !== undefined) return previous;
+          if (isPatchId(key.patchId)) {
+            const admission = yield* patches
+              .authorizePublish({
+                intent: "update",
+                patchId: key.patchId,
+                ownerUserId: identity.user.id
+              })
+              .pipe(
+                Effect.catchTags({
+                  NotOwner: lifecycleFailures.NotOwner,
+                  PatchRetired: lifecycleFailures.PatchRetired,
+                  PatchDeleted: lifecycleFailures.PatchDeleted,
+                  PatchUnavailable: ownerFailures.PatchUnavailable,
+                  SqlError: Effect.die,
+                  PatchConflict: () =>
+                    Effect.succeed(refuse(Conflict, { ok: false, error: "Patch already exists." }))
+                })
+              );
+            if (HttpServerResponse.isHttpServerResponse(admission)) return admission;
+          }
           const replayOrRespond = (response: HttpServerResponse.HttpServerResponse) =>
             Effect.map(replay(), (stored) => stored ?? response);
           const attempt = yield* limits.consume({
@@ -241,15 +361,15 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
           const quotaResponse = () =>
             refuse(PatchQuotaExceeded, {
               ok: false,
-              error: `Patch quota reached: ${livePatchesPerUser} live patches per user. Delete or let a patch expire before creating another.`,
+              error: `Patch quota reached: ${livePatchesPerUser} patches per user. Delete a patch before creating another; retired patches still count.`,
               code: "live_patch_quota_exceeded",
               quota: livePatchesPerUser
             });
           if (patchId === null) {
-            const live = yield* patches
-              .countLive(identity.user.id)
+            const counted = yield* patches
+              .countQuotaPatches(identity.user.id)
               .pipe(Effect.catchTags({ SqlError: Effect.die }));
-            if (live >= livePatchesPerUser) return yield* replayOrRespond(quotaResponse());
+            if (counted >= livePatchesPerUser) return yield* replayOrRespond(quotaResponse());
           }
           const origin = yield* requestOrigin;
           const metadata = payload.metadata;
@@ -260,6 +380,8 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
               ownerUserId: identity.user.id,
               machineTokenId: identity.machine.id,
               scope: payload.scope,
+              force: payload.force,
+              description: metadata.description ?? manifest.description,
               title,
               html: payload.html,
               filename: cleanText(metadata.filename),
@@ -279,6 +401,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             })
             .pipe(
               Effect.catchTags({
+                ...lifecycleFailures,
                 PatchUnavailable: () => replayOrRespond(notFound()),
                 PatchConflict: () =>
                   replayOrRespond(refuse(Conflict, { ok: false, error: "Patch already exists." })),
@@ -387,13 +510,8 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
           );
           if (HttpServerResponse.isHttpServerResponse(payload)) return payload;
           const shared = yield* patches
-            .setScope(params.patchId, identity.user.id, payload.scope)
-            .pipe(
-              Effect.catchTags({
-                PatchUnavailable: () => Effect.succeed(notFound()),
-                SqlError: Effect.die
-              })
-            );
+            .setScope(params.patchId, { userId: identity.user.id, admin: false }, payload.scope)
+            .pipe(Effect.catchTags(ownerFailures));
           if (HttpServerResponse.isHttpServerResponse(shared)) return shared;
           return new Shared({
             ok: true,
@@ -403,19 +521,88 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
           });
         })
       )
-      .handle("delete", ({ params }) =>
+      .handle("retire", ({ params, payload }) =>
         Effect.gen(function* () {
           const identity = yield* CurrentIdentity;
-          const deleted = yield* patches
-            .delete(params.patchId, identity.user.id)
-            .pipe(Effect.catchTags({ SqlError: Effect.die }));
-          if (!deleted) return notFound();
+          const patch = yield* patches
+            .retire(params.patchId, { userId: identity.user.id, admin: false }, payload.force)
+            .pipe(Effect.catchTags(ownerFailures));
+          if (HttpServerResponse.isHttpServerResponse(patch)) return patch;
+          return new Retired({
+            ok: true,
+            patchId: patch.id,
+            state: "retired",
+            retiredAt: patch.retiredAt!
+          });
+        })
+      )
+      .handle("restore", ({ params, payload }) =>
+        Effect.gen(function* () {
+          const identity = yield* CurrentIdentity;
+          const patch = yield* patches
+            .restore(params.patchId, { userId: identity.user.id, admin: false }, payload.force)
+            .pipe(Effect.catchTags(ownerFailures));
+          if (HttpServerResponse.isHttpServerResponse(patch)) return patch;
+          return new Restored({ ok: true, patchId: patch.id, state: "live" });
+        })
+      )
+      .handle("rollback", ({ params, payload }) =>
+        Effect.gen(function* () {
+          const identity = yield* CurrentIdentity;
+          const result = yield* patches
+            .rollback(
+              params.patchId,
+              { userId: identity.user.id, admin: false },
+              payload.versionNumber
+            )
+            .pipe(Effect.catchTags(ownerFailures));
+          if (HttpServerResponse.isHttpServerResponse(result)) return result;
+          return new RolledBack({
+            ok: true,
+            patchId: result.patch.id,
+            currentVersion: result.currentVersion,
+            address: Patches.address(publicBaseUrl, result.patch.companyHandle, result.patch.name)
+          });
+        })
+      )
+      .handle("describe", ({ params, payload }) =>
+        Effect.gen(function* () {
+          const identity = yield* CurrentIdentity;
+          const patch = yield* patches
+            .setDescription(
+              params.patchId,
+              { userId: identity.user.id, admin: false },
+              payload.description
+            )
+            .pipe(Effect.catchTags(ownerFailures));
+          if (HttpServerResponse.isHttpServerResponse(patch)) return patch;
+          return new Described({
+            ok: true,
+            patchId: patch.id,
+            description: patch.description,
+            descriptionUpdatedAt: patch.descriptionUpdatedAt
+          });
+        })
+      )
+      .handle("delete", ({ params, query }) =>
+        Effect.gen(function* () {
+          const identity = yield* CurrentIdentity;
+          const patch = yield* patches
+            .delete(params.patchId, { userId: identity.user.id, admin: false }, query.force)
+            .pipe(Effect.catchTags(ownerFailures));
+          if (HttpServerResponse.isHttpServerResponse(patch)) return patch;
           yield* analytics.track({
             name: "patch.deleted",
             principalId: identity.user.id,
             properties: { patchId: params.patchId }
           });
-          return new Ok({ ok: true });
+          return new Deleted({
+            ok: true,
+            patchId: patch.id,
+            state: "deleted",
+            deletedAt: patch.deletedAt!,
+            purgeAt: patch.purgeAt!
+          });
         })
       );
   })

@@ -9,7 +9,7 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import * as CompanyDatabases from "./CompanyDatabases.js";
-import { quoteIdentifier } from "./Inventory.js";
+import { reclaimNamespace as dropNamespace } from "./Reclamation.js";
 
 const DAY = 24 * 60 * 60 * 1_000;
 const BATCH_SIZE = 100;
@@ -144,9 +144,7 @@ export const make = Effect.gen(function* () {
           Effect.catchTags({ SchemaError: Effect.die })
         );
         if (stillLive[0]!.exists) return false;
-        yield* sql.unsafe(`DROP SCHEMA IF EXISTS ${quoteIdentifier(namespace)} CASCADE`);
-        yield* sql`DELETE FROM patchy.patches WHERE patch_id = ${patchId}`;
-        yield* sql`DELETE FROM patchy.orphan_namespaces WHERE namespace = ${namespace}`;
+        yield* dropNamespace();
         return true;
       })
     );

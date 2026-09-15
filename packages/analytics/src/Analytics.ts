@@ -4,10 +4,9 @@
  *
  * **Readers stay unwatched.** Nothing here ever runs in a reader's browser: a
  * served patch carries no script source of any kind. Serving a patch is
- * deliberately not an event (a visit moves a retention clock in the database
- * and is never reported here), and no event carries a source address, page
- * content, a filename, or a URL. What ships is the shape of what happened:
- * ids, sizes, counts, and states.
+ * deliberately not an event. Visits are counted in the database and never
+ * reported here. No event carries a source address, page content, filename
+ * or URL, only ids, sizes, counts and states.
  *
  * **A user's request never depends on it.** `track` never fails: a failing
  * backend is a warning in the log and no difference at all to the response.
@@ -29,7 +28,7 @@ import * as PostHogClient from "./PostHogClient.js";
  * The list is closed on purpose — serving a patch is not on it.
  */
 export type AnalyticsEventName =
-  "token.minted" | "patch.created" | "patch.updated" | "patch.deleted" | "patch.expired";
+  "token.minted" | "patch.created" | "patch.updated" | "patch.deleted" | "patch.purged";
 
 /** What an event property may hold. Ids, sizes, counts, and states — nothing else. */
 export type AnalyticsPropertyValue = string | number | boolean | null;
@@ -38,7 +37,7 @@ export interface AnalyticsEvent {
   readonly name: AnalyticsEventName;
   /**
    * The principal the event belongs to, or `null` for the events no principal
-   * performed — an expiry sweep acts for the instance, not for anyone.
+   * performed. A deletion sweep acts for the instance, not for anyone.
    */
   readonly principalId: string | null;
   readonly properties: Record<string, AnalyticsPropertyValue>;

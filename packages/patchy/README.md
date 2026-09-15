@@ -495,13 +495,13 @@ patchy publish ./plan.html
 
 Credential selection is deterministic: `PATCHY_API_TOKEN` wins, then the token stored for the resolved instance, then the token seeded beside a dev-env URL. A login therefore outranks the seed. With no key, publish exits 1 (`local`), `Run: patchy login`. A rejected credential is reported as-is; the CLI never starts a login or obtains a replacement on your behalf.
 
-Publishing a previously seen file updates the same patch. If it is unavailable, the publish fails; pass `--new` to create a new patch with a server-generated ID. `--patch <patch-id>` is update-only for an active patch owned by your user, through any of that user's machine tokens. Unknown, unavailable and unowned targets fail with the same generic error.
+Publishing a previously seen file updates the same patch. `--patch <patch-id>` is update-only for a live patch owned by your user, through any of that user's machine tokens. A same-company non-owner receives `not_owner`; a retired or deleted target receives `patch_retired` or `patch_deleted`. These definitive refusals preserve the repo's patch id. Restore the patch or arrange reassignment before publishing; only a gone target requires intentionally creating another patch.
 
-Every patch has an address at `/<company>/<name>` and numbered versions at `/<company>/<name>/~v/<n>`. Set or rename it with `--name quarterly-plan`: 3–32 lowercase letters, digits or hyphens, no leading or trailing hyphen. An explicit name taken by another patch fails with `name_taken` (409, exit 2, `rejected`); choose another name and retry. Without `--name`, a create normalises the filename, falls back to `patch` when unusable, and adds `-2`, `-3`, and so on on collision. Republishing keeps its name unless explicitly renamed. The old name redirects with 308 until another patch takes it; that redirect is then gone for good. Delete frees all the patch's names.
+Every patch has an address at `/<company>/<name>` and numbered versions at `/<company>/<name>/~v/<n>`. Set or rename it with `--name quarterly-plan`: 3–32 lowercase letters, digits or hyphens, no leading or trailing hyphen. An explicit collision is `name_taken`; `patches` and `connections` are reserved names. Without `--name`, a create normalises the filename, falls back to `patch` when unusable, and adds `-2`, `-3`, and so on on collision. Republishing keeps its name unless explicitly renamed. The old name redirects with 308 until another patch takes it. Retire and delete reserve the patch's names until the deletion sweep reclaims it.
 
 Before sending, the CLI authenticates the publishing key and saves the whole request, a fresh `publishKey`, the owning user ID, the original file path and cache application context in its instance-scoped state directory. The next `publish` authenticates again and recovers that attempt **before** checking today's file, cache, flags or release. A replacement token for the same owner can recover it; a different user is refused locally without sending the saved content or deleting the attempt. A successful replay updates the original file's cache and exits without another version, even if you passed a different file or `--new`.
 
-Authentication failures, throttling, quota refusals, lost replies, server failures and failed cache writes keep the attempt recoverable. Only a definitive payload refusal clears it so you can correct the input and start a fresh attempt. The complete [definitive-refusal clearing list in ADR-0004](../../docs/adr/ADR-0004-cli-contract-for-agents.md#definitive-publish-refusals) covers decoded 413s, selected 422s (or 422s carrying validation `errors`), selected 409s and matching unavailable-update 404s. Other refusals retain it. Keep the state directory and sign in as the original owner when recovering; never discard an attempt merely because its result is unknown.
+Authentication failures, throttling, quota refusals, lost replies, server failures and failed cache writes keep the attempt recoverable. A definitive refusal clears it so you can correct the input or target state and start a fresh attempt. The complete [definitive-refusal clearing list in ADR-0004](../../docs/adr/ADR-0004-cli-contract-for-agents.md#definitive-publish-refusals) includes ownership and lifecycle refusals. Keep the state directory and sign in as the original owner when recovering; never discard an attempt merely because its result is unknown.
 
 Concurrent invocations through the same instance and state directory resend the same persisted attempt rather than replacing it or refusing contention. Each authenticates the attempt's original owner before sending, including an invocation that loses the race to create it. Killing a process leaves the attempt available for recovery. A response clears only its matching publish key, so a stale response cannot remove a newer attempt.
 If the selected attempt settles before a competing invocation can read it, that
@@ -545,26 +545,31 @@ patchy share --patch k7f2m9x1a3b8 company --json
 # {"ok":true,"patchId":"k7f2m9x1a3b8","scope":"company","publicUrl":"https://pages.example.com/acme/plan"}
 ```
 
-Share uses the same credential chain as publish. With no key it exits 1 (`local`), `Run: patchy login`; a missing cached file target is also `local`. An unavailable or unowned patch answers 404 (`rejected`, exit 2), including under `--json`.
+Share uses the same credential chain as publish. With no key it exits 1 (`local`), `Run: patchy login`; a missing cached file target is also `local`. A same-company non-owner receives `not_owner`, a non-live patch receives `wrong_state`, and a foreign or gone patch answers 404. Each is `rejected`, exit 2.
 
 Only the current version of a public patch is public; older versions stay behind the company door. Read company pages through the user's signed-in browser. The current public version has `Cache-Control: public, max-age=60` at both `/<company>/<name>` and `/<company>/<name>/~v/<current n>`. Older versions, and all versions after changing to company, have origin responses of `private, no-store` and answer 401 to a cookie-free fetch. A previously cached public copy may remain reachable for up to 60 seconds; already downloaded copies cannot be recalled.
 
 ### `patchy delete <file> | --patch <patch-id>`
 
-Delete a patch. Irreversible: the origin stops serving it at once, so confirm with the user first. A still-fresh public cache entry may remain for up to 60 seconds, and downloaded copies cannot be recalled. Name the file the patch was published from and the CLI finds the patch in its cache, or pass `--patch <patch-id>` to name it outright; one or the other, not both. On success the cache forgets the patch, so a later publish from that file creates a new one.
+Delete a patch with a 30-day recovery window. The origin stops serving it at once, so confirm with the user first. A still-fresh public cache entry may remain for up to 60 seconds, and downloaded copies cannot be recalled. Name the file the patch was published from, or pass `--patch <patch-id>`, not both. Success forgets matching file-cache entries but reserves the patch's names until reclamation. The owner can restore it through the API before the returned `purgeAt`; the lifecycle CLI verbs are later work.
 
 From a published repo, `patchy delete` uses `patchy.json` without an argument.
-The id remains there: a later publish is refused with 404 and tells you to remove
-`patch` from `patchy.json` before intentionally creating a new patch.
+The id remains there. A later publish receives `patch_deleted` with `purgeAt`;
+keep the id to restore the patch. Only a gone patch requires a new create.
 
 ```sh
 patchy delete ./plan.html
 # Deleting from https://pages.example.com (target came from the saved config).
 # Deleted patch
 # Patch ID: k7f2m9x1a3b8
+# Recoverable until: 2026-10-15T12:00:00.000Z
 ```
 
 Delete uses the same credential chain as publish. Any machine token for the owner user can delete the patch. With no key it exits 1 (`local`), `Run: patchy login`; a missing or unowned patch is `rejected`, and the cache keeps its entry until the instance says yes.
+
+`delete --json` returns `{ ok, patchId, state: "deleted", deletedAt, purgeAt }`.
+A repeated delete is `wrong_state`; live dependants refuse deletion with
+`has_dependants`. CLI `--force` and confirmation flags are not implemented yet.
 
 ## Exit codes
 

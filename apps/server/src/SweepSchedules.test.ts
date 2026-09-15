@@ -1,6 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import { OrphanSweep } from "@patchy/company-database";
-import { ExpirySweep } from "@patchy/patches";
+import { DeletionSweep } from "@patchy/patches";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -13,19 +13,19 @@ import { TestClock } from "effect/testing";
 import * as Server from "./Server.js";
 
 it.effect(
-  "retries a defective orphan pass without stopping expiry, and cancels both on shutdown",
+  "retries a defective orphan pass without stopping deletion, and cancels both on shutdown",
   () =>
     Effect.gen(function* () {
-      const expiryRuns = yield* Queue.unbounded<number>();
+      const deletionRuns = yield* Queue.unbounded<number>();
       const orphanRuns = yield* Queue.unbounded<number>();
       const orphanInterrupted = yield* Deferred.make<void>();
       const secret = "postgres://private-user:private-password@database/internal";
       const logs: Array<{ message: unknown; cause: Cause.Cause<unknown> }> = [];
-      let expiryPasses = 0;
+      let deletionPasses = 0;
       let orphanPasses = 0;
-      const expiry = Layer.succeed(ExpirySweep.ExpirySweep, {
+      const deletion = Layer.succeed(DeletionSweep.DeletionSweep, {
         sweep: Effect.gen(function* () {
-          yield* Queue.offer(expiryRuns, ++expiryPasses);
+          yield* Queue.offer(deletionRuns, ++deletionPasses);
           return { deleted: 0, skipped: 0, failed: 0, orphanedObjects: 0 };
         })
       });
@@ -33,7 +33,7 @@ it.effect(
         sweep: Effect.gen(function* () {
           yield* Queue.offer(orphanRuns, ++orphanPasses);
           if (orphanPasses === 1) return yield* Effect.die(new Error(secret));
-          // A later hung pass must not delay expiry's next tick either.
+          // A later hung pass must not delay deletion's next tick either.
           return yield* Effect.never.pipe(
             Effect.onInterrupt(() => Deferred.succeed(orphanInterrupted, undefined))
           );
@@ -43,7 +43,7 @@ it.effect(
       yield* Effect.gen(function* () {
         yield* Layer.buildWithScope(
           Server.sweeper.pipe(
-            Layer.provide([expiry, orphan]),
+            Layer.provide([deletion, orphan]),
             Layer.provide(
               Logger.layer([
                 Logger.make((event) => {
@@ -54,20 +54,20 @@ it.effect(
           ),
           scope
         );
-        assert.strictEqual(yield* Queue.take(expiryRuns), 1);
+        assert.strictEqual(yield* Queue.take(deletionRuns), 1);
         assert.strictEqual(yield* Queue.take(orphanRuns), 1);
         yield* TestClock.adjust("1 hour");
-        assert.strictEqual(yield* Queue.take(expiryRuns), 2);
+        assert.strictEqual(yield* Queue.take(deletionRuns), 2);
         assert.strictEqual(yield* Queue.take(orphanRuns), 2);
         yield* TestClock.adjust("1 hour");
-        assert.strictEqual(yield* Queue.take(expiryRuns), 3);
+        assert.strictEqual(yield* Queue.take(deletionRuns), 3);
         assert.strictEqual(orphanPasses, 2);
         assert.strictEqual(logs.length, 1);
         assert.notInclude(JSON.stringify(logs), secret);
       }).pipe(Effect.ensuring(Scope.close(scope, Exit.void)));
       yield* Deferred.await(orphanInterrupted);
       yield* TestClock.adjust("1 hour");
-      assert.strictEqual(expiryPasses, 3);
+      assert.strictEqual(deletionPasses, 3);
       assert.strictEqual(orphanPasses, 2);
     })
 );
