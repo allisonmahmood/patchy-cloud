@@ -26,6 +26,7 @@
     "@patchy/integrations": "workspace:*",
     "@patchy/limits": "workspace:*",
     "@patchy/patches": "workspace:*",
+    "@patchy/portal": "workspace:*",
     "@patchy/primitives": "workspace:*",
     "@patchy/runtime": "workspace:*",
     "@patchy/sdk": "workspace:*",

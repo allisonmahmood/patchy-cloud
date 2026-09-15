@@ -201,7 +201,9 @@ const lifecycleFailures = {
         error: error.message
       })
     ),
-  InvalidOwner: Effect.die
+  InvalidOwner: Effect.die,
+  // Machine-token calls carry no portal precondition.
+  StaleAction: Effect.die
 };
 const ownerFailures = {
   ...lifecycleFailures,
