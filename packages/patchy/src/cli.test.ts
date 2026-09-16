@@ -2561,7 +2561,7 @@ describe("patch lifecycle commands", () => {
     }
   );
 
-  it("clears descriptions explicitly and refuses empty text, controls and overlong text locally", async () => {
+  it("refuses empty description text, controls and overlong text locally", async () => {
     const instance = await stubInstance((request, respond) =>
       respond(200, {
         ok: true,
@@ -2583,6 +2583,18 @@ describe("patch lifecycle commands", () => {
       expect(result.status).toBe(1);
     }
     expect(instance.requests).toEqual([]);
+  });
+
+  it("clears descriptions explicitly and normalizes nonempty text", async () => {
+    const instance = await stubInstance((request, respond) =>
+      respond(200, {
+        ok: true,
+        patchId,
+        description: decodeDescriptionRequest(request.body).description,
+        descriptionUpdatedAt: null
+      })
+    );
+    const options = { env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" } };
     const cleared = await runCli(["describe", "--clear", "--patch", patchId], options);
     expect(cleared).toMatchObject({ status: 0, stderr: "" });
     expect(cleared.stdout).toContain("(no description)");
