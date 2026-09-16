@@ -194,6 +194,94 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(Te
         })
     );
 
+    it.effect("checks deactivation without changing access, tokens or the final active admin", () =>
+      Effect.gen(function* () {
+        const users = yield* Users.Users;
+        const sql = yield* SqlClient.SqlClient;
+        const { company, admin, member } = yield* companyWithMember("deactivation-check");
+        const input = { companyId: company.id, userId: member.id };
+        yield* sql`
+          INSERT INTO machine_tokens (id, user_id, name, token_hash, created_at, expires_at, last_used_at)
+          VALUES ('tok_deactivation_check', ${member.id}, 'Laptop', 'deactivation-check-hash', now(), now() + interval '90 days', now())`;
+
+        assert.deepStrictEqual(yield* users.checkDeactivation(input), member);
+        assert.strictEqual(
+          (yield* users
+            .checkDeactivation({ companyId: company.id, userId: admin.id })
+            .pipe(Effect.flip))._tag,
+          "LastAdmin"
+        );
+        assert.strictEqual(
+          (yield* users
+            .checkDeactivation({ companyId: "cmp_elsewhere", userId: member.id })
+            .pipe(Effect.flip))._tag,
+          "UserNotFound"
+        );
+        assert.deepStrictEqual(yield* users.findByClerkId(member.clerkUserId), member);
+        assert.deepStrictEqual(yield* users.findByClerkId(admin.clerkUserId), admin);
+        assert.deepStrictEqual(
+          yield* sql`SELECT revoked_at IS NULL AS live FROM machine_tokens WHERE id = 'tok_deactivation_check'`,
+          [{ live: true }]
+        );
+      })
+    );
+
+    it.effect("commits or rolls back lifecycle changes with the ambient outer transaction", () =>
+      Effect.gen(function* () {
+        const users = yield* Users.Users;
+        const sql = yield* SqlClient.SqlClient;
+        const { company, member } = yield* companyWithMember("lifecycle-outer-transaction");
+        const input = { companyId: company.id, userId: member.id };
+        yield* sql`
+          INSERT INTO machine_tokens (id, user_id, name, token_hash, created_at, expires_at, last_used_at)
+          VALUES ('tok_lifecycle_outer', ${member.id}, 'Laptop', 'lifecycle-outer-hash', now(), now() + interval '90 days', now())`;
+        assert.strictEqual(
+          yield* sql
+            .withTransaction(
+              Effect.gen(function* () {
+                yield* users.deactivate(input);
+                return yield* Effect.fail("abort deactivation");
+              })
+            )
+            .pipe(Effect.flip),
+          "abort deactivation"
+        );
+        assert.deepStrictEqual(yield* users.findByClerkId(member.clerkUserId), member);
+        assert.deepStrictEqual(
+          yield* sql`SELECT revoked_at IS NULL AS live FROM machine_tokens WHERE id = 'tok_lifecycle_outer'`,
+          [{ live: true }]
+        );
+
+        const deactivated = yield* sql.withTransaction(users.deactivate(input));
+        assert.isNotNull(deactivated.deactivatedAt);
+        assert.deepStrictEqual(yield* users.findByClerkId(member.clerkUserId), deactivated);
+        assert.deepStrictEqual(
+          yield* sql`SELECT revoked_at IS NOT NULL AS revoked FROM machine_tokens WHERE id = 'tok_lifecycle_outer'`,
+          [{ revoked: true }]
+        );
+
+        assert.strictEqual(
+          yield* sql
+            .withTransaction(
+              Effect.gen(function* () {
+                yield* users.reactivate(input);
+                return yield* Effect.fail("abort reactivation");
+              })
+            )
+            .pipe(Effect.flip),
+          "abort reactivation"
+        );
+        assert.deepStrictEqual(yield* users.findByClerkId(member.clerkUserId), deactivated);
+
+        yield* sql.withTransaction(users.reactivate(input));
+        assert.deepStrictEqual(yield* users.findByClerkId(member.clerkUserId), member);
+        assert.deepStrictEqual(
+          yield* sql`SELECT revoked_at IS NOT NULL AS revoked FROM machine_tokens WHERE id = 'tok_lifecycle_outer'`,
+          [{ revoked: true }]
+        );
+      })
+    );
+
     it.effect(
       "revokes every machine atomically on deactivation and never revives a key on reactivation",
       () =>

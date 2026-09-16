@@ -70,6 +70,10 @@ export class Users extends Context.Service<
     readonly setRole: (
       input: UserRef & { readonly role: Role }
     ) => Effect.Effect<User, UserNotFound | LastAdmin | SqlError>;
+    /** Preview only; deactivate rechecks under the company and user locks. */
+    readonly checkDeactivation: (
+      input: UserRef
+    ) => Effect.Effect<User, UserNotFound | LastAdmin | SqlError>;
     readonly deactivate: (
       input: UserRef
     ) => Effect.Effect<User, UserNotFound | LastAdmin | SqlError>;
@@ -99,6 +103,12 @@ export const make = Effect.gen(function* () {
     Result: User,
     execute: (companyId) =>
       sql`SELECT ${columns} FROM users WHERE company_id = ${companyId} ORDER BY created_at, id`
+  });
+  const userByRef = SqlSchema.findOneOption({
+    Request: ref,
+    Result: User,
+    execute: ({ companyId, userId }) =>
+      sql`SELECT ${columns} FROM users WHERE company_id = ${companyId} AND id = ${userId}`
   });
   const lockedUser = SqlSchema.findOneOption({
     Request: ref,
@@ -162,6 +172,13 @@ export const make = Effect.gen(function* () {
     if (count <= 1) return yield* new LastAdmin({ companyId: user.companyId, userId: user.id });
   });
 
+  const checkDeactivation = Effect.fn("Users.checkDeactivation")(function* (input: UserRef) {
+    const found = yield* userByRef(input).pipe(Effect.catchTags(dieOnSchemaError));
+    if (Option.isNone(found)) return yield* new UserNotFound(input);
+    yield* preserveAdmin(found.value);
+    return found.value;
+  });
+
   const setRole = Effect.fn("Users.setRole")((input: UserRef & { readonly role: Role }) =>
     sql.withTransaction(
       Effect.gen(function* () {
@@ -209,6 +226,7 @@ export const make = Effect.gen(function* () {
     list,
     refreshClaims,
     setRole,
+    checkDeactivation,
     deactivate,
     reactivate
   });

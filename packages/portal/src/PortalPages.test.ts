@@ -180,10 +180,11 @@ const readPatch = Effect.fn("PortalPagesTest.readPatch")(function* (
   assert.strictEqual(rows.length, 1);
   return rows[0]!;
 });
+type FormFields = Record<string, string | readonly string[]>;
 const request = Effect.fn("PortalPagesTest.request")(function* (
   path: string,
   person: Person | null,
-  fields?: Record<string, string>,
+  fields?: FormFields,
   headers: Record<string, string> = {}
 ) {
   const client = yield* HttpClient.HttpClient;
@@ -202,13 +203,17 @@ const request = Effect.fn("PortalPagesTest.request")(function* (
       ? HttpClientRequest.get(path)
       : HttpClientRequest.post(path).pipe(
           HttpClientRequest.bodyText(
-            new URLSearchParams(fields).toString(),
+            new URLSearchParams(
+              Object.entries(fields).flatMap(([name, value]) =>
+                typeof value === "string" ? [[name, value]] : value.map((item) => [name, item])
+              )
+            ).toString(),
             "application/x-www-form-urlencoded"
           )
         );
   return yield* client.execute(input.pipe(HttpClientRequest.setHeaders({ cookie, ...headers })));
 });
-const post = (path: string, person: Person, fields: Record<string, string>) =>
+const post = (path: string, person: Person, fields: FormFields) =>
   request(path, person, fields, { origin: PUBLIC_BASE_URL });
 const text = (html: string) =>
   html
@@ -237,6 +242,17 @@ const inputs = (html: string, name: string, type: string) =>
     );
 const radioValues = (html: string) =>
   inputs(html, "user", "radio").map((input) => input.match(/\bvalue="([^"]*)"/)?.[1]);
+const inputValues = (html: string, name: string, type: string) =>
+  inputs(html, name, type)
+    .filter((input) => !/\bdisabled\b/.test(input))
+    .map((input) => input.match(/\bvalue="([^"]*)"/)?.[1]);
+const userPath = (person: Person, action: "deactivate" | "reactivate") =>
+  `/company/users/${person.id}/${action}`;
+const readUser = Effect.fn("PortalPagesTest.readUser")(function* (person: Person) {
+  const user = yield* (yield* Users.Users).findByClerkId(person.clerkUserId);
+  assert.isNotNull(user);
+  return user!;
+});
 const cardPath = (name: string) => `/patches/${name}`;
 const cardLinks = (html: string) =>
   links(html.match(/<aside\b[^>]*>([\s\S]*?)<\/aside>/)?.[1] ?? "").filter(
@@ -1463,5 +1479,622 @@ it.layer(layer)("portal pages on a socket", (it) => {
           );
         }
       })
+  );
+});
+
+it.layer(layer)("user lifecycle pages on a socket", (it) => {
+  it.effect("renders lifecycle picks and previews while company mutation locks are held", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const patch = yield* publish(workspace.owner, "preview-without-locks");
+      const sql = yield* SqlClient.SqlClient;
+      const users = yield* Users.Users;
+      for (const action of ["deactivate", "reactivate"] as const) {
+        if (action === "reactivate") {
+          yield* (yield* Patches.Patches).retire(patch.patchId, actor(workspace.admin));
+          yield* users.deactivate({ companyId: workspace.id, userId: workspace.owner.id });
+        }
+        const before = yield* readUser(workspace.owner);
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`SELECT pg_advisory_xact_lock(hashtextextended('patchy:dependencies:' || ${workspace.id}, 0))`;
+            yield* sql`SELECT id FROM patches WHERE company_id = ${workspace.id} FOR UPDATE`;
+            yield* sql`SELECT id FROM companies WHERE id = ${workspace.id} FOR UPDATE`;
+            const path = userPath(workspace.owner, action);
+            const pick = yield* request(path, workspace.admin);
+            assert.strictEqual(pick.status, 200);
+            assert.sameMembers(inputValues(yield* pick.text, "patch", "checkbox"), [patch.patchId]);
+            const preview = yield* post(path, workspace.admin, { choice: "all" });
+            assert.strictEqual(preview.status, 200);
+            assert.sameMembers(inputValues(yield* preview.text, "patch", "hidden"), [
+              patch.patchId
+            ]);
+          })
+        );
+        assert.deepStrictEqual(yield* readUser(workspace.owner), before);
+      }
+    })
+  );
+
+  it.effect(
+    "lists live patch choices with their dependants and leaves off patches unselectable",
+    () =>
+      Effect.gen(function* () {
+        const workspace = yield* company();
+        const service = yield* Patches.Patches;
+        const source = yield* publishSource(workspace.owner, "leaving-source");
+        const own = yield* publishDependant(workspace.owner, "leaving-own-reader", source.patchId);
+        const colleague = yield* publishDependant(
+          workspace.member,
+          "leaving-colleague-reader",
+          source.patchId
+        );
+        const offReader = yield* publishDependant(
+          workspace.member,
+          "leaving-off-reader",
+          source.patchId
+        );
+        yield* service.retire(offReader.patchId, actor(workspace.member));
+        const retired = yield* publish(workspace.owner, "leaving-retired");
+        const deleted = yield* publish(workspace.owner, "leaving-deleted");
+        yield* service.retire(retired.patchId, actor(workspace.owner));
+        yield* service.delete(deleted.patchId, actor(workspace.admin));
+
+        const path = userPath(workspace.owner, "deactivate");
+        const response = yield* request(path, workspace.admin);
+        assert.strictEqual(response.status, 200);
+        const html = yield* response.text;
+        assert.include(forms(html), path);
+        assert.sameMembers(inputValues(html, "patch", "checkbox"), [source.patchId, own.patchId]);
+        assert.match(text(html), new RegExp(`${own.name}[^)]*\\btheirs\\b`));
+        assert.match(text(html), new RegExp(`${colleague.name}[^a-zA-Z]*Alex`));
+        assert.notInclude(text(html), offReader.name);
+        assert.include(text(html), retired.name);
+        assert.include(text(html), deleted.name);
+        for (const label of ["Keep their patches live", "Retire selected", "Retire all"])
+          assert.include(text(html), label);
+        assert.isNull((yield* readUser(workspace.owner)).deactivatedAt);
+      })
+  );
+
+  it.effect(
+    "keeps checked patches live and deactivates immediately when the admin chooses keep",
+    () =>
+      Effect.gen(function* () {
+        const workspace = yield* company();
+        const source = yield* publishSource(workspace.owner, "keep-live-source");
+        const reader = yield* publishDependant(
+          workspace.member,
+          "keep-live-reader",
+          source.patchId
+        );
+        const response = yield* post(userPath(workspace.owner, "deactivate"), workspace.admin, {
+          choice: "keep",
+          patch: [source.patchId]
+        });
+        assert.strictEqual(response.status, 303);
+        assert.strictEqual(response.headers.location, "/company");
+        assert.isNotNull((yield* readUser(workspace.owner)).deactivatedAt);
+        assert.strictEqual((yield* readPatch(workspace.admin, source.patchId)).patch.state, "live");
+        assert.strictEqual((yield* readPatch(workspace.admin, reader.patchId)).patch.state, "live");
+        const card = yield* (yield* request(cardPath(source.name), workspace.member)).text;
+        assert.include(text(card), "Priya (deactivated)");
+        assert.strictEqual((yield* request("/", workspace.owner)).status, 403);
+      })
+  );
+
+  it.effect(
+    "rejects an empty selection and retires an entirely selected chain without breakage",
+    () =>
+      Effect.gen(function* () {
+        const workspace = yield* company();
+        const source = yield* publishSource(workspace.owner, "selected-chain-source");
+        const reader = yield* publishDependant(
+          workspace.owner,
+          "selected-chain-reader",
+          source.patchId
+        );
+        const path = userPath(workspace.owner, "deactivate");
+        const empty = yield* post(path, workspace.admin, { choice: "selected" });
+        assert.strictEqual(empty.status, 422);
+        const emptyHtml = yield* empty.text;
+        assert.include(text(emptyHtml), "Select at least one, or keep their patches live.");
+        assert.sameMembers(inputValues(emptyHtml, "patch", "checkbox"), [
+          source.patchId,
+          reader.patchId
+        ]);
+        assert.isNull((yield* readUser(workspace.owner)).deactivatedAt);
+
+        const selection = [source.patchId, reader.patchId];
+        const preview = yield* post(path, workspace.admin, {
+          choice: "selected",
+          patch: selection
+        });
+        assert.strictEqual(preview.status, 200);
+        const html = yield* preview.text;
+        assert.include(text(html), "Nothing breaks");
+        assert.deepStrictEqual(inputs(html, "ack", "checkbox"), []);
+        assert.sameMembers(inputValues(html, "patch", "hidden"), selection);
+        assert.strictEqual(hidden(html, "choice"), "confirm");
+        assert.isNull((yield* readUser(workspace.owner)).deactivatedAt);
+        for (const patchId of selection)
+          assert.strictEqual((yield* readPatch(workspace.admin, patchId)).patch.state, "live");
+
+        const committed = yield* post(path, workspace.admin, {
+          choice: "confirm",
+          patch: selection
+        });
+        assert.strictEqual(committed.status, 303);
+        assert.strictEqual(committed.headers.location, "/company");
+        assert.isNotNull((yield* readUser(workspace.owner)).deactivatedAt);
+        for (const patchId of selection) {
+          const saved = yield* readPatch(workspace.admin, patchId);
+          assert.strictEqual(saved.patch.state, "retired");
+          assert.strictEqual(saved.patch.retiredBy, workspace.admin.id);
+          assert.strictEqual(saved.patch.lastChangedBy, workspace.admin.id);
+          const card = yield* (yield* request(cardPath(saved.patch.name), workspace.member)).text;
+          assert.include(text(card), "Retired by Sam");
+        }
+      })
+  );
+
+  it.effect(
+    "recomputes outside dependants including the same owner before accepting acknowledgement",
+    () =>
+      Effect.gen(function* () {
+        const workspace = yield* company();
+        const source = yield* publishSource(workspace.owner, "outside-source");
+        const own = yield* publishDependant(workspace.owner, "outside-own-reader", source.patchId);
+        const path = userPath(workspace.owner, "deactivate");
+        const preview = yield* post(path, workspace.admin, {
+          choice: "selected",
+          patch: [source.patchId]
+        });
+        assert.strictEqual(preview.status, 200);
+        const html = yield* preview.text;
+        assert.include(text(html), own.name);
+        assert.notInclude(text(html), "Nothing breaks");
+        assert.strictEqual(inputs(html, "ack", "checkbox").length, 1);
+        const later = yield* publishDependant(
+          workspace.member,
+          "outside-later-reader",
+          source.patchId
+        );
+        for (const acknowledgement of [{}, { ack: "on" }]) {
+          const refused = yield* post(path, workspace.admin, {
+            choice: "confirm",
+            patch: [source.patchId],
+            ...acknowledgement
+          });
+          assert.strictEqual(refused.status, 409);
+          const fresh = yield* refused.text;
+          assert.include(text(fresh), own.name);
+          assert.include(text(fresh), later.name);
+          assert.include(text(fresh), workspace.member.name);
+          assert.isNull((yield* readUser(workspace.owner)).deactivatedAt);
+          assert.strictEqual(
+            (yield* readPatch(workspace.admin, source.patchId)).patch.state,
+            "live"
+          );
+        }
+        const committed = yield* post(path, workspace.admin, {
+          choice: "confirm",
+          patch: [source.patchId],
+          ack: "1"
+        });
+        assert.strictEqual(committed.status, 303);
+        assert.isNotNull((yield* readUser(workspace.owner)).deactivatedAt);
+        assert.strictEqual(
+          (yield* readPatch(workspace.admin, source.patchId)).patch.state,
+          "retired"
+        );
+        for (const reader of [own, later])
+          assert.strictEqual(
+            (yield* readPatch(workspace.admin, reader.patchId)).patch.state,
+            "live"
+          );
+      })
+  );
+
+  it.effect(
+    "skips the pick with no live patches and keeps them retired on immediate reactivation",
+    () =>
+      Effect.gen(function* () {
+        const workspace = yield* company();
+        const service = yield* Patches.Patches;
+        const retired = yield* publish(workspace.owner, "shortcut-retired");
+        const deleted = yield* publish(workspace.owner, "shortcut-deleted");
+        yield* service.retire(retired.patchId, actor(workspace.owner));
+        yield* service.delete(deleted.patchId, actor(workspace.admin));
+        const beforeRetired = yield* readPatch(workspace.admin, retired.patchId);
+        const beforeDeleted = yield* readPatch(workspace.admin, deleted.patchId);
+        const path = userPath(workspace.owner, "deactivate");
+        const page = yield* request(path, workspace.admin);
+        assert.strictEqual(page.status, 200);
+        const html = yield* page.text;
+        assert.strictEqual(hidden(html, "choice"), "confirm");
+        assert.deepStrictEqual(inputs(html, "patch", "checkbox"), []);
+        assert.deepStrictEqual(
+          links(html).filter((link) => link.text.startsWith("Back to")),
+          [{ href: "/company", text: "Back to Company" }]
+        );
+        assert.include(text(html), "Nothing breaks");
+        assert.isNull((yield* readUser(workspace.owner)).deactivatedAt);
+        assert.strictEqual((yield* post(path, workspace.admin, { choice: "confirm" })).status, 303);
+        assert.isNotNull((yield* readUser(workspace.owner)).deactivatedAt);
+
+        const returning = userPath(workspace.owner, "reactivate");
+        const pick = yield* (yield* request(returning, workspace.admin)).text;
+        assert.include(text(pick), "Keep them retired");
+        const kept = yield* post(returning, workspace.admin, {
+          choice: "keep",
+          patch: [retired.patchId]
+        });
+        assert.strictEqual(kept.status, 303);
+        assert.isNull((yield* readUser(workspace.owner)).deactivatedAt);
+        assert.deepStrictEqual(yield* readPatch(workspace.admin, retired.patchId), beforeRetired);
+        assert.deepStrictEqual(yield* readPatch(workspace.admin, deleted.patchId), beforeDeleted);
+        assert.strictEqual((yield* request("/", workspace.owner)).status, 200);
+      })
+  );
+
+  it.effect("refuses foreign, reassigned and retired patches in an exact confirmation", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const service = yield* Patches.Patches;
+      const first = yield* publish(workspace.owner, "stale-selection-first");
+      const second = yield* publish(workspace.owner, "stale-selection-second");
+      const path = userPath(workspace.owner, "deactivate");
+      const preview = yield* post(path, workspace.admin, { choice: "all" });
+      assert.strictEqual(preview.status, 200);
+      assert.sameMembers(inputValues(yield* preview.text, "patch", "hidden"), [
+        first.patchId,
+        second.patchId
+      ]);
+      const foreign = yield* company();
+      const other = yield* publish(foreign.owner, "foreign-selection-tool");
+      const forged = yield* post(path, workspace.admin, {
+        choice: "confirm",
+        patch: [first.patchId, other.patchId]
+      });
+      assert.strictEqual(forged.status, 409);
+      assert.isNull((yield* readUser(workspace.owner)).deactivatedAt);
+      assert.strictEqual((yield* readPatch(workspace.admin, first.patchId)).patch.state, "live");
+      assert.strictEqual((yield* readPatch(foreign.admin, other.patchId)).patch.state, "live");
+      const fields = { choice: "confirm", patch: [first.patchId, second.patchId] };
+      yield* service.reassign(second.patchId, actor(workspace.admin), workspace.member.id);
+      const reassigned = yield* post(path, workspace.admin, fields);
+      assert.strictEqual(reassigned.status, 409);
+      assert.isNull((yield* readUser(workspace.owner)).deactivatedAt);
+      assert.strictEqual((yield* readPatch(workspace.admin, first.patchId)).patch.state, "live");
+      const moved = yield* readPatch(workspace.admin, second.patchId);
+      assert.strictEqual(moved.patch.state, "live");
+      assert.strictEqual(moved.patch.ownerUserId, workspace.member.id);
+
+      yield* service.reassign(second.patchId, actor(workspace.admin), workspace.owner.id);
+      yield* service.retire(first.patchId, actor(workspace.admin));
+      const retired = yield* post(path, workspace.admin, fields);
+      assert.strictEqual(retired.status, 409);
+      assert.isNull((yield* readUser(workspace.owner)).deactivatedAt);
+      assert.strictEqual((yield* readPatch(workspace.admin, second.patchId)).patch.state, "live");
+    })
+  );
+
+  it.effect(
+    "offers every retired patch however retired but never restores deleted or reassigned patches",
+    () =>
+      Effect.gen(function* () {
+        const workspace = yield* company();
+        const service = yield* Patches.Patches;
+        const own = yield* publish(workspace.owner, "returning-own-retirement");
+        const admin = yield* publish(workspace.owner, "returning-admin-retirement");
+        const deleted = yield* publish(workspace.owner, "returning-deleted");
+        const moved = yield* publish(workspace.owner, "returning-reassigned");
+        yield* service.retire(own.patchId, actor(workspace.owner));
+        yield* service.retire(admin.patchId, actor(workspace.admin));
+        yield* service.delete(deleted.patchId, actor(workspace.admin));
+        yield* service.retire(moved.patchId, actor(workspace.owner));
+        yield* service.reassign(moved.patchId, actor(workspace.admin), workspace.member.id);
+        yield* (yield* Users.Users).deactivate({
+          companyId: workspace.id,
+          userId: workspace.owner.id
+        });
+        const beforeDeleted = yield* readPatch(workspace.admin, deleted.patchId);
+        const beforeMoved = yield* readPatch(workspace.admin, moved.patchId);
+        const path = userPath(workspace.owner, "reactivate");
+        const page = yield* request(path, workspace.admin);
+        assert.strictEqual(page.status, 200);
+        const html = yield* page.text;
+        assert.sameMembers(inputValues(html, "patch", "checkbox"), [own.patchId, admin.patchId]);
+        assert.notInclude(text(html), moved.name);
+        for (const label of ["Keep them retired", "Restore selected", "Restore all"])
+          assert.include(text(html), label);
+        const empty = yield* post(path, workspace.admin, { choice: "selected" });
+        assert.strictEqual(empty.status, 422);
+        assert.isNotNull((yield* readUser(workspace.owner)).deactivatedAt);
+
+        const preview = yield* post(path, workspace.admin, { choice: "all" });
+        assert.strictEqual(preview.status, 200);
+        const confirmation = yield* preview.text;
+        assert.sameMembers(inputValues(confirmation, "patch", "hidden"), [
+          own.patchId,
+          admin.patchId
+        ]);
+        assert.deepStrictEqual(inputs(confirmation, "ack", "checkbox"), []);
+        const committed = yield* post(path, workspace.admin, {
+          choice: "confirm",
+          patch: [own.patchId, admin.patchId]
+        });
+        assert.strictEqual(committed.status, 303);
+        assert.strictEqual(committed.headers.location, "/company");
+        assert.isNull((yield* readUser(workspace.owner)).deactivatedAt);
+        for (const patch of [own, admin]) {
+          const saved = yield* readPatch(workspace.admin, patch.patchId);
+          assert.strictEqual(saved.patch.state, "live");
+          assert.strictEqual(saved.patch.lastChangedBy, workspace.admin.id);
+          const card = yield* (yield* request(cardPath(patch.name), workspace.member)).text;
+          assert.notInclude(text(card), "Priya (deactivated)");
+        }
+        const stillDeleted = yield* readPatch(workspace.admin, deleted.patchId);
+        assert.deepStrictEqual(stillDeleted.patch, beforeDeleted.patch);
+        assert.isFalse(stillDeleted.owner.deactivated);
+        assert.deepStrictEqual(yield* readPatch(workspace.admin, moved.patchId), beforeMoved);
+      })
+  );
+
+  it.effect("restores a selected source chain without treating its own off sources as broken", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const service = yield* Patches.Patches;
+      const source = yield* publishSource(workspace.owner, "z-returning-chain-source");
+      const reader = yield* publishDependant(
+        workspace.owner,
+        "a-returning-chain-reader",
+        source.patchId
+      );
+      yield* service.retire(reader.patchId, actor(workspace.owner));
+      yield* service.retire(source.patchId, actor(workspace.admin));
+      yield* (yield* Users.Users).deactivate({
+        companyId: workspace.id,
+        userId: workspace.owner.id
+      });
+      const path = userPath(workspace.owner, "reactivate");
+      const selection = [reader.patchId, source.patchId];
+      const preview = yield* post(path, workspace.admin, { choice: "selected", patch: selection });
+      assert.strictEqual(preview.status, 200);
+      const html = yield* preview.text;
+      assert.deepStrictEqual(inputs(html, "ack", "checkbox"), []);
+      assert.sameMembers(inputValues(html, "patch", "hidden"), selection);
+      assert.isNotNull((yield* readUser(workspace.owner)).deactivatedAt);
+      const committed = yield* post(path, workspace.admin, { choice: "confirm", patch: selection });
+      assert.strictEqual(committed.status, 303);
+      assert.isNull((yield* readUser(workspace.owner)).deactivatedAt);
+      for (const patchId of selection)
+        assert.strictEqual((yield* readPatch(workspace.admin, patchId)).patch.state, "live");
+    })
+  );
+
+  it.effect("warns about current-version off sources and recomputes them before restoring", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const service = yield* Patches.Patches;
+      const retired = yield* publishSource(workspace.member, "return-source-retired");
+      const deleted = yield* publishSource(workspace.member, "return-source-deleted");
+      const gone = yield* publishSource(workspace.member, "return-source-gone");
+      const older = yield* publishSource(workspace.member, "return-source-older");
+      const live = yield* publishSource(workspace.member, "return-source-live");
+      const reader = yield* publishDependant(
+        workspace.owner,
+        "return-broken-reader",
+        older.patchId
+      );
+      yield* publish(workspace.owner, reader.name, {
+        intent: "update",
+        patchId: reader.patchId,
+        manifest: {
+          ...manifest,
+          name: reader.name,
+          uses: {
+            retired: sourceDeclaration(retired.patchId),
+            deleted: sourceDeclaration(deleted.patchId),
+            gone: sourceDeclaration(gone.patchId),
+            live: sourceDeclaration(live.patchId)
+          }
+        }
+      });
+      yield* service.retire(reader.patchId, actor(workspace.owner));
+      yield* service.retire(retired.patchId, actor(workspace.member));
+      yield* service.retire(older.patchId, actor(workspace.member));
+      yield* service.delete(deleted.patchId, actor(workspace.member));
+      yield* service.delete(gone.patchId, actor(workspace.member));
+      yield* TestClock.adjust(30 * DAY);
+      yield* service.purgeDeleted(gone.patchId);
+      yield* (yield* Users.Users).deactivate({
+        companyId: workspace.id,
+        userId: workspace.owner.id
+      });
+      const path = userPath(workspace.owner, "reactivate");
+      const preview = yield* post(path, workspace.admin, {
+        choice: "selected",
+        patch: [reader.patchId]
+      });
+      assert.strictEqual(preview.status, 200);
+      const html = yield* preview.text;
+      for (const name of [reader.name, retired.name, deleted.name, gone.patchId])
+        assert.include(text(html), name);
+      for (const state of ["retired", "deleted", "gone"]) assert.include(text(html), state);
+      assert.include(text(html), "notes");
+      assert.notInclude(text(html), older.name);
+      assert.notInclude(text(html), live.name);
+      assert.strictEqual(inputs(html, "ack", "checkbox").length, 1);
+
+      yield* service.retire(live.patchId, actor(workspace.member));
+      const refused = yield* post(path, workspace.admin, {
+        choice: "confirm",
+        patch: [reader.patchId]
+      });
+      assert.strictEqual(refused.status, 409);
+      assert.include(text(yield* refused.text), live.name);
+      assert.isNotNull((yield* readUser(workspace.owner)).deactivatedAt);
+      assert.strictEqual(
+        (yield* readPatch(workspace.admin, reader.patchId)).patch.state,
+        "retired"
+      );
+      const committed = yield* post(path, workspace.admin, {
+        choice: "confirm",
+        patch: [reader.patchId],
+        ack: "1"
+      });
+      assert.strictEqual(committed.status, 303);
+      assert.isNull((yield* readUser(workspace.owner)).deactivatedAt);
+      assert.strictEqual((yield* readPatch(workspace.admin, reader.patchId)).patch.state, "live");
+      assert.strictEqual(
+        (yield* readPatch(workspace.admin, retired.patchId)).patch.state,
+        "retired"
+      );
+      assert.strictEqual(
+        (yield* readPatch(workspace.admin, deleted.patchId)).patch.state,
+        "deleted"
+      );
+    })
+  );
+
+  it.effect(
+    "refuses the last active admin on GET and rechecks the rule after a pick was drawn",
+    () =>
+      Effect.gen(function* () {
+        const workspace = yield* company();
+        const users = yield* Users.Users;
+        const patch = yield* publish(workspace.admin, "last-admin-tool");
+        const path = userPath(workspace.admin, "deactivate");
+        const page = yield* request(path, workspace.admin);
+        assert.strictEqual(page.status, 409);
+        const html = yield* page.text;
+        assert.include(text(html), "The last active admin cannot be demoted or deactivated.");
+        assert.notInclude(forms(html), path);
+        assert.strictEqual((yield* post(path, workspace.admin, { choice: "keep" })).status, 409);
+        yield* users.setRole({
+          companyId: workspace.id,
+          userId: workspace.owner.id,
+          role: "admin"
+        });
+        assert.strictEqual((yield* request(path, workspace.admin)).status, 200);
+        yield* users.deactivate({ companyId: workspace.id, userId: workspace.owner.id });
+        const refused = yield* post(path, workspace.admin, {
+          choice: "confirm",
+          patch: [patch.patchId]
+        });
+        assert.strictEqual(refused.status, 409);
+        assert.isNull((yield* readUser(workspace.admin)).deactivatedAt);
+        assert.strictEqual((yield* readPatch(workspace.admin, patch.patchId)).patch.state, "live");
+      })
+  );
+
+  it.effect(
+    "requires an admin browser session, company membership and same-origin lifecycle forms",
+    () =>
+      Effect.gen(function* () {
+        const workspace = yield* company();
+        const foreign = yield* company();
+        const service = yield* Patches.Patches;
+        const patch = yield* publish(workspace.owner, "guarded-user-tool");
+        for (const action of ["deactivate", "reactivate"] as const) {
+          if (action === "reactivate") {
+            yield* service.retire(patch.patchId, actor(workspace.admin));
+            yield* (yield* Users.Users).deactivate({
+              companyId: workspace.id,
+              userId: workspace.owner.id
+            });
+          }
+          const path = userPath(workspace.owner, action);
+          const beforeUser = yield* readUser(workspace.owner);
+          const beforePatch = yield* readPatch(workspace.admin, patch.patchId);
+          assert.strictEqual((yield* request(path, null)).status, 401);
+          assert.strictEqual(
+            (yield* request(path, null, { choice: "keep" }, { origin: PUBLIC_BASE_URL })).status,
+            401
+          );
+          assert.strictEqual((yield* request(path, workspace.member)).status, 403);
+          assert.strictEqual((yield* post(path, workspace.member, { choice: "keep" })).status, 403);
+          const foreignPath = userPath(foreign.owner, action);
+          assert.strictEqual((yield* request(foreignPath, workspace.admin)).status, 404);
+          assert.strictEqual(
+            (yield* post(foreignPath, workspace.admin, { choice: "keep" })).status,
+            404
+          );
+          const refusedHeaders: ReadonlyArray<Record<string, string>> = [
+            {},
+            { origin: "https://foreign.invalid" },
+            { "sec-fetch-site": "cross-site" }
+          ];
+          for (const headers of refusedHeaders) {
+            const refused = yield* request(path, workspace.admin, { choice: "keep" }, headers);
+            assert.strictEqual(refused.status, 403);
+          }
+          assert.deepStrictEqual(yield* readUser(workspace.owner), beforeUser);
+          assert.deepStrictEqual(yield* readPatch(workspace.admin, patch.patchId), beforePatch);
+        }
+      })
+  );
+});
+
+it.layer(services)("user lifecycle transaction failure on a socket", (it) => {
+  it.effect("rolls back the user and first retirement when the second retirement fails", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const first = yield* publish(workspace.owner, "atomic-first");
+      const second = yield* publish(workspace.owner, "atomic-second");
+      const patches = yield* Patches.Patches;
+      const beforeUser = yield* readUser(workspace.owner);
+      const beforeFirst = yield* readPatch(workspace.admin, first.patchId);
+      const beforeSecond = yield* readPatch(workspace.admin, second.patchId);
+      let firstRetired: string | undefined;
+      let reachedSecondRetirement = false;
+      const failSecondRetire = Layer.succeed(Patches.Patches, {
+        ...patches,
+        retire: Effect.fn("PortalPagesTest.failSecondRetire")(function* (
+          patchId: string,
+          acting: Patches.Actor,
+          force?: boolean
+        ) {
+          if (firstRetired !== undefined) {
+            const rows = yield* patches.read({
+              companyId: workspace.id,
+              userId: workspace.admin.id,
+              canOpen: () => true,
+              state: "all",
+              patchRef: firstRetired
+            });
+            assert.strictEqual(rows[0]?.patch.state, "retired");
+            reachedSecondRetirement = true;
+            return yield* new Patches.PatchUnavailable({ patchId });
+          }
+          const retired = yield* patches.retire(patchId, acting, force);
+          firstRetired = patchId;
+          return retired;
+        })
+      });
+      const failingServer = HttpRouter.serve(routes, {
+        disableLogger: true,
+        disableListenLog: true
+      }).pipe(
+        Layer.provide(failSecondRetire),
+        Layer.provideMerge(NodeHttpServer.layerTest),
+        Layer.provideMerge(Layer.succeed(FetchHttpClient.RequestInit)({ redirect: "manual" }))
+      );
+      const status = yield* Effect.gen(function* () {
+        const response = yield* post(userPath(workspace.owner, "deactivate"), workspace.admin, {
+          choice: "confirm",
+          patch: [first.patchId, second.patchId]
+        });
+        yield* response.text;
+        return response.status;
+      }).pipe(Effect.provide(failingServer));
+      assert.strictEqual(status, 404);
+      assert.isTrue(reachedSecondRetirement);
+      assert.deepStrictEqual(yield* readUser(workspace.owner), beforeUser);
+      assert.deepStrictEqual(yield* readPatch(workspace.admin, first.patchId), beforeFirst);
+      assert.deepStrictEqual(yield* readPatch(workspace.admin, second.patchId), beforeSecond);
+    })
   );
 });

@@ -115,7 +115,7 @@ const services = Layer.mergeAll(
 
 it.layer(services)("company page and actions", (it) => {
   it.effect(
-    "lists only this company's users and pending invites, with escaped data and admin-only forms",
+    "lists only this company's users and pending invites, with escaped data and admin-only controls",
     () =>
       Effect.gen(function* () {
         const companies = yield* Companies.Companies;
@@ -171,14 +171,23 @@ it.layer(services)("company page and actions", (it) => {
               "/company/invites",
               `/company/invites/${pending.id}/revoke`,
               `/company/invites/${pending.id}/resend`,
-              `/company/users/${member.id}/role`,
-              `/company/users/${member.id}/deactivate`,
-              `/company/users/${inactive.id}/reactivate`
+              `/company/users/${member.id}/role`
             ])
               assert.include(html, `action="${action}"`);
-            assert.notInclude(html, `action="/company/users/${owner.user.id}/deactivate"`);
+            for (const path of [
+              `/company/users/${member.id}/deactivate`,
+              `/company/users/${inactive.id}/reactivate`
+            ]) {
+              assert.include(html, `href="${path}"`);
+              assert.notInclude(html, `action="${path}"`);
+            }
+            assert.notInclude(html, `href="/company/users/${owner.user.id}/deactivate"`);
           } else {
             assert.notMatch(html, /<form\b[^>]*action="\/company(?:\/|")/);
+            assert.notMatch(
+              html,
+              /<a\b[^>]*href="\/company\/users\/[^"]+\/(?:deactivate|reactivate)"/
+            );
           }
         }
       })
@@ -403,11 +412,9 @@ it.layer(services)("company page and actions", (it) => {
       Effect.gen(function* () {
         const owner = yield* createCompany("company-member-actions");
         const member = yield* addUser(owner, "member");
-        const inactive = yield* addUser(owner, "inactive");
         const users = yield* Users.Users;
         const companies = yield* Companies.Companies;
         const recording = yield* InviteMail.Recording;
-        yield* users.deactivate({ companyId: owner.company.id, userId: inactive.id });
         const invite = yield* companies.createInvite({
           companyId: owner.company.id,
           invitedBy: owner.user.id,
@@ -420,9 +427,7 @@ it.layer(services)("company page and actions", (it) => {
           ["/company/invites", { email: "member-forbidden@example.com", role: "admin" }],
           [`/company/invites/${invite.id}/revoke`, {}],
           [`/company/invites/${invite.id}/resend`, {}],
-          [`/company/users/${member.id}/role`, { role: "admin" }],
-          [`/company/users/${member.id}/deactivate`, {}],
-          [`/company/users/${inactive.id}/reactivate`, {}]
+          [`/company/users/${member.id}/role`, { role: "admin" }]
         ];
         for (const [path, body] of actions) {
           const response = yield* send(path, post(member, body));
@@ -435,15 +440,13 @@ it.layer(services)("company page and actions", (it) => {
       })
   );
 
-  it.effect("checks Origin on all six actions even with an administrator's valid session", () =>
+  it.effect("checks Origin on all company actions even with an administrator's valid session", () =>
     Effect.gen(function* () {
       const owner = yield* createCompany("company-origin");
       const member = yield* addUser(owner, "member");
-      const inactive = yield* addUser(owner, "inactive");
       const users = yield* Users.Users;
       const companies = yield* Companies.Companies;
       const recording = yield* InviteMail.Recording;
-      yield* users.deactivate({ companyId: owner.company.id, userId: inactive.id });
       const invite = yield* companies.createInvite({
         companyId: owner.company.id,
         invitedBy: owner.user.id,
@@ -456,9 +459,7 @@ it.layer(services)("company page and actions", (it) => {
         ["/company/invites", { email: "origin-forbidden@example.com", role: "member" }],
         [`/company/invites/${invite.id}/revoke`, {}],
         [`/company/invites/${invite.id}/resend`, {}],
-        [`/company/users/${member.id}/role`, { role: "admin" }],
-        [`/company/users/${member.id}/deactivate`, {}],
-        [`/company/users/${inactive.id}/reactivate`, {}]
+        [`/company/users/${member.id}/role`, { role: "admin" }]
       ];
       for (const [path, body] of actions) {
         for (const headers of [
@@ -484,11 +485,9 @@ it.layer(services)("company page and actions", (it) => {
       const owner = yield* createCompany("company-scope");
       const foreign = yield* createCompany("company-scope-foreign");
       const member = yield* addUser(foreign, "member");
-      const inactive = yield* addUser(foreign, "inactive");
       const users = yield* Users.Users;
       const companies = yield* Companies.Companies;
       const recording = yield* InviteMail.Recording;
-      yield* users.deactivate({ companyId: foreign.company.id, userId: inactive.id });
       const invite = yield* companies.createInvite({
         companyId: foreign.company.id,
         invitedBy: foreign.user.id,
@@ -500,9 +499,7 @@ it.layer(services)("company page and actions", (it) => {
       const actions: ReadonlyArray<readonly [string, Record<string, string>]> = [
         [`/company/invites/${invite.id}/revoke`, {}],
         [`/company/invites/${invite.id}/resend`, {}],
-        [`/company/users/${member.id}/role`, { role: "admin" }],
-        [`/company/users/${member.id}/deactivate`, {}],
-        [`/company/users/${inactive.id}/reactivate`, {}]
+        [`/company/users/${member.id}/role`, { role: "admin" }]
       ];
       for (const [path, body] of actions) {
         const response = yield* send(
@@ -521,24 +518,18 @@ it.layer(services)("company page and actions", (it) => {
     })
   );
 
-  it.effect("re-renders the last-admin reason for demotion and a crafted self-deactivation", () =>
+  it.effect("re-renders the last-admin reason when demotion would leave no active admin", () =>
     Effect.gen(function* () {
       const owner = yield* createCompany("company-last-admin");
-      for (const [action, body] of [
-        ["role", { role: "member" }],
-        ["deactivate", {}]
-      ] as const) {
-        const response = yield* send(
-          `/company/users/${owner.user.id}/${action}`,
-          post(owner.user, body)
-        );
-        assert.strictEqual(response.status, 409);
-        assert.strictEqual(response.headers.get("location"), null);
-        const html = yield* Effect.promise(() => response.text());
-        assert.include(html, 'role="alert"');
-        assert.match(html, /last (?:active )?admin/i);
-        assert.notInclude(html, `action="/company/users/${owner.user.id}/deactivate"`);
-      }
+      const response = yield* send(
+        `/company/users/${owner.user.id}/role`,
+        post(owner.user, { role: "member" })
+      );
+      assert.strictEqual(response.status, 409);
+      assert.strictEqual(response.headers.get("location"), null);
+      const html = yield* Effect.promise(() => response.text());
+      assert.include(html, 'role="alert"');
+      assert.match(html, /last (?:active )?admin/i);
       const user = yield* (yield* Users.Users).findByClerkId(owner.user.clerkUserId);
       assert.strictEqual(user?.role, "admin");
       assert.isNull(user?.deactivatedAt);
@@ -570,11 +561,13 @@ it.layer(services)("company page and actions", (it) => {
   );
 
   it.effect(
-    "changes roles and deactivates/reactivates browser and bearer access while mail is unavailable",
+    "reflects role and lifecycle changes in browser and bearer access while mail is unavailable",
     () =>
       Effect.gen(function* () {
         const owner = yield* createCompany("company-lifecycle");
         const member = yield* addUser(owner, "member");
+        const users = yield* Users.Users;
+        const input = { companyId: owner.company.id, userId: member.id };
         const tokens = yield* MachineTokens.MachineTokens;
         const laptop = yield* tokens.mint({ userId: member.id, name: "Laptop" });
         const desktop = yield* tokens.mint({ userId: member.id, name: "Desktop" });
@@ -596,7 +589,7 @@ it.layer(services)("company page and actions", (it) => {
         );
         assert.deepInclude(yield* (yield* me(laptop.token)).json, { role: "member" });
 
-        redirected(yield* send(`/company/users/${member.id}/deactivate`, post(owner.user)));
+        yield* users.deactivate(input);
         for (const token of [laptop.token, desktop.token]) {
           assert.strictEqual((yield* me(token)).status, 401);
         }
@@ -612,7 +605,7 @@ it.layer(services)("company page and actions", (it) => {
         const manage = yield* send("/company", { headers: { cookie: cookie(owner.user) } });
         assert.include(
           yield* Effect.promise(() => manage.text()),
-          `action="/company/users/${member.id}/reactivate"`
+          `href="/company/users/${member.id}/reactivate"`
         );
         assert.strictEqual(
           (yield* send(
@@ -625,7 +618,7 @@ it.layer(services)("company page and actions", (it) => {
           403
         );
 
-        redirected(yield* send(`/company/users/${member.id}/reactivate`, post(owner.user)));
+        yield* users.reactivate(input);
         const restored = yield* send("/company", { headers: { cookie: cookie(member) } });
         assert.strictEqual(restored.status, 200);
         const restoredHtml = yield* Effect.promise(() => restored.text());
