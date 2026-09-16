@@ -418,7 +418,7 @@ export const generate = Effect.fn("Project.generate")(function* (
         return yield* new LocalError({ message: `No declaration named ${change.alias}.` });
       removedKind = declaration.kind;
     }
-    // Static loading makes every lightweight command initialize TypeScript, including delete.
+    // Keep the config parser out of lightweight commands, including delete.
     const { editUses, isUsesEditRefused } = yield* localIO(
       "Load config editor",
       () => import("./editUses.js")

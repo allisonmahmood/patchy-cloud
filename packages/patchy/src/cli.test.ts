@@ -424,10 +424,10 @@ const publishTree = (instance: string, compiler: "native" | "legacy" = "native")
   }
   const compilerManifest =
     compiler === "native"
-      ? require.resolve("@typescript/native/package.json")
-      : createRequire(require.resolve("typescript/package.json")).resolve(
-          "@typescript/old/package.json"
-        );
+      ? require.resolve("typescript/package.json")
+      : createRequire(
+          new URL("../../../test/fixtures/typescript6/package.json", import.meta.url)
+        ).resolve("typescript/package.json");
   for (const name of ["typescript", "vite", "vite-plugin-singlefile", "@types/node"]) {
     const manifest =
       name === "typescript"
@@ -537,7 +537,7 @@ const localPackageRegistry = async () => {
       await pack(optional);
     }
   };
-  for (const name of ["@typescript/native", "vite-plugin-singlefile", "@types/node"])
+  for (const name of ["typescript", "vite-plugin-singlefile", "@types/node"])
     await pack(resolvePackage(name, import.meta.url));
   await pack(resolvePackage("vite", require.resolve("vitest/package.json")));
   const server = createServer((request, response) => {

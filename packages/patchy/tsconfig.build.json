@@ -2,8 +2,10 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "declaration": true,
+    "customConditions": ["development"],
     "declarationMap": false,
     "noEmit": false,
+    "noEmitOnError": true,
     "emitDeclarationOnly": true
   },
   "include": ["src/config.ts", "src/client.ts", "src/dev.ts", "src/executeConfig.ts"]

@@ -17,5 +17,12 @@
     }
   },
   "include": ["**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx"],
-  "exclude": ["**/dist/**", "**/node_modules/**", ".claude/**"]
+  "exclude": [
+    "**/dist/**",
+    "**/coverage/**",
+    "**/node_modules/**",
+    "**/.turbo/**",
+    ".claude/**",
+    ".local/**"
+  ]
 }

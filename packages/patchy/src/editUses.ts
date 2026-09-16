@@ -1,5 +1,6 @@
+import { parse, tokTypes } from "@babel/parser";
+import type { Expression, Node, ObjectExpression } from "@babel/types";
 import * as Schema from "effect/Schema";
-import ts from "typescript";
 import type { Declaration } from "./config.js";
 
 export type UsesChange =
@@ -19,149 +20,191 @@ export class UsesEditRefused extends Schema.TaggedError<UsesEditRefused>()("Uses
 
 export const isUsesEditRefused = Schema.is(UsesEditRefused);
 
-/** Edit only the literal uses object; leave imports and the rest of the user's config untouched. */
+/** Edit literal declarations by source range, retaining the author's expressions and comments. */
 export function editUses(source: string, change: UsesChange): string {
-  const file = ts.createSourceFile(
-    "patchy.config.ts",
-    source,
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS
-  );
-  const refuse = (node: ts.Node, reason: string): never => {
-    const { line } = file.getLineAndCharacterOfPosition(node.getStart(file));
-    const exact = source.split(/\r?\n/)[line] ?? "";
+  const refuse = (position: number, reason: string): never => {
+    const line = source.slice(0, position).split(/\r\n|[\n\r\u2028\u2029]/).length;
+    const sourceLine = source.split(/\r\n|[\n\r\u2028\u2029]/)[line - 1] ?? "";
     const instruction =
       change.kind === "add"
         ? `Add this line to uses, then run patchy refresh:\n${JSON.stringify(change.alias)}: ${JSON.stringify(change.declaration)},`
         : `Remove the ${JSON.stringify(change.alias)} declaration from uses, then run patchy refresh.`;
-    throw new UsesEditRefused({ line: line + 1, reason, sourceLine: exact, instruction });
+    throw new UsesEditRefused({ line, reason, sourceLine, instruction });
   };
-  const unwrap = (node: ts.Expression): ts.Expression => {
+  const file = (() => {
+    try {
+      const parsed = parse(source, {
+        sourceType: "module",
+        plugins: ["typescript", "decorators", "decoratorAutoAccessors"],
+        createParenthesizedExpressions: true,
+        tokens: true,
+        errorRecovery: true
+      });
+      // TypeScript also permits legacy parameter decorators. Babel retains their AST
+      // in standard decorator mode, but reports this diagnostic. Reject all other errors.
+      const syntaxError = parsed.errors?.find(
+        (error) => error.reasonCode !== "UnsupportedParameterDecorator"
+      );
+      if (syntaxError) throw syntaxError;
+      return parsed;
+    } catch (cause) {
+      if (cause instanceof SyntaxError) {
+        const position = "pos" in cause && typeof cause.pos === "number" ? cause.pos : 0;
+        return refuse(position, "the config contains invalid TypeScript syntax.");
+      }
+      throw cause;
+    }
+  })();
+  const unwrap = (node: Expression): Expression => {
     while (
-      ts.isParenthesizedExpression(node) ||
-      ts.isAsExpression(node) ||
-      ts.isSatisfiesExpression(node)
+      node.type === "ParenthesizedExpression" ||
+      node.type === "TSAsExpression" ||
+      node.type === "TSSatisfiesExpression"
     ) {
       node = node.expression;
     }
     return node;
   };
-  const name = (node: ts.PropertyName): string | undefined =>
-    ts.isIdentifier(node) || ts.isStringLiteral(node) ? node.text : undefined;
-  const exported = file.statements.find(ts.isExportAssignment);
-  if (!exported || exported.isExportEquals)
-    return refuse(file, "expected a default config export.");
-  let expression = unwrap(exported.expression);
-  if (ts.isIdentifier(expression)) {
-    const identifier = expression.text;
-    const declarations = file.statements
-      .filter(ts.isVariableStatement)
-      .flatMap((statement) => [...statement.declarationList.declarations])
-      .filter(
-        (declaration) => ts.isIdentifier(declaration.name) && declaration.name.text === identifier
-      );
-    const declaration = declarations.length === 1 ? declarations[0] : undefined;
-    if (!declaration?.initializer)
-      return refuse(expression, "the default config is not a local literal.");
-    expression = unwrap(declaration.initializer);
-  }
-  if (ts.isCallExpression(expression)) {
-    const callee = expression.expression;
-    const builders = file.statements.filter(ts.isImportDeclaration).flatMap((statement) => {
-      if (
-        !ts.isStringLiteral(statement.moduleSpecifier) ||
-        statement.moduleSpecifier.text !== "patchy/config"
+  const name = (node: Node): string | undefined =>
+    node.type === "Identifier" ? node.name : node.type === "StringLiteral" ? node.value : undefined;
+  const exports = file.program.body.filter((node) => node.type === "ExportDefaultDeclaration");
+  if (exports.length > 1)
+    refuse(exports[1]!.start!, "the config contains more than one default export.");
+  const exported = exports[0];
+  if (!exported) return refuse(0, "expected a default config export.");
+  // Babel includes declaration forms in this union; only expressions can be configs.
+  const declaration = exported.declaration;
+  if (
+    declaration.type === "FunctionDeclaration" ||
+    declaration.type === "ClassDeclaration" ||
+    declaration.type === "TSDeclareFunction"
+  )
+    return refuse(declaration.start!, "expected a default config export.");
+  let expression = unwrap(declaration);
+  if (expression.type === "Identifier") {
+    const identifier = expression.name;
+    const declarations = file.program.body
+      .map((statement) =>
+        statement.type === "ExportNamedDeclaration" ? statement.declaration : statement
       )
-        return [];
-      const bindings = statement.importClause?.namedBindings;
-      return bindings && ts.isNamedImports(bindings)
-        ? bindings.elements
-            .filter((binding) => (binding.propertyName ?? binding.name).text === "defineConfig")
-            .map((binding) => binding.name.text)
-        : [];
-    });
+      .filter((statement) => statement?.type === "VariableDeclaration")
+      .flatMap((statement) => statement.declarations)
+      .filter((entry) => entry.id.type === "Identifier" && entry.id.name === identifier);
+    const local = declarations.length === 1 ? declarations[0] : undefined;
+    if (!local?.init)
+      return refuse(expression.start!, "the default config is not a local literal.");
+    expression = unwrap(local.init);
+  }
+  if (expression.type === "CallExpression") {
+    const builders = file.program.body
+      .filter((statement) => statement.type === "ImportDeclaration")
+      .filter((statement) => statement.source.value === "patchy/config")
+      .flatMap((statement) => statement.specifiers)
+      .filter(
+        (binding) => binding.type === "ImportSpecifier" && name(binding.imported) === "defineConfig"
+      )
+      .map((binding) => binding.local.name);
     if (
-      !ts.isIdentifier(callee) ||
-      !builders.includes(callee.text) ||
-      expression.arguments.length !== 1
-    ) {
-      refuse(expression, "expected defineConfig with one object literal.");
-    }
+      expression.callee.type !== "Identifier" ||
+      !builders.includes(expression.callee.name) ||
+      expression.arguments.length !== 1 ||
+      expression.arguments[0]!.type === "SpreadElement" ||
+      expression.arguments[0]!.type === "ArgumentPlaceholder"
+    )
+      return refuse(expression.start!, "expected defineConfig with one object literal.");
     expression = unwrap(expression.arguments[0]!);
   }
-  if (!ts.isObjectLiteralExpression(expression))
-    return refuse(expression, "the config is not an object literal.");
+  if (expression.type !== "ObjectExpression")
+    return refuse(expression.start!, "the config is not an object literal.");
   const config = expression;
   for (const property of config.properties) {
-    if (ts.isSpreadAssignment(property) || (property.name && name(property.name) === undefined)) {
-      refuse(property, "a spread or computed property can replace uses.");
-    }
+    if (property.type === "SpreadElement" || property.computed || name(property.key) === undefined)
+      refuse(property.start!, "a spread or computed property can replace uses.");
   }
   const candidates = config.properties.filter(
-    (property) => property.name && name(property.name) === "uses"
+    (property) => property.type !== "SpreadElement" && name(property.key) === "uses"
   );
-  if (candidates.length > 1) refuse(candidates[1]!, "uses is declared more than once.");
+  if (candidates.length > 1) refuse(candidates[1]!.start!, "uses is declared more than once.");
   const property = candidates[0];
-  if (property && !ts.isPropertyAssignment(property))
-    return refuse(property, "uses must be an object-literal property.");
-  const value = property ? unwrap(property.initializer) : undefined;
-  if (value && !ts.isObjectLiteralExpression(value))
-    return refuse(value, "uses is not an object literal.");
+  if (property && (property.type !== "ObjectProperty" || property.shorthand))
+    return refuse(property.start!, "uses must be an object-literal property.");
+  // An object expression cannot contain a destructuring pattern as a property value.
+  const value = property ? unwrap(property.value as Expression) : undefined;
+  if (value && value.type !== "ObjectExpression")
+    return refuse(value.start!, "uses is not an object literal.");
   const uses = value;
   for (const entry of uses?.properties ?? []) {
-    if (!ts.isPropertyAssignment(entry) || name(entry.name) === undefined) {
-      refuse(entry, "uses contains a spread, computed property, method or shorthand.");
-    }
+    if (
+      entry.type !== "ObjectProperty" ||
+      entry.computed ||
+      entry.shorthand ||
+      name(entry.key) === undefined
+    )
+      refuse(entry.start!, "uses contains a spread, computed property, method or shorthand.");
   }
   const matches =
-    uses?.properties.filter((entry) => entry.name && name(entry.name) === change.alias) ?? [];
+    uses?.properties.filter(
+      (entry) => entry.type !== "SpreadElement" && name(entry.key) === change.alias
+    ) ?? [];
   if (change.kind === "add" && matches.length)
-    refuse(matches[0]!, `alias ${JSON.stringify(change.alias)} already exists.`);
+    refuse(matches[0]!.start!, `alias ${JSON.stringify(change.alias)} already exists.`);
   if (change.kind === "remove" && matches.length !== 1)
-    refuse(uses ?? config, `alias ${JSON.stringify(change.alias)} is absent or ambiguous.`);
-  const factory = ts.factory;
-  const entries = [...(uses?.properties ?? [])].filter(
-    (entry) => change.kind !== "remove" || entry !== matches[0]
-  );
-  if (change.kind === "add") {
-    // Literal declarations need no second managed edit to the user's imports.
-    const declaration = factory.createObjectLiteralExpression(
-      Object.entries(change.declaration).map(([key, value]) =>
-        factory.createPropertyAssignment(key, factory.createStringLiteral(value))
-      )
+    refuse(
+      (uses ?? config).start!,
+      `alias ${JSON.stringify(change.alias)} is absent or ambiguous.`
     );
-    entries.push(
-      factory.createPropertyAssignment(factory.createStringLiteral(change.alias), declaration)
+
+  // Babel's token list also contains comments. Token identity excludes commas inside either
+  // comments or literals; property boundaries exclude commas in nested expressions.
+  const tokens: readonly {
+    readonly type: unknown;
+    readonly start: number;
+    readonly end: number;
+  }[] = file.tokens ?? [];
+  const commas = tokens.filter((token) => token.type === tokTypes.comma);
+  if (change.kind === "remove") {
+    const target = matches[0]!;
+    const index = uses!.properties.indexOf(target);
+    const next = uses!.properties[index + 1];
+    const previous = uses!.properties[index - 1];
+    const after = commas.find(
+      (token) => token.start >= target.end! && token.end <= (next?.start ?? uses!.end! - 1)
     );
+    const before =
+      previous &&
+      commas.find((token) => token.start >= previous.end! && token.end <= target.start!);
+    const comma = after ?? before;
+    const ranges = [{ start: target.start!, end: target.end! }, ...(comma ? [comma] : [])].sort(
+      (a, b) => b.start - a.start
+    );
+    let edited = source;
+    for (const range of ranges) edited = edited.slice(0, range.start) + edited.slice(range.end);
+    return edited;
   }
-  const printer = ts.createPrinter({
-    newLine: source.includes("\r\n")
-      ? ts.NewLineKind.CarriageReturnLineFeed
-      : ts.NewLineKind.LineFeed
-  });
-  const updated = uses
-    ? factory.updateObjectLiteralExpression(uses, entries)
-    : factory.createObjectLiteralExpression(entries, true);
-  if (uses) {
+
+  const newline = source.includes("\r\n") ? "\r\n" : "\n";
+  const append = (object: ObjectExpression, entry: string) => {
+    const last = object.properties.at(-1);
+    const offset = last?.end ?? object.start! + 1;
+    const close = object.end! - 1;
+    const trailingComma = commas.some((token) => token.start >= offset && token.end <= close);
+    const separator = last && !trailingComma ? "," : "";
+    const lineStart = source.lastIndexOf("\n", object.start!) + 1;
+    const indent = /^[\t ]*/.exec(source.slice(lineStart))![0];
     return (
-      source.slice(0, uses.getStart(file)) +
-      printer.printNode(ts.EmitHint.Expression, updated, file) +
-      source.slice(uses.end)
+      source.slice(0, offset) +
+      separator +
+      source.slice(offset, close) +
+      newline +
+      indent +
+      "  " +
+      entry +
+      "," +
+      newline +
+      indent +
+      source.slice(close)
     );
-  }
-  const insertion = factory.createPropertyAssignment("uses", updated);
-  const last = config.properties.at(-1);
-  const offset = last?.end ?? config.getStart(file) + 1;
-  const separator = last && !config.properties.hasTrailingComma ? "," : "";
-  const gap = source.slice(offset, config.end - 1);
-  return (
-    source.slice(0, offset) +
-    separator +
-    gap +
-    "\n" +
-    printer.printNode(ts.EmitHint.Unspecified, insertion, file) +
-    "\n" +
-    source.slice(config.end - 1)
-  );
+  };
+  const entry = `${JSON.stringify(change.alias)}: ${JSON.stringify(change.declaration)}`;
+  return uses ? append(uses, entry) : append(config, `uses: { ${entry} }`);
 }

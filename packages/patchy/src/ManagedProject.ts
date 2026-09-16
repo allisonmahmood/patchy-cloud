@@ -133,7 +133,7 @@ export class ManagedProject {
 
   /** Only the pin is ours; later package scripts, dependencies and formatting remain the author's. */
   async setPin(expected: string, pin: string): Promise<void> {
-    // Keep the TypeScript parser out of commands that never edit package pins.
+    // Keep the JSON parser out of commands that never edit package pins.
     const { patchPackagePin } = await import("./packagePin.js");
     const target = await safePath(this.root, "package.json");
     const source = await fs.readFile(target, "utf8");
@@ -152,7 +152,7 @@ export class ManagedProject {
 
   private async restorePin(): Promise<void> {
     if (!this.pinEdit) return;
-    // Rollback is the same lazy compiler boundary as the forward pin edit.
+    // Load the same pin editor lazily for rollback.
     const { patchPackagePin } = await import("./packagePin.js");
     const target = await safePath(this.root, "package.json");
     if (!(await info(target))?.isFile()) return;

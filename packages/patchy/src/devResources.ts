@@ -1,3 +1,7 @@
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- Native declaration emit needs this name for inferred exported types.
+import type { ContentStore } from "@patchy/content-store";
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- Native declaration emit needs this name for inferred exported types.
+import type { Binding, Runtime } from "@patchy/runtime/core";
 import * as PgliteClient from "@effect/sql-pglite/PgliteClient";
 import { WIRE_VERSION } from "@patchy/api";
 import type { PatchInventory } from "@patchy/api";

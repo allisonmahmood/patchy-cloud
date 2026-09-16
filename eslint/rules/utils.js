@@ -1,5 +1,5 @@
 /**
- * The few AST readings the rules share. ESTree with typescript-eslint's
+ * The few AST readings the rules share. ESTree with Oxlint's
  * TypeScript nodes, so an expression may sit behind `as`, `satisfies`, `!`
  * or a parenthesis; the rules look through those.
  */

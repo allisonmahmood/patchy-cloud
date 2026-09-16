@@ -221,15 +221,18 @@ async function use() {
   createClient<typeof config>(config, { shared: {}, connections: {} });
 }
 `;
-      const result = yield* compileConsumer(
-        { "consumer.ts": source },
-        {
-          "patchy/client": [`${root}client.d.ts`],
-          "patchy/config": [`${root}config.d.ts`]
-        }
-      );
-      expect(result.stdout + result.stderr).toBe("");
-      expect(result.code).toBe(0);
+      for (const compiler of ["native", "legacy"] as const) {
+        const result = yield* compileConsumer(
+          { "consumer.ts": source },
+          {
+            "patchy/client": [`${root}client.d.ts`],
+            "patchy/config": [`${root}config.d.ts`]
+          },
+          compiler
+        );
+        expect(result.stdout + result.stderr, compiler).toBe("");
+        expect(result.code, compiler).toBe(0);
+      }
     })
 );
 

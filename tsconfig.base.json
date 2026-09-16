@@ -21,7 +21,7 @@
         // native compiler with Effect diagnostics. It retains this plugin name.
         "name": "@effect/language-service",
         "diagnosticSeverity": {
-          // Namespace imports are enforced by ESLint's namespace-service-imports rule.
+          // Namespace imports are enforced by Oxlint's namespace-service-imports rule.
           "anyUnknownInErrorContext": "error",
           "unsafeEffectTypeAssertion": "error",
           "instanceOfSchema": "error",

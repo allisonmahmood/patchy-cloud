@@ -2,6 +2,8 @@ packages:
   - "apps/*"
   - "packages/*"
   - "scripts/dev"
+  # Historical project compiler, isolated from normal workspace executable lookup.
+  - "test/fixtures/typescript6"
 catalog:
   parse5: ^7.3.0
   # Effect 4 release candidates ship in lockstep; Dependabot bumps these
@@ -13,7 +15,7 @@ catalog:
   "@effect/sql-pglite": 4.0.0-rc.112
   "@effect/vitest": 4.0.0-rc.112
   # Its packaged compiler replacements support exact TypeScript versions.
-  # Keep this paired with @typescript/native in the root package.json.
+  # Keep this paired with typescript in the root package.json.
   "@effect/tsgo": 0.45.0
 # Wait one day before resolving new releases so compromised versions have time to be removed.
 minimumReleaseAge: 1440

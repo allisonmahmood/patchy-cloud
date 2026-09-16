@@ -1,4 +1,10 @@
 // @effect-diagnostics nodeBuiltinImport:off -- This CLI-owned local server owns its Node socket and process identity.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- Native declaration emit needs this name for inferred exported types.
+import type { CompanyDatabases } from "@patchy/company-database/dev";
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- Native declaration emit needs this name for inferred exported types.
+import type { PostgresDev } from "@patchy/integrations/dev";
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- Native declaration emit needs this name for inferred exported types.
+import type { Tables } from "@patchy/primitives";
 import { createServer } from "node:http";
 import { randomBytes } from "node:crypto";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";

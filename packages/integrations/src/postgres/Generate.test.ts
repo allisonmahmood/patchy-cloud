@@ -2,7 +2,7 @@ import { fileURLToPath } from "node:url";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { compileConsumer } from "../../../../test/typescript.js";
-import * as ts from "typescript";
+import { transformSync } from "esbuild";
 import * as Schema from "effect/Schema";
 import { generate } from "./Generate.js";
 import type { Snapshot } from "@patchy/api/postgres-snapshot";
@@ -154,12 +154,18 @@ function inspect(error: ListError) {
 }
 `
       };
-      const result = yield* compileConsumer(files, {
-        "patchy/client": [`${patchy}client.d.ts`],
-        "patchy/config": [`${patchy}config.d.ts`]
-      });
-      assert.strictEqual(result.stdout + result.stderr, "");
-      assert.strictEqual(result.code, 0);
+      for (const compiler of ["native", "legacy"] as const) {
+        const result = yield* compileConsumer(
+          files,
+          {
+            "patchy/client": [`${patchy}client.d.ts`],
+            "patchy/config": [`${patchy}config.d.ts`]
+          },
+          compiler
+        );
+        assert.strictEqual(result.stdout + result.stderr, "");
+        assert.strictEqual(result.code, 0);
+      }
     })
 );
 
@@ -175,16 +181,21 @@ it("preserves arbitrary names without prototype mutation and narrows transport r
       ]
     }
   );
-  const javascript = ts.transpileModule(generated.client, {
-    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS }
-  }).outputText;
-  const exports = new Function("exports", "require", `${javascript}\nreturn exports;`)(
-    {},
-    (name: string) => {
-      assert.strictEqual(name, "patchy/client");
-      return PatchyClient;
-    }
-  ) as {
+  const javascript = transformSync(generated.client, {
+    loader: "ts",
+    target: "es2022",
+    format: "cjs"
+  }).code;
+  const module = { exports: {} };
+  const exports = new Function(
+    "module",
+    "exports",
+    "require",
+    `${javascript}\nreturn module.exports;`
+  )(module, module.exports, (name: string) => {
+    assert.strictEqual(name, "patchy/client");
+    return PatchyClient;
+  }) as {
     createClient: (
       connection: string,
       call: (op: string, args: unknown) => Promise<unknown>

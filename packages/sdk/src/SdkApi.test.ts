@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -40,6 +40,9 @@ import * as SdkApi from "./SdkApi.js";
 const exec = promisify(execFile);
 const repo = fileURLToPath(new URL("../../../", import.meta.url));
 const decodeRelease = Schema.decodeUnknownEffect(Release);
+const decodeBundleMap = Schema.decodeUnknownSync(
+  Schema.Struct({ sources: Schema.Array(Schema.String) })
+);
 const routes = Layer.mergeAll(
   HttpApiBuilder.layer(HttpApi.make("patchy").add(SdkGroup)).pipe(
     Layer.provide(SdkApi.layer),
@@ -137,6 +140,33 @@ it.layer(layer)("the packed SDK release", (it) => {
           "./config",
           "./dev"
         ]);
+        const installedDist = path.join(dir, "node_modules/patchy/dist");
+        for (const file of yield* Effect.promise(() =>
+          readdir(installedDist, { recursive: true })
+        )) {
+          if (file.endsWith(".d.ts")) {
+            const declaration = yield* Effect.promise(() =>
+              readFile(path.join(installedDist, file), "utf8")
+            );
+            assert.notInclude(declaration, repo, `${file} exposes the checkout path`);
+            assert.notMatch(
+              declaration,
+              /patchy-declarations-[^/\\\s]+/,
+              `${file} exposes a temporary build path`
+            );
+          }
+          if (!file.endsWith(".js")) continue;
+          const map = yield* Effect.promise(() =>
+            readFile(path.join(installedDist, `${file}.map`), "utf8")
+          );
+          for (const source of decodeBundleMap(JSON.parse(map)).sources) {
+            assert.notMatch(
+              source,
+              /(?:^|\/)(?:typescript|@typescript\/(?:typescript6|old))\/lib\/(?:typescript|_tsc)\.js$/,
+              `${file} bundles a TypeScript compiler`
+            );
+          }
+        }
         const cli = yield* Effect.tryPromise(() =>
           exec(
             process.execPath,
@@ -211,34 +241,45 @@ import { createPostMessageTransport } from "patchy/client";
 const inserted: Insert<typeof config, "notes"> = { title: "Saved" };
 const changed: Update<typeof config, "notes"> = { title: "Changed" };
 const at: Row<typeof config, "notes">["at"] = "2026-09-11T00:00:00.000Z";
+// @ts-expect-error Insert must retain the required field.
+const missingTitle: Insert<typeof config, "notes"> = {};
+// @ts-expect-error Update must retain the field type.
+const invalidTitle: Update<typeof config, "notes"> = { title: 42 };
+// @ts-expect-error Timestamps are serialized strings.
+const invalidTimestamp: Row<typeof config, "notes">["at"] = 42;
 void [inserted, changed, at, createClient, PatchyError, executeConfig, dev];
 `
           )
         );
-        yield* Effect.promise(() =>
-          writeFile(
-            path.join(dir, "tsconfig.json"),
-            JSON.stringify({
-              compilerOptions: {
-                strict: true,
-                noEmit: true,
-                target: "ES2022",
-                module: "NodeNext",
-                moduleResolution: "NodeNext",
-                lib: ["ES2022", "DOM"],
-                types: []
-              },
-              include: ["consumer.ts", "patchy.config.ts"]
-            })
-          )
-        );
-        yield* Effect.tryPromise(() =>
-          exec(
-            process.execPath,
-            [path.join(repo, "node_modules/@typescript/native/bin/tsc"), "-p", "tsconfig.json"],
-            { cwd: dir }
-          )
-        );
+        for (const moduleResolution of ["NodeNext", "Bundler"] as const) {
+          yield* Effect.promise(() =>
+            writeFile(
+              path.join(dir, "tsconfig.json"),
+              JSON.stringify({
+                compilerOptions: {
+                  strict: true,
+                  noEmit: true,
+                  target: "ES2022",
+                  module: moduleResolution === "NodeNext" ? "NodeNext" : "ESNext",
+                  moduleResolution,
+                  lib: ["ES2022", "DOM"],
+                  types: []
+                },
+                include: ["consumer.ts", "patchy.config.ts"]
+              })
+            )
+          );
+          for (const compiler of [
+            "node_modules/typescript/bin/tsc",
+            "test/fixtures/typescript6/node_modules/typescript/bin/tsc"
+          ]) {
+            yield* Effect.tryPromise(() =>
+              exec(process.execPath, [path.join(repo, compiler), "-p", "tsconfig.json"], {
+                cwd: dir
+              })
+            );
+          }
+        }
       }),
     { timeout: 60_000 }
   );
