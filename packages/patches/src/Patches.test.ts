@@ -801,9 +801,6 @@ it.layer(Patches.layer.pipe(Layer.provideMerge(Fixtures.database)))("Patches rea
       const databases = yield* CompanyDatabases.CompanyDatabases;
       const empty = yield* create({ manifest: { ...Fixtures.manifest, name: "read-empty" } });
       assert.isNull(yield* service.companyInventory(empty.patchId, access));
-      assert.isNull(
-        (yield* service.read({ ...access, state: "live", patchRef: empty.patchId }))[0]!.inventory
-      );
       yield* databases.claim(uploader.company.id);
       assert.isNull(yield* service.companyInventory(empty.patchId, access));
       yield* databases.ensureReady(uploader.company.id);
@@ -822,7 +819,6 @@ it.layer(Patches.layer.pipe(Layer.provideMerge(Fixtures.database)))("Patches rea
       assert.strictEqual(before!.tables.notes!.columns.body!.kind, "text");
       assert.isTrue(before!.tables.notes!.shared);
       const [detail] = yield* service.read({ ...access, state: "live", patchRef: source.name });
-      assert.deepStrictEqual(detail!.inventory, before);
       assert.strictEqual(detail!.currentVersion, 2);
       assert.strictEqual(detail!.tier, 0);
     })
@@ -1140,7 +1136,7 @@ it.layer(Patches.layer.pipe(Layer.provideMerge(Fixtures.database)))("Patches rea
             state: "live",
             patchRef: patch.patchId
           });
-          assert.isNull(detail!.inventory);
+          assert.strictEqual(detail!.patch.id, patch.patchId);
         }
         const unavailable = yield* Patches.make.pipe(
           Effect.provide(

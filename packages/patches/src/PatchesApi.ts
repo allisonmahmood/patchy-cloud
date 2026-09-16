@@ -123,84 +123,36 @@ const tableSummary = (
         hint: `Not shared. Ask ${row.owner.name} to share this table.`
       };
 };
+const lifecycleFailure = <S extends Schema.Top & Schema.Codec<{ readonly code: string }, unknown>>(
+  schema: S,
+  code: S["Type"]["code"],
+  fields: Omit<S["~type.make.in"], "ok" | "code">
+) => Effect.succeed(refuse(schema, { ok: false, code, ...fields }));
 const lifecycleFailures = {
   NotOwner: (error: Patches.NotOwner) =>
-    Effect.succeed(
-      refuse(NotOwner, {
-        ok: false,
-        code: "not_owner",
-        error: error.message,
-        owner: error.owner
-      })
-    ),
+    lifecycleFailure(NotOwner, "not_owner", { error: error.message, owner: error.owner }),
   WrongState: (error: Patches.WrongState) =>
-    Effect.succeed(
-      refuse(WrongState, {
-        ok: false,
-        code: "wrong_state",
-        error: error.message,
-        state: error.state
-      })
-    ),
+    lifecycleFailure(WrongState, "wrong_state", { error: error.message, state: error.state }),
   PatchRetired: (error: Patches.PatchRetired) =>
-    Effect.succeed(
-      refuse(PatchRetired, {
-        ok: false,
-        code: "patch_retired",
-        error: error.message
-      })
-    ),
+    lifecycleFailure(PatchRetired, "patch_retired", { error: error.message }),
   PatchDeleted: (error: Patches.PatchDeleted) =>
-    Effect.succeed(
-      refuse(PatchDeleted, {
-        ok: false,
-        code: "patch_deleted",
-        error: error.message,
-        purgeAt: error.purgeAt
-      })
-    ),
+    lifecycleFailure(PatchDeleted, "patch_deleted", {
+      error: error.message,
+      purgeAt: error.purgeAt
+    }),
   HasDependants: (error: Patches.HasDependants) =>
-    Effect.succeed(
-      refuse(HasDependants, {
-        ok: false,
-        code: "has_dependants",
-        error: error.message,
-        dependants: error.dependants
-      })
-    ),
+    lifecycleFailure(HasDependants, "has_dependants", {
+      error: error.message,
+      dependants: error.dependants
+    }),
   SourcesOff: (error: Patches.SourcesOff) =>
-    Effect.succeed(
-      refuse(SourcesOff, {
-        ok: false,
-        code: "sources_off",
-        error: error.message,
-        sources: error.sources
-      })
-    ),
+    lifecycleFailure(SourcesOff, "sources_off", { error: error.message, sources: error.sources }),
   ReservedName: (error: Patches.ReservedName) =>
-    Effect.succeed(
-      refuse(ReservedName, {
-        ok: false,
-        code: "reserved_name",
-        error: error.message
-      })
-    ),
+    lifecycleFailure(ReservedName, "reserved_name", { error: error.message }),
   InvalidDescription: (error: Patches.InvalidDescription) =>
-    Effect.succeed(
-      refuse(InvalidDescription, {
-        ok: false,
-        code: "invalid_description",
-        error: error.message
-      })
-    ),
+    lifecycleFailure(InvalidDescription, "invalid_description", { error: error.message }),
   VersionUnavailable: (error: Patches.VersionUnavailable) =>
-    Effect.succeed(
-      refuse(VersionUnavailable, {
-        ok: false,
-        code: "version_unavailable",
-        error: error.message
-      })
-    ),
+    lifecycleFailure(VersionUnavailable, "version_unavailable", { error: error.message }),
   InvalidOwner: Effect.die,
   // Machine-token calls carry no portal precondition.
   StaleAction: Effect.die
@@ -595,6 +547,19 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
           const identity = yield* CurrentIdentity;
           const row = yield* readOne(params.patchRef, query.state ?? "live", identity);
           if (HttpServerResponse.isHttpServerResponse(row)) return row;
+          const inventory = yield* patches
+            .companyInventory(row.patch.id, {
+              companyId: identity.company.id,
+              userId: identity.user.id,
+              canOpen: (patch) => openability(patch, identity.user.id)
+            })
+            .pipe(
+              Effect.catchTags({
+                PatchUnavailable: readFailures.PatchUnavailable,
+                SqlError: Effect.die
+              })
+            );
+          if (HttpServerResponse.isHttpServerResponse(inventory)) return inventory;
           return HttpServerResponse.jsonUnsafe(
             encodeDetail(
               new PatchDetail({
@@ -602,13 +567,13 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
                 title: row.patch.title,
                 descriptionUpdatedAt: row.patch.descriptionUpdatedAt,
                 inventory:
-                  row.inventory === null
+                  inventory === null
                     ? null
                     : {
-                        tables: Object.entries(row.inventory.tables).map(([name, table]) =>
+                        tables: Object.entries(inventory.tables).map(([name, table]) =>
                           tableSummary(row, name, table)
                         ),
-                        stores: Object.entries(row.inventory.files).map(([name, store]) => ({
+                        stores: Object.entries(inventory.files).map(([name, store]) => ({
                           name,
                           description: store.description,
                           declarable: false as const,
@@ -629,12 +594,25 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
           const identity = yield* CurrentIdentity;
           const row = yield* readOne(params.patchRef, query.state ?? "live", identity);
           if (HttpServerResponse.isHttpServerResponse(row)) return row;
-          if (row.inventory === null) return databaseUnavailable();
-          const table = Object.hasOwn(row.inventory.tables, params.name)
-            ? row.inventory.tables[params.name]
+          const inventory = yield* patches
+            .companyInventory(row.patch.id, {
+              companyId: identity.company.id,
+              userId: identity.user.id,
+              canOpen: (patch) => openability(patch, identity.user.id)
+            })
+            .pipe(
+              Effect.catchTags({
+                PatchUnavailable: readFailures.PatchUnavailable,
+                SqlError: Effect.die
+              })
+            );
+          if (HttpServerResponse.isHttpServerResponse(inventory)) return inventory;
+          if (inventory === null) return databaseUnavailable();
+          const table = Object.hasOwn(inventory.tables, params.name)
+            ? inventory.tables[params.name]
             : undefined;
-          const store = Object.hasOwn(row.inventory.files, params.name)
-            ? row.inventory.files[params.name]
+          const store = Object.hasOwn(inventory.files, params.name)
+            ? inventory.files[params.name]
             : undefined;
           if (table === undefined && store === undefined)
             return refuse(NotFound, { ok: false, error: "Primitive not found." });
@@ -645,7 +623,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
                 name: params.name,
                 description: (table ?? store)!.description,
                 shared: table?.shared === true,
-                schemaRevision: row.inventory.schemaRevision,
+                schemaRevision: inventory.schemaRevision,
                 columns:
                   table === undefined
                     ? []

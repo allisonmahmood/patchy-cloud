@@ -97,7 +97,7 @@ const renderConfirm = (input: {
   return `<article class="portal-subpage"><p>${back}</p><h1 class="page-heading">${verb(action)} ${escapeHtml(user.name)}?</h1>${refusal(input.message)}<form class="confirmation-form" method="post" action="/company/users/${encodeURIComponent(user.id)}/${action}"><p class="confirmation-consequence">${consequence(user, action)}</p><p>${summary}</p>${hidden("choice", "confirm")}${selected.map((row) => hidden("patch", row.patch.id)).join("")}${breaks ? `${action === "deactivate" ? "<p>These live patches outside the selection will lose access on their next read, until the sources are restored.</p>" : ""}<ul class="confirmation-list">${damage}</ul>` : '<p class="note note-ok">Nothing breaks</p>'}${acknowledgement}<div class="confirmation-actions"><button class="btn ${action === "deactivate" ? "btn-danger" : "btn-primary"}" type="submit">${verb(action)} ${escapeHtml(user.name)}${selected.length === 0 ? "" : action === "deactivate" ? " and retire selected" : " and restore selected"}</button><a class="btn btn-quiet" href="/company">Cancel</a></div></form></article>`;
 };
 
-/** Previews take no mutation locks; a commit rechecks the selection under Patches' locks. */
+/** Previews take no mutation locks; commits change patches before the user in one transaction. */
 export const handle = Effect.fn("UserLifecyclePage.handle")(function* (id: string, action: Action) {
   const viewer = yield* RequireSession.Viewer;
   const session = yield* Session.Session;
@@ -215,13 +215,14 @@ export const handle = Effect.fn("UserLifecyclePage.handle")(function* (id: strin
       !Option.contains(UrlParams.getFirst(fields, "ack"), "1")
     )
       return confirm("Acknowledge what breaks before confirming. Nothing was done.", 409);
+    const actor = { userId: viewer.user.id, admin: true };
+    // Use ID order across the selection; keep patch rows before the user row as reassign does.
+    for (const row of selected.sort((a, b) => a.patch.id.localeCompare(b.patch.id))) {
+      if (action === "deactivate") yield* patches.retire(row.patch.id, actor, true, id);
+      else yield* patches.restore(row.patch.id, actor, true, "retired", id);
+    }
     if (action === "deactivate") yield* users.deactivate(ref);
     else yield* users.reactivate(ref);
-    const actor = { userId: viewer.user.id, admin: true };
-    for (const row of selected) {
-      if (action === "deactivate") yield* patches.retire(row.patch.id, actor, true);
-      else yield* patches.restore(row.patch.id, actor, true, "retired");
-    }
     return HttpServerResponse.redirect("/company", {
       status: 303,
       headers: { "cache-control": "private, no-store" }
@@ -229,7 +230,7 @@ export const handle = Effect.fn("UserLifecyclePage.handle")(function* (id: strin
   });
   return yield* (
     choice === "keep" || choice === "confirm"
-      ? patches.withCompanyLifecycleLock(viewer.user.id)(run)
+      ? patches.withDependencyLock(viewer.user.id)(run)
       : run
   ).pipe(
     Effect.catchTags({

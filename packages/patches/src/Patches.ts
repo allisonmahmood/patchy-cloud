@@ -267,7 +267,6 @@ export interface ReadPatch {
   readonly currentVersion: number;
   readonly tier: number;
   readonly publishedAt: string;
-  readonly inventory: PatchInventory | null;
   readonly reads: readonly {
     readonly alias: string;
     readonly patchId: string;
@@ -622,10 +621,11 @@ export class Patches extends Context.Service<
       Option.Option<{ patch: Patch; actorName: string | null; sourcesOff: boolean }>,
       SqlError
     >;
-    /** Lock the acting user's company before a cross-context user/patch lifecycle commit. */
-    readonly withCompanyLifecycleLock: (
+    /** Hold the company's dependency advisory lock in a transaction, without locking patch rows. */
+    readonly withDependencyLock: (
       actorUserId: string
     ) => <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E | SqlError, R>;
+    /** Company-readable inventory; unavailable company-database inventory is null, not empty. */
     readonly companyInventory: (
       patchId: string,
       access: ReadAccess
@@ -713,7 +713,8 @@ export class Patches extends Context.Service<
     readonly retire: (
       patchId: string,
       actor: Actor,
-      force?: boolean
+      force?: boolean,
+      expectedOwnerUserId?: string
     ) => Effect.Effect<Patch, LifecycleError | SqlError>;
     readonly delete: (
       patchId: string,
@@ -724,7 +725,8 @@ export class Patches extends Context.Service<
       patchId: string,
       actor: Actor,
       force?: boolean,
-      expectedState?: PatchState
+      expectedState?: PatchState,
+      expectedOwnerUserId?: string
     ) => Effect.Effect<Patch, LifecycleError | SqlError>;
     readonly rollback: (
       patchId: string,
@@ -1105,18 +1107,13 @@ export const make = Effect.gen(function* () {
       sql`SELECT pg_advisory_xact_lock(hashtextextended('patchy:dependencies:' || company_id, 0))
       FROM users WHERE id = ${userId}`
   );
-  const withCompanyLifecycleLock: Patches["Service"]["withCompanyLifecycleLock"] =
-    (actorUserId) => (effect) =>
-      sql.withTransaction(
-        Effect.gen(function* () {
-          yield* lockDependencies(actorUserId);
-          // Reassign locks a patch before its target user. Keep that order here too.
-          yield* sql`SELECT id FROM patches
-            WHERE company_id = (SELECT company_id FROM users WHERE id = ${actorUserId})
-            ORDER BY id FOR UPDATE`;
-          return yield* effect;
-        })
-      );
+  const withDependencyLock: Patches["Service"]["withDependencyLock"] = (actorUserId) => (effect) =>
+    sql.withTransaction(
+      Effect.gen(function* () {
+        yield* lockDependencies(actorUserId);
+        return yield* effect;
+      })
+    );
   const manageable = Effect.fn("Patches.manageable")(function* (patchId: string, actor: Actor) {
     const row = yield* lockOpenable({ patchId, userId: actor.userId });
     if (Option.isNone(row)) return yield* new PatchUnavailable({ patchId });
@@ -1209,42 +1206,6 @@ export const make = Effect.gen(function* () {
       )
   );
 
-  // Acquire one company lease for the entire read, not one platform placement
-  // lookup per patch. Platform patch-query failures remain outside this recovery.
-  const companyInventories = Effect.fn("Patches.companyInventories")(
-    function* (companyId: string, patchIds: readonly string[]) {
-      return yield* databases.withCompany(companyId)(
-        Effect.gen(function* () {
-          const inventories = new Map<string, PatchInventory | null>();
-          for (const patchId of patchIds) {
-            const inventory = yield* inventoryStore.read(patchId).pipe(
-              Effect.map(
-                (snapshot) =>
-                  new PatchInventory(
-                    snapshot === null
-                      ? { schemaRevision: 0, tables: {}, files: {} }
-                      : {
-                          schemaRevision: snapshot.schemaRevision,
-                          ...Tables.inventoryManifest(snapshot)
-                        }
-                  )
-              ),
-              Effect.catchTags({ SqlError: () => Effect.succeed(null) })
-            );
-            inventories.set(patchId, inventory);
-          }
-          return inventories;
-        })
-      );
-    },
-    Effect.catchTags({
-      Busy: () => Effect.succeed(null),
-      CompanyDatabaseNotReady: () => Effect.succeed(null),
-      CompanyDatabaseError: () => Effect.succeed(null),
-      CompanyIdentityMismatch: Effect.die
-    })
-  );
-
   const companyInventory = Effect.fn("Patches.companyInventory")(function* (
     patchId: string,
     access: ReadAccess
@@ -1252,8 +1213,32 @@ export const make = Effect.gen(function* () {
     const row = yield* companyPatchRow({ companyId: access.companyId, patchId });
     if (Option.isNone(row) || !access.canOpen(toPatch(row.value)))
       return yield* new PatchUnavailable({ patchId });
-    const inventories = yield* companyInventories(access.companyId, [patchId]);
-    return inventories?.get(patchId) ?? null;
+    // Recover company inventory failures, not platform patch-query failures.
+    return yield* databases
+      .withCompany(access.companyId)(
+        inventoryStore.read(patchId).pipe(
+          Effect.map(
+            (snapshot) =>
+              new PatchInventory(
+                snapshot === null
+                  ? { schemaRevision: 0, tables: {}, files: {} }
+                  : {
+                      schemaRevision: snapshot.schemaRevision,
+                      ...Tables.inventoryManifest(snapshot)
+                    }
+              )
+          ),
+          Effect.catchTags({ SqlError: () => Effect.succeed(null) })
+        )
+      )
+      .pipe(
+        Effect.catchTags({
+          Busy: () => Effect.succeed(null),
+          CompanyDatabaseNotReady: () => Effect.succeed(null),
+          CompanyDatabaseError: () => Effect.succeed(null),
+          CompanyIdentityMismatch: Effect.die
+        })
+      );
   }, Effect.catchTags(dieOnSchemaError));
 
   const read = Effect.fn("Patches.read")(function* (options: ReadOptions) {
@@ -1307,10 +1292,6 @@ export const make = Effect.gen(function* () {
         });
       }
     }
-    const inventories = yield* companyInventories(
-      options.companyId,
-      selected.map(({ patch }) => patch.id)
-    );
     return selected.map(({ row, patch }): ReadPatch => ({
       patch,
       owner: {
@@ -1321,7 +1302,6 @@ export const make = Effect.gen(function* () {
       currentVersion: row.currentVersion,
       tier: row.tier,
       publishedAt: iso(row.publishedAt),
-      inventory: inventories?.get(patch.id) ?? null,
       reads: row.reads.map((declaration): ReadPatch["reads"][number] => {
         const source = openable.get(declaration.patchId)?.patch;
         return {
@@ -1883,10 +1863,13 @@ export const make = Effect.gen(function* () {
   const retire = Effect.fn("Patches.retire")(function* (
     patchId: string,
     actor: Actor,
-    force?: boolean
+    force?: boolean,
+    expectedOwnerUserId?: string
   ) {
     yield* lockDependencies(actor.userId);
     const row = yield* manageable(patchId, actor);
+    if (expectedOwnerUserId !== undefined && row.ownerUserId !== expectedOwnerUserId)
+      return yield* new StaleAction({ patchId });
     if (stateOf(row) !== "live") return yield* new WrongState({ state: stateOf(row) });
     yield* refuseDependants(patchId, row.companyId, force);
     const at = yield* now;
@@ -1917,10 +1900,13 @@ export const make = Effect.gen(function* () {
     patchId: string,
     actor: Actor,
     force?: boolean,
-    expectedState?: PatchState
+    expectedState?: PatchState,
+    expectedOwnerUserId?: string
   ) {
     yield* lockDependencies(actor.userId);
     const row = yield* manageable(patchId, actor);
+    if (expectedOwnerUserId !== undefined && row.ownerUserId !== expectedOwnerUserId)
+      return yield* new StaleAction({ patchId });
     if (stateOf(row) === "live") return yield* new WrongState({ state: "live" });
     const millis = yield* Clock.currentTimeMillis;
     const purgeMillis =
@@ -2086,7 +2072,7 @@ export const make = Effect.gen(function* () {
     read,
     portalCard,
     addressNotice,
-    withCompanyLifecycleLock,
+    withDependencyLock,
     companyInventory,
     sharedTable,
     sharedTables,
