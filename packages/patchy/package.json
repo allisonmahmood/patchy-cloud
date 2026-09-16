@@ -76,7 +76,7 @@
     "parse5": "catalog:",
     "typescript": "^6.0.3",
     "vite-plugin-singlefile": "^2.3.0",
-    "vitest": "^4.1.11"
+    "vitest": "^5.0.1"
   },
   "dependencies": {
     "@electric-sql/pglite": "0.5.8"
