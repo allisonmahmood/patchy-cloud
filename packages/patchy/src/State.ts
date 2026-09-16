@@ -67,6 +67,7 @@ export class CachedPatch extends Schema.Class<CachedPatch>("CachedPatch")({
 export class PendingPublish extends Schema.Class<PendingPublish>("PendingPublish")({
   request: PublishRequest,
   ownerUserId: Schema.NonEmptyString,
+  warnings: Schema.optionalKey(Schema.Array(Schema.String)),
   target: Schema.Union([
     Schema.Struct({ mode: Schema.Literal("repo") }),
     Schema.Struct({

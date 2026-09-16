@@ -2,7 +2,7 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it } from "@effect/vitest";
+import { assert, expect, it } from "@effect/vitest";
 import { Identity } from "@patchy/api";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -143,8 +143,7 @@ it.layer(NodeServices.layer)("dev process ownership", (it) => {
           release: record.release,
           identity
         };
-        assert.deepStrictEqual(
-          (yield* TestConsole.logLines).map((line) => JSON.parse(String(line))),
+        expect((yield* TestConsole.logLines).map((line) => JSON.parse(String(line)))).toMatchObject(
           [expected, expected]
         );
       }).pipe(Effect.provide(TestConsole.layer), Effect.scoped)
