@@ -129,6 +129,43 @@ const publish = Effect.fn("PortalPagesTest.publish")(function* (
   yield* patches.prepareObject(input.objectKey);
   return yield* patches.record(input);
 });
+const publishSource = Effect.fn("PortalPagesTest.publishSource")(function* (
+  person: Person,
+  name: string
+) {
+  return yield* publish(person, name, {
+    filename: null,
+    manifest: {
+      ...manifest,
+      name,
+      tier: 1,
+      tables: {
+        notes: {
+          description: "Notes keyed by id",
+          columns: { body: { kind: "text" } },
+          indexes: {},
+          shared: true
+        }
+      }
+    }
+  });
+});
+const sourceDeclaration = (patchId: string) => ({
+  kind: "sharedTable" as const,
+  patchId,
+  table: "notes",
+  id: sharedTableId(patchId, "notes"),
+  revision: 1
+});
+const publishDependant = Effect.fn("PortalPagesTest.publishDependant")(function* (
+  person: Person,
+  name: string,
+  sourceId: string
+) {
+  return yield* publish(person, name, {
+    manifest: { ...manifest, name, uses: { source: sourceDeclaration(sourceId) } }
+  });
+});
 const readPatch = Effect.fn("PortalPagesTest.readPatch")(function* (
   person: Person,
   patchId: string
@@ -190,6 +227,16 @@ const hidden = (html: string, name: string) =>
   html.match(
     new RegExp(`<input\\b(?=[^>]*\\bname="${name}")(?=[^>]*\\bvalue="([^"]*)")[^>]*>`)
   )?.[1];
+const inputs = (html: string, name: string, type: string) =>
+  [...html.matchAll(/<input\b[^>]*>/g)]
+    .map((match) => match[0])
+    .filter(
+      (input) =>
+        input.includes(`name="${name}"`) &&
+        (input.includes(`type="${type}"`) || (type === "text" && !/\btype=/.test(input)))
+    );
+const radioValues = (html: string) =>
+  inputs(html, "user", "radio").map((input) => input.match(/\bvalue="([^"]*)"/)?.[1]);
 const cardPath = (name: string) => `/patches/${name}`;
 const cardLinks = (html: string) =>
   links(html.match(/<aside\b[^>]*>([\s\S]*?)<\/aside>/)?.[1] ?? "").filter(
@@ -529,32 +576,318 @@ it.layer(layer)("portal pages on a socket", (it) => {
       })
   );
 
-  it.effect("restores retired and deleted patches at the same address", () =>
-    Effect.gen(function* () {
-      const workspace = yield* company();
-      const service = yield* Patches.Patches;
-      for (const state of ["retired", "deleted"] as const) {
-        const patch = yield* publish(workspace.owner, `restore-${state}`);
-        if (state === "retired") yield* service.retire(patch.patchId, actor(workspace.owner));
-        else yield* service.delete(patch.patchId, actor(workspace.owner));
+  for (const action of ["retire", "delete"] as const) {
+    it.effect(
+      `${action} lets owners and admins confirm without acknowledgement when nothing depends on it`,
+      () =>
+        Effect.gen(function* () {
+          const workspace = yield* company();
+          for (const person of [workspace.owner, workspace.admin]) {
+            const patch = yield* publish(workspace.owner, `${action}-${person.role}`);
+            const path = `${cardPath(patch.name)}/${action}?all=1`;
+            const before = yield* readPatch(workspace.owner, patch.patchId);
+            const page = yield* request(path, person);
+            assert.strictEqual(page.status, 200);
+            assert.strictEqual(page.headers["cache-control"], "private, no-store");
+            const html = yield* page.text;
+            assert.include(forms(html), path);
+            assert.strictEqual(
+              hidden(html, "expectedState"),
+              action === "retire" ? "live" : "not-deleted"
+            );
+            assert.deepStrictEqual(inputs(html, "ack", "checkbox"), []);
+            assert.include(
+              links(html).map((link) => link.href),
+              `${cardPath(patch.name)}?all=1`
+            );
+            assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), before);
+            const response = yield* post(path, person, {
+              expectedState: action === "retire" ? "live" : "not-deleted",
+              ...(action === "delete" ? { confirm: patch.name } : {})
+            });
+            assert.strictEqual(response.status, 303);
+            assert.strictEqual(response.headers.location, `${cardPath(patch.name)}?all=1`);
+            const saved = yield* readPatch(workspace.owner, patch.patchId);
+            assert.strictEqual(saved.patch.state, action === "retire" ? "retired" : "deleted");
+            assert.strictEqual(saved.patch.lastChangedBy, person.id);
+            assert.strictEqual(
+              saved.patch[action === "retire" ? "retiredBy" : "deletedBy"],
+              person.id
+            );
+            assert.strictEqual(saved.patch.currentVersionId, before.patch.currentVersionId);
+            const card = yield* (yield* request(`${cardPath(patch.name)}?all=1`, workspace.member))
+              .text;
+            assert.include(
+              text(card),
+              `${action === "retire" ? "Retired" : "Deleted"} by ${person.name}`
+            );
+          }
+        })
+    );
+
+    it.effect(`${action} recomputes dependants after GET and requires exactly ack=1`, () =>
+      Effect.gen(function* () {
+        const workspace = yield* company();
+        const source = yield* publishSource(workspace.owner, `${action}-source`);
+        const first = yield* publishDependant(workspace.member, `${action}-first`, source.patchId);
+        const path = `${cardPath(source.name)}/${action}?all=1`;
+        const page = yield* request(path, workspace.owner);
+        assert.strictEqual(page.status, 200);
+        const html = yield* page.text;
+        assert.include(text(html), first.name);
+        assert.include(text(html), workspace.member.name);
+        assert.strictEqual(inputs(html, "ack", "checkbox").length, 1);
+        const later = yield* publishDependant(workspace.owner, `${action}-later`, source.patchId);
+        const before = yield* readPatch(workspace.owner, source.patchId);
+        const fields = {
+          expectedState: action === "retire" ? "live" : "not-deleted",
+          ...(action === "delete" ? { confirm: source.name } : {})
+        };
+        for (const acknowledgement of [{}, { ack: "on" }]) {
+          const refused = yield* post(path, workspace.owner, { ...fields, ...acknowledgement });
+          assert.strictEqual(refused.status, 409);
+          const fresh = yield* refused.text;
+          assert.include(text(fresh), first.name);
+          assert.include(text(fresh), later.name);
+          assert.include(forms(fresh), path);
+          assert.strictEqual(inputs(fresh, "ack", "checkbox").length, 1);
+          assert.deepStrictEqual(yield* readPatch(workspace.owner, source.patchId), before);
+        }
+        const accepted = yield* post(path, workspace.admin, { ...fields, ack: "1" });
+        assert.strictEqual(accepted.status, 303);
+        assert.strictEqual(accepted.headers.location, `${cardPath(source.name)}?all=1`);
+        const saved = yield* readPatch(workspace.owner, source.patchId);
+        assert.strictEqual(saved.patch.state, action === "retire" ? "retired" : "deleted");
+        assert.strictEqual(saved.patch.lastChangedBy, workspace.admin.id);
+        for (const dependant of [first, later]) {
+          const read = yield* readPatch(workspace.owner, dependant.patchId);
+          assert.strictEqual(read.patch.state, "live");
+          assert.strictEqual(read.reads[0]!.state, saved.patch.state);
+        }
+      })
+    );
+
+    it.effect(`refuses a stale ${action} confirmation with the fresh state and actor`, () =>
+      Effect.gen(function* () {
+        const workspace = yield* company();
+        const service = yield* Patches.Patches;
+        const patch = yield* publish(workspace.owner, `stale-${action}-confirmation`);
+        const path = `${cardPath(patch.name)}/${action}?all=1`;
+        const page = yield* request(path, workspace.owner);
+        assert.strictEqual(page.status, 200);
+        const fields = {
+          expectedState: hidden(yield* page.text, "expectedState")!,
+          ...(action === "delete" ? { confirm: patch.name } : {})
+        };
+        if (action === "retire") yield* service.retire(patch.patchId, actor(workspace.admin));
+        else yield* service.delete(patch.patchId, actor(workspace.admin));
+        yield* TestClock.adjust(2 * 60 * 1_000);
         const before = yield* readPatch(workspace.owner, patch.patchId);
-        const response = yield* post(`${cardPath(patch.name)}/restore?all=1`, workspace.admin, {
-          expectedState: state
+        const unavailable = yield* request(path, workspace.owner);
+        assert.strictEqual(unavailable.status, 409);
+        const unavailableHtml = yield* unavailable.text;
+        assert.strictEqual(heading(unavailableHtml), patch.name);
+        assert.include(
+          text(unavailableHtml),
+          `${action === "retire" ? "Retired" : "Deleted"} by Sam`
+        );
+        assert.notInclude(forms(unavailableHtml), path);
+        const response = yield* post(path, workspace.owner, fields);
+        assert.strictEqual(response.status, 409);
+        const html = yield* response.text;
+        assert.strictEqual(heading(html), patch.name);
+        assertStale(html, action === "retire" ? "retired" : "deleted");
+        assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), before);
+      })
+    );
+  }
+
+  it.effect(
+    "uses the current state to decide delete warnings across live and retired transitions",
+    () =>
+      Effect.gen(function* () {
+        const workspace = yield* company();
+        const service = yield* Patches.Patches;
+        for (const initialState of ["live", "retired"] as const) {
+          const source = yield* publishSource(workspace.owner, `delete-from-${initialState}`);
+          const dependant = yield* publishDependant(
+            workspace.member,
+            `reader-from-${initialState}`,
+            source.patchId
+          );
+          if (initialState === "retired")
+            yield* service.retire(source.patchId, actor(workspace.owner), true);
+          const path = `${cardPath(source.name)}/delete`;
+          const page = yield* request(path, workspace.owner);
+          assert.strictEqual(page.status, 200);
+          const fields = {
+            expectedState: hidden(yield* page.text, "expectedState")!,
+            confirm: source.name
+          };
+          if (initialState === "live")
+            yield* service.retire(source.patchId, actor(workspace.admin), true);
+          else yield* service.restore(source.patchId, actor(workspace.admin));
+          const before = yield* readPatch(workspace.owner, source.patchId);
+          const response = yield* post(path, workspace.owner, fields);
+          if (initialState === "live") {
+            assert.strictEqual(response.status, 303);
+          } else {
+            assert.strictEqual(response.status, 409);
+            const html = yield* response.text;
+            assert.include(text(html), dependant.name);
+            assert.strictEqual(inputs(html, "ack", "checkbox").length, 1);
+            assert.deepStrictEqual(yield* readPatch(workspace.owner, source.patchId), before);
+            assert.strictEqual(
+              (yield* post(path, workspace.owner, { ...fields, ack: "1" })).status,
+              303
+            );
+          }
+          const saved = yield* readPatch(workspace.owner, source.patchId);
+          assert.strictEqual(saved.patch.state, "deleted");
+          assert.strictEqual(saved.patch.deletedBy, workspace.owner.id);
+        }
+      })
+  );
+
+  it.effect(
+    "deletes a retired source without warning again and starts a fresh 30-day recovery clock",
+    () =>
+      Effect.gen(function* () {
+        const workspace = yield* company();
+        const service = yield* Patches.Patches;
+        const source = yield* publishSource(workspace.owner, "retired-delete-source");
+        const dependant = yield* publishDependant(
+          workspace.member,
+          "retired-delete-reader",
+          source.patchId
+        );
+        yield* service.retire(source.patchId, actor(workspace.owner), true);
+        yield* TestClock.adjust(7 * DAY);
+        const path = `${cardPath(source.name)}/delete?all=1`;
+        const page = yield* request(path, workspace.owner);
+        assert.strictEqual(page.status, 200);
+        const html = yield* page.text;
+        assert.notInclude(text(html), dependant.name);
+        assert.deepStrictEqual(inputs(html, "ack", "checkbox"), []);
+        assert.match(text(html), /30.day/);
+        assert.include(text(html), "7 Feb 2026");
+        const response = yield* post(path, workspace.owner, {
+          expectedState: "not-deleted",
+          confirm: source.name
         });
         assert.strictEqual(response.status, 303);
-        assert.strictEqual(response.headers.location, `${cardPath(patch.name)}?all=1`);
-        const saved = yield* readPatch(workspace.owner, patch.patchId);
-        assert.strictEqual(saved.patch.state, "live");
-        assert.strictEqual(saved.patch.name, patch.name);
-        assert.strictEqual(saved.patch.currentVersionId, before.patch.currentVersionId);
-        assert.strictEqual(saved.patch.description, before.patch.description);
-        assert.isTrue(
-          links(yield* (yield* request(cardPath(patch.name), workspace.member)).text).some(
-            (link) => link.text === "Open"
-          )
+        const saved = yield* readPatch(workspace.owner, source.patchId);
+        assert.strictEqual(saved.patch.state, "deleted");
+        assert.strictEqual(saved.patch.deletedBy, workspace.owner.id);
+        assert.strictEqual(saved.patch.deletedAt, "2026-01-08T00:00:00.000Z");
+        assert.strictEqual(saved.patch.purgeAt, "2026-02-07T00:00:00.000Z");
+        assert.strictEqual(
+          (yield* readPatch(workspace.member, dependant.patchId)).patch.state,
+          "live"
         );
-      }
+      })
+  );
+
+  it.effect("keeps a mismatched typed delete name escaped and leaves the patch unchanged", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const patch = yield* publish(workspace.owner, "exact-delete-name");
+      const before = yield* readPatch(workspace.owner, patch.patchId);
+      const submitted = '<script>alert("wrong")</script>';
+      const path = `${cardPath(patch.name)}/delete?all=1`;
+      const response = yield* post(path, workspace.owner, {
+        expectedState: "not-deleted",
+        confirm: submitted
+      });
+      assert.strictEqual(response.status, 422);
+      const html = yield* response.text;
+      assert.include(forms(html), path);
+      assert.strictEqual(
+        hidden(html, "confirm"),
+        "&lt;script&gt;alert(&quot;wrong&quot;)&lt;/script&gt;"
+      );
+      assert.notInclude(html, submitted);
+      assert.match(inputs(html, "confirm", "text")[0]!, /\baria-invalid="true"/);
+      assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), before);
     })
+  );
+
+  it.effect(
+    "forbids members on every confirmation route and forbids non-admin owners from reassigning",
+    () =>
+      Effect.gen(function* () {
+        const workspace = yield* company();
+        const service = yield* Patches.Patches;
+        const patch = yield* publish(workspace.owner, "confirmation-permissions");
+        for (const [action, fields] of [
+          ["retire", { expectedState: "live" }],
+          ["delete", { expectedState: "not-deleted", confirm: patch.name }],
+          ["reassign", { expectedOwnerUserId: workspace.owner.id, user: workspace.member.id }],
+          ["restore", { expectedState: "retired" }]
+        ] as const) {
+          if (action === "restore") yield* service.retire(patch.patchId, actor(workspace.owner));
+          const before = yield* readPatch(workspace.owner, patch.patchId);
+          for (const person of action === "reassign"
+            ? [workspace.member, workspace.owner]
+            : [workspace.member]) {
+            const path = `${cardPath(patch.name)}/${action}`;
+            for (const response of [
+              yield* request(path, person),
+              yield* post(path, person, fields)
+            ]) {
+              assert.strictEqual(response.status, 403);
+              const html = yield* response.text;
+              assert.strictEqual(heading(html), patch.name);
+              assert.notInclude(forms(html), path);
+            }
+            assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), before);
+          }
+        }
+      })
+  );
+
+  it.effect(
+    "restores retired and deleted patches at the same address without an acknowledgement",
+    () =>
+      Effect.gen(function* () {
+        const workspace = yield* company();
+        const service = yield* Patches.Patches;
+        const source = yield* publishSource(workspace.owner, "live-restore-source");
+        for (const [state, person] of [
+          ["retired", workspace.owner],
+          ["deleted", workspace.admin]
+        ] as const) {
+          const patch = yield* publishDependant(
+            workspace.owner,
+            `restore-${state}`,
+            source.patchId
+          );
+          if (state === "retired") yield* service.retire(patch.patchId, actor(workspace.owner));
+          else yield* service.delete(patch.patchId, actor(workspace.owner));
+          const before = yield* readPatch(workspace.owner, patch.patchId);
+          for (const viewer of [workspace.owner, workspace.admin]) {
+            const page = yield* request(`${cardPath(patch.name)}/restore?all=1`, viewer);
+            assert.strictEqual(page.status, 303);
+            assert.strictEqual(page.headers.location, `${cardPath(patch.name)}?all=1`);
+          }
+          const response = yield* post(`${cardPath(patch.name)}/restore?all=1`, person, {
+            expectedState: state
+          });
+          assert.strictEqual(response.status, 303);
+          assert.strictEqual(response.headers.location, `${cardPath(patch.name)}?all=1`);
+          const saved = yield* readPatch(workspace.owner, patch.patchId);
+          assert.strictEqual(saved.patch.state, "live");
+          assert.strictEqual(saved.patch.name, patch.name);
+          assert.strictEqual(saved.patch.currentVersionId, before.patch.currentVersionId);
+          assert.strictEqual(saved.patch.description, before.patch.description);
+          assert.strictEqual(saved.patch.lastChangedBy, person.id);
+          assert.isTrue(
+            links(yield* (yield* request(cardPath(patch.name), workspace.member)).text).some(
+              (link) => link.text === "Open"
+            )
+          );
+        }
+      })
   );
 
   for (const action of ["description", "scope", "rollback", "restore"] as const) {
@@ -631,6 +964,9 @@ it.layer(layer)("portal pages on a socket", (it) => {
       yield* service.restore(patch.patchId, actor(workspace.admin));
       yield* TestClock.adjust(2 * 60 * 1_000);
       const before = yield* readPatch(workspace.owner, patch.patchId);
+      const redirect = yield* request(`${cardPath(patch.name)}/restore?all=1`, workspace.owner);
+      assert.strictEqual(redirect.status, 303);
+      assert.strictEqual(redirect.headers.location, `${cardPath(patch.name)}?all=1`);
       const response = yield* post(`${cardPath(patch.name)}/restore`, workspace.owner, {
         expectedState: hidden(form, "expectedState")!
       });
@@ -640,18 +976,15 @@ it.layer(layer)("portal pages on a socket", (it) => {
     })
   );
 
-  it.effect("refuses every member action before stale checks and keeps the card read-only", () =>
+  it.effect("refuses member edits before stale checks and keeps the card read-only", () =>
     Effect.gen(function* () {
       const workspace = yield* company();
-      const service = yield* Patches.Patches;
       const patch = yield* publish(workspace.owner, "member-refused");
       for (const [action, fields] of [
         ["description", { description: "Intrusion", expectedDescriptionUpdatedAt: "" }],
         ["scope", { scope: "public", expectedScope: "public" }],
-        ["rollback", { versionNumber: "999", expectedCurrentVersionId: "stale" }],
-        ["restore", { expectedState: "deleted" }]
+        ["rollback", { versionNumber: "999", expectedCurrentVersionId: "stale" }]
       ] as const) {
-        if (action === "restore") yield* service.retire(patch.patchId, actor(workspace.owner));
         const before = yield* readPatch(workspace.owner, patch.patchId);
         const response = yield* post(`${cardPath(patch.name)}/${action}`, workspace.member, fields);
         assert.strictEqual(response.status, 403);
@@ -752,95 +1085,241 @@ it.layer(layer)("portal pages on a socket", (it) => {
     })
   );
 
-  it.effect("sends an inline restore with newly off sources to a separate warning page", () =>
+  it.effect(
+    "recomputes current-version off sources for restore GET and POST before acknowledgement",
+    () =>
+      Effect.gen(function* () {
+        const workspace = yield* company();
+        const service = yield* Patches.Patches;
+        const sources = [];
+        for (const state of ["retired", "deleted", "gone", "older"] as const)
+          sources.push(yield* publishSource(workspace.owner, `source-${state}`));
+        const [retired, deleted, gone, older] = sources;
+        const consumer = yield* publishDependant(workspace.owner, "reads-sources", older!.patchId);
+        yield* publish(workspace.owner, consumer.name, {
+          intent: "update",
+          patchId: consumer.patchId,
+          manifest: {
+            ...manifest,
+            name: consumer.name,
+            uses: {
+              retired: sourceDeclaration(retired!.patchId),
+              deleted: sourceDeclaration(deleted!.patchId),
+              gone: sourceDeclaration(gone!.patchId)
+            }
+          }
+        });
+        yield* service.retire(consumer.patchId, actor(workspace.owner));
+        const drawn = yield* (yield* request(`${cardPath(consumer.name)}?all=1`, workspace.owner))
+          .text;
+        assert.include(forms(drawn), `${cardPath(consumer.name)}/restore?all=1`);
+        yield* service.retire(retired!.patchId, actor(workspace.owner));
+        yield* service.retire(older!.patchId, actor(workspace.owner));
+        yield* service.delete(deleted!.patchId, actor(workspace.owner));
+        yield* service.delete(gone!.patchId, actor(workspace.owner));
+        yield* TestClock.adjust(30 * DAY);
+        yield* service.purgeDeleted(gone!.patchId);
+        for (const [state, person] of [
+          ["retired", workspace.owner],
+          ["deleted", workspace.admin]
+        ] as const) {
+          if (state === "deleted") yield* service.delete(consumer.patchId, actor(workspace.owner));
+          const path = `${cardPath(consumer.name)}/restore?all=1`;
+          const before = yield* readPatch(workspace.owner, consumer.patchId);
+          const refused = yield* post(path, person, { expectedState: state });
+          assert.strictEqual(refused.status, 409);
+          const refusedHtml = yield* refused.text;
+          for (const viewer of [workspace.owner, workspace.admin]) {
+            const page = yield* request(path, viewer);
+            assert.strictEqual(page.status, 200);
+            for (const html of [yield* page.text, refusedHtml]) {
+              assert.include(text(html), retired!.name);
+              assert.include(text(html), deleted!.name);
+              assert.include(text(html), gone!.patchId);
+              for (const sourceState of ["retired", "deleted", "gone"])
+                assert.include(text(html), sourceState);
+              assert.include(text(html), "notes");
+              assert.notInclude(html, older!.name);
+              assert.include(forms(html), path);
+              assert.strictEqual(hidden(html, "expectedState"), state);
+              assert.strictEqual(inputs(html, "ack", "checkbox").length, 1);
+              assert.include(
+                links(html).map((link) => link.href),
+                `${cardPath(consumer.name)}?all=1`
+              );
+            }
+          }
+          assert.deepStrictEqual(yield* readPatch(workspace.owner, consumer.patchId), before);
+          const fresh = yield* (yield* request(`${cardPath(consumer.name)}?all=1`, workspace.owner))
+            .text;
+          assert.notInclude(forms(fresh), path);
+          assert.include(
+            links(fresh).map((link) => link.href),
+            path
+          );
+          const restored = yield* post(path, person, { expectedState: state, ack: "1" });
+          assert.strictEqual(restored.status, 303);
+          assert.strictEqual(restored.headers.location, `${cardPath(consumer.name)}?all=1`);
+          const saved = yield* readPatch(workspace.owner, consumer.patchId);
+          assert.strictEqual(saved.patch.state, "live");
+          assert.strictEqual(saved.patch.lastChangedBy, person.id);
+          assert.strictEqual(saved.patch.currentVersionId, before.patch.currentVersionId);
+        }
+      })
+  );
+
+  it.effect(
+    "filters reassignment to active company members and redisplays invalid targets without changing ownership",
+    () =>
+      Effect.gen(function* () {
+        const workspace = yield* company();
+        const foreign = yield* company();
+        const users = yield* Users.Users;
+        const patch = yield* publish(workspace.owner, "reassign-picker");
+        const path = `${cardPath(patch.name)}/reassign`;
+        const page = yield* request(`${path}?all=1`, workspace.admin);
+        assert.strictEqual(page.status, 200);
+        const html = yield* page.text;
+        assert.sameMembers(radioValues(html), [
+          workspace.owner.id,
+          workspace.member.id,
+          workspace.admin.id
+        ]);
+        assert.notInclude(html, foreign.owner.email);
+        assert.match(html, /<form\b[^>]*method="get"/i);
+        assert.match(html, /<form\b[^>]*method="post"/i);
+        assert.strictEqual(inputs(html, "q", "search").length, 1);
+        assert.strictEqual(hidden(html, "all"), "1");
+        assert.strictEqual(hidden(html, "expectedOwnerUserId"), workspace.owner.id);
+        const matching = yield* request(`${path}?q=aLeX&all=1`, workspace.admin);
+        assert.strictEqual(matching.status, 200);
+        assert.deepStrictEqual(radioValues(yield* matching.text), [workspace.member.id]);
+        const emailMatch = yield* request(
+          `${path}?q=${encodeURIComponent(workspace.owner.email)}`,
+          workspace.admin
+        );
+        assert.deepStrictEqual(radioValues(yield* emailMatch.text), [workspace.owner.id]);
+        const noMatch = yield* request(`${path}?q=nobody-has-this-name&all=1`, workspace.admin);
+        assert.strictEqual(noMatch.status, 200);
+        const empty = yield* noMatch.text;
+        assert.deepStrictEqual(radioValues(empty), []);
+        assert.strictEqual(hidden(empty, "q"), "nobody-has-this-name");
+        assert.match(empty, /<button\b(?=[^>]*type="submit")(?=[^>]*\bdisabled)[^>]*>/);
+        yield* users.deactivate({ companyId: workspace.id, userId: workspace.member.id });
+        const before = yield* readPatch(workspace.owner, patch.patchId);
+        for (const target of [workspace.member.id, foreign.owner.id, "usr_missing"]) {
+          const refused = yield* post(`${path}?q=Alex&all=1`, workspace.admin, {
+            expectedOwnerUserId: workspace.owner.id,
+            user: target
+          });
+          assert.strictEqual(refused.status, 409);
+          const fresh = yield* refused.text;
+          assert.notStrictEqual(heading(fresh), patch.name);
+          assert.strictEqual(hidden(fresh, "q"), "");
+          assert.sameMembers(radioValues(fresh), [workspace.owner.id, workspace.admin.id]);
+          assert.notMatch(fresh, /<button\b[^>]*\bdisabled/);
+          assert.include(forms(fresh), `${path}?all=1`);
+          assert.include(
+            links(fresh).map((link) => link.href),
+            `${cardPath(patch.name)}?all=1`
+          );
+          assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), before);
+        }
+        const active = yield* request(path, workspace.admin);
+        assert.sameMembers(radioValues(yield* active.text), [
+          workspace.owner.id,
+          workspace.admin.id
+        ]);
+        const recovered = yield* post(`${path}?all=1`, workspace.admin, {
+          expectedOwnerUserId: workspace.owner.id,
+          user: workspace.admin.id
+        });
+        assert.strictEqual(recovered.status, 303);
+        assert.strictEqual(
+          (yield* readPatch(workspace.admin, patch.patchId)).owner.id,
+          workspace.admin.id
+        );
+      })
+  );
+
+  it.effect(
+    "reassigns repeatedly in every lifecycle state and treats the current owner as a stamp-preserving no-op",
+    () =>
+      Effect.gen(function* () {
+        const workspace = yield* company();
+        const service = yield* Patches.Patches;
+        for (const state of ["live", "retired", "deleted"] as const) {
+          const patch = yield* publish(workspace.owner, `reassign-${state}`);
+          if (state === "retired") yield* service.retire(patch.patchId, actor(workspace.owner));
+          if (state === "deleted") yield* service.delete(patch.patchId, actor(workspace.owner));
+          const original = yield* readPatch(workspace.owner, patch.patchId);
+          const path = `${cardPath(patch.name)}/reassign?all=1`;
+          let currentOwner = workspace.owner.id;
+          for (const next of [workspace.member, workspace.owner, workspace.admin]) {
+            const card = yield* (yield* request(`${cardPath(patch.name)}?all=1`, workspace.admin))
+              .text;
+            assert.include(
+              links(card).map((link) => link.href),
+              path
+            );
+            const page = yield* request(path, workspace.admin);
+            assert.strictEqual(page.status, 200);
+            const html = yield* page.text;
+            assert.strictEqual(hidden(html, "expectedOwnerUserId"), currentOwner);
+            assert.include(radioValues(html), next.id);
+            yield* TestClock.adjust(1_000);
+            const response = yield* post(path, workspace.admin, {
+              expectedOwnerUserId: currentOwner,
+              user: next.id
+            });
+            assert.strictEqual(response.status, 303);
+            assert.strictEqual(response.headers.location, `${cardPath(patch.name)}?all=1`);
+            const saved = yield* readPatch(workspace.owner, patch.patchId);
+            assert.strictEqual(saved.owner.id, next.id);
+            assert.strictEqual(saved.patch.ownerUserId, next.id);
+            assert.strictEqual(saved.patch.reassignedBy, workspace.admin.id);
+            assert.strictEqual(saved.patch.lastChangedBy, workspace.admin.id);
+            assert.strictEqual(saved.patch.state, state);
+            assert.strictEqual(saved.patch.retiredAt, original.patch.retiredAt);
+            assert.strictEqual(saved.patch.deletedAt, original.patch.deletedAt);
+            assert.strictEqual(saved.patch.purgeAt, original.patch.purgeAt);
+            assert.strictEqual(saved.patch.currentVersionId, original.patch.currentVersionId);
+            currentOwner = next.id;
+          }
+          const beforeNoop = yield* readPatch(workspace.owner, patch.patchId);
+          yield* TestClock.adjust(DAY);
+          const noop = yield* post(path, workspace.admin, {
+            expectedOwnerUserId: currentOwner,
+            user: currentOwner
+          });
+          assert.strictEqual(noop.status, 303);
+          assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), beforeNoop);
+        }
+      })
+  );
+
+  it.effect("refuses reassignment against an old owner and returns the fresh card and actor", () =>
     Effect.gen(function* () {
       const workspace = yield* company();
       const service = yield* Patches.Patches;
-      const sources = [];
-      for (const state of ["retired", "deleted", "gone", "older"] as const) {
-        sources.push(
-          yield* publish(workspace.owner, `source-${state}`, {
-            filename: null,
-            manifest: {
-              ...manifest,
-              name: `source-${state}`,
-              tier: 1,
-              tables: {
-                notes: {
-                  description: "Notes keyed by id",
-                  columns: { body: { kind: "text" } },
-                  indexes: {},
-                  shared: true
-                }
-              }
-            }
-          })
-        );
-      }
-      const [retired, deleted, gone, older] = sources;
-      const declaration = (patchId: string) => ({
-        kind: "sharedTable" as const,
-        patchId,
-        table: "notes",
-        id: sharedTableId(patchId, "notes"),
-        revision: 1
-      });
-      const consumer = yield* publish(workspace.owner, "reads-sources", {
-        manifest: {
-          ...manifest,
-          name: "reads-sources",
-          uses: { older: declaration(older!.patchId) }
-        }
-      });
-      yield* publish(workspace.owner, consumer.name, {
-        intent: "update",
-        patchId: consumer.patchId,
-        manifest: {
-          ...manifest,
-          name: consumer.name,
-          uses: {
-            retired: declaration(retired!.patchId),
-            deleted: declaration(deleted!.patchId),
-            gone: declaration(gone!.patchId)
-          }
-        }
-      });
-      yield* service.retire(consumer.patchId, actor(workspace.owner));
-      const drawn = yield* (yield* request(`${cardPath(consumer.name)}?all=1`, workspace.owner))
-        .text;
-      assert.include(forms(drawn), `${cardPath(consumer.name)}/restore?all=1`);
-      yield* service.retire(retired!.patchId, actor(workspace.owner));
-      yield* service.retire(older!.patchId, actor(workspace.owner));
-      yield* service.delete(deleted!.patchId, actor(workspace.owner));
-      yield* service.delete(gone!.patchId, actor(workspace.owner));
-      yield* TestClock.adjust(30 * DAY);
-      yield* service.purgeDeleted(gone!.patchId);
-      const before = yield* readPatch(workspace.owner, consumer.patchId);
-      const response = yield* post(`${cardPath(consumer.name)}/restore?all=1`, workspace.owner, {
-        expectedState: "retired"
+      const patch = yield* publish(workspace.owner, "stale-reassign");
+      const path = `${cardPath(patch.name)}/reassign?all=1`;
+      const page = yield* request(path, workspace.admin);
+      assert.strictEqual(page.status, 200);
+      const expectedOwner = hidden(yield* page.text, "expectedOwnerUserId")!;
+      yield* service.reassign(patch.patchId, actor(workspace.admin), workspace.member.id);
+      yield* TestClock.adjust(2 * 60 * 1_000);
+      const before = yield* readPatch(workspace.owner, patch.patchId);
+      const response = yield* post(path, workspace.admin, {
+        expectedOwnerUserId: expectedOwner,
+        user: workspace.admin.id
       });
       assert.strictEqual(response.status, 409);
       const html = yield* response.text;
-      assert.notStrictEqual(heading(html), consumer.name);
-      assert.include(text(html), retired!.name);
-      assert.include(text(html), deleted!.name);
-      assert.include(text(html), gone!.patchId);
-      for (const state of ["retired", "deleted", "gone"]) assert.include(text(html), state);
-      assert.include(text(html), "notes");
-      assert.notInclude(html, older!.name);
-      assert.include(
-        links(html).map((link) => link.href),
-        `${cardPath(consumer.name)}/restore?all=1`
-      );
-      assert.isFalse(forms(html).some((path) => path.includes("/restore")));
-      assert.deepStrictEqual(yield* readPatch(workspace.owner, consumer.patchId), before);
-      const fresh = yield* (yield* request(`${cardPath(consumer.name)}?all=1`, workspace.owner))
-        .text;
-      assert.notInclude(forms(fresh), `${cardPath(consumer.name)}/restore?all=1`);
-      assert.include(
-        links(fresh).map((link) => link.href),
-        `${cardPath(consumer.name)}/restore?all=1`
-      );
+      assert.strictEqual(heading(html), patch.name);
+      assertStale(html, "reassigned");
+      assert.include(text(html), workspace.member.name);
+      assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), before);
     })
   );
 
@@ -848,7 +1327,14 @@ it.layer(layer)("portal pages on a socket", (it) => {
     Effect.gen(function* () {
       const workspace = yield* company();
       const patch = yield* publish(workspace.owner, "guarded-tool");
-      for (const path of ["/", cardPath(patch.name), `${cardPath(patch.name)}/versions`]) {
+      for (const path of [
+        "/",
+        cardPath(patch.name),
+        `${cardPath(patch.name)}/versions`,
+        ...["retire", "delete", "restore", "reassign"].map(
+          (action) => `${cardPath(patch.name)}/${action}`
+        )
+      ]) {
         const response = yield* request(path, null, undefined, {
           authorization: "Bearer patchy-dev-token"
         });
@@ -876,6 +1362,21 @@ it.layer(layer)("portal pages on a socket", (it) => {
         assert.include(text(yield* response.text), "Submit this form from this Patchy instance.");
         assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), before);
       }
+      for (const [action, actionFields] of [
+        ["retire", { expectedState: "live" }],
+        ["delete", { expectedState: "not-deleted", confirm: patch.name }],
+        ["restore", { expectedState: "retired" }],
+        ["reassign", { expectedOwnerUserId: workspace.owner.id, user: workspace.member.id }]
+      ] as const) {
+        const path = `${cardPath(patch.name)}/${action}`;
+        const signedOut = yield* request(path, null, actionFields, { origin: PUBLIC_BASE_URL });
+        assert.strictEqual(signedOut.status, 401);
+        const crossOrigin = yield* request(path, workspace.admin, actionFields, {
+          origin: "https://foreign.invalid"
+        });
+        assert.strictEqual(crossOrigin.status, 403);
+        assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), before);
+      }
       const accepted = yield* request(
         `${cardPath(patch.name)}/description`,
         workspace.owner,
@@ -886,25 +1387,6 @@ it.layer(layer)("portal pages on a socket", (it) => {
       assert.strictEqual(
         (yield* readPatch(workspace.owner, patch.patchId)).patch.description,
         "Same-origin browser"
-      );
-    })
-  );
-
-  it.effect("keeps deferred action pages in the signed-in app shell", () =>
-    Effect.gen(function* () {
-      const workspace = yield* company();
-      const patch = yield* publish(workspace.owner, "deferred-pages");
-      for (const action of ["retire", "delete", "restore", "reassign"]) {
-        const response = yield* request(`${cardPath(patch.name)}/${action}`, workspace.owner);
-        assert.strictEqual(response.status, 404);
-        assert.include(
-          links(yield* response.text).map((link) => link.href),
-          "/company"
-        );
-      }
-      assert.strictEqual(
-        (yield* request(`${cardPath("a".repeat(33))}/retire`, workspace.owner)).status,
-        414
       );
     })
   );
@@ -931,7 +1413,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
         yield* TestClock.adjust(30 * DAY);
         yield* service.purgeDeleted(deleted.patchId);
         for (const name of ["unknown-address", other.name, "old-address", deleted.name]) {
-          for (const suffix of ["", "/versions"]) {
+          for (const suffix of ["", "/versions", "/retire", "/delete", "/restore", "/reassign"]) {
             const response = yield* request(`${cardPath(name)}${suffix}`, workspace.member);
             assert.strictEqual(response.status, 404);
             const html = yield* response.text;
@@ -951,7 +1433,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
           );
         }
         assert.strictEqual((yield* request("/patches/new-address", workspace.member)).status, 200);
-        for (const suffix of ["", "/versions"]) {
+        for (const suffix of ["", "/versions", "/retire", "/delete", "/restore", "/reassign"]) {
           assert.strictEqual(
             (yield* request(`${cardPath("a".repeat(33))}${suffix}`, workspace.owner)).status,
             414
@@ -964,6 +1446,22 @@ it.layer(layer)("portal pages on a socket", (it) => {
           })).status,
           414
         );
+        for (const [action, fields] of [
+          ["retire", { expectedState: "live" }],
+          ["delete", { expectedState: "not-deleted", confirm: "unknown-address" }],
+          ["restore", { expectedState: "retired" }],
+          ["reassign", { expectedOwnerUserId: workspace.owner.id, user: workspace.member.id }]
+        ] as const) {
+          assert.strictEqual(
+            (yield* post(`${cardPath("a".repeat(33))}/${action}`, workspace.admin, fields)).status,
+            414
+          );
+          assert.strictEqual(
+            (yield* post(`${cardPath("unknown-address")}/${action}`, workspace.admin, fields))
+              .status,
+            404
+          );
+        }
       })
   );
 });

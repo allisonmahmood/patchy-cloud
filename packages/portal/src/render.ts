@@ -1,7 +1,9 @@
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import type { RequireSession } from "@patchy/auth";
+import type { Users } from "@patchy/companies";
 import { escapeAttribute, escapeHtml } from "@patchy/core";
-import type { Patches } from "@patchy/patches";
+import { Patches } from "@patchy/patches";
 
 export const styles = `
   .portal { display: grid; grid-template-columns: minmax(220px, 280px) minmax(0, 1fr); gap: 36px; align-items: start; }
@@ -322,17 +324,113 @@ export const renderVersions = (input: {
 }): string =>
   `<article class="portal-subpage"><p><a href="${escapeAttribute(cardPath(input.card.patch, input.all))}">Back to ${escapeHtml(input.card.patch.name)}</a></p><h1 class="page-heading">Versions of ${escapeHtml(input.card.patch.name)}</h1>${versionsTable(input.card, input.card.versions, input.viewer, input.all, input.now)}${canManage(input.card, input.viewer) && input.card.patch.state === "live" ? '<p class="supporting-text">The address changes for everyone now. Tables and the description do not move.</p>' : ""}</article>`;
 
-export const renderRestoreConflict = (input: {
+export type ConfirmationAction = "retire" | "delete" | "restore" | "reassign";
+
+const confirmationDependants = (groups: readonly DependantGroup[]): string =>
+  groups.length === 0
+    ? '<p class="supporting-text">Nothing else reads this patch.</p>'
+    : `<p>These patches will lose access to its tables on their next read, until it is restored.</p><ul class="confirmation-list">${groups
+        .map(
+          (group) =>
+            `<li><code>${escapeHtml(group.name)}</code> (${escapeHtml(group.ownerName)}) reads ${group.tables.map((table) => `<code>${escapeHtml(table)}</code>`).join(", ")}</li>`
+        )
+        .join("")}</ul>`;
+
+const confirmationAcknowledgement = (text: string, checked: boolean): string =>
+  `<label class="confirmation-acknowledgement"><input class="field-checkbox" type="checkbox" name="ack" value="1" required${checked ? " checked" : ""}><span>${escapeHtml(text)}</span></label>`;
+
+export const renderConfirmation = (input: {
   readonly card: Patches.PortalCard;
   readonly viewer: RequireSession.Viewer["Service"];
   readonly all: boolean;
+  readonly now: number;
+  readonly action: ConfirmationAction;
+  readonly members: readonly Users.User[];
+  readonly query: string;
+  readonly notice?: string;
+  readonly submittedName?: string;
+  readonly nameError?: string;
+  readonly selectedOwnerId?: string;
+  readonly acknowledged?: boolean;
 }): string => {
-  const { card, viewer, all } = input;
-  const sources = card.offSources
-    .map(
-      (source) =>
-        `<li><code>${escapeHtml(source.name ?? source.patchId)}</code> / <code>${escapeHtml(source.table)}</code>: ${escapeHtml(source.state)}</li>`
-    )
-    .join("");
-  return `<article class="portal-subpage"><p><a href="${escapeAttribute(cardPath(card.patch, all))}">Back to ${escapeHtml(card.patch.name)}</a></p><h1 class="page-heading">Restore ${escapeHtml(card.patch.name)}?</h1><div class="note note-refused" role="alert">Some sources are off. Nothing was done.</div><p class="confirmation-consequence">This patch will serve, but it will error when it reads these tables until their sources are restored too.</p><ul class="confirmation-list">${sources}</ul><div class="confirmation-actions">${canManage(card, viewer) ? `<a class="btn btn-primary" href="${escapeAttribute(cardPath(card.patch, all, "restore"))}">Review restore…</a>` : ""}<a class="btn btn-quiet" href="${escapeAttribute(cardPath(card.patch, all))}">Cancel</a></div></article>`;
+  const { card, viewer, all, action } = input;
+  const { patch } = card;
+  const postPath = cardPath(patch, all, action);
+  const cancelPath = cardPath(patch, all);
+  const acknowledged = input.acknowledged === true;
+  let verb: string;
+  let fields: string;
+  let consequence: string;
+  let filter = "";
+  let disabled = false;
+
+  switch (action) {
+    case "retire": {
+      verb = "Retire";
+      consequence = `Nobody can open <code>${escapeHtml(patch.name)}</code> until it is restored. Its page, versions, tables, files and name are kept indefinitely. The owner or an admin can restore it.`;
+      const groups = dependantGroups(card);
+      fields = `${hidden("expectedState", "live")}${confirmationDependants(groups)}${groups.length === 0 ? "" : confirmationAcknowledgement("I understand these patches will lose access to its tables.", acknowledged)}`;
+      break;
+    }
+    case "delete": {
+      verb = "Delete";
+      const reclaimAt = DateTime.formatIso(
+        DateTime.makeUnsafe(input.now + Duration.toMillis(Patches.RECOVERY_WINDOW))
+      );
+      consequence = `${patch.state === "retired" ? "Its readers already lost access when it was retired. This starts the 30-day clock." : `Nobody can open <code>${escapeHtml(patch.name)}</code> until it is restored. Delete keeps it for 30 days.`} The owner or an admin can restore it during that window. On ${escapeHtml(dateLabel(reclaimAt))}, the page, its versions, tables, files and the name will be reclaimed for good.`;
+      const groups = patch.state === "live" ? dependantGroups(card) : [];
+      const dependants =
+        patch.state === "live"
+          ? `${confirmationDependants(groups)}${groups.length === 0 ? "" : confirmationAcknowledgement("I understand these patches will lose access to its tables.", acknowledged)}`
+          : "";
+      const nameError =
+        input.nameError === undefined
+          ? ""
+          : `<p class="field-error" id="confirm-error" role="alert">${escapeHtml(input.nameError)}</p>`;
+      fields = `${hidden("expectedState", "not-deleted")}${dependants}<label class="field-label" for="confirm">Type ${escapeHtml(patch.name)} to confirm</label><input class="field" id="confirm" name="confirm" value="${escapeAttribute(input.submittedName ?? "")}" required autocomplete="off" spellcheck="false" aria-describedby="confirm-hint${input.nameError === undefined ? "" : " confirm-error"}"${input.nameError === undefined ? "" : ' aria-invalid="true"'}><p class="field-hint" id="confirm-hint">Enter the patch name exactly.</p>${nameError}`;
+      break;
+    }
+    case "restore": {
+      verb = "Restore";
+      consequence =
+        "This patch will serve, but it will error when it reads these tables until their sources are restored too. A source that is gone cannot be restored.";
+      const sources = card.offSources
+        .map(
+          (source) =>
+            `<li><code>${escapeHtml(source.name ?? source.patchId)}</code> / <code>${escapeHtml(source.table)}</code>: ${escapeHtml(source.state)}</li>`
+        )
+        .join("");
+      fields = `${hidden("expectedState", patch.state)}<ul class="confirmation-list">${sources}</ul>${confirmationAcknowledgement("I understand this patch will error when it reads these tables.", acknowledged)}`;
+      break;
+    }
+    case "reassign": {
+      verb = "Reassign";
+      consequence = `Choose an active member of ${escapeHtml(viewer.company.name)} to own this patch. Its versions keep their original publisher attribution. Choosing ${escapeHtml(card.owner.name)}, the current owner, changes nothing.`;
+      const activeMembers = input.members.filter(
+        (member) => member.deactivatedAt === null && member.companyId === viewer.company.id
+      );
+      const selectedOwnerId = activeMembers.some((member) => member.id === input.selectedOwnerId)
+        ? input.selectedOwnerId
+        : undefined;
+      const needle = input.query.trim().toLowerCase();
+      const members = activeMembers.filter(
+        (member) =>
+          member.id === selectedOwnerId ||
+          member.name.toLowerCase().includes(needle) ||
+          member.email.toLowerCase().includes(needle)
+      );
+      filter = `<form method="get" action="${escapeAttribute(cardPath(patch, false, action))}">${all ? hidden("all", "1") : ""}<label class="field-label" for="member-query">Find a member</label><input class="field" type="search" id="member-query" name="q" value="${escapeAttribute(input.query)}"><div class="actions"><button class="btn" type="submit">Filter members</button></div></form>`;
+      const choices = members
+        .map(
+          (member, index) =>
+            `<li><label class="field-choice"><input class="field-radio" type="radio" name="user" value="${escapeAttribute(member.id)}" required aria-describedby="member-consequence-${index}"${member.id === selectedOwnerId ? " checked" : ""}><span>${escapeHtml(member.name)} (${escapeHtml(member.email)})${member.id === card.owner.id ? ", current owner" : ""}</span></label><p class="field-hint" id="member-consequence-${index}">${escapeHtml(member.name)} can publish, retire or delete it at once; you can reassign it again.</p></li>`
+        )
+        .join("");
+      fields = `${hidden("expectedOwnerUserId", card.owner.id)}${members.length === 0 ? '<p class="supporting-text">No active members match this filter.</p>' : `<div role="radiogroup" aria-label="New owner"><ul class="confirmation-list">${choices}</ul></div>`}`;
+      disabled = members.length === 0;
+      break;
+    }
+  }
+
+  return `<article class="portal-subpage"><p><a href="${escapeAttribute(cancelPath)}">Back to ${escapeHtml(patch.name)}</a></p><h1 class="page-heading">${verb} ${escapeHtml(patch.name)}?</h1>${refusal(input.notice)}${filter}<form class="confirmation-form" method="post" action="${escapeAttribute(postPath)}"><p class="confirmation-consequence">${consequence}</p>${fields}<div class="confirmation-actions"><button class="btn ${action === "retire" || action === "delete" ? "btn-danger" : "btn-primary"}" type="submit"${disabled ? " disabled" : ""}>${verb} ${escapeHtml(patch.name)}</button><a class="btn btn-quiet" href="${escapeAttribute(cancelPath)}">Cancel</a></div></form></article>`;
 };
