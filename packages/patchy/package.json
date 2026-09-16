@@ -64,7 +64,7 @@
     "@patchy/primitives": "workspace:*",
     "@patchy/runtime": "workspace:*",
     "@patchy/serving": "workspace:*",
-    "vite": "^7.3.1",
+    "vite": "^8.3.0",
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
     "@patchy/api": "workspace:*",
