@@ -8,7 +8,6 @@
  * (docs/adr/ADR-0004).
  */
 import * as Schema from "effect/Schema";
-import * as Struct from "effect/Struct";
 import {
   HasDependants,
   NotOwner,
@@ -59,6 +58,8 @@ const refusal = Schema.Union([
   })
 ]);
 
+// This adapter relays the wire's code, not a service's own failure model.
+// Separate CLI tags would duplicate @patchy/api's refusal union.
 const refusalMessage = (value: typeof refusal.Type): string => {
   switch (value.code) {
     case "not_owner":
@@ -98,7 +99,11 @@ export class RejectedError extends Schema.TaggedError<RejectedError>()("Rejected
   }
 }
 
-export const refusalDetails = (error: RejectedError) => Struct.omit(error.refusal, ["ok", "error"]);
+// Share the relay's ADR-0004 field allowlist; wire additions must not widen CLI output.
+const encodeRefusalDetails = Schema.encodeSync(
+  Schema.Struct({ code: Schema.optionalKey(Schema.String), ...refusalFields })
+);
+export const refusalDetails = (error: RejectedError) => encodeRefusalDetails(error.refusal);
 
 /** No usable answer from the instance: connect, timeout, 5xx, an unparseable body. */
 export class UnreachableError extends Schema.TaggedError<UnreachableError>()("UnreachableError", {

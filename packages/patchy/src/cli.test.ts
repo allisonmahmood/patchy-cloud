@@ -3092,8 +3092,10 @@ describe("repo description sync and change notices", () => {
     writeFileSync(config, privateConfig);
     const refused = await runCli(["publish", "--json"], options);
     expect(refused).toMatchObject({ status: 2, stdout: "" });
-    expect(JSON.parse(refused.stderr)).toMatchObject({
+    expect(JSON.parse(refused.stderr)).toEqual({
       ok: false,
+      error:
+        "Other live patches read these tables.\n- mnopqrstuvwx reader (Sam)\nAsk the person you are working for before forcing.",
       kind: "rejected",
       code: "has_dependants",
       dependants,
