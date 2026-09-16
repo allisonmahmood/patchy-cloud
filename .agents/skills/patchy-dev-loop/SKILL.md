@@ -62,6 +62,10 @@ Read it again before changing that binding on an existing instance: a healthy
 idempotent start does not reseed or move an enrolled user between companies.
 The seed also backfills missing patch names from titles in creation order; named
 patches keep their addresses. The test Postgres template runs the same backfill.
+The shared seed contains identity rows, not example patches. A fresh portal is
+empty; optional HTML fixture publishing creates live patches with empty descriptions.
+Follow DEVELOPMENT's **Portal and patch lifecycle** recipe to create and inspect
+retired or deleted examples rather than assuming the seed supplies them.
 The runner also supplies both company-database URLs from its embedded Postgres;
 company databases are created only when resources need them. For placement,
 pool-budget or PGlite changes, follow DEVELOPMENT's **How it works** section:
@@ -163,6 +167,15 @@ selection and definitive-refusal clearing. Exercise concurrent callers and a
 killed caller: recovery resends the winner, while a stale response must leave a
 newer attempt intact. New attempts check the CLI against `GET /api/release`.
 Production-domain Clerk handshake verification remains a separate live check.
+
+For portal or lifecycle changes, follow DEVELOPMENT's
+[Portal and patch lifecycle](../../../docs/DEVELOPMENT.md#portal-and-patch-lifecycle)
+recipe. Check the index and card as the seeded company's browser user, then the
+retired/deleted address notice, restore and shared-reader refusal/recovery.
+The machine token exercises owner CLI verbs, not browser pages or admin acts.
+The packed e2e covers that lifecycle with a real shared-table consumer and the
+description pull-down; the real-Postgres suite covers the publish, retire,
+reassign, sweep and restore races.
 
 For a login change, follow the logout check in
 [Device login through the CLI](../../../docs/DEVELOPMENT.md#device-login-through-the-cli)

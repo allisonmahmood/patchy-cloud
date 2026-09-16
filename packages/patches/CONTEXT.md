@@ -20,6 +20,10 @@ _Avoid_: runtime (the thing a tier names), level, plan (tiers are capability, no
 The one user in a company a patch belongs to, and the only one who publishes to it. Any machine token acting as that user can manage the patch; an admin may manage any company patch in the portal or reassign it to an active company member, but cannot publish without becoming its owner.
 _Avoid_: creator (a version has a creating machine; ownership belongs to the user), editor, author
 
+**Reassignment**:
+An admin changing a patch's owner to an active member of the same company, including themselves. The patch keeps its identity and every version's publisher attribution.
+_Avoid_: transfer (a patch never moves companies), republish, claim
+
 **Sharing scope**:
 Who may open a patch: `company` means signed-in colleagues in its company; `public` means anyone with the link to its current version, without signing in. Older versions stay behind the company door; new patches default to company sharing, and the owner or an admin may change a live patch's scope without publishing.
 _Avoid_: visibility, token scope (a publishing key does not grant reading access)
@@ -69,7 +73,7 @@ A live, enabled patch that declares one of this patch's shared tables in any ret
 _Avoid_: consumer (a runtime word), subscriber
 
 **Description**:
-One paragraph, written by the building agent and edited by the owner or an admin, saying what a patch does. Decided as local-owned: the repo's copy is the truth, publish sends it, and a portal edit is pulled back into the repo with a notice.
+One paragraph saying what a patch does, written by the building agent and editable by its owner or an admin. It is local-owned with [description sync](../patchy/CONTEXT.md): publish sends the repo's text, and newer cloud edits pull back into the repo with a notice.
 _Avoid_: purpose (the agent instruction, kept separately), title (the document's `<title>`), summary
 
 **Version**:
