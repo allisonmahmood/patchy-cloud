@@ -70,8 +70,9 @@ an alternative server mode.
 **Migrations target their owning database.** Platform metadata migrations run
 through the platform ledger. Company inventory initialization runs in each
 company database; both drivers execute its same PostgreSQL statements.
-The PGlite path emits one statement per `sql.unsafe` call and normalizes `int8`
-and `DATE` codecs to match the PostgreSQL driver. Its fsync-off directories are
+Both paths emit one statement per `sql.unsafe` call, and both read `int8` and
+`DATE` as strings and timestamps as `Date` (the PGlite parsers mirror the
+`@patchy/sql` row codecs). Its fsync-off directories are
 recreatable local state, not a backup or a production database.
 
 The pre-deployment name backfill requested by #195 is a seed operation, not an

@@ -8,11 +8,15 @@ import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import {
   type Authorization,
+  BadRequest,
   CurrentIdentity,
+  decodeBody,
+  GenerateRequest,
   Generated,
   PatchyApi,
   PublishRefused,
   PublishUnavailable,
+  readBody,
   Release,
   refuse
 } from "@patchy/api";
@@ -24,6 +28,22 @@ import * as Generation from "./Generation.js";
 const encodeRelease = Schema.encodeSync(Release);
 const encodeGenerated = Schema.encodeSync(Generated);
 const noStore = { headers: { "cache-control": "private, no-store" } };
+/** A manifest and a skill list, never a bundle. */
+const MAX_GENERATE_BODY_BYTES = 1024 * 1024;
+// Unknown fields are refused here, not stripped: the HttpApi payload decoder ignores them.
+const decodeGenerate = decodeBody(GenerateRequest, { onExcessProperty: "error" });
+const malformed = (field?: string) =>
+  refuse(
+    BadRequest,
+    {
+      ok: false,
+      error:
+        field === undefined
+          ? "Request body must be a JSON generate request."
+          : `Invalid generate request field: ${field}.`
+    },
+    noStore.headers
+  );
 const rejected = (error: Generation.GenerationRefused) =>
   Effect.succeed(
     refuse(PublishRefused, { ok: false, code: error.code, error: error.message }, noStore.headers)
@@ -49,9 +69,17 @@ export const layer: Layer.Layer<
           })
         )
       )
-      .handle("generate", ({ payload }) =>
+      .handleRaw("generate", () =>
         Effect.gen(function* () {
           const identity = yield* CurrentIdentity;
+          const payload = yield* readBody(MAX_GENERATE_BODY_BYTES).pipe(
+            Effect.flatMap(decodeGenerate),
+            Effect.catchTags({
+              MalformedBody: (error) => Effect.succeed(malformed(error.field)),
+              BodyTooLarge: () => Effect.succeed(malformed())
+            })
+          );
+          if (HttpServerResponse.isHttpServerResponse(payload)) return payload;
           const result = yield* Generation.generate(identity.company.id, payload).pipe(
             Effect.catchTags({
               Busy: (error) =>

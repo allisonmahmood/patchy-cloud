@@ -51,17 +51,17 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(Te
           const { admin } = yield* companyWithMember("claim-refresh");
           // An audit observer makes unnecessary writes observable without
           // inspecting the service's query text or PostgreSQL's row internals.
-          yield* ddl(`
-          CREATE TABLE claim_refresh_audit (user_id TEXT NOT NULL);
-          CREATE FUNCTION audit_claim_refresh() RETURNS trigger LANGUAGE plpgsql AS $$
-          BEGIN
-            INSERT INTO claim_refresh_audit (user_id) VALUES (NEW.id);
-            RETURN NEW;
-          END;
-          $$;
-          CREATE TRIGGER claim_refresh_audit AFTER UPDATE ON users
-            FOR EACH ROW EXECUTE FUNCTION audit_claim_refresh();
-        `);
+          yield* ddl(
+            `CREATE TABLE claim_refresh_audit (user_id TEXT NOT NULL)`,
+            `CREATE FUNCTION audit_claim_refresh() RETURNS trigger LANGUAGE plpgsql AS $$
+                BEGIN
+                  INSERT INTO claim_refresh_audit (user_id) VALUES (NEW.id);
+                  RETURN NEW;
+                END;
+                $$`,
+            `CREATE TRIGGER claim_refresh_audit AFTER UPDATE ON users
+                  FOR EACH ROW EXECUTE FUNCTION audit_claim_refresh()`
+          );
           const claims = {
             clerkUserId: admin.clerkUserId,
             email: admin.email.toUpperCase(),
@@ -355,18 +355,18 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(Te
         yield* sql`
           INSERT INTO machine_tokens (id, user_id, name, token_hash, created_at, expires_at, last_used_at)
           VALUES ('tok_deactivation_atomic', ${member.id}, 'Laptop', 'deactivation-atomic-hash', now(), now() + interval '90 days', now())`;
-        yield* ddl(`
-          CREATE FUNCTION refuse_atomic_revocation() RETURNS trigger LANGUAGE plpgsql AS $$
-          BEGIN
-            IF NEW.id = 'tok_deactivation_atomic' THEN
-              RAISE EXCEPTION 'Revocation unavailable';
-            END IF;
-            RETURN NEW;
-          END;
-          $$;
-          CREATE TRIGGER refuse_atomic_revocation BEFORE UPDATE ON machine_tokens
-            FOR EACH ROW EXECUTE FUNCTION refuse_atomic_revocation();
-        `);
+        yield* ddl(
+          `CREATE FUNCTION refuse_atomic_revocation() RETURNS trigger LANGUAGE plpgsql AS $$
+              BEGIN
+                IF NEW.id = 'tok_deactivation_atomic' THEN
+                  RAISE EXCEPTION 'Revocation unavailable';
+                END IF;
+                RETURN NEW;
+              END;
+              $$`,
+          `CREATE TRIGGER refuse_atomic_revocation BEFORE UPDATE ON machine_tokens
+                FOR EACH ROW EXECUTE FUNCTION refuse_atomic_revocation()`
+        );
         assert.strictEqual(
           (yield* users.deactivate({ companyId: company.id, userId: member.id }).pipe(Effect.flip))
             ._tag,

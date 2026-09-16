@@ -3,30 +3,11 @@ import * as Effect from "effect/Effect";
 import * as Cause from "effect/Cause";
 import * as Exit from "effect/Exit";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { LEDGER_TABLE, migrate, splitStatements, type Migrations } from "./index.js";
+import { LEDGER_TABLE, migrate, type Migrations } from "./index.js";
 import * as Testing from "./testing.js";
 
 const ddl = (statement: string) =>
   Effect.flatMap(SqlClient.SqlClient, (sql) => sql.unsafe(statement));
-
-it("splits a script on statement ends, not on the `;` inside quotes, bodies or comments", () => {
-  assert.deepStrictEqual(
-    splitStatements(`
-      -- a comment; with a semicolon
-      CREATE TABLE a (note TEXT DEFAULT 'x; y', "odd;name" TEXT);
-      /* block; comment */
-      CREATE FUNCTION f() RETURNS void LANGUAGE plpgsql AS $$
-        BEGIN RETURN; END;
-      $$;
-      CREATE INDEX a_idx ON a (note)
-    `),
-    [
-      `-- a comment; with a semicolon\n      CREATE TABLE a (note TEXT DEFAULT 'x; y', "odd;name" TEXT)`,
-      `/* block; comment */\n      CREATE FUNCTION f() RETURNS void LANGUAGE plpgsql AS $$\n        BEGIN RETURN; END;\n      $$`,
-      "CREATE INDEX a_idx ON a (note)"
-    ]
-  );
-});
 
 /** Two stand-in capability records, spread the way `{ ...auth, ...patches }` will be. */
 const widgets: Migrations = { "1_widgets": ddl("CREATE TABLE widgets (id integer PRIMARY KEY)") };

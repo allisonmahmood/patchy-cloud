@@ -1,5 +1,6 @@
 import * as PgliteClient from "@effect/sql-pglite/PgliteClient";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -191,9 +192,12 @@ export const layer = (options: Options) =>
       PgliteClient.layer({
         dataDir: options.dataDir,
         relaxedDurability: true,
+        // Match the platform pool's row codecs (`@patchy/sql`): int8 and date
+        // as strings, a plain timestamp as UTC wall time.
         parsers: {
           20: (value) => value,
-          1082: (value) => value
+          1082: (value) => value,
+          1114: (value) => DateTime.toDateUtc(DateTime.makeUnsafe(`${value.replace(" ", "T")}Z`))
         }
       })
     )

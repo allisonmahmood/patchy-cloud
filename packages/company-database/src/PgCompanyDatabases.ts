@@ -78,7 +78,7 @@ class PoolKey extends Data.Class<{
   readonly databaseName: string;
 }> {}
 
-/** A scoped pool on the shared row codecs: `int8` and `date` as strings, the shapes PGlite answers too. */
+/** A scoped pool on the shared row codecs: `int8` as a string, timestamps as `Date`, the shapes PGlite answers too. */
 const pool = (url: Redacted.Redacted<string>, max: number) =>
   Sql.pool({
     url,

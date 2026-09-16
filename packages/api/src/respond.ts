@@ -96,8 +96,11 @@ export const readBody = (maxBytes: number) =>
   });
 
 /** A decoder for one wire schema; compiled once, so build it outside the request. */
-export const decodeBody = <S extends Schema.Top & Schema.Codec<unknown, unknown>>(schema: S) => {
-  const decode = Schema.decodeUnknownResult(schema);
+export const decodeBody = <S extends Schema.Top & Schema.Codec<unknown, unknown>>(
+  schema: S,
+  options?: SchemaAST.ParseOptions
+) => {
+  const decode = Schema.decodeUnknownResult(schema, options);
   return (body: unknown): Effect.Effect<S["Type"], MalformedBody> => {
     const result = decode(body);
     return Result.isSuccess(result)

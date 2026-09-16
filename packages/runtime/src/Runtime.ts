@@ -259,8 +259,12 @@ export const config = Config.all({
   )
 });
 
-const decodePrincipal = Schema.decodeUnknownEffect(Schema.fromJsonString(RuntimePrincipal));
-const decodeBodyPrincipal = Schema.decodeUnknownEffect(RuntimePrincipal);
+const decodePrincipal = Schema.decodeUnknownEffect(Schema.fromJsonString(RuntimePrincipal), {
+  onExcessProperty: "error"
+});
+const decodeBodyPrincipal = Schema.decodeUnknownEffect(RuntimePrincipal, {
+  onExcessProperty: "error"
+});
 export const decodeWire = Schema.decodeUnknownEffect(
   Schema.NumberFromString.check(Schema.isInt(), Schema.isGreaterThan(0))
 );

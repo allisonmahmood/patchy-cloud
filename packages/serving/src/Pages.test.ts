@@ -626,13 +626,13 @@ it.layer(layer)("pages", (it) => {
       yield* TestClock.setTime(Date.UTC(2026, 0, 1));
       const { path, patchId } = yield* publish("Survives a failed visit");
       const sql = yield* SqlClient.SqlClient;
-      yield* ddl(`
-        CREATE FUNCTION fail_visit() RETURNS trigger AS $$
-          BEGIN RAISE EXCEPTION 'Forced visit recording failure.'; END
-        $$ LANGUAGE plpgsql;
-        CREATE TRIGGER fail_visit BEFORE UPDATE OF visit_count ON patches
-          FOR EACH ROW EXECUTE FUNCTION fail_visit();
-      `);
+      yield* ddl(
+        `CREATE FUNCTION fail_visit() RETURNS trigger AS $$
+            BEGIN RAISE EXCEPTION 'Forced visit recording failure.'; END
+          $$ LANGUAGE plpgsql`,
+        `CREATE TRIGGER fail_visit BEFORE UPDATE OF visit_count ON patches
+            FOR EACH ROW EXECUTE FUNCTION fail_visit()`
+      );
 
       const [before] = yield* sql`SELECT visit_count FROM patches WHERE id = ${patchId}`;
       const served = yield* get(path);

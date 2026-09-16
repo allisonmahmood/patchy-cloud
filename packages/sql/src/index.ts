@@ -22,7 +22,11 @@ export type Migrations = Parameters<typeof Migrator.fromRecord>[0];
 /** The ledger Effect's Migrator keeps: `(migration_id integer, name, created_at)`. */
 export const LEDGER_TABLE = "schema_migrations";
 
-/** A built-in binary codec with its decoded value and parameter mapped through `to` and `from`. */
+/**
+ * A built-in binary codec with its decoded value and parameter mapped through
+ * `to` and `from`. The registry is deliberately left off both calls: with it,
+ * lookup would land on this wrapper again and recurse.
+ */
 const mapCodec = <A, B>(
   oid: number,
   to: (value: A) => B,
@@ -33,15 +37,16 @@ const mapCodec = <A, B>(
 });
 
 /**
- * The row codecs every Patchy client shares. The native client decodes `int8`
+ * The row codecs every Patchy pool shares. The native client decodes `int8`
  * to `bigint` and timestamps to epoch milliseconds; Patchy keeps `int8` as a
  * decimal string and timestamps as `Date`, so row schemas stay `Schema.Date`
- * and PGlite (see `@patchy/company-database`) answers the same shapes.
- * Inferred parameters arrive as the built-in codec's value: a `bigint` for an
- * integer beyond `int4`, epoch milliseconds for a `Date`.
+ * and PGlite (see `@patchy/company-database`) answers the same shapes. A plain
+ * `timestamp` is read as UTC wall time on both. Inferred parameters arrive as
+ * the built-in codec's value: a `bigint` for an integer beyond `int4`, epoch
+ * milliseconds for a `Date`.
  */
-export const types: PgTypes.Registry = PgTypes.makeRegistry();
-types.register(
+const rowCodecs = PgTypes.makeRegistry();
+rowCodecs.register(
   PgTypes.OID.int8,
   mapCodec<bigint, string | bigint>(PgTypes.OID.int8, String, BigInt),
   { arrayOid: PgTypes.OID.int8Array }
@@ -50,10 +55,11 @@ for (const [oid, arrayOid] of [
   [PgTypes.OID.timestamptz, PgTypes.OID.timestamptzArray],
   [PgTypes.OID.timestamp, PgTypes.OID.timestampArray]
 ] as const) {
-  types.register(
+  rowCodecs.register(
     oid,
     mapCodec<number, Date | number>(
       oid,
+      // The `globalDate` guardrail forbids `new Date`; this is the same instant.
       (millis) => DateTime.toDateUtc(DateTime.makeUnsafe(millis)),
       (value) => (value instanceof Date ? value.getTime() : value)
     ),
@@ -68,69 +74,24 @@ for (const [oid, arrayOid] of [
  * in between (which never finishes).
  */
 export const pool = (config: PgClient.PgPoolConfig) =>
-  PgClient.make({ ...config, types }).pipe(
+  PgClient.make({ ...config, types: rowCodecs }).pipe(
     Effect.provideService(Clock.Clock, Clock.Clock.defaultValue())
   );
+
+/** The client on a URL already in hand — the migration seam and the test layer. */
+export const layerFromUrl = (url: Redacted.Redacted<string>) => PgClient.layerFrom(pool({ url }));
 
 /** The client the server runs on: `DATABASE_URL`, read as a secret. */
 export const layer = Layer.unwrap(Effect.map(Config.Redacted("DATABASE_URL"), layerFromUrl));
 
-/** The same client on a URL already in hand — the migration seam and the test layer. */
-export function layerFromUrl(url: Redacted.Redacted<string>) {
-  return PgClient.layerFrom(pool({ url }));
-}
-
-const dollarQuote = /^\$[A-Za-z_][A-Za-z0-9_]*\$|^\$\$/;
-
 /**
- * Splits a multi-statement script on the `;` that end statements, skipping
- * quoted strings and identifiers, dollar-quoted bodies and comments. The
- * native client speaks the extended protocol, which takes one statement per
- * query; migrations stay readable as one script and run one statement at a time.
+ * Runs statements in order on the ambient client; the shape of a migration
+ * record. One statement per call: the client's extended protocol rejects
+ * multi-statement strings.
  */
-export const splitStatements = (source: string): ReadonlyArray<string> => {
-  const statements: string[] = [];
-  let start = 0;
-  let content = false;
-  let i = 0;
-  while (i < source.length) {
-    const char = source[i]!;
-    const pair = source.slice(i, i + 2);
-    if (pair === "--") {
-      const end = source.indexOf("\n", i);
-      i = end === -1 ? source.length : end;
-    } else if (pair === "/*") {
-      const end = source.indexOf("*/", i + 2);
-      i = end === -1 ? source.length : end + 2;
-    } else if (char === "'" || char === '"') {
-      const end = source.indexOf(char, i + 1);
-      i = end === -1 ? source.length : end + 1;
-      content = true;
-    } else if (char === "$" && dollarQuote.test(source.slice(i))) {
-      const tag = dollarQuote.exec(source.slice(i))![0];
-      const end = source.indexOf(tag, i + tag.length);
-      i = end === -1 ? source.length : end + tag.length;
-      content = true;
-    } else if (char === ";") {
-      if (content) statements.push(source.slice(start, i).trim());
-      start = i + 1;
-      content = false;
-      i++;
-    } else {
-      if (!/\s/.test(char)) content = true;
-      i++;
-    }
-  }
-  if (content) statements.push(source.slice(start).trim());
-  return statements;
-};
-
-/** Runs a DDL script statement by statement on the ambient client; the shape of a migration record. */
-export const ddl = (source: string) =>
+export const ddl = (...statements: ReadonlyArray<string>) =>
   Effect.flatMap(SqlClient.SqlClient, (sql) =>
-    Effect.forEach(splitStatements(source), (statement) => sql.unsafe(statement), {
-      discard: true
-    })
+    Effect.forEach(statements, (statement) => sql.unsafe(statement), { discard: true })
   );
 
 /**
