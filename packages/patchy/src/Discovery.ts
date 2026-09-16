@@ -14,7 +14,7 @@ import {
   WrongState
 } from "@patchy/api";
 import * as Api from "./Api.js";
-import { LocalError, WrongPatchState } from "./CliError.js";
+import { LocalError, RejectedError } from "./CliError.js";
 import * as Output from "./Output.js";
 
 const encodeList = Schema.encodeSync(
@@ -34,7 +34,11 @@ const decodePatchReference = Schema.decodeUnknownEffect(
 
 const refusal = Effect.fn("Discovery.refusal")(function* (error: Api.ClientFailure) {
   if (isWrongState(error)) {
-    return yield* new WrongPatchState({ state: error.state, cause: error });
+    return yield* new RejectedError({
+      refusal: error,
+      hint: `Patch is ${error.state}; pass --state ${error.state === "deleted" ? "all" : error.state}.`,
+      cause: error
+    });
   }
   return yield* Api.classify(error, "Could not read discovery.");
 });

@@ -114,8 +114,11 @@ const refused = (error: Api.ClientFailure, fallback: string) =>
       (error.status === 401 || (error.status === undefined && error.error === UNAUTHORIZED))
     ) {
       return yield* new RejectedError({
-        message: `${error.error}${defaultHostHint(apiUrl)}`,
-        ...(error.code === undefined ? {} : { code: error.code }),
+        refusal: {
+          ok: false,
+          error: `${error.error}${defaultHostHint(apiUrl)}`,
+          ...(error.code === undefined ? {} : { code: error.code })
+        },
         cause: error
       });
     }
@@ -412,13 +415,16 @@ const sendPublish = Effect.fn("sendPublish")(function* (
           error.error === PATCH_NOT_FOUND
         ) {
           return yield* new RejectedError({
-            message:
-              attempt.target.mode === "repo"
-                ? "Patch is unavailable for update. Remove patch from patchy.json to create a new patch."
-                : attempt.target.explicitPatch
-                  ? "Patch is unavailable for update. --patch never creates a new patch."
-                  : "Cached patch is unavailable for update. Use --new to create a new patch.",
-            ...(error.code === undefined ? {} : { code: error.code }),
+            refusal: {
+              ok: false,
+              error:
+                attempt.target.mode === "repo"
+                  ? "Patch is unavailable for update. Remove patch from patchy.json to create a new patch."
+                  : attempt.target.explicitPatch
+                    ? "Patch is unavailable for update. --patch never creates a new patch."
+                    : "Cached patch is unavailable for update. Use --new to create a new patch.",
+              ...(error.code === undefined ? {} : { code: error.code })
+            },
             cause: error
           });
         }
@@ -780,8 +786,11 @@ const del = Command.make(
             Effect.catch((error) => {
               if (Api.isRefusal(error) && error.error === PATCH_NOT_FOUND) {
                 return new RejectedError({
-                  message: `Patch ${patchId} is unavailable for deletion: it is not on ${instance.apiUrl}, or this publishing key does not own it.`,
-                  ...(error.code === undefined ? {} : { code: error.code }),
+                  refusal: {
+                    ok: false,
+                    error: `Patch ${patchId} is unavailable for deletion: it is not on ${instance.apiUrl}, or this publishing key does not own it.`,
+                    ...(error.code === undefined ? {} : { code: error.code })
+                  },
                   cause: error
                 });
               }
