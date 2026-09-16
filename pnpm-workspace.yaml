@@ -10,7 +10,7 @@ catalog:
   effect: 4.0.0-rc.112
   "@effect/platform-node": 4.0.0-rc.112
   "@effect/sql-pg": 4.0.0-rc.112
-  "@effect/sql-pglite": 4.0.0-rc.112
+  "@effect/sql-pglite": 4.0.0-rc.115
   "@effect/vitest": 4.0.0-rc.112
   "@effect/language-service": 0.87.2
 # Wait one day before resolving new releases so compromised versions have time to be removed.
