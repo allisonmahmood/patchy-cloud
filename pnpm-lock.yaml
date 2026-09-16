@@ -15,7 +15,7 @@ overrides:
   '@effect/platform-node': 4.0.0-rc.112
   '@effect/sql-pg': 4.0.0-rc.112
   '@effect/sql-pglite': 4.0.0-rc.112
-  '@effect/vitest': 4.0.0-rc.112
+  '@effect/vitest': 4.0.0-rc.115
   '@effect/language-service': 0.87.2
 
 patchedDependencies:
@@ -35,8 +35,8 @@ importers:
         specifier: 4.0.0-rc.112
         version: 4.0.0-rc.112(effect@4.0.0-rc.112)
       '@effect/vitest':
-        specifier: 4.0.0-rc.112
-        version: 4.0.0-rc.112(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 4.0.0-rc.115
+        version: 4.0.0-rc.115(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0)))
       '@eslint/js':
         specifier: ^10.0.1
         version: 10.0.1(eslint@10.10.0)
@@ -156,8 +156,8 @@ importers:
         version: 4.0.0-rc.112
     devDependencies:
       '@effect/vitest':
-        specifier: 4.0.0-rc.112
-        version: 4.0.0-rc.112(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 4.0.0-rc.115
+        version: 4.0.0-rc.115(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0)))
       vitest:
         specifier: ^4.1.11
         version: 4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0))
@@ -172,8 +172,8 @@ importers:
         version: 5.51.8
     devDependencies:
       '@effect/vitest':
-        specifier: 4.0.0-rc.112
-        version: 4.0.0-rc.112(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 4.0.0-rc.115
+        version: 4.0.0-rc.115(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0)))
       vitest:
         specifier: ^4.1.11
         version: 4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0))
@@ -218,8 +218,8 @@ importers:
         specifier: 4.0.0-rc.112
         version: 4.0.0-rc.112(effect@4.0.0-rc.112)(redis@6.2.1)
       '@effect/vitest':
-        specifier: 4.0.0-rc.112
-        version: 4.0.0-rc.112(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 4.0.0-rc.115
+        version: 4.0.0-rc.115(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0)))
       tough-cookie:
         specifier: ^6.0.2
         version: 6.0.2
@@ -243,8 +243,8 @@ importers:
         version: 4.0.0-rc.112
     devDependencies:
       '@effect/vitest':
-        specifier: 4.0.0-rc.112
-        version: 4.0.0-rc.112(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 4.0.0-rc.115
+        version: 4.0.0-rc.115(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0)))
       vitest:
         specifier: ^4.1.11
         version: 4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0))
@@ -280,8 +280,8 @@ importers:
         specifier: 4.0.0-rc.112
         version: 4.0.0-rc.112(effect@4.0.0-rc.112)(redis@6.2.1)
       '@effect/vitest':
-        specifier: 4.0.0-rc.112
-        version: 4.0.0-rc.112(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 4.0.0-rc.115
+        version: 4.0.0-rc.115(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0)))
       '@types/pg':
         specifier: ^8.23.1
         version: 8.23.1
@@ -305,8 +305,8 @@ importers:
         version: 4.0.0-rc.112
     devDependencies:
       '@effect/vitest':
-        specifier: 4.0.0-rc.112
-        version: 4.0.0-rc.112(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 4.0.0-rc.115
+        version: 4.0.0-rc.115(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0)))
       vitest:
         specifier: ^4.1.11
         version: 4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0))
@@ -351,8 +351,8 @@ importers:
         specifier: 4.0.0-rc.112
         version: 4.0.0-rc.112(effect@4.0.0-rc.112)(redis@6.2.1)
       '@effect/vitest':
-        specifier: 4.0.0-rc.112
-        version: 4.0.0-rc.112(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 4.0.0-rc.115
+        version: 4.0.0-rc.115(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0)))
       '@patchy/limits':
         specifier: workspace:*
         version: link:../limits
@@ -376,8 +376,8 @@ importers:
         version: 4.0.0-rc.112
     devDependencies:
       '@effect/vitest':
-        specifier: 4.0.0-rc.112
-        version: 4.0.0-rc.112(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 4.0.0-rc.115
+        version: 4.0.0-rc.115(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0)))
       vitest:
         specifier: ^4.1.11
         version: 4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0))
@@ -419,8 +419,8 @@ importers:
         version: 4.0.0-rc.112
     devDependencies:
       '@effect/vitest':
-        specifier: 4.0.0-rc.112
-        version: 4.0.0-rc.112(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 4.0.0-rc.115
+        version: 4.0.0-rc.115(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0)))
       '@patchy/auth':
         specifier: workspace:*
         version: link:../auth
@@ -441,8 +441,8 @@ importers:
         specifier: 4.0.0-rc.112
         version: 4.0.0-rc.112(effect@4.0.0-rc.112)
       '@effect/vitest':
-        specifier: 4.0.0-rc.112
-        version: 4.0.0-rc.112(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 4.0.0-rc.115
+        version: 4.0.0-rc.115(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0)))
       '@patchy/api':
         specifier: workspace:*
         version: link:../api
@@ -523,8 +523,8 @@ importers:
         specifier: 4.0.0-rc.112
         version: 4.0.0-rc.112(effect@4.0.0-rc.112)(redis@6.2.1)
       '@effect/vitest':
-        specifier: 4.0.0-rc.112
-        version: 4.0.0-rc.112(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 4.0.0-rc.115
+        version: 4.0.0-rc.115(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0)))
       '@patchy/company-database':
         specifier: workspace:*
         version: link:../company-database
@@ -563,8 +563,8 @@ importers:
         specifier: 4.0.0-rc.112
         version: 4.0.0-rc.112(effect@4.0.0-rc.112)(redis@6.2.1)
       '@effect/vitest':
-        specifier: 4.0.0-rc.112
-        version: 4.0.0-rc.112(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 4.0.0-rc.115
+        version: 4.0.0-rc.115(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0)))
       '@patchy/auth':
         specifier: workspace:*
         version: link:../auth
@@ -600,8 +600,8 @@ importers:
         version: 4.0.0-rc.112
     devDependencies:
       '@effect/vitest':
-        specifier: 4.0.0-rc.112
-        version: 4.0.0-rc.112(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 4.0.0-rc.115
+        version: 4.0.0-rc.115(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0)))
       '@patchy/companies':
         specifier: workspace:*
         version: link:../companies
@@ -631,8 +631,8 @@ importers:
         specifier: 4.0.0-rc.112
         version: 4.0.0-rc.112(effect@4.0.0-rc.112)(redis@6.2.1)
       '@effect/vitest':
-        specifier: 4.0.0-rc.112
-        version: 4.0.0-rc.112(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 4.0.0-rc.115
+        version: 4.0.0-rc.115(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0)))
       patchy:
         specifier: workspace:*
         version: link:../patchy
@@ -665,8 +665,8 @@ importers:
         specifier: 4.0.0-rc.112
         version: 4.0.0-rc.112(effect@4.0.0-rc.112)(redis@6.2.1)
       '@effect/vitest':
-        specifier: 4.0.0-rc.112
-        version: 4.0.0-rc.112(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 4.0.0-rc.115
+        version: 4.0.0-rc.115(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0)))
       '@patchy/analytics':
         specifier: workspace:*
         version: link:../analytics
@@ -702,8 +702,8 @@ importers:
         version: 4.0.0-rc.112
     devDependencies:
       '@effect/vitest':
-        specifier: 4.0.0-rc.112
-        version: 4.0.0-rc.112(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 4.0.0-rc.115
+        version: 4.0.0-rc.115(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0)))
       vitest:
         specifier: ^4.1.11
         version: 4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0))
@@ -742,8 +742,8 @@ importers:
         version: 18.4.0-beta.17
     devDependencies:
       '@effect/vitest':
-        specifier: 4.0.0-rc.112
-        version: 4.0.0-rc.112(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 4.0.0-rc.115
+        version: 4.0.0-rc.115(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0)))
 
 packages:
 
@@ -879,11 +879,11 @@ packages:
     peerDependencies:
       effect: 4.0.0-rc.112
 
-  '@effect/vitest@4.0.0-rc.112':
-    resolution: {integrity: sha512-mEKh/FI64mt8JK1/v9mpOrJYdnp+UFZdRUBMEdZMiKz7klg6NPqVgg/oeAGH6wOOQc2iAPcfc2H9BbAv1KyzMQ==}
+  '@effect/vitest@4.0.0-rc.115':
+    resolution: {integrity: sha512-DJR0hfdr3HNXAkzW8AzfvUz6VmrNFLrKk9tZGDURi33faMyxkc7ZewxELMMZwGpOTGN4mfqYVbX2CXgI+ZJBeQ==}
     peerDependencies:
       effect: 4.0.0-rc.112
-      vitest: '>=4.1.0 <5.0.0'
+      vitest: '>=5.0.0 <6.0.0'
 
   '@electric-sql/pglite@0.5.8':
     resolution: {integrity: sha512-n9tsbUOhwx2epK1V0ZG9Ar4SHWUju04dhmzZXiSBXwBoleOvIfals33NAaWgagQVAL4Rbvx/Ptsu3P+pA09f6Q==}
@@ -2721,7 +2721,7 @@ snapshots:
       '@electric-sql/pglite': 0.5.8
       effect: 4.0.0-rc.112
 
-  '@effect/vitest@4.0.0-rc.112(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0)))':
+  '@effect/vitest@4.0.0-rc.115(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0)))':
     dependencies:
       effect: 4.0.0-rc.112
       vitest: 4.1.11(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.13)(yaml@2.9.0))
