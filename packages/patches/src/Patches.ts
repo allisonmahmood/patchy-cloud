@@ -625,6 +625,7 @@ export class Patches extends Context.Service<
     readonly withDependencyLock: (
       actorUserId: string
     ) => <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E | SqlError, R>;
+    /** Company-readable inventory; unavailable company-database inventory is null, not empty. */
     readonly companyInventory: (
       patchId: string,
       access: ReadAccess
@@ -712,7 +713,8 @@ export class Patches extends Context.Service<
     readonly retire: (
       patchId: string,
       actor: Actor,
-      force?: boolean
+      force?: boolean,
+      expectedOwnerUserId?: string
     ) => Effect.Effect<Patch, LifecycleError | SqlError>;
     readonly delete: (
       patchId: string,
@@ -723,7 +725,8 @@ export class Patches extends Context.Service<
       patchId: string,
       actor: Actor,
       force?: boolean,
-      expectedState?: PatchState
+      expectedState?: PatchState,
+      expectedOwnerUserId?: string
     ) => Effect.Effect<Patch, LifecycleError | SqlError>;
     readonly rollback: (
       patchId: string,
@@ -1860,10 +1863,13 @@ export const make = Effect.gen(function* () {
   const retire = Effect.fn("Patches.retire")(function* (
     patchId: string,
     actor: Actor,
-    force?: boolean
+    force?: boolean,
+    expectedOwnerUserId?: string
   ) {
     yield* lockDependencies(actor.userId);
     const row = yield* manageable(patchId, actor);
+    if (expectedOwnerUserId !== undefined && row.ownerUserId !== expectedOwnerUserId)
+      return yield* new StaleAction({ patchId });
     if (stateOf(row) !== "live") return yield* new WrongState({ state: stateOf(row) });
     yield* refuseDependants(patchId, row.companyId, force);
     const at = yield* now;
@@ -1894,10 +1900,13 @@ export const make = Effect.gen(function* () {
     patchId: string,
     actor: Actor,
     force?: boolean,
-    expectedState?: PatchState
+    expectedState?: PatchState,
+    expectedOwnerUserId?: string
   ) {
     yield* lockDependencies(actor.userId);
     const row = yield* manageable(patchId, actor);
+    if (expectedOwnerUserId !== undefined && row.ownerUserId !== expectedOwnerUserId)
+      return yield* new StaleAction({ patchId });
     if (stateOf(row) === "live") return yield* new WrongState({ state: "live" });
     const millis = yield* Clock.currentTimeMillis;
     const purgeMillis =

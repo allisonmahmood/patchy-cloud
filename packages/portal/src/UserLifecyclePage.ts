@@ -6,7 +6,6 @@ import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import * as UrlParams from "effect/unstable/http/UrlParams";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { pageResponse, RequireSession, Session } from "@patchy/auth";
 import { Users } from "@patchy/companies";
 import { escapeAttribute, escapeHtml } from "@patchy/core";
@@ -106,7 +105,6 @@ export const handle = Effect.fn("UserLifecyclePage.handle")(function* (id: strin
   const users = yield* Users.Users;
   const patches = yield* Patches.Patches;
   const canOpen = yield* Patches.Openability;
-  const sql = yield* SqlClient.SqlClient;
   const access = {
     companyId: viewer.company.id,
     userId: viewer.user.id,
@@ -218,10 +216,10 @@ export const handle = Effect.fn("UserLifecyclePage.handle")(function* (id: strin
     )
       return confirm("Acknowledge what breaks before confirming. Nothing was done.", 409);
     const actor = { userId: viewer.user.id, admin: true };
-    // Reassign takes the patch row before the user row; keep the same order here.
+    // Use ID order across the selection; keep patch rows before the user row as reassign does.
     for (const row of selected.sort((a, b) => a.patch.id.localeCompare(b.patch.id))) {
-      if (action === "deactivate") yield* patches.retire(row.patch.id, actor, true);
-      else yield* patches.restore(row.patch.id, actor, true, "retired");
+      if (action === "deactivate") yield* patches.retire(row.patch.id, actor, true, id);
+      else yield* patches.restore(row.patch.id, actor, true, "retired", id);
     }
     if (action === "deactivate") yield* users.deactivate(ref);
     else yield* users.reactivate(ref);
@@ -231,11 +229,9 @@ export const handle = Effect.fn("UserLifecyclePage.handle")(function* (id: strin
     });
   });
   return yield* (
-    choice === "confirm"
+    choice === "keep" || choice === "confirm"
       ? patches.withDependencyLock(viewer.user.id)(run)
-      : choice === "keep"
-        ? sql.withTransaction(run)
-        : run
+      : run
   ).pipe(
     Effect.catchTags({
       UserNotFound: (error) => Effect.succeed(refuse(error.message, 404)),

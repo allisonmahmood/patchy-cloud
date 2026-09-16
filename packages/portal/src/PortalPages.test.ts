@@ -1,7 +1,9 @@
 import { assert, it } from "@effect/vitest";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import { TestClock } from "effect/testing";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
@@ -1488,6 +1490,83 @@ it.layer(layer)("portal pages on a socket", (it) => {
 });
 
 it.layer(layer)("user lifecycle pages on a socket", (it) => {
+  for (const action of ["deactivate", "reactivate"] as const) {
+    it.effect(
+      `refuses ${action} when a selected patch is reassigned while confirmation waits`,
+      () =>
+        Effect.gen(function* () {
+          const workspace = yield* company();
+          const patches = yield* Patches.Patches;
+          const users = yield* Users.Users;
+          const sql = yield* SqlClient.SqlClient;
+          const unrelated = yield* publish(workspace.member, `${action}-unrelated`);
+          const first = yield* publish(workspace.owner, `z-${action}-first`);
+          const moved = yield* publish(workspace.owner, `a-${action}-moved`);
+          if (action === "reactivate") {
+            yield* patches.retire(first.patchId, actor(workspace.admin));
+            yield* patches.retire(moved.patchId, actor(workspace.admin));
+            yield* users.deactivate({ companyId: workspace.id, userId: workspace.owner.id });
+          }
+          const beforeUser = yield* readUser(workspace.owner);
+          const beforeFirst = yield* readPatch(workspace.admin, first.patchId);
+          const locked = yield* Deferred.make<number>();
+          const commit = yield* Deferred.make<void>();
+          const reassigning = yield* sql
+            .withTransaction(
+              Effect.gen(function* () {
+                const reassigned = yield* patches.reassign(
+                  moved.patchId,
+                  actor(workspace.admin),
+                  workspace.member.id,
+                  workspace.owner.id
+                );
+                const [backend] = yield* sql<{ pid: number }>`SELECT pg_backend_pid() AS pid`;
+                yield* Deferred.succeed(locked, backend!.pid);
+                yield* Deferred.await(commit);
+                return reassigned;
+              })
+            )
+            .pipe(Effect.forkScoped);
+          const blocker = yield* Deferred.await(locked);
+          const confirmation = yield* post(userPath(workspace.owner, action), workspace.admin, {
+            choice: "confirm",
+            patch: [moved.patchId, first.patchId]
+          }).pipe(Effect.forkScoped);
+          // Wait for the real HTTP transaction to reach the reassignment's row lock.
+          yield* sql<{ pid: number }>`
+            SELECT pid FROM pg_stat_activity
+            WHERE datname = current_database()
+              AND ${blocker} = ANY(pg_blocking_pids(pid)) AND wait_event_type = 'Lock'`.pipe(
+            Effect.repeat({ until: (rows) => rows.length === 1 }),
+            Effect.timeout("10 seconds"),
+            TestClock.withLive
+          );
+          yield* patches
+            .setDescription(
+              unrelated.patchId,
+              actor(workspace.member),
+              "Edited during confirmation"
+            )
+            .pipe(Effect.timeout("10 seconds"), TestClock.withLive);
+          yield* Deferred.succeed(commit, undefined);
+          const reassigned = yield* Fiber.join(reassigning);
+          const response = yield* Fiber.join(confirmation);
+          assert.strictEqual(response.status, 409);
+          assert.deepStrictEqual(yield* readUser(workspace.owner), beforeUser);
+          assert.deepStrictEqual(yield* readPatch(workspace.admin, first.patchId), beforeFirst);
+          assert.deepStrictEqual(
+            (yield* readPatch(workspace.admin, moved.patchId)).patch,
+            reassigned
+          );
+          assert.strictEqual(
+            (yield* readPatch(workspace.member, unrelated.patchId)).patch.description,
+            "Edited during confirmation"
+          );
+        }).pipe(Effect.scoped),
+      15_000
+    );
+  }
+
   it.effect("renders lifecycle picks and previews while company mutation locks are held", () =>
     Effect.gen(function* () {
       const workspace = yield* company();
