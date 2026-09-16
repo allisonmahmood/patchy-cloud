@@ -977,6 +977,306 @@ it.layer(Layer.fresh(publishLayer))("owner lifecycle over machine tokens", (it) 
   );
 });
 
+it.layer(
+  Layer.fresh(publishLayer).pipe(
+    Layer.provide(
+      Layer.succeed(
+        Patches.Openability,
+        (patch, userId) => patch.name !== "hidden-discovery" || userId === uploader.user.id
+      )
+    )
+  )
+)("patch discovery over machine tokens", (it) => {
+  it.effect("reports unavailable inventory without inventing an empty database", () =>
+    Effect.gen(function* () {
+      const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+      const colleague = yield* client.pipe(Effect.provide(Fixtures.as(reader)));
+      const created = yield* owner.publish({
+        payload: publishRequest({
+          html: html("No company database"),
+          manifest: { ...Fixtures.manifest, name: "discovery-no-database" }
+        })
+      });
+      const [detail, response] = yield* colleague.detail({
+        params: { patchRef: created.patchId },
+        query: {},
+        responseMode: "decoded-and-response"
+      });
+      assert.isNull(detail.inventory);
+      assert.strictEqual(response.headers["cache-control"], "private, no-store");
+      const primitive = yield* colleague.primitive({
+        params: { patchRef: created.patchId, name: "notes" },
+        query: {},
+        responseMode: "response-only"
+      });
+      assert.strictEqual(primitive.status, 503);
+      expect(yield* primitive.json).toMatchObject({ code: "source_unavailable" });
+    })
+  );
+
+  it.effect("hides unopenable patches before resolving state and respects mine", () =>
+    Effect.gen(function* () {
+      const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+      const colleague = yield* client.pipe(Effect.provide(Fixtures.as(reader)));
+      const created = yield* owner.publish({
+        payload: publishRequest({
+          html: html("Hidden"),
+          manifest: { ...Fixtures.manifest, name: "hidden-discovery" }
+        })
+      });
+      expect(
+        (yield* owner.list({ query: { mine: true } })).patches.map((patch) => patch.id)
+      ).toContain(created.patchId);
+      expect(
+        (yield* colleague.list({ query: { state: "all" } })).patches.map((patch) => patch.id)
+      ).not.toContain(created.patchId);
+      assert.deepStrictEqual((yield* colleague.list({ query: { mine: true } })).patches, []);
+      for (const patchRef of [created.patchId, created.name, "unknown-discovery"]) {
+        const response = yield* colleague.detail({
+          params: { patchRef },
+          query: { state: "retired" },
+          responseMode: "response-only"
+        });
+        assert.strictEqual(response.status, 404);
+        assert.deepStrictEqual(yield* response.json, { ok: false, error: "Patch not found." });
+      }
+    })
+  );
+
+  it.effect("resolves names before state filters and deleted patches only by id", () =>
+    Effect.gen(function* () {
+      const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+      const colleague = yield* client.pipe(Effect.provide(Fixtures.as(reader)));
+      const created = yield* owner.publish({
+        payload: publishRequest({
+          html: html("State resolution"),
+          manifest: {
+            ...Fixtures.manifest,
+            name: "discovery-states",
+            tables: { notes: { description: "Notes.", columns: {}, indexes: {}, shared: true } }
+          }
+        })
+      });
+      const params = { patchId: created.patchId };
+      for (const [state, filter] of [
+        ["live", "retired"],
+        ["retired", "live"],
+        ["deleted", "live"]
+      ] as const) {
+        const patchRef = state === "deleted" ? created.patchId : created.name;
+        for (const response of [
+          yield* colleague.detail({
+            params: { patchRef },
+            query: { state: filter },
+            responseMode: "response-only"
+          }),
+          yield* colleague.primitive({
+            params: { patchRef, name: "notes" },
+            query: { state: filter },
+            responseMode: "response-only"
+          })
+        ]) {
+          assert.strictEqual(response.status, 409);
+          expect(yield* response.json).toMatchObject({ code: "wrong_state", state });
+        }
+        if (state === "live") {
+          yield* owner.retire({ params, payload: new ForceRequest({}) });
+          const retired = yield* colleague.detail({
+            params: { patchRef: created.name },
+            query: { state: "retired" }
+          });
+          expect(retired.inventory?.tables).toContainEqual(
+            expect.objectContaining({ name: "notes", declarable: false, reason: "source_off" })
+          );
+        } else if (state === "retired") {
+          yield* owner.delete({ params, query: {} });
+        }
+      }
+      const deleted = yield* colleague.detail({
+        params: { patchRef: created.patchId },
+        query: { state: "all" }
+      });
+      assert.strictEqual(
+        Date.parse(deleted.purgeAt!) - Date.parse(deleted.deletedAt!),
+        30 * 24 * 60 * 60 * 1000
+      );
+      const byName = yield* colleague.detail({
+        params: { patchRef: created.name },
+        query: { state: "all" },
+        responseMode: "response-only"
+      });
+      assert.strictEqual(byName.status, 404);
+      expect((yield* colleague.list({ query: {} })).patches.map((patch) => patch.id)).not.toContain(
+        created.patchId
+      );
+      expect(
+        (yield* colleague.list({ query: { state: "all" } })).patches.map((patch) => patch.id)
+      ).toContain(created.patchId);
+    })
+  );
+
+  it.effect("shows colleagues cumulative definitions, retained reads and declaration hints", () =>
+    Effect.gen(function* () {
+      const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+      const colleague = yield* client.pipe(Effect.provide(Fixtures.as(reader)));
+      const source = yield* owner.publish({
+        payload: publishRequest({
+          html: html("Shared inventory"),
+          manifest: {
+            ...Fixtures.manifest,
+            name: "discovery-inventory",
+            description: "Records for other tools.",
+            tables: {
+              notes: {
+                description: "Notes keyed by id.",
+                columns: {
+                  title: { kind: "text" },
+                  parent: { kind: "ref", table: "notes", optional: true },
+                  priority: { kind: "integer", default: 1 }
+                },
+                indexes: { byTitle: { columns: ["title"], unique: true } },
+                shared: true
+              },
+              privateNotes: { description: "Private notes.", columns: {}, indexes: {} }
+            },
+            files: { photos: { description: "Receipt photos." } }
+          }
+        })
+      });
+      const consumer = yield* colleague.publish({
+        payload: publishRequest({
+          html: html("Reader"),
+          manifest: {
+            ...Fixtures.manifest,
+            name: "discovery-reader",
+            uses: {
+              sourceNotes: {
+                kind: "sharedTable",
+                patchId: source.patchId,
+                table: "notes",
+                id: sharedTableId(source.patchId, "notes"),
+                revision: source.schemaRevision
+              }
+            }
+          }
+        })
+      });
+      for (const [api, patch] of [
+        [owner, source],
+        [colleague, consumer]
+      ] as const) {
+        yield* api.publish({
+          payload: publishRequest({
+            patchId: patch.patchId,
+            html: html("Dropped declarations"),
+            manifest: { ...Fixtures.manifest, name: patch.name }
+          })
+        });
+      }
+      const detail = yield* colleague.detail({
+        params: { patchRef: source.name },
+        query: {}
+      });
+      expect(detail).toMatchObject({
+        id: source.patchId,
+        title: "Dropped declarations",
+        description: "Records for other tools.",
+        mine: false,
+        currentVersion: 2,
+        owner: { id: uploader.user.id, name: uploader.user.name },
+        inventory: {
+          tables: expect.arrayContaining([
+            {
+              name: "notes",
+              description: "Notes keyed by id.",
+              shared: true,
+              declarable: true,
+              hint: `patchy add shared-table ${source.patchId}/notes`
+            },
+            expect.objectContaining({
+              name: "privateNotes",
+              declarable: false,
+              reason: "not_shared",
+              hint: expect.stringContaining(uploader.user.name)
+            })
+          ]),
+          stores: [
+            {
+              name: "photos",
+              description: "Receipt photos.",
+              declarable: false,
+              reason: "not_shareable",
+              hint: expect.any(String)
+            }
+          ]
+        }
+      });
+      const primitive = yield* colleague.primitive({
+        params: { patchRef: source.patchId, name: "notes" },
+        query: {}
+      });
+      expect(primitive).toMatchObject({
+        kind: "table",
+        name: "notes",
+        shared: true,
+        schemaRevision: source.schemaRevision,
+        columns: expect.arrayContaining([
+          { name: "title", kind: "text", optional: false },
+          { name: "parent", kind: "ref", optional: true, ref: "notes" },
+          { name: "priority", kind: "integer", optional: false, default: 1 }
+        ]),
+        indexes: [{ name: "byTitle", columns: ["title"], unique: true }]
+      });
+      assert.isFalse(
+        Object.hasOwn(
+          primitive.columns.find((column) => column.name === "title")!,
+          "default"
+        )
+      );
+      const store = yield* colleague.primitive({
+        params: { patchRef: source.patchId, name: "photos" },
+        query: {}
+      });
+      expect(store).toMatchObject({
+        kind: "store",
+        name: "photos",
+        shared: false,
+        columns: [],
+        indexes: []
+      });
+      const retained = yield* owner.detail({
+        params: { patchRef: consumer.patchId },
+        query: {}
+      });
+      assert.deepStrictEqual(retained.reads, [
+        {
+          alias: "sourceNotes",
+          patchId: source.patchId,
+          name: source.name,
+          table: "notes",
+          state: "live"
+        }
+      ]);
+      const missing = yield* colleague.primitive({
+        params: { patchRef: source.patchId, name: "absent" },
+        query: {},
+        responseMode: "response-only"
+      });
+      assert.strictEqual(missing.status, 404);
+      yield* owner.delete({ params: { patchId: source.patchId }, query: { force: true } });
+      yield* TestClock.adjust("30 days");
+      yield* (yield* Patches.Patches).purgeDeleted(source.patchId);
+      const afterPurge = yield* colleague.detail({
+        params: { patchRef: consumer.patchId },
+        query: {}
+      });
+      assert.deepStrictEqual(afterPurge.reads, [
+        { alias: "sourceNotes", patchId: source.patchId, table: "notes", state: "gone" }
+      ]);
+    })
+  );
+});
+
 const racingClients = Effect.fn("racingClients")(function* () {
   const store = yield* ContentStore.ContentStore;
   const ready = yield* Deferred.make<void>();

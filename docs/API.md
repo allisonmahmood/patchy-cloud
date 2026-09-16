@@ -79,6 +79,47 @@ Responses:
 - `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
 - `503` { ok: false, error: string, code: "busy" | "source_unavailable" }
 
+### `GET /api/patches`
+
+List the bearer credential's openable company patches, including public patches but never another company's. Machine tokens only; browser sessions do not grant API access. `state` is live by default, retired for retired patches, or all for live, retired and deleted patches not yet reclaimed. The recovery deadline limits restore; the deletion sweep makes a patch gone. A bare `?mine` or `mine=true` restricts the list to the token's owner; `mine=false` does not. Results are yours first, then the company's, sorted by name within each group. Each row includes the canonical id, address, owner and deactivated mark, description, lifecycle stamps, current version, tier and publish time. `purgeAt` is 30 days after deletion. Unopenable, disabled and gone patches are absent. No connections, table names or business rows are returned. Responses are private, no-store.
+
+Responses:
+
+- `200` { patches: [PatchSummary](#patchsummary)[] }
+- `400` { ok: false, error: string }
+- `401` { ok: false, error: "Missing or invalid API token." }
+- `404` { ok: false, error: string }
+- `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
+
+### `GET /api/patches/:patchRef`
+
+Read one openable company patch by canonical id or exact name, using the same state filter as the list. Names resolve only non-deleted patches; ids resolve any retained state. A resolved patch outside the requested state answers 409 `wrong_state` with its actual state. Unknown, unopenable, disabled, foreign, gone and deleted-by-name references answer the same 404. The summary gains `title`, a cumulative `inventory: { tables, stores } | null`, and `reads` across every retained version, including declarations dropped by the current version. Existing in-company sources retain their lifecycle state even when disabled or unopenable; only openable sources expose a name. Source state does not imply permission to read it. Sources absent from the company lookup are `gone` without a name; foreign metadata is never queried. An unavailable company database means null inventory, never fabricated empty arrays. Live shared tables are declarable and carry `patchy add shared-table <patchId>/<table>`; unshared tables carry `not_shared` and an owner-name hint. Off tables carry `source_off`; stores carry `not_shareable`. No versions, dependants or business rows are returned. Machine tokens only. Overlong references answer 414. Responses are private, no-store.
+
+Responses:
+
+- `200` [PatchDetail](#patchdetail)
+- `400` { ok: false, error: string }
+- `401` { ok: false, error: "Missing or invalid API token." }
+- `404` { ok: false, error: string }
+- `409` { ok: false, error: string, code: "wrong_state", state: "live" | "retired" | "deleted" }
+- `414` { ok: false, error: string }
+- `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
+
+### `GET /api/patches/:patchRef/primitives/:name`
+
+Read one table or file store from a patch's cumulative inventory with the detail route's id-or-name resolution, openability gate and state filter. Returns kind, name, description, sharing, schema revision, columns and indexes, never rows or contents. Columns report their name, kind, optional flag, an optional ref target and a default only when present; an explicit null default stays present. Indexes report name, columns and uniqueness. Stores have `kind: store`, `shared: false` and empty columns and indexes. A missing table or store answers 404; an unavailable inventory answers 503 `source_unavailable`, not a missing primitive. Machine tokens only. Overlong patch references answer 414. Responses are private, no-store.
+
+Responses:
+
+- `200` [PrimitiveDetail](#primitivedetail)
+- `400` { ok: false, error: string }
+- `401` { ok: false, error: "Missing or invalid API token." }
+- `404` { ok: false, error: string }
+- `409` { ok: false, error: string, code: "wrong_state", state: "live" | "retired" | "deleted" }
+- `414` { ok: false, error: string }
+- `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
+- `503` { ok: false, error: string, code: "busy" | "source_unavailable" }
+
 ### `GET /api/patches/:patchId/inventory`
 
 Read the cumulative table and file-store definitions and schema revision for an openable same-company patch in any lifecycle state, including each primitive's stored description. Omitted definitions and their descriptions remain here. Unknown, disabled, gone and foreign patches answer 404. A primitive-free patch answers empty definitions and revision zero. An existing ready company database is probed for inventory even when the current version declares none: a failed platform commit may have left cumulative definitions. An unavailable database answers `source_unavailable` (or `busy`), never a fabricated empty inventory.
@@ -489,6 +530,73 @@ Responses:
   warnings: string[],
   description: string,
   descriptionUpdatedAt: string | null
+}
+```
+
+### PatchSummary
+
+```
+{
+  id: string,
+  name: string,
+  address: string,
+  owner: {
+    id: string,
+    name: string,
+    deactivated: boolean
+  },
+  mine: boolean,
+  tier: integer,
+  scope: "company" | "public",
+  description: string,
+  state: "live" | "retired" | "deleted",
+  retiredAt: string | null,
+  deletedAt: string | null,
+  purgeAt: string | null,
+  currentVersion: integer,
+  publishedAt: string
+}
+```
+
+### PatchDetail
+
+```
+{
+  id: string,
+  name: string,
+  address: string,
+  owner: {
+    id: string,
+    name: string,
+    deactivated: boolean
+  },
+  mine: boolean,
+  tier: integer,
+  scope: "company" | "public",
+  description: string,
+  state: "live" | "retired" | "deleted",
+  retiredAt: string | null,
+  deletedAt: string | null,
+  purgeAt: string | null,
+  currentVersion: integer,
+  publishedAt: string,
+  title: string,
+  inventory: { tables: { name: string, description: string, shared: boolean, declarable: boolean, reason?: "not_shared" | "source_off", hint?: string }[], stores: { name: string, description: string, declarable: false, reason: "not_shareable", hint: string }[] } | null,
+  reads: { alias: string, patchId: string, name?: string, table: string, state: "live" | "retired" | "deleted" | "gone" }[]
+}
+```
+
+### PrimitiveDetail
+
+```
+{
+  kind: "table" | "store",
+  name: string,
+  description: string,
+  shared: boolean,
+  schemaRevision: integer,
+  columns: { name: string, kind: "text" | "integer" | "number" | "boolean" | "timestamp" | "json" | "ref", optional: boolean, default?: unknown, ref?: string }[],
+  indexes: { name: string, columns: string[], unique: boolean }[]
 }
 ```
 

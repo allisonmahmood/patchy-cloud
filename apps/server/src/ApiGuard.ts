@@ -49,18 +49,19 @@ export const deviceLoginRateLimitPerMinute = Config.int(
 const MAX_PARAM_LENGTH = 100;
 
 /**
- * The routes that take a patch id, read off the contract: `METHOD /api/patches/:patchId`
- * and `METHOD /api/patches/:patchId/<suffix>`. An overlong parameter on one of
- * these is a too-long target; on any other shape it is a route that never
- * existed. Derived, so a route added to the API answers 414 without a table
- * here to keep in step.
+ * The routes that take a patch id or reference, read off the contract. Match
+ * every suffix segment, including named parameters such as a primitive name,
+ * so only a route that exists answers 414 to an overlong patch reference.
  */
-const PATCH_ROUTES = new Set(
-  Object.values(PatchyApi.groups)
-    .flatMap((group) => Object.values(group.endpoints))
-    .map((endpoint) => `${endpoint.method} ${endpoint.path}`)
-    .filter((route) => route.includes(" /api/patches/:patchId"))
-);
+const PATCH_ROUTES: ReadonlyArray<{ method: string; suffix: readonly string[] }> = Object.values(
+  PatchyApi.groups
+)
+  .flatMap((group) => Object.values(group.endpoints))
+  .filter((endpoint) => /^\/api\/patches\/:(patchId|patchRef)(\/|$)/.test(endpoint.path))
+  .map((endpoint) => ({
+    method: endpoint.method,
+    suffix: endpoint.path.split("/").slice(4)
+  }));
 
 /**
  * What the guard makes of a request target: not the API's business at all,
@@ -217,12 +218,12 @@ function normalize(pathname: string): string {
 }
 
 /**
- * The answer to an overlong `:patchId`, when there is one: 414 on the shape
+ * The answer to an overlong `:patchId` or `:patchRef`, when there is one: 414 on the shape
  * of a route that exists, 404 on one that never did, and nothing at all when
  * the parameter is a length the routes take.
  */
 function overlongParamStatus(method: string, path: string): 404 | 414 | undefined {
-  const [leading, api, patches, parameter, suffix, ...rest] = path.split("/");
+  const [leading, api, patches, parameter, ...suffix] = normalize(path).split("/");
   if (
     leading !== "" ||
     api === undefined ||
@@ -235,7 +236,14 @@ function overlongParamStatus(method: string, path: string): 404 | 414 | undefine
     return undefined;
   }
 
-  const shape =
-    suffix === undefined ? "/api/patches/:patchId" : `/api/patches/:patchId/${decodeURI(suffix)}`;
-  return rest.length === 0 && PATCH_ROUTES.has(`${method} ${shape}`) ? 414 : 404;
+  return PATCH_ROUTES.some(
+    (route) =>
+      route.method === method &&
+      route.suffix.length === suffix.length &&
+      route.suffix.every((segment, index) =>
+        segment.startsWith(":") ? suffix[index] !== "" : segment === decodeURI(suffix[index]!)
+      )
+  )
+    ? 414
+    : 404;
 }
