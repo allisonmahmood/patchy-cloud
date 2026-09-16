@@ -111,6 +111,6 @@ export function renderShellNotice(code: ShellNotice, returnTo: string): string {
   return htmlPage({
     title: notice.title,
     styles: ".auth-card p:last-child { margin-bottom: 0; }",
-    body: `<main class="auth-card" data-notice="${code}"><div class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</div><p class="auth-kicker">${escapeHtml(notice.kicker)}</p><h1>${escapeHtml(notice.title)}</h1><p>${escapeHtml(notice.message)}</p>${notice.signIn ? `<a class="auth-action" href="/login?return=${escapeAttribute(encodeURIComponent(returnTo))}">Sign in</a>` : ""}</main>`
+    body: `<main class="auth-card" data-notice="${code}"><div class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</div><p class="auth-kicker">${escapeHtml(notice.kicker)}</p><h1 class="page-heading">${escapeHtml(notice.title)}</h1><p>${escapeHtml(notice.message)}</p>${notice.signIn ? `<div class="actions"><a class="btn btn-primary" href="/login?return=${escapeAttribute(encodeURIComponent(returnTo))}">Sign in</a></div>` : ""}</main>`
   });
 }
