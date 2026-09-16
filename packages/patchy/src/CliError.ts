@@ -8,6 +8,7 @@
  * (docs/adr/ADR-0004).
  */
 import * as Schema from "effect/Schema";
+import { PatchState } from "@patchy/api";
 
 export type Kind = "local" | "rejected" | "unreachable";
 
@@ -29,6 +30,18 @@ export class LocalError extends Schema.TaggedError<LocalError>()("LocalError", f
 /** The instance answered and said no: 4xx, with the sentence it used. */
 export class RejectedError extends Schema.TaggedError<RejectedError>()("RejectedError", fields) {
   readonly kind = "rejected";
+}
+
+/** Discovery resolved a patch outside the requested lifecycle filter. */
+export class WrongPatchState extends Schema.TaggedError<WrongPatchState>()("WrongPatchState", {
+  state: PatchState,
+  cause: Schema.Defect()
+}) {
+  readonly kind = "rejected";
+  readonly code = "wrong_state";
+  override get message() {
+    return `Patch is ${this.state}; pass --state ${this.state === "deleted" ? "all" : this.state}.`;
+  }
 }
 
 /** No usable answer from the instance: connect, timeout, 5xx, an unparseable body. */
@@ -86,6 +99,7 @@ export class InstanceMismatch extends Schema.TaggedError<InstanceMismatch>()("In
 export const CliError = Schema.Union([
   LocalError,
   RejectedError,
+  WrongPatchState,
   UnreachableError,
   ReleaseMismatch,
   InstanceMismatch

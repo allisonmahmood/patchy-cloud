@@ -3,7 +3,7 @@
 - **Status**: Accepted
 - **Date**: 2026-08-29
 - **Contexts**: Publishing (`packages/patchy`). System-wide because every agent driving the CLI and the cloud worktree's dev runner depend on this contract.
-- **Source**: Effect v4 port spec (#68) §5; [CLI contract on Effect cli](https://github.com/allisonmahmood/patchy-cloud/issues/60#issuecomment-5456839739); [Local dev environment](https://github.com/allisonmahmood/patchy-cloud/issues/15); [auth spec §10](https://github.com/allisonmahmood/patchy-cloud/issues/135); [SDK map decisions](https://github.com/allisonmahmood/patchy-cloud/issues/164) and [SDK spec §§7–8, 13–14](https://github.com/allisonmahmood/patchy-cloud/issues/193).
+- **Source**: Effect v4 port spec (#68) §5; [CLI contract on Effect cli](https://github.com/allisonmahmood/patchy-cloud/issues/60#issuecomment-5456839739); [Local dev environment](https://github.com/allisonmahmood/patchy-cloud/issues/15); [auth spec §10](https://github.com/allisonmahmood/patchy-cloud/issues/135); [SDK map decisions](https://github.com/allisonmahmood/patchy-cloud/issues/164) and [SDK spec §§7–8, 13–14](https://github.com/allisonmahmood/patchy-cloud/issues/193); [agent discovery #252](https://github.com/allisonmahmood/patchy-cloud/issues/252) and [portal spec §§7–8](https://github.com/allisonmahmood/patchy-cloud/issues/247).
 
 ## Context
 
@@ -44,10 +44,11 @@ lists of validation failures; their line count is not the branching contract.
 - **Success:** exactly one stdout JSON document, with the command's shape below.
   Warnings are fields in that document, never JSON-mode stderr; install, build
   and generation progress do not leak into stdout. `status` always uses JSON.
-- **Failure:** one stderr document `{ ok: false, error, kind, code? }`, ordinarily
+- **Failure:** one stderr document `{ ok: false, error, kind, code?, state? }`, ordinarily
   empty stdout, and the exit code for `kind`. `code` preserves exposed wire
   refusals and identifies [local repo checks](#local-repo-refusal-codes), plus
   local dev codes such as `not_additive` and `not_running`; not every error has one.
+  Discovery's `wrong_state` refusal includes the actual patch `state`.
   Terminal device-login refusals currently use `kind` and `error` without a code.
 - **Parse errors:** Effect may print usage to stdout before the failure document.
   Check the exit code before parsing stdout as success. Built-ins such as help
@@ -75,12 +76,12 @@ instance is `rejected` (exit 2). Not every local failure has a structured code
 
 ### Instance, credentials and local state
 
-For `init` and file-oriented commands, the instance is resolved once per command:
+For `list`, `init` and file-oriented commands, the instance is resolved once per command:
 
 `--api-url` > nearest upward `.local/dev/env` > `PATCHY_API_URL` > saved config >
 `http://localhost:3000`.
 
-For repo commands (`refresh`, `catalog`, `add`, `remove`, `dev` and its
+For repo commands (`refresh`, `add`, `remove`, `dev` and its
 subcommands, no-file `publish`, untargeted `share`/`delete`, and private
 generation), the instance stored in `patchy.json` is authoritative. Select the
 effective override from `--api-url` > `.local/dev/env` > `PATCHY_API_URL`.
@@ -88,8 +89,9 @@ If present, it must match the stored URL after normalization; a mismatch is
 `instance_mismatch` before any HTTP request, naming both targets. Ignored
 lower-precedence settings cannot cause a mismatch. With no override, the repo
 instance wins over saved config and the default. A matching override retains
-its URL source and credential behavior. `init` and file mode do not read this
-repo binding. Correct the effective override rather than deleting the patch id
+its URL source and credential behavior. `list`, `init` and file mode do not read
+this repo binding. `list` runs anywhere under the saved login and never reads
+`patchy.json`. Correct the effective override rather than deleting the patch id
 or changing the stored instance to bypass a refusal.
 
 One service exposes the resolved source: `flag`, `dev-env`, `env`, `project`,
@@ -179,15 +181,63 @@ Logout warns about an environment key or worktree seed without revoking either.
 It does not sign the browser out. These device and browser boundaries are
 [ADR-0008](./ADR-0008-every-bearer-is-somebody.md).
 
+### Discovery
+
+Discovery reads metadata under the machine token without granting access.
+The top level merges two routes; the other levels expose their wire body
+unchanged, with no `ok` wrapper. [API reference](../API.md) owns the wire fields.
+
+| command                                | behaviour                                                                                     | `--json` success                                                                                   |
+| -------------------------------------- | --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `patchy list` or `patchy list patches` | Company patches, grouped Yours and Company, then Connections. Both forms include connections. | `{ patches, connections }`, merged from `GET /api/patches` and `GET /api/connections`              |
+| `patchy list <patch>`                  | Patch row, description, cumulative Tables and Stores, and Reads across retained versions.     | Patch detail wire body, including `inventory: { tables, stores } \| null` and `reads`              |
+| `patchy list <patch> <primitive>`      | One table or file store's definition, never contents.                                         | Primitive detail wire body `{ kind, name, description, shared, schemaRevision, columns, indexes }` |
+| `patchy list connections [--all]`      | Company connections in both states; `--all` adds offered integrations.                        | Connections wire body `{ connections, offered? }`                                                  |
+| `patchy list connections <handle>`     | Current immutable schema snapshot and its `takenAt`; unavailable when null.                   | Connection detail wire body `{ handle, description, status, snapshot }`                            |
+
+`--json` applies everywhere. `--state live|retired|all`, default `live`, governs
+the top level's patches and patch resolution at both detail levels. `all` includes
+deleted patches not yet reclaimed, even after `purgeAt` while awaiting the sweep.
+`--mine` is top level only, on `list` and `list patches`. `--all` is only for
+`list connections`, not connection detail.
+Patch flags are refused on connections. Wrong-level flags are local errors,
+exit 1, rather than ignored filters. Agents filter JSON locally; there is no
+search or paging.
+
+A patch ref is a canonical id or exact current name in the caller's company.
+A pasted URL resolves by its final path segment. Names resolve only non-deleted
+patches; a deleted patch needs its id and `--state all` at both detail levels.
+A resolved patch outside the requested state receives the API's `wrong_state`
+409, exit 2. The failure document carries `state` beside `code`; text names the
+state and its remedy: `retired; pass --state retired`, `deleted; pass --state all`,
+or `live; pass --state live`. Unknown, gone and unopenable refs answer 404.
+No match means none the credential can use, not proof a tool does not exist.
+The skills teach agents to check `--state retired` before concluding absence.
+
+Text patch rows lead with the id, then name, state, owner with `· deactivated`
+when applicable, current version such as `v7`, and the description's first
+line or `(no description)`. Deleted rows show `deleted · gone in N days`,
+derived from the server's `purgeAt`, never a second local recovery deadline.
+Patch detail prints `Tables: unavailable` for null inventory, not `none`.
+Table detail prints column kinds, optionality, explicit defaults including
+`null`, ref targets, indexes with `unique`, the shared flag and schema revision.
+An absent default means no default.
+
+Only declarable shared tables get `patchy add shared-table <patchId>/<table>`
+hints. Unshared tables name the owner; stores are not shareable; off sources
+need restoration. Connected entries get `patchy add postgres/<handle>`;
+disconnected ones point to `/company/connections`. JSON agents branch on
+`declarable` and `reason`, never parse `hint`. The discovery chain is descriptions,
+patch inventory and reads, table keys and types, then `add` by canonical id.
+
 ### Patch-repo commands and managed files
 
-| command                                                                                                     | behaviour                                                                                                                                                                                                                                    | `--json` success                                                               |
-| ----------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `patchy init [dir] [--tier 0\|1] [--purpose <text>]`                                                        | Authenticate first, print instance/identity, ask purpose only at a human terminal, stage a new repo, install and generate before activating it. Default tier 1; target must be empty or absent under an existing parent.                     | `{ ok, dir, release, tier, generated, skills, installed }`                     |
-| `patchy refresh`                                                                                            | Fetch one release, update/install the pin if needed, re-exec that CLI before config execution, generate and activate the managed set transactionally. Failure leaves the previous set intact.                                                | `{ ok, release: { from, to }, changed: { pin, generated, skills, fixtures } }` |
-| `patchy catalog [--all]`                                                                                    | Temporary connections-only command over `GET /api/connections`. Includes disconnected entries and server hints; only connected entries get executable `add` and `uses` lines. `--all` adds offered integrations and state. No shared tables. | Connections wire response `{ connections, offered? }`, no `ok` wrapper         |
-| `patchy add postgres/<handle> [--as <alias>]` or `patchy add shared-table <patchId>/<table> [--as <alias>]` | Insert a literal declaration into `uses` by TypeScript AST without import changes, then generate client, context, missing fixture and skill.                                                                                                 | `{ ok, alias, declaration, generated, skills }`                                |
-| `patchy remove <alias>`                                                                                     | Remove the declaration and its generated surface; remove the declaration skill only when no declaration of that kind remains. Keep the fixture and say so.                                                                                   | `{ ok, alias, removed }`                                                       |
+| command                                                                                                     | behaviour                                                                                                                                                                                                                | `--json` success                                                               |
+| ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------ |
+| `patchy init [dir] [--tier 0\|1] [--purpose <text>]`                                                        | Authenticate first, print instance/identity, ask purpose only at a human terminal, stage a new repo, install and generate before activating it. Default tier 1; target must be empty or absent under an existing parent. | `{ ok, dir, release, tier, generated, skills, installed }`                     |
+| `patchy refresh`                                                                                            | Fetch one release, update/install the pin if needed, re-exec that CLI before config execution, generate and activate the managed set transactionally. Failure leaves the previous set intact.                            | `{ ok, release: { from, to }, changed: { pin, generated, skills, fixtures } }` |
+| `patchy add postgres/<handle> [--as <alias>]` or `patchy add shared-table <patchId>/<table> [--as <alias>]` | Insert a literal declaration into `uses` by TypeScript AST without import changes, then generate client, context, missing fixture and skill.                                                                             | `{ ok, alias, declaration, generated, skills }`                                |
+| `patchy remove <alias>`                                                                                     | Remove the declaration and its generated surface; remove the declaration skill only when no declaration of that kind remains. Keep the fixture and say so.                                                               | `{ ok, alias, removed }`                                                       |
 
 Agent, JSON and non-terminal `init` calls require `--purpose`; purpose is never
 inferred. A company with no connections gets empty `uses` and core skills. The
@@ -203,14 +253,13 @@ as `invalid_manifest`, naming both conflicting definitions.
 The tree typechecks without more setup. Nothing identifying the person is committed.
 
 `patchy add postgres` chooses the sole connected Postgres connection; with
-several it lists copy-ready choices and stops, and with none it names
-`/company/connections`. Default aliases camel-case Postgres handle hyphens or use
+several it lists copy-ready choices from `list connections` and stops, and with
+none it names `/company/connections`. Default aliases camel-case Postgres handle hyphens or use
 the shared table name; `--as` overrides either. An uneditable `uses` expression
 fails with the exact source line and declaration line to add before refresh.
 Shared-table add reads the named source's discovery detail, checks that the table
 is declarable, and records its canonical patch id. It does not list connections
-or shared tables across the company. The retained `catalog` command is temporary
-until the replacement discovery CLI lands.
+or shared tables across the company; use `list` for discovery.
 Connection setup, reconnection and credential forms are browser-only for admins;
 no CLI command accepts connection secrets. A shared-source refusal names the
 source-access repair path.

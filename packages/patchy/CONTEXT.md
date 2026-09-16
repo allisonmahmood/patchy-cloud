@@ -85,20 +85,16 @@ The release-bound parts of a patch repo maintained by Patchy's commands rather t
 _Avoid_: scaffold (these parts continue to be maintained), all project files
 
 **Global skill**:
-The agent instructions for entering Patchy: choosing an instance, signing the machine in, publishing a static file or starting a patch repo. Inside a patch repo, its project skills govern building.
+The agent instructions for entering Patchy: choosing an instance, signing the machine in, discovering company tools and data sources, publishing a static file or starting a patch repo. Inside a patch repo, its project skills govern building.
 _Avoid_: project skill, template
 
 **Project skill**:
 A release-bound set of agent instructions for building within one patch repo, supplied by the instance for its core capabilities or declared connections and shared tables.
 _Avoid_: global skill, copied tutorial
 
-**Catalog**:
-See **Catalog** in [Integrations](../integrations/CONTEXT.md). The temporary CLI command now lists connections only; shared-table discovery belongs to the patch read API.
-_Avoid_: marketplace, connection inventory (the cumulative schema inventory is a different concept)
-
 **Discovery**:
-The decided agent's view of the company's inventory through `patchy list`: patches, one patch's primitives and reads, and connections, under the machine token, showing only what the credential can open, with a copy-ready declaration only where one can be made.
-_Avoid_: catalog (what it replaces), search, inspect
+The agent's view of its company's patches, their tables, stores and reads, and company connections. It includes only what the credential can open and identifies which sources can be declared; finding a source grants no access.
+_Avoid_: search, inspect, marketplace
 
 **Fixture stub**:
 The initial, metadata-only guide for a declaration's local fixture, ready for the builder to fill with invented rows. Once present it belongs to the builder, including after that declaration is removed.

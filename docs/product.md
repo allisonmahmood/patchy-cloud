@@ -2,7 +2,7 @@
 
 The product, written down where agents read it. The [foundation map](https://github.com/allisonmahmood/patchy-cloud/issues/5), [auth map](https://github.com/allisonmahmood/patchy-cloud/issues/112), [SDK map](https://github.com/allisonmahmood/patchy-cloud/issues/164) and [portal map](https://github.com/allisonmahmood/patchy-cloud/issues/230) record the decisions (the portal's spec is [#247](https://github.com/allisonmahmood/patchy-cloud/issues/247)); the glossaries in each `CONTEXT.md` carry the words, and this file carries the shape.
 
-**Built today:** tier 0 static HTML pages and tier 1 sandboxed browser tools at named company addresses. Static pages publish from an HTML file or a repo; tier 1 tools publish from a repo. Repos have code-first config, a generated typed client, release-bound project skills and a local PGlite dev loop with fixtures. Publish is replay-safe and provisions patch-owned tables and file stores additively into a database per company. Tier 1 reaches those resources, read-only shared tables and company Postgres connections through the shell broker as the viewer, with mutations and integration calls logged. Postgres includes browser-only connection administration, immutable schema snapshots and generated relation clients. Clerk sign-in, create-or-join, company administration, user ownership, company/public sharing and machine login, logout and revocation are built. Hosted runtimes and patch identity, the portal, narrower sharing, other integrations, billing and the remaining company lifecycle are not.
+**Built today:** tier 0 static HTML pages and tier 1 sandboxed browser tools at named company addresses. Static pages publish from an HTML file or a repo; tier 1 tools publish from a repo. Repos have code-first config, a generated typed client, release-bound project skills and a local PGlite dev loop with fixtures. Publish is replay-safe and provisions patch-owned tables and file stores additively into a database per company. Tier 1 reaches those resources, read-only shared tables and company Postgres connections through the shell broker as the viewer, with mutations and integration calls logged. Postgres includes browser-only connection administration, immutable schema snapshots and generated relation clients. Agents discover company tools and data sources through `patchy list` and its drill-downs. Clerk sign-in, create-or-join, company administration, user ownership, company/public sharing and machine login, logout and revocation are built. Hosted runtimes and patch identity, the portal, narrower sharing, other integrations, billing and the remaining company lifecycle are not.
 
 ## Patches
 
@@ -114,16 +114,19 @@ create another patch. Only a gone patch's 404 asks for the id to be removed.
 The new `retire`, `restore`, `rollback <n>` and `describe` CLI commands remain
 future work. Their owner API routes and the service's admin authority are built.
 
-The temporary `patchy catalog` command lists company connections in both states,
-with copy-ready `add` and `uses` lines only for connected ones. `--all` includes
-offered integrations and their state. Shared tables are discovered through the patch
-API, not catalog. Discovery grants no authority. The planned `patchy list` replaces
-the command (see [Sharing and finding](#sharing-and-finding)). `patchy add postgres/<handle>`
+`patchy list` discovers company patches and connections, then drills into patch
+definitions and connection snapshots. It runs anywhere under the saved login
+and never reads `patchy.json`; discovery grants no authority. See
+[Sharing and finding](#sharing-and-finding) for the discovery chain.
+`patchy add postgres/<handle>`
 or `patchy add shared-table <patchId>/<table>` adds one aliased declaration by
 TypeScript AST and generates the client, context, missing fixture stub and skill.
 The insertion is a literal declaration, requiring no import changes. An uneditable
 expression fails with its exact source line and the exact declaration line to
 add manually before refresh, rather than guessing at a rewrite.
+`patchy add postgres` selects a sole connected Postgres connection; with several
+it lists choices from `list connections` and stops. With none, it names
+`/company/connections`.
 Connection refusals point to `/company/connections`; an unavailable shared-table
 addition points to `/company`. Restore source access or correct the declaration.
 `patchy remove <alias>`
@@ -167,15 +170,17 @@ A published patch is shared with **everyone in the company** by default, or made
 
 Today a person finds a patch because someone shared its address. A patch's identity is its **id**, while its **name** is unique within the company. Two sales dashboards need different names, but renaming one never changes which patch it is (see [Addresses](#addresses)).
 
-**The portal**, decided on the [portal map](https://github.com/allisonmahmood/patchy-cloud/issues/230) and not built yet, is where a signed-in person finds their company's patches. `/` is the login door signed out and the portal signed in: a compact index of the company's patches (name and the first clause of the description, grouped **Yours**, **Company**, and **Retired and deleted** behind a toggle) beside one patch's **card** at `/patches/<name>`. The card is catalog plus manage, never the patch: the address with **Open**, the description, the owner (marked when deactivated), the current version, who can open it in plain words, and which patches read its shared tables; the owner or an admin also sees the management controls described under [Updating, retiring, deleting](#updating-retiring-deleting). `/<company>/<patch>` stays the patch itself. The portal lists only the viewer's own company, public patches included, and never another company's public patches. No search, filters or paging until a real inventory asks; the name leads everywhere, and the document title is at most one secondary line on the card.
+**The portal**, decided on the [portal map](https://github.com/allisonmahmood/patchy-cloud/issues/230) and not built yet, is where a signed-in person will find their company's patches. Signed out, `/` will show the login door. Signed in, it will show an index grouped Yours and Company, with Retired and deleted behind a toggle, beside one patch's card at `/patches/<name>`. The card will show its address with Open, description, owner and deactivation status, current version, readership and patches that read its shared tables. The owner or an admin will also see the controls described under [Updating, retiring, deleting](#updating-retiring-deleting). `/<company>/<patch>` stays the patch itself. The portal will use the same discovery query as agents, limited to the viewer's company, including its public patches. There will be no search or paging; the name will lead, with the document title at most a secondary line on the card.
 
-**The agent discovery API is built.** Machine tokens can read the company's patches through `GET /api/patches`, drill into a patch by id or current name, and inspect one table or file store. The shared query includes owners and their deactivation status, the served version, retained-version reads and live dependant edges for the future portal. The list returns patches only, yours first; `mine` restricts it to yours. Detail returns cumulative inventory and retained-version reads, not dependants or version history. Primitive detail returns columns, indexes and schema revision, never rows or files. An unavailable company database yields `inventory: null`, not empty definitions.
+**Agent discovery is built.** `patchy list` and its release-bound skills let agents find tools by description, inspect a candidate's tables, stores and reads with `list <patch>`, then check keys and types with `list <patch> <table>` before adding a shared table by canonical patch id. The CLI runs anywhere under the saved login and never reads `patchy.json`. `list` and `list patches` both group rows Yours, Company, then Connections. Patch rows lead with the id, then name, state, owner with `· deactivated` when applicable, current version and the description's first line or `(no description)`. Deleted rows show `deleted · gone in N days` from the server's `purgeAt`.
 
-Discovery defaults to live patches; `state=retired|all` admits the other states. A name resolves only among non-deleted patches; a deleted patch is reachable by id with `state=all`. A resolved patch outside the requested state answers `wrong_state` with its actual state. Only patches the credential can open appear; unknown, foreign, disabled, gone and unopenable references all answer 404. Shared live tables carry copy-ready `patchy add shared-table <patchId>/<table>` hints. Unshared tables name the owner to ask, file stores are not shareable, and off sources must be restored first.
+`--state live|retired|all` defaults to `live` and governs patches at all three levels. Names resolve only non-deleted patches; a pasted URL resolves by its final path segment. A deleted patch needs its id and `--state all` at both detail levels. A resolved patch outside the requested state receives the API's `wrong_state` refusal, exit 2, with guidance such as `retired; pass --state retired`. Only patches the credential can open appear; unknown, foreign, disabled, gone and unopenable references all answer 404. "No match" means "none you can use"; the skills teach checking `--state retired` before concluding a tool does not exist. `--mine` applies only to the top level, and `--all` only to `list connections`, not one connection's detail. Patch flags do not apply to connections; wrong-level flags are local errors.
 
-**Connection discovery is built.** Every active member's machine token can list their company's connections through `GET /api/connections`; `all` adds offered integrations and their state. Connected entries carry an `add` hint; disconnected ones carry `reason: not_connected` and a `/company/connections` pointer. `GET /api/connections/:handle` returns the current immutable snapshot with its revision and taken-at timestamp, or `snapshot: null` when missing. Neither route reads source rows or exposes credentials. The SDK catalog route is removed.
+Patch detail returns cumulative inventory and reads across retained versions, not dependants or version history. Table detail returns column kinds, optionality, explicit defaults including `null`, ref targets, indexes with `unique`, sharing and schema revision, never rows. An unavailable company database yields `inventory: null` and text `Tables: unavailable`, not empty definitions. Shared live tables carry copy-ready `patchy add shared-table <patchId>/<table>` hints. Agents branch on `declarable` and `reason`, not the human `hint`; unshared tables name the owner, file stores are not shareable, and off sources need restoration.
 
-**The `patchy list` CLI remains planned.** It will expose these three patch levels and merge connections from their separate read routes. `list connections [<handle>]` and replacing the temporary, connections-only `patchy catalog` command are later work. The owner inventory route remains available.
+`list connections [--all]` lists the company's connections, with offered integrations when requested. Connected entries carry an `add` hint; disconnected ones carry `reason: not_connected` and a `/company/connections` pointer. `list connections <handle>` returns the current immutable snapshot with its revision and `takenAt`. A null snapshot is unavailable, not an empty database. Discovery reads no source rows or credentials.
+
+Every level accepts `--json`. The top level merges `{ patches, connections }` from `GET /api/patches` and `GET /api/connections`; other levels print their wire body without an `ok` wrapper. Agents filter those documents locally. The patch read query also carries live dependant edges for the future portal, while the agent detail exposes only inventory and reads. The owner inventory route remains available. Discovery is complete for agents; the portal and new lifecycle CLI verbs remain later work.
 
 ### Updating, retiring, deleting
 
@@ -403,8 +408,9 @@ argument of `table(description, columns, options?)` and `files(description)`. It
 one row or object is, its identifying keys and units. The manifest and cumulative inventory
 include it. A publish that defines the primitive replaces its description; omission and rollback
 preserve it. A description-only change does not advance the schema revision. A table and file store
-cannot have the same name. The CLI's reminder to re-check unchanged descriptions when definitions
-change, and discovery through `patchy list <patch>`, remain future work.
+cannot have the same name. `patchy list <patch>` exposes the cumulative inventory
+to agents. The CLI's reminder to re-check unchanged descriptions when definitions
+change remains future work.
 
 This **company database** is Patchy's storage for the company's patch resources,
 not a Postgres connection to an outside source. Platform records — users, patches,
@@ -653,7 +659,7 @@ handle cannot silently rebind an old declaration.
 ### Declaring, granting, opening
 
 A patch declares each connection under a local `uses` alias in its config.
-`patchy catalog` shows the company's connections and their state; `patchy add` inserts the
+`patchy list connections` shows the company's connections and their state; `patchy add` inserts the
 declaration and brings its generated client, context, fixture stub and skill.
 Publish resolves the handle to a stable connection id and metadata revision.
 Neither the alias, the handle nor the declaration is a permission.
@@ -714,7 +720,7 @@ after an admin refreshes discovery. Live credentials and access are checked
 separately; a dropped or incompatible column fails the old call rather than
 silently changing its contract.
 
-There is no bring-your-own source: no generic REST escape hatch and no "connect an MCP server". A company that needs an integration Patchy has not shipped requests it, and Patchy builds it. Opening the integration catalog to third-party authors would be a separate later decision; today's `patchy catalog` discovers the capabilities Patchy already offers.
+There is no bring-your-own source: no generic REST escape hatch and no "connect an MCP server". A company that needs an integration Patchy has not shipped requests it, and Patchy builds it. Admitting third-party integration authors would be a separate later decision; today's `patchy list connections --all` discovers the capabilities Patchy already offers.
 
 ### Development
 

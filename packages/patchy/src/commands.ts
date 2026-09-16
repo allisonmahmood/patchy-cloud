@@ -32,6 +32,7 @@ import {
 import { newInternalId, sha256, validateHtml } from "@patchy/core";
 import * as Api from "./Api.js";
 import { type CliError, LocalError, RejectedError } from "./CliError.js";
+import * as Discovery from "./Discovery.js";
 import * as Git from "./Git.js";
 import * as Instance from "./Instance.js";
 import * as Login from "./Login.js";
@@ -789,16 +790,41 @@ const refresh = Command.make("refresh", {}, () =>
   )
 );
 
-const catalog = Command.make(
-  "catalog",
-  { all: Flag.boolean("all").pipe(Flag.withDefault(false)) },
+const list = Command.make(
+  "list",
+  {
+    target: Argument.string("target").pipe(
+      Argument.withDescription(
+        "patches, connections, a patch id or name, or a pasted patch address"
+      ),
+      Argument.optional
+    ),
+    detail: Argument.string("detail").pipe(
+      Argument.withDescription("A primitive name for a patch, or a handle after connections"),
+      Argument.optional
+    ),
+    state: Flag.choice("state", ["live", "retired", "all"]).pipe(
+      Flag.withDescription("Filter patches at every depth; defaults to live"),
+      Flag.optional
+    ),
+    mine: Flag.boolean("mine").pipe(
+      Flag.withDescription("Only your patches; top level only"),
+      Flag.optional
+    ),
+    all: Flag.boolean("all").pipe(
+      Flag.withDescription("Include offered integrations; list connections only"),
+      Flag.optional
+    )
+  },
   (options) =>
-    runProject(
+    run(
       Effect.gen(function* () {
-        yield* Project.catalog(yield* requiredToken(), options.all);
+        yield* Discovery.list(yield* requiredToken(), options);
       })
     )
-).pipe(Command.withDescription("List company connections and their status."));
+).pipe(
+  Command.withDescription("Discover patches, their primitives and reads, and company connections.")
+);
 
 const add = Command.make(
   "add",
@@ -903,7 +929,7 @@ export const root = Command.make("patchy").pipe(
     init,
     dev,
     refresh,
-    catalog,
+    list,
     add,
     remove,
     generateProject

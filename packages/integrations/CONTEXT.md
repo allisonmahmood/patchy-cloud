@@ -14,10 +14,7 @@ _Avoid_: datasource, connected account, credential (what it holds, not what it i
 
 **Connection discovery**:
 The member-readable list of the company's connections and their state, with declaration hints for connected ones and setup guidance for disconnected ones. Offered integrations are optional; drilling into one connection reveals its current immutable snapshot and taken-at time, or reports the snapshot unavailable.
-_Avoid_: catalog, connection administration
-
-**Catalog**:
-The former combined discovery of connections and shared tables. See **Connection discovery** here and **Discovery** in [Publishing](../patchy/CONTEXT.md); the temporary CLI command lists connections only.
+_Avoid_: connection administration
 
 **Personal connection**:
 A future connection belonging to one user rather than their company, such as that user's Gmail. Its credentials and lifetime follow the user; the access rules live in [the product](../../docs/product.md#company-and-personal-connections).

@@ -48,8 +48,12 @@ Open the returned URL in the same signed-in browser. **Company scope is the defa
 
 To start a patch repo against this worktree, run `pnpm patchy init .local/team-tool --purpose "Track our team's work"`.
 Initialization installs the pinned package and generates the client, context and project skills.
-Inside that repo use `pnpm patchy catalog`, `add`, `remove` and `refresh`; see the
-[project commands](packages/patchy/README.md#patch-repo-commands) for their contracts.
+Use `pnpm patchy list` to find tools by description, `list <patch>` for their
+tables and reads, and `list <patch> <table>` for keys and types. Discovery runs
+anywhere under the saved login and never reads `patchy.json`; see the
+[discovery contract](packages/patchy/README.md#discovery).
+Inside the repo, `add`, `remove` and `refresh` manage declarations and generated
+files; see the [project commands](packages/patchy/README.md#patch-repo-commands).
 The repo is ready to typecheck, and hosted tier 1 patches use the sandboxed browser broker.
 Run `pnpm patchy dev` to exercise it locally over PGlite and invented fixtures, then `pnpm patchy publish` from the repo root to build and publish it.
 

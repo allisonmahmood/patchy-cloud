@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { EventEmitter, on } from "node:events";
 import {
   access,
@@ -776,6 +776,7 @@ try {
   assert.equal(removedAgain.code, 2, "deleting an already-deleted patch is the instance's refusal");
 
   await runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release: installedManifest.version });
+  await runDiscoveryFlow({ cliPath, cliEnv, publicBaseUrl, foreignToken });
 
   // Login uses its own state and dev env so it cannot replace the seeded key
   // that the publishing scenarios above need. Revoke that seed only at the end.
@@ -3045,6 +3046,221 @@ function parseJsonSuccess(result, keys) {
   assertDocumentKeys(document, keys);
   assert.equal(document.ok, true);
   return document;
+}
+
+async function runDiscoveryFlow({ cliPath, cliEnv, publicBaseUrl, foreignToken }) {
+  console.log("[packed-cli-e2e] discovery: seeding two patches on the disposable server");
+  const releaseResponse = await checkedCall(() => fetch(`${publicBaseUrl}/api/release`));
+  assert.equal(releaseResponse.status, 200);
+  const { release, manifestVersion } = await releaseResponse.json();
+  const seedPatch = async (token, manifest) => {
+    const response = await checkedCall(() =>
+      fetch(`${publicBaseUrl}/api/publish`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          manifest: {
+            manifestVersion,
+            release,
+            tier: 0,
+            tables: {},
+            files: {},
+            uses: {},
+            ...manifest
+          },
+          html: validHtml(manifest.name, "Invented discovery fixture"),
+          publishKey: randomUUID(),
+          metadata: { filename: `${manifest.name}.html` }
+        })
+      })
+    );
+    assert.equal(response.status, 201, `seeding ${manifest.name} must create a patch`);
+    const published = await response.json();
+    assert.equal(published.ok, true);
+    assert.match(published.patchId, /^[a-z0-9]{12}$/);
+    assert.equal(published.name, manifest.name);
+    return published;
+  };
+  const accounts = await seedPatch(foreignToken, {
+    name: "packed-discovery-accounts",
+    description: "Tracks customer accounts for order entry.",
+    tables: {
+      accounts: {
+        description: "One customer account per unique account code.",
+        columns: {
+          code: { kind: "text" },
+          parent: { kind: "ref", table: "accounts", optional: true },
+          priority: { kind: "integer", default: 0 }
+        },
+        indexes: { byCode: { columns: ["code"], unique: true } },
+        shared: true
+      }
+    },
+    files: { receipts: { description: "Receipt scans keyed by file name." } }
+  });
+  const orders = await seedPatch(DEV_SEED.token, {
+    name: "packed-discovery-orders",
+    description: "Tracks orders against the shared customer directory.",
+    tables: {
+      orders: {
+        description: "One order per id, grouped by customer account code.",
+        columns: {
+          accountCode: { kind: "text" },
+          fulfilled: { kind: "boolean", default: false }
+        },
+        indexes: { byAccount: { columns: ["accountCode"] } }
+      }
+    },
+    uses: {
+      customers: {
+        kind: "sharedTable",
+        patchId: accounts.patchId,
+        table: "accounts",
+        id: `${accounts.patchId}/accounts`,
+        revision: accounts.schemaRevision
+      }
+    }
+  });
+  assert.notEqual(accounts.patchId, orders.patchId);
+
+  // Use the saved login outside a patch repo. No environment token or repo binding
+  // selects the instance for these installed-CLI discovery commands.
+  const options = { cwd: tempRoot, env: cliEnv, sensitiveValues: [foreignToken] };
+  const list = async (...args) => {
+    const result = await runCli(cliPath, ["list", ...args, "--json"], options);
+    assert.equal(result.code, 0);
+    assert.equal(result.stderr, "", "--json discovery must leave stderr empty");
+    return JSON.parse(result.stdout);
+  };
+  const discovered = await list();
+  assertDocumentKeys(discovered, ["patches", "connections"]);
+  assert.deepEqual(discovered.connections, []);
+  const text = await runCli(cliPath, ["list"], options);
+  assert.match(text.stdout, /Yours/);
+  assert.match(text.stdout, /Company/);
+  for (const fixture of [
+    {
+      published: accounts,
+      mine: false,
+      owner: { id: "usr_packed_other", name: "Other Publisher", deactivated: false },
+      table: "accounts",
+      description: "One customer account per unique account code.",
+      shared: true,
+      columns: {
+        code: { kind: "text", optional: false },
+        parent: { kind: "ref", optional: true, ref: "accounts" },
+        priority: { kind: "integer", optional: false, default: 0 }
+      },
+      indexes: [{ name: "byCode", columns: ["code"], unique: true }],
+      reads: []
+    },
+    {
+      published: orders,
+      mine: true,
+      owner: { id: DEV_SEED.userId, name: DEV_SEED.userName, deactivated: false },
+      table: "orders",
+      description: "One order per id, grouped by customer account code.",
+      shared: false,
+      columns: {
+        accountCode: { kind: "text", optional: false },
+        fulfilled: { kind: "boolean", optional: false, default: false }
+      },
+      indexes: [{ name: "byAccount", columns: ["accountCode"], unique: false }],
+      reads: [
+        {
+          alias: "customers",
+          patchId: accounts.patchId,
+          name: accounts.name,
+          table: "accounts",
+          state: "live"
+        }
+      ]
+    }
+  ]) {
+    const { published } = fixture;
+    const summary = discovered.patches.find((patch) => patch.name === published.name);
+    assert.ok(summary, `list must discover ${published.name}`);
+    assert.equal(summary.id, published.patchId);
+    assert.equal(summary.description, published.description);
+    assert.equal(summary.address, published.address);
+    assert.equal(summary.mine, fixture.mine);
+    assert.deepEqual(summary.owner, fixture.owner);
+    assert.equal(summary.state, "live");
+    assert.equal(summary.currentVersion, 1);
+    for (const value of [summary.id, summary.name, summary.description, summary.owner.name])
+      assert.ok(text.stdout.includes(value), `list text must include ${JSON.stringify(value)}`);
+
+    // Drill down from discovered names and pasted addresses, then carry the
+    // returned canonical id into the schema lookup and the shared-table hint.
+    const ref = fixture.mine ? summary.address : summary.name;
+    const detail = await list(ref);
+    assert.equal(detail.id, summary.id);
+    assert.equal(detail.description, summary.description);
+    assert.deepEqual(detail.reads, fixture.reads);
+    assert.ok(detail.inventory, "seeded table definitions must be available");
+    assert.equal(detail.inventory.tables.length, 1);
+    const table = detail.inventory.tables[0];
+    assert.equal(table.name, fixture.table);
+    assert.equal(table.description, fixture.description);
+    assert.equal(table.shared, fixture.shared);
+    assert.equal(table.declarable, fixture.shared);
+    if (fixture.shared) {
+      assert.equal(table.hint, `patchy add shared-table ${detail.id}/${table.name}`);
+      assert.deepEqual(
+        detail.inventory.stores.map(({ name, description, declarable, reason }) => ({
+          name,
+          description,
+          declarable,
+          reason
+        })),
+        [
+          {
+            name: "receipts",
+            description: "Receipt scans keyed by file name.",
+            declarable: false,
+            reason: "not_shareable"
+          }
+        ]
+      );
+    } else {
+      assert.equal(table.reason, "not_shared");
+      assert.ok(table.hint.includes(fixture.owner.name));
+      assert.deepEqual(detail.inventory.stores, []);
+    }
+    const detailText = await runCli(cliPath, ["list", ref], options);
+    for (const value of [detail.id, detail.description, table.name, table.description])
+      assert.ok(detailText.stdout.includes(value), `patch detail text must include ${value}`);
+    if (fixture.shared) assert.ok(detailText.stdout.includes(table.hint));
+    else assert.ok(detailText.stdout.includes(accounts.patchId));
+
+    const schema = await list(detail.id, table.name);
+    assertDocumentKeys(schema, [
+      "kind",
+      "name",
+      "description",
+      "shared",
+      "schemaRevision",
+      "columns",
+      "indexes"
+    ]);
+    assert.equal(schema.kind, "table");
+    assert.equal(schema.name, table.name);
+    assert.equal(schema.description, table.description);
+    assert.equal(schema.shared, fixture.shared);
+    assert.equal(schema.schemaRevision, published.schemaRevision);
+    assert.deepEqual(
+      Object.fromEntries(schema.columns.map(({ name, ...column }) => [name, column])),
+      fixture.columns
+    );
+    assert.deepEqual(schema.indexes, fixture.indexes);
+    const schemaText = await runCli(cliPath, ["list", detail.id, table.name], options);
+    for (const value of [table.name, ...Object.keys(fixture.columns), fixture.indexes[0].name])
+      assert.ok(schemaText.stdout.includes(value), `table schema text must include ${value}`);
+  }
+  console.log("[packed-cli-e2e] PASS: packed list → patch inventory → canonical-id table schema");
 }
 
 async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {

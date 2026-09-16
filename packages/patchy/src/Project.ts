@@ -7,7 +7,7 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Prompt from "effect/unstable/cli/Prompt";
 import * as HttpClient from "effect/unstable/http/HttpClient";
-import { Connections, DefinitionName, Generated, Manifest, PatchName } from "@patchy/api";
+import { DefinitionName, Generated, Manifest, PatchName } from "@patchy/api";
 import * as Api from "./Api.js";
 import { InstanceMismatch, LocalError, RejectedError, UnreachableError } from "./CliError.js";
 import * as Instance from "./Instance.js";
@@ -68,7 +68,6 @@ const decodeChange = Schema.decodeUnknownSync(Schema.fromJsonString(changeSchema
 const decodeSkills = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Array(Schema.String)));
 const decodeChild = Schema.decodeUnknownSync(Schema.fromJsonString(childSchema));
 const decodeFailure = Schema.decodeUnknownOption(Schema.fromJsonString(failureSchema));
-const encodeConnections = Schema.encodeSync(Connections);
 const decodeName = Schema.decodeUnknownSync(PatchName);
 const isDefinitionName = Schema.is(DefinitionName);
 const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
@@ -223,33 +222,6 @@ const refusal = (error: Api.ClientFailure, fallback: string) =>
     }
     return yield* Api.classify(error, fallback);
   });
-
-export const catalog = Effect.fn("Project.catalog")(function* (
-  token: Redacted.Redacted,
-  all: boolean
-) {
-  const client = yield* Api.client(token);
-  const result = yield* client
-    .listConnections({ query: { all } })
-    .pipe(Effect.catch((error) => refusal(error, "Could not read the catalog.")));
-  const lines: string[] = [];
-  for (const connection of result.connections) {
-    lines.push(
-      `${connection.integration}/${connection.handle}: ${connection.description} (${connection.status})`,
-      `  ${connection.hint}`
-    );
-    if (connection.status === "connected") {
-      const alias = connectionAlias(connection.handle);
-      lines.push(
-        `  uses: { ${Output.toJson(alias)}: postgres(${Output.toJson(connection.handle)}) }`
-      );
-    }
-  }
-  for (const offered of result.offered ?? [])
-    lines.push(`${offered.integration}: ${offered.connected ? "connected" : "not connected"}`);
-  if (!all) lines.push("Run patchy catalog --all to see every offered integration and its state.");
-  yield* Output.report(encodeConnections(result), lines);
-});
 
 /** Private subprocess entry: this is executed by the installed release, never the old CLI. */
 export const generate = Effect.fn("Project.generate")(function* (
@@ -502,7 +474,7 @@ export const add = Effect.fn("Project.add")(function* (
       });
     if (connections.length > 1)
       return yield* new LocalError({
-        message: `Choose a Postgres connection:\n${connections.map((connection) => `  patchy add postgres/${connection.handle} — ${connection.description}`).join("\n")}`
+        message: `Choose a Postgres connection from patchy list connections:\n${connections.map((connection) => `  patchy add postgres/${connection.handle} · ${connection.description}`).join("\n")}`
       });
     declaration = { kind: "postgres", handle: connections[0]!.handle };
     defaultAlias = connectionAlias(declaration.handle);
