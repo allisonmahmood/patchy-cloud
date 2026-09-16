@@ -108,6 +108,7 @@ export const migrations: Migrations = {
       ADD COLUMN description_updated_by TEXT REFERENCES users(id),
       ADD COLUMN last_changed_at TIMESTAMPTZ,
       ADD COLUMN last_changed_by TEXT REFERENCES users(id),
+      ADD COLUMN last_changed_action TEXT,
       ADD COLUMN visit_count BIGINT NOT NULL DEFAULT 0;
     CREATE INDEX patches_deleted_at_idx ON patches(deleted_at)
       WHERE deleted_at IS NOT NULL;

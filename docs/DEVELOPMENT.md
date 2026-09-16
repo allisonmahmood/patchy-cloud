@@ -109,6 +109,11 @@ inventory reads and writes fail until the disposable dev databases are recreated
 The reset deletes local published HTML, rows and file objects. Do not run it
 against data you need to keep.
 
+Issue #255 adds `last_changed_action` to the unmerged `0008_patches_lifecycle`
+migration for precise portal stale-action notices. An existing disposable dev
+database from before this change needs `pnpm dev reset`; restarting does not
+reapply a migration. This deletes local data, not a production migration path.
+
 `--json` also works on `status`, `reset` and a plain start. The server is not
 watched; after a code change, `pnpm dev stop && pnpm dev`.
 

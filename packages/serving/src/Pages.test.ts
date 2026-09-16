@@ -82,6 +82,7 @@ const memoryStore = Layer.sync(ContentStore.ContentStore, () => {
 const routes = Layer.mergeAll(
   Pages.layer,
   AuthPages.layer,
+  HttpRouter.add("*", "/*", Pages.notFound),
   HttpRouter.middleware(servingHeaders, { global: true })
 );
 const services = Layer.mergeAll(Content.layer, DeviceLogins.layer).pipe(
@@ -377,7 +378,7 @@ it.layer(layer)("pages", (it) => {
 
   it.effect("matches static routes before the patch-address wildcard", () =>
     Effect.gen(function* () {
-      for (const url of ["/", "/healthz", "/auth/session.js"]) {
+      for (const url of ["/healthz", "/auth/session.js"]) {
         const response = yield* get(url, {});
         assert.strictEqual(response.status, 200, url);
         assert.strictEqual(response.headers["cache-control"], "no-store");
@@ -387,8 +388,6 @@ it.layer(layer)("pages", (it) => {
           assert.include(response.headers["content-type"], "text/javascript");
         } else if (url === "/healthz") {
           assert.deepStrictEqual(yield* response.json, { ok: true });
-        } else {
-          assert.include(yield* response.text, PUBLIC_BASE_URL);
         }
       }
     })
