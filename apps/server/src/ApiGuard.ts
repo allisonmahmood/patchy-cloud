@@ -9,7 +9,8 @@
  * Other `/api/*` requests spend the per-address protected-API limit, then need
  * a token. Malformed targets and missing routes disclose their shape only
  * after authentication.
- * The portal owns its name bound through GET /patches/*.
+ * The portal owns its name bound through its concrete routes and GET /patches/*.
+ * Targets those routes cannot match keep the page fallback.
  *
  * Two pieces: `make`, the middleware that spends the limit and answers the
  * shapes the router never sees; and `notFound`, the `/api/*` catch-all route
@@ -43,28 +44,19 @@ export const deviceLoginRateLimitPerMinute = Config.int(
   "PATCHY_DEVICE_LOGIN_RATE_LIMIT_PER_MINUTE"
 ).pipe(Config.withDefault(5));
 
-/**
- * Concrete patch routes that may exceed the router's 100-character parameter
- * limit. Route owners supply the shapes so adding a route cannot leave its
- * too-long target behind.
- */
-const PATCH_ROUTES: ReadonlyArray<{
-  readonly kind: "api";
-  readonly prefix: readonly string[];
-  readonly routes: ReadonlyArray<{ method: string; suffix: readonly string[] }>;
-}> = [
-  {
-    kind: "api",
-    prefix: ["api", "patches"],
-    routes: Object.values(PatchyApi.groups)
-      .flatMap((group) => Object.values(group.endpoints))
-      .filter((endpoint) => /^\/api\/patches\/:(patchId|patchRef)(\/|$)/.test(endpoint.path))
-      .map((endpoint) => ({
-        method: endpoint.method,
-        suffix: endpoint.path.split("/").slice(4)
-      }))
-  }
-];
+/** Effect's router rejects a decoded parameter longer than this. */
+const routerParamLimit = 100;
+
+/** Route owners supply the shapes whose overlong patch references get a 414. */
+const apiPatchRoutes: ReadonlyArray<{ method: string; suffix: readonly string[] }> = Object.values(
+  PatchyApi.groups
+)
+  .flatMap((group) => Object.values(group.endpoints))
+  .filter((endpoint) => /^\/api\/patches\/:(patchId|patchRef)(\/|$)/.test(endpoint.path))
+  .map((endpoint) => ({
+    method: endpoint.method,
+    suffix: endpoint.path.split("/").slice(4)
+  }));
 
 /**
  * What the guard makes of a request target: not the API's business at all,
@@ -226,23 +218,23 @@ function normalize(pathname: string): string {
  */
 function overlongParamTarget(method: string, path: string): Target | undefined {
   const segments = normalize(path).split("/");
-  if (segments[0] !== "") return undefined;
-  for (const group of PATCH_ROUTES) {
-    if (!group.prefix.every((segment, index) => segment === decodeURI(segments[index + 1] ?? ""))) {
-      continue;
-    }
-    const parameter = segments[group.prefix.length + 1];
-    if (parameter === undefined || decodeURIComponent(parameter).length <= 100) return undefined;
-    const suffix = segments.slice(group.prefix.length + 2);
-    const exists = group.routes.some(
-      (route) =>
-        route.method === method &&
-        route.suffix.length === suffix.length &&
-        route.suffix.every((segment, index) =>
-          segment.startsWith(":") ? suffix[index] !== "" : segment === decodeURI(suffix[index]!)
-        )
-    );
-    return { kind: "refused", status: exists ? 414 : 404 };
-  }
-  return undefined;
+  if (
+    segments[0] !== "" ||
+    decodeURI(segments[1] ?? "") !== "api" ||
+    decodeURI(segments[2] ?? "") !== "patches"
+  )
+    return undefined;
+  const parameter = segments[3];
+  if (parameter === undefined || decodeURIComponent(parameter).length <= routerParamLimit)
+    return undefined;
+  const suffix = segments.slice(4);
+  const exists = apiPatchRoutes.some(
+    (route) =>
+      route.method === method &&
+      route.suffix.length === suffix.length &&
+      route.suffix.every((segment, index) =>
+        segment.startsWith(":") ? suffix[index] !== "" : segment === decodeURI(suffix[index]!)
+      )
+  );
+  return { kind: "refused", status: exists ? 414 : 404 };
 }

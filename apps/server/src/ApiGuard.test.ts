@@ -355,6 +355,7 @@ it.layer(server())("the guard: anonymous and token-only routes", (it) => {
 
       for (const request of [
         HttpClientRequest.get(`/patches/${"x".repeat(33)}`),
+        HttpClientRequest.get(`/patches/${"x".repeat(16)}%2F${"x".repeat(16)}`),
         HttpClientRequest.post(`/patches/${"x".repeat(33)}/restore`),
         ...["", "/versions", "/retire", "/delete", "/restore", "/reassign"].map((suffix) =>
           HttpClientRequest.get(`/patches/${long}${suffix}`)
@@ -403,14 +404,16 @@ it.layer(server())("the guard: anonymous and token-only routes", (it) => {
           404
         );
       }
-      const head = yield* send(
-        HttpClientRequest.head(`/patches/${long}/versions`).pipe(
-          HttpClientRequest.setHeader("cookie", cookie)
-        )
-      );
-      assert.strictEqual(head.status, 414);
-      assert.strictEqual(head.headers["cache-control"], "private, no-store");
-      assert.strictEqual(yield* head.text, "");
+      for (const name of ["x".repeat(33), long]) {
+        const head = yield* send(
+          HttpClientRequest.head(`/patches/${name}/versions`).pipe(
+            HttpClientRequest.setHeader("cookie", cookie)
+          )
+        );
+        assert.strictEqual(head.status, 414);
+        assert.strictEqual(head.headers["cache-control"], "private, no-store");
+        assert.strictEqual(yield* head.text, "");
+      }
     })
   );
 

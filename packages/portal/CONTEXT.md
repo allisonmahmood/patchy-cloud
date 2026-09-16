@@ -13,7 +13,7 @@ The compact list of the company's patches beside the card: name and the first cl
 _Avoid_: sidebar, list (the CLI's `patchy list` is discovery, not this), table
 
 **Card**:
-One patch's page at `/patches/<name>`: its address, description, owner, current version, who can open it and what reads it, with the management acts for whoever may perform them. The card describes and manages the patch; the patch itself lives at its address.
+One patch's page at `/patches/<name>`: its address, description, owner, current version, who can open it and what reads it, with the management acts for whoever may perform them. The portal owns the card's browser admission and 32-character name bound; the patch itself lives at its address.
 _Avoid_: patch page (the patch is the page at the address), detail view, dossier
 
 **Manage**:
