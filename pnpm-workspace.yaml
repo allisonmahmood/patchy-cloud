@@ -8,7 +8,7 @@ catalog:
   # together (see .github/dependabot.yml). Only the language service has
   # its own release line.
   effect: 4.0.0-rc.112
-  "@effect/platform-node": 4.0.0-rc.112
+  "@effect/platform-node": 4.0.0-rc.115
   "@effect/sql-pg": 4.0.0-rc.112
   "@effect/sql-pglite": 4.0.0-rc.112
   "@effect/vitest": 4.0.0-rc.112
