@@ -160,6 +160,22 @@ export const normalizeDescription = Effect.fn("Project.normalizeDescription")(fu
   );
 });
 
+const writeRepo = Effect.fn("Project.writeRepo")(function* (
+  cwd: string,
+  repo: typeof repoSchema.Type,
+  failureMessage: string
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const destination = yield* localIO("Resolve patchy.json", () => safePath(cwd, "patchy.json"));
+  yield* Effect.scoped(
+    Effect.gen(function* () {
+      const staged = yield* fs.makeTempFileScoped({ directory: cwd, prefix: ".patchy-repo-" });
+      yield* fs.writeFileString(staged, json(repo));
+      yield* fs.rename(staged, destination);
+    })
+  ).pipe(Effect.mapError((cause) => new LocalError({ message: failureMessage, cause })));
+});
+
 export const recordDescription = Effect.fn("Project.recordDescription")(function* (
   cwd: string,
   description: {
@@ -169,7 +185,6 @@ export const recordDescription = Effect.fn("Project.recordDescription")(function
   },
   apiUrl: string
 ) {
-  const fs = yield* FileSystem.FileSystem;
   const repo = yield* readRepo(cwd);
   if (Instance.normalizeApiUrl(repo.instance) !== Instance.normalizeApiUrl(apiUrl))
     return yield* InstanceMismatch.new({ stored: repo.instance, requested: apiUrl });
@@ -177,31 +192,14 @@ export const recordDescription = Effect.fn("Project.recordDescription")(function
     return yield* new LocalError({
       message: "patchy.json now names a different patch. Its description was not changed locally."
     });
-  const destination = yield* localIO("Resolve patchy.json", () => safePath(cwd, "patchy.json"));
-  yield* Effect.scoped(
-    Effect.gen(function* () {
-      const staged = yield* fs.makeTempFileScoped({
-        directory: cwd,
-        prefix: ".patchy-description-"
-      });
-      yield* fs.writeFileString(
-        staged,
-        json({
-          ...repo,
-          description: description.description,
-          descriptionSyncedAt: description.descriptionUpdatedAt
-        })
-      );
-      yield* fs.rename(staged, destination);
-    })
-  ).pipe(
-    Effect.mapError(
-      (cause) =>
-        new LocalError({
-          message: "Could not write the cloud description into patchy.json.",
-          cause
-        })
-    )
+  yield* writeRepo(
+    cwd,
+    {
+      ...repo,
+      description: description.description,
+      descriptionSyncedAt: description.descriptionUpdatedAt
+    },
+    "Could not write the cloud description into patchy.json."
   );
 });
 
@@ -222,8 +220,11 @@ export const syncDescription = Effect.fn("Project.syncDescription")(function* (
       Effect.catch((error) => {
         if (publishing && Api.isRefusal(error) && error.error === "Patch not found.")
           return new RejectedError({
-            message:
-              "Patch is unavailable for update. Remove patch from patchy.json to create a new patch.",
+            refusal: {
+              ok: false,
+              error:
+                "Patch is unavailable for update. Remove patch from patchy.json to create a new patch."
+            },
             cause: error
           });
         return Api.classify(error, "Could not read the patch description.");
@@ -268,7 +269,6 @@ export const recordPublish = Effect.fn("Project.recordPublish")(function* (
   apiUrl: string,
   descriptionUpdatedAt?: string | null
 ) {
-  const fs = yield* FileSystem.FileSystem;
   const repo = yield* readRepo(cwd);
   if (Instance.normalizeApiUrl(repo.instance) !== Instance.normalizeApiUrl(apiUrl))
     return yield* InstanceMismatch.new({ stored: repo.instance, requested: apiUrl });
@@ -278,31 +278,14 @@ export const recordPublish = Effect.fn("Project.recordPublish")(function* (
       message:
         "patchy.json now names a different patch. Restore the original repo identity before recovering this publish; the attempt has been kept."
     });
-  const destination = yield* localIO("Resolve patchy.json", () => safePath(cwd, "patchy.json"));
-  yield* Effect.scoped(
-    Effect.gen(function* () {
-      const staged = yield* fs.makeTempFileScoped({ directory: cwd, prefix: ".patchy-publish-" });
-      yield* fs.writeFileString(
-        staged,
-        json({
-          ...repo,
-          patch: patchId,
-          ...(descriptionUpdatedAt === undefined
-            ? {}
-            : { descriptionSyncedAt: descriptionUpdatedAt })
-        })
-      );
-      yield* fs.rename(staged, destination);
-    })
-  ).pipe(
-    Effect.mapError(
-      (cause) =>
-        new LocalError({
-          message:
-            "Could not write patch into patchy.json. Run publish again to recover the saved result.",
-          cause
-        })
-    )
+  yield* writeRepo(
+    cwd,
+    {
+      ...repo,
+      patch: patchId,
+      ...(descriptionUpdatedAt === undefined ? {} : { descriptionSyncedAt: descriptionUpdatedAt })
+    },
+    "Could not write patch into patchy.json. Run publish again to recover the saved result."
   );
 });
 
@@ -384,8 +367,12 @@ const refusal = (error: Api.ClientFailure, fallback: string) =>
       (error.code === "connection_not_connected" || error.code === "patch_not_openable")
     ) {
       return yield* new RejectedError({
-        message: `${Api.refusalMessage(error, fallback)}\nAsk an admin at ${instance.apiUrl}/company${error.code === "connection_not_connected" ? "/connections" : ""}.`,
-        code: error.code
+        refusal: {
+          ok: false,
+          error: `${Api.refusalMessage(error, fallback)}\nAsk an admin at ${instance.apiUrl}/company${error.code === "connection_not_connected" ? "/connections" : ""}.`,
+          code: error.code
+        },
+        cause: error
       });
     }
     return yield* Api.classify(error, fallback);
@@ -641,8 +628,11 @@ export const add = Effect.fn("Project.add")(function* (
     );
     if (connections.length === 0)
       return yield* new RejectedError({
-        code: "connection_not_connected",
-        message: `No connected Postgres connection${handle ? ` named ${handle}` : ""}. Ask an admin at ${instance.apiUrl}/company/connections.`
+        refusal: {
+          ok: false,
+          code: "connection_not_connected",
+          error: `No connected Postgres connection${handle ? ` named ${handle}` : ""}. Ask an admin at ${instance.apiUrl}/company/connections.`
+        }
       });
     if (connections.length > 1)
       return yield* new LocalError({
@@ -657,8 +647,11 @@ export const add = Effect.fn("Project.add")(function* (
         message: "Use patchy add shared-table <patchId>/<table> [--as <alias>]."
       });
     const notOpenable = {
-      code: "patch_not_openable",
-      message: `That shared table is not available to you. Ask an admin at ${instance.apiUrl}/company.`
+      refusal: {
+        ok: false as const,
+        code: "patch_not_openable",
+        error: `That shared table is not available to you. Ask an admin at ${instance.apiUrl}/company.`
+      }
     };
     const observed: { status?: number } = {};
     const http = yield* HttpClient.HttpClient;

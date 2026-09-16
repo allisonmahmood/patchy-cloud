@@ -14,31 +14,25 @@ const decodeManifest = Schema.decodeUnknownEffect(Schema.fromJsonString(Manifest
 type Definition =
   (typeof Manifest.Type)["tables"][string] | (typeof Manifest.Type)["files"][string];
 
-const sameDefinition = (before: Definition, after: Definition): boolean => {
-  if (isDeepStrictEqual(before, after)) return true;
-  if (!("columns" in before) || !("columns" in after)) return false;
-  if ((before.shared ?? false) !== (after.shared ?? false)) return false;
-  if (Object.keys(before.columns).length !== Object.keys(after.columns).length) return false;
-  for (const [name, column] of Object.entries(before.columns)) {
-    const next = after.columns[name];
-    if (next === undefined) return false;
-    if (isDeepStrictEqual(column, next)) continue;
-    if ((column.optional ?? false) !== (next.optional ?? false)) return false;
-    if (!isDeepStrictEqual({ ...column, optional: false }, { ...next, optional: false }))
-      return false;
-  }
-  if (Object.keys(before.indexes).length !== Object.keys(after.indexes).length) return false;
-  for (const [name, index] of Object.entries(before.indexes)) {
-    const next = after.indexes[name];
-    if (
-      next === undefined ||
-      (index.unique ?? false) !== (next.unique ?? false) ||
-      !isDeepStrictEqual(index.columns, next.columns)
-    )
-      return false;
-  }
-  return true;
-};
+const canonical = (definition: Definition): Definition =>
+  "columns" in definition
+    ? {
+        ...definition,
+        shared: definition.shared ?? false,
+        columns: Object.fromEntries(
+          Object.entries(definition.columns).map(([name, column]) => [
+            name,
+            { ...column, optional: column.optional ?? false }
+          ])
+        ),
+        indexes: Object.fromEntries(
+          Object.entries(definition.indexes).map(([name, index]) => [
+            name,
+            { ...index, unique: index.unique ?? false }
+          ])
+        )
+      }
+    : definition;
 
 /** Compare executed definitions with the previous generation, before replacing it. */
 export const primitiveReminders = Effect.fn("primitiveReminders")(function* (
@@ -76,7 +70,7 @@ export const primitiveReminders = Effect.fn("primitiveReminders")(function* (
       if (
         before !== undefined &&
         before.description === definition.description &&
-        !sameDefinition(before, definition)
+        !isDeepStrictEqual(canonical(before), canonical(definition))
       ) {
         warnings.push(
           `${kind === "tables" ? "Table" : "Store"} \`${name}\` changed since its last generation; check that its description still holds: '${definition.description}'`

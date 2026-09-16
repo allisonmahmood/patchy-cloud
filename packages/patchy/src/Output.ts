@@ -16,7 +16,7 @@ import * as GlobalFlag from "effect/unstable/cli/GlobalFlag";
 import * as Option from "effect/Option";
 import * as Runtime from "effect/Runtime";
 import * as Schema from "effect/Schema";
-import { type CliError, type Rejected, exitCode, refusalDetails } from "./CliError.js";
+import { type CliError, type RejectedError, exitCode, refusalDetails } from "./CliError.js";
 
 export const JsonFlag = GlobalFlag.setting("json")({
   flag: Flag.boolean("json").pipe(
@@ -96,22 +96,15 @@ export const contract = <A, R>(handler: Effect.Effect<A, CliError, R>) =>
             ? error
             : [...warnings, error].join("\n")
       ).pipe(Effect.andThen(new Failed({ code: exitCode(kind) })));
-    const failKnown = (error: Exclude<CliError, Rejected>) =>
+    const failKnown = (error: Exclude<CliError, RejectedError>) =>
       fail(error.message, error.kind, error.code === undefined ? {} : { code: error.code });
-    const failRejected = (error: Rejected) =>
+    const failRejected = (error: RejectedError) =>
       fail(error.message, error.kind, refusalDetails(error));
     return yield* handler.pipe(
       Effect.provideService(WarningBuffer, warnings),
       Effect.catchTags({
         LocalError: failKnown,
         RejectedError: failRejected,
-        NotOwnerError: failRejected,
-        PatchRetiredError: failRejected,
-        PatchDeletedError: failRejected,
-        HasDependantsError: failRejected,
-        SourcesOffError: failRejected,
-        WrongStateError: failRejected,
-        WrongPatchState: failRejected,
         UnreachableError: failKnown,
         ReleaseMismatch: failKnown,
         InstanceMismatch: failKnown

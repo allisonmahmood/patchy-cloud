@@ -106,7 +106,10 @@ const poll = Effect.fn("Login.poll")(function* (
                 : error.code === "expired"
                   ? "The login expired before it was confirmed (codes last ten minutes). Run: patchy login"
                   : `No login is pending for code ${login.userCode} on ${apiUrl}; it may already have been reported. Run: patchy login`;
-            return yield* new RejectedError({ message, cause: error });
+            return yield* new RejectedError({
+              refusal: { ok: false, error: message },
+              cause: error
+            });
           }
           return yield* Api.classify(error, "Login could not complete.");
         })
