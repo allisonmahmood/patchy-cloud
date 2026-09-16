@@ -39,6 +39,7 @@ describe("wire schemas", () => {
       schemaRevision: 3,
       tables: {
         notes: {
+          description: "Notes keyed by id.",
           columns: {
             parent: { kind: "ref" as const, table: "notes", optional: true },
             priority: { kind: "integer" as const, default: 1 }
@@ -157,40 +158,94 @@ describe("wire schemas", () => {
     const decode = Schema.decodeUnknownExit(Manifest, { onExcessProperty: "error" });
     expect(decode({ ...manifest, release: "0.0.0", manifestVersion: 7 })._tag).toBe("Success");
     for (const tables of [
-      { "not-valid": { columns: {}, indexes: {} } },
-      { ["a".repeat(64)]: { columns: {}, indexes: {} } },
-      { notes: { columns: { count: { kind: "integer", default: 2147483648 } }, indexes: {} } },
-      { notes: { columns: { data: { kind: "json", default: null } }, indexes: {} } },
-      { notes: { columns: { title: { kind: "text", default: "nul\u0000text" } }, indexes: {} } },
+      { "not-valid": { description: "Records keyed by id.", columns: {}, indexes: {} } },
+      { ["a".repeat(64)]: { description: "Records keyed by id.", columns: {}, indexes: {} } },
       {
-        notes: { columns: { data: { kind: "json", default: { nested: ["\ud800"] } } }, indexes: {} }
+        notes: {
+          description: "Records keyed by id.",
+          columns: { count: { kind: "integer", default: 2147483648 } },
+          indexes: {}
+        }
       },
       {
         notes: {
+          description: "Records keyed by id.",
+          columns: { data: { kind: "json", default: null } },
+          indexes: {}
+        }
+      },
+      {
+        notes: {
+          description: "Records keyed by id.",
+          columns: { title: { kind: "text", default: "nul\u0000text" } },
+          indexes: {}
+        }
+      },
+      {
+        notes: {
+          description: "Records keyed by id.",
+          columns: { data: { kind: "json", default: { nested: ["\ud800"] } } },
+          indexes: {}
+        }
+      },
+      {
+        notes: {
+          description: "Records keyed by id.",
           columns: { data: { kind: "json", default: { ["nul\u0000key"]: true } } },
           indexes: {}
         }
       },
       {
         notes: {
+          description: "Records keyed by id.",
           columns: { at: { kind: "timestamp", default: "2026-02-30T00:00:00Z" } },
           indexes: {}
         }
       },
-      { notes: { columns: {}, indexes: { inherited: { columns: ["toString"] } } } },
-      { notes: { columns: { id: { kind: "text" } }, indexes: {} } },
-      { notes: { columns: { title: { kind: "integer", default: "wrong" } }, indexes: {} } },
       {
         notes: {
+          description: "Records keyed by id.",
+          columns: {},
+          indexes: { inherited: { columns: ["toString"] } }
+        }
+      },
+      {
+        notes: {
+          description: "Records keyed by id.",
+          columns: { id: { kind: "text" } },
+          indexes: {}
+        }
+      },
+      {
+        notes: {
+          description: "Records keyed by id.",
+          columns: { title: { kind: "integer", default: "wrong" } },
+          indexes: {}
+        }
+      },
+      {
+        notes: {
+          description: "Records keyed by id.",
           columns: { title: { kind: "text" } },
           indexes: { missing: { columns: ["absent"] } }
         }
       },
-      { notes: { columns: { title: { kind: "invalid" } }, indexes: {} } }
+      {
+        notes: {
+          description: "Records keyed by id.",
+          columns: { title: { kind: "invalid" } },
+          indexes: {}
+        }
+      }
     ]) {
       expect(decode({ ...manifest, tables })._tag).toBe("Failure");
     }
-    expect(decode({ ...manifest, files: { images: { unexpected: true } } })._tag).toBe("Failure");
+    expect(
+      decode({
+        ...manifest,
+        files: { images: { description: "Images keyed by file name.", unexpected: true } }
+      })._tag
+    ).toBe("Failure");
     expect(
       decode({
         ...manifest,
@@ -203,6 +258,7 @@ describe("wire schemas", () => {
         tier: 1,
         tables: {
           notes: {
+            description: "Notes keyed by id.",
             columns: {
               title: { kind: "text", default: "Untitled" },
               body: { kind: "text", optional: true },
@@ -217,7 +273,7 @@ describe("wire schemas", () => {
             shared: true
           }
         },
-        files: { images: {} },
+        files: { images: { description: "Images keyed by file name." } },
         uses: {
           sales: { kind: "postgres", handle: "warehouse", id: "conn_1", revision: 1 },
           shared: {
@@ -244,6 +300,7 @@ describe("wire schemas", () => {
       ...manifest,
       tables: {
         notes: {
+          description: "Records keyed by id.",
           columns: { contact: { kind: "ref" as const, table: declaration.id } },
           indexes: {}
         }

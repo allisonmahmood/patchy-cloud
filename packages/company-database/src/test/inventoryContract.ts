@@ -66,7 +66,12 @@ export const inventoryContract = Effect.fn("Contract.inventory")(function* (comp
           assert.strictEqual(yield* inventory.ensurePatch(patchId), 0);
           yield* sql.unsafe(`CREATE TABLE ${qualified} ("body" text NOT NULL)`);
           yield* sql.unsafe(`INSERT INTO ${qualified} ("body") VALUES ('kept')`);
-          yield* inventory.putTable({ patchId, name: table, shared: true });
+          yield* inventory.putTable({
+            description: "Notes identified by their row id.",
+            patchId,
+            name: table,
+            shared: true
+          });
           yield* inventory.putColumn({
             patchId,
             table,
@@ -84,7 +89,11 @@ export const inventoryContract = Effect.fn("Contract.inventory")(function* (comp
             columns: ["body"],
             unique: false
           });
-          yield* inventory.putStore({ patchId, name: "documents" });
+          yield* inventory.putStore({
+            description: "Documents identified by file name.",
+            patchId,
+            name: "documents"
+          });
           assert.strictEqual(yield* inventory.bumpRevision(patchId), 1);
         })
       );
@@ -93,6 +102,8 @@ export const inventoryContract = Effect.fn("Contract.inventory")(function* (comp
       assert.isNotNull(initial);
       if (initial === null) return;
       assert.strictEqual(initial.tables[0]?.name, table);
+      assert.strictEqual(initial.tables[0]?.description, "Notes identified by their row id.");
+      assert.strictEqual(initial.stores[0]?.description, "Documents identified by file name.");
       assert.strictEqual(initial.columns[0]?.defaultValue, "first");
       assert.deepStrictEqual(initial.indexes[0]?.columns, ["body"]);
       assert.isTrue(initial.createdAt instanceof Date);
@@ -102,7 +113,12 @@ export const inventoryContract = Effect.fn("Contract.inventory")(function* (comp
         Effect.gen(function* () {
           assert.strictEqual(yield* inventory.ensurePatch(patchId), 1);
           yield* sql.unsafe(`ALTER TABLE ${qualified} ADD COLUMN "metadata" jsonb`);
-          yield* inventory.putTable({ patchId, name: table, shared: false });
+          yield* inventory.putTable({
+            description: "Notes with optional JSON metadata.",
+            patchId,
+            name: table,
+            shared: false
+          });
           yield* inventory.putColumn({
             patchId,
             table,
@@ -113,7 +129,11 @@ export const inventoryContract = Effect.fn("Contract.inventory")(function* (comp
             defaultKind: "constant",
             defaultValue: { nested: [true, null, "value"] }
           });
-          yield* inventory.putStore({ patchId, name: "pictures" });
+          yield* inventory.putStore({
+            description: "Documents identified by file name.",
+            patchId,
+            name: "pictures"
+          });
           assert.strictEqual(yield* inventory.bumpRevision(patchId), 2);
         })
       );
@@ -132,6 +152,8 @@ export const inventoryContract = Effect.fn("Contract.inventory")(function* (comp
         ["documents", "pictures"]
       );
       assert.strictEqual(cumulative.tables[0]?.shared, false);
+      assert.strictEqual(cumulative.tables[0]?.description, "Notes with optional JSON metadata.");
+      assert.strictEqual(cumulative.stores[0]?.description, initial.stores[0]?.description);
       assert.deepStrictEqual(cumulative.indexes, initial.indexes);
       assert.deepStrictEqual(cumulative.createdAt, initial.createdAt);
       assert.deepStrictEqual(cumulative.tables[0]?.createdAt, initial.tables[0]?.createdAt);
@@ -139,7 +161,12 @@ export const inventoryContract = Effect.fn("Contract.inventory")(function* (comp
       const unlockedPatchId = "unlocked-new-patch";
       const writes: ReadonlyArray<Effect.Effect<unknown, SqlError, CompanyDatabases.PatchLock>> = [
         inventory.ensurePatch(unlockedPatchId),
-        inventory.putTable({ patchId, name: table, shared: true }),
+        inventory.putTable({
+          description: "Notes identified by their row id.",
+          patchId,
+          name: table,
+          shared: true
+        }),
         inventory.putColumn({
           patchId,
           table,
@@ -157,7 +184,11 @@ export const inventoryContract = Effect.fn("Contract.inventory")(function* (comp
           columns: ["body"],
           unique: true
         }),
-        inventory.putStore({ patchId, name: "forbidden" }),
+        inventory.putStore({
+          description: "Documents identified by file name.",
+          patchId,
+          name: "forbidden"
+        }),
         inventory.bumpRevision(patchId)
       ];
       for (const write of writes) {
@@ -191,7 +222,12 @@ export const inventoryContract = Effect.fn("Contract.inventory")(function* (comp
               defaultKind: null,
               defaultValue: null
             });
-            yield* inventory.putTable({ patchId, name: table, shared: true });
+            yield* inventory.putTable({
+              description: "Notes identified by their row id.",
+              patchId,
+              name: table,
+              shared: true
+            });
             yield* inventory.bumpRevision(patchId);
             return yield* Effect.fail("abort-provisioning");
           })

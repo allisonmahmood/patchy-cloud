@@ -108,7 +108,11 @@ it("binds bootstrap to the parent and URL nonce and closes pending calls on page
 it("transfers owned upload buffers and isolates subviews without leaking neighboring bytes", async () => {
   const channel = new MessageChannel();
   const transport = createPortTransport(channel.port1);
-  const config = defineConfig({ name: "uploads", tier: 1, files: { images: files() } });
+  const config = defineConfig({
+    name: "uploads",
+    tier: 1,
+    files: { images: files("Images keyed by filename.") }
+  });
   const client = createClient<typeof config>(config, { transport, shared: {}, connections: {} });
   const uploads: Uint8Array[] = [];
   channel.port2.onmessage = ({ data }) => {
@@ -144,7 +148,11 @@ it("transfers owned upload buffers and isolates subviews without leaking neighbo
 it("decodes transferred file replies into client bytes and downloads through the broker", async () => {
   const channel = new MessageChannel();
   const transport = createPortTransport(channel.port1);
-  const config = defineConfig({ name: "downloads", tier: 1, files: { images: files() } });
+  const config = defineConfig({
+    name: "downloads",
+    tier: 1,
+    files: { images: files("Images keyed by filename.") }
+  });
   const client = createClient<typeof config>(config, { transport, shared: {}, connections: {} });
   const downloads: unknown[] = [];
   channel.port2.onmessage = ({ data }) => {

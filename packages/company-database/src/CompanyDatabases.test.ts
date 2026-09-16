@@ -49,7 +49,12 @@ it.layer(Testing.layer())("CompanyDatabases", (it) => {
           yield* service.withPatchLock(patchId)(
             Effect.gen(function* () {
               yield* inventory.ensurePatch(patchId);
-              yield* inventory.putTable({ patchId, name: "notes", shared: true });
+              yield* inventory.putTable({
+                description: "Notes identified by their row id.",
+                patchId,
+                name: "notes",
+                shared: true
+              });
               yield* inventory.putColumn({
                 patchId,
                 table: "notes",
@@ -312,7 +317,12 @@ it.layer(Testing.layer())("CompanyDatabases", (it) => {
               // Hold the later component query behind this transaction while earlier
               // components remain readable, exposing a mixed snapshot without the lock.
               yield* sql`LOCK TABLE patchy.columns IN ACCESS EXCLUSIVE MODE`;
-              yield* inventory.putTable({ patchId: "snapshot", name: "notes", shared: false });
+              yield* inventory.putTable({
+                description: "Notes identified by their row id.",
+                patchId: "snapshot",
+                name: "notes",
+                shared: false
+              });
               yield* inventory.putColumn({
                 patchId: "snapshot",
                 table: "notes",

@@ -871,7 +871,14 @@ it.layer(Layer.fresh(publishLayer))("owner lifecycle over machine tokens", (it) 
               manifest: {
                 ...Fixtures.manifest,
                 name,
-                tables: { orders: { columns: {}, indexes: {}, shared: true } }
+                tables: {
+                  orders: {
+                    description: "Notes keyed by id.",
+                    columns: {},
+                    indexes: {},
+                    shared: true
+                  }
+                }
               }
             })
           })
@@ -1003,6 +1010,60 @@ const racingClients = Effect.fn("racingClients")(function* () {
 
 it.layer(publishLayer)("publish attempts", (it) => {
   it.effect(
+    "replaces primitive descriptions without changing schema and preserves them on omission and rollback",
+    () =>
+      Effect.gen(function* () {
+        const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+        const manifest = {
+          ...Fixtures.manifest,
+          name: "primitive-descriptions",
+          tables: { notes: { description: "Notes keyed by id.", columns: {}, indexes: {} } },
+          files: { attachments: { description: "Attachments keyed by file name." } }
+        };
+        const first = yield* owner.publish({
+          payload: publishRequest({ html: html("Descriptions"), manifest })
+        });
+        const params = { patchId: first.patchId };
+        const revised = {
+          ...manifest,
+          tables: {
+            notes: { ...manifest.tables.notes, description: "Meeting notes keyed by id." }
+          },
+          files: {
+            attachments: {
+              description: "Meeting recordings keyed by file name; durations are seconds."
+            }
+          }
+        };
+        const second = yield* owner.publish({
+          payload: publishRequest({
+            ...params,
+            html: html("Revised descriptions"),
+            manifest: revised
+          })
+        });
+        assert.strictEqual(second.schemaRevision, first.schemaRevision);
+        const expected = {
+          schemaRevision: first.schemaRevision,
+          tables: { notes: { ...revised.tables.notes, shared: false } },
+          files: revised.files
+        };
+        expect(yield* owner.inventory({ params })).toEqual(expected);
+        const omitted = yield* owner.publish({
+          payload: publishRequest({
+            ...params,
+            html: html("Omitted definitions"),
+            manifest: { ...Fixtures.manifest, name: manifest.name }
+          })
+        });
+        assert.strictEqual(omitted.schemaRevision, first.schemaRevision);
+        expect(yield* owner.inventory({ params })).toEqual(expected);
+        yield* owner.rollback({ params, payload: new RollbackRequest({ versionNumber: 1 }) });
+        expect(yield* owner.inventory({ params })).toEqual(expected);
+      })
+  );
+
+  it.effect(
     "publishes store-only repos and retains omitted stores in the owner's cumulative inventory",
     () =>
       Effect.gen(function* () {
@@ -1011,7 +1072,7 @@ it.layer(publishLayer)("publish attempts", (it) => {
         const manifest = {
           ...Fixtures.manifest,
           name: "inventory-files",
-          files: { attachments: {} }
+          files: { attachments: { description: "Attachments keyed by file name." } }
         };
         const payload = publishRequest({ html: html("File store repo"), manifest });
         const [created, response] = yield* owner.publish({
@@ -1081,6 +1142,7 @@ it.layer(publishLayer)("publish attempts", (it) => {
           name: "inventory-notes",
           tables: {
             notes: {
+              description: "Notes keyed by id.",
               columns: {
                 title: { kind: "text" as const },
                 parent: { kind: "ref" as const, table: "notes", optional: true },
@@ -1201,8 +1263,14 @@ it.layer(publishLayer)("publish attempts", (it) => {
           ...Fixtures.manifest,
           tier: 1,
           name: "lost-repo-reply",
-          tables: { notes: { columns: { title: { kind: "text" } }, indexes: {} } },
-          files: { attachments: {} }
+          tables: {
+            notes: {
+              description: "Records keyed by id.",
+              columns: { title: { kind: "text" } },
+              indexes: {}
+            }
+          },
+          files: { attachments: { description: "Attachments keyed by file name." } }
         }
       });
       const patches = yield* Patches.Patches;
@@ -1235,7 +1303,9 @@ it.layer(publishLayer)("publish attempts", (it) => {
       const inventory = yield* patches.inventory(patchId, uploader.user.id);
       assert.strictEqual(inventory.schemaRevision, 1);
       assert.strictEqual(inventory.tables.notes?.columns.title?.kind, "text");
-      assert.deepStrictEqual(inventory.files, { attachments: {} });
+      assert.deepStrictEqual(inventory.files, {
+        attachments: { description: "Attachments keyed by file name." }
+      });
     })
   );
 
@@ -1892,6 +1962,31 @@ it.layer(publishLayer)("publish attempts", (it) => {
         const payload = publishRequest({ html: html("Wire stamp") });
         for (const [body, status] of [
           [{ ...payload, manifest: { ...Fixtures.manifest, tables: [] } }, 422],
+          [
+            {
+              ...payload,
+              manifest: { ...Fixtures.manifest, tables: { notes: { columns: {}, indexes: {} } } }
+            },
+            422
+          ],
+          [{ ...payload, manifest: { ...Fixtures.manifest, files: { docs: {} } } }, 422],
+          [
+            {
+              ...payload,
+              manifest: {
+                ...Fixtures.manifest,
+                tables: { notes: { description: "", columns: {}, indexes: {} } }
+              }
+            },
+            422
+          ],
+          [
+            {
+              ...payload,
+              manifest: { ...Fixtures.manifest, files: { docs: { description: " \t\n" } } }
+            },
+            422
+          ],
           [{ ...payload, wireVersion: 999 }, 201],
           [{ publishKey: payload.publishKey, manifest: null }, 409]
         ] as const) {
@@ -1939,6 +2034,7 @@ it.layer(Layer.fresh(publishLayer))("shared table publishing", (it) => {
           name: "shared-contacts",
           tables: {
             contacts: {
+              description: "Notes keyed by id.",
               columns: { name: { kind: "text" as const } },
               indexes: { byName: { columns: ["name"] } },
               shared: true
@@ -2001,6 +2097,7 @@ it.layer(Layer.fresh(publishLayer))("shared table publishing", (it) => {
           name: "shared-consumer",
           tables: {
             notes: {
+              description: "Records keyed by id.",
               columns: { contact: { kind: "ref" as const, table: declaration.id } },
               indexes: {}
             }
@@ -2162,7 +2259,9 @@ it.layer(Layer.fresh(publishLayer))("shared table publishing", (it) => {
         const manifest = {
           ...Fixtures.manifest,
           name: "stable-source-name",
-          tables: { contacts: { columns: {}, indexes: {}, shared: true } }
+          tables: {
+            contacts: { description: "Notes keyed by id.", columns: {}, indexes: {}, shared: true }
+          }
         };
         const source = yield* owner.publish({
           payload: publishRequest({ html: html("Source"), manifest })

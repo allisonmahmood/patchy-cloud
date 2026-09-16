@@ -32,11 +32,12 @@ const definition: typeof Manifest.Type = {
   tier: 1,
   tables: {
     notes: {
+      description: "Records keyed by id.",
       columns: { title: { kind: "text" }, slug: { kind: "text" } },
       indexes: { bySlug: { columns: ["slug"], unique: true } }
     }
   },
-  files: { docs: {} }
+  files: { docs: { description: "Documents keyed by file name." } }
 };
 
 const filesystem = Layer.unwrap(
@@ -270,7 +271,7 @@ it.layer(services, { timeout: "60 seconds" })("SDK orchestration / real PostgreS
           assert.strictEqual(result.schemaRevision, 1);
           assert.deepStrictEqual(
             (yield* patches.inventory(result.patchId, uploader.user.id)).files,
-            { docs: {} }
+            { docs: { description: "Documents keyed by file name." } }
           );
           const binding = yield* bindingFor(result.patchId, result.versionId);
           const inserted = yield* handlers["tables.insert"]
@@ -320,7 +321,10 @@ it.layer(services, { timeout: "60 seconds" })("SDK orchestration / real PostgreS
               }
             }
           },
-          files: { docs: {}, images: {} }
+          files: {
+            docs: { description: "Documents keyed by file name." },
+            images: { description: "Images keyed by file name." }
+          }
         };
         const secondManifest: typeof Manifest.Type = {
           ...definition,
@@ -390,7 +394,10 @@ it.layer(services, { timeout: "60 seconds" })("SDK orchestration / real PostgreS
           "slug",
           "title"
         ]);
-        assert.deepStrictEqual(cumulative.files, { docs: {}, images: {} });
+        assert.deepStrictEqual(cumulative.files, {
+          docs: { description: "Documents keyed by file name." },
+          images: { description: "Images keyed by file name." }
+        });
         const current = Option.getOrThrow(yield* patches.find(initial.patchId));
         assert.strictEqual(current.version.id, secondResult.versionId);
         assert.strictEqual(yield* content.read(current.version), "<p>priority bundle</p>");
@@ -573,7 +580,10 @@ it.layer(services, { timeout: "60 seconds" })("SDK orchestration / real PostgreS
               }
             }
           },
-          files: { docs: {}, images: {} }
+          files: {
+            docs: { description: "Documents keyed by file name." },
+            images: { description: "Images keyed by file name." }
+          }
         };
         const held = yield* heldProvision();
         const heldContent = yield* Content.make.pipe(
@@ -609,7 +619,10 @@ it.layer(services, { timeout: "60 seconds" })("SDK orchestration / real PostgreS
         assert.strictEqual(yield* content.read(rolledBack.version), "<p>rollback target</p>");
         const inventory = yield* patches.inventory(original.patchId, uploader.user.id);
         assert.strictEqual(inventory.schemaRevision, 2);
-        assert.deepStrictEqual(inventory.files, { docs: {}, images: {} });
+        assert.deepStrictEqual(inventory.files, {
+          docs: { description: "Documents keyed by file name." },
+          images: { description: "Images keyed by file name." }
+        });
         assert.deepStrictEqual(Object.keys(inventory.tables.notes!.columns).sort(), [
           "label",
           "slug",

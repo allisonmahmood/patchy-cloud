@@ -6,6 +6,8 @@ import { randomUUID } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  DefinitionName,
+  GenerationManifest,
   Manifest,
   PatchName,
   PostgresDeclaration,
@@ -14,6 +16,7 @@ import {
 } from "@patchy/api";
 import * as Schema from "effect/Schema";
 import type { ColumnKind, Declaration, IndexDefinition, Json } from "./config.js";
+import { LocalError } from "./CliError.js";
 import { MANIFEST_VERSION, RELEASE } from "./release.js";
 
 /** Portable declaration types: bundling Effect's schema types leaks its type dependencies. */
@@ -42,13 +45,14 @@ export interface ExecutedManifest {
     Record<
       string,
       {
+        readonly description: string;
         readonly columns: Readonly<Record<string, ManifestColumn>>;
         readonly indexes: Readonly<Record<string, IndexDefinition>>;
         readonly shared?: boolean;
       }
     >
   >;
-  readonly files: Readonly<Record<string, Readonly<Record<string, never>>>>;
+  readonly files: Readonly<Record<string, { readonly description: string }>>;
   readonly uses: Readonly<
     Record<string, Declaration & { readonly id: string; readonly revision: number }>
   >;
@@ -94,6 +98,9 @@ const generatedIndexSchema = Schema.Struct({
 const decodeConfig = Schema.decodeUnknownSync(configSchema, { onExcessProperty: "error" });
 const decodeIndex = Schema.decodeUnknownSync(Schema.fromJsonString(generatedIndexSchema));
 const decodeManifest = Schema.decodeUnknownSync(Manifest, { onExcessProperty: "error" });
+const decodeGenerationManifest = Schema.decodeUnknownSync(GenerationManifest, {
+  onExcessProperty: "error"
+});
 const childMessageSchema = Schema.Union([
   Schema.Struct({ ok: Schema.Literal(true), config: Schema.Unknown }),
   Schema.Struct({ ok: Schema.Literal(false), message: Schema.String })
@@ -106,6 +113,27 @@ export class StaleGenerated extends Error {
     super("declarations changed; run `patchy refresh`", options);
   }
 }
+
+class PrimitiveNameCollision extends Schema.TaggedError<PrimitiveNameCollision>()(
+  "PrimitiveNameCollision",
+  { definitionName: DefinitionName, cause: Schema.Defect() }
+) {
+  override get message() {
+    return `Table "${this.definitionName}" and file store "${this.definitionName}" must have different names.`;
+  }
+}
+const isPrimitiveNameCollision = Schema.is(PrimitiveNameCollision);
+
+/** Only known config errors supply public diagnostics; arbitrary config exceptions stay in cause. */
+export const configFailure = (cause: unknown) =>
+  new LocalError({
+    message:
+      isPrimitiveNameCollision(cause) || cause instanceof StaleGenerated
+        ? cause.message
+        : "Could not execute patchy.config.ts. Check the config, its imports and primitive descriptions.",
+    code: cause instanceof StaleGenerated ? cause.code : "invalid_manifest",
+    cause
+  });
 
 const runConfig = (path: string): Promise<unknown> => {
   const { promise, resolve: accept, reject } = Promise.withResolvers<unknown>();
@@ -167,13 +195,26 @@ export async function executeConfig(
   options?: { readonly resolve: false; readonly source?: string }
 ): Promise<ExecutedManifest | UnresolvedManifest> {
   const absolutePath = resolve(path);
-  const config = decodeConfig(
+  const input = decodeConfig(
     options?.source === undefined
       ? await runConfig(absolutePath)
       : await runEditedConfig(absolutePath, options.source)
   );
+  let config: typeof GenerationManifest.Type;
+  try {
+    config = decodeGenerationManifest({
+      ...input,
+      manifestVersion: MANIFEST_VERSION,
+      release: RELEASE
+    });
+  } catch (cause) {
+    // Names passed the definition grammar above, so this diagnostic cannot contain config values.
+    const name = Object.keys(input.tables).find((name) => Object.hasOwn(input.files, name));
+    if (name !== undefined) throw new PrimitiveNameCollision({ definitionName: name, cause });
+    throw cause;
+  }
   if (options?.resolve === false) {
-    return { ...config, manifestVersion: MANIFEST_VERSION, release: RELEASE };
+    return config;
   }
   const declarations = Object.entries(config.uses);
   const uses: Record<string, (typeof Manifest.Type)["uses"][string]> = {};

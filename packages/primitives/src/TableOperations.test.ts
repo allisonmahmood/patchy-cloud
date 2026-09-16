@@ -67,6 +67,7 @@ it.layer(postgres)("TableOperations / Postgres", (it) => {
           ...manifest,
           tables: {
             notes: {
+              description: "Notes identified by their row id.",
               columns: { title: { kind: "text" as const } },
               indexes: { byTitle: { columns: ["title"] } }
             }

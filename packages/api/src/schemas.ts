@@ -297,7 +297,13 @@ export const IndexDefinition = Schema.Struct({
   columns: Schema.Array(NonEmptyText).check(Schema.isMinLength(1), Schema.isMaxLength(32)),
   unique: Schema.optionalKey(Schema.Boolean)
 });
+const PrimitiveDescription = PostgresText.check(
+  Schema.makeFilter(
+    (value) => value.trim().length > 0 || "A primitive description must not be blank."
+  )
+);
 export const TableDefinition = Schema.Struct({
+  description: PrimitiveDescription,
   columns: definitions(ColumnDefinition).check(
     Schema.makeFilter(
       (columns) =>
@@ -322,7 +328,7 @@ export const TableDefinition = Schema.Struct({
       ) || "An index names an unknown column."
   )
 );
-export const FileStoreDefinition = Schema.Record(Schema.String, Schema.Never);
+export const FileStoreDefinition = Schema.Struct({ description: PrimitiveDescription });
 export const PostgresDeclaration = Schema.Struct({
   kind: Schema.Literal("postgres"),
   handle: NonEmptyText,
@@ -339,6 +345,17 @@ export const SharedTableDeclaration = Schema.Struct({
   id: NonEmptyText,
   revision: Revision
 });
+const distinctPrimitiveNames = Schema.makeFilter(
+  (manifest: {
+    readonly tables: Readonly<Record<string, unknown>>;
+    readonly files: Readonly<Record<string, unknown>>;
+  }) => {
+    const name = Object.keys(manifest.tables).find((name) => Object.hasOwn(manifest.files, name));
+    return (
+      name === undefined || `Table "${name}" and file store "${name}" must have different names.`
+    );
+  }
+);
 export const Manifest = Schema.Struct({
   manifestVersion: Schema.Int.check(Schema.isGreaterThan(0)),
   release: NonEmptyText,
@@ -348,7 +365,9 @@ export const Manifest = Schema.Struct({
   tables: definitions(TableDefinition),
   files: definitions(FileStoreDefinition),
   uses: definitions(Schema.Union([PostgresDeclaration, SharedTableDeclaration]))
-}).annotate({ parseOptions: { onExcessProperty: "error" } });
+})
+  .check(distinctPrimitiveNames)
+  .annotate({ parseOptions: { onExcessProperty: "error" } });
 
 /** Generation resolves declarations; existing stamps are hints, never authority. */
 export const GenerationManifest = Schema.Struct({
@@ -367,7 +386,9 @@ export const GenerationManifest = Schema.Struct({
       })
     ])
   )
-}).annotate({ parseOptions: { onExcessProperty: "error" } });
+})
+  .check(distinctPrimitiveNames)
+  .annotate({ parseOptions: { onExcessProperty: "error" } });
 
 export const Catalog = Schema.Struct({
   connections: Schema.Array(

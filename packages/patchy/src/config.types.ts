@@ -13,6 +13,7 @@ const config = defineConfig({
   tier: 1,
   tables: {
     notes: table(
+      "Notes identified by id; count is a whole-number tally.",
       {
         title: t.text(),
         titleOptional: t.text().optional(),
@@ -42,9 +43,9 @@ const config = defineConfig({
         shared: true
       }
     ),
-    users: table({ name: t.text() })
+    users: table("Users identified by id.", { name: t.text() })
   },
-  files: { attachments: files() },
+  files: { attachments: files("Note attachments keyed by filename.") },
   uses: { sales: postgres("warehouse"), customers: sharedTable("abcdefghijkl", "customers") }
 });
 type Note = Row<typeof config, "notes">;
@@ -152,9 +153,17 @@ const boundaries = (noteId: Id<"notes">, userId: Id<"users">) => {
   // @ts-expect-error reference defaults must name the right target
   t.ref("notes").default(userId);
   // @ts-expect-error system columns are reserved
-  table({ id: t.text() });
+  table("Notes identified by id.", { id: t.text() });
   // @ts-expect-error indexes can only name known or system columns
-  table({ title: t.text() }, { indexes: { bad: ["absent"] } });
+  table("Notes identified by id.", { title: t.text() }, { indexes: { bad: ["absent"] } });
+  // @ts-expect-error a table description cannot be an empty literal
+  table("", { title: t.text() });
+  // @ts-expect-error a file store description cannot be an empty literal
+  files("");
+  // @ts-expect-error a table description is required
+  table({ title: t.text() });
+  // @ts-expect-error a file store description is required
+  files();
   return {
     insert,
     update,
