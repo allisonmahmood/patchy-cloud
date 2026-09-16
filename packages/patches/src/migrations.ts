@@ -2,12 +2,7 @@
  * The patches capability's schema: baseline 3 and lifecycle migration 8 of
  * the global migration sequence (`packages/sql/CONTEXT.md`).
  */
-import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import type { Migrations } from "@patchy/sql";
-
-const ddl = (statement: string) =>
-  Effect.flatMap(SqlClient.SqlClient, (sql) => sql.unsafe(statement));
+import { ddl, type Migrations } from "@patchy/sql";
 
 export const migrations: Migrations = {
   // A patch owns its address and served-version pointer. Versions retain

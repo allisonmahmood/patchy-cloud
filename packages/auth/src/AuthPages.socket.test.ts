@@ -49,7 +49,7 @@ it.layer(layer)("auth pages on a socket", (it) => {
   it.effect("bounds device forms before session admission, including chunked bodies", () =>
     Effect.gen(function* () {
       const server = yield* HttpServer.HttpServer;
-      if (server.address._tag !== "TcpAddress") return assert.fail("Expected a TCP listener");
+      if (server.address._tag === "UnixPathAddress") return assert.fail("Expected a TCP listener");
       const url = `http://127.0.0.1:${server.address.port}/login/device`;
       const body = new TextEncoder().encode(
         new URLSearchParams({
@@ -97,8 +97,8 @@ it.layer(layer)("auth pages on a socket", (it) => {
     () =>
       Effect.gen(function* () {
         const server = yield* HttpServer.HttpServer;
-        assert.strictEqual(server.address._tag, "TcpAddress");
-        if (server.address._tag !== "TcpAddress") return;
+        if (server.address._tag === "UnixPathAddress")
+          return assert.fail("Expected a TCP listener");
         const socket = `http://127.0.0.1:${server.address.port}`;
         const jar = new CookieJar();
         const request = (path: string, options: RequestInit = {}) =>
@@ -173,7 +173,7 @@ it.layer(layer)("auth pages on a socket", (it) => {
   it.effect("signs out before enrollment and refuses a foreign-origin logout", () =>
     Effect.gen(function* () {
       const server = yield* HttpServer.HttpServer;
-      if (server.address._tag !== "TcpAddress") return;
+      if (server.address._tag === "UnixPathAddress") return assert.fail("Expected a TCP listener");
       const socket = `http://127.0.0.1:${server.address.port}`;
       const sessionCookie = signedInCookies(signSession({ sub: "user_socket_no_row" }));
       const foreign = yield* Effect.promise(() =>

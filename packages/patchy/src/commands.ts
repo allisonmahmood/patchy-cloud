@@ -204,7 +204,7 @@ const promptForToken = Effect.gen(function* () {
         "Interactive token entry requires a terminal. For automation, pipe the token to patchy auth set --token-stdin."
     });
   }
-  return yield* Prompt.run(Prompt.password({ message: "Patchy Cloud API token" })).pipe(
+  return yield* Prompt.run(Prompt.Password({ message: "Patchy Cloud API token" })).pipe(
     Effect.catchTags({ QuitError: () => Effect.interrupt })
   );
 });
@@ -227,7 +227,7 @@ const readStdin = Effect.gen(function* () {
 const authSet = Command.make(
   "set",
   {
-    tokenStdin: Flag.boolean("token-stdin").pipe(
+    tokenStdin: Flag.Boolean("token-stdin").pipe(
       Flag.withDescription("Read the Patchy Cloud API token from stdin"),
       Flag.withDefault(false)
     )
@@ -261,9 +261,9 @@ const auth = Command.make("auth").pipe(
 const login = Command.make(
   "login",
   {
-    complete: Flag.boolean("complete").pipe(Flag.withDefault(false)),
-    code: Argument.string("code").pipe(Argument.optional),
-    wait: Flag.float("wait").pipe(Flag.withDefault(60))
+    complete: Flag.Boolean("complete").pipe(Flag.withDefault(false)),
+    code: Argument.String("code").pipe(Argument.optional),
+    wait: Flag.Finite("wait").pipe(Flag.withDefault(60))
   },
   (options) => run(Login.login(options))
 ).pipe(
@@ -337,7 +337,7 @@ const status = Command.make("status", {}, () =>
 
 // --- validate ---------------------------------------------------------------
 
-const fileArgument = Argument.string("file").pipe(Argument.withDescription("HTML file path"));
+const fileArgument = Argument.String("file").pipe(Argument.withDescription("HTML file path"));
 
 const validate = Command.make("validate", { file: fileArgument }, ({ file }) =>
   run(
@@ -479,24 +479,24 @@ const publish = Command.make(
   "publish",
   {
     file: fileArgument.pipe(Argument.optional),
-    name: Flag.string("name").pipe(
+    name: Flag.String("name").pipe(
       Flag.withDescription("Set the patch's name in its company"),
       Flag.optional
     ),
-    patch: Flag.string("patch").pipe(
+    patch: Flag.String("patch").pipe(
       Flag.withDescription("Update an existing patch only; never creates a patch"),
       Flag.optional
     ),
-    share: Flag.choice("share", SharingScope.literals).pipe(
+    share: Flag.Literals("share", SharingScope.literals).pipe(
       Flag.withDescription("Who can open the patch: your company or anyone with the link"),
       Flag.optional
     ),
-    description: Flag.string("description").pipe(
+    description: Flag.String("description").pipe(
       Flag.withDescription("Set the description when publishing an HTML file"),
       Flag.optional
     ),
-    force: Flag.boolean("force").pipe(Flag.withDefault(false)),
-    new: Flag.boolean("new").pipe(
+    force: Flag.Boolean("force").pipe(Flag.withDefault(false)),
+    new: Flag.Boolean("new").pipe(
       Flag.withDescription("Always create a new patch"),
       Flag.withDefault(false)
     )
@@ -687,12 +687,12 @@ const patchTarget = Effect.fn("patchTarget")(function* (
 const share = Command.make(
   "share",
   {
-    fileOrScope: Argument.string("file-or-scope").pipe(
+    fileOrScope: Argument.String("file-or-scope").pipe(
       Argument.withDescription("The published HTML file, or company|public when using --patch"),
       Argument.optional
     ),
-    scope: Argument.choice("scope", SharingScope.literals).pipe(Argument.optional),
-    patch: Flag.string("patch").pipe(
+    scope: Argument.Literals("scope", SharingScope.literals).pipe(Argument.optional),
+    patch: Flag.String("patch").pipe(
       Flag.withDescription("Change sharing for this patch by ID instead of by file"),
       Flag.optional
     )
@@ -743,16 +743,16 @@ const share = Command.make(
 const del = Command.make(
   "delete",
   {
-    file: Argument.string("file").pipe(
+    file: Argument.String("file").pipe(
       Argument.withDescription("The HTML file the patch was published from"),
       Argument.optional
     ),
-    patch: Flag.string("patch").pipe(
+    patch: Flag.String("patch").pipe(
       Flag.withDescription("Delete this patch by ID instead of by file"),
       Flag.optional
     ),
-    yes: Flag.boolean("yes").pipe(Flag.withDefault(false)),
-    force: Flag.boolean("force").pipe(Flag.withDefault(false))
+    yes: Flag.Boolean("yes").pipe(Flag.withDefault(false)),
+    force: Flag.Boolean("force").pipe(Flag.withDefault(false))
   },
   (options) =>
     (Option.isNone(options.file) && Option.isNone(options.patch) ? runProject : run)(
@@ -768,7 +768,7 @@ const del = Command.make(
                 "Delete requires confirmation. Ask the person you are working for, then pass --yes for non-interactive use."
             });
           const confirmed = yield* Prompt.run(
-            Prompt.confirm({
+            Prompt.Confirm({
               message: `Delete patch ${patchId}? It will be kept for 30 days, then reclaimed.`,
               initial: false
             })
@@ -815,12 +815,12 @@ const del = Command.make(
 
 const lifecycleTarget = {
   file: fileArgument.pipe(Argument.optional),
-  patch: Flag.string("patch").pipe(Flag.optional)
+  patch: Flag.String("patch").pipe(Flag.optional)
 };
 
 const retire = Command.make(
   "retire",
-  { ...lifecycleTarget, force: Flag.boolean("force").pipe(Flag.withDefault(false)) },
+  { ...lifecycleTarget, force: Flag.Boolean("force").pipe(Flag.withDefault(false)) },
   (options) =>
     (Option.isNone(options.file) && Option.isNone(options.patch) ? runProject : run)(
       Effect.gen(function* () {
@@ -844,7 +844,7 @@ const retire = Command.make(
 
 const restore = Command.make(
   "restore",
-  { ...lifecycleTarget, force: Flag.boolean("force").pipe(Flag.withDefault(false)) },
+  { ...lifecycleTarget, force: Flag.Boolean("force").pipe(Flag.withDefault(false)) },
   (options) =>
     (Option.isNone(options.file) && Option.isNone(options.patch) ? runProject : run)(
       Effect.gen(function* () {
@@ -871,7 +871,7 @@ const restore = Command.make(
 
 const rollback = Command.make(
   "rollback",
-  { version: Argument.integer("n"), ...lifecycleTarget },
+  { version: Argument.Int("n"), ...lifecycleTarget },
   (options) =>
     (Option.isNone(options.file) && Option.isNone(options.patch) ? runProject : run)(
       Effect.gen(function* () {
@@ -903,10 +903,10 @@ const rollback = Command.make(
 const describe = Command.make(
   "describe",
   {
-    fileOrText: Argument.string("file-or-text").pipe(Argument.optional),
-    text: Argument.string("text").pipe(Argument.optional),
-    patch: Flag.string("patch").pipe(Flag.optional),
-    clear: Flag.boolean("clear").pipe(Flag.withDefault(false))
+    fileOrText: Argument.String("file-or-text").pipe(Argument.optional),
+    text: Argument.String("text").pipe(Argument.optional),
+    patch: Flag.String("patch").pipe(Flag.optional),
+    clear: Flag.Boolean("clear").pipe(Flag.withDefault(false))
   },
   (options) => {
     const file =
@@ -957,9 +957,9 @@ const describe = Command.make(
 const init = Command.make(
   "init",
   {
-    dir: Argument.string("dir").pipe(Argument.optional),
-    tier: Flag.choice("tier", ["0", "1"]).pipe(Flag.withDefault("1")),
-    purpose: Flag.string("purpose").pipe(Flag.optional)
+    dir: Argument.String("dir").pipe(Argument.optional),
+    tier: Flag.Literals("tier", ["0", "1"]).pipe(Flag.withDefault("1")),
+    purpose: Flag.String("purpose").pipe(Flag.optional)
   },
   (options) =>
     run(
@@ -996,25 +996,25 @@ const refresh = Command.make("refresh", {}, () =>
 const list = Command.make(
   "list",
   {
-    target: Argument.string("target").pipe(
+    target: Argument.String("target").pipe(
       Argument.withDescription(
         "patches, connections, a patch id or name, or a pasted patch address"
       ),
       Argument.optional
     ),
-    detail: Argument.string("detail").pipe(
+    detail: Argument.String("detail").pipe(
       Argument.withDescription("A primitive name for a patch, or a handle after connections"),
       Argument.optional
     ),
-    state: Flag.choice("state", ["live", "retired", "all"]).pipe(
+    state: Flag.Literals("state", ["live", "retired", "all"]).pipe(
       Flag.withDescription("Filter patches at every depth; defaults to live"),
       Flag.optional
     ),
-    mine: Flag.boolean("mine").pipe(
+    mine: Flag.Boolean("mine").pipe(
       Flag.withDescription("Only your patches; top level only"),
       Flag.optional
     ),
-    all: Flag.boolean("all").pipe(
+    all: Flag.Boolean("all").pipe(
       Flag.withDescription("Include offered integrations; list connections only"),
       Flag.optional
     )
@@ -1032,9 +1032,9 @@ const list = Command.make(
 const add = Command.make(
   "add",
   {
-    integration: Argument.string("integration"),
-    target: Argument.string("target").pipe(Argument.optional),
-    as: Flag.string("as").pipe(Flag.optional)
+    integration: Argument.String("integration"),
+    target: Argument.String("target").pipe(Argument.optional),
+    as: Flag.String("as").pipe(Flag.optional)
   },
   (options) =>
     runProject(
@@ -1049,7 +1049,7 @@ const add = Command.make(
   )
 );
 
-const remove = Command.make("remove", { alias: Argument.string("alias") }, (options) =>
+const remove = Command.make("remove", { alias: Argument.String("alias") }, (options) =>
   runProject(
     Effect.gen(function* () {
       const token = yield* requiredToken();
@@ -1065,9 +1065,9 @@ const remove = Command.make("remove", { alias: Argument.string("alias") }, (opti
 const generateProject = Command.make(
   "__generate",
   {
-    release: Flag.string("release"),
-    skills: Flag.string("skills"),
-    change: Flag.string("change").pipe(Flag.optional)
+    release: Flag.String("release"),
+    skills: Flag.String("skills"),
+    change: Flag.String("change").pipe(Flag.optional)
   },
   (options) =>
     runProject(
@@ -1080,7 +1080,7 @@ const generateProject = Command.make(
 
 const dev = Command.make(
   "dev",
-  { foreground: Flag.boolean("foreground").pipe(Flag.withDefault(false)) },
+  { foreground: Flag.Boolean("foreground").pipe(Flag.withDefault(false)) },
   ({ foreground }) =>
     runProject(
       Effect.gen(function* () {

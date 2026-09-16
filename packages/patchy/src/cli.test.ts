@@ -256,13 +256,15 @@ const decodeGenerateRequest = Schema.decodeUnknownSync(GenerateRequest);
 const decodeForceRequest = Schema.decodeUnknownSync(ForceRequest);
 const decodeDescriptionRequest = Schema.decodeUnknownSync(DescriptionRequest);
 const decodePackageFixture = Schema.decodeUnknownSync(
-  Schema.Struct({
-    name: Schema.String,
-    version: Schema.String,
-    dependencies: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
-    optionalDependencies: Schema.optionalKey(Schema.Record(Schema.String, Schema.String))
-  }),
-  { onExcessProperty: "preserve" }
+  Schema.StructWithRest(
+    Schema.Struct({
+      name: Schema.String,
+      version: Schema.String,
+      dependencies: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+      optionalDependencies: Schema.optionalKey(Schema.Record(Schema.String, Schema.String))
+    }),
+    [Schema.Record(Schema.String, Schema.Unknown)]
+  )
 );
 const coreProjectSkills = ["patchy-files", "patchy-loop", "patchy-tables"];
 const projectConfig =

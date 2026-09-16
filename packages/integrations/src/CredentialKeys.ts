@@ -152,8 +152,8 @@ export const makeFromKeys = Effect.fn("CredentialKeys.makeFromKeys")(function* (
   return CredentialKeys.of({ encrypt, decrypt });
 });
 
-export const config = Config.redacted("PATCHY_CREDENTIAL_KEYS").pipe(
-  Config.mapOrFail((value) =>
+export const config = Config.Redacted("PATCHY_CREDENTIAL_KEYS").pipe(
+  Config.mapEffect((value) =>
     parseKeys(value).pipe(
       Effect.as(value),
       Effect.mapError(

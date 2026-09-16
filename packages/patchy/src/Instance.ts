@@ -40,8 +40,8 @@ export const describeSource = (source: Source): string =>
   })[source];
 
 /** The `--api-url` global flag, accepted by every command. */
-export const ApiUrlFlag = GlobalFlag.setting("api-url")({
-  flag: Flag.string("api-url").pipe(
+export const ApiUrlFlag = GlobalFlag.Setting("api-url")({
+  flag: Flag.String("api-url").pipe(
     Flag.withDescription("The Patchy Cloud instance to talk to (its API base URL)"),
     Flag.optional
   )
@@ -61,7 +61,7 @@ export const normalizeApiUrl = (value: string): string => value.trim().replace(/
 
 /** An unset variable and an empty one mean the same thing: nothing was configured. */
 export const optionalEnv = (name: string) =>
-  Config.string(name).pipe(
+  Config.String(name).pipe(
     Config.option,
     Config.map(Option.filter((value) => value !== "")),
     // A plain string variable cannot fail to parse; anything else here is a bug.
@@ -80,7 +80,7 @@ const envValue = (text: string, key: string) =>
 
 /** A secret from the environment, redacted at the boundary; empty means unset. */
 export const optionalSecret = (name: string) =>
-  Config.redacted(name).pipe(
+  Config.Redacted(name).pipe(
     Config.option,
     Config.map(Option.filter((value) => Redacted.value(value) !== "")),
     Effect.orDie

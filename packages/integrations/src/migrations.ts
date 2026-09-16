@@ -1,10 +1,7 @@
-import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import type { Migrations } from "@patchy/sql";
+import { ddl, type Migrations } from "@patchy/sql";
 
 export const migrations: Migrations = {
-  "0007_integrations_baseline": Effect.flatMap(SqlClient.SqlClient, (sql) =>
-    sql.unsafe(`
+  "0007_integrations_baseline": ddl(`
       CREATE TABLE connections (
         id TEXT PRIMARY KEY,
         company_id TEXT NOT NULL REFERENCES companies(id),
@@ -45,5 +42,4 @@ export const migrations: Migrations = {
         BEFORE UPDATE OR DELETE OR TRUNCATE ON connection_snapshots
         FOR EACH STATEMENT EXECUTE FUNCTION reject_connection_snapshot_mutation();
     `)
-  )
 };

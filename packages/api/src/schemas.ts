@@ -398,9 +398,7 @@ export const Manifest = Schema.Struct({
   tables: definitions(TableDefinition),
   files: definitions(FileStoreDefinition),
   uses: definitions(Schema.Union([PostgresDeclaration, SharedTableDeclaration]))
-})
-  .check(distinctPrimitiveNames)
-  .annotate({ parseOptions: { onExcessProperty: "error" } });
+}).check(distinctPrimitiveNames);
 
 /** Generation resolves declarations; existing stamps are hints, never authority. */
 export const GenerationManifest = Schema.Struct({
@@ -419,9 +417,7 @@ export const GenerationManifest = Schema.Struct({
       })
     ])
   )
-})
-  .check(distinctPrimitiveNames)
-  .annotate({ parseOptions: { onExcessProperty: "error" } });
+}).check(distinctPrimitiveNames);
 
 export const ConnectionSummary = Schema.Struct({
   id: Schema.String,

@@ -18,8 +18,8 @@ import * as Runtime from "effect/Runtime";
 import * as Schema from "effect/Schema";
 import { type CliError, type RejectedError, exitCode, refusalDetails } from "./CliError.js";
 
-export const JsonFlag = GlobalFlag.setting("json")({
-  flag: Flag.boolean("json").pipe(
+export const JsonFlag = GlobalFlag.Setting("json")({
+  flag: Flag.Boolean("json").pipe(
     Flag.withDescription("Print the result as one JSON document on stdout"),
     Flag.withDefault(false)
   )

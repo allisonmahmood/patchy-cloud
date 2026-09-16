@@ -35,12 +35,12 @@ import { Authorization, MachineTokens } from "@patchy/auth";
 import { Limits } from "@patchy/limits";
 
 /** Protected-API attempts admitted per source address per minute, in memory. */
-export const protectedApiRateLimitPerMinute = Config.int(
+export const protectedApiRateLimitPerMinute = Config.Int(
   "PATCHY_PROTECTED_API_RATE_LIMIT_PER_MINUTE"
 ).pipe(Config.withDefault(60));
 
 /** Device-login starts admitted per source address per minute, in memory. */
-export const deviceLoginRateLimitPerMinute = Config.int(
+export const deviceLoginRateLimitPerMinute = Config.Int(
   "PATCHY_DEVICE_LOGIN_RATE_LIMIT_PER_MINUTE"
 ).pipe(Config.withDefault(5));
 

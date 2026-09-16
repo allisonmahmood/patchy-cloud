@@ -72,7 +72,7 @@ import { migrate } from "@patchy/sql";
 import * as ApiGuard from "./ApiGuard.js";
 
 /** The port the server listens on. */
-export const port = Config.int("PORT").pipe(Config.withDefault(3000));
+export const port = Config.Int("PORT").pipe(Config.withDefault(3000));
 
 /**
  * Where a patch's bytes go is wiring, not a setting: Azure Blob when its

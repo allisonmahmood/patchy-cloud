@@ -36,7 +36,7 @@ const DEVELOPER_ENV_NAMES = [
 /** `$XDG_CONFIG_HOME/patchy-cloud/dev.env`, with `XDG_CONFIG_HOME` defaulting to `<home>/.config`. */
 export const developerEnvFile = Effect.fn("developerEnvFile")(function* (home: string) {
   const path = yield* Path.Path;
-  const configHome = yield* Config.string("XDG_CONFIG_HOME").pipe(
+  const configHome = yield* Config.String("XDG_CONFIG_HOME").pipe(
     Config.withDefault(path.join(home, ".config"))
   );
   return path.join(configHome, "patchy-cloud", "dev.env");

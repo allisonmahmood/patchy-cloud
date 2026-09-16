@@ -1,6 +1,6 @@
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
+import * as ByteSize from "effect/ByteSize";
 import type * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
@@ -245,7 +245,7 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Acti
   const request = yield* HttpServerRequest.HttpServerRequest;
   const form = Object.fromEntries(
     yield* request.urlParamsBody.pipe(
-      Effect.provideService(HttpServerRequest.MaxBodySize, FileSystem.Size(16_384))
+      Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(16_384))
     )
   );
   const confirmation =

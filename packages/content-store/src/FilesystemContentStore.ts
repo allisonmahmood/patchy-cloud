@@ -15,7 +15,7 @@ import * as Stream from "effect/Stream";
 import * as ContentStore from "./ContentStore.js";
 
 /** Where the objects land. */
-export const rootDir = Config.string("PATCHY_STORAGE_DIR").pipe(
+export const rootDir = Config.String("PATCHY_STORAGE_DIR").pipe(
   Config.withDefault(".local/patches")
 );
 

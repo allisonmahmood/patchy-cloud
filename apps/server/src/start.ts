@@ -42,7 +42,7 @@ const server = Layer.effectDiscard(announce).pipe(
 NodeRuntime.runMain(
   Effect.gen(function* () {
     yield* Config.all([
-      Config.redacted("DATABASE_URL"),
+      Config.Redacted("DATABASE_URL"),
       PgCompanyDatabases.config,
       Session.config,
       CredentialKeys.config

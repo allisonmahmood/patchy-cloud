@@ -226,35 +226,35 @@ export const handler = <
 };
 
 export const byteLimits = {
-  rowBytes: Config.int("PATCHY_RUNTIME_ROW_BYTES").pipe(
+  rowBytes: Config.Int("PATCHY_RUNTIME_ROW_BYTES").pipe(
     Config.withDefault(runtimeByteLimits.rowBytes)
   ),
-  batchBytes: Config.int("PATCHY_RUNTIME_BATCH_BYTES").pipe(
+  batchBytes: Config.Int("PATCHY_RUNTIME_BATCH_BYTES").pipe(
     Config.withDefault(runtimeByteLimits.batchBytes)
   ),
-  resultBytes: Config.int("PATCHY_RUNTIME_RESULT_BYTES").pipe(
+  resultBytes: Config.Int("PATCHY_RUNTIME_RESULT_BYTES").pipe(
     Config.withDefault(runtimeByteLimits.resultBytes)
   ),
-  fileBytes: Config.int("PATCHY_RUNTIME_FILE_BYTES").pipe(
+  fileBytes: Config.Int("PATCHY_RUNTIME_FILE_BYTES").pipe(
     Config.withDefault(runtimeByteLimits.fileBytes)
   )
 };
 
 export const config = Config.all({
-  callsPerMinute: Config.int("PATCHY_RUNTIME_CALLS_PER_MINUTE").pipe(Config.withDefault(300)),
-  callBytes: Config.int("PATCHY_RUNTIME_CALL_BYTES").pipe(
+  callsPerMinute: Config.Int("PATCHY_RUNTIME_CALLS_PER_MINUTE").pipe(Config.withDefault(300)),
+  callBytes: Config.Int("PATCHY_RUNTIME_CALL_BYTES").pipe(
     Config.withDefault(runtimeByteLimits.callBytes)
   ),
   rowBytes: byteLimits.rowBytes,
   batchBytes: byteLimits.batchBytes,
-  postgresBytes: Config.int("PATCHY_RUNTIME_POSTGRES_BYTES").pipe(
+  postgresBytes: Config.Int("PATCHY_RUNTIME_POSTGRES_BYTES").pipe(
     Config.withDefault(runtimeByteLimits.postgresBytes)
   ),
   fileBytes: byteLimits.fileBytes,
-  mutationDeadlineMs: Config.int("PATCHY_RUNTIME_MUTATION_DEADLINE_MS").pipe(
+  mutationDeadlineMs: Config.Int("PATCHY_RUNTIME_MUTATION_DEADLINE_MS").pipe(
     Config.withDefault(30_000)
   ),
-  integrationDeadlineMs: Config.int("PATCHY_RUNTIME_INTEGRATION_DEADLINE_MS").pipe(
+  integrationDeadlineMs: Config.Int("PATCHY_RUNTIME_INTEGRATION_DEADLINE_MS").pipe(
     Config.withDefault(15_000)
   )
 });

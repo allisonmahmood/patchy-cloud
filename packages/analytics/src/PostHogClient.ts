@@ -27,7 +27,7 @@ export interface CaptureMessage {
 }
 
 /** The key that switches reporting on. Unset (the default) means an instance reports nothing. */
-export const apiKey = Config.redacted("PATCHY_POSTHOG_API_KEY");
+export const apiKey = Config.Redacted("PATCHY_POSTHOG_API_KEY");
 
 /**
  * Where capture goes: PostHog's US cloud unless pointed elsewhere. Must be an

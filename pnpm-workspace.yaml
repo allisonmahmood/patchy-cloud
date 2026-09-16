@@ -7,11 +7,11 @@ catalog:
   # Effect 4 release candidates ship in lockstep; Dependabot bumps these
   # together (see .github/dependabot.yml). Only the language service has
   # its own release line.
-  effect: 4.0.0-rc.112
-  "@effect/platform-node": 4.0.0-rc.112
-  "@effect/sql-pg": 4.0.0-rc.112
-  "@effect/sql-pglite": 4.0.0-rc.112
-  "@effect/vitest": 4.0.0-rc.112
+  effect: 4.0.0-rc.115
+  "@effect/platform-node": 4.0.0-rc.115
+  "@effect/sql-pg": 4.0.0-rc.115
+  "@effect/sql-pglite": 4.0.0-rc.115
+  "@effect/vitest": 4.0.0-rc.115
   "@effect/language-service": 0.87.2
 # Wait one day before resolving new releases so compromised versions have time to be removed.
 minimumReleaseAge: 1440
@@ -51,5 +51,3 @@ allowBuilds:
   "@embedded-postgres/linux-ia32": true
   "@embedded-postgres/linux-ppc64": true
   simple-git-hooks: true
-  # Optional native msgpack accelerator pulled in by @effect/platform-node; the JS path is fine.
-  msgpackr-extract: false

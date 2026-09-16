@@ -311,7 +311,8 @@ it.layer(socket)("Files HTTP / streamed bytes", (it) => {
         const original = new Uint8Array([0, 255, 128]);
         yield* put("chunked.bin", original);
         const server = yield* HttpServer.HttpServer;
-        if (server.address._tag !== "TcpAddress") return assert.fail("Expected a TCP listener");
+        if (server.address._tag === "UnixPathAddress")
+          return assert.fail("Expected a TCP listener");
         const url = `http://127.0.0.1:${server.address.port}${fileUrl({ patchId, versionId, store: "docs", name: "chunked.bin" })}`;
         const response = yield* Effect.tryPromise(async () => {
           const options: RequestInit & { duplex: "half" } = {

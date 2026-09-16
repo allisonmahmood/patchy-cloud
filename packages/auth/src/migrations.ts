@@ -1,11 +1,8 @@
 /** Machine credentials and device-login state; Companies owns their user foreign keys. */
-import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import type { Migrations } from "@patchy/sql";
+import { ddl, type Migrations } from "@patchy/sql";
 
 export const migrations: Migrations = {
-  "0002_auth_baseline": Effect.flatMap(SqlClient.SqlClient, (sql) =>
-    sql.unsafe(`
+  "0002_auth_baseline": ddl(`
     CREATE TABLE machine_tokens (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id),
@@ -30,5 +27,4 @@ export const migrations: Migrations = {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
   `)
-  )
 };

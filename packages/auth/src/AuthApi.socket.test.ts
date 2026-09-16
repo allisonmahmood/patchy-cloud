@@ -65,8 +65,8 @@ it.layer(layer)("anonymous device JSON bodies on a socket", (it) => {
     it.effect(`refuses ${framing} overflow on start without storing the machine hint`, () =>
       Effect.gen(function* () {
         const server = yield* HttpServer.HttpServer;
-        assert.strictEqual(server.address._tag, "TcpAddress");
-        if (server.address._tag !== "TcpAddress") return;
+        if (server.address._tag === "UnixPathAddress")
+          return assert.fail("Expected a TCP listener");
         const machineNameHint = `${framing}-${"x".repeat(4096)}`;
         const request = post(
           `http://127.0.0.1:${server.address.port}/api/login/device`,
@@ -94,8 +94,8 @@ it.layer(layer)("anonymous device JSON bodies on a socket", (it) => {
     it.effect(`refuses ${framing} overflow on poll without advancing the polling interval`, () =>
       Effect.gen(function* () {
         const server = yield* HttpServer.HttpServer;
-        assert.strictEqual(server.address._tag, "TcpAddress");
-        if (server.address._tag !== "TcpAddress") return;
+        if (server.address._tag === "UnixPathAddress")
+          return assert.fail("Expected a TCP listener");
         const logins = yield* DeviceLogins.DeviceLogins;
         const started = yield* logins.start({ machineNameHint: "Bounded poll" });
         const body = JSON.stringify({ deviceCode: started.deviceCode }) + " ".repeat(4096);

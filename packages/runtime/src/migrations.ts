@@ -1,11 +1,7 @@
-import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import type { Migrations } from "@patchy/sql";
+import { ddl, type Migrations } from "@patchy/sql";
 
 export const migrations: Migrations = {
-  "0006_runtime_baseline": Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    yield* sql.unsafe(`
+  "0006_runtime_baseline": ddl(`
       CREATE TABLE runtime_calls (
         id TEXT PRIMARY KEY,
         at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -29,10 +25,8 @@ export const migrations: Migrations = {
         CHECK ((outcome = 'pending' AND duration_ms IS NULL AND row_count IS NULL)
           OR (outcome <> 'pending' AND duration_ms IS NOT NULL))
       );
-    `);
-    yield* sql.unsafe(`
+
       CREATE INDEX runtime_calls_connection_recent
         ON runtime_calls (company_id, connection_id, at DESC, id DESC);
-    `);
-  })
+    `)
 };

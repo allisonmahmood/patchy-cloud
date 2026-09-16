@@ -56,8 +56,8 @@ export function parse(value: string): ReadonlyArray<Range> | null {
 }
 
 /** The trusted networks: none unless configured, and startup fails on a value `parse` refuses. */
-export const config = Config.string("PATCHY_TRUST_PROXY").pipe(
-  Config.mapOrFail((value) => {
+export const config = Config.String("PATCHY_TRUST_PROXY").pipe(
+  Config.mapEffect((value) => {
     const ranges = parse(value);
     return ranges === null
       ? Effect.fail(

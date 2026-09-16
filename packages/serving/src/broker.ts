@@ -17,13 +17,12 @@ const MiB = 1024 * KiB;
 const MAX_HELD = 64 * MiB;
 const MAX_FILE = runtimeByteLimits.fileBytes;
 const MAX_PENDING = 32;
-const decodeRequest = Schema.decodeUnknownSync(RuntimeRequest);
+// The broker refuses unknown fields on its own inputs; the parser option is the only place that holds.
+const decodeRequest = Schema.decodeUnknownSync(RuntimeRequest, { onExcessProperty: "error" });
 const decodeFailure = Schema.decodeUnknownSync(RuntimeFailure);
 const isMe = Schema.is(runtimeOperations.me.response);
-const routeArguments = Schema.Struct({ path: Schema.String }).annotate({
-  parseOptions: { onExcessProperty: "error" }
-});
-const decodeRoute = Schema.decodeUnknownSync(routeArguments);
+const routeArguments = Schema.Struct({ path: Schema.String });
+const decodeRoute = Schema.decodeUnknownSync(routeArguments, { onExcessProperty: "error" });
 const decoder = new TextDecoder();
 type Operation = keyof typeof runtimeOperations;
 type Reply = { value: unknown; bytes?: ArrayBuffer; heldBytes: number };

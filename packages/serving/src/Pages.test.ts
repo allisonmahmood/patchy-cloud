@@ -31,6 +31,7 @@ import { DEV_SEED } from "@patchy/auth/seed";
 import { ContentStore } from "@patchy/content-store";
 import { Content, Patches } from "@patchy/patches";
 import { ConnectionStoreDev } from "@patchy/integrations/dev";
+import { ddl } from "@patchy/sql";
 import * as Testing from "@patchy/company-database/testing";
 import { Tables } from "@patchy/primitives";
 import * as Pages from "./Pages.js";
@@ -625,7 +626,7 @@ it.layer(layer)("pages", (it) => {
       yield* TestClock.setTime(Date.UTC(2026, 0, 1));
       const { path, patchId } = yield* publish("Survives a failed visit");
       const sql = yield* SqlClient.SqlClient;
-      yield* sql.unsafe(`
+      yield* ddl(`
         CREATE FUNCTION fail_visit() RETURNS trigger AS $$
           BEGIN RAISE EXCEPTION 'Forced visit recording failure.'; END
         $$ LANGUAGE plpgsql;

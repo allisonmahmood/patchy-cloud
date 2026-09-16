@@ -14,7 +14,7 @@ export const PostgresKey = Schema.Record(Name, Scalar);
 export const PostgresShapeColumn = Schema.Struct({
   kind: Schema.Literals(["text", "integer", "number", "boolean", "timestamp", "json"]),
   optional: Schema.optionalKey(Schema.Boolean)
-}).annotate({ parseOptions: { onExcessProperty: "error" } });
+});
 export const PostgresShape = Schema.Record(Name, PostgresShapeColumn).check(
   Schema.makeFilter((shape) => Object.keys(shape).length > 0)
 );

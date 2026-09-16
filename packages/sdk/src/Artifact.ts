@@ -47,7 +47,7 @@ export class Artifact extends Context.Service<
 
 export const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
-  const base = yield* Config.string("PATCHY_PUBLIC_BASE_URL");
+  const base = yield* Config.String("PATCHY_PUBLIC_BASE_URL");
   const metadataPath = fileURLToPath(new URL("../artifacts/release.json", import.meta.url));
   const metadataText = yield* fs
     .readFileString(metadataPath)

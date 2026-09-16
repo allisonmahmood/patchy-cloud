@@ -1,5 +1,5 @@
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
+import * as ByteSize from "effect/ByteSize";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -129,7 +129,7 @@ export const handle = Effect.fn("UserLifecyclePage.handle")(function* (id: strin
   const submission =
     request.method === "POST"
       ? yield* request.urlParamsBody.pipe(
-          Effect.provideService(HttpServerRequest.MaxBodySize, FileSystem.Size(65_536)),
+          Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(65_536)),
           Effect.result
         )
       : Result.succeed(UrlParams.empty);

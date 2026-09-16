@@ -1,10 +1,7 @@
-import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import type { Migrations } from "@patchy/sql";
+import { ddl, type Migrations } from "@patchy/sql";
 
 export const migrations: Migrations = {
-  "0001_companies_baseline": Effect.flatMap(SqlClient.SqlClient, (sql) =>
-    sql.unsafe(`
+  "0001_companies_baseline": ddl(`
     CREATE TABLE companies (
       id TEXT PRIMARY KEY,
       handle TEXT NOT NULL UNIQUE,
@@ -37,14 +34,11 @@ export const migrations: Migrations = {
     );
     CREATE UNIQUE INDEX invites_company_email_live_idx ON invites(company_id, email)
       WHERE revoked_at IS NULL AND consumed_at IS NULL;
-  `)
-  ),
+  `),
   // Freeze the historical 30-day backfill; elapsed hours avoid daylight-saving shifts.
-  "0004_invites_expiry": Effect.flatMap(SqlClient.SqlClient, (sql) =>
-    sql.unsafe(`
+  "0004_invites_expiry": ddl(`
       ALTER TABLE invites ADD COLUMN expires_at TIMESTAMPTZ;
       UPDATE invites SET expires_at = created_at + interval '720 hours';
       ALTER TABLE invites ALTER COLUMN expires_at SET NOT NULL;
     `)
-  )
 };

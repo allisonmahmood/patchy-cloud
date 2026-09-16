@@ -164,8 +164,8 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
     ...patchesMigrations
   }).pipe(Effect.provide(layerFromUrl(Redacted.make(plan.databaseUrl))));
   const inherited = yield* Config.all({
-    PATH: Config.string("PATH"),
-    HOME: Config.string("HOME").pipe(Config.withDefault(plan.stateDir))
+    PATH: Config.String("PATH"),
+    HOME: Config.String("HOME").pipe(Config.withDefault(plan.stateDir))
   });
   const devEnvFile = yield* developerEnvFile(inherited.HOME);
   const { PATCHY_DEV_CLERK_USER_ID, ...clerk } = yield* readDeveloperEnv(devEnvFile);

@@ -12,8 +12,8 @@ import * as Semaphore from "effect/Semaphore";
 import * as Reactivity from "effect/unstable/reactivity/Reactivity";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
-import * as Pg from "pg";
 import { newInternalId } from "@patchy/core";
+import * as Sql from "@patchy/sql";
 import * as CompanyDatabases from "./CompanyDatabases.js";
 import * as Inventory from "./Inventory.js";
 
@@ -32,7 +32,7 @@ export class AdminClient extends Context.Service<AdminClient, SqlClient.SqlClien
   "@patchy/company-database/PgCompanyDatabases/AdminClient"
 ) {}
 
-// pg uses the last `user` query value when nonempty, otherwise the authority.
+// The client uses the last `user` query value when nonempty, otherwise the authority.
 const username = (url: URL): string =>
   url.searchParams.getAll("user").at(-1) || decodeURIComponent(url.username);
 
@@ -78,29 +78,14 @@ class PoolKey extends Data.Class<{
   readonly databaseName: string;
 }> {}
 
-/** Register cleanup before any network I/O, including a failed/interrupted first connection. */
+/** A scoped pool on the shared row codecs: `int8` and `date` as strings, the shapes PGlite answers too. */
 const pool = (url: Redacted.Redacted<string>, max: number) =>
-  PgClient.fromPool({
-    acquire: Effect.acquireRelease(
-      Effect.sync(() => {
-        const pool = new Pg.Pool({
-          connectionString: Redacted.value(url),
-          max,
-          min: 0,
-          idleTimeoutMillis: 60_000,
-          connectionTimeoutMillis: 5_000,
-          types: {
-            getTypeParser: (oid, format) =>
-              oid === 20 || oid === 1082
-                ? (value: string) => value
-                : Pg.types.getTypeParser(oid, format)
-          }
-        });
-        pool.on("error", () => {});
-        return pool;
-      }),
-      (pool) => Effect.promise(() => pool.end())
-    )
+  Sql.pool({
+    url,
+    maxConnections: max,
+    minConnections: 0,
+    idleTimeout: "60 seconds",
+    connectTimeout: "5 seconds"
   });
 
 export const adminLayer = Layer.effect(
@@ -116,7 +101,7 @@ export const make = Effect.gen(function* () {
   // Callers hold platform patch-row transactions. Placement work must never
   // borrow from that pool: saturated callers would each wait for a second slot.
   // Clone credentials/options, not connections, and keep claims independently committed.
-  const platform = yield* PgClient.make({
+  const platform = yield* Sql.pool({
     ...platformPool.config,
     maxConnections: 2,
     minConnections: 0,

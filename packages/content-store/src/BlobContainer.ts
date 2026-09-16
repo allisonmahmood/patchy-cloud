@@ -30,13 +30,13 @@ export class BlobRequestFailed extends Schema.TaggedError<BlobRequestFailed>()(
 }
 
 /** The container the objects live in. Its presence is what selects the Azure layer. */
-export const container = Config.string("AZURE_STORAGE_CONTAINER");
+export const container = Config.String("AZURE_STORAGE_CONTAINER");
 
 /** The account, reached with a managed identity; read only when no connection string is set. */
-export const account = Config.string("AZURE_STORAGE_ACCOUNT");
+export const account = Config.String("AZURE_STORAGE_ACCOUNT");
 
 /** Connection-string auth, for local Azure testing and deployments without a managed identity. */
-export const connectionString = Config.option(Config.redacted("AZURE_STORAGE_CONNECTION_STRING"));
+export const connectionString = Config.option(Config.Redacted("AZURE_STORAGE_CONNECTION_STRING"));
 
 export class BlobContainer extends Context.Service<
   BlobContainer,
