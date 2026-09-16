@@ -1,5 +1,5 @@
 /**
- * The API and portal-name guard, ahead of the router.
+ * The API guard, ahead of the router.
  *
  * The API's own bearer middleware authenticates every protected route the
  * router matches, before a body is read. Release discovery and the two POST
@@ -9,7 +9,7 @@
  * Other `/api/*` requests spend the per-address protected-API limit, then need
  * a token. Malformed targets and missing routes disclose their shape only
  * after authentication.
- * Overlong portal names keep browser admission and never spend an API attempt.
+ * The portal owns its name bound through GET /patches/*.
  *
  * Two pieces: `make`, the middleware that spends the limit and answers the
  * shapes the router never sees; and `notFound`, the `/api/*` catch-all route
@@ -30,10 +30,8 @@ import {
   refuse,
   RequestTargetTooLong
 } from "@patchy/api";
-import { Authorization, MachineTokens, Session } from "@patchy/auth";
-import { Companies, Users } from "@patchy/companies";
+import { Authorization, MachineTokens } from "@patchy/auth";
 import { Limits } from "@patchy/limits";
-import { PortalPages } from "@patchy/portal";
 
 /** Protected-API attempts admitted per source address per minute, in memory. */
 export const protectedApiRateLimitPerMinute = Config.int(
@@ -46,20 +44,18 @@ export const deviceLoginRateLimitPerMinute = Config.int(
 ).pipe(Config.withDefault(5));
 
 /**
- * Patch parameter bounds and concrete routes. The API's bound is the router's
- * parameter limit; the portal takes names only. Route owners supply the shapes
- * so adding a route cannot leave its too-long target behind.
+ * Concrete patch routes that may exceed the router's 100-character parameter
+ * limit. Route owners supply the shapes so adding a route cannot leave its
+ * too-long target behind.
  */
 const PATCH_ROUTES: ReadonlyArray<{
-  readonly kind: "api" | "portal";
+  readonly kind: "api";
   readonly prefix: readonly string[];
-  readonly maxLength: number;
   readonly routes: ReadonlyArray<{ method: string; suffix: readonly string[] }>;
 }> = [
   {
     kind: "api",
     prefix: ["api", "patches"],
-    maxLength: 100,
     routes: Object.values(PatchyApi.groups)
       .flatMap((group) => Object.values(group.endpoints))
       .filter((endpoint) => /^\/api\/patches\/:(patchId|patchRef)(\/|$)/.test(endpoint.path))
@@ -67,15 +63,6 @@ const PATCH_ROUTES: ReadonlyArray<{
         method: endpoint.method,
         suffix: endpoint.path.split("/").slice(4)
       }))
-  },
-  {
-    kind: "portal",
-    prefix: ["patches"],
-    maxLength: PortalPages.maxNameLength,
-    routes: PortalPages.patchRoutes.map((route) => ({
-      method: route.method,
-      suffix: route.path.split("/").slice(3)
-    }))
   }
 ];
 
@@ -89,7 +76,6 @@ export type Target =
   | { readonly kind: "route" }
   | { readonly kind: "publish" }
   | { readonly kind: "runtime" }
-  | { readonly kind: "portal-name-too-long" }
   | { readonly kind: "device-login"; readonly action: "start" | "poll" }
   | { readonly kind: "refused"; readonly status: 400 | 404 | 414 };
 
@@ -113,7 +99,7 @@ export function classify(method: string, requestTarget: string): Target {
     if (pathname === "/api/login/device") return { kind: "device-login", action: "start" };
     if (pathname === "/api/login/device/token") return { kind: "device-login", action: "poll" };
   }
-  if (pathname.startsWith("/api/patches/") || pathname.startsWith("/patches/")) {
+  if (pathname.startsWith("/api/patches/")) {
     const target = overlongParamTarget(method, rawPath(requestTarget));
     if (target !== undefined) return target;
   }
@@ -148,23 +134,12 @@ const authenticated = <E, R>(
     Option.isNone(identity) ? Effect.succeed(Authorization.unauthorized) : answer
   );
 
-/**
- * The middleware. Reads the API limits once and captures their services.
- * Portal refusals use the same browser admission as the portal's routes.
- */
+/** The middleware. Reads the API limits once and captures their services. */
 export const make = Effect.gen(function* () {
   const limits = yield* Limits.Limits;
   const tokens = yield* MachineTokens.MachineTokens;
   const limit = yield* protectedApiRateLimitPerMinute;
   const deviceLimit = yield* deviceLoginRateLimitPerMinute;
-  const session = yield* Session.Session;
-  const companies = yield* Companies.Companies;
-  const users = yield* Users.Users;
-  const nameTooLong = PortalPages.nameTooLong.pipe(
-    Effect.provideService(Session.Session, session),
-    Effect.provideService(Companies.Companies, companies),
-    Effect.provideService(Users.Users, users)
-  );
 
   return HttpMiddleware.make((app) =>
     Effect.gen(function* () {
@@ -173,7 +148,6 @@ export const make = Effect.gen(function* () {
       if (target.kind === "public" || target.kind === "publish" || target.kind === "runtime")
         return yield* app;
       if (target.kind === "device-login" && target.action === "poll") return yield* app;
-      if (target.kind === "portal-name-too-long") return yield* nameTooLong;
 
       // Keyed by source address — after the trusted-proxy walk, so a proxy in
       // front of the instance does not share one bucket with everyone behind it.
@@ -247,8 +221,7 @@ function normalize(pathname: string): string {
 }
 
 /**
- * Only concrete routes get a guard-generated 414. Unmatched portal targets
- * keep their page router's admission and fallback; unmatched API targets
+ * Only concrete API routes get a guard-generated 414. Unmatched API targets
  * require a token before their 404.
  */
 function overlongParamTarget(method: string, path: string): Target | undefined {
@@ -259,23 +232,17 @@ function overlongParamTarget(method: string, path: string): Target | undefined {
       continue;
     }
     const parameter = segments[group.prefix.length + 1];
-    if (parameter === undefined || decodeURIComponent(parameter).length <= group.maxLength)
-      return undefined;
+    if (parameter === undefined || decodeURIComponent(parameter).length <= 100) return undefined;
     const suffix = segments.slice(group.prefix.length + 2);
     const exists = group.routes.some(
       (route) =>
-        (route.method === method ||
-          (group.kind === "portal" && method === "HEAD" && route.method === "GET")) &&
+        route.method === method &&
         route.suffix.length === suffix.length &&
         route.suffix.every((segment, index) =>
           segment.startsWith(":") ? suffix[index] !== "" : segment === decodeURI(suffix[index]!)
         )
     );
-    return group.kind === "portal"
-      ? exists
-        ? { kind: "portal-name-too-long" }
-        : undefined
-      : { kind: "refused", status: exists ? 414 : 404 };
+    return { kind: "refused", status: exists ? 414 : 404 };
   }
   return undefined;
 }
