@@ -38,6 +38,7 @@ import {
 import { AzureContentStore, BlobContainer, FilesystemContentStore } from "@patchy/content-store";
 import {
   ConnectionPages,
+  ConnectionsApi,
   SqlConnectionStore,
   CredentialKeys,
   PostgresSource,
@@ -166,7 +167,13 @@ export const sweeper = Layer.effectDiscard(
 
 /** `/api/*`: the groups' handlers, bearer middleware on protected endpoints, and catch-all. */
 const api = Layer.mergeAll(HttpApiBuilder.layer(PatchyApi), ApiGuard.notFound).pipe(
-  Layer.provide([AuthApi.layer, PatchesApi.layer, SdkApi.layer, RuntimeApi.layer]),
+  Layer.provide([
+    AuthApi.layer,
+    PatchesApi.layer,
+    ConnectionsApi.layer,
+    SdkApi.layer,
+    RuntimeApi.layer
+  ]),
   Layer.provide(Authorization.layer)
 );
 

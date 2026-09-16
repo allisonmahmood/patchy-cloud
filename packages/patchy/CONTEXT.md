@@ -93,7 +93,7 @@ A release-bound set of agent instructions for building within one patch repo, su
 _Avoid_: global skill, copied tutorial
 
 **Catalog**:
-The instance's view of the company's connected capabilities and the shared tables the caller can open, with declarations the builder can add to a patch. It describes availability, never grants access. Decided to be replaced by discovery.
+See **Catalog** in [Integrations](../integrations/CONTEXT.md). The temporary CLI command now lists connections only; shared-table discovery belongs to the patch read API.
 _Avoid_: marketplace, connection inventory (the cumulative schema inventory is a different concept)
 
 **Discovery**:

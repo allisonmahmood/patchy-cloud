@@ -1,4 +1,4 @@
-import { PostgresDeclaration } from "@patchy/api";
+import { PostgresDeclaration, type ConnectionDetail } from "@patchy/api";
 import * as Companies from "@patchy/companies/Companies";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -30,7 +30,13 @@ export class Connection extends Schema.Class<Connection>("Connection")({
 
 export class ConnectionNotFound extends Schema.TaggedError<ConnectionNotFound>()(
   "ConnectionNotFound",
-  { companyId: Schema.String, id: Schema.String, revision: Schema.optionalKey(Schema.Int) }
+  {
+    companyId: Schema.String,
+    lookup: Schema.Union([
+      Schema.Struct({ id: Schema.String, revision: Schema.optionalKey(Schema.Int) }),
+      Schema.Struct({ handle: Schema.String })
+    ])
+  }
 ) {
   readonly code = "connection_not_found";
   readonly status = 404;
@@ -128,6 +134,7 @@ export class ConnectionStorageFailed extends Schema.TaggedError<ConnectionStorag
     operation: Schema.Literals([
       "list",
       "get",
+      "detail",
       "snapshot",
       "connect",
       "test",
@@ -187,6 +194,10 @@ export class ConnectionStore extends Context.Service<
   {
     readonly list: (companyId: string) => Effect.Effect<ReadonlyArray<Connection>, ConnectionError>;
     readonly get: (companyId: string, id: string) => Effect.Effect<Connection, ConnectionError>;
+    readonly detail: (
+      companyId: string,
+      handle: string
+    ) => Effect.Effect<typeof ConnectionDetail.Type, ConnectionNotFound | ConnectionStorageFailed>;
     readonly snapshot: (
       companyId: string,
       id: string,

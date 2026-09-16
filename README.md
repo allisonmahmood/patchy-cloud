@@ -59,7 +59,7 @@ A Turborepo monorepo managed with pnpm. [AGENTS.md](AGENTS.md) is the guide to w
 
 - `apps/server` — the Effect HTTP server: wires the capability packages into one layer, guards `/api/*`, and listens (`@patchy/server`).
 - `packages/patchy` — `patchy`, one package for the CLI, config builders, browser client and local dev runtime; initializes patch repos, refreshes managed files and edits declarations.
-- `packages/sdk` — current release and immutable tarball distribution, authenticated catalog and generation, and canonical project skills under `skills/` (`@patchy/sdk`).
+- `packages/sdk` — current release and immutable tarball distribution, authenticated generation, and canonical project skills under `skills/` (`@patchy/sdk`).
 - `packages/core` — shared HTML validation, hashing, ID helpers, and the first-party page shell (`@patchy/core`).
 - `packages/api` — the wire contract: schemas, the `HttpApi`, the derived client (`@patchy/api`).
 - `packages/companies` — companies, users, roles, invites and membership lifecycle (`@patchy/companies`).

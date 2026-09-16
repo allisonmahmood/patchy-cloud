@@ -35,8 +35,9 @@ project skills; it refuses a second initialization there. Do not reinstall.
 Inside that repo read `AGENTS.md`, `.agents/skills/patchy-loop/SKILL.md` and
 `patchy/_generated/index.json`, then use `pnpm patchy`, the pinned copy.
 The project skills teach tables, files and declarations in Patchy's own terms.
-`pnpm patchy catalog` shows usable connections and shared tables; `--all` also
-shows offered integrations and state. `pnpm patchy add postgres/<handle> --as <alias>`
+`pnpm patchy catalog` shows company connections and their state; `--all` also
+shows offered integrations. Shared-table discovery uses the patch API as described
+in the core `patchy-loop` skill. `pnpm patchy add postgres/<handle> --as <alias>`
 or `pnpm patchy add shared-table <patchId>/<table> --as <alias>` adds a declaration
 and generates its client, context, fixture stub and skill. `pnpm patchy remove <alias>`
 reverses it while leaving its fixture. `pnpm patchy refresh` updates the pin,

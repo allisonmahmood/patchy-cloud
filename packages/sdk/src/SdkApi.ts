@@ -8,7 +8,6 @@ import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import {
   type Authorization,
-  Catalog,
   CurrentIdentity,
   Generated,
   PatchyApi,
@@ -23,7 +22,6 @@ import * as Artifact from "./Artifact.js";
 import * as Generation from "./Generation.js";
 
 const encodeRelease = Schema.encodeSync(Release);
-const encodeCatalog = Schema.encodeSync(Catalog);
 const encodeGenerated = Schema.encodeSync(Generated);
 const noStore = { headers: { "cache-control": "private, no-store" } };
 const rejected = (error: Generation.GenerationRefused) =>
@@ -50,34 +48,6 @@ export const layer: Layer.Layer<
             headers: { "cache-control": "no-store" }
           })
         )
-      )
-      .handle("catalog", ({ query }) =>
-        Effect.gen(function* () {
-          const identity = yield* CurrentIdentity;
-          const result = yield* Generation.catalog(identity.company.id, query.all ?? false).pipe(
-            Effect.catchTags({
-              Busy: (error) =>
-                Effect.succeed(
-                  refuse(
-                    PublishUnavailable,
-                    { ok: false, code: "busy", error: error.message },
-                    noStore.headers
-                  )
-                ),
-              GenerationUnavailable: (error) =>
-                Effect.succeed(
-                  refuse(
-                    PublishUnavailable,
-                    { ok: false, code: "source_unavailable", error: error.message },
-                    noStore.headers
-                  )
-                )
-            })
-          );
-          return HttpServerResponse.isHttpServerResponse(result)
-            ? result
-            : HttpServerResponse.jsonUnsafe(encodeCatalog(result), noStore);
-        })
       )
       .handle("generate", ({ payload }) =>
         Effect.gen(function* () {
