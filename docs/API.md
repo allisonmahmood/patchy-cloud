@@ -281,7 +281,7 @@ Responses:
 
 ### `POST /api/sdk/generate`
 
-Resolve declarations against current company metadata and return finished managed files, uses stamps and typed declaration metadata. Requires the exact current release. Refuses connection_not_connected, patch_not_openable and release_mismatch. Present skills are sticky; an unknown present skill refuses generation. Includes core and implied skills, typed clients, contexts and fixture stubs. The metadata response field contains Postgres snapshots and shared-table definitions with recursive source ref targets and their shared declarations; it is never written to a generated file. Never returns manifest.json, credentials or business rows.
+Resolve declarations against current company metadata and return finished managed files, uses stamps and typed declaration metadata. Requires the exact current release. Refuses connection_not_connected, patch_not_openable and release_mismatch. Present skills are sticky; an unknown present skill refuses generation. Includes core and implied skills, typed clients, contexts and fixture stubs. The metadata response field contains Postgres snapshots and shared-table definitions with recursive source ref targets and their shared declarations; it is never written to a generated file. Never returns manifest.json, credentials or business rows. Unknown fields anywhere in the body answer 400. The JSON body cap is 1 MiB; larger bodies answer 413.
 
 Request body: { release: string, manifest: { manifestVersion: integer, release: string, name?: string, description?: string, tier: 0 | 1 | 2 | 3, tables: { [key: string]: { description: string, columns: { [key: string]: { kind: "text", optional?: boolean, default?: string } | { kind: "integer", optional?: boolean, default?: integer } | { kind: "number", optional?: boolean, default?: number } | { kind: "boolean", optional?: boolean, default?: boolean } | { kind: "timestamp", optional?: boolean, default?: "now" | string } | { kind: "json", optional?: boolean, default?: unknown } | { kind: "ref", table: string, optional?: boolean, default?: string } }, indexes: { [key: string]: { columns: string[], unique?: boolean } }, shared?: boolean } }, files: { [key: string]: { description: string } }, uses: { [key: string]: { kind: "postgres", handle: string, id?: string, revision?: integer } | { kind: "sharedTable", patchId: string, table: string, id?: string, revision?: integer } } }, patchId?: string, skills: string[] }
 
@@ -291,6 +291,7 @@ Responses:
 - `400` { ok: false, error: string }
 - `401` { ok: false, error: "Missing or invalid API token." }
 - `404` { ok: false, error: string }
+- `413` { ok: false, error: string }
 - `422` { ok: false, error: string, code: "release_mismatch" | "invalid_manifest" | "tier_mismatch" | "has_primitives" | "patch_not_openable" | "connection_not_connected" | "stale_generated" }
 - `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
 - `503` { ok: false, error: string, code: "busy" | "source_unavailable" }

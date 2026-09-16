@@ -14,6 +14,7 @@ import {
   GenerateRequest,
   Generated,
   PatchyApi,
+  PayloadTooLarge,
   PublishRefused,
   PublishUnavailable,
   readBody,
@@ -76,7 +77,14 @@ export const layer: Layer.Layer<
             Effect.flatMap(decodeGenerate),
             Effect.catchTags({
               MalformedBody: (error) => Effect.succeed(malformed(error.field)),
-              BodyTooLarge: () => Effect.succeed(malformed())
+              BodyTooLarge: () =>
+                Effect.succeed(
+                  refuse(
+                    PayloadTooLarge,
+                    { ok: false, error: "Request body is too large." },
+                    noStore.headers
+                  )
+                )
             })
           );
           if (HttpServerResponse.isHttpServerResponse(payload)) return payload;
