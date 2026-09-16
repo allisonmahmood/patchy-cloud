@@ -168,8 +168,8 @@ importers:
         specifier: 4.0.0-rc.115
         version: 4.0.0-rc.115
       posthog-node:
-        specifier: ^5.51.8
-        version: 5.51.8
+        specifier: ^5.52.1
+        version: 5.52.4
     devDependencies:
       '@effect/vitest':
         specifier: 4.0.0-rc.115
@@ -1185,11 +1185,11 @@ packages:
     engines: {node: '>=20'}
     hasBin: true
 
-  '@posthog/core@1.51.2':
-    resolution: {integrity: sha512-z3fPR/RdOgTYWdHQnZZm81CCgljDxsrMsSz72Jpd2vJAtycsRYKOlMXdP8+55yM3WYeVU1wOyF9BldWsIABr+A==}
+  '@posthog/core@1.54.2':
+    resolution: {integrity: sha512-p0NuMjiZkploKG/aASj4nw4QDuhF87SIFWkelaFRrr3G0Myb7KWWUZot2hm5qXpPx7zKozVZJrJkGzC2kGBqbg==}
 
-  '@posthog/types@1.409.2':
-    resolution: {integrity: sha512-hZ4EXZ1+BstMaxUkmAEg3qvgMR/S00Xb+wEwY/Tx2Dr9dBgiBWrERxaq2UwICh/Fh/vVXpKZT/0SkRtO8JKQ2A==}
+  '@posthog/types@1.412.1':
+    resolution: {integrity: sha512-FxXsb9YOOME8bJI5K09qKeSvLjnZQ2dPV7wZpI7a8sERQtXkAuhBcPB/balCnVE7TYwhgtHj5NQss9BgQ5bAfQ==}
 
   '@redis/bloom@6.2.1':
     resolution: {integrity: sha512-huQgNLaCIZfQ9SeLn4q9124uOUd8HbZDYHwwUzNcRgHqCHiHKl2dDxMqJCeWh8cMqZAoWuHR8XnWbDMIf+o7ag==}
@@ -2090,8 +2090,8 @@ packages:
     resolution: {integrity: sha512-9ZhXKM/rw350N1ovuWHbGxnGh/SNJ4cnxHiM0rxE4VN41wsg8P8zWn9hv/buK00RP4WvlOyr/RBDiptyxVbkZQ==}
     engines: {node: '>=0.10.0'}
 
-  posthog-node@5.51.8:
-    resolution: {integrity: sha512-TCqgAYbACwb/D3VI2S861ugD+FavvowQfak8eMwS/wATS+g0Wj+YpsABrBEKi+ZP3Y5SJDcoc7bIH49rlGo1Ww==}
+  posthog-node@5.52.4:
+    resolution: {integrity: sha512-P3p4OouGQfw/ouv+Px4gcVWLNwYsFB4JPyksYmxv7QRX4niwp1/C9XjQSUyl0nt+KoQnK14zFDfONHWVthwKDA==}
     engines: {node: ^20.20.0 || >=22.22.0}
     peerDependencies:
       rxjs: ^7.0.0
@@ -2810,11 +2810,11 @@ snapshots:
     dependencies:
       playwright: 1.63.0
 
-  '@posthog/core@1.51.2':
+  '@posthog/core@1.54.2':
     dependencies:
-      '@posthog/types': 1.409.2
+      '@posthog/types': 1.412.1
 
-  '@posthog/types@1.409.2': {}
+  '@posthog/types@1.412.1': {}
 
   '@redis/bloom@6.2.1(@redis/client@6.2.1)':
     dependencies:
@@ -3610,9 +3610,9 @@ snapshots:
     dependencies:
       xtend: 4.0.2
 
-  posthog-node@5.51.8:
+  posthog-node@5.52.4:
     dependencies:
-      '@posthog/core': 1.51.2
+      '@posthog/core': 1.54.2
 
   prelude-ls@1.2.1: {}
 
