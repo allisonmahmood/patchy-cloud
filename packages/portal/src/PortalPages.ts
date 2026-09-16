@@ -23,7 +23,7 @@ import {
 import * as UserLifecyclePage from "./UserLifecyclePage.js";
 
 const isName = Schema.is(PatchName);
-export const maxNameLength = 32;
+const maxNameLength = 32;
 const decodeDescription = Schema.decodeUnknownEffect(
   Schema.Struct({
     description: Schema.String,
@@ -111,14 +111,9 @@ const render = Effect.fn("PortalPages.render")(function* (
     submittedDescription?: string;
     descriptionError?: string;
     versions?: boolean;
-    confirmation?: ConfirmationAction;
-    submittedName?: string;
-    nameError?: string;
-    selectedOwnerId?: string;
-    acknowledged?: boolean;
   } = {}
 ) {
-  const { viewer, session, all, access, query } = yield* context;
+  const { viewer, session, all, access } = yield* context;
   if (name !== undefined && name.length > maxNameLength) return yield* overlongName;
   if (name !== undefined && !isName(name))
     return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
@@ -135,78 +130,96 @@ const render = Effect.fn("PortalPages.render")(function* (
     return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
   const card = selected ? yield* patches.portalCard(selected.patch.id, access) : null;
   const now = yield* Clock.currentTimeMillis;
-  let action = options.confirmation;
-  if (action && card) {
-    if (viewer.role !== "admin" && (action === "reassign" || card.owner.id !== viewer.user.id)) {
-      options = {
-        status: 403,
-        notice: action === "reassign" ? adminRequired : forbidden
-      };
-      action = undefined;
-    } else if (
-      action === "restore" &&
-      options.status === undefined &&
-      card.offSources.length === 0
-    ) {
-      return HttpServerResponse.redirect(
-        `/patches/${encodeURIComponent(card.patch.name)}${all ? "?all=1" : ""}`,
-        { status: 303, headers: { "cache-control": "private, no-store" } }
-      );
-    } else if (
-      (action === "retire" && card.patch.state !== "live") ||
-      (action === "delete" && card.patch.state === "deleted") ||
-      (action === "restore" && card.patch.state === "live")
-    ) {
-      options = {
-        status: 409,
-        notice: `This patch is ${card.patch.state}. This action is not available. Nothing was done.`
-      };
-      action = undefined;
-    }
-  }
-  const members = action === "reassign" ? yield* (yield* Users.Users).list(viewer.company.id) : [];
   const body =
     options.versions && card
       ? renderVersions({ card, viewer, all, now })
-      : action && card
-        ? renderConfirmation({
-            card,
-            viewer,
-            all,
-            now,
-            action,
-            members,
-            query,
-            notice: options.notice,
-            submittedName: options.submittedName,
-            nameError: options.nameError,
-            selectedOwnerId: options.selectedOwnerId,
-            acknowledged: options.acknowledged
-          })
-        : renderPortal({
-            rows,
-            card,
-            viewer,
-            all,
-            now,
-            publicBaseUrl: session.publicBaseUrl,
-            ...(options.notice === undefined ? {} : { notice: options.notice }),
-            ...(options.submittedDescription === undefined
-              ? {}
-              : { submittedDescription: options.submittedDescription }),
-            ...(options.descriptionError === undefined
-              ? {}
-              : { descriptionError: options.descriptionError })
-          });
+      : renderPortal({
+          rows,
+          card,
+          viewer,
+          all,
+          now,
+          publicBaseUrl: session.publicBaseUrl,
+          notice: options.notice,
+          submittedDescription: options.submittedDescription,
+          descriptionError: options.descriptionError
+        });
   return pageResponse(
     {
-      title: card
-        ? `${card.patch.name}${options.versions ? " versions" : action ? ` ${action}` : ""}`
-        : "Patches",
+      title: card ? `${card.patch.name}${options.versions ? " versions" : ""}` : "Patches",
       heading: "",
       body,
       styles,
       status: options.status ?? 200,
+      app: { viewer, section: "patches" }
+    },
+    session
+  );
+});
+
+const confirmationPage = Effect.fn("PortalPages.confirmationPage")(function* (
+  name: string,
+  action: ConfirmationAction,
+  form: {
+    status?: number;
+    notice?: string;
+    submittedName?: string;
+    nameError?: string;
+    selectedOwnerId?: string;
+    acknowledged?: boolean;
+  } = {}
+) {
+  const { viewer, session, all, access, query } = yield* context;
+  if (name.length > maxNameLength) return yield* overlongName;
+  if (!isName(name))
+    return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
+  const patches = yield* Patches.Patches;
+  const rows = yield* patches.read({ ...access, state: "all" });
+  const selected = rows.find((row) => row.patch.name === name);
+  if (selected === undefined)
+    return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
+  const card = yield* patches.portalCard(selected.patch.id, access);
+  if (viewer.role !== "admin" && (action === "reassign" || card.owner.id !== viewer.user.id))
+    return yield* render(name, {
+      status: 403,
+      notice: action === "reassign" ? adminRequired : forbidden
+    });
+  if (action === "restore" && form.status === undefined && card.offSources.length === 0)
+    return HttpServerResponse.redirect(
+      `/patches/${encodeURIComponent(card.patch.name)}${all ? "?all=1" : ""}`,
+      { status: 303, headers: { "cache-control": "private, no-store" } }
+    );
+  if (
+    (action === "retire" && card.patch.state !== "live") ||
+    (action === "delete" && card.patch.state === "deleted") ||
+    (action === "restore" && card.patch.state === "live")
+  )
+    return yield* render(name, {
+      status: 409,
+      notice: `This patch is ${card.patch.state}. This action is not available. Nothing was done.`
+    });
+  const members = action === "reassign" ? yield* (yield* Users.Users).list(viewer.company.id) : [];
+  const now = yield* Clock.currentTimeMillis;
+  return pageResponse(
+    {
+      title: `${card.patch.name} ${action}`,
+      heading: "",
+      body: renderConfirmation({
+        card,
+        viewer,
+        all,
+        now,
+        action,
+        members,
+        query,
+        notice: form.notice,
+        submittedName: form.submittedName,
+        nameError: form.nameError,
+        selectedOwnerId: form.selectedOwnerId,
+        acknowledged: form.acknowledged
+      }),
+      styles,
+      status: form.status ?? 200,
       app: { viewer, section: "patches" }
     },
     session
@@ -240,14 +253,16 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Acti
       ? action
       : undefined;
   const redisplay = (status: number, notice: string, nameError?: string) =>
-    render(name, {
-      status,
-      ...(nameError === undefined ? { notice } : { nameError }),
-      ...(confirmation === undefined ? {} : { confirmation }),
-      submittedName: form.confirm ?? "",
-      selectedOwnerId: form.user ?? "",
-      acknowledged: form.ack === "1"
-    });
+    confirmation === undefined
+      ? render(name, { status, notice })
+      : confirmationPage(name, confirmation, {
+          status,
+          notice: nameError === undefined ? notice : undefined,
+          nameError,
+          submittedName: form.confirm ?? "",
+          selectedOwnerId: form.user ?? "",
+          acknowledged: form.ack === "1"
+        });
   const run = Effect.gen(function* () {
     switch (action) {
       case "description": {
@@ -400,13 +415,7 @@ const pageErrors = <E, R>(app: Effect.Effect<HttpServerResponse.HttpServerRespon
 /** The server owns GET / and its signed-out door alongside the catch-all. */
 export const index = render().pipe(pageErrors);
 
-/** The guard uses the same browser admission and response as the routed pages. */
-export const nameTooLong = errors(
-  RequireSession.sameOrigin(RequireSession.withViewer(overlongName))
-);
-
-/** Concrete patch routes are shared with the server's request-target guard. */
-export const patchRoutes = [
+const patchRoutes = [
   {
     method: "GET" as const,
     path: "/patches/:name" as const,
@@ -420,7 +429,7 @@ export const patchRoutes = [
   ...(["retire", "delete", "restore", "reassign"] as const).map((action) => ({
     method: "GET" as const,
     path: `/patches/:name/${action}` as const,
-    handle: (name: string) => render(name, { confirmation: action })
+    handle: (name: string) => confirmationPage(name, action)
   })),
   ...(["description", "scope", "rollback", "retire", "delete", "restore", "reassign"] as const).map(
     (action) => ({

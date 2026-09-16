@@ -84,7 +84,7 @@ describe("classify", () => {
     assert.deepStrictEqual(classify("POST", `/api/unmatched/${long}`), { kind: "route" });
   });
 
-  it("bounds portal names on concrete routes without treating them as API references", () => {
+  it("leaves portal name bounds and unmatched targets to page routing", () => {
     const long = "x".repeat(33);
     for (const [method, target] of [
       ["GET", `/patches/${long}`],
@@ -94,19 +94,18 @@ describe("classify", () => {
       ["GET", `/patches/${"x".repeat(16)}%2F${"x".repeat(16)}`],
       ["HEAD", `/patches/${long}/versions`],
       ["POST", `/patches/${long}/restore`],
-      ["POST", `/patches/${"x".repeat(101)}/description`]
-    ] as const) {
-      assert.deepStrictEqual(classify(method, target), { kind: "portal-name-too-long" }, target);
-    }
-    for (const [method, target] of [
       ["GET", `/patches/${"x".repeat(32)}`],
       ["GET", `/patches/${long}/versions/extra`],
       ["POST", `/patches/${long}`],
       ["POST", `/patches/${long}/versions`],
-      ["PUT", `/patches/${long}/restore`]
+      ["PUT", `/patches/${long}/restore`],
+      ["GET", `/patches/x%2F${"x".repeat(101)}/versions`]
     ] as const) {
       assert.deepStrictEqual(classify(method, target), { kind: "public" }, target);
     }
+    assert.deepStrictEqual(classify("POST", `/patches/${"x".repeat(101)}/description`), {
+      kind: "public"
+    });
     assert.deepStrictEqual(classify("GET", `/api/patches/${long}`), { kind: "route" });
   });
 });
@@ -334,14 +333,19 @@ it.layer(server())("the guard: anonymous and token-only routes", (it) => {
     })
   );
 
-  it.effect("keeps portal name refusals on browser admission, even beyond the router's bound", () =>
+  it.effect("leaves portal name refusals and unmatched targets to page routing", () =>
     Effect.gen(function* () {
       const long = "x".repeat(101);
+      const encoded = `x%2F${long}`;
       for (const request of [
         HttpClientRequest.get(`/patches/${"x".repeat(32)}`),
         HttpClientRequest.post(`/patches/${long}`),
         HttpClientRequest.put(`/patches/${long}/restore`),
-        HttpClientRequest.post(`/patches/${long}/versions`)
+        HttpClientRequest.post(`/patches/${long}/versions`),
+        HttpClientRequest.get(`/patches/${encoded}/versions`),
+        ...["description", "scope", "rollback", "retire", "delete", "restore", "reassign"].map(
+          (action) => HttpClientRequest.post(`/patches/${long}/${action}`)
+        )
       ]) {
         const response = yield* send(
           request.pipe(HttpClientRequest.setHeaders({ cookie, origin: "https://patchy.example" }))
@@ -351,12 +355,10 @@ it.layer(server())("the guard: anonymous and token-only routes", (it) => {
 
       for (const request of [
         HttpClientRequest.get(`/patches/${"x".repeat(33)}`),
+        HttpClientRequest.get(`/patches/${"x".repeat(16)}%2F${"x".repeat(16)}`),
         HttpClientRequest.post(`/patches/${"x".repeat(33)}/restore`),
         ...["", "/versions", "/retire", "/delete", "/restore", "/reassign"].map((suffix) =>
           HttpClientRequest.get(`/patches/${long}${suffix}`)
-        ),
-        ...["description", "scope", "rollback", "retire", "delete", "restore", "reassign"].map(
-          (action) => HttpClientRequest.post(`/patches/${long}/${action}`)
         ),
         HttpClientRequest.get(`/%70atches/${"%78".repeat(33)}/versions`)
       ]) {
@@ -372,7 +374,7 @@ it.layer(server())("the guard: anonymous and token-only routes", (it) => {
 
       for (const request of [
         HttpClientRequest.get(`/patches/${long}`),
-        HttpClientRequest.post(`/patches/${long}/restore`)
+        HttpClientRequest.get(`/patches/${encoded}/versions`)
       ]) {
         for (const headers of [{}, { authorization: `Bearer ${DEV_SEED.token}` }]) {
           const door = yield* send(
@@ -387,24 +389,31 @@ it.layer(server())("the guard: anonymous and token-only routes", (it) => {
           assert.isUndefined(door.headers["www-authenticate"]);
         }
       }
-      for (const headers of [{ cookie }, { cookie, origin: "https://foreign.example" }]) {
+      for (const headers of [
+        {},
+        { authorization: `Bearer ${DEV_SEED.token}` },
+        { cookie },
+        { cookie, origin: "https://foreign.example" }
+      ]) {
         assert.strictEqual(
           (yield* send(
             HttpClientRequest.post(`/patches/${long}/restore`).pipe(
               HttpClientRequest.setHeaders(headers)
             )
           )).status,
-          403
+          404
         );
       }
-      const head = yield* send(
-        HttpClientRequest.head(`/patches/${long}/versions`).pipe(
-          HttpClientRequest.setHeader("cookie", cookie)
-        )
-      );
-      assert.strictEqual(head.status, 414);
-      assert.strictEqual(head.headers["cache-control"], "private, no-store");
-      assert.strictEqual(yield* head.text, "");
+      for (const name of ["x".repeat(33), long]) {
+        const head = yield* send(
+          HttpClientRequest.head(`/patches/${name}/versions`).pipe(
+            HttpClientRequest.setHeader("cookie", cookie)
+          )
+        );
+        assert.strictEqual(head.status, 414);
+        assert.strictEqual(head.headers["cache-control"], "private, no-store");
+        assert.strictEqual(yield* head.text, "");
+      }
     })
   );
 
