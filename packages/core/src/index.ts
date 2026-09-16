@@ -5,3 +5,4 @@ export * from "./ids.js";
 export * from "./types.js";
 export { escapeAttribute, escapeHtml, htmlPage } from "./html.js";
 export type { AppShell } from "./html.js";
+export { dateLabel, daysLeft, renderOffPatch } from "./patch-presentation.js";

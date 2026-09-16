@@ -6,6 +6,7 @@
  * the HTML only after admission. The serving guarantees these routes answer
  * under are `serving-headers.ts`.
  */
+import * as Clock from "effect/Clock";
 import type { ConfigError } from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -13,13 +14,14 @@ import * as Option from "effect/Option";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
-import { Session, withCookies, sessionScripts, returnPath } from "@patchy/auth";
+import { Session, withCookies, sessionScripts, returnPath, pageResponse } from "@patchy/auth";
 import { WIRE_VERSION } from "@patchy/api";
 import { newInternalId } from "@patchy/core";
 import type { Companies, Users } from "@patchy/companies";
 import { Content, Patches, PatchesConfig } from "@patchy/patches";
 import * as Door from "./Door.js";
 import { renderNotFound } from "./render.js";
+import { renderAddressNotice } from "./address-notice.js";
 import { renderPatchWrapper, renderShellNotice, isShellNotice, brokerScript } from "./shell.js";
 import {
   NO_REFERRER_POLICY,
@@ -38,8 +40,9 @@ export const notFound = HttpServerResponse.html(renderNotFound()).pipe(
 );
 
 /**
- * On every address and content answer, the 404 included: a patch URL is never
- * indexed or handed on as a referrer, whether or not it currently serves.
+ * Patch documents, redirects and refusals are never indexed or sent as referrers.
+ * Address notices stay unindexed but use pageResponse's same-origin referrer
+ * policy so their Restore form can submit with a valid Origin.
  */
 const patchUrlHeaders = {
   "x-robots-tag": PATCH_ROBOTS_TAG,
@@ -77,16 +80,21 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (kind: "address" | "c
     patchId === undefined
       ? Option.none()
       : yield* patches
-          .find(
+          .findRetained(
             patchId,
             selection?.versionNumber ?? undefined,
             kind === "content" ? params.versionId : undefined
           )
           .pipe(Effect.catchTags({ SqlError: Effect.die }));
+  // Gone and operator-disabled patches are absent even before sign-in.
+  if (Option.isNone(served) || served.value.patch.disabledAt !== null) {
+    return withCookies(HttpServerResponse.setHeaders(notFound, patchUrlHeaders), cookies);
+  }
   const isPublic =
-    Option.isSome(served) &&
+    served.value.patch.state === "live" &&
     served.value.patch.scope === "public" &&
     served.value.version.id === served.value.patch.currentVersionId;
+  const isAlias = Option.isSome(resolved) && !resolved.value.current;
   // Finish a verified sign-in before serving a public document, but never require
   // a public reader to start a handshake or pass company admission.
   if (!isPublic || completedHandshake) {
@@ -99,13 +107,36 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (kind: "address" | "c
         cookies
       );
     }
-    if (Option.isNone(served) || served.value.patch.companyId !== admission.company.id) {
+    if (served.value.patch.companyId !== admission.company.id) {
       return withCookies(HttpServerResponse.setHeaders(notFound, patchUrlHeaders), cookies);
     }
+    if (served.value.patch.state !== "live" && !isAlias) {
+      const canOpen = yield* Patches.Openability;
+      const notice = yield* patches
+        .addressNotice(served.value.patch.id, {
+          companyId: admission.company.id,
+          userId: admission.user.id,
+          canOpen: (patch) => canOpen(patch, admission.user.id)
+        })
+        .pipe(Effect.catchTags({ SqlError: Effect.die }));
+      if (Option.isNone(notice)) {
+        return withCookies(HttpServerResponse.setHeaders(notFound, patchUrlHeaders), cookies);
+      }
+      const now = yield* Clock.currentTimeMillis;
+      return withCookies(
+        pageResponse(
+          {
+            title: `${notice.value.patch.name} is ${notice.value.patch.state}`,
+            body: renderAddressNotice({ ...notice.value, viewer: admission, now }),
+            app: { viewer: admission, section: "patches" }
+          },
+          session
+        ).pipe(HttpServerResponse.setHeader("x-robots-tag", PATCH_ROBOTS_TAG)),
+        cookies
+      );
+    }
   }
-  if (Option.isNone(served))
-    return withCookies(HttpServerResponse.setHeaders(notFound, patchUrlHeaders), cookies);
-  if (url !== undefined && Option.isSome(resolved) && !resolved.value.current) {
+  if (url !== undefined && isAlias) {
     const response = HttpServerResponse.redirect(
       `/${served.value.patch.companyHandle}/${served.value.patch.name}${suffix}${url.search}`,
       { status: 308, headers: patchUrlHeaders }

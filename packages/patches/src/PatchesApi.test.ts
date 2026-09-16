@@ -1812,9 +1812,6 @@ it.layer(publishLayer)("publish attempts", (it) => {
       }
 
       yield* contenders[winner]!.api.delete({ params: { patchId: created.patchId }, query: {} });
-      assert.isTrue(
-        Option.isNone(yield* patches.resolveName(uploader.company.handle, "company-name-race"))
-      );
       const refused = yield* contenders[loser]!.api.publish({
         payload: publishRequest({
           html: html("Reserved exact name"),
