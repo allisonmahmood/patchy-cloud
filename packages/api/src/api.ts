@@ -29,7 +29,23 @@ import {
   NotAdditive,
   PatchInventory,
   PublishUnavailable,
-  Ok,
+  NotOwner,
+  WrongState,
+  PatchRetired,
+  PatchDeleted,
+  HasDependants,
+  SourcesOff,
+  ReservedName,
+  InvalidDescription,
+  VersionUnavailable,
+  ForceRequest,
+  Retired,
+  Deleted,
+  Restored,
+  RollbackRequest,
+  RolledBack,
+  DescriptionRequest,
+  Described,
   PatchQuotaExceeded,
   PayloadTooLarge,
   PollDeviceLoginRequest,
@@ -82,6 +98,14 @@ const protectedErrors = [BadRequest, NotFound, RateLimited] as const;
  */
 const patchRouteErrors = [...protectedErrors, RequestTargetTooLong] as const;
 const patchParams = { patchId: Schema.String };
+const ownerRouteErrors = [...patchRouteErrors, NotOwner, WrongState] as const;
+/** A bare query flag is true; clients encode booleans as true/false. */
+const queryFlag = Schema.Literals(["", "true", "false"]).pipe(
+  Schema.decodeTo(Schema.Boolean, {
+    decode: SchemaGetter.transform((value) => value !== "false"),
+    encode: SchemaGetter.transform((value) => (value ? ("true" as const) : ("false" as const)))
+  })
+);
 
 /** The route's paragraph in `docs/API.md`. */
 const describe = (description: string) => OpenApi.annotations({ description });
@@ -150,6 +174,12 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
         InvalidHtml,
         PublishKeyConflict,
         NameTaken,
+        NotOwner,
+        PatchRetired,
+        PatchDeleted,
+        ReservedName,
+        InvalidDescription,
+        HasDependants,
         NotAdditive,
         PublishUnavailable,
         Conflict,
@@ -159,7 +189,7 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
     }).annotateMerge(
       describe(
         "Publish one HTML bundle and its manifest. Without `patchId` creates a patch (201); " +
-          "with an owned `patchId` publishes a version (200). Authenticate, then replay by owner " +
+          "with an owned live `patchId` publishes a version (200). Authenticate, then replay by owner " +
           "and `publishKey` before limits or release validation: identical payloads return the " +
           "stored response and status, even after an upgrade; changed payloads answer 409 " +
           "`publish_key_conflict`. New attempts require the exact current release and manifest " +
@@ -174,9 +204,13 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "The resolved id is `<patchId>/<table>`, never a patch name; revision stamps the source inventory. " +
           "Publish requires a live same-company source the publisher can open and an inventory table " +
           "marked shared, otherwise `patch_not_openable`. A stamp behind the source revision warns, " +
-          "not refuses. Unsharing a defined table reports the number of distinct live declaring patches, " +
-          "including declarations in retained versions; omission and rollback never change sharing. " +
-          "Schema changes are checked before bytes and rechecked under the patch lock. " +
+          "not refuses. Unsharing a defined table refuses with `has_dependants` and the distinct live declaring " +
+          "patches, including declarations in retained versions, unless `force` is true. Ask the person you " +
+          "are working for before forcing. Omission and rollback never change sharing. " +
+          "Ownership and lifecycle are checked before validating HTML and again at commit: another company's " +
+          "patch is 404; a same-company non-owner gets `not_owner` first, with the current owner. The owner " +
+          "gets `patch_retired` or `patch_deleted` with `purgeAt`, and must restore before publishing. " +
+          "Schema changes are checked before storage and rechecked under the patch lock. " +
           "Preflight conservatively refuses new indexes with existing uncompressed key tuples " +
           "over 2,000 bytes, and added columns that expand existing rows over the row limit. " +
           "`not_additive` names every refused object, change and fix. Omitted tables and stores remain in " +
@@ -193,12 +227,17 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "and live-patch quota; updates do not. Omitted scope defaults to company on creates " +
           "and remains unchanged on updates. `manifest.name` is an exact company-scoped name " +
           "(3–32 lowercase letters, digits or hyphens, starting and ending with a letter or digit); " +
-          "a taken current name answers 409 `name_taken` on create or rename. Without a name, " +
-          "creates derive one from `metadata.filename` without its extension (title when absent), " +
+          "a taken current name answers 409 `name_taken` on create or rename, including deleted patches. " +
+          "`patches` and `connections` are reserved names and answer 422 `reserved_name` on create. " +
+          "Without a name, creates derive one from `metadata.filename` without its extension (title when absent), " +
           "normalize it, fall back to `patch` and add `-2`, `-3`, etc. on collision. Updates with " +
           "no name retain their existing name. Rename leaves a redirect until another patch " +
-          "claims it; deletion frees all names. `address` and `publicUrl` both name the absolute " +
-          "`/<company>/<name>` address. The JSON body cap is three times the larger configured HTML or bundle cap."
+          "claims it; retire and delete reserve names until the deletion sweep reclaims the patch after 30 days. " +
+          "`manifest.description` or file mode's `metadata.description` updates the description; omitted, the " +
+          "cloud text remains. Descriptions collapse whitespace, permit at most 500 Unicode code points and " +
+          "no control characters, and are returned with `descriptionUpdatedAt`. " +
+          "`address` and `publicUrl` both name the absolute `/<company>/<name>` address. " +
+          "The JSON body cap is three times the larger configured HTML or bundle cap."
       )
     ),
     HttpApiEndpoint.get("inventory", "/patches/:patchId/inventory", {
@@ -207,9 +246,9 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
       error: [...patchRouteErrors, PublishUnavailable]
     }).annotateMerge(
       describe(
-        "Read the cumulative table and file-store definitions and schema revision for an owned, " +
-          "available patch. Omitted definitions remain here. Unknown, unavailable and another " +
-          "user's patches all answer 404. A primitive-free patch answers empty definitions and revision zero. " +
+        "Read the cumulative table and file-store definitions and schema revision for an openable " +
+          "same-company patch in any lifecycle state. Omitted definitions remain here. Unknown, disabled, " +
+          "gone and foreign patches answer 404. A primitive-free patch answers empty definitions and revision zero. " +
           "An existing ready company database is probed for inventory even when the current version " +
           "declares none: a failed platform commit may have left cumulative definitions. An unavailable " +
           "database answers `source_unavailable` (or `busy`), never a fabricated empty inventory."
@@ -219,13 +258,14 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
       params: patchParams,
       payload: ShareRequest,
       success: Shared,
-      error: [...patchRouteErrors, PayloadTooLarge]
+      error: [...ownerRouteErrors, PayloadTooLarge]
     }).annotateMerge(
       describe(
         "Change the sharing scope of a patch owned by the bearer token's user, without publishing a version. " +
           "`company` requires a company member's browser session; `public` lets anyone with the link open the current version. " +
           "Only the current version of a public patch is public; older versions stay behind the company door. " +
-          "A patch the caller does not own answers 404. The current public version may be cached for 60 seconds " +
+          "A same-company non-owner answers 403 `not_owner`, including an admin's machine token; another company " +
+          "answers 404. Only live patches permit scope changes, otherwise `wrong_state`. The current public version may be cached for 60 seconds " +
           "at both `/<company>/<name>` and `/<company>/<name>/~v/<current n>`; older versions and company patches are " +
           "`private, no-store` and answer 401 without a session. " +
           "The JSON body is bounded by three times `PATCHY_MAX_HTML_BYTES`; the larger scripted-bundle cap applies only to publishing. " +
@@ -233,27 +273,86 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "streaming bodies are cut off at the cap. Rejected requests leave the scope unchanged."
       )
     ),
-    HttpApiEndpoint.delete("delete", "/patches/:patchId", {
+    HttpApiEndpoint.post("retire", "/patches/:patchId/retire", {
       params: patchParams,
-      success: Ok,
-      error: patchRouteErrors
+      payload: ForceRequest,
+      success: Retired,
+      error: [...ownerRouteErrors, HasDependants, PayloadTooLarge]
     }).annotateMerge(
       describe(
-        "Delete a patch owned by the bearer token's user. The origin stops serving it at once; " +
-          "all its names are freed, and the expiry sweep removes its content after its retention clock expires."
+        "Retire an owned live patch. It stops serving and its shared tables stop answering readers. " +
+          "Everything is retained indefinitely, including its names. Live dependants refuse with " +
+          "`has_dependants` unless `force` is true. Ask the person you are working for before forcing. " +
+          "The JSON body is bounded by three times `PATCHY_MAX_HTML_BYTES`, before decoding. " +
+          "An oversized declared body answers 413; streaming bodies are cut off at the cap. " +
+          "Rejected requests leave the patch unchanged."
+      )
+    ),
+    HttpApiEndpoint.delete("delete", "/patches/:patchId", {
+      params: patchParams,
+      query: { force: Schema.optionalKey(queryFlag) },
+      success: Deleted,
+      error: [...ownerRouteErrors, HasDependants]
+    }).annotateMerge(
+      describe(
+        "Delete an owned live or retired patch. It stops serving but retains its names, versions, tables " +
+          "and files through a fixed 30-day recovery window. `purgeAt` is the deadline; the deletion sweep " +
+          "reclaims it at or after that time. From live, dependants refuse with `has_dependants` unless " +
+          "`force` is true. Delete from retired has no dependant refusal. A bare `?force` means true."
+      )
+    ),
+    HttpApiEndpoint.post("restore", "/patches/:patchId/restore", {
+      params: patchParams,
+      payload: ForceRequest,
+      success: Restored,
+      error: [...ownerRouteErrors, SourcesOff, PatchDeleted, PayloadTooLarge]
+    }).annotateMerge(
+      describe(
+        "Restore an owned retired or deleted patch to live, preserving its address and description. " +
+          "Recovery applies only to deletions after the lifecycle migration; legacy deleted patch IDs remain 404. " +
+          "Deleted patches require the current time to be before `purgeAt`, otherwise `patch_deleted`. " +
+          "The current version's off sources refuse with `sources_off`, listing each source's table and " +
+          "state, including gone, unless `force` is true. Ask the person you are working for before forcing. " +
+          "The JSON body is bounded by three times `PATCHY_MAX_HTML_BYTES`, before decoding. " +
+          "An oversized declared body answers 413; streaming bodies are cut off at the cap. " +
+          "Rejected requests leave the patch unchanged."
+      )
+    ),
+    HttpApiEndpoint.post("rollback", "/patches/:patchId/rollback", {
+      params: patchParams,
+      payload: RollbackRequest,
+      success: RolledBack,
+      error: [...ownerRouteErrors, VersionUnavailable, PayloadTooLarge]
+    }).annotateMerge(
+      describe(
+        "Move an owned live patch's address to a retained `versionNumber`, creating no version. " +
+          "Tables, files, sharing, name and description do not change. A missing version answers " +
+          "422 `version_unavailable`; an off patch answers `wrong_state`. " +
+          "The JSON body is bounded by three times `PATCHY_MAX_HTML_BYTES`, before decoding. " +
+          "An oversized declared body answers 413; streaming bodies are cut off at the cap. " +
+          "Rejected requests leave the patch unchanged."
+      )
+    ),
+    HttpApiEndpoint.put("describe", "/patches/:patchId/description", {
+      params: patchParams,
+      payload: DescriptionRequest,
+      success: Described,
+      error: [...ownerRouteErrors, InvalidDescription, PayloadTooLarge]
+    }).annotateMerge(
+      describe(
+        "Set an owned live or retired patch's description without publishing a version. Whitespace runs " +
+          "collapse to spaces and surrounding whitespace is trimmed. The result is one paragraph of at " +
+          "most 500 Unicode code points with no control characters; invalid text answers 422 " +
+          "`invalid_description`. An empty string clears it. Markup is stored literally. A no-op save " +
+          "does not change its timestamp. Deleted patches answer `wrong_state`. " +
+          "The JSON body is bounded by three times `PATCHY_MAX_HTML_BYTES`, before decoding. " +
+          "An oversized declared body answers 413; streaming bodies are cut off at the cap. " +
+          "Rejected requests leave the patch unchanged."
       )
     )
   )
   .middleware(Authorization)
   .prefix("/api") {}
-
-/** A bare ?all is true; generated clients encode booleans as true/false. */
-const catalogAll = Schema.Literals(["", "true", "false"]).pipe(
-  Schema.decodeTo(Schema.Boolean, {
-    decode: SchemaGetter.transform((value) => value !== "false"),
-    encode: SchemaGetter.transform((value) => (value ? ("true" as const) : ("false" as const)))
-  })
-);
 
 export class SdkGroup extends HttpApiGroup.make("sdk", { topLevel: true })
   .add(
@@ -266,7 +365,7 @@ export class SdkGroup extends HttpApiGroup.make("sdk", { topLevel: true })
       )
     ),
     HttpApiEndpoint.get("catalog", "/sdk/catalog", {
-      query: Schema.Struct({ all: Schema.optionalKey(catalogAll) }),
+      query: Schema.Struct({ all: Schema.optionalKey(queryFlag) }),
       success: Catalog,
       error: [PublishUnavailable, ...protectedErrors]
     })

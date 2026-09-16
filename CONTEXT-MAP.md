@@ -4,7 +4,7 @@ Patchy Cloud is one deployment: the hosting server on one side, the `patchy` CLI
 
 ## Contexts
 
-- [Patches](./packages/patches/CONTEXT.md) — `packages/patches`. Patches and immutable versions, company-scoped names, manifests and replay-safe publish keys, tier 0 and tier 1 bundle admission, additive table and store provisioning at publish, owner inventory, user ownership, company/public sharing, owner deletion, retention and its sweep, the owner quota, and the `patches` API group. The decided lifecycle (retire, restore, delete with a recovery window, rollback, reassignment, the description) replaces retention and is not built
+- [Patches](./packages/patches/CONTEXT.md): `packages/patches`. Patches and immutable versions, company-scoped names, manifests and replay-safe publish keys, tier 0 and tier 1 bundle admission, additive table and store provisioning, owner inventory, ownership, sharing, retire, delete, restore, rollback, reassignment, descriptions, visits, the owner quota, the deletion sweep and the `patches` API group. Lifecycle CLI commands and portal controls remain future work.
 - [Serving](./packages/serving/CONTEXT.md) — `packages/serving`. Patch addresses and version/content URLs, tier 0 and tier 1 pages, the sandboxed frame and document-bound broker, route bridge, login and needs-rebuild doors, serving guarantees, admitted visits and trusted-proxy attribution. Hosted runtimes, the connect door and patch identity remain future work
 - [Companies](./packages/companies/CONTEXT.md) — `packages/companies`. Companies and handles, users and roles, create-or-join, invitations, the company page, deactivation and reactivation. Groups, verified domains, SSO, billing, suspension and the operator's surfaces remain future work
 - [Portal](./packages/portal/CONTEXT.md) — `packages/portal`, decided on the [portal map](https://github.com/allisonmahmood/patchy-cloud/issues/230) and not yet created. The signed-in landing at `/`, the patch card and its management and confirmation pages, and the deactivation and reactivation pick pages, over Patches, Companies and Auth
@@ -39,7 +39,7 @@ Supporting packages rather than product contexts; their glossaries define only t
 - **Publishing (`patchy/dev`) → Runtime, Primitives, Integrations, Company database, Content store, Limits**: supplies local loaded versions and the handler map, composing the real capabilities over PGlite and a filesystem store with the machine's user identity and synthetic fixtures
 - **`patchy/dev` → `serving/shell`**: serves the production renderer, broker and sandbox policies through the infrastructure-free shell export
 - **Serving → Patches, Auth**: relies on Patches for content, sharing and visits, and on Auth for viewer identity and session admission
-- **Patches → Content store**: owns the lifecycle of stored patch content, from publication through expiry
+- **Patches → Content store**: owns the lifecycle of stored patch content, from publication through deletion and reclamation
 - **Runtime → Auth, Limits, SQL**: admits the browser session as the acting identity, limits calls per viewer and owning patch, and records mutations and integration calls before execution
 - **Patches → Runtime**: supplies Runtime's loaded-version lookup: the manifest, effective sharing scope, owning company and server-stamped wire version; current-source lookup supplies shared-table liveness without platform persistence inside primitive operations
 - **Hosting → Runtime, Patches**: supplies the production loaded-version layer and the operation handler map; Runtime imports neither Patches, Primitives nor Integrations
@@ -52,7 +52,7 @@ Supporting packages rather than product contexts; their glossaries define only t
 - **Auth → Companies**: relies on company membership, roles and deactivation to authenticate users and machines
 - **Hosting, Auth, Patches → Limits**: rely on shared rate limiting for API access, device login and publishing
 - **Integrations → Companies**: a company owns its connections; active members read their safe metadata and admins manage them
-- **Hosting → runtime packages**: coordinates their lifetime, including database setup, API protection, page serving and retention sweeping
+- **Hosting → runtime packages**: coordinates their lifetime, including database setup, API protection, page serving and deletion sweeping
 
 ## Decisions
 

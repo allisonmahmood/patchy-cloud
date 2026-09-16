@@ -1,4 +1,5 @@
 import { assert, expect, it } from "@effect/vitest";
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
@@ -12,8 +13,12 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
+import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServer from "effect/unstable/http/HttpServer";
+import * as HttpApi from "effect/unstable/httpapi/HttpApi";
+import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import * as HttpApiMiddleware from "effect/unstable/httpapi/HttpApiMiddleware";
 import * as HttpApiTest from "effect/unstable/httpapi/HttpApiTest";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -21,7 +26,11 @@ import { Analytics } from "@patchy/analytics";
 import {
   Authorization,
   PatchyApi,
+  PatchesGroup,
   ShareRequest,
+  ForceRequest,
+  DescriptionRequest,
+  RollbackRequest,
   PublishCreated,
   PublishRequest,
   PublishUpdated,
@@ -215,24 +224,32 @@ it.layer(layer)("patches group", (it) => {
           );
         }
 
-        for (const patchId of [created.patchId, "abcdefabcdef"]) {
-          assert.deepStrictEqual(
-            yield* anotherUser
-              .share({ params: { patchId }, payload: new ShareRequest({ scope: "company" }) })
-              .pipe(Effect.flip),
-            { ok: false, error: "Patch not found." }
-          );
-        }
+        const nonOwner = yield* anotherUser
+          .share({ params, payload: new ShareRequest({ scope: "company" }) })
+          .pipe(Effect.flip);
+        assert.include(nonOwner, { ok: false, code: "not_owner" });
+        expect(nonOwner).toMatchObject({
+          owner: { id: uploader.user.id, name: uploader.user.name }
+        });
+        assert.deepStrictEqual(
+          yield* anotherUser
+            .share({
+              params: { patchId: "abcdefabcdef" },
+              payload: new ShareRequest({ scope: "company" })
+            })
+            .pipe(Effect.flip),
+          { ok: false, error: "Patch not found." }
+        );
         assert.strictEqual(
           Option.getOrThrow(yield* patches.find(created.patchId)).patch.scope,
           "public"
         );
-        yield* owner.delete({ params });
-        assert.deepStrictEqual(
+        yield* owner.delete({ params, query: {} });
+        assert.include(
           yield* sameUser
             .share({ params, payload: new ShareRequest({ scope: "public" }) })
             .pipe(Effect.flip),
-          { ok: false, error: "Patch not found." }
+          { ok: false, code: "wrong_state", state: "deleted" }
         );
       })
   );
@@ -289,14 +306,20 @@ it.layer(layer)("patches group", (it) => {
       const admins = yield* publish({ html: html("Theirs") }).pipe(
         Effect.provide(Fixtures.as(admin))
       );
-      // Unknown and another user's: one 404, never saying which.
-      for (const patchId of ["abcdefabcdef", admins.patchId]) {
-        const refused = yield* publish({ html: html("x"), patchId }).pipe(
+      assert.include(
+        yield* publish({ html: html("x"), patchId: admins.patchId }).pipe(
           Effect.provide(asUploader),
           Effect.flip
-        );
-        assert.deepStrictEqual(refused, { ok: false, error: "Patch not found." });
-      }
+        ),
+        { ok: false, code: "not_owner" }
+      );
+      assert.deepStrictEqual(
+        yield* publish({ html: html("x"), patchId: "abcdefabcdef" }).pipe(
+          Effect.provide(asUploader),
+          Effect.flip
+        ),
+        { ok: false, error: "Patch not found." }
+      );
     })
   );
 
@@ -331,7 +354,7 @@ it.layer(layer)("patches group", (it) => {
         // Deleting one returns its slot.
         yield* TestClock.adjust("1 minute");
         const api = yield* client.pipe(Effect.provide(as));
-        yield* api.delete({ params: { patchId: first.patchId } });
+        yield* api.delete({ params: { patchId: first.patchId }, query: {} });
         yield* publish({ html: html("Three again") }).pipe(Effect.provide(as));
       })
   );
@@ -349,26 +372,30 @@ it.layer(layer)("patches group", (it) => {
       assert.strictEqual(updated.versionNumber, 2);
 
       const params = { patchId: created.patchId };
-      assert.deepStrictEqual(
+      expect(
         yield* asAdmin
           .publish({ payload: publishRequest({ html: html("Not yours"), ...params }) })
-          .pipe(Effect.flip),
-        { ok: false, error: "Patch not found." }
-      );
-      assert.deepStrictEqual(yield* asAdmin.delete({ params }).pipe(Effect.flip), {
+          .pipe(Effect.flip)
+      ).toMatchObject({
         ok: false,
-        error: "Patch not found."
+        code: "not_owner",
+        owner: { id: reader.user.id, name: reader.user.name }
+      });
+      assert.include(yield* asAdmin.delete({ params, query: {} }).pipe(Effect.flip), {
+        ok: false,
+        code: "not_owner"
       });
       const content = yield* Content.Content;
       const patches = yield* Patches.Patches;
       const current = Option.getOrThrow(yield* patches.find(created.patchId));
       assert.include(yield* content.read(current.version), "Owner update");
 
-      assert.isTrue((yield* asOwner.delete({ params })).ok);
+      assert.isTrue((yield* asOwner.delete({ params, query: {} })).ok);
       assert.isTrue(Option.isNone(yield* patches.find(created.patchId)));
-      assert.deepStrictEqual(yield* asOwner.delete({ params }).pipe(Effect.flip), {
+      assert.include(yield* asOwner.delete({ params, query: {} }).pipe(Effect.flip), {
         ok: false,
-        error: "Patch not found."
+        code: "wrong_state",
+        state: "deleted"
       });
     })
   );
@@ -400,6 +427,548 @@ const publishLayer = Layer.mergeAll(PatchesApi.layer, HttpServer.layerServices).
   Layer.provideMerge(Fixtures.database),
   Layer.provide(publishConfig())
 );
+
+const lifecycleSocketLayer = HttpRouter.serve(
+  HttpApiBuilder.layer(HttpApi.make("patchy").add(PatchesGroup)),
+  { disableLogger: true, disableListenLog: true }
+).pipe(Layer.provideMerge(NodeHttpServer.layerTest), Layer.provideMerge(publishLayer));
+
+it.layer(Layer.fresh(lifecycleSocketLayer))("owner lifecycle body bounds on a socket", (it) => {
+  for (const route of ["retire", "restore", "rollback", "description"] as const) {
+    it.effect(`bounds ${route} bodies before mutation and accepts ordinary owner requests`, () =>
+      Effect.gen(function* () {
+        const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+        const first = yield* owner.publish({
+          payload: publishRequest({
+            html: html(`Bounded ${route} first`),
+            manifest: { ...Fixtures.manifest, description: "Original description" }
+          })
+        });
+        const params = { patchId: first.patchId };
+        const second = yield* owner.publish({
+          payload: publishRequest({ ...params, html: html(`Bounded ${route} second`) })
+        });
+        if (route === "restore") {
+          yield* owner.retire({ params, payload: new ForceRequest({}) });
+        }
+        const http = yield* HttpClient.HttpClient;
+        const sql = yield* SqlClient.SqlClient;
+        const patches = yield* Patches.Patches;
+        const snapshot = sql`
+          SELECT current_version_id, description, description_updated_at,
+            retired_at, deleted_at, last_changed_at
+          FROM patches WHERE id = ${first.patchId}`;
+        const before = yield* snapshot;
+        const description = String.fromCodePoint(0x20000).repeat(500);
+        const payload =
+          route === "description"
+            ? { description }
+            : route === "rollback"
+              ? { versionNumber: 1 }
+              : { force: true };
+        const padding = " ".repeat(4 * 1024 * 1024);
+        const padded =
+          route === "description"
+            ? JSON.stringify({ description: padding + description })
+            : JSON.stringify(payload) + padding;
+        const bytes = new TextEncoder().encode(padded);
+        const request = HttpClientRequest.make(route === "description" ? "PUT" : "POST")(
+          `/api/patches/${first.patchId}/${route}`
+        ).pipe(HttpClientRequest.bearerToken(uploader.machine.id));
+
+        const declared = yield* http.execute(
+          request.pipe(HttpClientRequest.bodyText(padded, "application/json"))
+        );
+        assert.strictEqual(declared.status, 413);
+        expect(yield* declared.json).toEqual({ ok: false, error: expect.any(String) });
+        assert.deepStrictEqual(yield* snapshot, before);
+
+        const chunked = request.pipe(
+          HttpClientRequest.bodyStream(
+            Stream.fromIterable([bytes.subarray(0, 1024), bytes.subarray(1024)]),
+            { contentType: "application/json" }
+          )
+        );
+        // Node closes the socket when an undeclared body crosses the cap.
+        const failure = yield* http.execute(chunked).pipe(Effect.flip);
+        assert.strictEqual(failure.reason._tag, "TransportError");
+        assert.deepStrictEqual(yield* snapshot, before);
+
+        for (const malformed of ["{", '{"force":"yes","versionNumber":0,"description":null}']) {
+          const response = yield* http.execute(
+            request.pipe(HttpClientRequest.bodyText(malformed, "application/json"))
+          );
+          assert.strictEqual(response.status, 400);
+          expect(yield* response.json).toEqual({ ok: false, error: expect.any(String) });
+        }
+        assert.deepStrictEqual(yield* snapshot, before);
+
+        const accepted = yield* http.execute(
+          request.pipe(HttpClientRequest.bodyJsonUnsafe(payload))
+        );
+        assert.strictEqual(accepted.status, 200);
+        expect(yield* accepted.json).toMatchObject({ ok: true, patchId: first.patchId });
+        if (route === "retire") {
+          assert.isTrue(Option.isNone(yield* patches.find(first.patchId)));
+          yield* owner.restore({ params, payload: new ForceRequest({}) });
+        }
+        const current = Option.getOrThrow(yield* patches.find(first.patchId));
+        assert.strictEqual(
+          current.version.id,
+          route === "rollback" ? first.versionId : second.versionId
+        );
+        assert.strictEqual(
+          current.patch.description,
+          route === "description" ? description : first.description
+        );
+        const versions = yield* sql<{ count: number }>`
+          SELECT count(*)::integer AS count FROM patch_versions WHERE patch_id = ${first.patchId}`;
+        assert.strictEqual(versions[0]!.count, 2);
+      })
+    );
+  }
+});
+
+it.layer(Layer.fresh(publishLayer))("owner lifecycle over machine tokens", (it) => {
+  it.effect("retires, describes, restores, rolls back and deletes without replacing versions", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.UTC(2026, 0, 1));
+      const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+      const first = yield* owner.publish({
+        payload: publishRequest({
+          html: html("Lifecycle first"),
+          manifest: { ...Fixtures.manifest, description: "  Tracks\u2003orders.  " }
+        })
+      });
+      assert.strictEqual(first.description, "Tracks orders.");
+      assert.strictEqual(first.descriptionUpdatedAt, "2026-01-01T00:00:00.000Z");
+      const params = { patchId: first.patchId };
+      yield* TestClock.adjust("1 minute");
+      const second = yield* owner.publish({
+        payload: publishRequest({ ...params, html: html("Lifecycle second") })
+      });
+      assert.strictEqual(second.description, first.description);
+      assert.strictEqual(second.descriptionUpdatedAt, first.descriptionUpdatedAt);
+      const retired = yield* owner.retire({ params, payload: new ForceRequest({}) });
+      expect(retired).toMatchObject({
+        ok: true,
+        ...params,
+        state: "retired",
+        retiredAt: "2026-01-01T00:01:00.000Z"
+      });
+      const patches = yield* Patches.Patches;
+      assert.isTrue(Option.isNone(yield* patches.find(first.patchId)));
+      const described = yield* owner.describe({
+        params,
+        payload: new DescriptionRequest({ description: "<b>Tracks</b>\n\torders." })
+      });
+      assert.strictEqual(described.description, "<b>Tracks</b> orders.");
+      expect(yield* owner.restore({ params, payload: new ForceRequest({}) })).toMatchObject({
+        ok: true,
+        ...params,
+        state: "live"
+      });
+      expect(
+        yield* owner.rollback({ params, payload: new RollbackRequest({ versionNumber: 1 }) })
+      ).toMatchObject({
+        ok: true,
+        ...params,
+        currentVersion: 1,
+        address: first.address
+      });
+      const rolledBack = Option.getOrThrow(yield* patches.find(first.patchId));
+      assert.strictEqual(rolledBack.version.id, first.versionId);
+      assert.strictEqual(rolledBack.patch.description, described.description);
+      const next = yield* owner.publish({
+        payload: publishRequest({ ...params, html: html("After rollback") })
+      });
+      assert.strictEqual(next.versionNumber, 3);
+      assert.strictEqual(next.description, described.description);
+      assert.strictEqual(next.descriptionUpdatedAt, described.descriptionUpdatedAt);
+      const deleted = yield* owner.delete({ params, query: {} });
+      expect(deleted).toMatchObject({
+        ok: true,
+        ...params,
+        state: "deleted",
+        deletedAt: "2026-01-01T00:01:00.000Z",
+        purgeAt: "2026-01-31T00:01:00.000Z"
+      });
+      yield* owner.restore({ params, payload: new ForceRequest({}) });
+      assert.strictEqual(
+        Option.getOrThrow(yield* patches.find(first.patchId)).version.id,
+        next.versionId
+      );
+    })
+  );
+
+  it.effect("returns each owner refusal before inspecting invalid publish bytes", () =>
+    Effect.gen(function* () {
+      const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+      const nonOwner = yield* client.pipe(Effect.provide(Fixtures.as(admin)));
+      const patches = yield* Patches.Patches;
+      const store = yield* ContentStore.ContentStore;
+      for (const state of ["live", "retired", "deleted"] as const) {
+        const created = yield* owner.publish({
+          payload: publishRequest({ html: html(`Owner refusal ${state}`) })
+        });
+        const params = { patchId: created.patchId };
+        if (state === "retired") yield* owner.retire({ params, payload: new ForceRequest({}) });
+        if (state === "deleted") yield* owner.delete({ params, query: {} });
+        const before = yield* Stream.runCollect(store.list("patches/"));
+        const options = { params, responseMode: "response-only" as const };
+        for (const response of [
+          yield* nonOwner.publish({
+            payload: publishRequest({
+              ...params,
+              html: "<script>bad()</script>",
+              manifest: { ...Fixtures.manifest, release: "not-current" }
+            }),
+            responseMode: "response-only"
+          }),
+          yield* nonOwner.retire({ ...options, payload: new ForceRequest({}) }),
+          yield* nonOwner.delete({ ...options, query: {} }),
+          yield* nonOwner.restore({ ...options, payload: new ForceRequest({}) }),
+          yield* nonOwner.rollback({
+            ...options,
+            payload: new RollbackRequest({ versionNumber: 999 })
+          }),
+          yield* nonOwner.describe({
+            ...options,
+            payload: new DescriptionRequest({ description: "\u0000" })
+          }),
+          yield* nonOwner.share({ ...options, payload: new ShareRequest({ scope: "public" }) })
+        ]) {
+          assert.strictEqual(response.status, 403);
+          expect(yield* response.json).toMatchObject({
+            ok: false,
+            code: "not_owner",
+            owner: { id: uploader.user.id, name: uploader.user.name }
+          });
+        }
+        if (state !== "live") {
+          const response = yield* owner.publish({
+            payload: publishRequest({ ...params, html: "<script>bad()</script>" }),
+            responseMode: "response-only"
+          });
+          assert.strictEqual(response.status, 409);
+          expect(yield* response.json).toMatchObject({
+            code: state === "retired" ? "patch_retired" : "patch_deleted",
+            ...(state === "deleted" ? { purgeAt: expect.any(String) } : {})
+          });
+        }
+        assert.deepStrictEqual(yield* Stream.runCollect(store.list("patches/")), before);
+        assert.strictEqual(Option.isSome(yield* patches.find(created.patchId)), state === "live");
+      }
+    })
+  );
+
+  it.effect("reports wrong states, unavailable versions and the recovery deadline", () =>
+    Effect.gen(function* () {
+      const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+      const created = yield* owner.publish({
+        payload: publishRequest({ html: html("State gates") })
+      });
+      const params = { patchId: created.patchId };
+      assert.include(
+        yield* owner.restore({ params, payload: new ForceRequest({}) }).pipe(Effect.flip),
+        {
+          code: "wrong_state",
+          state: "live"
+        }
+      );
+      const absent = yield* owner.rollback({
+        params,
+        payload: new RollbackRequest({ versionNumber: 999 }),
+        responseMode: "response-only"
+      });
+      assert.strictEqual(absent.status, 422);
+      assert.include(yield* absent.json, { code: "version_unavailable" });
+      yield* owner.retire({ params, payload: new ForceRequest({}) });
+      assert.include(
+        yield* owner.retire({ params, payload: new ForceRequest({}) }).pipe(Effect.flip),
+        {
+          code: "wrong_state",
+          state: "retired"
+        }
+      );
+      for (const response of [
+        yield* owner.rollback({
+          params,
+          payload: new RollbackRequest({ versionNumber: 1 }),
+          responseMode: "response-only"
+        }),
+        yield* owner.share({
+          params,
+          payload: new ShareRequest({ scope: "public" }),
+          responseMode: "response-only"
+        })
+      ]) {
+        assert.strictEqual(response.status, 409);
+        assert.include(yield* response.json, { code: "wrong_state", state: "retired" });
+      }
+      const deleted = yield* owner.delete({ params, query: {} });
+      for (const response of [
+        yield* owner.delete({ params, query: {}, responseMode: "response-only" }),
+        yield* owner.retire({
+          params,
+          payload: new ForceRequest({}),
+          responseMode: "response-only"
+        }),
+        yield* owner.rollback({
+          params,
+          payload: new RollbackRequest({ versionNumber: 1 }),
+          responseMode: "response-only"
+        }),
+        yield* owner.describe({
+          params,
+          payload: new DescriptionRequest({ description: "Cannot edit deleted" }),
+          responseMode: "response-only"
+        }),
+        yield* owner.share({
+          params,
+          payload: new ShareRequest({ scope: "public" }),
+          responseMode: "response-only"
+        })
+      ]) {
+        assert.strictEqual(response.status, 409);
+        assert.include(yield* response.json, { code: "wrong_state", state: "deleted" });
+      }
+      yield* TestClock.adjust("30 days");
+      assert.include(
+        yield* owner.restore({ params, payload: new ForceRequest({}) }).pipe(Effect.flip),
+        {
+          code: "patch_deleted",
+          purgeAt: deleted.purgeAt
+        }
+      );
+    })
+  );
+
+  it.effect("normalizes descriptions, counts code points and preserves no-op stamps", () =>
+    Effect.gen(function* () {
+      const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+      const created = yield* owner.publish({
+        payload: publishRequest({
+          html: html("Description bounds"),
+          manifest: { ...Fixtures.manifest, description: "Manifest text" },
+          metadata: { description: " File\u00a0description " }
+        })
+      });
+      assert.strictEqual(created.description, "File description");
+      const params = { patchId: created.patchId };
+      const atLimit = "\u{1F680}".repeat(500);
+      yield* TestClock.adjust("1 second");
+      const described = yield* owner.describe({
+        params,
+        payload: new DescriptionRequest({ description: atLimit })
+      });
+      assert.strictEqual(described.description, atLimit);
+      yield* TestClock.adjust("1 second");
+      const unchanged = yield* owner.describe({
+        params,
+        payload: new DescriptionRequest({ description: ` \t${atLimit}\n ` })
+      });
+      assert.strictEqual(unchanged.descriptionUpdatedAt, described.descriptionUpdatedAt);
+      for (const description of [
+        atLimit + "x",
+        " \n\t ",
+        "bad\u0000text",
+        "bad\u007ftext",
+        "bad\u0085text"
+      ]) {
+        const response = yield* owner.describe({
+          params,
+          payload: new DescriptionRequest({ description }),
+          responseMode: "response-only"
+        });
+        assert.strictEqual(response.status, 422);
+        assert.include(yield* response.json, { code: "invalid_description" });
+      }
+      const invalidPublish = yield* owner.publish({
+        payload: publishRequest({
+          ...params,
+          html: html("Invalid description"),
+          metadata: { description: "bad\u0000text" }
+        }),
+        responseMode: "response-only"
+      });
+      assert.strictEqual(invalidPublish.status, 422);
+      assert.include(yield* invalidPublish.json, { code: "invalid_description" });
+      const current = Option.getOrThrow(yield* (yield* Patches.Patches).find(created.patchId));
+      assert.strictEqual(current.patch.description, atLimit);
+      assert.strictEqual(current.version.id, created.versionId);
+      const cleared = yield* owner.describe({
+        params,
+        payload: new DescriptionRequest({ description: "" })
+      });
+      assert.strictEqual(cleared.description, "");
+      assert.notStrictEqual(cleared.descriptionUpdatedAt, described.descriptionUpdatedAt);
+      for (const name of ["patches", "connections"]) {
+        const response = yield* owner.publish({
+          payload: publishRequest({
+            html: html("Reserved name"),
+            manifest: { ...Fixtures.manifest, name }
+          }),
+          responseMode: "response-only"
+        });
+        assert.strictEqual(response.status, 422);
+        assert.include(yield* response.json, { code: "reserved_name" });
+      }
+    })
+  );
+
+  it.effect("requires tokens and hides unknown and foreign patches on every owner route", () =>
+    Effect.gen(function* () {
+      const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+      const anonymous = yield* client.pipe(
+        Effect.provide(
+          HttpApiMiddleware.layerClient(Authorization, ({ next, request }) => next(request))
+        )
+      );
+      const created = yield* owner.publish({ payload: publishRequest({ html: html("Foreign") }) });
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO companies (id, handle, name)
+        VALUES ('cmp_owner_wire_foreign', 'owner-wire-foreign', 'Foreign')`;
+      yield* sql`UPDATE patches SET company_id = 'cmp_owner_wire_foreign' WHERE id = ${created.patchId}`;
+      for (const [api, patchId, status] of [
+        [owner, created.patchId, 404],
+        [owner, "abcdefghijkl", 404],
+        [anonymous, created.patchId, 401]
+      ] as const) {
+        const options = { params: { patchId }, responseMode: "response-only" as const };
+        for (const response of [
+          yield* api.publish({
+            payload: publishRequest({ patchId, html: "" }),
+            responseMode: "response-only"
+          }),
+          yield* api.retire({ ...options, payload: new ForceRequest({}) }),
+          yield* api.delete({ ...options, query: {} }),
+          yield* api.restore({ ...options, payload: new ForceRequest({}) }),
+          yield* api.rollback({ ...options, payload: new RollbackRequest({ versionNumber: 1 }) }),
+          yield* api.describe({
+            ...options,
+            payload: new DescriptionRequest({ description: "No leak" })
+          }),
+          yield* api.share({ ...options, payload: new ShareRequest({ scope: "public" }) })
+        ]) {
+          assert.strictEqual(response.status, status);
+          const body = yield* response.json;
+          expect(body).toEqual({ ok: false, error: expect.any(String) });
+        }
+      }
+    })
+  );
+  it.effect("names dependants and off sources and admits force only when requested", () =>
+    Effect.gen(function* () {
+      const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+      const consumerOwner = yield* client.pipe(Effect.provide(Fixtures.as(reader)));
+      const sources: Array<PublishCreated | PublishUpdated> = [];
+      for (const name of ["lifecycle-gone", "lifecycle-retired", "lifecycle-deleted"]) {
+        sources.push(
+          yield* owner.publish({
+            payload: publishRequest({
+              html: html(name),
+              manifest: {
+                ...Fixtures.manifest,
+                name,
+                tables: { orders: { columns: {}, indexes: {}, shared: true } }
+              }
+            })
+          })
+        );
+      }
+      const [gone, retired, deleted] = sources;
+      const uses = Object.fromEntries(
+        sources.map((source, index) => [
+          `source${index}`,
+          {
+            kind: "sharedTable" as const,
+            patchId: source.patchId,
+            table: "orders",
+            id: sharedTableId(source.patchId, "orders"),
+            revision: source.schemaRevision
+          }
+        ])
+      );
+      const consumer = yield* consumerOwner.publish({
+        payload: publishRequest({
+          html: html("Lifecycle reader"),
+          manifest: { ...Fixtures.manifest, name: "lifecycle-reader", uses }
+        })
+      });
+      const params = { patchId: gone!.patchId };
+      for (const response of [
+        yield* owner.retire({
+          params,
+          payload: new ForceRequest({}),
+          responseMode: "response-only"
+        }),
+        yield* owner.delete({ params, query: { force: false }, responseMode: "response-only" })
+      ]) {
+        assert.strictEqual(response.status, 409);
+        expect(yield* response.json).toMatchObject({
+          code: "has_dependants",
+          dependants: [
+            {
+              patchId: consumer.patchId,
+              name: consumer.name,
+              owner: { id: reader.user.id, name: reader.user.name }
+            }
+          ]
+        });
+      }
+      yield* owner.retire({ params, payload: new ForceRequest({ force: true }) });
+      yield* owner.restore({ params, payload: new ForceRequest({}) });
+      const bareForce = yield* client.pipe(
+        Effect.provide(
+          HttpApiMiddleware.layerClient(Authorization, ({ next, request }) =>
+            next(
+              request.pipe(
+                HttpClientRequest.bearerToken(uploader.machine.id),
+                HttpClientRequest.setUrlParam("force", "")
+              )
+            )
+          )
+        )
+      );
+      yield* bareForce.delete({ params, query: {} });
+      yield* TestClock.adjust("30 days");
+      yield* (yield* Patches.Patches).purgeDeleted(gone!.patchId);
+      yield* owner.retire({
+        params: { patchId: retired!.patchId },
+        payload: new ForceRequest({ force: true })
+      });
+      yield* owner.delete({ params: { patchId: deleted!.patchId }, query: { force: true } });
+      const consumerParams = { patchId: consumer.patchId };
+      yield* consumerOwner.retire({ params: consumerParams, payload: new ForceRequest({}) });
+      const warning = yield* consumerOwner.restore({
+        params: consumerParams,
+        payload: new ForceRequest({}),
+        responseMode: "response-only"
+      });
+      assert.strictEqual(warning.status, 409);
+      const body = yield* warning.json;
+      expect(body).toMatchObject({
+        code: "sources_off",
+        sources: expect.arrayContaining([
+          { patchId: gone!.patchId, table: "orders", state: "gone" },
+          { patchId: retired!.patchId, name: retired!.name, table: "orders", state: "retired" },
+          { patchId: deleted!.patchId, name: deleted!.name, table: "orders", state: "deleted" }
+        ])
+      });
+      expect(
+        yield* consumerOwner.restore({
+          params: consumerParams,
+          payload: new ForceRequest({ force: true })
+        })
+      ).toMatchObject({ ok: true, patchId: consumer.patchId, state: "live" });
+      assert.strictEqual(
+        Option.getOrThrow(yield* (yield* Patches.Patches).find(consumer.patchId)).version.id,
+        consumer.versionId
+      );
+    })
+  );
+});
 
 const racingClients = Effect.fn("racingClients")(function* () {
   const store = yield* ContentStore.ContentStore;
@@ -462,10 +1031,7 @@ it.layer(publishLayer)("publish attempts", (it) => {
         assert.strictEqual(baseline.schemaRevision, 1);
         assert.deepStrictEqual(baseline.tables, {});
         assert.deepStrictEqual(baseline.files, manifest.files);
-        assert.deepStrictEqual(yield* other.inventory({ params }).pipe(Effect.flip), {
-          ok: false,
-          error: "Patch not found."
-        });
+        assert.deepStrictEqual(yield* other.inventory({ params }), baseline);
         const replayed = yield* owner.publish({ payload, responseMode: "response-only" });
         assert.strictEqual(yield* replayed.text, yield* response.text);
         const omitted = yield* owner.publish({
@@ -540,12 +1106,11 @@ it.layer(publishLayer)("publish attempts", (it) => {
         assert.deepStrictEqual(baseline.tables.notes?.columns, manifest.tables.notes.columns);
         assert.deepStrictEqual(baseline.tables.notes?.indexes.byTitle?.columns, ["title"]);
         assert.strictEqual(baseline.tables.notes?.shared, true);
-        for (const patchId of [created.patchId, "not-a-patch"]) {
-          assert.deepStrictEqual(
-            yield* other.inventory({ params: { patchId } }).pipe(Effect.flip),
-            { ok: false, error: "Patch not found." }
-          );
-        }
+        assert.deepStrictEqual(yield* other.inventory({ params }), baseline);
+        assert.deepStrictEqual(
+          yield* other.inventory({ params: { patchId: "not-a-patch" } }).pipe(Effect.flip),
+          { ok: false, error: "Patch not found." }
+        );
         const omitted = yield* owner.publish({
           payload: publishRequest({
             patchId: created.patchId,
@@ -610,11 +1175,8 @@ it.layer(publishLayer)("publish attempts", (it) => {
         );
         assert.include(refusal.error, "notes.title");
         assert.deepStrictEqual(yield* Stream.runCollect(store.list("patches/")), before);
-        yield* owner.delete({ params });
-        assert.deepStrictEqual(yield* owner.inventory({ params }).pipe(Effect.flip), {
-          ok: false,
-          error: "Patch not found."
-        });
+        yield* owner.delete({ params, query: {} });
+        assert.deepStrictEqual(yield* owner.inventory({ params }), baseline);
       })
   );
 
@@ -644,7 +1206,7 @@ it.layer(publishLayer)("publish attempts", (it) => {
         }
       });
       const patches = yield* Patches.Patches;
-      const before = yield* patches.countLive(uploader.user.id);
+      const before = yield* patches.countQuotaPatches(uploader.user.id);
       const failed = yield* unavailable
         .publish({ payload, responseMode: "response-only" })
         .pipe(Effect.exit);
@@ -652,7 +1214,7 @@ it.layer(publishLayer)("publish attempts", (it) => {
       const stored = Option.getOrThrow(yield* patches.replay(uploader.user.id, payload.publishKey));
       const committed = decodeCreated(stored.response);
       const { versionId, patchId } = committed;
-      assert.strictEqual(yield* patches.countLive(uploader.user.id), before + 1);
+      assert.strictEqual(yield* patches.countQuotaPatches(uploader.user.id), before + 1);
       const objects = yield* ContentStore.ContentStore;
       const committedObjects = yield* Stream.runCollect(objects.list("patches/"));
       const upgraded = yield* client.pipe(
@@ -664,7 +1226,7 @@ it.layer(publishLayer)("publish attempts", (it) => {
       const replayed = yield* upgraded.publish({ payload, responseMode: "response-only" });
       assert.strictEqual(replayed.status, 201);
       assert.strictEqual(yield* replayed.text, stored.body);
-      assert.strictEqual(yield* patches.countLive(uploader.user.id), before + 1);
+      assert.strictEqual(yield* patches.countQuotaPatches(uploader.user.id), before + 1);
       assert.deepStrictEqual(yield* Stream.runCollect(objects.list("patches/")), committedObjects);
       const latest = Option.getOrThrow(yield* patches.find(patchId));
       assert.strictEqual(latest.version.id, versionId);
@@ -827,17 +1389,20 @@ it.layer(publishLayer)("publish attempts", (it) => {
           assert.strictEqual(a.status, 201);
           assert.strictEqual(b.status, 201);
           assert.strictEqual(yield* a.text, yield* b.text);
-          assert.strictEqual(yield* (yield* Patches.Patches).countLive(identity.user.id), 1);
+          assert.strictEqual(
+            yield* (yield* Patches.Patches).countQuotaPatches(identity.user.id),
+            1
+          );
         }
       })
   );
 
-  it.effect("arbitrates exact-name creates across owners and frees the name on deletion", () =>
+  it.effect("arbitrates exact-name creates across owners and reserves the name on deletion", () =>
     Effect.gen(function* () {
       const contenders = yield* racingClients();
       const patches = yield* Patches.Patches;
       const before = yield* Effect.forEach(contenders, ({ identity }) =>
-        patches.countLive(identity.user.id)
+        patches.countQuotaPatches(identity.user.id)
       );
       const responses = yield* Effect.all(
         contenders.map(({ identity, api }) =>
@@ -865,32 +1430,31 @@ it.layer(publishLayer)("publish attempts", (it) => {
       );
       for (let index = 0; index < contenders.length; index++) {
         assert.strictEqual(
-          yield* patches.countLive(contenders[index]!.identity.user.id),
+          yield* patches.countQuotaPatches(contenders[index]!.identity.user.id),
           before[index]! + (index === winner ? 1 : 0)
         );
       }
 
-      yield* contenders[winner]!.api.delete({ params: { patchId: created.patchId } });
+      yield* contenders[winner]!.api.delete({ params: { patchId: created.patchId }, query: {} });
       assert.isTrue(
         Option.isNone(yield* patches.resolveName(uploader.company.handle, "company-name-race"))
       );
-      const [reused, response] = yield* contenders[loser]!.api.publish({
+      const refused = yield* contenders[loser]!.api.publish({
         payload: publishRequest({
-          html: html("Reused exact name"),
+          html: html("Reserved exact name"),
           manifest: { ...Fixtures.manifest, name: "company-name-race" }
         }),
-        responseMode: "decoded-and-response"
+        responseMode: "response-only"
       });
-      assert.strictEqual(response.status, 201);
-      assert.strictEqual(reused.name, "company-name-race");
-      assert.notStrictEqual(reused.patchId, created.patchId);
-      assert.deepStrictEqual(
-        {
-          ...Option.getOrThrow(
-            yield* patches.resolveName(uploader.company.handle, "company-name-race")
-          )
-        },
-        { patchId: reused.patchId, name: "company-name-race", current: true }
+      assert.strictEqual(refused.status, 409);
+      assert.include(yield* refused.json, { code: "name_taken" });
+      yield* contenders[winner]!.api.restore({
+        params: { patchId: created.patchId },
+        payload: new ForceRequest({})
+      });
+      assert.strictEqual(
+        Option.getOrThrow(yield* patches.find(created.patchId)).patch.name,
+        "company-name-race"
       );
     })
   );
@@ -1223,7 +1787,7 @@ it.layer(publishLayer)("publish attempts", (it) => {
     Effect.gen(function* () {
       const api = yield* client.pipe(Effect.provide(Fixtures.as(admin)));
       const patches = yield* Patches.Patches;
-      const before = yield* patches.countLive(admin.user.id);
+      const before = yield* patches.countQuotaPatches(admin.user.id);
       const cases = [
         { manifest: { ...Fixtures.manifest, tier: 2 as const }, code: "tier_mismatch" },
         { manifest: { ...Fixtures.manifest, tier: 3 as const }, code: "tier_mismatch" },
@@ -1245,7 +1809,7 @@ it.layer(publishLayer)("publish attempts", (it) => {
         assert.strictEqual(response.status, 422);
         assert.include(yield* response.json, { code });
       }
-      assert.strictEqual(yield* patches.countLive(admin.user.id), before);
+      assert.strictEqual(yield* patches.countQuotaPatches(admin.user.id), before);
     })
   );
 
@@ -1512,7 +2076,7 @@ it.layer(Layer.fresh(publishLayer))("shared table publishing", (it) => {
           })
         });
         const sql = yield* SqlClient.SqlClient;
-        for (const state of ["deleted", "expired", "disabled"] as const) {
+        for (const state of ["deleted", "retired", "disabled"] as const) {
           const inactive = yield* consumer.publish({
             payload: publishRequest({
               html: html(state),
@@ -1524,24 +2088,43 @@ it.layer(Layer.fresh(publishLayer))("shared table publishing", (it) => {
             })
           });
           if (state === "deleted")
-            yield* consumer.delete({ params: { patchId: inactive.patchId } });
-          else if (state === "expired") {
-            const expiredAt = (yield* Clock.currentTimeMillis) / 1_000 - 1;
-            yield* sql`UPDATE patches SET expires_at = to_timestamp(${expiredAt})
-            WHERE id = ${inactive.patchId}`;
-          } else yield* sql`UPDATE patches SET disabled_at = now() WHERE id = ${inactive.patchId}`;
+            yield* consumer.delete({ params: { patchId: inactive.patchId }, query: {} });
+          else if (state === "retired")
+            yield* consumer.retire({
+              params: { patchId: inactive.patchId },
+              payload: new ForceRequest({})
+            });
+          else yield* sql`UPDATE patches SET disabled_at = now() WHERE id = ${inactive.patchId}`;
         }
-        const unshared = yield* owner.publish({
-          payload: publishRequest({
-            patchId: source.patchId,
-            html: html("No longer shared"),
-            manifest: {
-              ...evolvedManifest,
-              tables: { contacts: { ...evolvedManifest.tables.contacts, shared: false } }
-            }
-          })
+        const unsharePayload = publishRequest({
+          patchId: source.patchId,
+          html: html("No longer shared"),
+          manifest: {
+            ...evolvedManifest,
+            tables: { contacts: { ...evolvedManifest.tables.contacts, shared: false } }
+          }
         });
-        assert.isTrue(unshared.warnings.some((warning) => warning.includes("2 declaring patches")));
+        const blocked = yield* owner.publish({
+          payload: unsharePayload,
+          responseMode: "response-only"
+        });
+        assert.strictEqual(blocked.status, 409);
+        expect(yield* blocked.json).toMatchObject({
+          code: "has_dependants",
+          dependants: [
+            {
+              patchId: historical.patchId,
+              name: historical.name,
+              owner: { id: reader.user.id, name: reader.user.name }
+            },
+            {
+              patchId: created.patchId,
+              name: created.name,
+              owner: { id: reader.user.id, name: reader.user.name }
+            }
+          ]
+        });
+        yield* owner.publish({ payload: new PublishRequest({ ...unsharePayload, force: true }) });
         assert.deepStrictEqual(
           yield* consumer.inventory({ params: { patchId: created.patchId } }),
           baseline
@@ -1623,20 +2206,19 @@ it.layer(Layer.fresh(publishLayer))("shared table publishing", (it) => {
         assert.include(yield* foreign.json, { code: "patch_not_openable" });
         assert.deepStrictEqual(yield* Stream.runCollect(store.list("patches/")), before);
         yield* sql`UPDATE patches SET company_id = ${uploader.company.id} WHERE id = ${source.patchId}`;
-        const expiredAt = (yield* Clock.currentTimeMillis) / 1_000 - 1;
-        yield* sql`UPDATE patches SET expires_at = to_timestamp(${expiredAt}) WHERE id = ${source.patchId}`;
-        const expired = yield* consumer.publish({
+        yield* owner.retire({ params: { patchId: source.patchId }, payload: new ForceRequest({}) });
+        const retired = yield* consumer.publish({
           payload: publishRequest({
-            html: html("Expired source"),
+            html: html("Retired source"),
             manifest: { ...Fixtures.manifest, uses: { contacts: declaration } }
           }),
           responseMode: "response-only"
         });
-        assert.include(yield* expired.json, { code: "patch_not_openable" });
+        assert.include(yield* retired.json, { code: "patch_not_openable" });
         assert.deepStrictEqual(yield* Stream.runCollect(store.list("patches/")), before);
-        yield* sql`UPDATE patches SET expires_at = to_timestamp(${expiredAt + 86400})
-        WHERE id = ${source.patchId}`;
-        yield* owner.delete({ params: { patchId: source.patchId } });
+        yield* owner.delete({ params: { patchId: source.patchId }, query: {} });
+        yield* TestClock.adjust("30 days");
+        yield* (yield* Patches.Patches).purgeDeleted(source.patchId);
         const replacement = yield* owner.publish({
           payload: publishRequest({ html: html("Replacement"), manifest })
         });

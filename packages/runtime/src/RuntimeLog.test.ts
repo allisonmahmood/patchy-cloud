@@ -271,9 +271,8 @@ it.layer(RuntimeLog.layer.pipe(Layer.provideMerge(Testing.layer())))("RuntimeLog
       yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
         VALUES (${userId}, 'user_runtime_deleted', ${companyId},
           'deleted@runtime.test', 'Deleted member', 'member')`;
-      yield* sql`INSERT INTO patches (id, company_id, owner_user_id, title, name, expires_at)
-        VALUES (${patchId}, ${companyId}, ${userId}, 'Deleted patch', 'runtime-deleted',
-          to_timestamp(${NOW / 1_000}))`;
+      yield* sql`INSERT INTO patches (id, company_id, owner_user_id, title, name)
+        VALUES (${patchId}, ${companyId}, ${userId}, 'Deleted patch', 'runtime-deleted')`;
       yield* sql`INSERT INTO patch_versions (id, patch_id, version_number, object_key,
         content_hash, file_size, created_by_machine_token_id, owner_user_id, tier, release,
         manifest_version, wire_version, schema_revision, manifest, publish_key, payload_digest,

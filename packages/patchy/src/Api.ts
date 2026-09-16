@@ -5,13 +5,30 @@
  */
 import * as Effect from "effect/Effect";
 import type * as Redacted from "effect/Redacted";
-import type { SchemaError } from "effect/Schema";
+import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import type * as HttpClientError from "effect/unstable/http/HttpClientError";
+import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import * as HttpApiMiddleware from "effect/unstable/httpapi/HttpApiMiddleware";
-import { Authorization, authorizationClient, makeClient, type PublishRequest } from "@patchy/api";
+import {
+  Authorization,
+  authorizationClient,
+  makeClient,
+  PublishCreated,
+  type PublishRequest,
+  PublishUpdated
+} from "@patchy/api";
 import { LocalError, RejectedError, UnreachableError } from "./CliError.js";
 import * as Instance from "./Instance.js";
+
+/** Retained receipts predate description metadata; validate it only when present. */
+const PublishReceipt = Schema.Struct({
+  ...PublishCreated.fields,
+  description: Schema.optionalKey(PublishCreated.fields.description),
+  descriptionUpdatedAt: Schema.optionalKey(PublishCreated.fields.descriptionUpdatedAt)
+});
+const decodePublishReceipt = Schema.decodeUnknownEffect(PublishReceipt);
+const encodePublish = Schema.encodeSync(Schema.Union([PublishCreated, PublishUpdated]));
 
 /** Public login requests need no bearer; protected calls supply one explicitly. */
 export const client = (token?: Redacted.Redacted) =>
@@ -26,26 +43,40 @@ export const client = (token?: Redacted.Redacted) =>
     );
   });
 
-/** Capture status before the generated client decodes it away, scoped to this one request. */
+/** Preserve generated transport/refusals; only a recovered attempt may use an old receipt. */
 export const publish = Effect.fn("Api.publish")(function* (
   token: Redacted.Redacted,
-  payload: PublishRequest
+  payload: PublishRequest,
+  replay: boolean
 ) {
   const http = yield* HttpClient.HttpClient;
-  let status: number | undefined;
+  const observed: { response?: HttpClientResponse.HttpClientResponse } = {};
   const api = yield* client(token).pipe(
     Effect.provideService(
       HttpClient.HttpClient,
       HttpClient.tap(http, (response) =>
         Effect.sync(() => {
-          status = response.status;
+          observed.response = response;
         })
       )
     )
   );
-  return yield* api
-    .publish({ payload })
-    .pipe(Effect.mapError((error) => (isRefusal(error) ? { ...error, status } : error)));
+  const result = yield* api.publish({ payload }).pipe(Effect.result);
+  const response = observed.response;
+  if (
+    replay &&
+    response !== undefined &&
+    (response.status === 200 || response.status === 201) &&
+    (result._tag === "Success" || Schema.isSchemaError(result.failure))
+  ) {
+    const document = yield* response.json;
+    return { published: yield* decodePublishReceipt(document), document };
+  }
+  if (result._tag === "Failure") {
+    const error = result.failure;
+    return yield* Effect.fail(isRefusal(error) ? { ...error, status: response?.status } : error);
+  }
+  return { published: result.success, document: encodePublish(result.success) };
 });
 
 /** What any refusal on the wire looks like: `{ ok: false, error }`, or the 422's `errors`. */
@@ -58,7 +89,7 @@ export interface Refusal {
   readonly status?: number | undefined;
 }
 
-export type ClientFailure = Refusal | HttpClientError.HttpClientError | SchemaError;
+export type ClientFailure = Refusal | HttpClientError.HttpClientError | Schema.SchemaError;
 
 export const isRefusal = (error: ClientFailure): error is Refusal => "ok" in error;
 

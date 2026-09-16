@@ -22,14 +22,12 @@ import * as Prompt from "effect/unstable/cli/Prompt";
 import {
   PatchName,
   Identity,
-  Ok,
+  Deleted,
   Shared,
   ShareRequest,
   SharingScope,
-  PublishCreated,
   PublishMetadata,
-  PublishRequest,
-  PublishUpdated
+  PublishRequest
 } from "@patchy/api";
 import { newInternalId, sha256, validateHtml } from "@patchy/core";
 import * as Api from "./Api.js";
@@ -72,9 +70,7 @@ const runProject = <A, R>(handler: Effect.Effect<A, CliError, R>) =>
   );
 
 const encodeIdentity = Schema.encodeSync(Identity);
-// A create is 201, an update 200; the wire names them separately.
-const encodePublish = Schema.encodeSync(Schema.Union([PublishCreated, PublishUpdated]));
-const encodeOk = Schema.encodeSync(Ok);
+const encodeDeleted = Schema.encodeSync(Deleted);
 const encodeShared = Schema.encodeSync(Shared);
 const decodeSharingScope = Schema.decodeUnknownEffect(SharingScope);
 const decodePublishName = Schema.decodeUnknownEffect(PatchName);
@@ -345,6 +341,7 @@ const sendPublish = Effect.fn("sendPublish")(function* (
   attempt: State.PendingPublish,
   token: Redacted.Redacted,
   ownerUserId: string,
+  replay: boolean,
   repoRoot?: string
 ) {
   const repo = attempt.target.mode === "repo" ? repoRoot : undefined;
@@ -360,7 +357,7 @@ const sendPublish = Effect.fn("sendPublish")(function* (
   }
   const instance = yield* Instance.Instance;
   const state = yield* State.State;
-  const published = yield* Api.publish(token, attempt.request).pipe(
+  const { published, document } = yield* Api.publish(token, attempt.request, replay).pipe(
     Effect.catch((error) =>
       refused(error, "Publish failed.").pipe(
         Effect.catchTags({
@@ -380,9 +377,16 @@ const sendPublish = Effect.fn("sendPublish")(function* (
                       error.code === "connection_not_connected" ||
                       error.code === "stale_generated" ||
                       error.code === "not_additive" ||
+                      error.code === "reserved_name" ||
+                      error.code === "invalid_description" ||
                       error.errors !== undefined)) ||
                   (error.status === 409 &&
-                    (error.code === "publish_key_conflict" || error.code === "name_taken")) ||
+                    (error.code === "publish_key_conflict" ||
+                      error.code === "name_taken" ||
+                      error.code === "has_dependants" ||
+                      error.code === "patch_retired" ||
+                      error.code === "patch_deleted")) ||
+                  (error.status === 403 && error.code === "not_owner") ||
                   (error.status === 404 &&
                     attempt.request.patchId !== undefined &&
                     error.error === PATCH_NOT_FOUND));
@@ -431,7 +435,7 @@ const sendPublish = Effect.fn("sendPublish")(function* (
     );
   }
   yield* state.forgetPendingPublish(instance.apiUrl, attempt.request.publishKey, repo);
-  yield* Output.report(encodePublish(published), [
+  yield* Output.report(document, [
     attempt.request.patchId !== undefined ? "Updated patch" : "Published patch",
     `URL: ${published.address}`,
     scopeLines[published.scope],
@@ -485,7 +489,7 @@ const publish = Command.make(
             Effect.catch((error) => refused(error, "Could not verify the publishing key's owner."))
           );
         if (Option.isSome(pending)) {
-          return yield* sendPublish(pending.value, apiToken, identity.user.id, repo);
+          return yield* sendPublish(pending.value, apiToken, identity.user.id, true, repo);
         }
 
         if (repo !== undefined) {
@@ -516,7 +520,13 @@ const publish = Command.make(
             })
           });
           const selected = yield* state.lockPublish(instance.apiUrl, attempt, repo);
-          return yield* sendPublish(selected, apiToken, identity.user.id, repo);
+          return yield* sendPublish(
+            selected,
+            apiToken,
+            identity.user.id,
+            selected.request.publishKey !== attempt.request.publishKey,
+            repo
+          );
         }
 
         if (Option.isSome(options.patch) && options.new) {
@@ -584,7 +594,12 @@ const publish = Command.make(
           })
         });
         const selected = yield* state.lockPublish(instance.apiUrl, attempt);
-        yield* sendPublish(selected, apiToken, identity.user.id);
+        yield* sendPublish(
+          selected,
+          apiToken,
+          identity.user.id,
+          selected.request.publishKey !== attempt.request.publishKey
+        );
       })
     )
 ).pipe(Command.withDescription("Publish the current patch repo, or an explicit static HTML file."));
@@ -708,7 +723,7 @@ const del = Command.make(
           `Deleting from ${instance.apiUrl} (target came from ${Instance.describeSource(instance.source)}).`
         );
         const client = yield* Api.client(token);
-        const ok = yield* client.delete({ params: { patchId } }).pipe(
+        const deleted = yield* client.delete({ params: { patchId }, query: {} }).pipe(
           Effect.catch((error) => {
             if (Api.isRefusal(error) && error.error === PATCH_NOT_FOUND) {
               return new RejectedError({
@@ -720,12 +735,16 @@ const del = Command.make(
           })
         );
         yield* state.forgetPatch(instance.apiUrl, patchId);
-        yield* Output.report(encodeOk(ok), ["Deleted patch", `Patch ID: ${patchId}`]);
+        yield* Output.report(encodeDeleted(deleted), [
+          "Deleted patch",
+          `Patch ID: ${patchId}`,
+          `Recoverable until: ${deleted.purgeAt}`
+        ]);
       })
     )
 ).pipe(
   Command.withDescription(
-    "Delete a patch from the instance. Irreversible. Confirm with the user first."
+    "Delete a patch with a 30-day recovery window. Confirm with the user first."
   )
 );
 

@@ -1,59 +1,38 @@
 import { assert, it } from "@effect/vitest";
+import { type Manifest, sharedTableId } from "@patchy/api";
+import { CompanyDatabases, Inventory } from "@patchy/company-database";
 import * as Effect from "effect/Effect";
+import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import type { SqlError } from "effect/unstable/sql/SqlError";
 import * as Patches from "./Patches.js";
 import * as Fixtures from "./test/fixtures.js";
 
 const DAY = 24 * 60 * 60 * 1000;
-const { admin, sibling, uploader } = Fixtures.identities;
-const patches = Effect.flatMap(Patches.Patches, Effect.succeed);
-
+const { admin, sibling, uploader, reader } = Fixtures.identities;
+const owner = { userId: uploader.user.id, admin: false };
+const administrator = { userId: admin.user.id, admin: true };
 let counter = 0;
-/** Records a first version for a fresh patch held by `identity`. */
-const create = (identity = uploader, title = "Page", scope?: Patches.Patch["scope"]) =>
-  Effect.gen(function* () {
-    const id = `p${String(++counter).padStart(11, "0")}`;
-    yield* Fixtures.record({
-      ...Fixtures.publishRecord(),
-      intent: "create",
-      patchId: id,
-      companyId: identity.company.id,
-      ownerUserId: identity.user.id,
-      versionId: `ver_${id}_1`,
-      machineTokenId: identity.machine.id,
-      scope,
-      title,
-      objectKey: `patches/${id}/versions/1.html`,
-      contentHash: "sha256:x",
-      fileSize: 1,
-      filename: null,
-      repoOrg: null,
-      repoName: null,
-      cliVersion: null,
-      gitBranch: null,
-      gitCommitSha: null,
-      sourceIp: null,
-      userAgent: null
-    });
-    return id;
-  });
 
-const update = (patchId: string, identity = uploader, scope?: Patches.Patch["scope"]) =>
-  Fixtures.record({
+const input = (overrides: Partial<Patches.RecordInput> = {}): Patches.RecordInput => {
+  const ordinal = ++counter;
+  const patchId = overrides.patchId ?? `p${String(ordinal).padStart(11, "0")}`;
+  return {
     ...Fixtures.publishRecord(),
-    intent: "update",
+    intent: "create",
     patchId,
-    companyId: identity.company.id,
-    ownerUserId: identity.user.id,
-    versionId: `ver_${patchId}_${++counter}`,
-    machineTokenId: identity.machine.id,
-    scope,
-    title: "Updated",
-    objectKey: `patches/${patchId}/versions/${counter}.html`,
-    contentHash: "sha256:y",
+    companyId: uploader.company.id,
+    ownerUserId: uploader.user.id,
+    versionId: `ver_${patchId}_${ordinal}`,
+    machineTokenId: uploader.machine.id,
+    title: `Lifecycle ${ordinal}`,
+    objectKey: `patches/${patchId}/versions/${ordinal}.html`,
+    contentHash: `sha256:${ordinal}`,
     fileSize: 1,
     filename: null,
     repoOrg: null,
@@ -62,189 +41,649 @@ const update = (patchId: string, identity = uploader, scope?: Patches.Patch["sco
     gitBranch: null,
     gitCommitSha: null,
     sourceIp: null,
-    userAgent: null
-  });
-
-/** Takes every patch the sweep could, so a test's own listing is what it asserts on. */
-const drain = Effect.gen(function* () {
-  const service = yield* patches;
-  for (const patchId of yield* service.listExpired(1_000)) yield* service.deleteExpired(patchId);
+    userAgent: null,
+    ...overrides
+  };
+};
+const create = Effect.fn("PatchesTest.create")(function* (
+  overrides: Partial<Patches.RecordInput> = {}
+) {
+  const request = input(overrides);
+  yield* (yield* Patches.Patches).preflight(request);
+  return yield* Fixtures.record(request);
+});
+const update = (patchId: string, overrides: Partial<Patches.RecordInput> = {}) =>
+  Fixtures.record(input({ intent: "update", patchId, ...overrides }));
+const stored = Effect.fn("PatchesTest.stored")(function* (patchId: string) {
+  const sql = yield* SqlClient.SqlClient;
+  const rows = yield* sql`SELECT * FROM patches WHERE id = ${patchId}`;
+  return rows[0]!;
+});
+const tableManifest = (name: string, shared = true): typeof Manifest.Type => ({
+  ...Fixtures.manifest,
+  name,
+  tier: 1,
+  tables: { notes: { columns: { body: { kind: "text" } }, indexes: {}, shared } }
+});
+const declaration = (patchId: string, revision = 1) => ({
+  kind: "sharedTable" as const,
+  patchId,
+  table: "notes",
+  id: sharedTableId(patchId, "notes"),
+  revision
 });
 
-const isServed = (patchId: string, versionNumber?: number) =>
-  Effect.map(
-    Effect.flatMap(patches, (service) => service.find(patchId, versionNumber)),
-    Option.isSome
-  );
-
 it.layer(Patches.layer.pipe(Layer.provideMerge(Fixtures.database)))("Patches", (it) => {
-  it.effect("allows only owner writes and refuses unavailable update targets uniformly", () =>
-    Effect.gen(function* () {
-      const service = yield* patches;
-      const owned = yield* create();
-      const foreign = yield* create(admin);
-      const disabled = yield* create();
-      // Operators can still take a patch out of service directly in SQL.
-      const sql = yield* SqlClient.SqlClient;
-      yield* sql`UPDATE patches SET disabled_at = now(), disabled_reason = 'off' WHERE id = ${disabled}`;
-      const deleted = yield* create();
-      yield* service.delete(deleted, uploader.user.id);
+  const moves: ReadonlyArray<{
+    name: string;
+    allowed: readonly Patches.PatchState[];
+    run: (
+      service: Patches.Patches["Service"],
+      patchId: string,
+      actor: Patches.Actor
+    ) => Effect.Effect<unknown, Patches.LifecycleError | Patches.AdminRequired | SqlError>;
+  }> = [
+    { name: "retire", allowed: ["live"], run: (service, id, actor) => service.retire(id, actor) },
+    {
+      name: "delete",
+      allowed: ["live", "retired"],
+      run: (service, id, actor) => service.delete(id, actor)
+    },
+    {
+      name: "restore",
+      allowed: ["retired", "deleted"],
+      run: (service, id, actor) => service.restore(id, actor)
+    },
+    {
+      name: "rollback",
+      allowed: ["live"],
+      run: (service, id, actor) => service.rollback(id, actor, 1)
+    },
+    {
+      name: "scope",
+      allowed: ["live"],
+      run: (service, id, actor) => service.setScope(id, actor, "public")
+    },
+    {
+      name: "description",
+      allowed: ["live", "retired"],
+      run: (service, id, actor) => service.setDescription(id, actor, "New description")
+    },
+    {
+      name: "reassign",
+      allowed: ["live", "retired", "deleted"],
+      run: (service, id, actor) => service.reassign(id, actor, reader.user.id)
+    }
+  ];
 
-      const versioned = yield* update(owned);
-      assert.strictEqual(versioned.versionNumber, 2);
-      // A different machine acts as the same owner user.
-      assert.strictEqual((yield* update(owned, sibling)).versionNumber, 3);
-      const latest = Option.getOrThrow(yield* service.find(owned));
-      assert.strictEqual(latest.version.createdByMachineTokenId, sibling.machine.id);
-      assert.strictEqual(
-        Option.getOrThrow(yield* service.find(owned, 1)).version.createdByMachineTokenId,
-        uploader.machine.id
+  for (const actor of [owner, administrator]) {
+    for (const state of ["live", "retired", "deleted"] as const) {
+      it.effect(
+        `applies every ${actor.admin ? "admin" : "owner"} move from ${state} atomically`,
+        () =>
+          Effect.gen(function* () {
+            const service = yield* Patches.Patches;
+            for (const move of moves) {
+              const patch = yield* create();
+              if (state === "retired") yield* service.retire(patch.patchId, owner);
+              if (state === "deleted") yield* service.delete(patch.patchId, owner);
+              const before = yield* stored(patch.patchId);
+              yield* TestClock.adjust(1_000);
+              if (move.name === "reassign" && !actor.admin) {
+                const refused = yield* move.run(service, patch.patchId, actor).pipe(Effect.flip);
+                assert.strictEqual(refused._tag, "AdminRequired");
+                assert.deepStrictEqual(yield* stored(patch.patchId), before);
+                continue;
+              }
+              if (!move.allowed.includes(state)) {
+                const refused = yield* move.run(service, patch.patchId, actor).pipe(Effect.flip);
+                assert.instanceOf(refused, Patches.WrongState);
+                assert.strictEqual(refused.state, state);
+                assert.deepStrictEqual(yield* stored(patch.patchId), before, move.name);
+                continue;
+              }
+              yield* move.run(service, patch.patchId, actor);
+              const after = yield* stored(patch.patchId);
+              assert.strictEqual(after.last_changed_by, actor.userId, move.name);
+              assert.deepStrictEqual(
+                after.last_changed_at,
+                DateTime.toDateUtc(yield* DateTime.now),
+                move.name
+              );
+              if (move.name === "retire") assert.strictEqual(after.retired_by, actor.userId);
+              if (move.name === "delete") {
+                assert.strictEqual(after.deleted_by, actor.userId);
+                assert.deepStrictEqual(after.retired_at, before.retired_at);
+              }
+              if (move.name === "restore") {
+                assert.isNull(after.retired_at);
+                assert.isNull(after.retired_by);
+                assert.isNull(after.deleted_at);
+                assert.isNull(after.deleted_by);
+                assert.isTrue(Option.isSome(yield* service.find(patch.patchId)));
+              }
+              if (move.name === "description")
+                assert.strictEqual(after.description_updated_by, actor.userId);
+              if (move.name === "reassign") {
+                assert.strictEqual(after.owner_user_id, reader.user.id);
+                assert.strictEqual(after.reassigned_by, actor.userId);
+              }
+            }
+          })
       );
-      for (const patchId of ["nope", foreign, disabled, deleted]) {
-        const refused = yield* update(patchId).pipe(Effect.flip);
-        assert.strictEqual(refused._tag, "PatchUnavailable", patchId);
-        assert.strictEqual(
-          (yield* service
-            .preflight({
+    }
+  }
+
+  it.effect("checks company and ownership before every verb's state and validation", () =>
+    Effect.gen(function* () {
+      const service = yield* Patches.Patches;
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO companies (id, handle, name) VALUES ('cmp_lifecycle_foreign', 'lifecycle-foreign', 'Foreign')`;
+      yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
+        VALUES ('usr_lifecycle_foreign', 'clerk_lifecycle_foreign', 'cmp_lifecycle_foreign', 'foreign@patchy.local', 'Foreign', 'admin')`;
+      const outsider = { userId: "usr_lifecycle_foreign", admin: true };
+      for (const state of ["live", "retired", "deleted"] as const) {
+        const patch = yield* create();
+        if (state === "retired") yield* service.retire(patch.patchId, owner);
+        if (state === "deleted") yield* service.delete(patch.patchId, owner);
+        const before = yield* stored(patch.patchId);
+        for (const move of moves) {
+          const refused = yield* move
+            .run(service, patch.patchId, { userId: reader.user.id, admin: false })
+            .pipe(Effect.flip);
+          assert.instanceOf(refused, Patches.NotOwner);
+          assert.deepStrictEqual(refused.owner, { id: uploader.user.id, name: uploader.user.name });
+          assert.instanceOf(
+            yield* move.run(service, patch.patchId, outsider).pipe(Effect.flip),
+            Patches.PatchUnavailable
+          );
+        }
+        assert.instanceOf(
+          yield* service
+            .setDescription(patch.patchId, { userId: reader.user.id, admin: false }, "\u0000")
+            .pipe(Effect.flip),
+          Patches.NotOwner
+        );
+        assert.instanceOf(
+          yield* update(patch.patchId, {
+            ownerUserId: reader.user.id,
+            machineTokenId: reader.machine.id
+          }).pipe(Effect.flip),
+          Patches.NotOwner
+        );
+        assert.instanceOf(
+          yield* service
+            .authorizePublish({
               intent: "update",
-              patchId,
-              ownerUserId: uploader.user.id,
-              companyId: uploader.company.id,
-              manifest: Fixtures.manifest,
-              filename: null
+              patchId: patch.patchId,
+              ownerUserId: outsider.userId
             })
-            .pipe(Effect.flip))._tag,
-          "PatchUnavailable"
+            .pipe(Effect.flip),
+          Patches.PatchUnavailable
+        );
+        assert.deepStrictEqual(yield* stored(patch.patchId), before);
+        yield* service.inventory(patch.patchId, reader.user.id);
+        assert.instanceOf(
+          yield* service.inventory(patch.patchId, outsider.userId).pipe(Effect.flip),
+          Patches.PatchUnavailable
         );
       }
-      assert.strictEqual(
-        (yield* service
-          .preflight({
-            intent: "create",
-            patchId: owned,
-            ownerUserId: uploader.user.id,
-            companyId: uploader.company.id,
-            manifest: Fixtures.manifest,
-            filename: null
-          })
-          .pipe(Effect.flip))._tag,
-        "PatchConflict"
+      const disabled = yield* create();
+      yield* sql`UPDATE patches SET disabled_at = now() WHERE id = ${disabled.patchId}`;
+      for (const move of moves) {
+        assert.instanceOf(
+          yield* move.run(service, disabled.patchId, administrator).pipe(Effect.flip),
+          Patches.PatchUnavailable
+        );
+        assert.instanceOf(
+          yield* move.run(service, "unknown", owner).pipe(Effect.flip),
+          Patches.PatchUnavailable
+        );
+      }
+      assert.instanceOf(
+        yield* service.inventory(disabled.patchId, uploader.user.id).pipe(Effect.flip),
+        Patches.PatchUnavailable
       );
-      assert.isFalse(yield* service.delete(foreign, uploader.user.id));
-      assert.isTrue(yield* isServed(foreign));
-      assert.isTrue(yield* service.delete(owned, sibling.user.id));
-      assert.isFalse(yield* isServed(owned));
-      assert.isFalse(yield* isServed(owned, 1));
-      assert.isFalse(yield* service.delete(owned, uploader.user.id));
+      assert.isTrue(Option.isNone(yield* service.find(disabled.patchId)));
+    })
+  );
+
+  it.effect("rechecks ownership and state when an authorized publish commits", () =>
+    Effect.gen(function* () {
+      const service = yield* Patches.Patches;
+      for (const change of ["reassign", "retire", "delete"] as const) {
+        const patch = yield* create();
+        const request = input({ intent: "update", patchId: patch.patchId });
+        yield* service.authorizePublish(request);
+        yield* service.preflight(request);
+        if (change === "reassign") {
+          yield* service.reassign(patch.patchId, administrator, reader.user.id);
+          yield* service.retire(patch.patchId, administrator);
+        } else if (change === "retire") yield* service.retire(patch.patchId, owner);
+        else yield* service.delete(patch.patchId, owner);
+        const expected =
+          change === "reassign"
+            ? "NotOwner"
+            : change === "retire"
+              ? "PatchRetired"
+              : "PatchDeleted";
+        assert.strictEqual((yield* Fixtures.record(request).pipe(Effect.flip))._tag, expected);
+        assert.strictEqual((yield* service.preflight(request).pipe(Effect.flip))._tag, expected);
+        const sql = yield* SqlClient.SqlClient;
+        const versions =
+          yield* sql`SELECT id FROM patch_versions WHERE patch_id = ${patch.patchId}`;
+        assert.deepStrictEqual(versions, [{ id: patch.versionId }]);
+      }
+      const owned = yield* create();
+      assert.instanceOf(
+        yield* update(owned.patchId, {
+          ownerUserId: admin.user.id,
+          machineTokenId: admin.machine.id
+        }).pipe(Effect.flip),
+        Patches.NotOwner
+      );
+    })
+  );
+
+  it.effect("validates active reassignment targets and leaves a no-op unstamped", () =>
+    Effect.gen(function* () {
+      const service = yield* Patches.Patches;
+      const patch = yield* create();
+      const before = yield* stored(patch.patchId);
+      yield* TestClock.adjust(DAY);
+      yield* service.reassign(patch.patchId, administrator, uploader.user.id);
+      assert.deepStrictEqual(yield* stored(patch.patchId), before);
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role, deactivated_at)
+        VALUES ('usr_lifecycle_inactive', 'clerk_lifecycle_inactive', ${uploader.company.id}, 'inactive@patchy.local', 'Inactive', 'member', now())`;
+      for (const userId of ["usr_lifecycle_inactive", "usr_lifecycle_foreign", "unknown"]) {
+        assert.instanceOf(
+          yield* service.reassign(patch.patchId, administrator, userId).pipe(Effect.flip),
+          Patches.InvalidOwner
+        );
+        assert.deepStrictEqual(yield* stored(patch.patchId), before);
+      }
+      const reassigned = yield* service.reassign(patch.patchId, administrator, admin.user.id);
+      assert.strictEqual(reassigned.ownerUserId, admin.user.id);
+      assert.strictEqual(reassigned.reassignedBy, admin.user.id);
+      assert.strictEqual(
+        (yield* update(patch.patchId, {
+          ownerUserId: admin.user.id,
+          machineTokenId: admin.machine.id
+        })).versionNumber,
+        2
+      );
+      assert.strictEqual(
+        Option.getOrThrow(yield* service.find(patch.patchId, 1)).version.createdByMachineTokenId,
+        uploader.machine.id
+      );
+    })
+  );
+
+  it.effect("normalizes descriptions by code point and stamps only changed text", () =>
+    Effect.gen(function* () {
+      const service = yield* Patches.Patches;
+      const patch = yield* create({ description: "  First\nparagraph \t here  " });
+      assert.strictEqual(patch.description, "First paragraph here");
+      yield* TestClock.adjust(DAY);
+      const before = yield* stored(patch.patchId);
+      yield* service.setDescription(patch.patchId, owner, " First\tparagraph\n here ");
+      assert.deepStrictEqual(yield* stored(patch.patchId), before);
+      const same = yield* update(patch.patchId, { description: "First paragraph here" });
+      assert.strictEqual(same.descriptionUpdatedAt, patch.descriptionUpdatedAt);
+      const astral = "\u{10400}".repeat(500);
+      assert.strictEqual(
+        (yield* service.setDescription(patch.patchId, administrator, astral)).description,
+        astral
+      );
+      for (const text of [astral + "\u{10400}", "\u0000", "\u007f", "\u0085", " \n\t "]) {
+        assert.instanceOf(
+          yield* service.setDescription(patch.patchId, owner, text).pipe(Effect.flip),
+          Patches.InvalidDescription
+        );
+      }
+      yield* service.setDescription(patch.patchId, owner, "<script>literal</script>");
+      const unchanged = yield* update(patch.patchId);
+      assert.strictEqual(unchanged.description, "<script>literal</script>");
+      const cleared = yield* service.setDescription(patch.patchId, owner, "");
+      assert.strictEqual(cleared.description, "");
+      const emptyBefore = yield* stored(patch.patchId);
+      yield* TestClock.adjust(DAY);
+      yield* service.setDescription(patch.patchId, administrator, "");
+      assert.deepStrictEqual(yield* stored(patch.patchId), emptyBefore);
+      const fromManifest = yield* create({
+        manifest: { ...Fixtures.manifest, description: " Manifest description " }
+      });
+      assert.strictEqual(fromManifest.description, "Manifest description");
+    })
+  );
+
+  it.effect("refuses reserved names before bytes and at commit", () =>
+    Effect.gen(function* () {
+      const service = yield* Patches.Patches;
+      for (const name of ["patches", "connections"]) {
+        const request = input({ manifest: { ...Fixtures.manifest, name } });
+        assert.instanceOf(
+          yield* service.preflight(request).pipe(Effect.flip),
+          Patches.ReservedName
+        );
+        assert.instanceOf(yield* Fixtures.record(request).pipe(Effect.flip), Patches.ReservedName);
+        assert.isTrue(Option.isNone(yield* service.find(request.patchId)));
+      }
+    })
+  );
+
+  it.effect("keeps live patches indefinitely and counts visits without changing stamps", () =>
+    Effect.gen(function* () {
+      const service = yield* Patches.Patches;
+      const patch = yield* create({
+        ownerUserId: reader.user.id,
+        machineTokenId: reader.machine.id
+      });
+      const before = Option.getOrThrow(yield* service.find(patch.patchId));
+      yield* Fixtures.revoke(reader.machine.id);
+      yield* TestClock.adjust(365 * DAY);
+      yield* service.recordVisit(patch.patchId);
+      yield* service.recordVisit(patch.patchId);
+      assert.deepStrictEqual(Option.getOrThrow(yield* service.find(patch.patchId)), before);
+      const sql = yield* SqlClient.SqlClient;
+      const visits =
+        yield* sql`SELECT visit_count::int AS count FROM patches WHERE id = ${patch.patchId}`;
+      assert.deepStrictEqual(visits, [{ count: 2 }]);
+      yield* service.retire(patch.patchId, administrator);
+      yield* service.recordVisit(patch.patchId);
+      assert.deepStrictEqual(
+        yield* sql`SELECT visit_count::int AS count FROM patches WHERE id = ${patch.patchId}`,
+        [{ count: 2 }]
+      );
     })
   );
 
   it.effect(
-    "defaults creates to company and preserves or explicitly changes scope on updates",
+    "defaults scope, preserves explicit scope across machines and serializes version numbers",
     () =>
       Effect.gen(function* () {
-        const service = yield* patches;
-        const company = yield* create();
-        assert.strictEqual(Option.getOrThrow(yield* service.find(company)).patch.scope, "company");
-        assert.strictEqual((yield* update(company)).scope, "company");
-
-        const published = yield* create(uploader, "Public", "public");
-        assert.strictEqual(Option.getOrThrow(yield* service.find(published)).patch.scope, "public");
-        assert.strictEqual((yield* update(published, sibling)).scope, "public");
-        assert.strictEqual(Option.getOrThrow(yield* service.find(published)).patch.scope, "public");
-        assert.strictEqual((yield* update(published, sibling, "company")).scope, "company");
-        assert.strictEqual(
-          Option.getOrThrow(yield* service.find(published)).patch.scope,
-          "company"
+        const service = yield* Patches.Patches;
+        const patch = yield* create();
+        assert.strictEqual(patch.scope, "company");
+        yield* service.setScope(patch.patchId, administrator, "public");
+        const before = Option.getOrThrow(yield* service.find(patch.patchId));
+        yield* service.setScope(patch.patchId, owner, "company");
+        assert.deepStrictEqual(
+          Option.getOrThrow(yield* service.find(patch.patchId)).version,
+          before.version
         );
-        assert.strictEqual((yield* update(published, uploader, "public")).scope, "public");
-        assert.strictEqual(Option.getOrThrow(yield* service.find(published)).patch.scope, "public");
+        assert.strictEqual((yield* update(patch.patchId, { scope: "public" })).scope, "public");
+        assert.strictEqual(
+          (yield* update(patch.patchId, { machineTokenId: sibling.machine.id })).scope,
+          "public"
+        );
+        const numbers = yield* Effect.all(
+          [update(patch.patchId), update(patch.patchId), update(patch.patchId)],
+          { concurrency: "unbounded" }
+        );
+        assert.deepStrictEqual(numbers.map((entry) => entry.versionNumber).sort(), [4, 5, 6]);
       })
   );
 
-  it.effect("shares only an owner's available patch, without a version or retention reset", () =>
+  it.effect("counts retained non-deleted patches for the owner quota", () =>
     Effect.gen(function* () {
-      const service = yield* patches;
-      yield* TestClock.setTime(Date.UTC(2026, 0, 1));
-      const owned = yield* create();
-      const foreign = yield* create(admin);
-      const disabled = yield* create();
-      const sql = yield* SqlClient.SqlClient;
-      yield* sql`UPDATE patches SET disabled_at = now(), disabled_reason = 'off' WHERE id = ${disabled}`;
+      const service = yield* Patches.Patches;
+      const before = yield* service.countQuotaPatches(uploader.user.id);
+      const kept = yield* create();
+      const retired = yield* create();
       const deleted = yield* create();
-      yield* service.delete(deleted, uploader.user.id);
-      const before = Option.getOrThrow(yield* service.find(owned));
-
-      yield* TestClock.adjust(DAY);
-      assert.strictEqual(
-        (yield* service.setScope(owned, sibling.user.id, "public")).scope,
-        "public"
-      );
-      const published = Option.getOrThrow(yield* service.find(owned));
-      assert.strictEqual(published.patch.scope, "public");
-      assert.strictEqual(published.patch.expiresAt, before.patch.expiresAt);
-      assert.deepStrictEqual(published.version, before.version);
-      assert.isTrue(Option.isNone(yield* service.find(owned, 2)));
-
-      assert.strictEqual(
-        (yield* service.setScope(owned, uploader.user.id, "company")).scope,
-        "company"
-      );
-      const restricted = Option.getOrThrow(yield* service.find(owned));
-      assert.strictEqual(restricted.patch.scope, "company");
-      assert.strictEqual(restricted.patch.expiresAt, before.patch.expiresAt);
-      assert.deepStrictEqual(restricted.version, before.version);
-      for (const patchId of ["nope", foreign, disabled, deleted]) {
-        assert.strictEqual(
-          (yield* service.setScope(patchId, uploader.user.id, "public").pipe(Effect.flip))._tag,
-          "PatchUnavailable",
-          patchId
-        );
-      }
-      assert.strictEqual(Option.getOrThrow(yield* service.find(foreign)).patch.scope, "company");
-
-      yield* TestClock.adjust(89 * DAY + 1);
-      assert.isFalse(yield* isServed(owned));
-      assert.strictEqual(
-        (yield* service.setScope(owned, uploader.user.id, "public").pipe(Effect.flip))._tag,
-        "PatchUnavailable"
-      );
-    })
-  );
-
-  it.effect("serialises concurrent updates of one patch into distinct versions", () =>
-    Effect.gen(function* () {
-      const patchId = yield* create();
-      const numbers = yield* Effect.all([update(patchId), update(patchId), update(patchId)], {
-        concurrency: "unbounded"
-      }).pipe(Effect.map((results) => results.map((result) => result.versionNumber).sort()));
-      assert.deepStrictEqual(numbers, [2, 3, 4]);
-    })
-  );
-
-  it.effect("backfills title names in creation order without renaming or reviving patches", () =>
-    Effect.gen(function* () {
-      const service = yield* patches;
-      const named = yield* create(uploader, "Backfill Report");
-      const later = yield* create(uploader, "Bäckfill Réport");
-      const earlier = yield* create(admin, "BACKFILL___REPORT!");
-      const deleted = yield* create(uploader, "Backfill Report");
-      yield* service.delete(deleted, uploader.user.id);
-
+      const disabled = yield* create();
+      yield* update(kept.patchId);
+      assert.strictEqual(yield* service.countQuotaPatches(uploader.user.id), before + 4);
+      yield* service.retire(retired.patchId, owner);
+      yield* service.delete(deleted.patchId, owner);
       const sql = yield* SqlClient.SqlClient;
-      // Recreate legacy missing claims, with creation order opposite to their ids.
-      yield* sql`DELETE FROM patch_names WHERE patch_id IN (${earlier}, ${later})`;
-      yield* sql`UPDATE patches SET created_at = '2020-01-01'::timestamptz WHERE id = ${deleted}`;
-      yield* sql`UPDATE patches SET created_at = '2020-01-02'::timestamptz WHERE id = ${earlier}`;
-      yield* sql`UPDATE patches SET created_at = '2020-01-03'::timestamptz WHERE id = ${later}`;
-      yield* sql`UPDATE patches SET title = 'Already named title' WHERE id = ${named}`;
+      yield* sql`UPDATE patches SET disabled_at = now() WHERE id = ${disabled.patchId}`;
+      assert.strictEqual(yield* service.countQuotaPatches(uploader.user.id), before + 2);
+    })
+  );
 
+  it.effect(
+    "retains declarations across versions, excluding off dependants, and refuses unshare before DDL",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* Patches.Patches;
+        const source = yield* create({ manifest: tableManifest("lifecycle-source") });
+        const consumerManifest = {
+          ...Fixtures.manifest,
+          uses: { notes: declaration(source.patchId) }
+        };
+        const consumer = yield* create({
+          manifest: consumerManifest,
+          ownerUserId: reader.user.id,
+          machineTokenId: reader.machine.id
+        });
+        yield* update(consumer.patchId, {
+          manifest: consumerManifest,
+          ownerUserId: reader.user.id,
+          machineTokenId: reader.machine.id
+        });
+        yield* update(consumer.patchId, {
+          ownerUserId: reader.user.id,
+          machineTokenId: reader.machine.id
+        });
+        for (const state of ["retired", "deleted", "disabled"] as const) {
+          const off = yield* create({ manifest: consumerManifest });
+          if (state === "retired") yield* service.retire(off.patchId, owner);
+          else if (state === "deleted") yield* service.delete(off.patchId, owner);
+          else {
+            const sql = yield* SqlClient.SqlClient;
+            yield* sql`UPDATE patches SET disabled_at = now() WHERE id = ${off.patchId}`;
+          }
+        }
+        const expected = [
+          {
+            patchId: consumer.patchId,
+            name: consumer.name,
+            owner: { id: reader.user.id, name: reader.user.name }
+          }
+        ];
+        for (const move of [service.retire, service.delete]) {
+          const refused = yield* move(source.patchId, owner).pipe(Effect.flip);
+          assert.instanceOf(refused, Patches.HasDependants);
+          assert.deepStrictEqual(refused.dependants, expected);
+        }
+        const before = yield* service.inventory(source.patchId, reader.user.id);
+        const unshared: typeof Manifest.Type = {
+          ...tableManifest(source.name, false),
+          tables: {
+            notes: {
+              columns: { body: { kind: "text" }, extra: { kind: "text", optional: true } },
+              indexes: {},
+              shared: false
+            }
+          }
+        };
+        const request = input({ intent: "update", patchId: source.patchId, manifest: unshared });
+        assert.instanceOf(
+          yield* service.preflight(request).pipe(Effect.flip),
+          Patches.HasDependants
+        );
+        const refused = yield* Fixtures.record(request).pipe(Effect.flip);
+        assert.instanceOf(refused, Patches.HasDependants);
+        assert.deepStrictEqual(refused.dependants, expected);
+        assert.deepStrictEqual(yield* service.inventory(source.patchId, uploader.user.id), before);
+        yield* update(source.patchId, { manifest: unshared, force: true });
+        const inventory = yield* service.inventory(source.patchId, reader.user.id);
+        assert.isFalse(inventory.tables.notes!.shared);
+        assert.isDefined(inventory.tables.notes!.columns.extra);
+        yield* service.retire(source.patchId, owner, true);
+        assert.instanceOf(
+          yield* service
+            .sharedTable(source.patchId, "notes", uploader.company.id)
+            .pipe(Effect.flip),
+          Patches.PatchNotOpenable
+        );
+        yield* service.delete(source.patchId, owner);
+        assert.deepStrictEqual(yield* service.inventory(source.patchId, reader.user.id), inventory);
+      })
+  );
+
+  it.effect("restore reports current-version sources as retired, deleted and gone", () =>
+    Effect.gen(function* () {
+      const service = yield* Patches.Patches;
+      const sources = [];
+      for (const state of ["retired", "deleted", "gone", "older"])
+        sources.push(yield* create({ manifest: tableManifest(`lifecycle-${state}`) }));
+      const [retired, deleted, gone, older] = sources;
+      const consumer = yield* create({
+        manifest: { ...Fixtures.manifest, uses: { old: declaration(older!.patchId) } }
+      });
+      yield* update(consumer.patchId, {
+        manifest: {
+          ...Fixtures.manifest,
+          uses: {
+            retired: declaration(retired!.patchId),
+            deleted: declaration(deleted!.patchId),
+            gone: declaration(gone!.patchId)
+          }
+        }
+      });
+      yield* service.retire(consumer.patchId, owner);
+      yield* service.retire(retired!.patchId, owner);
+      yield* service.retire(older!.patchId, owner);
+      yield* service.delete(deleted!.patchId, owner);
+      yield* service.delete(gone!.patchId, owner);
+      yield* TestClock.adjust(30 * DAY);
+      yield* service.purgeDeleted(gone!.patchId);
+      const refused = yield* service.restore(consumer.patchId, owner).pipe(Effect.flip);
+      assert.instanceOf(refused, Patches.SourcesOff);
+      assert.deepStrictEqual(refused.sources, [
+        { patchId: retired!.patchId, name: retired!.name, table: "notes", state: "retired" },
+        { patchId: deleted!.patchId, name: deleted!.name, table: "notes", state: "deleted" },
+        { patchId: gone!.patchId, table: "notes", state: "gone" }
+      ]);
+      assert.strictEqual(
+        (yield* service.restore(consumer.patchId, administrator, true)).state,
+        "live"
+      );
+      yield* service.restore(retired!.patchId, owner);
+      assert.strictEqual(
+        (yield* service.sharedTable(retired!.patchId, "notes", uploader.company.id)).patchId,
+        retired!.patchId
+      );
+      assert.isFalse(
+        (yield* service.sharedTables(uploader.company.id)).some(
+          (table) => table.patchId === deleted!.patchId
+        )
+      );
+    })
+  );
+
+  it.effect(
+    "rolls back only the pointer, keeping cumulative inventory, sharing, name and description",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* Patches.Patches;
+        const first = yield* create({
+          manifest: tableManifest("lifecycle-rollback"),
+          description: "First"
+        });
+        const secondManifest: typeof Manifest.Type = {
+          ...tableManifest("lifecycle-renamed", false),
+          tables: {
+            notes: {
+              columns: { body: { kind: "text" }, extra: { kind: "text", optional: true } },
+              indexes: {},
+              shared: false
+            }
+          }
+        };
+        const second = yield* update(first.patchId, {
+          manifest: secondManifest,
+          description: "Second",
+          machineTokenId: sibling.machine.id
+        });
+        const before = yield* service.inventory(first.patchId, reader.user.id);
+        const rolled = yield* service.rollback(first.patchId, administrator, 1);
+        assert.strictEqual(rolled.currentVersion, 1);
+        assert.strictEqual(rolled.patch.currentVersionId, first.versionId);
+        assert.strictEqual(rolled.patch.name, second.name);
+        assert.strictEqual(rolled.patch.description, "Second");
+        assert.strictEqual(rolled.patch.descriptionUpdatedAt, second.descriptionUpdatedAt);
+        assert.deepStrictEqual(yield* service.inventory(first.patchId, reader.user.id), before);
+        assert.strictEqual(
+          Option.getOrThrow(yield* service.find(first.patchId)).version.createdByMachineTokenId,
+          uploader.machine.id
+        );
+        assert.instanceOf(
+          yield* service.rollback(first.patchId, owner, 999).pipe(Effect.flip),
+          Patches.VersionUnavailable
+        );
+        const third = yield* update(first.patchId, { manifest: secondManifest });
+        assert.strictEqual(third.versionNumber, 3);
+        assert.strictEqual(
+          Option.getOrThrow(yield* service.find(first.patchId)).version.id,
+          third.versionId
+        );
+        assert.deepStrictEqual(
+          { ...Option.getOrThrow(yield* service.resolveName(uploader.company.handle, first.name)) },
+          { patchId: first.patchId, name: second.name, current: false }
+        );
+      })
+  );
+
+  it.effect(
+    "restores the original inventory and address but refuses the exact recovery deadline",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* Patches.Patches;
+        const patch = yield* create({ manifest: tableManifest("lifecycle-recovery") });
+        const companies = yield* CompanyDatabases.CompanyDatabases;
+        const inventory = yield* Inventory.Inventory;
+        const before = yield* companies.withCompany(uploader.company.id)(
+          inventory.read(patch.patchId)
+        );
+        yield* service.retire(patch.patchId, administrator);
+        const deleted = yield* service.delete(patch.patchId, owner);
+        assert.isNotNull(deleted.retiredAt);
+        assert.strictEqual(Date.parse(deleted.purgeAt!) - Date.parse(deleted.deletedAt!), 30 * DAY);
+        assert.isTrue(
+          Option.isNone(yield* service.resolveName(uploader.company.handle, patch.name))
+        );
+        yield* TestClock.adjust(30 * DAY - 1);
+        const restored = yield* service.restore(patch.patchId, owner);
+        assert.strictEqual(restored.name, patch.name);
+        assert.isNull(restored.purgeAt);
+        assert.deepStrictEqual(
+          yield* companies.withCompany(uploader.company.id)(inventory.read(patch.patchId)),
+          before
+        );
+        const deletedAgain = yield* service.delete(patch.patchId, owner);
+        yield* TestClock.adjust(30 * DAY);
+        const refused = yield* service
+          .restore(patch.patchId, administrator, true)
+          .pipe(Effect.flip);
+        assert.instanceOf(refused, Patches.PatchDeleted);
+        assert.strictEqual(refused.purgeAt, deletedAgain.purgeAt);
+      })
+  );
+
+  it.effect("backfills missing names in creation order without changing existing names", () =>
+    Effect.gen(function* () {
+      const service = yield* Patches.Patches;
+      const named = yield* create({ title: "Backfill Report" });
+      const later = yield* create({ title: "Bäckfill Réport" });
+      const earlier = yield* create({ title: "BACKFILL___REPORT!" });
+      const deleted = yield* create({ title: "Backfill Report" });
+      yield* service.delete(deleted.patchId, owner);
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`DELETE FROM patch_names WHERE patch_id IN (${earlier.patchId}, ${later.patchId})`;
+      yield* sql`UPDATE patches SET created_at = '2020-01-02'::timestamptz WHERE id = ${earlier.patchId}`;
+      yield* sql`UPDATE patches SET created_at = '2020-01-03'::timestamptz WHERE id = ${later.patchId}`;
+      yield* sql`UPDATE patches SET title = 'Already named title' WHERE id = ${named.patchId}`;
       for (let run = 0; run < 2; run++) {
         yield* Patches.backfillNames();
         for (const [patchId, name] of [
-          [named, "backfill-report"],
-          [earlier, "backfill-report-2"],
-          [later, "backfill-report-3"]
+          [named.patchId, "backfill-report"],
+          [earlier.patchId, "backfill-report-2"],
+          [later.patchId, "backfill-report-3"]
         ] as const) {
           assert.strictEqual(Option.getOrThrow(yield* service.find(patchId)).patch.name, name);
           assert.deepStrictEqual(
@@ -255,114 +694,80 @@ it.layer(Patches.layer.pipe(Layer.provideMerge(Fixtures.database)))("Patches", (
         assert.isTrue(
           Option.isNone(yield* service.resolveName(uploader.company.handle, "backfill-report-4"))
         );
-        assert.isTrue(
-          Option.isNone(yield* service.resolveName(uploader.company.handle, "already-named-title"))
-        );
       }
     })
   );
 
-  it.effect("counts live patches per owner across machines, releasing the taken-down ones", () =>
-    Effect.gen(function* () {
-      const service = yield* patches;
-      const before = yield* service.countLive(uploader.user.id);
-      const kept = yield* create(sibling);
-      const disabled = yield* create();
-      const deleted = yield* create();
-      // Creating and updating on another machine cannot reset the owner's quota.
-      yield* update(kept);
-      assert.strictEqual(yield* service.countLive(uploader.user.id), before + 3);
-      const sql = yield* SqlClient.SqlClient;
-      yield* sql`UPDATE patches SET disabled_at = now(), disabled_reason = 'off' WHERE id = ${disabled}`;
-      yield* service.delete(deleted, uploader.user.id);
-      assert.strictEqual(yield* service.countLive(uploader.user.id), before + 1);
-    })
-  );
-
-  it.effect(
-    "runs the retention clock: expiry at the anchor, a visit tops up, a publish restarts",
-    () =>
+  for (const [admission, change] of [
+    ["publish", "retire"],
+    ["publish", "delete"],
+    ["publish", "unshare"],
+    ["restore", "retire"]
+  ] as const) {
+    it.effect(`fences ${change} against an uncommitted consumer ${admission}`, () =>
       Effect.gen(function* () {
-        const service = yield* patches;
-        yield* TestClock.setTime(Date.UTC(2026, 0, 1));
-        const patchId = yield* create();
-
-        // Served at the exact instant the clock reads out, and not past it.
-        yield* TestClock.adjust(90 * DAY);
-        assert.isTrue(yield* isServed(patchId));
-        yield* TestClock.adjust(1);
-        assert.isFalse(yield* isServed(patchId));
-        // Expired: refused as an update target, and a visit cannot bring it back.
-        assert.strictEqual((yield* update(patchId).pipe(Effect.flip))._tag, "PatchUnavailable");
-        yield* service.recordVisit(patchId);
-        assert.isFalse(yield* isServed(patchId));
-
-        // A visit with more than the visit window left changes nothing; with
-        // less, it tops the clock up to exactly that window.
-        const visited = yield* create();
-        yield* TestClock.adjust(10 * DAY);
-        yield* service.recordVisit(visited);
-        yield* TestClock.adjust(80 * DAY + 1);
-        assert.isFalse(yield* isServed(visited), "an early visit did not extend");
-        const kept = yield* create();
-        yield* TestClock.adjust(70 * DAY);
-        yield* service.recordVisit(kept);
-        yield* TestClock.adjust(29 * DAY);
-        assert.isTrue(yield* isServed(kept), "a late visit topped up to thirty days");
-        yield* TestClock.adjust(DAY + 1);
-        assert.isFalse(yield* isServed(kept));
-
-        // A new version restarts the whole window.
-        const republished = yield* create();
-        yield* TestClock.adjust(80 * DAY);
-        yield* update(republished);
-        yield* TestClock.adjust(89 * DAY);
-        assert.isTrue(yield* isServed(republished));
-      })
-  );
-
-  it.effect("tops up visits even after the creating machine token is revoked", () =>
-    Effect.gen(function* () {
-      const service = yield* patches;
-      yield* TestClock.setTime(Date.UTC(2027, 0, 1));
-      const patchId = yield* create(Fixtures.identities.reader);
-      yield* Fixtures.revoke(Fixtures.identities.reader.machine.id);
-      yield* TestClock.adjust(85 * DAY);
-      yield* service.recordVisit(patchId);
-      yield* TestClock.adjust(5 * DAY + 1);
-      assert.isTrue(yield* isServed(patchId));
-      yield* TestClock.adjust(25 * DAY);
-      assert.isFalse(yield* isServed(patchId));
-    })
-  );
-
-  it.effect(
-    "hard-deletes an expired patch with its versions, longest-expired first, and never a live one",
-    () =>
-      Effect.gen(function* () {
-        const service = yield* patches;
-        yield* TestClock.setTime(Date.UTC(2029, 0, 1));
-        yield* drain;
-        const older = yield* create();
-        yield* update(older);
-        yield* TestClock.adjust(DAY);
-        const newer = yield* create();
-        yield* TestClock.adjust(91 * DAY);
-        const live = yield* create();
-
-        assert.deepStrictEqual(yield* service.listExpired(1), [older]);
-        assert.deepStrictEqual(yield* service.listExpired(10), [older, newer]);
-        assert.deepStrictEqual(
-          Option.getOrThrow(yield* service.deleteExpired(older)).toSorted(),
-          [
-            `patches/${older}/versions/1.html`,
-            `patches/${older}/versions/${counter - 2}.html`
-          ].toSorted()
+        const service = yield* Patches.Patches;
+        const sql = yield* SqlClient.SqlClient;
+        const sourceManifest = tableManifest(`fence-${admission}-${change}`);
+        const source = yield* create({ manifest: sourceManifest });
+        const request = input({
+          manifest: { ...Fixtures.manifest, tier: 1, uses: { notes: declaration(source.patchId) } }
+        });
+        yield* service.preflight(request);
+        if (admission === "restore") {
+          yield* Fixtures.record(request);
+          yield* service.retire(request.patchId, owner);
+        }
+        const admitted = yield* Deferred.make<void>();
+        const commit = yield* Deferred.make<void>();
+        const admitting = yield* sql
+          .withTransaction(
+            Effect.gen(function* () {
+              if (admission === "restore") yield* service.restore(request.patchId, owner);
+              else yield* Fixtures.record(request);
+              yield* Deferred.succeed(admitted, undefined);
+              yield* Deferred.await(commit);
+            })
+          )
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(admitted);
+        const changingPid = yield* Deferred.make<number>();
+        const changing = yield* sql
+          .withTransaction(
+            Effect.gen(function* () {
+              const [row] = yield* sql<{ pid: number }>`SELECT pg_backend_pid() AS pid`;
+              yield* Deferred.succeed(changingPid, row!.pid);
+              if (change === "retire") yield* service.retire(source.patchId, owner);
+              else if (change === "delete") yield* service.delete(source.patchId, owner);
+              else
+                yield* update(source.patchId, {
+                  manifest: tableManifest(sourceManifest.name!, false)
+                });
+            })
+          )
+          .pipe(Effect.catchTags({ HasDependants: Effect.succeed }), Effect.forkScoped);
+        const pid = yield* Deferred.await(changingPid);
+        const waiting = yield* Effect.raceFirst(
+          sql<{ waiting: boolean }>`SELECT EXISTS (
+            SELECT 1 FROM pg_stat_activity WHERE pid = ${pid} AND wait_event_type = 'Lock'
+          ) AS waiting`.pipe(Effect.repeat({ until: (rows) => rows[0]!.waiting }), Effect.as(true)),
+          Fiber.await(changing).pipe(Effect.as(false))
         );
-        assert.isTrue(Option.isNone(yield* service.deleteExpired(older)));
-        assert.isTrue(Option.isNone(yield* service.deleteExpired(live)));
-        assert.deepStrictEqual(yield* service.listExpired(10), [newer]);
-        assert.isTrue(yield* isServed(live));
-      })
-  );
+        yield* Deferred.succeed(commit, undefined);
+        yield* Fiber.join(admitting);
+        const refusal = yield* Fiber.join(changing);
+        assert.isTrue(waiting, "the source change must wait for the consumer's commit");
+        assert.instanceOf(refusal, Patches.HasDependants);
+        assert.deepStrictEqual(
+          refusal.dependants.map(({ patchId }) => patchId),
+          [request.patchId]
+        );
+        assert.isTrue(Option.isSome(yield* service.find(source.patchId)));
+        assert.strictEqual(
+          (yield* service.inventory(source.patchId, owner.userId)).tables.notes?.shared,
+          true
+        );
+      }).pipe(Effect.scoped)
+    );
+  }
 });

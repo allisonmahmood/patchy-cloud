@@ -448,8 +448,8 @@ try {
     redirect: "error",
     signal: AbortSignal.timeout(5_000)
   });
-  assert.equal(foreignResponse.status, 404, "company membership must not grant ownership");
-  await foreignResponse.arrayBuffer();
+  assert.equal(foreignResponse.status, 403, "company membership must not grant ownership");
+  assert.equal((await foreignResponse.json()).code, "not_owner");
   const foreignShare = await runCli(
     cliPath,
     ["share", "--patch", first.patchId, "company", "--json"],
@@ -465,6 +465,7 @@ try {
   const foreignFailure = JSON.parse(foreignShare.stderr);
   assert.equal(foreignFailure.ok, false);
   assert.equal(foreignFailure.kind, "rejected");
+  assert.equal(foreignFailure.code, "not_owner");
   for (const version of publicVersions) {
     assertPublicViewer(await fetchViewer(version.url), { ...version, patchId: first.patchId });
   }
@@ -739,13 +740,16 @@ try {
   const doomedViewer = await fetchViewer(doomed.address);
   assertViewerDoor(doomedViewer);
   assertViewerDoor(await fetchViewer(`${doomed.address}/~v/1`));
-  const removed = await runCli(cliPath, ["delete", fixtureArgument], {
+  const removed = await runCli(cliPath, ["delete", fixtureArgument, "--json"], {
     cwd: consumerDir,
     env: cliEnv
   });
+  const deletion = JSON.parse(removed.stdout);
+  assert.equal(deletion.patchId, doomed.patchId);
+  assert.equal(deletion.state, "deleted");
   assert.equal(
-    removed.stdout,
-    `Deleting from ${publicBaseUrl} (target came from the saved config).\nDeleted patch\nPatch ID: ${doomed.patchId}\n`
+    Date.parse(deletion.purgeAt) - Date.parse(deletion.deletedAt),
+    30 * 24 * 60 * 60 * 1000
   );
   assert.equal(removed.stderr, "");
   const removedViewer = await fetchViewer(doomed.address);
@@ -769,7 +773,7 @@ try {
     env: cliEnv,
     allowFailure: true
   });
-  assert.equal(removedAgain.code, 2, "deleting a patch that is gone is the instance's refusal");
+  assert.equal(removedAgain.code, 2, "deleting an already-deleted patch is the instance's refusal");
 
   await runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release: installedManifest.version });
 
@@ -3249,6 +3253,8 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
     "versionId",
     "versionNumber",
     "title",
+    "description",
+    "descriptionUpdatedAt",
     "scope",
     "name",
     "address",
@@ -3274,6 +3280,8 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
     versionId: published.versionId,
     versionNumber: 1,
     title: published.title,
+    description: "",
+    descriptionUpdatedAt: null,
     scope: "company",
     name: "tier1-notes",
     address: `${publicBaseUrl}/${DEV_SEED.companyHandle}/tier1-notes`,

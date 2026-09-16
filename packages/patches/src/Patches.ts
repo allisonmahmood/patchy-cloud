@@ -3,20 +3,12 @@
  * written here and nowhere else. Rows are decoded through `SqlSchema` in this
  * module only, so a client type change lands in one place.
  *
- * The retention clock lives in these queries. Every patch carries one expiry
- * anchor and three rules act on it: a publish resets the anchor to the full
- * retention window; a visit with less than the visit-extension window
- * remaining moves the anchor to exactly that window out — never shorter,
- * never reviving an expired patch; the clock check is `expires_at < now`, and
- * nothing else. Visits top up the clock regardless of the creating machine
- * token's state.
- *
- * The clock is Effect's, read as `Clock.currentTimeMillis`, so a test winds
- * retention and pending-object leases. Audit stamps (`created_at`,
- * `updated_at`, `deleted_at`, `disabled_at`) stay on SQL `now()`.
+ * Lifecycle changes and the deletion window use the Effect clock. Retired and
+ * deleted rows retain their versions and company inventory until reclamation.
  */
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -25,11 +17,12 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
-import type * as Statement from "effect/unstable/sql/Statement";
 import {
   Manifest,
   PatchInventory,
   PatchName,
+  PatchState as PatchStateSchema,
+  PatchSourceState,
   PublishCreated,
   PublishUpdated,
   SharingScope,
@@ -48,11 +41,8 @@ const decodeResponseBodies = Schema.decodeUnknownEffect(
   Schema.Array(Schema.Struct({ responseBody: Schema.String }))
 );
 
-/** The window a publish gives a patch. */
-export const RETENTION_WINDOW = Duration.days(90);
-
-/** What a visit tops the remaining time up to, when less than this remains. */
-export const VISIT_EXTENSION_WINDOW = Duration.days(30);
+/** Deleted patches can be restored strictly before this window closes. */
+export const RECOVERY_WINDOW = Duration.days(30);
 
 /** Allows the bounded put and 60-second record transaction to finish before reclamation. */
 export const PENDING_OBJECT_LEASE = Duration.minutes(5);
@@ -82,11 +72,7 @@ export const deriveName = (source: string, ordinal = 1): string => {
 export const address = (publicBaseUrl: string, companyHandle: string, name: string) =>
   `${publicBaseUrl.replace(/\/+$/, "")}/${companyHandle}/${name}`;
 
-/**
- * A write named a patch the caller cannot write: unknown, another
- * user's, deleted, disabled or expired. One refusal for all five, so the
- * answer never says which.
- */
+/** Unknown, disabled or outside the actor's company. */
 export class PatchUnavailable extends Schema.TaggedError<PatchUnavailable>()("PatchUnavailable", {
   patchId: Schema.String
 }) {
@@ -112,6 +98,121 @@ export class NameTaken extends Schema.TaggedError<NameTaken>()("NameTaken", {
   }
 }
 
+export type PatchState = typeof PatchStateSchema.Type;
+export interface Actor {
+  readonly userId: string;
+  readonly admin: boolean;
+}
+const Owner = Schema.Struct({ id: Schema.String, name: Schema.String });
+const Dependant = Schema.Struct({ patchId: Schema.String, name: Schema.String, owner: Owner });
+const OffSource = Schema.Struct({
+  patchId: Schema.String,
+  name: Schema.optionalKey(Schema.String),
+  table: Schema.String,
+  state: PatchSourceState
+});
+
+export class NotOwner extends Schema.TaggedError<NotOwner>()("NotOwner", {
+  owner: Owner
+}) {
+  override get message() {
+    return `This patch belongs to ${this.owner.name}. Ask them, or an admin, to reassign it.`;
+  }
+}
+export class WrongState extends Schema.TaggedError<WrongState>()("WrongState", {
+  state: PatchStateSchema
+}) {
+  override get message() {
+    return `This patch is ${this.state}; this action is not available in that state.`;
+  }
+}
+export class PatchRetired extends Schema.TaggedError<PatchRetired>()("PatchRetired", {}) {
+  override get message() {
+    return "This patch is retired. Restore it through the lifecycle API or ask an admin.";
+  }
+}
+export class PatchDeleted extends Schema.TaggedError<PatchDeleted>()("PatchDeleted", {
+  purgeAt: Schema.String
+}) {
+  override get message() {
+    return `This patch is deleted and will be gone for good at ${this.purgeAt}. Restore it through the lifecycle API before then or ask an admin.`;
+  }
+}
+export class HasDependants extends Schema.TaggedError<HasDependants>()("HasDependants", {
+  dependants: Schema.Array(Dependant)
+}) {
+  override get message() {
+    return "Other live patches read these tables. Ask the person you are working for before forcing.";
+  }
+}
+export class SourcesOff extends Schema.TaggedError<SourcesOff>()("SourcesOff", {
+  sources: Schema.Array(OffSource)
+}) {
+  override get message() {
+    return "This patch reads sources that are off. Ask the person you are working for before forcing.";
+  }
+}
+export class ReservedName extends Schema.TaggedError<ReservedName>()("ReservedName", {
+  name: Schema.String
+}) {
+  override get message() {
+    return `Patch name "${this.name}" is reserved.`;
+  }
+}
+export class InvalidDescription extends Schema.TaggedError<InvalidDescription>()(
+  "InvalidDescription",
+  {}
+) {
+  override get message() {
+    return "Use one paragraph of at most 500 Unicode code points, without control characters.";
+  }
+}
+export class VersionUnavailable extends Schema.TaggedError<VersionUnavailable>()(
+  "VersionUnavailable",
+  { versionNumber: Schema.Number }
+) {
+  override get message() {
+    return `Version ${this.versionNumber} is not retained by this patch.`;
+  }
+}
+export class InvalidOwner extends Schema.TaggedError<InvalidOwner>()("InvalidOwner", {
+  userId: Schema.String
+}) {
+  override get message() {
+    return "The new owner must be an active member of this company.";
+  }
+}
+export class AdminRequired extends Schema.TaggedError<AdminRequired>()("AdminRequired", {
+  userId: Schema.String
+}) {
+  override get message() {
+    return "Only a company administrator can reassign a patch.";
+  }
+}
+export type LifecycleError =
+  | PatchUnavailable
+  | NotOwner
+  | WrongState
+  | PatchRetired
+  | PatchDeleted
+  | HasDependants
+  | SourcesOff
+  | ReservedName
+  | InvalidDescription
+  | VersionUnavailable
+  | InvalidOwner;
+
+const normalizeDescription = Effect.fn("Patches.normalizeDescription")(function* (text: string) {
+  // Whitespace controls become spaces; all other controls are refused.
+  if (/[\u0000-\u0008\u000e-\u001f\u007f-\u009f]/u.test(text))
+    return yield* new InvalidDescription();
+  const normalized = text.replace(/\s+/gu, " ").trim();
+  if ((text !== "" && normalized === "") || [...normalized].length > 500)
+    return yield* new InvalidDescription();
+  return normalized;
+});
+const reservedName = (name: string) => name === "patches" || name === "connections";
+
 export interface Patch {
   readonly id: string;
   readonly companyId: string;
@@ -125,9 +226,19 @@ export interface Patch {
   readonly repoName: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
-  /** The retention clock's anchor: expired once this is past. */
-  readonly expiresAt: string;
+  readonly state: PatchState;
+  readonly retiredAt: string | null;
+  readonly retiredBy: string | null;
   readonly deletedAt: string | null;
+  readonly deletedBy: string | null;
+  readonly purgeAt: string | null;
+  readonly reassignedAt: string | null;
+  readonly reassignedBy: string | null;
+  readonly description: string;
+  readonly descriptionUpdatedAt: string | null;
+  readonly descriptionUpdatedBy: string | null;
+  readonly lastChangedAt: string | null;
+  readonly lastChangedBy: string | null;
   readonly disabledAt: string | null;
   readonly disabledReason: string | null;
 }
@@ -240,6 +351,8 @@ export interface PublishPreflight extends PublishTarget {
   readonly companyId: string;
   readonly manifest: typeof Manifest.Type;
   readonly filename: string | null;
+  readonly force?: boolean;
+  readonly description?: string;
 }
 
 const hasOwnedDefinitions = (manifest: typeof Manifest.Type) =>
@@ -276,6 +389,8 @@ export interface RecordInput extends PublishTarget {
   readonly publicBaseUrl: string;
   readonly warnings: ReadonlyArray<string>;
   readonly livePatchQuota?: number;
+  readonly force?: boolean;
+  readonly description?: string;
 }
 
 export interface Recorded extends PublishUpdated {
@@ -294,13 +409,14 @@ const Replay = Schema.Struct({
 export class Patches extends Context.Service<
   Patches,
   {
-    /**
-     * How many patches this user owns that are still live — neither
-     * deleted nor disabled. The durable half of the patch quota: recounted
-     * from the database on every create, so a restart cannot reset it. An
-     * expired patch still counts until the sweep takes its row.
-     */
-    readonly countLive: (ownerUserId: string) => Effect.Effect<number, SqlError>;
+    /** Non-deleted, enabled patches owned by this user, including retired patches. */
+    readonly countQuotaPatches: (ownerUserId: string) => Effect.Effect<number, SqlError>;
+    readonly authorizePublish: (
+      target: PublishTarget
+    ) => Effect.Effect<
+      void,
+      PatchUnavailable | PatchConflict | NotOwner | PatchRetired | PatchDeleted | SqlError
+    >;
     readonly replay: (
       ownerUserId: string,
       publishKey: string
@@ -311,13 +427,10 @@ export class Patches extends Context.Service<
      */
     readonly preflight: (
       input: PublishPreflight
-    ) => Effect.Effect<
-      void,
-      PatchUnavailable | PatchConflict | NameTaken | ResourceError | SqlError
-    >;
+    ) => Effect.Effect<void, LifecycleError | PatchConflict | NameTaken | ResourceError | SqlError>;
     readonly inventory: (
       patchId: string,
-      ownerUserId: string
+      actorUserId: string
     ) => Effect.Effect<PatchInventory, PatchUnavailable | DatabaseError | SqlError>;
     /** Cumulative metadata from live same-company shared inventory. */
     readonly sharedTable: (
@@ -345,7 +458,7 @@ export class Patches extends Context.Service<
     readonly completeObject: (objectKey: string) => Effect.Effect<void, SqlError>;
     /**
      * Records a publish whose bytes are already stored: the version row, the
-     * patch row it creates or moves forward, and a fresh retention window,
+     * patch row it creates or moves forward,
      * in one transaction. Consumes the pending-object intent under a lock;
      * a sweep that claimed it first prevents the version from being recorded.
      * Re-checks the target, so the preflight's answer can still change here.
@@ -361,16 +474,17 @@ export class Patches extends Context.Service<
       | PatchQuotaReached
       | PendingObjectExpired
       | ResourceError
+      | LifecycleError
       | SqlError
     >;
-    /** Changes an owned, available patch's audience without publishing or extending retention. */
+    /** Changes a live patch's audience without creating a version. */
     readonly setScope: (
       patchId: string,
-      ownerUserId: string,
+      actor: Actor,
       scope: Patch["scope"]
     ) => Effect.Effect<
       { scope: Patch["scope"]; name: string; companyHandle: string },
-      PatchUnavailable | SqlError
+      LifecycleError | SqlError
     >;
     /** A current name or a redirect to the destination patch's current name. */
     readonly resolveName: (
@@ -382,37 +496,53 @@ export class Patches extends Context.Service<
     >;
     /**
      * A patch in service and one of its versions — the current one, or the
-     * numbered one asked for. Deleted, disabled and expired patches are
-     * absent here, exactly as an unknown id is.
+     * numbered one asked for. Retired, deleted and disabled patches are absent.
      */
     readonly find: (
       patchId: string,
       versionNumber?: number,
       versionId?: string
     ) => Effect.Effect<Option.Option<{ patch: Patch; version: PatchVersion }>, SqlError>;
-    /**
-     * Tops a served patch's clock up to the visit-extension window when less
-     * than that remains. A no-op otherwise, including for a patch already
-     * expired, deleted or disabled.
-     */
+    /** Counts a visit to a serving patch without changing its lifecycle. */
     readonly recordVisit: (patchId: string) => Effect.Effect<void, SqlError>;
-    /**
-     * Ids the sweep may take right now — expired, the longest-expired first —
-     * capped at `limit`. Deleted and disabled patches are included: the
-     * sweep is what finally frees their storage.
-     */
-    readonly listExpired: (limit: number) => Effect.Effect<ReadonlyArray<string>, SqlError>;
-    /**
-     * Hard-deletes one expired patch and queues its version keys durably for
-     * object deletion in the same transaction. Returns those keys for the
-     * expiry event. `None` when the patch is no longer the sweep's to take:
-     * already gone, or no longer expired.
-     */
-    readonly deleteExpired: (
+    readonly retire: (
+      patchId: string,
+      actor: Actor,
+      force?: boolean
+    ) => Effect.Effect<Patch, LifecycleError | SqlError>;
+    readonly delete: (
+      patchId: string,
+      actor: Actor,
+      force?: boolean
+    ) => Effect.Effect<Patch, LifecycleError | SqlError>;
+    readonly restore: (
+      patchId: string,
+      actor: Actor,
+      force?: boolean
+    ) => Effect.Effect<Patch, LifecycleError | SqlError>;
+    readonly rollback: (
+      patchId: string,
+      actor: Actor,
+      versionNumber: number
+    ) => Effect.Effect<{ patch: Patch; currentVersion: number }, LifecycleError | SqlError>;
+    readonly reassign: (
+      patchId: string,
+      actor: Actor,
+      newOwnerUserId: string
+    ) => Effect.Effect<Patch, LifecycleError | AdminRequired | SqlError>;
+    readonly setDescription: (
+      patchId: string,
+      actor: Actor,
+      description: string
+    ) => Effect.Effect<Patch, LifecycleError | SqlError>;
+    readonly listDeleted: (limit: number) => Effect.Effect<ReadonlyArray<string>, SqlError>;
+    /** Locks platform then company inventory; reclamation follows the platform commit. */
+    readonly purgeDeleted: (
       patchId: string
-    ) => Effect.Effect<Option.Option<ReadonlyArray<string>>, SqlError>;
-    /** Soft-deletes an owned patch; the row and its bytes go with the next sweep. `false` when unavailable. */
-    readonly delete: (patchId: string, ownerUserId: string) => Effect.Effect<boolean, SqlError>;
+    ) => Effect.Effect<
+      Option.Option<{ companyId: string; objectKeys: ReadonlyArray<string> }>,
+      SqlError | DatabaseError
+    >;
   }
 >()("@patchy/patches/Patches") {}
 
@@ -433,8 +563,17 @@ class PatchRow extends Schema.Class<PatchRow>("PatchRow")({
   repoName: Schema.NullOr(Schema.String),
   createdAt: Stamp,
   updatedAt: Stamp,
-  expiresAt: Stamp,
+  retiredAt: NullableStamp,
+  retiredBy: Schema.NullOr(Schema.String),
   deletedAt: NullableStamp,
+  deletedBy: Schema.NullOr(Schema.String),
+  reassignedAt: NullableStamp,
+  reassignedBy: Schema.NullOr(Schema.String),
+  description: Schema.String,
+  descriptionUpdatedAt: NullableStamp,
+  descriptionUpdatedBy: Schema.NullOr(Schema.String),
+  lastChangedAt: NullableStamp,
+  lastChangedBy: Schema.NullOr(Schema.String),
   disabledAt: NullableStamp,
   disabledReason: Schema.NullOr(Schema.String)
 }) {}
@@ -472,11 +611,9 @@ class DeclaringPatches extends Schema.Class<DeclaringPatches>("DeclaringPatches"
   table: Schema.String,
   count: Schema.Int
 }) {}
-class PatchTargetRow extends Schema.Class<PatchTargetRow>("PatchTargetRow")({
-  scope: SharingScope,
-  companyId: Schema.String,
-  companyHandle: Schema.String,
-  name: PatchName
+class ManagedPatchRow extends Schema.Class<ManagedPatchRow>("ManagedPatchRow")({
+  ...PatchRow.fields,
+  ownerName: Schema.String
 }) {}
 class NameRow extends Schema.Class<NameRow>("NameRow")({ name: PatchName }) {}
 class ResolvedName extends Schema.Class<ResolvedName>("ResolvedName")({
@@ -495,6 +632,14 @@ class UnnamedPatch extends Schema.Class<UnnamedPatch>("UnnamedPatch")({
 
 const iso = (date: Date) => date.toISOString();
 const isoOrNull = (date: Date | null) => (date === null ? null : date.toISOString());
+const stateOf = (row: PatchRow): PatchState =>
+  row.deletedAt !== null ? "deleted" : row.retiredAt !== null ? "retired" : "live";
+const purgeAtOf = (row: PatchRow): string | null =>
+  row.deletedAt === null
+    ? null
+    : DateTime.formatIso(
+        DateTime.makeUnsafe(row.deletedAt.getTime() + Duration.toMillis(RECOVERY_WINDOW))
+      );
 
 const toPatch = (row: PatchRow): Patch => ({
   id: row.id,
@@ -509,8 +654,19 @@ const toPatch = (row: PatchRow): Patch => ({
   repoName: row.repoName,
   createdAt: iso(row.createdAt),
   updatedAt: iso(row.updatedAt),
-  expiresAt: iso(row.expiresAt),
+  state: stateOf(row),
+  retiredAt: isoOrNull(row.retiredAt),
+  retiredBy: row.retiredBy,
   deletedAt: isoOrNull(row.deletedAt),
+  deletedBy: row.deletedBy,
+  purgeAt: purgeAtOf(row),
+  reassignedAt: isoOrNull(row.reassignedAt),
+  reassignedBy: row.reassignedBy,
+  description: row.description,
+  descriptionUpdatedAt: isoOrNull(row.descriptionUpdatedAt),
+  descriptionUpdatedBy: row.descriptionUpdatedBy,
+  lastChangedAt: isoOrNull(row.lastChangedAt),
+  lastChangedBy: row.lastChangedBy,
   disabledAt: isoOrNull(row.disabledAt),
   disabledReason: row.disabledReason
 });
@@ -551,8 +707,13 @@ const PATCH_COLUMNS = `
   patches.current_version_id AS "currentVersionId",
   patches.repo_org AS "repoOrg", patches.repo_name AS "repoName",
   patches.created_at AS "createdAt", patches.updated_at AS "updatedAt",
-  patches.expires_at AS "expiresAt",
-  patches.deleted_at AS "deletedAt", patches.disabled_at AS "disabledAt",
+  patches.retired_at AS "retiredAt", patches.retired_by AS "retiredBy",
+  patches.deleted_at AS "deletedAt", patches.deleted_by AS "deletedBy",
+  patches.reassigned_at AS "reassignedAt", patches.reassigned_by AS "reassignedBy",
+  patches.description, patches.description_updated_at AS "descriptionUpdatedAt",
+  patches.description_updated_by AS "descriptionUpdatedBy",
+  patches.last_changed_at AS "lastChangedAt", patches.last_changed_by AS "lastChangedBy",
+  patches.disabled_at AS "disabledAt",
   patches.disabled_reason AS "disabledReason"`;
 
 const VERSION_COLUMNS = `
@@ -612,55 +773,40 @@ export const make = Effect.gen(function* () {
   const tables = yield* Tables.Tables;
   const connections = yield* ConnectionStore.ConnectionStore;
 
-  /** An instant on the Effect clock, as a value Postgres compares against `expires_at`. */
+  /** An Effect-clock instant represented as a Postgres timestamp. */
   const stamp = (millis: number) => sql`to_timestamp(${millis / 1_000})`;
   /** The clock's reading now, as that value. */
   const now = Effect.map(Clock.currentTimeMillis, stamp);
 
-  /**
-   * "Not expired" as one predicate: the anchor must not be past. Bound to
-   * the clock reading passed in, so every query in one operation reads the
-   * same instant.
-   */
-  const notExpired = (at: Statement.Fragment) => sql`(patches.expires_at >= ${at})`;
+  const serving = sql`patches.deleted_at IS NULL AND patches.retired_at IS NULL AND patches.disabled_at IS NULL`;
 
-  /** A patch in service the user may write: theirs, and neither taken down nor expired. */
-  const writable = (patchId: string, ownerUserId: string, at: Statement.Fragment) =>
-    sql`patches.id = ${patchId} AND patches.owner_user_id = ${ownerUserId}
-        AND patches.deleted_at IS NULL AND patches.disabled_at IS NULL AND ${notExpired(at)}`;
-
-  const countLiveRow = SqlSchema.findOne({
+  const countQuotaPatchesRow = SqlSchema.findOne({
     Request: Schema.String,
     Result: Count,
     execute: (ownerUserId) => sql`
       SELECT count(*)::int AS count
       FROM patches
       WHERE patches.owner_user_id = ${ownerUserId}
-        AND patches.deleted_at IS NULL
-        AND patches.disabled_at IS NULL`
+        AND patches.deleted_at IS NULL AND patches.disabled_at IS NULL`
   });
 
   const findPatch = SqlSchema.findOneOption({
-    Request: Schema.Struct({ patchId: Schema.String, nowMillis: Schema.Number }),
+    Request: Schema.String,
     Result: PatchRow,
-    execute: ({ nowMillis, patchId }) => sql`
+    execute: (patchId) => sql`
       SELECT ${sql.unsafe(PATCH_COLUMNS)}
       FROM patches JOIN companies ON companies.id = patches.company_id
-      WHERE patches.id = ${patchId}
-        AND patches.deleted_at IS NULL
-        AND patches.disabled_at IS NULL
-        AND ${notExpired(stamp(nowMillis))}`
+      WHERE patches.id = ${patchId} AND ${serving}`
   });
 
   const sharedSources = SqlSchema.findAll({
-    Request: Schema.Struct({ companyId: Schema.String, nowMillis: Schema.Number }),
+    Request: Schema.String,
     Result: Schema.Struct({ patchId: Schema.String, name: Schema.String }),
-    execute: ({ companyId, nowMillis }) => sql`
+    execute: (companyId) => sql`
       SELECT patches.id AS "patchId", patches.name
       FROM patches JOIN patch_versions ON patch_versions.id = patches.current_version_id
         AND patch_versions.patch_id = patches.id
-      WHERE patches.company_id = ${companyId} AND patches.deleted_at IS NULL
-        AND patches.disabled_at IS NULL AND ${notExpired(stamp(nowMillis))}
+      WHERE patches.company_id = ${companyId} AND ${serving}
       ORDER BY patches.name, patches.id`
   });
 
@@ -683,18 +829,16 @@ export const make = Effect.gen(function* () {
   const resolveNameRow = SqlSchema.findOneOption({
     Request: Schema.Struct({
       companyHandle: Schema.String,
-      name: Schema.String,
-      nowMillis: Schema.Number
+      name: Schema.String
     }),
     Result: ResolvedName,
-    execute: ({ companyHandle, name, nowMillis }) => sql`
+    execute: ({ companyHandle, name }) => sql`
       SELECT patches.id AS "patchId", patches.name, patch_names.current
       FROM patch_names
       JOIN companies ON companies.id = patch_names.company_id
       JOIN patches ON patches.id = patch_names.patch_id
       WHERE companies.handle = ${companyHandle} AND patch_names.name = ${name}
-        AND patches.deleted_at IS NULL AND patches.disabled_at IS NULL
-        AND ${notExpired(stamp(nowMillis))}`
+        AND ${serving}`
   });
 
   const companyHandleRow = SqlSchema.findOne({
@@ -715,13 +859,13 @@ export const make = Effect.gen(function* () {
       RETURNING name`
   });
 
-  const listExpiredRows = SqlSchema.findAll({
+  const listDeletedRows = SqlSchema.findAll({
     Request: Schema.Struct({ nowMillis: Schema.Number, limit: Schema.Number }),
     Result: Id,
     execute: ({ limit, nowMillis }) => sql`
       SELECT id FROM patches
-      WHERE NOT ${notExpired(stamp(nowMillis))}
-      ORDER BY expires_at ASC
+      WHERE deleted_at <= ${stamp(nowMillis - Duration.toMillis(RECOVERY_WINDOW))}
+      ORDER BY deleted_at, id
       LIMIT ${limit}`
   });
 
@@ -740,19 +884,40 @@ export const make = Effect.gen(function* () {
       sql`SELECT object_key AS "objectKey" FROM patch_versions WHERE patch_id = ${patchId}`
   });
 
-  const lockTarget = SqlSchema.findOneOption({
-    Request: Schema.Struct({
-      patchId: Schema.String,
-      ownerUserId: Schema.String,
-      nowMillis: Schema.Number
-    }),
-    Result: PatchTargetRow,
-    execute: ({ patchId, ownerUserId, nowMillis }) => sql`
-      SELECT patches.scope, patches.name, patches.company_id AS "companyId",
-        companies.handle AS "companyHandle"
+  // Company/public sharing admits every member of this company in any lifecycle
+  // state. Disabled patches remain hidden; serving reads use the stricter gate.
+  const lockOpenable = SqlSchema.findOneOption({
+    Request: Schema.Struct({ patchId: Schema.String, userId: Schema.String }),
+    Result: ManagedPatchRow,
+    execute: ({ patchId, userId }) => sql`
+      SELECT ${sql.unsafe(PATCH_COLUMNS)}, owner.name AS "ownerName"
       FROM patches JOIN companies ON companies.id = patches.company_id
-      WHERE ${writable(patchId, ownerUserId, stamp(nowMillis))}
+      JOIN users owner ON owner.id = patches.owner_user_id
+      JOIN users actor ON actor.id = ${userId} AND actor.company_id = patches.company_id
+      WHERE patches.id = ${patchId} AND patches.disabled_at IS NULL
       FOR UPDATE OF patches`
+  });
+  // Serialize dependency admissions and source changes before taking patch rows.
+  // This prevents cross-patch write skew without lock-order cycles in shared reads.
+  const lockDependencies = Effect.fn("Patches.lockDependencies")(
+    (userId: string) =>
+      sql`SELECT pg_advisory_xact_lock(hashtextextended('patchy:dependencies:' || company_id, 0))
+      FROM users WHERE id = ${userId}`
+  );
+  const manageable = Effect.fn("Patches.manageable")(function* (patchId: string, actor: Actor) {
+    const row = yield* lockOpenable({ patchId, userId: actor.userId });
+    if (Option.isNone(row)) return yield* new PatchUnavailable({ patchId });
+    if (row.value.ownerUserId !== actor.userId && !actor.admin)
+      return yield* new NotOwner({
+        owner: { id: row.value.ownerUserId, name: row.value.ownerName }
+      });
+    return row.value;
+  }, Effect.catchTags(dieOnSchemaError));
+  const publishable = Effect.fn("Patches.publishable")(function* (target: PublishTarget) {
+    const row = yield* manageable(target.patchId, { userId: target.ownerUserId, admin: false });
+    if (row.deletedAt !== null) return yield* new PatchDeleted({ purgeAt: purgeAtOf(row)! });
+    if (row.retiredAt !== null) return yield* new PatchRetired();
+    return row;
   });
 
   const replayRow = SqlSchema.findOneOption({
@@ -766,8 +931,8 @@ export const make = Effect.gen(function* () {
   const replay = Effect.fn("Patches.replay")((ownerUserId: string, publishKey: string) =>
     replayRow({ ownerUserId, publishKey }).pipe(Effect.catchTags(dieOnSchemaError))
   );
-  const countLive = Effect.fn("Patches.countLive")((ownerUserId: string) =>
-    countLiveRow(ownerUserId).pipe(
+  const countQuotaPatches = Effect.fn("Patches.countQuotaPatches")((ownerUserId: string) =>
+    countQuotaPatchesRow(ownerUserId).pipe(
       Effect.map((row) => row.count),
       // `count(*)` always answers one row; no row is a bug, not a state.
       Effect.catchTags({ ...dieOnSchemaError, NoSuchElementError: Effect.die })
@@ -778,8 +943,7 @@ export const make = Effect.gen(function* () {
     versionNumber?: number,
     versionId?: string
   ) {
-    const nowMillis = yield* Clock.currentTimeMillis;
-    const patch = yield* findPatch({ patchId, nowMillis });
+    const patch = yield* findPatch(patchId);
     if (Option.isNone(patch)) return Option.none();
     const selectedId = versionId ?? patch.value.currentVersionId;
     const version =
@@ -791,16 +955,18 @@ export const make = Effect.gen(function* () {
     return Option.map(version, (row) => ({ patch: toPatch(patch.value), version: toVersion(row) }));
   }, Effect.catchTags(dieOnSchemaError));
 
-  const checkTarget = Effect.fn("Patches.checkTarget")(function* (target: PublishTarget) {
-    if (target.intent === "update") {
-      const rows =
-        yield* sql`SELECT 1 FROM patches WHERE ${writable(target.patchId, target.ownerUserId, yield* now)}`;
-      if (rows.length === 0) return yield* new PatchUnavailable({ patchId: target.patchId });
-      return;
-    }
-    const rows = yield* sql`SELECT 1 FROM patches WHERE id = ${target.patchId}`;
-    if (rows.length > 0) return yield* new PatchConflict({ patchId: target.patchId });
-  });
+  const authorizePublish = Effect.fn("Patches.authorizePublish")((target: PublishTarget) =>
+    sql.withTransaction(
+      Effect.gen(function* () {
+        if (target.intent === "update") {
+          yield* publishable(target);
+          return;
+        }
+        const rows = yield* sql`SELECT 1 FROM patches WHERE id = ${target.patchId}`;
+        if (rows.length > 0) return yield* new PatchConflict({ patchId: target.patchId });
+      })
+    )
+  );
 
   // Probe without starting a company transaction. A platform version is not
   // evidence of absence: company DDL may have committed before platform failure.
@@ -858,7 +1024,7 @@ export const make = Effect.gen(function* () {
   });
 
   const sharedTables = Effect.fn("Patches.sharedTables")(function* (companyId: string) {
-    const sources = yield* sharedSources({ companyId, nowMillis: yield* Clock.currentTimeMillis });
+    const sources = yield* sharedSources(companyId);
     const result: Array<{ patchId: string; name: string; table: string; schemaRevision: number }> =
       [];
     for (const source of sources) {
@@ -902,26 +1068,78 @@ export const make = Effect.gen(function* () {
   const declaringPatchRows = SqlSchema.findAll({
     Request: Schema.Struct({
       patchId: Schema.String,
-      companyId: Schema.String,
-      nowMillis: Schema.Number
+      companyId: Schema.String
     }),
     Result: DeclaringPatches,
-    execute: ({ patchId, companyId, nowMillis }) => sql`
+    execute: ({ patchId, companyId }) => sql`
       SELECT declaration.value->>'table' AS "table", count(DISTINCT patches.id)::int AS count
       FROM patches
       JOIN patch_versions ON patch_versions.patch_id = patches.id
       CROSS JOIN LATERAL jsonb_each(patch_versions.manifest->'uses') AS declaration
       WHERE patches.company_id = ${companyId}
-        AND patches.deleted_at IS NULL AND patches.disabled_at IS NULL
-        AND ${notExpired(stamp(nowMillis))}
+        AND ${serving}
         AND declaration.value->>'kind' = 'sharedTable'
         AND declaration.value->>'patchId' = ${patchId}
         AND declaration.value->>'id' = ${patchId} || '/' || (declaration.value->>'table')
       GROUP BY declaration.value->>'table'`
   });
 
+  const dependantRows = SqlSchema.findAll({
+    Request: Schema.Struct({
+      patchId: Schema.String,
+      companyId: Schema.String,
+      tables: Schema.NullOr(Schema.Array(Schema.String))
+    }),
+    Result: Dependant,
+    execute: ({ patchId, companyId, tables: affected }) => sql`
+      SELECT DISTINCT patches.id AS "patchId", patches.name,
+        jsonb_build_object('id', owner.id, 'name', owner.name) AS owner
+      FROM patches JOIN users owner ON owner.id = patches.owner_user_id
+      JOIN patch_versions ON patch_versions.patch_id = patches.id
+      CROSS JOIN LATERAL jsonb_each(patch_versions.manifest->'uses') AS declaration
+      WHERE patches.company_id = ${companyId} AND ${serving}
+        AND declaration.value->>'kind' = 'sharedTable'
+        AND declaration.value->>'patchId' = ${patchId}
+        AND declaration.value->>'id' = ${patchId} || '/' || (declaration.value->>'table')
+        AND ${affected === null ? sql`true` : sql`declaration.value->>'table' IN ${sql.in(affected)}`}
+      ORDER BY patches.name, patches.id`
+  });
+  const refuseDependants = Effect.fn("Patches.refuseDependants")(function* (
+    patchId: string,
+    companyId: string,
+    force: boolean | undefined,
+    affected: readonly string[] | null = null
+  ) {
+    if (force || affected?.length === 0) return;
+    const dependants = yield* dependantRows({ patchId, companyId, tables: affected });
+    if (dependants.length > 0) return yield* new HasDependants({ dependants });
+  }, Effect.catchTags(dieOnSchemaError));
+  const offSources = SqlSchema.findAll({
+    Request: Schema.Struct({ patchId: Schema.String, companyId: Schema.String }),
+    Result: Schema.Struct({ ...OffSource.fields, name: Schema.NullOr(Schema.String) }),
+    execute: ({ patchId, companyId }) => sql`
+      SELECT DISTINCT declaration.value->>'patchId' AS "patchId", source.name,
+        declaration.value->>'table' AS "table",
+        CASE WHEN source.id IS NULL THEN 'gone'
+          WHEN source.deleted_at IS NOT NULL THEN 'deleted'
+          WHEN source.retired_at IS NOT NULL THEN 'retired'
+          ELSE 'live' END AS state
+      FROM patches
+      JOIN patch_versions ON patch_versions.id = patches.current_version_id AND patch_versions.patch_id = patches.id
+      CROSS JOIN LATERAL jsonb_each(patch_versions.manifest->'uses') AS declaration
+      LEFT JOIN patches source ON source.id = declaration.value->>'patchId'
+        AND source.company_id = ${companyId} AND source.disabled_at IS NULL
+      WHERE patches.id = ${patchId} AND declaration.value->>'kind' = 'sharedTable'
+        AND (source.id IS NULL OR source.deleted_at IS NOT NULL OR source.retired_at IS NOT NULL)
+      ORDER BY "patchId", "table"`
+  });
+
   const preflight = Effect.fn("Patches.preflight")(function* (input: PublishPreflight) {
-    yield* checkTarget(input);
+    yield* authorizePublish(input);
+    const description = input.description ?? input.manifest.description;
+    if (description !== undefined) yield* normalizeDescription(description);
+    if (input.manifest.name !== undefined && reservedName(input.manifest.name))
+      return yield* new ReservedName({ name: input.manifest.name });
     if (input.manifest.name !== undefined) {
       const occupied = yield* sql`
         SELECT 1 FROM patch_names WHERE company_id = ${input.companyId}
@@ -937,23 +1155,23 @@ export const make = Effect.gen(function* () {
         ? { companyId: input.companyId, snapshot: null }
         : yield* sql.withTransaction(
             Effect.gen(function* () {
-              const locked = yield* lockTarget({
-                patchId: input.patchId,
-                ownerUserId: input.ownerUserId,
-                nowMillis: yield* Clock.currentTimeMillis
-              });
-              if (Option.isNone(locked))
-                return yield* new PatchUnavailable({ patchId: input.patchId });
+              const locked = yield* publishable(input);
               return {
-                companyId: locked.value.companyId,
-                snapshot: yield* readInventory(locked.value.companyId, input.patchId)
+                companyId: locked.companyId,
+                snapshot: yield* readInventory(locked.companyId, input.patchId)
               };
-            }).pipe(Effect.catchTags(dieOnSchemaError))
+            })
           );
     if (snapshot !== null && isFileMode(input)) {
       return yield* new HasPrimitives({ patchId: input.patchId });
     }
-    yield* tables.diff(input.manifest, snapshot);
+    const plan = yield* tables.diff(input.manifest, snapshot);
+    yield* refuseDependants(
+      input.patchId,
+      companyId,
+      input.force,
+      plan.sharing.filter((table) => input.manifest.tables[table]!.shared !== true)
+    );
     if (snapshot !== null) {
       yield* databases.withCompany(companyId)(
         tables.validate(input.patchId, input.manifest, snapshot)
@@ -961,14 +1179,10 @@ export const make = Effect.gen(function* () {
     }
   });
 
-  const inventory = Effect.fn("Patches.inventory")((patchId: string, ownerUserId: string) =>
+  const inventory = Effect.fn("Patches.inventory")((patchId: string, actorUserId: string) =>
     sql.withTransaction(
       Effect.gen(function* () {
-        const locked = yield* lockTarget({
-          patchId,
-          ownerUserId,
-          nowMillis: yield* Clock.currentTimeMillis
-        });
+        const locked = yield* lockOpenable({ patchId, userId: actorUserId });
         if (Option.isNone(locked)) return yield* new PatchUnavailable({ patchId });
         const snapshot = yield* readInventory(locked.value.companyId, patchId);
         return new PatchInventory(
@@ -994,6 +1208,14 @@ export const make = Effect.gen(function* () {
           return yield* databases.withPatchLock(input.patchId)(
             Effect.gen(function* () {
               if (isFileMode(input)) return yield* new HasPrimitives({ patchId: input.patchId });
+              const snapshot = yield* inventoryStore.read(input.patchId);
+              const plan = yield* tables.diff(input.manifest, snapshot);
+              yield* refuseDependants(
+                input.patchId,
+                input.companyId,
+                input.force,
+                plan.sharing.filter((table) => input.manifest.tables[table]!.shared !== true)
+              );
               return yield* tables.provision(input.patchId, input.manifest);
             })
           );
@@ -1053,7 +1275,22 @@ export const make = Effect.gen(function* () {
       .withTransaction(
         Effect.gen(function* () {
           yield* sql`SET LOCAL statement_timeout = '60s'`;
+          yield* lockDependencies(input.ownerUserId);
           const millis = yield* Clock.currentTimeMillis;
+          const existing = input.intent === "update" ? yield* publishable(input) : null;
+          const incomingDescription = input.description ?? input.manifest.description;
+          const normalizedDescription =
+            incomingDescription === undefined
+              ? undefined
+              : yield* normalizeDescription(incomingDescription);
+          const description = normalizedDescription ?? existing?.description ?? "";
+          const descriptionChanged = description !== (existing?.description ?? "");
+          const descriptionUpdatedAt = descriptionChanged
+            ? DateTime.formatIso(DateTime.makeUnsafe(millis))
+            : isoOrNull(existing?.descriptionUpdatedAt ?? null);
+          const descriptionUpdatedBy = descriptionChanged
+            ? input.ownerUserId
+            : (existing?.descriptionUpdatedBy ?? null);
           // DELETE holds the intent's row lock until commit. A concurrent sweep
           // skips it; rollback restores it; a lost commit reply cannot orphan
           // live bytes because the version and intent change atomically.
@@ -1064,8 +1301,6 @@ export const make = Effect.gen(function* () {
             RETURNING object_key`;
           if (pending.length === 0)
             return yield* new PendingObjectExpired({ objectKey: input.objectKey });
-          // A publish — first version or fifth — restarts the whole window.
-          const expiresAt = stamp(millis + Duration.toMillis(RETENTION_WINDOW));
           let versionNumber: number;
           let scope: Patch["scope"] = input.scope ?? "company";
           let companyId = input.companyId;
@@ -1077,25 +1312,22 @@ export const make = Effect.gen(function* () {
             // The row lock serialises concurrent updates of one patch: the
             // version number is allocated after it, so each waits its turn and
             // then sees the committed version before it.
-            const locked = yield* lockTarget({
-              patchId: input.patchId,
-              ownerUserId: input.ownerUserId,
-              nowMillis: millis
-            });
-            if (Option.isNone(locked))
-              return yield* new PatchUnavailable({ patchId: input.patchId });
-            scope = input.scope ?? locked.value.scope;
-            companyId = locked.value.companyId;
-            companyHandle = locked.value.companyHandle;
-            name = input.manifest.name ?? locked.value.name;
-            rename = name !== locked.value.name;
+            const locked = existing!;
+            scope = input.scope ?? locked.scope;
+            companyId = locked.companyId;
+            companyHandle = locked.companyHandle;
+            name = input.manifest.name ?? locked.name;
+            rename = name !== locked.name;
             versionNumber = (yield* nextVersionNumber(input.patchId)).nextVersion;
           } else {
             // Serialise quota accounting across distinct creates by the same owner.
-            yield* sql`SELECT id FROM users WHERE id = ${input.ownerUserId} FOR UPDATE`;
+            const owner = yield* sql`SELECT id FROM users
+              WHERE id = ${input.ownerUserId} AND company_id = ${companyId} AND deactivated_at IS NULL
+              FOR UPDATE`;
+            if (owner.length === 0) return yield* new PatchUnavailable({ patchId: input.patchId });
             if (
               input.livePatchQuota !== undefined &&
-              (yield* countLive(input.ownerUserId)) >= input.livePatchQuota
+              (yield* countQuotaPatches(input.ownerUserId)) >= input.livePatchQuota
             ) {
               return yield* new PatchQuotaReached({ quota: input.livePatchQuota });
             }
@@ -1106,15 +1338,17 @@ export const make = Effect.gen(function* () {
               deriveName(
                 input.filename === null ? input.title : input.filename.replace(/\.[^.]*$/, "")
               );
+            if (reservedName(name)) return yield* new ReservedName({ name });
             const created = yield* sql`
-            INSERT INTO patches (id, company_id, owner_user_id, scope, title, name, current_version_id, repo_org, repo_name, expires_at)
+            INSERT INTO patches (id, company_id, owner_user_id, scope, title, name, current_version_id, repo_org, repo_name, created_at, updated_at)
             VALUES (${input.patchId}, ${companyId}, ${input.ownerUserId}, ${scope},
-                    ${input.title}, ${name}, ${input.versionId}, ${input.repoOrg}, ${input.repoName}, ${expiresAt})
+                    ${input.title}, ${name}, ${input.versionId}, ${input.repoOrg}, ${input.repoName}, ${stamp(millis)}, ${stamp(millis)})
             ON CONFLICT (id) DO NOTHING
             RETURNING id`;
             if (created.length === 0) return yield* new PatchConflict({ patchId: input.patchId });
           }
           if (input.intent === "create" || rename) {
+            if (reservedName(name)) return yield* new ReservedName({ name });
             const baseName = name;
             let ordinal = 1;
             while (Option.isNone(yield* claimName({ companyId, patchId: input.patchId, name }))) {
@@ -1136,8 +1370,7 @@ export const make = Effect.gen(function* () {
             ? new Map(
                 (yield* declaringPatchRows({
                   patchId: input.patchId,
-                  companyId,
-                  nowMillis: yield* Clock.currentTimeMillis
+                  companyId
                 })).map((row) => [row.table, row.count])
               )
             : new Map<string, number>();
@@ -1155,6 +1388,8 @@ export const make = Effect.gen(function* () {
             title: input.title,
             scope,
             name,
+            description,
+            descriptionUpdatedAt,
             address: publicUrl,
             publicUrl,
             tier: input.manifest.tier,
@@ -1180,7 +1415,7 @@ export const make = Effect.gen(function* () {
             created_by_machine_token_id, source_ip, user_agent, cli_version,
             git_branch, git_commit_sha, original_filename,
             owner_user_id, tier, release, manifest_version, wire_version, schema_revision,
-            manifest, publish_key, payload_digest, publish_response, publish_status
+            manifest, publish_key, payload_digest, publish_response, publish_status, created_at
           ) VALUES (
             ${input.versionId}, ${input.patchId}, ${versionNumber}, ${input.objectKey},
             ${input.contentHash}, ${input.fileSize}, ${input.machineTokenId}, ${input.sourceIp},
@@ -1188,7 +1423,7 @@ export const make = Effect.gen(function* () {
             ${input.filename}, ${input.ownerUserId}, ${input.manifest.tier}, ${input.manifest.release},
             ${input.manifest.manifestVersion}, ${input.wireVersion}, ${resources.schemaRevision},
             ${encodeManifest(input.manifest)}::jsonb, ${input.publishKey}, ${input.payloadDigest},
-            ${responseJson}::jsonb, ${status}
+            ${responseJson}::jsonb, ${status}, ${stamp(millis)}
           ) ON CONFLICT (owner_user_id, publish_key) DO NOTHING
           RETURNING publish_response::text AS "responseBody"`.pipe(
             Effect.flatMap(decodeResponseBodies)
@@ -1204,7 +1439,11 @@ export const make = Effect.gen(function* () {
               name = ${name},
               repo_org = COALESCE(${input.repoOrg}, repo_org),
               repo_name = COALESCE(${input.repoName}, repo_name),
-              updated_at = now(), expires_at = ${expiresAt}
+              description = ${description},
+              description_updated_at = ${descriptionUpdatedAt}::timestamptz,
+              description_updated_by = ${descriptionUpdatedBy},
+              updated_at = ${stamp(millis)}, last_changed_at = ${stamp(millis)},
+              last_changed_by = ${input.ownerUserId}
           WHERE id = ${input.patchId}`;
 
           return { ...response, status, responseBody: inserted.responseBody } satisfies Recorded;
@@ -1213,37 +1452,143 @@ export const make = Effect.gen(function* () {
       .pipe(Effect.timeout("60 seconds"), Effect.catchTags({ TimeoutError: Effect.die }))
   );
 
-  const setScopeRow = SqlSchema.findOneOption({
-    Request: Schema.Struct({
-      patchId: Schema.String,
-      ownerUserId: Schema.String,
-      scope: SharingScope,
-      nowMillis: Schema.Number
-    }),
-    Result: PatchTargetRow,
-    execute: ({ patchId, ownerUserId, scope, nowMillis }) => sql`
-      UPDATE patches
-      SET scope = ${scope}, updated_at = now()
-      FROM companies
-      WHERE ${writable(patchId, ownerUserId, stamp(nowMillis))}
-        AND companies.id = patches.company_id
-      RETURNING patches.scope, patches.name, patches.company_id AS "companyId",
-        companies.handle AS "companyHandle"`
+  const changedPatch = SqlSchema.findOne({
+    Request: Schema.String,
+    Result: PatchRow,
+    execute: (patchId) => sql`SELECT ${sql.unsafe(PATCH_COLUMNS)}
+      FROM patches JOIN companies ON companies.id = patches.company_id
+      WHERE patches.id = ${patchId}`
   });
+  const afterChange = Effect.fn("Patches.afterChange")((patchId: string) =>
+    changedPatch(patchId).pipe(
+      Effect.map(toPatch),
+      Effect.catchTags({ ...dieOnSchemaError, NoSuchElementError: Effect.die })
+    )
+  );
   const setScope = Effect.fn("Patches.setScope")(function* (
     patchId: string,
-    ownerUserId: string,
+    actor: Actor,
     scope: Patch["scope"]
   ) {
-    const row = yield* setScopeRow({
-      patchId,
-      ownerUserId,
-      scope,
-      nowMillis: yield* Clock.currentTimeMillis
-    });
-    if (Option.isNone(row)) return yield* new PatchUnavailable({ patchId });
-    return { scope: row.value.scope, name: row.value.name, companyHandle: row.value.companyHandle };
-  }, Effect.catchTags(dieOnSchemaError));
+    const row = yield* manageable(patchId, actor);
+    if (stateOf(row) !== "live") return yield* new WrongState({ state: stateOf(row) });
+    const at = yield* now;
+    yield* sql`UPDATE patches SET scope = ${scope}, updated_at = ${at},
+        last_changed_at = ${at}, last_changed_by = ${actor.userId} WHERE id = ${patchId}`;
+    return { scope, name: row.name, companyHandle: row.companyHandle };
+  }, sql.withTransaction);
+
+  const retire = Effect.fn("Patches.retire")(function* (
+    patchId: string,
+    actor: Actor,
+    force?: boolean
+  ) {
+    yield* lockDependencies(actor.userId);
+    const row = yield* manageable(patchId, actor);
+    if (stateOf(row) !== "live") return yield* new WrongState({ state: stateOf(row) });
+    yield* refuseDependants(patchId, row.companyId, force);
+    const at = yield* now;
+    yield* sql`UPDATE patches SET retired_at = ${at}, retired_by = ${actor.userId},
+        updated_at = ${at}, last_changed_at = ${at}, last_changed_by = ${actor.userId}
+        WHERE id = ${patchId}`;
+    return yield* afterChange(patchId);
+  }, sql.withTransaction);
+  const delete_ = Effect.fn("Patches.delete")(function* (
+    patchId: string,
+    actor: Actor,
+    force?: boolean
+  ) {
+    yield* lockDependencies(actor.userId);
+    const row = yield* manageable(patchId, actor);
+    const state = stateOf(row);
+    if (state === "deleted") return yield* new WrongState({ state });
+    if (state === "live") yield* refuseDependants(patchId, row.companyId, force);
+    const at = yield* now;
+    yield* sql`UPDATE patches SET deleted_at = ${at}, deleted_by = ${actor.userId},
+        updated_at = ${at}, last_changed_at = ${at}, last_changed_by = ${actor.userId}
+        WHERE id = ${patchId}`;
+    return yield* afterChange(patchId);
+  }, sql.withTransaction);
+  const restore = Effect.fn("Patches.restore")(function* (
+    patchId: string,
+    actor: Actor,
+    force?: boolean
+  ) {
+    yield* lockDependencies(actor.userId);
+    const row = yield* manageable(patchId, actor);
+    if (stateOf(row) === "live") return yield* new WrongState({ state: "live" });
+    const millis = yield* Clock.currentTimeMillis;
+    const purgeMillis =
+      row.deletedAt === null ? null : row.deletedAt.getTime() + Duration.toMillis(RECOVERY_WINDOW);
+    if (purgeMillis !== null && millis >= purgeMillis)
+      return yield* new PatchDeleted({
+        purgeAt: DateTime.formatIso(DateTime.makeUnsafe(purgeMillis))
+      });
+    if (!force) {
+      const rows = yield* offSources({ patchId, companyId: row.companyId }).pipe(
+        Effect.catchTags(dieOnSchemaError)
+      );
+      if (rows.length > 0)
+        return yield* new SourcesOff({
+          sources: rows.map(({ name, ...source }) => (name === null ? source : { ...source, name }))
+        });
+    }
+    const at = stamp(millis);
+    yield* sql`UPDATE patches SET retired_at = NULL, retired_by = NULL,
+        deleted_at = NULL, deleted_by = NULL, updated_at = ${at},
+        last_changed_at = ${at}, last_changed_by = ${actor.userId} WHERE id = ${patchId}`;
+    return yield* afterChange(patchId);
+  }, sql.withTransaction);
+  const rollback = Effect.fn("Patches.rollback")(function* (
+    patchId: string,
+    actor: Actor,
+    versionNumber: number
+  ) {
+    const row = yield* manageable(patchId, actor);
+    if (stateOf(row) !== "live") return yield* new WrongState({ state: stateOf(row) });
+    const version = yield* findVersionByNumber({ patchId, versionNumber }).pipe(
+      Effect.catchTags(dieOnSchemaError)
+    );
+    if (Option.isNone(version)) return yield* new VersionUnavailable({ versionNumber });
+    const at = yield* now;
+    yield* sql`UPDATE patches SET current_version_id = ${version.value.id}, updated_at = ${at},
+        last_changed_at = ${at}, last_changed_by = ${actor.userId} WHERE id = ${patchId}`;
+    return { patch: yield* afterChange(patchId), currentVersion: versionNumber };
+  }, sql.withTransaction);
+  const reassign = Effect.fn("Patches.reassign")(function* (
+    patchId: string,
+    actor: Actor,
+    newOwnerUserId: string
+  ) {
+    const row = yield* manageable(patchId, actor);
+    if (!actor.admin) return yield* new AdminRequired({ userId: actor.userId });
+    const target = yield* sql`SELECT id FROM users
+        WHERE id = ${newOwnerUserId} AND company_id = ${row.companyId} AND deactivated_at IS NULL
+        FOR SHARE`;
+    if (target.length === 0) return yield* new InvalidOwner({ userId: newOwnerUserId });
+    if (row.ownerUserId === newOwnerUserId) return toPatch(row);
+    const at = yield* now;
+    yield* sql`UPDATE patches SET owner_user_id = ${newOwnerUserId},
+        reassigned_at = ${at}, reassigned_by = ${actor.userId}, updated_at = ${at},
+        last_changed_at = ${at}, last_changed_by = ${actor.userId} WHERE id = ${patchId}`;
+    return yield* afterChange(patchId);
+  }, sql.withTransaction);
+  const setDescription = Effect.fn("Patches.setDescription")(function* (
+    patchId: string,
+    actor: Actor,
+    description: string
+  ) {
+    const row = yield* manageable(patchId, actor);
+    if (stateOf(row) === "deleted") return yield* new WrongState({ state: "deleted" });
+    const normalized = yield* normalizeDescription(description);
+    if (row.description === normalized) return toPatch(row);
+    const at = yield* now;
+    yield* sql`UPDATE patches SET description = ${normalized},
+        description_updated_at = ${at}, description_updated_by = ${actor.userId},
+        updated_at = ${at}, last_changed_at = ${at}, last_changed_by = ${actor.userId}
+        WHERE id = ${patchId}`;
+    return yield* afterChange(patchId);
+  }, sql.withTransaction);
 
   const resolveName = Effect.fn("Patches.resolveName")(function* (
     companyHandle: string,
@@ -1251,81 +1596,67 @@ export const make = Effect.gen(function* () {
   ) {
     return yield* resolveNameRow({
       companyHandle,
-      name,
-      nowMillis: yield* Clock.currentTimeMillis
+      name
     });
   }, Effect.catchTags(dieOnSchemaError));
 
-  // One predicate says both halves of the visit rule: `expires_at` below the
-  // topped-up anchor is exactly "less than the visit-extension window
-  // remains", and it is also exactly "this move does not shorten the clock".
-  // The not-expired term keeps a visit from reviving an expired patch.
   const recordVisit = Effect.fn("Patches.recordVisit")(function* (patchId: string) {
-    const millis = yield* Clock.currentTimeMillis;
-    const at = stamp(millis);
-    const toppedUp = stamp(millis + Duration.toMillis(VISIT_EXTENSION_WINDOW));
-    yield* sql`
-      UPDATE patches
-      SET expires_at = ${toppedUp}
-      WHERE patches.id = ${patchId}
-        AND patches.deleted_at IS NULL
-        AND patches.disabled_at IS NULL
-        AND ${notExpired(at)}
-        AND patches.expires_at < ${toppedUp}`;
+    yield* sql`UPDATE patches SET visit_count = visit_count + 1
+      WHERE patches.id = ${patchId} AND ${serving}`;
   });
 
-  const listExpired = Effect.fn("Patches.listExpired")(function* (limit: number) {
+  const listDeleted = Effect.fn("Patches.listDeleted")(function* (limit: number) {
     if (limit <= 0) return [];
-    const nowMillis = yield* Clock.currentTimeMillis;
-    const rows = yield* listExpiredRows({ nowMillis, limit }).pipe(
-      Effect.catchTags(dieOnSchemaError)
-    );
+    const rows = yield* listDeletedRows({ nowMillis: yield* Clock.currentTimeMillis, limit });
     return rows.map((row) => row.id);
+  }, Effect.catchTags(dieOnSchemaError));
+
+  const purgeTarget = SqlSchema.findOneOption({
+    Request: Schema.String,
+    Result: Schema.Struct({ companyId: Schema.String, deletedAt: NullableStamp }),
+    execute: (patchId) => sql`SELECT company_id AS "companyId", deleted_at AS "deletedAt"
+      FROM patches WHERE id = ${patchId} FOR UPDATE`
   });
-
-  const deleteExpired = Effect.fn("Patches.deleteExpired")((patchId: string) =>
-    sql.withTransaction(
-      Effect.gen(function* () {
-        // Re-check under a row lock so a patch can only be taken once and
-        // only while its retention clock is expired.
-        const target = yield* sql`
-          SELECT id FROM patches
-          WHERE patches.id = ${patchId} AND NOT ${notExpired(yield* now)}
-          FOR UPDATE`;
-        if (target.length === 0) return Option.none();
-
+  const purgeDeleted = Effect.fn("Patches.purgeDeleted")(
+    function* (patchId: string) {
+      const target = yield* purgeTarget(patchId);
+      if (Option.isNone(target) || target.value.deletedAt === null) return Option.none();
+      const millis = yield* Clock.currentTimeMillis;
+      if (target.value.deletedAt.getTime() + Duration.toMillis(RECOVERY_WINDOW) > millis)
+        return Option.none();
+      const companyId = target.value.companyId;
+      const removeRows = Effect.gen(function* () {
         const keys = yield* objectKeysOf(patchId);
-        yield* sql`
-          INSERT INTO pending_patch_objects (object_key, expires_at, claimed)
-          SELECT object_key, ${yield* now}, true FROM patch_versions
-          WHERE patch_id = ${patchId}`;
-        // Foreign keys decide the order: versions name the patch, so the patch goes last.
+        yield* sql`INSERT INTO pending_patch_objects (object_key, expires_at, claimed)
+          SELECT object_key, ${stamp(millis)}, true FROM patch_versions WHERE patch_id = ${patchId}`;
         yield* sql`DELETE FROM patch_versions WHERE patch_id = ${patchId}`;
-        yield* sql`DELETE FROM patches WHERE id = ${patchId}`;
-        return Option.some(keys.map((row) => row.objectKey));
-      }).pipe(Effect.catchTags(dieOnSchemaError))
-    )
-  );
-
-  const delete_ = Effect.fn("Patches.delete")((patchId: string, ownerUserId: string) =>
-    sql.withTransaction(
-      Effect.gen(function* () {
-        const rows = yield* sql`
-          UPDATE patches
-          SET deleted_at = now(), updated_at = now()
-          WHERE id = ${patchId}
-            AND owner_user_id = ${ownerUserId}
-            AND deleted_at IS NULL
-          RETURNING id`;
-        if (rows.length === 0) return false;
         yield* sql`DELETE FROM patch_names WHERE patch_id = ${patchId}`;
-        return true;
-      })
-    )
+        yield* sql`DELETE FROM patches WHERE id = ${patchId}`;
+        return Option.some({ companyId, objectKeys: keys.map((row) => row.objectKey) });
+      });
+      // No platform row disappears while a publisher holds its company inventory.
+      // An absent placement means this patch never provisioned a namespace.
+      return yield* databases
+        .withCompany(companyId)(
+          Effect.gen(function* () {
+            if (!(yield* inventoryStore.exists(patchId))) return yield* removeRows;
+            return yield* databases.withPatchLock(patchId)(removeRows);
+          })
+        )
+        .pipe(
+          Effect.catchTags({
+            CompanyDatabaseNotReady: (error) =>
+              error.status === null ? removeRows : Effect.fail(error)
+          })
+        );
+    },
+    sql.withTransaction,
+    Effect.catchTags(dieOnSchemaError)
   );
 
   return Patches.of({
-    countLive,
+    countQuotaPatches,
+    authorizePublish,
     replay,
     preflight,
     inventory,
@@ -1339,8 +1670,13 @@ export const make = Effect.gen(function* () {
     resolveName,
     find,
     recordVisit,
-    listExpired,
-    deleteExpired,
+    retire,
+    restore,
+    rollback,
+    reassign,
+    setDescription,
+    listDeleted,
+    purgeDeleted,
     delete: delete_
   });
 });

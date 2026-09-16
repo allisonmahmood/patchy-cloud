@@ -144,8 +144,8 @@ it.layer(Testing.layer())("CompanyDatabases", (it) => {
         );
         for (let index = 0; index < gates.length; index++) {
           const patchId = `platform_saturation_${index}`;
-          yield* platform`INSERT INTO patches (id, company_id, owner_user_id, title, name, expires_at)
-          VALUES (${patchId}, 'cmp_dev', 'usr_dev', 'Pool saturation', ${`pool-${index}`}, '2040-01-01')`;
+          yield* platform`INSERT INTO patches (id, company_id, owner_user_id, title, name)
+          VALUES (${patchId}, 'cmp_dev', 'usr_dev', 'Pool saturation', ${`pool-${index}`})`;
         }
         const fibers = yield* Effect.forEach(gates, (gate, index) =>
           platform

@@ -126,23 +126,20 @@ const bindingFor = Effect.fn("SdkConcurrency.bindingFor")(function* (
 const backendPid = (sql: SqlClient.SqlClient) =>
   sql<{ pid: number }>`SELECT pg_backend_pid() AS pid`.pipe(Effect.map((rows) => rows[0]!.pid));
 
-// Observe actual lock waiters, rather than assuming that fork order caused a race.
-const blockedBy = Effect.fn("SdkConcurrency.blockedBy")(function* (
-  blocker: number,
-  query: string,
-  count = 1
-) {
+// Observe actual lock waiters by backend identity; pg_stat_activity truncates query text.
+const blockedBy = Effect.fn("SdkConcurrency.blockedBy")(function* (blocker: number, count = 1) {
   const observer = yield* SqlClient.SqlClient;
   const rows = yield* observer<{ pid: number }>`
     SELECT pid FROM pg_stat_activity
-    WHERE ${blocker} = ANY(pg_blocking_pids(pid)) AND wait_event_type = 'Lock'
-      AND position(${query} IN query) > 0`.pipe(
+    WHERE ${blocker} = ANY(pg_blocking_pids(pid)) AND wait_event_type = 'Lock'`.pipe(
     Effect.repeat({ until: (rows) => rows.length >= count }),
     Effect.timeout("10 seconds"),
     TestClock.withLive
   );
-  assert.strictEqual(new Set(rows.map((row) => row.pid)).size, count);
-  assert.isFalse(rows.some((row) => row.pid === blocker));
+  const pids = rows.map((row) => row.pid);
+  assert.strictEqual(new Set(pids).size, count);
+  assert.notInclude(pids, blocker);
+  return pids;
 });
 
 const gate = Effect.fn("SdkConcurrency.gate")(function* () {
@@ -171,6 +168,31 @@ const stagedContent = Effect.fn("SdkConcurrency.stagedContent")(function* (
       })
     )
   );
+});
+
+// Capture record's backend inside its own transaction, before either dependency or row locks.
+const observedRecord = Effect.fn("SdkConcurrency.observedRecord")(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const patches = yield* Patches.Patches;
+  const session = yield* Deferred.make<number>();
+  const withTransaction: SqlClient.SqlClient["withTransaction"] = (operation) =>
+    sql.withTransaction(
+      Effect.gen(function* () {
+        yield* Deferred.succeed(session, yield* backendPid(sql));
+        return yield* operation;
+      })
+    );
+  const observedSql = new Proxy(sql, {
+    get: (target, property, receiver) =>
+      property === "withTransaction" ? withTransaction : Reflect.get(target, property, receiver)
+  });
+  const observed = yield* Patches.make.pipe(
+    Effect.provideService(SqlClient.SqlClient, observedSql)
+  );
+  return {
+    session,
+    patches: Patches.Patches.of({ ...patches, record: observed.record })
+  };
 });
 
 // Pause after real DDL/inventory writes, with both publication transactions still open.
@@ -229,7 +251,7 @@ it.layer(services, { timeout: "60 seconds" })("SDK orchestration / real PostgreS
             publish({ ...definition, name }, `<p>${name}</p>`).pipe(Effect.forkScoped)
           )
         );
-        yield* blockedBy(pid, "INSERT INTO company_databases", 2);
+        yield* blockedBy(pid, 2);
         yield* Deferred.succeed(held.release, undefined);
         yield* Fiber.join(blocker);
         const results = yield* Effect.forEach(publications, Fiber.join);
@@ -315,8 +337,9 @@ it.layer(services, { timeout: "60 seconds" })("SDK orchestration / real PostgreS
         const firstStored = yield* gate();
         const secondStored = yield* gate();
         const provisioning = yield* heldProvision();
+        const secondRecord = yield* observedRecord();
         const firstContent = yield* stagedContent(firstStored.pause, provisioning.patches);
-        const secondContent = yield* stagedContent(secondStored.pause, patches);
+        const secondContent = yield* stagedContent(secondStored.pause, secondRecord.patches);
         const first = yield* publish(firstManifest, "<p>label bundle</p>", initial.patchId).pipe(
           Effect.provideService(Content.Content, firstContent),
           Effect.forkScoped
@@ -342,8 +365,10 @@ it.layer(services, { timeout: "60 seconds" })("SDK orchestration / real PostgreS
             Effect.flatMap(decodeRow),
             Effect.forkScoped
           );
-        yield* blockedBy(pids.platform, "FOR UPDATE OF patches");
-        yield* blockedBy(pids.company, "INSERT INTO");
+        assert.deepStrictEqual(yield* blockedBy(pids.platform), [
+          yield* Deferred.await(secondRecord.session)
+        ]);
+        yield* blockedBy(pids.company);
         const before = Option.getOrThrow(yield* patches.find(initial.patchId));
         assert.strictEqual(before.version.id, initial.versionId);
         assert.strictEqual(yield* content.read(before.version), "<p>original bundle</p>");
@@ -436,7 +461,7 @@ it.layer(services, { timeout: "60 seconds" })("SDK orchestration / real PostgreS
             ]
           })
           .pipe(Effect.provideService(Binding.Binding, oldBinding), Effect.flip, Effect.forkScoped);
-        yield* blockedBy(winnerPid, "INSERT INTO");
+        yield* blockedBy(winnerPid);
         yield* Deferred.succeed(batchHeld.release, undefined);
         yield* Fiber.join(winningBatch);
         assert.strictEqual((yield* Fiber.join(losingBatch)).code, "unique_violation");
@@ -497,7 +522,7 @@ it.layer(services, { timeout: "60 seconds" })("SDK orchestration / real PostgreS
             )
             .pipe(Effect.provideService(Binding.Binding, candidate.binding), Effect.forkScoped)
         );
-        yield* blockedBy(fileLockPid, "pg_advisory_xact_lock", 2);
+        yield* blockedBy(fileLockPid, 2);
         yield* Deferred.succeed(fileHeld.release, undefined);
         yield* Fiber.join(fileBlocker);
         yield* Effect.forEach(puts, Fiber.join);
@@ -560,10 +585,12 @@ it.layer(services, { timeout: "60 seconds" })("SDK orchestration / real PostgreS
           original.patchId
         ).pipe(Effect.provideService(Content.Content, heldContent), Effect.forkScoped);
         const pids = yield* Deferred.await(held.sessions);
+        const rollbackPid = yield* Deferred.make<number>();
         // There is no rollback service yet; this is the existing locked pointer-change seam.
         const rollback = yield* platform
           .withTransaction(
             Effect.gen(function* () {
+              yield* Deferred.succeed(rollbackPid, yield* backendPid(platform));
               const [current] = yield* platform<{ version: string }>`
           SELECT current_version_id AS version FROM patches WHERE id = ${original.patchId} FOR UPDATE`;
               yield* platform`UPDATE patches SET current_version_id = ${original.versionId} WHERE id = ${original.patchId}`;
@@ -571,7 +598,9 @@ it.layer(services, { timeout: "60 seconds" })("SDK orchestration / real PostgreS
             })
           )
           .pipe(Effect.forkScoped);
-        yield* blockedBy(pids.platform, "FOR UPDATE");
+        assert.deepStrictEqual(yield* blockedBy(pids.platform), [
+          yield* Deferred.await(rollbackPid)
+        ]);
         yield* Deferred.succeed(held.release, undefined);
         const published = yield* Fiber.join(publication);
         assert.strictEqual(yield* Fiber.join(rollback), published.versionId);
@@ -603,7 +632,8 @@ it.layer(services, { timeout: "60 seconds" })("SDK orchestration / real PostgreS
 
         // Preflight saw company scope. A later row-locked change must survive record's whole-row update.
         const stored = yield* gate();
-        const staged = yield* stagedContent(stored.pause, patches);
+        const nextRecord = yield* observedRecord();
+        const staged = yield* stagedContent(stored.pause, nextRecord.patches);
         const next = yield* publish(
           manifest,
           "<p>after locked scope change</p>",
@@ -616,7 +646,11 @@ it.layer(services, { timeout: "60 seconds" })("SDK orchestration / real PostgreS
           .withTransaction(
             Effect.gen(function* () {
               yield* platform`SELECT id FROM patches WHERE id = ${original.patchId} FOR UPDATE`;
-              yield* patches.setScope(original.patchId, uploader.user.id, "public");
+              yield* patches.setScope(
+                original.patchId,
+                { userId: uploader.user.id, admin: false },
+                "public"
+              );
               yield* Deferred.succeed(scopePid, yield* backendPid(platform));
               yield* scopeHeld.pause;
             })
@@ -624,7 +658,7 @@ it.layer(services, { timeout: "60 seconds" })("SDK orchestration / real PostgreS
           .pipe(Effect.forkScoped);
         const pid = yield* Deferred.await(scopePid);
         yield* Deferred.succeed(stored.release, undefined);
-        yield* blockedBy(pid, "FOR UPDATE OF patches");
+        assert.deepStrictEqual(yield* blockedBy(pid), [yield* Deferred.await(nextRecord.session)]);
         yield* Deferred.succeed(scopeHeld.release, undefined);
         yield* Fiber.join(scopeChange);
         const nextResult = yield* Fiber.join(next);

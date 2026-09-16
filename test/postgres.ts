@@ -77,10 +77,10 @@ export default async function setup(project: TestProject): Promise<() => Promise
       migrate({
         ...companiesMigrations,
         ...authMigrations,
-        ...patchesMigrations,
         ...companyDatabaseMigrations,
         ...runtimeMigrations,
-        ...integrationsMigrations
+        ...integrationsMigrations,
+        ...patchesMigrations
       }).pipe(Effect.provide(layerFromUrl(Redacted.make(templateUrl))))
     );
     // The same rows `pnpm dev` seeds, so a test and the dev instance agree

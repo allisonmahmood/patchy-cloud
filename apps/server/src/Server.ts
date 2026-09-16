@@ -2,7 +2,7 @@
  * The server as one layer: the capability services over a migrated
  * database, the `/api/*` contract with bearer middleware on protected
  * endpoints, the pages, the middleware every request passes through,
- * and the expiry sweep forked in the same scope. Wiring only — every rule
+ * and the deletion sweep forked in the same scope. Wiring only; every rule
  * lives in the package that owns it.
  *
  * Needs a `SqlClient` and an `HttpServer` from whoever launches it: `start.ts`
@@ -49,7 +49,7 @@ import { Limits } from "@patchy/limits";
 import {
   Content,
   LoadedVersions,
-  ExpirySweep,
+  DeletionSweep,
   migrations as patchesMigrations,
   Patches,
   PatchesApi
@@ -86,10 +86,10 @@ const migrated = Layer.effectDiscard(
   migrate({
     ...companiesMigrations,
     ...authMigrations,
-    ...patchesMigrations,
     ...companyDatabaseMigrations,
     ...runtimeMigrations,
-    ...integrationsMigrations
+    ...integrationsMigrations,
+    ...patchesMigrations
   })
 );
 
@@ -100,7 +100,7 @@ const migrated = Layer.effectDiscard(
 const services = Layer.mergeAll(
   Artifact.layer,
   Content.layer,
-  ExpirySweep.layer,
+  DeletionSweep.layer,
   DeviceLogins.layer,
   OrphanSweep.layer,
   Layer.unwrap(
@@ -138,15 +138,15 @@ const services = Layer.mergeAll(
 
 /**
  * Each sweep runs once on the way up and then hourly in its own scoped fiber.
- * A slow or defective orphan pass must not stop expiry. Contain pass failures
+ * A slow or defective orphan pass must not stop deletion. Contain pass failures
  * inside each repeat so the next tick retries, but never swallow shutdown.
  */
 export const sweeper = Layer.effectDiscard(
   Effect.gen(function* () {
-    const expiry = yield* ExpirySweep.ExpirySweep;
+    const deletion = yield* DeletionSweep.DeletionSweep;
     const orphan = yield* OrphanSweep.OrphanSweep;
     for (const [name, sweep] of [
-      ["expiry", Effect.asVoid(expiry.sweep)],
+      ["deletion", Effect.asVoid(deletion.sweep)],
       ["orphan", Effect.asVoid(orphan.sweep)]
     ] as const) {
       yield* sweep.pipe(
