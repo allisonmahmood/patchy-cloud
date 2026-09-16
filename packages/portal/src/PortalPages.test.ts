@@ -577,6 +577,8 @@ it.layer(layer)("portal pages on a socket", (it) => {
           description: "The current description"
         });
         const before = yield* readPatch(workspace.owner, patch.patchId);
+        const service = yield* Patches.Patches;
+        const inventory = yield* service.inventory(patch.patchId, workspace.owner.id);
         const response = yield* post(`${cardPath(patch.name)}/rollback?all=1`, workspace.owner, {
           versionNumber: "1",
           expectedCurrentVersionId: before.patch.currentVersionId ?? ""
@@ -588,7 +590,10 @@ it.layer(layer)("portal pages on a socket", (it) => {
         assert.strictEqual(saved.patch.currentVersionId, patch.versionId);
         assert.strictEqual(saved.patch.description, before.patch.description);
         assert.strictEqual(saved.patch.descriptionUpdatedAt, before.patch.descriptionUpdatedAt);
-        assert.deepStrictEqual(saved.inventory, before.inventory);
+        assert.deepStrictEqual(
+          yield* service.inventory(patch.patchId, workspace.owner.id),
+          inventory
+        );
       })
   );
 
@@ -1489,15 +1494,15 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
       const patch = yield* publish(workspace.owner, "preview-without-locks");
       const sql = yield* SqlClient.SqlClient;
       const users = yield* Users.Users;
+      const patches = yield* Patches.Patches;
       for (const action of ["deactivate", "reactivate"] as const) {
         if (action === "reactivate") {
           yield* (yield* Patches.Patches).retire(patch.patchId, actor(workspace.admin));
           yield* users.deactivate({ companyId: workspace.id, userId: workspace.owner.id });
         }
         const before = yield* readUser(workspace.owner);
-        yield* sql.withTransaction(
+        yield* patches.withDependencyLock(workspace.admin.id)(
           Effect.gen(function* () {
-            yield* sql`SELECT pg_advisory_xact_lock(hashtextextended('patchy:dependencies:' || ${workspace.id}, 0))`;
             yield* sql`SELECT id FROM patches WHERE company_id = ${workspace.id} FOR UPDATE`;
             yield* sql`SELECT id FROM companies WHERE id = ${workspace.id} FOR UPDATE`;
             const path = userPath(workspace.owner, action);
@@ -2039,46 +2044,38 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
 });
 
 it.layer(services)("user lifecycle transaction failure on a socket", (it) => {
-  it.effect("rolls back the user and first retirement when the second retirement fails", () =>
+  it.effect("rolls back the selected retirements and user when deactivation fails", () =>
     Effect.gen(function* () {
       const workspace = yield* company();
       const first = yield* publish(workspace.owner, "atomic-first");
       const second = yield* publish(workspace.owner, "atomic-second");
-      const patches = yield* Patches.Patches;
+      const users = yield* Users.Users;
       const beforeUser = yield* readUser(workspace.owner);
       const beforeFirst = yield* readPatch(workspace.admin, first.patchId);
       const beforeSecond = yield* readPatch(workspace.admin, second.patchId);
-      let firstRetired: string | undefined;
-      let reachedSecondRetirement = false;
-      const failSecondRetire = Layer.succeed(Patches.Patches, {
-        ...patches,
-        retire: Effect.fn("PortalPagesTest.failSecondRetire")(function* (
-          patchId: string,
-          acting: Patches.Actor,
-          force?: boolean
-        ) {
-          if (firstRetired !== undefined) {
-            const rows = yield* patches.read({
-              companyId: workspace.id,
-              userId: workspace.admin.id,
-              canOpen: () => true,
-              state: "all",
-              patchRef: firstRetired
-            });
-            assert.strictEqual(rows[0]?.patch.state, "retired");
-            reachedSecondRetirement = true;
-            return yield* new Patches.PatchUnavailable({ patchId });
-          }
-          const retired = yield* patches.retire(patchId, acting, force);
-          firstRetired = patchId;
-          return retired;
+      let reachedDeactivation = false;
+      const failDeactivation = Layer.succeed(Users.Users, {
+        ...users,
+        deactivate: Effect.fn("PortalPagesTest.failDeactivation")(function* (ref: Users.UserRef) {
+          yield* users.deactivate(ref);
+          assert.isNotNull((yield* readUser(workspace.owner)).deactivatedAt);
+          assert.strictEqual(
+            (yield* readPatch(workspace.admin, first.patchId)).patch.state,
+            "retired"
+          );
+          assert.strictEqual(
+            (yield* readPatch(workspace.admin, second.patchId)).patch.state,
+            "retired"
+          );
+          reachedDeactivation = true;
+          return yield* new Users.UserNotFound(ref);
         })
       });
       const failingServer = HttpRouter.serve(routes, {
         disableLogger: true,
         disableListenLog: true
       }).pipe(
-        Layer.provide(failSecondRetire),
+        Layer.provide(failDeactivation),
         Layer.provideMerge(NodeHttpServer.layerTest),
         Layer.provideMerge(Layer.succeed(FetchHttpClient.RequestInit)({ redirect: "manual" }))
       );
@@ -2091,7 +2088,7 @@ it.layer(services)("user lifecycle transaction failure on a socket", (it) => {
         return response.status;
       }).pipe(Effect.provide(failingServer));
       assert.strictEqual(status, 404);
-      assert.isTrue(reachedSecondRetirement);
+      assert.isTrue(reachedDeactivation);
       assert.deepStrictEqual(yield* readUser(workspace.owner), beforeUser);
       assert.deepStrictEqual(yield* readPatch(workspace.admin, first.patchId), beforeFirst);
       assert.deepStrictEqual(yield* readPatch(workspace.admin, second.patchId), beforeSecond);

@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import * as UrlParams from "effect/unstable/http/UrlParams";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { pageResponse, RequireSession, Session } from "@patchy/auth";
 import { Users } from "@patchy/companies";
 import { escapeAttribute, escapeHtml } from "@patchy/core";
@@ -97,7 +98,7 @@ const renderConfirm = (input: {
   return `<article class="portal-subpage"><p>${back}</p><h1 class="page-heading">${verb(action)} ${escapeHtml(user.name)}?</h1>${refusal(input.message)}<form class="confirmation-form" method="post" action="/company/users/${encodeURIComponent(user.id)}/${action}"><p class="confirmation-consequence">${consequence(user, action)}</p><p>${summary}</p>${hidden("choice", "confirm")}${selected.map((row) => hidden("patch", row.patch.id)).join("")}${breaks ? `${action === "deactivate" ? "<p>These live patches outside the selection will lose access on their next read, until the sources are restored.</p>" : ""}<ul class="confirmation-list">${damage}</ul>` : '<p class="note note-ok">Nothing breaks</p>'}${acknowledgement}<div class="confirmation-actions"><button class="btn ${action === "deactivate" ? "btn-danger" : "btn-primary"}" type="submit">${verb(action)} ${escapeHtml(user.name)}${selected.length === 0 ? "" : action === "deactivate" ? " and retire selected" : " and restore selected"}</button><a class="btn btn-quiet" href="/company">Cancel</a></div></form></article>`;
 };
 
-/** Previews take no mutation locks; a commit rechecks the selection under Patches' locks. */
+/** Previews take no mutation locks; commits change patches before the user in one transaction. */
 export const handle = Effect.fn("UserLifecyclePage.handle")(function* (id: string, action: Action) {
   const viewer = yield* RequireSession.Viewer;
   const session = yield* Session.Session;
@@ -105,6 +106,7 @@ export const handle = Effect.fn("UserLifecyclePage.handle")(function* (id: strin
   const users = yield* Users.Users;
   const patches = yield* Patches.Patches;
   const canOpen = yield* Patches.Openability;
+  const sql = yield* SqlClient.SqlClient;
   const access = {
     companyId: viewer.company.id,
     userId: viewer.user.id,
@@ -215,22 +217,25 @@ export const handle = Effect.fn("UserLifecyclePage.handle")(function* (id: strin
       !Option.contains(UrlParams.getFirst(fields, "ack"), "1")
     )
       return confirm("Acknowledge what breaks before confirming. Nothing was done.", 409);
-    if (action === "deactivate") yield* users.deactivate(ref);
-    else yield* users.reactivate(ref);
     const actor = { userId: viewer.user.id, admin: true };
-    for (const row of selected) {
+    // Reassign takes the patch row before the user row; keep the same order here.
+    for (const row of selected.sort((a, b) => a.patch.id.localeCompare(b.patch.id))) {
       if (action === "deactivate") yield* patches.retire(row.patch.id, actor, true);
       else yield* patches.restore(row.patch.id, actor, true, "retired");
     }
+    if (action === "deactivate") yield* users.deactivate(ref);
+    else yield* users.reactivate(ref);
     return HttpServerResponse.redirect("/company", {
       status: 303,
       headers: { "cache-control": "private, no-store" }
     });
   });
   return yield* (
-    choice === "keep" || choice === "confirm"
-      ? patches.withCompanyLifecycleLock(viewer.user.id)(run)
-      : run
+    choice === "confirm"
+      ? patches.withDependencyLock(viewer.user.id)(run)
+      : choice === "keep"
+        ? sql.withTransaction(run)
+        : run
   ).pipe(
     Effect.catchTags({
       UserNotFound: (error) => Effect.succeed(refuse(error.message, 404)),
