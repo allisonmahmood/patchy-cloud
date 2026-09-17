@@ -516,31 +516,40 @@ user's machine tokens; reactivation restores browser access, not old keys.
 
 ### TypeScript tooling
 
-`pnpm typecheck` and workspace `tsc` commands use TypeScript 7, installed as
-`@typescript/native`. `@effect/tsgo` patches that compiler during `prepare` and
-`typecheck` so configured Effect errors fail the command. Keep the compiler and
-checker pinned to a supported pair; check the native checker's supported versions
-before updating either package.
+The workspace uses TypeScript 7 directly. `@effect/tsgo` patches it during
+`prepare` and `typecheck` so configured Effect errors fail the command. Keep
+TypeScript and the checker pinned to a supported pair. Oxlint runs typed linting
+and the custom rules in `eslint/`; Effect diagnostics stay in `tsc`. Its JavaScript
+plugin host is alpha, so update the linter and typed engine together and run the
+lint integration tests. ESLint supplies the existing rule unit tests and the import-boundary rule.
+The native typed engine discovers the root `tsconfig.json`. Renaming that file
+can silently remove typed coverage for root scripts and tests.
 
-The `typescript` dependency is an alias for `@typescript/typescript6`. It supplies
-the TS6 JavaScript API used by typed ESLint, the CLI's config editor and release
-checks, and `rollup-plugin-dts`. Its compiler command is `tsc6`. Keep the same alias
-in every workspace that declares `typescript`, otherwise a local TS6 `tsc` can
-override the root TS7 executable. The lockfile pins the underlying TS6 compiler.
-Workspace declarations are emitted by TS7; the bundled CLI declarations still
-use TS6 and are checked by TS7 consumer tests.
+The CLI uses Babel for TypeScript source edits and `jsonc-parser` for package-pin
+literal ranges. Declaration builds emit with TS7, then bundle the emitted files
+with Rolldown's compiler-free declaration parser. Native emission needs a few
+otherwise-unused type imports to name inferred exported types; their local lint
+exceptions explain that purpose. The installed public declarations must stay
+independent of workspace packages and Effect.
 
-New patch repos install TypeScript 7 directly under `typescript`; they do not need
-the monorepo's compatibility alias. Existing patch repos keep their authored
-compiler dependency when refreshing Patchy. Both use the project-local compiler
-for publishing. Offline CLI test fixtures must package the native compiler and
-its installed platform dependency rather than the root compatibility wrapper.
+`test/fixtures/typescript6` is a private workspace with an exact historical
+compiler and no build tasks. It keeps old-project tests offline without letting
+a root TS6 executable override TS7. It is the only intended TS6 dependency;
+application code, release builds and linting do not use its API. Do not replace
+it with a root compiler alias. Normal workspace compiler checks exclude this
+fixture explicitly.
 
-After compiler changes, verify a clean uncached build, typed linting, typechecking,
-the generated-client type tests, and the packed CLI suite. Use a fresh dependency
-install when verifying the native patch. TS6 compatibility can be removed only
-after its API consumers and declaration tooling work without it; inspect both
-the dependency graph and the bundled CLI for retained compiler code.
+New patch repos install TS7. Existing patch repos retain their authored compiler
+dependency when refreshing Patchy; publishing invokes that project's compiler.
+Offline CLI fixtures must package the native compiler and its installed platform
+dependency, restoring Microsoft's original executable when the workspace copy
+has an Effect patch. Fresh patches must not inherit that replacement binary.
+
+After tooling changes, verify a clean frozen install, uncached build, typed lint,
+Effect typecheck, generated-client tests and the packed CLI suite on Node 22.22
+and 24. The packed declaration consumers cover TS6 and TS7 under NodeNext and
+Bundler resolution. Inspect the dependency graph and every emitted bundle,
+including `index.js` and `dev.js`, for retained compatibility/compiler code.
 
 ### Test tiers
 

@@ -94,8 +94,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm format:check
-      - run: pnpm lint
       - run: pnpm build
+      - run: pnpm lint
       - run: pnpm typecheck
 
   cli-smoke:

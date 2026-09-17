@@ -1,6 +1,6 @@
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import ts from "typescript";
+import { parseTree, type ParseError } from "jsonc-parser";
 
 const decode = Schema.decodeUnknownOption(
   Schema.fromJsonString(
@@ -12,27 +12,20 @@ const decode = Schema.decodeUnknownOption(
 export function patchPackagePin(source: string, expected: string, replacementLiteral: string) {
   const decoded = decode(source);
   if (Option.isNone(decoded) || decoded.value.devDependencies.patchy !== expected) return undefined;
-  const file = ts.parseJsonText("package.json", source);
-  const statement = file.statements[0];
-  let node: ts.Expression | undefined =
-    statement && ts.isExpressionStatement(statement) ? statement.expression : undefined;
+  const errors: ParseError[] = [];
+  let node = parseTree(source, errors, { disallowComments: true, allowTrailingComma: false });
+  if (errors.length) return undefined;
   for (const key of ["devDependencies", "patchy"]) {
-    if (!node || !ts.isObjectLiteralExpression(node)) return undefined;
-    let value: ts.Expression | undefined;
-    for (const property of node.properties) {
-      if (
-        ts.isPropertyAssignment(property) &&
-        ts.isStringLiteral(property.name) &&
-        property.name.text === key
-      )
-        value = property.initializer;
-    }
-    node = value;
+    if (node?.type !== "object") return undefined;
+    // JSON.parse uses the last duplicate key, including escaped spellings of the same name.
+    node = node.children?.filter((property) => property.children?.[0]?.value === key).at(-1)
+      ?.children?.[1];
   }
-  if (!node || !ts.isStringLiteral(node)) return undefined;
-  const start = node.getStart(file);
+  if (node?.type !== "string") return undefined;
+  const start = node.offset;
+  const end = start + node.length;
   return {
-    contents: source.slice(0, start) + replacementLiteral + source.slice(node.end),
-    previousLiteral: source.slice(start, node.end)
+    contents: source.slice(0, start) + replacementLiteral + source.slice(end),
+    previousLiteral: source.slice(start, end)
   };
 }

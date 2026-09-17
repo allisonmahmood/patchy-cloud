@@ -2,6 +2,9 @@ version: 2
 updates:
   - package-ecosystem: npm
     directory: /
+    # This compiler is a fixed historical test input, not a tool to upgrade.
+    exclude-paths:
+      - "test/fixtures/typescript6/**"
     schedule:
       interval: weekly
     # Patch releases are low-risk enough to review together. Minor and major
@@ -13,10 +16,13 @@ updates:
       # Review this pair against @effect/tsgo's supported versions before merging.
       typescript-tooling:
         patterns:
-          - "@typescript/native"
           - typescript
-          - "@typescript/typescript6"
           - "@effect/tsgo"
+      # JS plugin support is alpha; keep the linter and typed engine under one review.
+      lint-tooling:
+        patterns:
+          - oxlint
+          - oxlint-tsgolint
       # Effect 4 release candidates ship in lockstep and are pinned through the
       # pnpm catalog, so every new RC lands as one pull request. Dependabot only
       # follows prereleases while the pinned version is itself a prerelease of

@@ -3,6 +3,8 @@
  * the resolved instance, and the one place a refusal or a failed request is
  * turned into a `CliError` whose kind says who has to act.
  */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- Native declaration emit needs this name for inferred exported types.
+import type { NodeInspectSymbol } from "effect/Inspectable";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import type * as Redacted from "effect/Redacted";

@@ -38,10 +38,10 @@
   "devDependencies": {
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
-    "@patchy/sql": "workspace:*",
     "@patchy/limits": "workspace:*",
+    "@patchy/sql": "workspace:*",
     "@types/pg": "^8.23.1",
-    "typescript": "npm:@typescript/typescript6@6.0.2",
+    "esbuild": "0.28.2",
     "vitest": "^4.1.11"
   }
 }

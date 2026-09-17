@@ -1,13 +1,24 @@
 // Bundle all dependencies: the release installs offline, without registry access or scripts.
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { access, chmod, copyFile, cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  copyFile,
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as esbuild from "esbuild";
-import { rollup } from "rollup";
-import { dts } from "rollup-plugin-dts";
-import ts from "typescript";
+import { parse } from "@babel/parser";
+import { rolldown } from "rolldown";
+import { dts } from "rolldown-plugin-dts";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const packageDir = path.join(repoRoot, "packages/patchy");
@@ -18,25 +29,23 @@ const packageSkillsDir = path.join(packageDir, "skills");
 const publicEntries = ["config", "client", "dev"];
 
 const literals = async (file) => {
-  const source = ts.createSourceFile(
-    file,
-    await readFile(file, "utf8"),
-    ts.ScriptTarget.Latest,
-    true
-  );
+  const source = parse(await readFile(file, "utf8"), {
+    sourceFilename: file,
+    sourceType: "module",
+    plugins: ["typescript"]
+  });
   const values = {};
-  for (const statement of source.statements) {
-    if (!ts.isVariableStatement(statement)) continue;
-    for (const declaration of statement.declarationList.declarations) {
-      const value = declaration.initializer;
+  for (const statement of source.program.body) {
+    const variable =
+      statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
+    if (variable?.type !== "VariableDeclaration") continue;
+    for (const declaration of variable.declarations) {
+      const value = declaration.init;
       if (
-        ts.isIdentifier(declaration.name) &&
-        value &&
-        (ts.isStringLiteral(value) || ts.isNumericLiteral(value))
+        declaration.id.type === "Identifier" &&
+        (value?.type === "StringLiteral" || value?.type === "NumericLiteral")
       ) {
-        values[declaration.name.text] = ts.isNumericLiteral(value)
-          ? Number(value.text)
-          : value.text;
+        values[declaration.id.name] = value.value;
       }
     }
   }
@@ -48,6 +57,8 @@ const runtime = await literals(path.join(packageDir, "src/release.ts"));
 // let its independent wire constants or current release drift from the artifact.
 if (
   api.CURRENT_RELEASE !== packageJson.version ||
+  typeof api.MANIFEST_VERSION !== "number" ||
+  typeof api.WIRE_VERSION !== "number" ||
   api.MANIFEST_VERSION !== runtime.MANIFEST_VERSION ||
   api.WIRE_VERSION !== runtime.WIRE_VERSION
 ) {
@@ -63,11 +74,15 @@ const common = {
   conditions: ["development"],
   // Its WASM/data and worker-relative imports must remain a real package. npm packs it with Patchy.
   external: ["@electric-sql/pglite", "@electric-sql/pglite/*"],
-  // CSSTree's Node entry reads JSON at runtime; its standalone build embeds that data.
-  alias: { "css-tree": path.join(packageDir, "node_modules/css-tree/dist/csstree.esm.js") }
+  alias: {
+    // CSSTree's Node entry reads JSON at runtime; its standalone build embeds that data.
+    "css-tree": path.join(packageDir, "node_modules/css-tree/dist/csstree.esm.js"),
+    // JSONC's UMD entry hides relative requires from the bundler; its ESM entry is self-contained.
+    "jsonc-parser": path.join(packageDir, "node_modules/jsonc-parser/lib/esm/main.js")
+  }
 };
 const requireBanner =
-  "import { createRequire as __createRequire } from 'node:module'; import { fileURLToPath as __fileURLToPath } from 'node:url'; import { dirname as __dirnameOf } from 'node:path'; const require = __createRequire(import.meta.url); const __filename = __fileURLToPath(import.meta.url); const __dirname = __dirnameOf(__filename);";
+  "import { createRequire as __createRequire } from 'node:module'; import { fileURLToPath as __fileURLToPath } from 'node:url'; const require = __createRequire(import.meta.url); const __filename = __fileURLToPath(import.meta.url);";
 await esbuild.build({
   ...common,
   entryPoints: [path.join(packageDir, "src/index.ts")],
@@ -96,26 +111,47 @@ await esbuild.build({
   target: "node22",
   banner: { js: requireBanner }
 });
-const declarations = await rollup({
-  input: Object.fromEntries(
-    publicEntries.map((name) => [name, path.join(packageDir, `src/${name}.ts`)])
-  ),
-  plugins: [
-    dts({
-      tsconfig: path.join(packageDir, "tsconfig.build.json"),
-      compilerOptions: { customConditions: ["development"] }
-    })
-  ]
-});
+// Native emit checks the implementation graph; only the three public declaration
+// entries are bundled, so private workspace and Effect types stay out of the release.
+const declarationDir = await mkdtemp(path.join(tmpdir(), "patchy-declarations-"));
 try {
-  await declarations.write({
-    dir: distDir,
-    format: "es",
-    entryFileNames: "[name].d.ts",
-    chunkFileNames: "_types/[name]-[hash].d.ts"
+  execFileSync(
+    process.execPath,
+    [
+      path.join(repoRoot, "node_modules/typescript/bin/tsc"),
+      "-p",
+      path.join(packageDir, "tsconfig.build.json"),
+      "--rootDir",
+      repoRoot,
+      "--outDir",
+      declarationDir
+    ],
+    { cwd: repoRoot, stdio: "inherit" }
+  );
+  const declarations = await rolldown({
+    // Temporary emitter paths must not leak into published declarations or chunk hashes.
+    experimental: { attachDebugInfo: "none" },
+    input: Object.fromEntries(
+      publicEntries.map((name) => [
+        name,
+        path.join(declarationDir, `packages/patchy/src/${name}.d.ts`)
+      ])
+    ),
+    // This path only parses existing declarations, without loading a compiler API.
+    plugins: [dts({ dtsInput: true, tsconfig: false, generator: "oxc" })]
   });
+  try {
+    await declarations.write({
+      dir: distDir,
+      format: "es",
+      entryFileNames: "[name].d.ts",
+      chunkFileNames: "_types/[name]-[hash].d.ts"
+    });
+  } finally {
+    await declarations.close();
+  }
 } finally {
-  await declarations.close();
+  await rm(declarationDir, { recursive: true, force: true });
 }
 await chmod(path.join(distDir, "index.js"), 0o755);
 await access(path.join(rootSkillsDir, "patchy/SKILL.md"));

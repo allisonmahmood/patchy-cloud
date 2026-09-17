@@ -103,3 +103,31 @@ it("refuses a staged uses edit after an author save, keeping config and generate
   expect(await readFile(join(root, "patchy.config.ts"), "utf8")).toBe("author's saved config");
   expect(await bytes(generated)).toEqual(before);
 });
+
+it("rolls back the effective duplicate pin with its original escaped literal", async () => {
+  const root = await project();
+  await writeFile(
+    join(root, "package.json"),
+    String.raw`{"devDependencies":{"patchy":"old\u002drelease"}}`
+  );
+  const transaction = await ManagedProject.begin(root);
+  await transaction.setPin("old-release", "new-release");
+  const authored =
+    String.raw`{"devDependencies":{"patchy":"author-other-pin"},"description":"author edit","devDependencies":{"patchy":"ignored","p\u0061tchy":"new-release"}}` +
+    "\r\n";
+  await writeFile(join(root, "package.json"), authored);
+  await transaction.finish(false);
+  expect(await readFile(join(root, "package.json"), "utf8")).toBe(
+    authored.replace('"new-release"', String.raw`"old\u002drelease"`)
+  );
+});
+
+it("does not roll back an author-selected replacement pin", async () => {
+  const root = await project();
+  const transaction = await ManagedProject.begin(root);
+  await transaction.setPin("old-release", "new-release");
+  const authored = originalPackage.replace("old-release", "author-release");
+  await writeFile(join(root, "package.json"), authored);
+  await transaction.finish(false);
+  expect(await readFile(join(root, "package.json"), "utf8")).toBe(authored);
+});
