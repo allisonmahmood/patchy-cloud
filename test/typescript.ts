@@ -6,19 +6,13 @@ import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 
-const compilers = {
-  native: fileURLToPath(new URL("../node_modules/typescript/bin/tsc", import.meta.url)),
-  legacy: fileURLToPath(
-    new URL("./fixtures/typescript6/node_modules/typescript/bin/tsc", import.meta.url)
-  )
-};
+const compiler = fileURLToPath(new URL("../node_modules/typescript/bin/tsc", import.meta.url));
 
 /** Compile actual consumer files, including their @ts-expect-error assertions. */
 export const compileConsumer = Effect.fn("compileConsumer")(
   function* (
     files: Readonly<Record<string, string>>,
-    paths: Readonly<Record<string, readonly string[]>>,
-    compiler: keyof typeof compilers = "native"
+    paths: Readonly<Record<string, readonly string[]>>
   ) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -44,16 +38,12 @@ export const compileConsumer = Effect.fn("compileConsumer")(
         files: Object.keys(files)
       })
     );
-    const child = yield* ChildProcess.make(
-      process.execPath,
-      [compilers[compiler], "-p", "tsconfig.json"],
-      {
-        cwd,
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "pipe"
-      }
-    );
+    const child = yield* ChildProcess.make(process.execPath, [compiler, "-p", "tsconfig.json"], {
+      cwd,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe"
+    });
     const [stdout, stderr, code] = yield* Effect.all(
       [
         Stream.mkString(Stream.decodeText(child.stdout)),

@@ -80,7 +80,6 @@ A Turborepo monorepo managed with pnpm. [AGENTS.md](AGENTS.md) is the guide to w
 - `packages/sql`, `packages/analytics`, `packages/limits` — the Postgres client and Migrator, the event service, the rate limiter.
 - `packages/company-database` — company placements, lazy Postgres databases, bounded pools, transactional patch locks, cumulative inventory and the PGlite development layer.
 - `skills/patchy` — the global agent skill for sign-in, safe static publishing, reading patches and starting a patch repo; project skills come from `packages/sdk`.
-- `test/fixtures/typescript6`: an isolated historical compiler for old-patch compatibility tests; normal workspace commands use TS7.
 - `examples/plan.html` — a Patchy-styled starter patch.
 
 `pnpm test`, `pnpm typecheck` and `pnpm lint` are the checks. `pnpm test:all` runs package tests, the real-Postgres concurrency suites and the packed CLI e2e; it does not run the live Clerk tiers. Install Chromium and its system dependencies first with `pnpm exec playwright install --with-deps chromium`. [`pnpm test:clerk`](docs/DEVELOPMENT.md#live-clerk-pnpm-testclerk) runs the live Backend-API and Playwright tiers with development keys.

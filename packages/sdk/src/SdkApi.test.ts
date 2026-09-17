@@ -162,7 +162,7 @@ it.layer(layer)("the packed SDK release", (it) => {
           for (const source of decodeBundleMap(JSON.parse(map)).sources) {
             assert.notMatch(
               source,
-              /(?:^|\/)(?:typescript|@typescript\/(?:typescript6|old))\/lib\/(?:typescript|_tsc)\.js$/,
+              /(?:^|\/)typescript\/lib\/(?:typescript|_tsc)\.js$/,
               `${file} bundles a TypeScript compiler`
             );
           }
@@ -269,16 +269,13 @@ void [inserted, changed, at, createClient, PatchyError, executeConfig, dev];
               })
             )
           );
-          for (const compiler of [
-            "node_modules/typescript/bin/tsc",
-            "test/fixtures/typescript6/node_modules/typescript/bin/tsc"
-          ]) {
-            yield* Effect.tryPromise(() =>
-              exec(process.execPath, [path.join(repo, compiler), "-p", "tsconfig.json"], {
-                cwd: dir
-              })
-            );
-          }
+          yield* Effect.tryPromise(() =>
+            exec(
+              process.execPath,
+              [path.join(repo, "node_modules/typescript/bin/tsc"), "-p", "tsconfig.json"],
+              { cwd: dir }
+            )
+          );
         }
       }),
     { timeout: 60_000 }

@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Node's file-URL conversion locates the release artifact; keep its synchronous integrity hash during the compiler migration.
+// @effect-diagnostics nodeBuiltinImport:off -- Node converts artifact file URLs and computes the synchronous SHA-512 integrity hash.
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import * as Config from "effect/Config";
