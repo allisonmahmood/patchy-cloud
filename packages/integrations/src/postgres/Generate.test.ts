@@ -154,18 +154,12 @@ function inspect(error: ListError) {
 }
 `
       };
-      for (const compiler of ["native", "legacy"] as const) {
-        const result = yield* compileConsumer(
-          files,
-          {
-            "patchy/client": [`${patchy}client.d.ts`],
-            "patchy/config": [`${patchy}config.d.ts`]
-          },
-          compiler
-        );
-        assert.strictEqual(result.stdout + result.stderr, "");
-        assert.strictEqual(result.code, 0);
-      }
+      const result = yield* compileConsumer(files, {
+        "patchy/client": [`${patchy}client.d.ts`],
+        "patchy/config": [`${patchy}config.d.ts`]
+      });
+      assert.strictEqual(result.stdout + result.stderr, "");
+      assert.strictEqual(result.code, 0);
     })
 );
 

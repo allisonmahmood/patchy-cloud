@@ -532,24 +532,17 @@ otherwise-unused type imports to name inferred exported types; their local lint
 exceptions explain that purpose. The installed public declarations must stay
 independent of workspace packages and Effect.
 
-`test/fixtures/typescript6` is a private workspace with an exact historical
-compiler and no build tasks. It keeps old-project tests offline without letting
-a root TS6 executable override TS7. It is the only intended TS6 dependency;
-application code, release builds and linting do not use its API. Do not replace
-it with a root compiler alias. Normal workspace compiler checks exclude this
-fixture explicitly.
-
-New patch repos install TS7. Existing patch repos retain their authored compiler
-dependency when refreshing Patchy; publishing invokes that project's compiler.
+Patch repos install TS7. Refreshing Patchy preserves the project's authored
+compiler dependency; publishing invokes that project's compiler.
 Offline CLI fixtures must package the native compiler and its installed platform
 dependency, restoring Microsoft's original executable when the workspace copy
 has an Effect patch. Fresh patches must not inherit that replacement binary.
 
 After tooling changes, verify a clean frozen install, uncached build, typed lint,
 Effect typecheck, generated-client tests and the packed CLI suite on Node 22.22
-and 24. The packed declaration consumers cover TS6 and TS7 under NodeNext and
-Bundler resolution. Inspect the dependency graph and every emitted bundle,
-including `index.js` and `dev.js`, for retained compatibility/compiler code.
+and 24. The packed declaration consumers use TS7 under NodeNext and Bundler
+resolution. Check that the dependency graph uses TS7 and emitted bundles,
+including `index.js` and `dev.js`, contain no compiler implementation.
 
 ### Test tiers
 

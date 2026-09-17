@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Preserve synchronous IDs and unbiased cryptographic sampling during the compiler migration.
+// @effect-diagnostics nodeBuiltinImport:off -- Synchronous ID generation uses Node randomInt for unbiased cryptographic sampling.
 import { randomInt } from "node:crypto";
 
 const ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";

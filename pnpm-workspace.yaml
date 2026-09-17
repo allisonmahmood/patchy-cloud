@@ -2,8 +2,6 @@ packages:
   - "apps/*"
   - "packages/*"
   - "scripts/dev"
-  # Historical project compiler, isolated from normal workspace executable lookup.
-  - "test/fixtures/typescript6"
 catalog:
   parse5: ^7.3.0
   # Effect 4 release candidates ship in lockstep; Dependabot bumps these

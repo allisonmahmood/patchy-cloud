@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Keep these synchronous hash/token APIs during the compiler migration; Effect Crypto requires a service and returns Effects.
+// @effect-diagnostics nodeBuiltinImport:off -- Hash and token helpers return synchronous values; Effect Crypto requires a service and returns Effects.
 import { createHash, randomBytes } from "node:crypto";
 
 export function sha256(value: string): string {

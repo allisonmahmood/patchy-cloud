@@ -2,9 +2,6 @@ version: 2
 updates:
   - package-ecosystem: npm
     directory: /
-    # This compiler is a fixed historical test input, not a tool to upgrade.
-    exclude-paths:
-      - "test/fixtures/typescript6/**"
     schedule:
       interval: weekly
     # Patch releases are low-risk enough to review together. Minor and major
