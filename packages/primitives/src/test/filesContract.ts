@@ -1,14 +1,17 @@
 import { createHash } from "node:crypto";
 import { NodeFileSystem } from "@effect/platform-node";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { CURRENT_RELEASE, FilePage, Manifest, WIRE_VERSION } from "@patchy/api";
@@ -40,7 +43,7 @@ export const filesystem = Layer.unwrap(
       Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ PATCHY_STORAGE_DIR: root })))
     );
   })
-).pipe(Layer.provideMerge(NodeFileSystem.layer));
+).pipe(Layer.provideMerge([NodeFileSystem.layer, NodeCrypto.layer]));
 
 export const setup = Effect.fn("test.filesContract.setup")(function* (
   companyId: string,
@@ -157,15 +160,27 @@ const storageFailureContract = Effect.fn("test.filesContract.storageFailure")(fu
         Effect.fail(new ContentStore.StoreUnavailable({ operation: "put", key, cause }))
     })
   );
-  const handlers = yield* Files.make.pipe(Effect.provide(fault));
-  const failure = yield* handlers["files.put"]
-    .run({ store: "docs", name: "keep.bin", contentType: "text/html" }, new Uint8Array([1]))
-    .pipe(Effect.provideService(Binding.Binding, binding), Effect.flip);
-  assert.strictEqual(failure.code, "source_unavailable");
-  assert.deepStrictEqual(yield* readPointer("keep.bin"), previous);
-  const stored = yield* get("keep.bin");
-  assert.deepStrictEqual(stored.bytes, original);
-  assert.strictEqual(stored.contentType, "application/octet-stream");
+  const crypto = yield* Crypto.Crypto;
+  const digestFailure = PlatformError.badArgument({
+    module: "Crypto",
+    method: "digest",
+    description: "injected digest failure"
+  });
+  const failedDigest = Layer.succeed(Crypto.Crypto, {
+    ...crypto,
+    digest: () => Effect.fail(digestFailure)
+  });
+  for (const failureLayer of [fault, failedDigest]) {
+    const handlers = yield* Files.make.pipe(Effect.provide(failureLayer));
+    const failure = yield* handlers["files.put"]
+      .run({ store: "docs", name: "keep.bin", contentType: "text/html" }, new Uint8Array([1]))
+      .pipe(Effect.provideService(Binding.Binding, binding), Effect.flip);
+    assert.strictEqual(failure.code, "source_unavailable");
+    assert.deepStrictEqual(yield* readPointer("keep.bin"), previous);
+    const stored = yield* get("keep.bin");
+    assert.deepStrictEqual(stored.bytes, original);
+    assert.strictEqual(stored.contentType, "application/octet-stream");
+  }
 });
 
 const concurrentWritesContract = Effect.fn("test.filesContract.concurrentWrites")(function* (

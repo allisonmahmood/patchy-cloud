@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Preserve synchronous SQL index-name generation during the compiler migration; Effect Crypto digests return Effects.
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";

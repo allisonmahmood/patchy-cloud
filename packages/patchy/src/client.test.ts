@@ -1,7 +1,10 @@
 import { resolveObjectURL } from "node:buffer";
-import { expect, it } from "vitest";
+import { fileURLToPath } from "node:url";
+import { it } from "@effect/vitest";
+import { expect } from "vitest";
+import * as Effect from "effect/Effect";
 import { build } from "esbuild";
-import * as ts from "typescript";
+import { compileConsumer } from "../../../test/typescript.js";
 import {
   createClient,
   createSharedTable,
@@ -146,16 +149,19 @@ it("shares the supplied transport with generated aliases and exposes shared read
   client.close();
 });
 
-it("infers the owned facade and generated aliases without widening index, id, or write boundaries", () => {
-  const root = new URL("../dist/", import.meta.url).pathname;
-  const source = `import { createClient, createSharedTable, type Call, type ErrorCode, type Operation, type Me, type FileMetadata } from "patchy/client";
+it.effect(
+  "infers the owned facade and generated aliases without widening index, id, or write boundaries",
+  () =>
+    Effect.gen(function* () {
+      const root = fileURLToPath(new URL("../dist/", import.meta.url));
+      const source = `import { createClient, createSharedTable, type Call, type ErrorCode, type Operation, type Me, type FileMetadata } from "patchy/client";
 import { defineConfig, table, t, files, postgres, sharedTable, type Id } from "patchy/config";
 type Equal<A, B> = [A] extends [B] ? [B] extends [A] ? true : false : false;
 const operationsConform: Equal<Operation, "route.set" | "download" | ${Object.keys(
-    runtimeOperations
-  )
-    .map((name) => JSON.stringify(name))
-    .join(" | ")}> = true;
+        runtimeOperations
+      )
+        .map((name) => JSON.stringify(name))
+        .join(" | ")}> = true;
 const config = defineConfig({ name: "notes", tier: 1, tables: {
   notes: table("Notes identified by id; parent links another note.", { title: t.text(), body: t.text().optional(), count: t.integer().default(0), parent: t.ref("notes").optional() }, { indexes: { byTitle: ["title"] } }),
   people: table("People identified by id.", { name: t.text() }),
@@ -215,35 +221,17 @@ async function use() {
   createClient<typeof config>(config, { shared: {}, connections: {} });
 }
 `;
-  const filename = `${root}consumer.virtual.ts`;
-  const options: ts.CompilerOptions = {
-    noEmit: true,
-    strict: true,
-    target: ts.ScriptTarget.ES2022,
-    module: ts.ModuleKind.ESNext,
-    moduleResolution: ts.ModuleResolutionKind.Bundler,
-    types: [],
-    lib: ["lib.es2022.d.ts", "lib.dom.d.ts"],
-    paths: {
-      "patchy/client": [`${root}client.d.ts`],
-      "patchy/config": [`${root}config.d.ts`]
-    },
-    resolveJsonModule: true,
-    skipLibCheck: true
-  };
-  const host = ts.createCompilerHost(options);
-  const getSourceFile = host.getSourceFile.bind(host);
-  host.getSourceFile = (file, language, onError, fresh) =>
-    file === filename
-      ? ts.createSourceFile(file, source, language, true)
-      : getSourceFile(file, language, onError, fresh);
-  const program = ts.createProgram([filename], options, host);
-  expect(
-    ts
-      .getPreEmitDiagnostics(program)
-      .map((error) => ts.flattenDiagnosticMessageText(error.messageText, "\n"))
-  ).toEqual([]);
-});
+      const result = yield* compileConsumer(
+        { "consumer.ts": source },
+        {
+          "patchy/client": [`${root}client.d.ts`],
+          "patchy/config": [`${root}config.d.ts`]
+        }
+      );
+      expect(result.stdout + result.stderr).toBe("");
+      expect(result.code).toBe(0);
+    })
+);
 
 it("bundles the actual browser entry and generated template without Node, Effect, PGlite or executing config", async () => {
   const clientPath = new URL("./client.ts", import.meta.url).pathname;

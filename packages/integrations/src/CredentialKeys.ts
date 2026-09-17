@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Effect Crypto does not provide AES-GCM encryption or authenticated decryption.
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";

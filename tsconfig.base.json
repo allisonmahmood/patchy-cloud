@@ -17,11 +17,11 @@
     "skipLibCheck": true,
     "plugins": [
       {
-        // Effect diagnostics. `effect-language-service patch` (run by `prepare`
-        // and `typecheck`) bakes the plugin into tsc so these fail the build.
+        // `effect-tsgo patch` (run by `prepare` and `typecheck`) installs the
+        // native compiler with Effect diagnostics. It retains this plugin name.
         "name": "@effect/language-service",
         "diagnosticSeverity": {
-          "importFromBarrel": "error",
+          // Namespace imports are enforced by ESLint's namespace-service-imports rule.
           "anyUnknownInErrorContext": "error",
           "unsafeEffectTypeAssertion": "error",
           "instanceOfSchema": "error",
@@ -46,9 +46,6 @@
           "globalTimers": "error",
           "globalFetch": "error",
           "cryptoRandomUUID": "error"
-          // Omitted as v3-only in @effect/language-service 0.87.2, so inert on
-          // Effect 4: missingEffectServiceDependency, schemaSyncInEffect,
-          // nonObjectEffectServiceType, scopeInLayerEffect, schemaUnionOfLiterals.
         }
       }
     ]

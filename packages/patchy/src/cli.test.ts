@@ -7,6 +7,8 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import * as Struct from "effect/Struct";
 import {
+  copyFileSync,
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -406,7 +408,7 @@ const projectTree = (instance: string, source = projectConfig) => {
 };
 
 /** Real repo tools, linked from the checkout instead of reinstalling them for each scenario. */
-const publishTree = (instance: string) => {
+const publishTree = (instance: string, compiler: "native" | "legacy" = "native") => {
   const dir = projectTree(instance);
   for (const [file, source] of Object.entries(
     starterFiles({
@@ -420,16 +422,29 @@ const publishTree = (instance: string) => {
     mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
     writeFileSync(path.join(dir, file), source);
   }
+  const compilerManifest =
+    compiler === "native"
+      ? require.resolve("@typescript/native/package.json")
+      : createRequire(require.resolve("typescript/package.json")).resolve(
+          "@typescript/old/package.json"
+        );
   for (const name of ["typescript", "vite", "vite-plugin-singlefile", "@types/node"]) {
     const manifest =
-      name === "vite-plugin-singlefile"
-        ? path.join(packageDir, "node_modules/vite-plugin-singlefile/package.json")
-        : require.resolve(`${name}/package.json`, {
-            paths: [packageDir, path.dirname(require.resolve("vitest/package.json"))]
-          });
+      name === "typescript"
+        ? compilerManifest
+        : name === "vite-plugin-singlefile"
+          ? path.join(packageDir, "node_modules/vite-plugin-singlefile/package.json")
+          : require.resolve(`${name}/package.json`, {
+              paths: [packageDir, path.dirname(require.resolve("vitest/package.json"))]
+            });
     const destination = path.join(dir, "node_modules", name);
     mkdirSync(path.dirname(destination), { recursive: true });
     symlinkSync(path.dirname(manifest), destination, "dir");
+  }
+  if (compiler === "legacy") {
+    const file = path.join(dir, "package.json");
+    const source = readFileSync(file, "utf8");
+    writeFileSync(file, source.replace('"typescript": "7.0.2"', '"typescript": "^6.0.3"'));
   }
   return dir;
 };
@@ -487,13 +502,27 @@ const localPackageRegistry = async () => {
       version: manifest.version,
       tarball
     });
+    let source = path.dirname(file);
+    if (manifest.name.startsWith("@typescript/typescript-")) {
+      const executable = path.join("lib", process.platform === "win32" ? "tsc.exe" : "tsc");
+      const original = path.join(source, `${executable}.original`);
+      if (existsSync(original)) {
+        // New projects install Microsoft's compiler, not the checkout's Effect replacement.
+        const staged = path.join(dir, `${seen.size}-native`);
+        cpSync(source, staged, { recursive: true });
+        copyFileSync(original, path.join(staged, executable));
+        rmSync(path.join(staged, `${executable}.original`));
+        rmSync(path.join(staged, `${executable}.sig`), { force: true });
+        source = staged;
+      }
+    }
     await exec("tar", [
       "-czf",
       tarball,
       "--exclude=node_modules",
       "--transform=s,^\\.,package,",
       "-C",
-      path.dirname(file),
+      source,
       "."
     ]);
     for (const name of Object.keys(manifest.dependencies ?? {}))
@@ -508,7 +537,7 @@ const localPackageRegistry = async () => {
       await pack(optional);
     }
   };
-  for (const name of ["typescript", "vite-plugin-singlefile", "@types/node"])
+  for (const name of ["@typescript/native", "vite-plugin-singlefile", "@types/node"])
     await pack(resolvePackage(name, import.meta.url));
   await pack(resolvePackage("vite", require.resolve("vitest/package.json")));
   const server = createServer((request, response) => {
@@ -2820,6 +2849,37 @@ describe("publish description and lifecycle recovery", () => {
 });
 
 describe("repo description sync and change notices", () => {
+  it("keeps an existing TS6 project's compiler and refuses its type errors", async () => {
+    const instance = await stubInstance((request, respond, disconnect) => {
+      if (request.url === "/api/publish")
+        return respond(201, { ...publish(201, "abcdefghijkl", 1), tier: 1 });
+      projectHandler(request, respond, disconnect);
+    });
+    const dir = path.join(tempDir(), "legacy compiler project");
+    renameSync(publishTree(instance.url, "legacy"), dir);
+    const options = { cwd: dir, env: { PATCHY_API_TOKEN: "pp_owner" } };
+    const before = readFileSync(path.join(dir, "package.json"));
+    const version = await exec(process.execPath, [
+      path.join(dir, "node_modules/typescript/bin/tsc"),
+      "--version"
+    ]);
+    expect(version.stdout).toMatch(/^Version 6\./);
+    const refreshed = await runCli(["refresh", "--json"], options);
+    expect(refreshed, refreshed.stderr).toMatchObject({ status: 0, stderr: "" });
+    const published = await runCli(["publish", "--json"], options);
+    expect(published, published.stderr).toMatchObject({ status: 0, stderr: "" });
+    expect(readFileSync(path.join(dir, "package.json"))).toEqual(before);
+    writeFileSync(path.join(dir, "src/main.ts"), "const title: string = 42;\n");
+    const failed = await runCli(["publish", "--json"], options);
+    expect(failed).toMatchObject({ status: 1, stdout: "" });
+    expect(JSON.parse(failed.stderr)).toMatchObject({
+      ok: false,
+      kind: "local",
+      error: expect.stringContaining("Typecheck failed")
+    });
+    expect(instance.requests.filter((request) => request.url === "/api/publish")).toHaveLength(1);
+  }, 30_000);
+
   it("pulls only newer cloud descriptions on refresh, then publishes the pulled text and records its stamp", async () => {
     let cloud = {
       description: "Portal description",
@@ -4029,6 +4089,11 @@ describe("patch-repo commands", () => {
       authoredPaths.map((name) => [name, readFileSync(path.join(dir, name))])
     );
     const generatedBefore = treeBytes(path.join(dir, "patchy/_generated"));
+    const compiler = await exec(process.execPath, [
+      path.join(dir, "node_modules/typescript/bin/tsc"),
+      "--version"
+    ]);
+    expect(compiler.stdout.trim()).toBe("Version 7.0.2");
     await exec("pnpm", ["typecheck"], {
       cwd: dir,
       env: { PATH: process.env.PATH, HOME: stateDir, ...registry }

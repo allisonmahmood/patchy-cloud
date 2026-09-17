@@ -1,4 +1,7 @@
+import { fileURLToPath } from "node:url";
 import { assert, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import { compileConsumer } from "../../../../test/typescript.js";
 import * as ts from "typescript";
 import * as Schema from "effect/Schema";
 import { generate } from "./Generate.js";
@@ -61,12 +64,15 @@ const declaration = {
   revision: 3
 };
 
-it("compiles projected keys, keyless views, query shapes and discriminated known errors", () => {
-  const generated = generate(declaration, snapshot);
-  const patchy = new URL("../../../patchy/dist/", import.meta.url).pathname;
-  const files: Readonly<Record<string, string>> = {
-    "/generated.ts": generated.client,
-    "/consumer.ts": `import { createClient, type ListError } from "./generated.js";
+it.effect(
+  "compiles projected keys, keyless views, query shapes and discriminated known errors",
+  () =>
+    Effect.gen(function* () {
+      const generated = generate(declaration, snapshot);
+      const patchy = fileURLToPath(new URL("../../../patchy/dist/", import.meta.url));
+      const files: Readonly<Record<string, string>> = {
+        "generated.ts": generated.client,
+        "consumer.ts": `import { createClient, type ListError } from "./generated.js";
 import { isPatchyError } from "patchy/client";
 import { t } from "patchy/config";
 const db = createClient("sales", async () => ({ ok: true, rows: [], cursor: null }));
@@ -147,44 +153,15 @@ function inspect(error: ListError) {
   }
 }
 `
-  };
-  const options: ts.CompilerOptions = {
-    noEmit: true,
-    strict: true,
-    target: ts.ScriptTarget.ES2022,
-    module: ts.ModuleKind.ESNext,
-    moduleResolution: ts.ModuleResolutionKind.Bundler,
-    paths: {
-      "patchy/client": [`${patchy}client.d.ts`],
-      "patchy/config": [`${patchy}config.d.ts`]
-    },
-    resolveJsonModule: true,
-    lib: ["lib.es2022.d.ts", "lib.dom.d.ts"],
-    types: [],
-    skipLibCheck: true
-  };
-  const host = ts.createCompilerHost(options);
-  const getSourceFile = host.getSourceFile.bind(host);
-  const fileExists = host.fileExists.bind(host);
-  const readFile = host.readFile.bind(host);
-  host.fileExists = (file) => Object.hasOwn(files, file) || fileExists(file);
-  host.readFile = (file) => files[file] ?? readFile(file);
-  host.getSourceFile = (file, languageVersion, onError, shouldCreateNewSourceFile) =>
-    Object.hasOwn(files, file)
-      ? ts.createSourceFile(file, files[file]!, languageVersion, true)
-      : getSourceFile(file, languageVersion, onError, shouldCreateNewSourceFile);
-  const program = ts.createProgram(
-    Object.keys(files).filter((file) => file.endsWith(".ts")),
-    options,
-    host
-  );
-  assert.deepStrictEqual(
-    ts
-      .getPreEmitDiagnostics(program)
-      .map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n")),
-    []
-  );
-});
+      };
+      const result = yield* compileConsumer(files, {
+        "patchy/client": [`${patchy}client.d.ts`],
+        "patchy/config": [`${patchy}config.d.ts`]
+      });
+      assert.strictEqual(result.stdout + result.stderr, "");
+      assert.strictEqual(result.code, 0);
+    })
+);
 
 it("preserves arbitrary names without prototype mutation and narrows transport refusals", async () => {
   const malicious = "__proto__";

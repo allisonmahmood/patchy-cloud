@@ -1,6 +1,6 @@
 import { Buffer } from "node:buffer";
-import { createHash } from "node:crypto";
 import * as Config from "effect/Config";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -103,6 +103,7 @@ const encodePage = Schema.encodeSync(
 );
 
 export const make = Effect.gen(function* () {
+  const crypto = yield* Crypto.Crypto;
   const databases = yield* CompanyDatabases.CompanyDatabases;
   const content = yield* ContentStore.ContentStore;
   const settings = yield* config;
@@ -168,7 +169,10 @@ export const make = Effect.gen(function* () {
         return yield* withStore(args.store, (binding) =>
           Effect.gen(function* () {
             const objectId = newInternalId("obj");
-            const sha256 = createHash("sha256").update(bytes).digest("hex");
+            const digest = yield* crypto
+              .digest("SHA-256", bytes)
+              .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
+            const sha256 = Buffer.from(digest).toString("hex");
             // Unique immutable objects need no lease or lock; only the later pointer change does.
             yield* content
               .putBytes(objectKey(binding.patchId, args.store, objectId), bytes)

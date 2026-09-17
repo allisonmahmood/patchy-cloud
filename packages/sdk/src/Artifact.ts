@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off — Node supplies SHA-512 and file-URL conversion; Effect has no digest service.
+// @effect-diagnostics nodeBuiltinImport:off -- Node's file-URL conversion locates the release artifact; keep its synchronous integrity hash during the compiler migration.
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import * as Config from "effect/Config";
