@@ -26,7 +26,7 @@ export function starterFiles(options: {
       scripts: { typecheck: "tsc --noEmit", build: "vite build" },
       devDependencies: {
         patchy: tarball,
-        typescript: "^6.0.3",
+        typescript: "7.0.2",
         vite: "^7.3.1",
         "vite-plugin-singlefile": "^2.3.0",
         "@types/node": "^22.19.0"

@@ -235,7 +235,7 @@ void [inserted, changed, at, createClient, PatchyError, executeConfig, dev];
         yield* Effect.tryPromise(() =>
           exec(
             process.execPath,
-            [path.join(repo, "node_modules/typescript/bin/tsc"), "-p", "tsconfig.json"],
+            [path.join(repo, "node_modules/@typescript/native/bin/tsc"), "-p", "tsconfig.json"],
             { cwd: dir }
           )
         );

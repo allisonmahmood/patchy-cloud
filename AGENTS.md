@@ -115,7 +115,7 @@ Before writing Effect code, read `node_modules/effect/AGENTS.md` — how Effect 
 
 ### Guardrails
 
-`@effect/language-service` diagnostics fail `pnpm typecheck` (rule set in `tsconfig.base.json`, every rule an error; `effect-language-service patch` runs from `prepare`). A Node API with no Effect equivalent is allowed per file with `// @effect-diagnostics <rule>:off` and a reason. `pnpm lint` runs the repo's own rules from `eslint/`: namespace imports for Effect and service modules, no manual runtimes in tests, no Schema compiles in function bodies. `/code-review` loads the service review spec above whenever a diff touches an Effect service.
+TypeScript 7 compiles and checks the workspace; `@effect/tsgo` adds the Effect diagnostics configured in `tsconfig.base.json`. `effect-tsgo patch` runs from `prepare` and `typecheck`. The `typescript` dependency supplies the TS6 compatibility API for ESLint, AST editing and CLI declaration bundling. Read `docs/DEVELOPMENT.md`'s **TypeScript tooling** before changing either compiler dependency or the checker. A Node API with no Effect equivalent is allowed per file with `// @effect-diagnostics <rule>:off` and a reason. Existing synchronous crypto helpers have explicit migration exceptions to preserve their callers. `pnpm lint` runs the repo's own rules from `eslint/`: namespace imports for Effect and service modules, no manual runtimes in tests, no Schema compiles in function bodies. `/code-review` loads the service review spec above whenever a diff touches an Effect service.
 
 ### Effect RC bumps
 

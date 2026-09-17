@@ -9,6 +9,14 @@ updates:
     versioning-strategy: increase
     open-pull-requests-limit: 20
     groups:
+      # Native Effect diagnostics replace an exact TypeScript compiler version.
+      # Review this pair against @effect/tsgo's supported versions before merging.
+      typescript-tooling:
+        patterns:
+          - "@typescript/native"
+          - typescript
+          - "@typescript/typescript6"
+          - "@effect/tsgo"
       # Effect 4 release candidates ship in lockstep and are pinned through the
       # pnpm catalog, so every new RC lands as one pull request. Dependabot only
       # follows prereleases while the pinned version is itself a prerelease of
@@ -20,10 +28,9 @@ updates:
         patterns:
           - effect
           - "@effect/*"
-        # The language service has its own release line; let it flow as an
-        # ordinary update instead of muddying the RC changelog.
+        # The native language service follows the compiler, not the Effect RC.
         exclude-patterns:
-          - "@effect/language-service"
+          - "@effect/tsgo"
       patch-updates:
         update-types:
           - patch

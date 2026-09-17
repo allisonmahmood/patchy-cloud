@@ -1,5 +1,6 @@
 /** Real PostgreSQL only: the dedicated runner supplies the migrated, seeded template. */
 import { NodeFileSystem } from "@effect/platform-node";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Deferred from "effect/Deferred";
@@ -88,7 +89,9 @@ const realPostgres = Layer.unwrap(
 
 const services = Layer.mergeAll(Content.layer, PatchLoadedVersions.layer, DeletionSweep.layer).pipe(
   Layer.provideMerge(Patches.layer),
-  Layer.provideMerge(Layer.mergeAll(realPostgres, filesystem, Analytics.layerNoop))
+  Layer.provideMerge(
+    Layer.mergeAll(realPostgres, filesystem, NodeCrypto.layer, Analytics.layerNoop)
+  )
 );
 
 const publish = Effect.fn("SdkConcurrency.publish")(function* (

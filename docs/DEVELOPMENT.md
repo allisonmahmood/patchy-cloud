@@ -514,6 +514,34 @@ Clerk invitation was already revoked, including after a lost revoke response.
 Offline tests use recording and failing `InviteMail` layers instead. Deactivation revokes all the
 user's machine tokens; reactivation restores browser access, not old keys.
 
+### TypeScript tooling
+
+`pnpm typecheck` and workspace `tsc` commands use TypeScript 7, installed as
+`@typescript/native`. `@effect/tsgo` patches that compiler during `prepare` and
+`typecheck` so configured Effect errors fail the command. Keep the compiler and
+checker pinned to a supported pair; check the native checker's supported versions
+before updating either package.
+
+The `typescript` dependency is an alias for `@typescript/typescript6`. It supplies
+the TS6 JavaScript API used by typed ESLint, the CLI's config editor and release
+checks, and `rollup-plugin-dts`. Its compiler command is `tsc6`. Keep the same alias
+in every workspace that declares `typescript`, otherwise a local TS6 `tsc` can
+override the root TS7 executable. The lockfile pins the underlying TS6 compiler.
+Workspace declarations are emitted by TS7; the bundled CLI declarations still
+use TS6 and are checked by TS7 consumer tests.
+
+New patch repos install TypeScript 7 directly under `typescript`; they do not need
+the monorepo's compatibility alias. Existing patch repos keep their authored
+compiler dependency when refreshing Patchy. Both use the project-local compiler
+for publishing. Offline CLI test fixtures must package the native compiler and
+its installed platform dependency rather than the root compatibility wrapper.
+
+After compiler changes, verify a clean uncached build, typed linting, typechecking,
+the generated-client type tests, and the packed CLI suite. Use a fresh dependency
+install when verifying the native patch. TS6 compatibility can be removed only
+after its API consumers and declaration tooling work without it; inspect both
+the dependency graph and the bundled CLI for retained compiler code.
+
 ### Test tiers
 
 `pnpm test` stays offline and needs no Clerk account or development keys.

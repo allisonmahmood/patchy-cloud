@@ -1,4 +1,5 @@
 import { NodeFileSystem } from "@effect/platform-node";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -29,7 +30,9 @@ const decodePage = Schema.decodeUnknownEffect(TablePage);
 const versions = Layer.succeed(LoadedVersions.LoadedVersions, {
   find: () => Effect.succeed(Option.none())
 });
-const postgres = Tables.layer.pipe(Layer.provideMerge([Testing.layer(), versions]));
+const postgres = Tables.layer.pipe(
+  Layer.provideMerge([Testing.layer(), versions, NodeCrypto.layer])
+);
 it.layer(postgres)("TableOperations / Postgres", (it) => {
   it.effect(
     "obeys the seven operation contracts and stable version-bound cursors",
@@ -196,7 +199,7 @@ it.layer(postgres)("TableOperations / Postgres", (it) => {
   );
 });
 
-it.layer(NodeFileSystem.layer)("TableOperations / PGlite", (it) => {
+it.layer(Layer.merge(NodeFileSystem.layer, NodeCrypto.layer))("TableOperations / PGlite", (it) => {
   it.effect(
     "runs the same operations, cursors and bounds over the dev database",
     () =>
