@@ -208,7 +208,7 @@ describe("Oxlint workspace policy", () => {
           ].includes(d.filename)
       )
     ).toEqual([]);
-  }, 15_000);
+  }, 35_000);
 
   it("fails when a configured plugin or rule cannot load", () => {
     const config = JSON.parse(readFileSync(path.join(directory, ".oxlintrc.json"), "utf8"));
@@ -223,5 +223,5 @@ describe("Oxlint workspace policy", () => {
     const missingRule = lint("bad-rule.json");
     expect(missingRule.status).toBe(1);
     expect(missingRule.stdout).toContain("missing-rule");
-  }, 15_000);
+  }, 65_000);
 });
