@@ -98,8 +98,10 @@ jobs:
             }
 
             const desired =
-              changed < 100 ? "size:s" : changed <= 500 ? "size:m" : "size:l";
-            const sizes = ["size:s", "size:m", "size:l"];
+              changed < 100 ? "size:s" :
+              changed <= 500 ? "size:m" :
+              changed <= 1000 ? "size:l" : "size:xl";
+            const sizes = ["size:s", "size:m", "size:l", "size:xl"];
             const current = pr.labels.map((label) => label.name);
 
             for (const name of sizes) {

@@ -35,6 +35,9 @@ body:
         - Not sure
         - The CLI (patchy)
         - The server / hosting a published page
+        - Tables and files
+        - Company connections and integrations
+        - The portal and browser pages
         - HTML validation and safety rules
         - Documentation
     validations:
