@@ -93,12 +93,17 @@ export class UnsupportedUrlParameters extends Schema.TaggedError<UnsupportedUrlP
   }
 }
 
-/** The parameters on a URL that `pool` would refuse; config validation checks the same list up front. */
+/**
+ * The parameters on a URL that `pool` would refuse; config validation checks
+ * the same list up front. Names are reported as printable ASCII, at most 64
+ * characters and 8 of them, so a hostile URL cannot shape the diagnostic.
+ */
 export const unsupportedUrlParameters = (url: Redacted.Redacted<string>): ReadonlyArray<string> => {
   try {
-    return [...new URL(Redacted.value(url)).searchParams.keys()].filter(
-      (key) => !URL_PARAMETERS.has(key)
-    );
+    return [...new URL(Redacted.value(url)).searchParams.keys()]
+      .filter((key) => !URL_PARAMETERS.has(key))
+      .slice(0, 8)
+      .map((key) => key.replace(/[^\x21-\x7e]/g, "?").slice(0, 64));
   } catch {
     return [];
   }

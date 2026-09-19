@@ -91,7 +91,7 @@ const pool = (url: Redacted.Redacted<string>, max: number, database?: string) =>
     connectTimeout: "5 seconds"
   }).pipe(
     // `DatabaseUrl` refused unsupported parameters at startup; here it is a bug.
-    Effect.catchTag("UnsupportedUrlParameters", Effect.die)
+    Effect.catchTags({ UnsupportedUrlParameters: Effect.die })
   );
 
 export const adminLayer = Layer.effect(
