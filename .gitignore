@@ -20,3 +20,6 @@ packages/patchy/skills/
 packages/patchy/LICENSE
 packages/sdk/artifacts/
 packages/patchy/artifacts/
+
+# Vitest 5 reporter and attachment output
+.vitest/
