@@ -1,10 +1,8 @@
 # Path -> area label mapping for .github/workflows/pr-labels.yml
 #
-# The areas follow CONTEXT-MAP.md so pull requests and the domain docs stay in
-# one vocabulary: `area:server` is the hosting side (apps/server and its
-# packages: analytics, api, auth, content-store, limits, patches, sdk, serving, sql),
-# `area:cli` the Publishing context, `area:core` the shared kernel. The table in
-# docs/agents/triage-labels.md says the same thing; change both together.
+# Each package has an area; first-party UI files also receive area:ui.
+# The table in docs/agents/triage-labels.md says the same thing; change both
+# together when adding packages or moving first-party page rendering.
 #
 # A pull request can carry several area labels; that is intended.
 
@@ -15,12 +13,37 @@
           - "packages/analytics/**"
           - "packages/api/**"
           - "packages/auth/**"
+          - "packages/companies/**"
+          - "packages/company-database/**"
           - "packages/content-store/**"
           - "packages/limits/**"
           - "packages/patches/**"
+          - "packages/runtime/**"
           - "packages/sdk/**"
           - "packages/serving/**"
           - "packages/sql/**"
+
+"area:primitives":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "packages/primitives/**"
+
+"area:integrations":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "packages/integrations/**"
+
+"area:ui":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "packages/portal/**"
+          - "packages/core/src/html.ts"
+          - "packages/core/src/patch-presentation.ts"
+          - "packages/auth/src/page.ts"
+          - "packages/auth/src/*Page*.ts"
+          - "packages/integrations/src/ConnectionPage*.ts"
+          - "packages/serving/src/render*.ts"
+          - "packages/serving/src/address-notice.ts"
 
 "area:cli":
   - changed-files:
@@ -39,17 +62,24 @@
       - any-glob-to-any-file:
           - ".github/**"
           - "scripts/**"
+          - "test/**"
+          - "eslint/**"
+          - "patches/**"
           # Root-level workspace and tooling config. These patterns have no
           # slash, so they match only at the root -- packages/*/package.json
           # and packages/*/tsconfig.json belong to their own package's area.
           - "turbo.json"
           - "pnpm-workspace.yaml"
-          - "pnpm-lock.yaml"
           - "package.json"
           - "tsconfig*.json"
           - "*.config.js"
+          - "*.config.ts"
+          - "mise.toml"
           - "skills-lock.json"
           - ".dockerignore"
+          - ".prettierignore"
+          - ".gitignore"
+          - ".gitattributes"
 
 "area:docs":
   - changed-files:
