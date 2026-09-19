@@ -517,6 +517,10 @@ user's machine tokens; reactivation restores browser access, not old keys.
 ### Test tiers
 
 `pnpm test` stays offline and needs no Clerk account or development keys.
+Every package with a `test` script carries its own `vitest.config.ts` that
+re-exports the shared config from `test/`; Vitest does not look up a parent
+directory's config, so a package without one runs its suite with no Postgres
+setup and no fetch guard, silently.
 `pnpm test:packed-cli-e2e` installs the packed CLI offline with an empty npm cache
 and install scripts disabled, then exercises it against its own server and
 headless Chromium. Install the browser first with
