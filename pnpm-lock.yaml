@@ -168,7 +168,7 @@ importers:
         specifier: 4.0.0-rc.115
         version: 4.0.0-rc.115
       posthog-node:
-        specifier: ^5.52.1
+        specifier: ^5.52.4
         version: 5.52.4
     devDependencies:
       '@effect/vitest':
