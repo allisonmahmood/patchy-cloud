@@ -12,8 +12,8 @@ import * as Semaphore from "effect/Semaphore";
 import * as Reactivity from "effect/unstable/reactivity/Reactivity";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
-import * as Pg from "pg";
 import { newInternalId } from "@patchy/core";
+import * as Sql from "@patchy/sql";
 import * as CompanyDatabases from "./CompanyDatabases.js";
 import * as Inventory from "./Inventory.js";
 
@@ -32,7 +32,7 @@ export class AdminClient extends Context.Service<AdminClient, SqlClient.SqlClien
   "@patchy/company-database/PgCompanyDatabases/AdminClient"
 ) {}
 
-// pg uses the last `user` query value when nonempty, otherwise the authority.
+// The client uses the last `user` query value when nonempty, otherwise the authority.
 const username = (url: URL): string =>
   url.searchParams.getAll("user").at(-1) || decodeURIComponent(url.username);
 
@@ -44,6 +44,7 @@ const DatabaseUrl = Schema.Redacted(Schema.String).check(
       decodeURI(url.pathname);
       return (
         (url.protocol === "postgres:" || url.protocol === "postgresql:") &&
+        Sql.unsupportedUrlParameters(secret).length === 0 &&
         username(url).length > 0 &&
         url.hash === "" &&
         (url.hostname !== "" || Boolean(url.searchParams.getAll("host").at(-1)))
@@ -64,11 +65,6 @@ export const config = Config.all({
   capacity: Config.succeed(100)
 });
 
-const databaseUrl = (template: Redacted.Redacted<string>, name: string) => {
-  const url = new URL(Redacted.value(template));
-  url.pathname = `/${name}`;
-  return Redacted.make(url.toString());
-};
 const duplicateDatabase = Schema.is(Schema.Struct({ code: Schema.Literal("42P04") }));
 
 class PoolKey extends Data.Class<{
@@ -78,30 +74,25 @@ class PoolKey extends Data.Class<{
   readonly databaseName: string;
 }> {}
 
-/** Register cleanup before any network I/O, including a failed/interrupted first connection. */
-const pool = (url: Redacted.Redacted<string>, max: number) =>
-  PgClient.fromPool({
-    acquire: Effect.acquireRelease(
-      Effect.sync(() => {
-        const pool = new Pg.Pool({
-          connectionString: Redacted.value(url),
-          max,
-          min: 0,
-          idleTimeoutMillis: 60_000,
-          connectionTimeoutMillis: 5_000,
-          types: {
-            getTypeParser: (oid, format) =>
-              oid === 20 || oid === 1082
-                ? (value: string) => value
-                : Pg.types.getTypeParser(oid, format)
-          }
-        });
-        pool.on("error", () => {});
-        return pool;
-      }),
-      (pool) => Effect.promise(() => pool.end())
-    )
-  });
+/**
+ * A scoped pool on the shared row codecs: `int8` as a string, timestamps as
+ * `Date`, the shapes PGlite answers too. The placement's `database` outranks
+ * whatever database the URL names, in its path or a `dbname` parameter, and
+ * the login is the validated one (last nonempty `user`, else the authority).
+ */
+const pool = (url: Redacted.Redacted<string>, max: number, database?: string) =>
+  Sql.pool({
+    url,
+    username: username(new URL(Redacted.value(url))),
+    database,
+    maxConnections: max,
+    minConnections: 0,
+    idleTimeout: "60 seconds",
+    connectTimeout: "5 seconds"
+  }).pipe(
+    // `DatabaseUrl` refused unsupported parameters at startup; here it is a bug.
+    Effect.catchTags({ UnsupportedUrlParameters: Effect.die })
+  );
 
 export const adminLayer = Layer.effect(
   AdminClient,
@@ -116,7 +107,7 @@ export const make = Effect.gen(function* () {
   // Callers hold platform patch-row transactions. Placement work must never
   // borrow from that pool: saturated callers would each wait for a second slot.
   // Clone credentials/options, not connections, and keep claims independently committed.
-  const platform = yield* PgClient.make({
+  const platform = yield* Sql.pool({
     ...platformPool.config,
     maxConnections: 2,
     minConnections: 0,
@@ -168,7 +159,7 @@ export const make = Effect.gen(function* () {
 
   const upgradeReady = Effect.fn("CompanyDatabases.upgradeReady")(
     function* (placement: CompanyDatabases.Placement) {
-      const data = yield* pool(databaseUrl(settings.dataUrl, placement.databaseName), 1);
+      const data = yield* pool(settings.dataUrl, 1, placement.databaseName);
       yield* Inventory.upgrade.pipe(Effect.provideService(SqlClient.SqlClient, data));
       return placement;
     },
@@ -214,7 +205,7 @@ export const make = Effect.gen(function* () {
           );
           yield* Effect.scoped(
             Effect.gen(function* () {
-              const data = yield* pool(databaseUrl(settings.dataUrl, claimed.databaseName), 1);
+              const data = yield* pool(settings.dataUrl, 1, claimed.databaseName);
               yield* Effect.gen(function* () {
                 yield* data.unsafe(`REVOKE ALL ON DATABASE ${name} FROM PUBLIC`);
                 yield* data.unsafe(`GRANT CONNECT, TEMPORARY ON DATABASE ${name} TO ${dataRole}`);
@@ -299,7 +290,7 @@ export const make = Effect.gen(function* () {
             reservedBackends -= 4;
           })
       );
-      const sql = yield* pool(databaseUrl(settings.dataUrl, key.databaseName), 4).pipe(
+      const sql = yield* pool(settings.dataUrl, 4, key.databaseName).pipe(
         Effect.mapError(
           (cause) =>
             new CompanyDatabases.CompanyDatabaseError({

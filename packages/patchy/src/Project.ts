@@ -79,9 +79,12 @@ const failureSchema = Schema.Struct({
   warnings: Schema.optionalKey(Schema.Array(Schema.String)),
   ...refusalFields
 });
-const decodeRepo = Schema.decodeUnknownSync(Schema.fromJsonString(repoSchema), {
-  onExcessProperty: "preserve"
-});
+// Unknown keys ride along (a rewrite spreads them back) but stay out of the type.
+const decodeRepo = Schema.decodeUnknownSync(
+  Schema.fromJsonString(
+    Schema.StructWithRest(repoSchema, [Schema.Record(Schema.String, Schema.Unknown)])
+  )
+);
 const decodePackage = Schema.decodeUnknownSync(Schema.fromJsonString(packageSchema));
 const decodeDependencies = Schema.decodeUnknownSync(dependenciesSchema);
 const decodeChange = Schema.decodeUnknownSync(Schema.fromJsonString(changeSchema));
@@ -126,7 +129,7 @@ export const readRepo = Effect.fn("Project.readRepo")(function* (cwd: string) {
         })
     )
   );
-  return yield* Effect.try({
+  const repo: typeof repoSchema.Type = yield* Effect.try({
     try: () => decodeRepo(source),
     catch: (cause) =>
       new LocalError({
@@ -136,6 +139,7 @@ export const readRepo = Effect.fn("Project.readRepo")(function* (cwd: string) {
         cause
       })
   });
+  return repo;
 });
 
 export const normalizeDescription = Effect.fn("Project.normalizeDescription")(function* (
@@ -717,7 +721,7 @@ export const init = Effect.fn("Project.init")(function* (
         return yield* new LocalError({
           message: "Supply --purpose <text> when initializing non-interactively."
         });
-      purpose = yield* Prompt.run(Prompt.text({ message: "What is this patch for?" })).pipe(
+      purpose = yield* Prompt.run(Prompt.String({ message: "What is this patch for?" })).pipe(
         Effect.catchTags({ QuitError: () => Effect.interrupt })
       );
     }

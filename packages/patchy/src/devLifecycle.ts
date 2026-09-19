@@ -185,7 +185,7 @@ export const start = Effect.fn("Dev.start")(function* <R>(
       );
       const processEnv: NodeJS.ProcessEnv = {};
       for (const key of ["PATH", "HOME", "TMPDIR", "TEMP", "TMP", "SystemRoot"]) {
-        const value = yield* Config.option(Config.string(key)).pipe(
+        const value = yield* Config.option(Config.String(key)).pipe(
           Effect.mapError(
             (cause) =>
               new LocalError({ message: `Could not read ${key} for the dev process.`, cause })

@@ -28,7 +28,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "auth", (handlers) =>
   Effect.gen(function* () {
     const tokens = yield* MachineTokens.MachineTokens;
     const logins = yield* DeviceLogins.DeviceLogins;
-    const publicBaseUrl = yield* Config.string("PATCHY_PUBLIC_BASE_URL");
+    const publicBaseUrl = yield* Config.String("PATCHY_PUBLIC_BASE_URL");
     const verificationUrlBare = `${publicBaseUrl.replace(/\/+$/, "")}/login/device`;
     return handlers
       .handleRaw("startDeviceLogin", () =>

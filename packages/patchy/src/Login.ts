@@ -33,7 +33,7 @@ const agentVariables = [
 export const notWaitingBecause = Effect.gen(function* () {
   if (yield* Output.JsonFlag) return "--json";
   for (const name of agentVariables) {
-    const value = yield* Config.string(name).pipe(Config.option, Effect.orDie);
+    const value = yield* Config.String(name).pipe(Config.option, Effect.orDie);
     if (Option.isSome(value)) return `${name} is set`;
   }
   const stdio = yield* Stdio.Stdio;

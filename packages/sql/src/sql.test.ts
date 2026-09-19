@@ -3,11 +3,42 @@ import * as Effect from "effect/Effect";
 import * as Cause from "effect/Cause";
 import * as Exit from "effect/Exit";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { LEDGER_TABLE, migrate, type Migrations } from "./index.js";
+import * as Reactivity from "effect/unstable/reactivity/Reactivity";
+import * as Redacted from "effect/Redacted";
+import { LEDGER_TABLE, migrate, pool, unsupportedUrlParameters, type Migrations } from "./index.js";
 import * as Testing from "./testing.js";
 
 const ddl = (statement: string) =>
   Effect.flatMap(SqlClient.SqlClient, (sql) => sql.unsafe(statement));
+
+it("reports hostile parameter names as bounded printable ASCII", () => {
+  const names = Array.from({ length: 12 }, (_, index) => `x${index}`);
+  const hostile = `postgresql://user:secret@127.0.0.1:1/db?${names.map((name) => `${name}=1`).join("&")}&${encodeURIComponent("bad\nname")}=1&${"k".repeat(8192)}=1`;
+  const reported = unsupportedUrlParameters(Redacted.make(hostile));
+  assert.strictEqual(reported.length, 8);
+  assert.deepStrictEqual(reported, names.slice(0, 8));
+  const tail = unsupportedUrlParameters(
+    Redacted.make(
+      `postgresql://u:p@127.0.0.1:1/db?${encodeURIComponent("bad\nname")}=1&${"k".repeat(8192)}=1`
+    )
+  );
+  assert.deepStrictEqual(tail, ["bad?name", "k".repeat(64)]);
+});
+
+it.effect("refuses a URL parameter the client does not read instead of dropping it", () =>
+  Effect.gen(function* () {
+    const failure = yield* pool({
+      url: Redacted.make(
+        "postgresql://user:secret@127.0.0.1:1/db?ssl=true&statement_timeout=5&sslmode=require"
+      )
+    }).pipe(Effect.flip);
+    assert.strictEqual(failure._tag, "UnsupportedUrlParameters");
+    assert.deepStrictEqual(failure._tag === "UnsupportedUrlParameters" ? failure.parameters : [], [
+      "ssl",
+      "statement_timeout"
+    ]);
+  }).pipe(Effect.scoped, Effect.provide(Reactivity.layer))
+);
 
 /** Two stand-in capability records, spread the way `{ ...auth, ...patches }` will be. */
 const widgets: Migrations = { "1_widgets": ddl("CREATE TABLE widgets (id integer PRIMARY KEY)") };

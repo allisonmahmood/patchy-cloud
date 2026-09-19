@@ -2,19 +2,19 @@
 
 The `@effect/sql-pg` client layer, Effect's Migrator over the capability packages' migration records, and the migrated-database test layer. No tables live here; see `CONTEXT.md` for the migration and ledger contract.
 
-- `layer` — `PgClient` from `DATABASE_URL` (a `Redacted` `Config`). `layerFromUrl` is the same client on a URL already in hand. Connections are direct: the pinned adapter's cancellation does not work through PgBouncer's transaction pooling; see [ADR-0009](../../docs/adr/ADR-0009-one-postgres-database-per-company.md).
-- `migrate({ ...companies, ...auth, ...patches, ...companyDatabase, ...runtime, ...integrations })` — runs every pending platform step in one transaction and answers with what it applied. The record keys are `<id>_<name>`; existing platform migrations use multi-statement DDL. Company inventory initialization is separate and emits one statement per call so the same SQL runs over Postgres and PGlite.
+- `layer` — `PgClient` from `DATABASE_URL` (a `Redacted` `Config`). `layerFromUrl` is the same client on a URL already in hand. Both are `pool`, which carries the row codecs below, keeps the pool on the wall clock, and refuses a URL parameter the client does not read (`UnsupportedUrlParameters`): `pg` accepted `?ssl=true` or `?statement_timeout=`, the native client reads `sslmode` and nothing else of the kind, so a URL that would silently lose its TLS fails at startup instead. Connections are direct: named prepared statements and cancellation do not work through PgBouncer's transaction pooling; see [ADR-0009](../../docs/adr/ADR-0009-one-postgres-database-per-company.md).
+- `migrate({ ...companies, ...auth, ...patches, ...companyDatabase, ...runtime, ...integrations })` — runs every pending platform step in one transaction and answers with what it applied. The record keys are `<id>_<name>`; a record is `ddl(...statements)`, one statement per string, because the client's extended protocol takes one statement per query. Company inventory initialization is separate and emits one statement per call so the same SQL runs over Postgres and PGlite.
 - `@patchy/sql/testing` — `layer()` clones the shared seeded template for an `it.layer` block and drops the clone when the layer closes. `emptyLayer(migrations)` creates an empty database for SQL's own migrator tests.
 
 ## Decoding rows
 
-A capability decodes rows through `SqlSchema` with a `Schema.Class` result, in one module per capability, so the pending `@effect/sql-pg` client type change (`int8` → `bigint`, timestamps → epoch milliseconds) lands in one place per package:
+A capability decodes rows through `SqlSchema` with a `Schema.Class` result, in one module per capability. The native `@effect/sql-pg` client decodes `int8` to `bigint` and timestamps to epoch milliseconds; the pool's row codecs override both so rows keep `int8` as a decimal string and timestamps as `Date` (a plain `timestamp` read as UTC wall time), the shapes PGlite answers in `@patchy/company-database`, and the override lives here rather than in every row schema:
 
 ```ts
 class TokenRow extends Schema.Class<TokenRow>("TokenRow")({
   id: Schema.String,
   userId: Schema.String,
-  revokedAt: Schema.NullOr(Schema.Date) // today's client hands back a Date; when it becomes epoch ms only this line moves
+  revokedAt: Schema.NullOr(Schema.Date) // a Date, by way of the pool's row codecs
 }) {}
 
 const findToken = SqlSchema.findOneOption({

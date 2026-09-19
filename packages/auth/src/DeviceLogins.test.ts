@@ -7,6 +7,7 @@ import { Analytics } from "@patchy/analytics";
 import { Users } from "@patchy/companies";
 import { sha256 } from "@patchy/core";
 import { Limits } from "@patchy/limits";
+import { ddl } from "@patchy/sql";
 import * as Testing from "@patchy/sql/testing";
 import * as DeviceLogins from "./DeviceLogins.js";
 import * as MachineTokens from "./MachineTokens.js";
@@ -530,10 +531,12 @@ it.layer(layer)("DeviceLogins", (it) => {
         previousMachineTokenId: old.id
       });
       yield* logins.confirm({ userCode: login.userCode, userId, machineName: "Atomic" });
-      yield* sql.unsafe(`CREATE FUNCTION fail_device_delete() RETURNS trigger LANGUAGE plpgsql AS $$
-        BEGIN RAISE EXCEPTION 'device deletion unavailable'; END $$;
-        CREATE TRIGGER fail_device_delete BEFORE DELETE ON device_logins
-        FOR EACH ROW EXECUTE FUNCTION fail_device_delete()`);
+      yield* ddl(
+        `CREATE FUNCTION fail_device_delete() RETURNS trigger LANGUAGE plpgsql AS $$
+          BEGIN RAISE EXCEPTION 'device deletion unavailable'; END $$`,
+        `CREATE TRIGGER fail_device_delete BEFORE DELETE ON device_logins
+          FOR EACH ROW EXECUTE FUNCTION fail_device_delete()`
+      );
       yield* Effect.gen(function* () {
         assert.strictEqual(
           (yield* logins.poll(login.deviceCode).pipe(Effect.flip))._tag,
@@ -554,12 +557,10 @@ it.layer(layer)("DeviceLogins", (it) => {
         );
       }).pipe(
         Effect.ensuring(
-          sql
-            .unsafe(
-              `DROP TRIGGER fail_device_delete ON device_logins;
-        DROP FUNCTION fail_device_delete()`
-            )
-            .pipe(Effect.orDie)
+          ddl(
+            `DROP TRIGGER fail_device_delete ON device_logins`,
+            `DROP FUNCTION fail_device_delete()`
+          ).pipe(Effect.orDie)
         )
       );
       yield* TestClock.adjust(5_000);

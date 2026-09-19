@@ -306,6 +306,32 @@ const failureSource = Effect.fn("sdk.failureSource")(function* (patchId: string)
 });
 
 it.layer(layer)("SDK company generation", (it) => {
+  it.effect("refuses a manifest with unknown fields instead of stripping them", () =>
+    Effect.gen(function* () {
+      const client = yield* HttpClient.HttpClient;
+      const manifest = {
+        ...Fixtures.manifest,
+        tables: {
+          notes: {
+            description: "Notes identified by their row id.",
+            columns: { title: { kind: "text", optionall: true } },
+            indexes: {}
+          }
+        }
+      };
+      const response = yield* client.execute(
+        HttpClientRequest.post("/api/sdk/generate").pipe(
+          HttpClientRequest.bearerToken(identity.machine.id),
+          HttpClientRequest.bodyJsonUnsafe(generateRequest(manifest as typeof Fixtures.manifest))
+        )
+      );
+      assert.strictEqual(response.status, 400);
+      assert.deepStrictEqual(yield* response.json, {
+        ok: false,
+        error: "Invalid generate request field: manifest."
+      });
+    })
+  );
   it.effect(
     "requires bearer auth, handles primitive-free companies, and serves canonical sticky skills",
     () =>

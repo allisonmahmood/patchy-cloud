@@ -8,8 +8,8 @@
  * tells them apart — a handler chooses it here rather than failing with a
  * value the endpoint's error union could encode as either.
  */
+import * as ByteSize from "effect/ByteSize";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as SchemaAST from "effect/SchemaAST";
@@ -85,7 +85,7 @@ export const readBody = (maxBytes: number) =>
       return yield* new BodyTooLarge({ maxBytes });
     }
     const text = yield* request.text.pipe(
-      Effect.provideService(HttpServerRequest.MaxBodySize, FileSystem.Size(maxBytes)),
+      Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(maxBytes)),
       Effect.mapError((cause) => new MalformedBody({ cause }))
     );
     if (text.trim().length === 0) return {} as unknown;
@@ -96,8 +96,11 @@ export const readBody = (maxBytes: number) =>
   });
 
 /** A decoder for one wire schema; compiled once, so build it outside the request. */
-export const decodeBody = <S extends Schema.Top & Schema.Codec<unknown, unknown>>(schema: S) => {
-  const decode = Schema.decodeUnknownResult(schema);
+export const decodeBody = <S extends Schema.Top & Schema.Codec<unknown, unknown>>(
+  schema: S,
+  options?: SchemaAST.ParseOptions
+) => {
+  const decode = Schema.decodeUnknownResult(schema, options);
   return (body: unknown): Effect.Effect<S["Type"], MalformedBody> => {
     const result = decode(body);
     return Result.isSuccess(result)

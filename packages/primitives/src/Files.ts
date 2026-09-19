@@ -53,8 +53,8 @@ export class Busy extends Schema.TaggedError<Busy>()("FileBusy", {
 export const config = Config.all({
   fileBytes: Runtime.byteLimits.fileBytes,
   resultBytes: Runtime.byteLimits.resultBytes,
-  defaultPage: Config.int("PATCHY_FILE_DEFAULT_PAGE").pipe(Config.withDefault(100)),
-  maxPage: Config.int("PATCHY_FILE_MAX_PAGE").pipe(Config.withDefault(1000))
+  defaultPage: Config.Int("PATCHY_FILE_DEFAULT_PAGE").pipe(Config.withDefault(100)),
+  maxPage: Config.Int("PATCHY_FILE_MAX_PAGE").pipe(Config.withDefault(1000))
 });
 const cursorSchema = Schema.Struct({
   version: Schema.Literal(1),

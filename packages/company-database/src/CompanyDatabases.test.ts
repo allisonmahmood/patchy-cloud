@@ -188,6 +188,37 @@ it.layer(Testing.layer())("CompanyDatabases", (it) => {
       }).pipe(Effect.scoped)
   );
 
+  it.effect(
+    "the placement names the database and the login, not the URL's dbname or an empty user",
+    () =>
+      Effect.gen(function* () {
+        yield* createCompany("url-override");
+        const url = new URL(inject("postgres").adminUrl);
+        url.searchParams.set("dbname", "postgres");
+        url.searchParams.set("user", "");
+        const context = yield* Layer.build(
+          Layer.effect(CompanyDatabases.CompanyDatabases, PgCompanyDatabases.make).pipe(
+            Layer.provide(PgCompanyDatabases.adminLayer),
+            Layer.provide(Reactivity.layer),
+            Layer.provide(
+              Layer.succeed(PgCompanyDatabases.CompanyDatabaseConfig, {
+                adminUrl: Redacted.make(url.toString()),
+                dataUrl: Redacted.make(url.toString()),
+                maxBackends: 200,
+                capacity: 100
+              })
+            )
+          )
+        );
+        const service = Context.get(context, CompanyDatabases.CompanyDatabases);
+        const placement = yield* service.ensureReady("url-override");
+        assert.strictEqual(
+          yield* service.withCompany("url-override")(currentDatabase),
+          placement.databaseName
+        );
+      })
+  );
+
   it.effect("races independent registries against one committed claim", () =>
     Effect.gen(function* () {
       yield* createCompany("claim-race");

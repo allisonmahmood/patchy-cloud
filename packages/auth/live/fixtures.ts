@@ -47,8 +47,8 @@ export function liveSettings(env: NodeJS.ProcessEnv): LiveSettings {
 }
 
 export const liveClient = Effect.gen(function* () {
-  const secretKey = yield* Config.redacted("CLERK_SECRET_KEY");
-  const publishableKey = yield* Config.string("CLERK_PUBLISHABLE_KEY");
+  const secretKey = yield* Config.Redacted("CLERK_SECRET_KEY");
+  const publishableKey = yield* Config.String("CLERK_PUBLISHABLE_KEY");
   return createClerkClient({
     secretKey: Redacted.value(secretKey),
     publishableKey,

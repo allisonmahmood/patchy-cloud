@@ -113,9 +113,9 @@ export const config = Config.all({
   rowBytes: Runtime.byteLimits.rowBytes,
   batchBytes: Runtime.byteLimits.batchBytes,
   resultBytes: Runtime.byteLimits.resultBytes,
-  maxItems: Config.int("PATCHY_TABLE_MAX_ITEMS").pipe(Config.withDefault(1000)),
-  defaultPage: Config.int("PATCHY_TABLE_DEFAULT_PAGE").pipe(Config.withDefault(100)),
-  maxPage: Config.int("PATCHY_TABLE_MAX_PAGE").pipe(Config.withDefault(1000))
+  maxItems: Config.Int("PATCHY_TABLE_MAX_ITEMS").pipe(Config.withDefault(1000)),
+  defaultPage: Config.Int("PATCHY_TABLE_DEFAULT_PAGE").pipe(Config.withDefault(100)),
+  maxPage: Config.Int("PATCHY_TABLE_MAX_PAGE").pipe(Config.withDefault(1000))
 });
 type Row = typeof TableRow.Type;
 type Column = typeof ColumnDefinition.Type;

@@ -34,7 +34,6 @@
     "@effect/sql-pg": "catalog:",
     "@effect/sql-pglite": "catalog:",
     "@patchy/core": "workspace:*",
-    "pg": "^8.23.0",
     "@electric-sql/pglite": "0.5.8",
     "@patchy/content-store": "workspace:*",
     "@patchy/sql": "workspace:*",
@@ -43,7 +42,6 @@
   "devDependencies": {
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
-    "@types/pg": "^8.23.1",
     "vitest": "^4.1.11"
   }
 }

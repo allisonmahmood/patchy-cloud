@@ -86,8 +86,8 @@ const isSafeReason = Schema.is(SafeReason);
 export const config = Config.all({
   publicUrl: Config.schema(Origin, "PATCHY_PUBLIC_BASE_URL"),
   publishableKey: Config.schema(PublishableKey, "CLERK_PUBLISHABLE_KEY"),
-  secretKey: Config.redacted("CLERK_SECRET_KEY"),
-  jwtKey: Config.option(Config.string("CLERK_JWT_KEY")),
+  secretKey: Config.Redacted("CLERK_SECRET_KEY"),
+  jwtKey: Config.option(Config.String("CLERK_JWT_KEY")),
   authorizedParty: Config.option(Config.schema(Origin, "CLERK_AUTHORIZED_PARTIES"))
 });
 

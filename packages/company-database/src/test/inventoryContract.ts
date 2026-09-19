@@ -1,5 +1,6 @@
 import { assert } from "@effect/vitest";
 import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
@@ -11,11 +12,16 @@ import * as Inventory from "../Inventory.js";
 
 const readCodecs = SqlSchema.findOne({
   Request: Schema.Void,
-  Result: Schema.Struct({ small: Schema.String, large: Schema.String, day: Schema.String }),
+  Result: Schema.Struct({
+    small: Schema.String,
+    large: Schema.String,
+    day: Schema.String,
+    stamp: Schema.Date
+  }),
   execute: Effect.fn("Contract.readCodecs")(function* () {
     const sql = yield* SqlClient.SqlClient;
     return yield* sql`SELECT 42::bigint AS "small", 9223372036854775807::bigint AS "large",
-      '2024-02-29'::date AS "day"`;
+      '2024-02-29'::date AS "day", '2024-02-29 12:34:56.123'::timestamp AS "stamp"`;
   })
 });
 
@@ -259,7 +265,8 @@ export const inventoryContract = Effect.fn("Contract.inventory")(function* (comp
       assert.deepStrictEqual(yield* readCodecs(undefined), {
         small: "42",
         large: "9223372036854775807",
-        day: "2024-02-29"
+        day: "2024-02-29",
+        stamp: DateTime.toDateUtc(DateTime.makeUnsafe(Date.UTC(2024, 1, 29, 12, 34, 56, 123)))
       });
       yield* databases.withPatchLock(patchId)(
         sql`INSERT INTO "patchy"."files"

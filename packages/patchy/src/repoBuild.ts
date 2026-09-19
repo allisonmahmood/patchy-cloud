@@ -26,7 +26,7 @@ const decodePackage = Schema.decodeUnknownSync(
   )
 );
 const decodeRuntime = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.String));
-const decodeManifest = Schema.decodeUnknownSync(Manifest);
+const decodeManifest = Schema.decodeUnknownSync(Manifest, { onExcessProperty: "error" });
 const encodeManifest = Schema.encodeSync(Schema.fromJsonString(Manifest));
 const isLocalError = Schema.is(LocalError);
 const maxBundleBytes = 10 * 1024 * 1024;

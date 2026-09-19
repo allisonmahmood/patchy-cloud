@@ -72,7 +72,7 @@ interface Running {
 const subprocess = (args: ReadonlyArray<string>, cwd: string, env: NodeJS.ProcessEnv = {}) =>
   Effect.acquireRelease(
     Effect.gen(function* () {
-      const executablePath = yield* Config.string("PATH").pipe(Config.withDefault(""));
+      const executablePath = yield* Config.String("PATH").pipe(Config.withDefault(""));
       const child = spawn(process.execPath, [...args], {
         cwd,
         env: {

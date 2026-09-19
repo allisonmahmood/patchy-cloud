@@ -481,7 +481,7 @@ const diff = Effect.fn("Tables.diff")(function* (
 
 export const make = Effect.gen(function* () {
   const inventory = yield* Inventory.Inventory;
-  const rowBytes = yield* Config.int("PATCHY_RUNTIME_ROW_BYTES").pipe(
+  const rowBytes = yield* Config.Int("PATCHY_RUNTIME_ROW_BYTES").pipe(
     Config.withDefault(1024 * 1024)
   );
   const validate = Effect.fn("Tables.validate")(function* (

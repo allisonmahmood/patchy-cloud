@@ -207,7 +207,7 @@ export class State extends Context.Service<
 export const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const configured = yield* Config.string("PATCHY_STATE_DIR").pipe(Config.option, Effect.orDie);
+  const configured = yield* Config.String("PATCHY_STATE_DIR").pipe(Config.option, Effect.orDie);
   const dir = path.resolve(
     Option.getOrElse(
       Option.filter(configured, (value) => value !== ""),

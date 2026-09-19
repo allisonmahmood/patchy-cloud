@@ -1,7 +1,7 @@
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
+import * as ByteSize from "effect/ByteSize";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import type * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
@@ -92,7 +92,7 @@ const postDevice = Effect.gen(function* () {
     return yield* new BodyTooLarge({ maxBytes: MAX_FORM_BYTES });
   }
   const params = yield* request.urlParamsBody.pipe(
-    Effect.provideService(HttpServerRequest.MaxBodySize, FileSystem.Size(MAX_FORM_BYTES))
+    Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(MAX_FORM_BYTES))
   );
   const form = yield* decodeForm(Object.fromEntries(params));
   // Only the code survives authentication/enrollment. Neither the action nor

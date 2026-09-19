@@ -87,8 +87,7 @@ export const RuntimeVersionId = Schema.String.check(
 
 /** Null bootstraps `me`; a company shell binds every later call to its returned user. */
 export const RuntimePrincipal = Schema.NullOr(Schema.Struct({ userId: NonEmptyText })).annotate({
-  identifier: "RuntimePrincipal",
-  parseOptions: { onExcessProperty: "error" }
+  identifier: "RuntimePrincipal"
 });
 export type RuntimePrincipal = typeof RuntimePrincipal.Type;
 
@@ -245,8 +244,7 @@ export const runtimeOperations = {
 export const RuntimeRequest = Schema.Union(
   Object.values(runtimeOperations).map((operation) => operation.request)
 ).annotate({
-  identifier: "RuntimeRequest",
-  parseOptions: { onExcessProperty: "error" }
+  identifier: "RuntimeRequest"
 });
 export type RuntimeRequest = typeof RuntimeRequest.Type;
 
@@ -271,7 +269,7 @@ export const RuntimeCall = Schema.Union(
   Object.values(runtimeOperations).map((operation) =>
     Schema.Struct({ ...envelopeFields, ...operation.request.fields })
   )
-).annotate({ identifier: "RuntimeCall", parseOptions: { onExcessProperty: "error" } });
+).annotate({ identifier: "RuntimeCall" });
 export type RuntimeCall = typeof RuntimeCall.Type;
 
 /** Failures shared by every integration operation, independent of its source. */

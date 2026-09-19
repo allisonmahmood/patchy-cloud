@@ -136,12 +136,12 @@ const printPlan = (plan: Plan, json: boolean) => {
 
 // ---- Commands -------------------------------------------------------------
 
-const json = Flag.boolean("json").pipe(
+const json = Flag.Boolean("json").pipe(
   Flag.withDescription("Print the plan as JSON"),
   Flag.withDefault(false)
 );
 
-const dryRun = Flag.boolean("dry-run").pipe(
+const dryRun = Flag.Boolean("dry-run").pipe(
   Flag.withDescription("Print the plan this worktree would run with; start nothing"),
   Flag.withDefault(false)
 );
