@@ -64,11 +64,6 @@ export const config = Config.all({
   capacity: Config.succeed(100)
 });
 
-const databaseUrl = (template: Redacted.Redacted<string>, name: string) => {
-  const url = new URL(Redacted.value(template));
-  url.pathname = `/${name}`;
-  return Redacted.make(url.toString());
-};
 const duplicateDatabase = Schema.is(Schema.Struct({ code: Schema.Literal("42P04") }));
 
 class PoolKey extends Data.Class<{
@@ -78,10 +73,15 @@ class PoolKey extends Data.Class<{
   readonly databaseName: string;
 }> {}
 
-/** A scoped pool on the shared row codecs: `int8` as a string, timestamps as `Date`, the shapes PGlite answers too. */
-const pool = (url: Redacted.Redacted<string>, max: number) =>
+/**
+ * A scoped pool on the shared row codecs: `int8` as a string, timestamps as
+ * `Date`, the shapes PGlite answers too. The placement's `database` outranks
+ * whatever database the URL names, in its path or a `dbname` parameter.
+ */
+const pool = (url: Redacted.Redacted<string>, max: number, database?: string) =>
   Sql.pool({
     url,
+    database,
     maxConnections: max,
     minConnections: 0,
     idleTimeout: "60 seconds",
@@ -153,7 +153,7 @@ export const make = Effect.gen(function* () {
 
   const upgradeReady = Effect.fn("CompanyDatabases.upgradeReady")(
     function* (placement: CompanyDatabases.Placement) {
-      const data = yield* pool(databaseUrl(settings.dataUrl, placement.databaseName), 1);
+      const data = yield* pool(settings.dataUrl, 1, placement.databaseName);
       yield* Inventory.upgrade.pipe(Effect.provideService(SqlClient.SqlClient, data));
       return placement;
     },
@@ -199,7 +199,7 @@ export const make = Effect.gen(function* () {
           );
           yield* Effect.scoped(
             Effect.gen(function* () {
-              const data = yield* pool(databaseUrl(settings.dataUrl, claimed.databaseName), 1);
+              const data = yield* pool(settings.dataUrl, 1, claimed.databaseName);
               yield* Effect.gen(function* () {
                 yield* data.unsafe(`REVOKE ALL ON DATABASE ${name} FROM PUBLIC`);
                 yield* data.unsafe(`GRANT CONNECT, TEMPORARY ON DATABASE ${name} TO ${dataRole}`);
@@ -284,7 +284,7 @@ export const make = Effect.gen(function* () {
             reservedBackends -= 4;
           })
       );
-      const sql = yield* pool(databaseUrl(settings.dataUrl, key.databaseName), 4).pipe(
+      const sql = yield* pool(settings.dataUrl, 4, key.databaseName).pipe(
         Effect.mapError(
           (cause) =>
             new CompanyDatabases.CompanyDatabaseError({

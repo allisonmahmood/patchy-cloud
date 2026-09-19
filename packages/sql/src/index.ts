@@ -68,15 +68,31 @@ for (const [oid, arrayOid] of [
 }
 
 /**
+ * `pg` read `?ssl=true|false` on a URL; the native client only reads
+ * `sslmode`. Existing URLs keep meaning what they meant instead of silently
+ * connecting in the clear.
+ */
+const legacySsl = (url: Redacted.Redacted<string>): boolean | undefined => {
+  try {
+    const value = new URL(Redacted.value(url)).searchParams.get("ssl");
+    return value === null ? undefined : value === "true" || value === "1";
+  } catch {
+    return undefined;
+  }
+};
+
+/**
  * A scoped connection pool on the shared row codecs. Pools keep time on the
  * wall clock: idle sweeps and connection lifetimes are infrastructure, and a
  * test that jumps its `TestClock` by years must not replay every pool tick
  * in between (which never finishes).
  */
 export const pool = (config: PgClient.PgPoolConfig) =>
-  PgClient.make({ ...config, types: rowCodecs }).pipe(
-    Effect.provideService(Clock.Clock, Clock.Clock.defaultValue())
-  );
+  PgClient.make({
+    ...config,
+    ssl: config.ssl ?? (config.url === undefined ? undefined : legacySsl(config.url)),
+    types: rowCodecs
+  }).pipe(Effect.provideService(Clock.Clock, Clock.Clock.defaultValue()));
 
 /** The client on a URL already in hand — the migration seam and the test layer. */
 export const layerFromUrl = (url: Redacted.Redacted<string>) => PgClient.layerFrom(pool({ url }));
