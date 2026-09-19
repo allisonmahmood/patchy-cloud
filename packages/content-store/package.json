@@ -21,7 +21,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@azure/identity": "^4.13.2",
+    "@azure/identity": "^4.13.3",
     "@azure/storage-blob": "^12.27.0",
     "@effect/platform-node": "catalog:",
     "effect": "catalog:"
