@@ -79,7 +79,7 @@ const failureSchema = Schema.Struct({
   warnings: Schema.optionalKey(Schema.Array(Schema.String)),
   ...refusalFields
 });
-// Unknown keys ride along so a rewrite keeps what the repo added to patchy.json.
+// Unknown keys ride along (a rewrite spreads them back) but stay out of the type.
 const decodeRepo = Schema.decodeUnknownSync(
   Schema.fromJsonString(
     Schema.StructWithRest(repoSchema, [Schema.Record(Schema.String, Schema.Unknown)])
@@ -129,7 +129,7 @@ export const readRepo = Effect.fn("Project.readRepo")(function* (cwd: string) {
         })
     )
   );
-  return yield* Effect.try({
+  const repo: typeof repoSchema.Type = yield* Effect.try({
     try: () => decodeRepo(source),
     catch: (cause) =>
       new LocalError({
@@ -139,6 +139,7 @@ export const readRepo = Effect.fn("Project.readRepo")(function* (cwd: string) {
         cause
       })
   });
+  return repo;
 });
 
 export const normalizeDescription = Effect.fn("Project.normalizeDescription")(function* (

@@ -9,7 +9,9 @@ import * as Schema from "effect/Schema";
 import { LocalError } from "./CliError.js";
 import * as Output from "./Output.js";
 
-const decodeManifest = Schema.decodeUnknownEffect(Schema.fromJsonString(Manifest));
+const decodeManifest = Schema.decodeUnknownEffect(Schema.fromJsonString(Manifest), {
+  onExcessProperty: "error"
+});
 
 type Definition =
   (typeof Manifest.Type)["tables"][string] | (typeof Manifest.Type)["files"][string];

@@ -44,6 +44,7 @@ const DatabaseUrl = Schema.Redacted(Schema.String).check(
       decodeURI(url.pathname);
       return (
         (url.protocol === "postgres:" || url.protocol === "postgresql:") &&
+        Sql.unsupportedUrlParameters(secret).length === 0 &&
         username(url).length > 0 &&
         url.hash === "" &&
         (url.hostname !== "" || Boolean(url.searchParams.getAll("host").at(-1)))
@@ -76,17 +77,22 @@ class PoolKey extends Data.Class<{
 /**
  * A scoped pool on the shared row codecs: `int8` as a string, timestamps as
  * `Date`, the shapes PGlite answers too. The placement's `database` outranks
- * whatever database the URL names, in its path or a `dbname` parameter.
+ * whatever database the URL names, in its path or a `dbname` parameter, and
+ * the login is the validated one (last nonempty `user`, else the authority).
  */
 const pool = (url: Redacted.Redacted<string>, max: number, database?: string) =>
   Sql.pool({
     url,
+    username: username(new URL(Redacted.value(url))),
     database,
     maxConnections: max,
     minConnections: 0,
     idleTimeout: "60 seconds",
     connectTimeout: "5 seconds"
-  });
+  }).pipe(
+    // `DatabaseUrl` refused unsupported parameters at startup; here it is a bug.
+    Effect.catchTag("UnsupportedUrlParameters", Effect.die)
+  );
 
 export const adminLayer = Layer.effect(
   AdminClient,

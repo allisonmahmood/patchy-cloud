@@ -29,7 +29,7 @@ export class FixtureMissing extends Schema.TaggedError<FixtureMissing>()("DevFix
   }
 }
 
-const decodeManifest = Schema.decodeUnknownEffect(Manifest);
+const decodeManifest = Schema.decodeUnknownEffect(Manifest, { onExcessProperty: "error" });
 const encodeManifest = Schema.encodeSync(Schema.fromJsonString(Manifest));
 const io = <A>(operation: string, run: () => Promise<A>) =>
   Effect.tryPromise({

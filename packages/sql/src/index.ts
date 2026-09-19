@@ -13,6 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import * as Migrator from "effect/unstable/sql/Migrator";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
@@ -67,17 +68,39 @@ for (const [oid, arrayOid] of [
   );
 }
 
+/** The URL parameters the native client reads; `pg` also read `ssl`, `statement_timeout` and more. */
+const URL_PARAMETERS = new Set([
+  "host",
+  "port",
+  "user",
+  "password",
+  "dbname",
+  "application_name",
+  "connect_timeout",
+  "sslmode"
+]);
+
 /**
- * `pg` read `?ssl=true|false` on a URL; the native client only reads
- * `sslmode`. Existing URLs keep meaning what they meant instead of silently
- * connecting in the clear.
+ * A Postgres URL carries a parameter the client does not read. Failing at
+ * startup beats connecting without TLS or a timeout the URL asked for.
  */
-const legacySsl = (url: Redacted.Redacted<string>): boolean | undefined => {
+export class UnsupportedUrlParameters extends Schema.TaggedError<UnsupportedUrlParameters>()(
+  "UnsupportedUrlParameters",
+  { parameters: Schema.Array(Schema.String) }
+) {
+  override get message() {
+    return `Postgres URL parameters the client does not read: ${this.parameters.join(", ")}. It reads ${[...URL_PARAMETERS].join(", ")}; ask for TLS with sslmode=require or sslmode=verify-full.`;
+  }
+}
+
+/** The parameters on a URL that `pool` would refuse; config validation checks the same list up front. */
+export const unsupportedUrlParameters = (url: Redacted.Redacted<string>): ReadonlyArray<string> => {
   try {
-    const value = new URL(Redacted.value(url)).searchParams.get("ssl");
-    return value === null ? undefined : value === "true" || value === "1";
+    return [...new URL(Redacted.value(url)).searchParams.keys()].filter(
+      (key) => !URL_PARAMETERS.has(key)
+    );
   } catch {
-    return undefined;
+    return [];
   }
 };
 
@@ -87,12 +110,14 @@ const legacySsl = (url: Redacted.Redacted<string>): boolean | undefined => {
  * test that jumps its `TestClock` by years must not replay every pool tick
  * in between (which never finishes).
  */
-export const pool = (config: PgClient.PgPoolConfig) =>
-  PgClient.make({
-    ...config,
-    ssl: config.ssl ?? (config.url === undefined ? undefined : legacySsl(config.url)),
-    types: rowCodecs
-  }).pipe(Effect.provideService(Clock.Clock, Clock.Clock.defaultValue()));
+export const pool = Effect.fn("Sql.pool")(function* (config: PgClient.PgPoolConfig) {
+  const unsupported = config.url === undefined ? [] : unsupportedUrlParameters(config.url);
+  if (unsupported.length > 0)
+    return yield* new UnsupportedUrlParameters({ parameters: unsupported });
+  return yield* PgClient.make({ ...config, types: rowCodecs }).pipe(
+    Effect.provideService(Clock.Clock, Clock.Clock.defaultValue())
+  );
+});
 
 /** The client on a URL already in hand — the migration seam and the test layer. */
 export const layerFromUrl = (url: Redacted.Redacted<string>) => PgClient.layerFrom(pool({ url }));
