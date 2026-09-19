@@ -28,7 +28,7 @@ export function starterFiles(options: {
         patchy: tarball,
         typescript: "^6.0.3",
         vite: "^8.3.0",
-        "vite-plugin-singlefile": "^2.3.0",
+        "vite-plugin-singlefile": "^2.3.3",
         "@types/node": "^22.19.0"
       }
     }),
