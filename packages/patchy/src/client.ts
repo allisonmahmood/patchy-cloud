@@ -1,13 +1,140 @@
+// @effect-diagnostics globalTimers:off
+// Browser client with no Effect runtime in the bundle; the subscription grace window is a platform timer.
 import type { Config, Id, Indexes, Insert, Row, TableDefinition, Update } from "./config.js";
 import {
   createPostMessageTransport,
   type Call,
   type Me,
+  type Operation,
   type Transport
 } from "./clientTransport.js";
 import { PatchyError } from "./clientError.js";
 export * from "./clientError.js";
-export type { Call, Me, Operation, Route, Transport } from "./clientTransport.js";
+// PROTOTYPE for #313: the fixture reaches the transport directly for the postgres refusal case.
+export { createPostMessageTransport } from "./clientTransport.js";
+export type {
+  Call,
+  Me,
+  Operation,
+  Route,
+  SubscriptionEvent,
+  Transport
+} from "./clientTransport.js";
+
+// PROTOTYPE for #313, not for merge. The core owns the subscription machinery (contract
+// point 9): a registry keyed by operation plus canonical arguments, a refcount, an
+// unsubscribe grace window, resync handling and a per-subscription revision high-water mark
+// so stale or duplicate snapshots are dropped in O(1) without deep comparison.
+export type SubscriptionStatus = "up-to-date" | "resyncing" | "stopped";
+export interface SubscribeOptions {
+  readonly onError?: (error: PatchyError) => void;
+  readonly onStatus?: (status: SubscriptionStatus) => void;
+}
+export type Unsubscribe = () => void;
+export interface Subscribable<A, T> {
+  (args: A): Promise<T>;
+  subscribe(args: A, onSnapshot: (value: T) => void, options?: SubscribeOptions): Unsubscribe;
+}
+export type SubscribableList<A, T> = {
+  (args?: A): Promise<T>;
+  subscribe(
+    args: A | undefined,
+    onSnapshot: (value: T) => void,
+    options?: SubscribeOptions
+  ): Unsubscribe;
+};
+const GRACE_MS = 1000;
+/** The one canonicalisation the server shares: sorted keys, no undefined. */
+export function canonicalArguments(value: unknown): string {
+  const sort = (item: unknown): unknown =>
+    Array.isArray(item)
+      ? item.map(sort)
+      : item !== null && typeof item === "object"
+        ? Object.fromEntries(
+            Object.keys(item)
+              .sort()
+              .filter((key) => (item as Record<string, unknown>)[key] !== undefined)
+              .map((key) => [key, sort((item as Record<string, unknown>)[key])])
+          )
+        : item;
+  return JSON.stringify(sort(value));
+}
+interface Entry {
+  readonly listeners: Set<{ onSnapshot: (value: unknown) => void; options: SubscribeOptions }>;
+  unsubscribe?: Unsubscribe;
+  revision: number;
+  last: { value: unknown } | undefined;
+  grace?: ReturnType<typeof setTimeout>;
+}
+/** Statistics the Playwright prototype reads; harmless otherwise. */
+export const subscriptionStats = { snapshots: 0, dropped: 0, resyncs: 0 };
+function createRegistry(transport: Transport) {
+  const entries = new Map<string, Entry>();
+  return (
+    op: Operation,
+    args: unknown,
+    onSnapshot: (value: unknown) => void,
+    options: SubscribeOptions = {}
+  ): Unsubscribe => {
+    const key = `${op} ${canonicalArguments(args)}`;
+    let entry = entries.get(key);
+    if (entry === undefined) {
+      const created: Entry = { listeners: new Set(), revision: 0, last: undefined };
+      entry = created;
+      entries.set(key, created);
+      created.unsubscribe = transport.subscribe(op, args, (event) => {
+        if (event.type === "snapshot") {
+          if (event.revision <= created.revision) {
+            subscriptionStats.dropped += 1;
+            return;
+          }
+          created.revision = event.revision;
+          created.last = { value: event.value };
+          subscriptionStats.snapshots += 1;
+          for (const listener of created.listeners) listener.onSnapshot(event.value);
+        } else if (event.type === "must-resync") {
+          // Continuity was lost: the next snapshot starts a new revision clock. Data is kept.
+          created.revision = 0;
+          subscriptionStats.resyncs += 1;
+          for (const listener of created.listeners) listener.options.onStatus?.("resyncing");
+        } else if (event.type === "up-to-date") {
+          for (const listener of created.listeners) listener.options.onStatus?.("up-to-date");
+        } else if (event.type === "stop") {
+          for (const listener of created.listeners) listener.options.onStatus?.("stopped");
+        } else {
+          for (const listener of created.listeners) listener.options.onError?.(event.error);
+        }
+      });
+    }
+    clearTimeout(entry.grace);
+    const listener = { onSnapshot, options };
+    entry.listeners.add(listener);
+    if (entry.last !== undefined) onSnapshot(entry.last.value);
+    return () => {
+      const current = entries.get(key);
+      if (current === undefined || !current.listeners.delete(listener)) return;
+      if (current.listeners.size > 0) return;
+      // Grace window: a remount within a second reuses the live subscription.
+      current.grace = setTimeout(() => {
+        if (entries.get(key) !== current || current.listeners.size > 0) return;
+        entries.delete(key);
+        current.unsubscribe?.();
+      }, GRACE_MS);
+    };
+  };
+}
+function subscribable<A, T>(
+  call: Call,
+  register: ReturnType<typeof createRegistry>,
+  op: Operation,
+  argsOf: (args: A) => unknown
+): Subscribable<A, T> {
+  const read = (args: A) => call(op, argsOf(args)) as Promise<T>;
+  return Object.assign(read, {
+    subscribe: (args: A, onSnapshot: (value: T) => void, options?: SubscribeOptions) =>
+      register(op, argsOf(args), onSnapshot as (value: unknown) => void, options)
+  });
+}
 
 export interface Page<R> {
   readonly rows: readonly R[];
@@ -52,9 +179,10 @@ export interface ReadTable<
   R extends { readonly id: string },
   I extends Indexes = Record<never, never>
 > {
-  get(id: R["id"]): Promise<R | null>;
+  /** PROTOTYPE for #313: `get` and `list` also carry `.subscribe(args, onSnapshot)`. */
+  get: Subscribable<R["id"], R | null>;
   getMany(ids: readonly R["id"][]): Promise<readonly (R | null)[]>;
-  list(options?: ListOptions<R, I>): Promise<Page<R>>;
+  list: SubscribableList<ListOptions<R, I>, Page<R>>;
 }
 export interface OwnedTable<
   C extends Config,
@@ -119,14 +247,42 @@ export interface ClientManifest {
   readonly uses: Readonly<Record<string, { readonly kind: string }>>;
 }
 
+/** Factories receive only `call`; shared tables get a registry over the same transport-less seam. */
+const registries = new WeakMap<Call, ReturnType<typeof createRegistry>>();
+const registryFor = (call: Call, transport?: Transport) => {
+  let registry = registries.get(call);
+  if (registry === undefined) {
+    registry = createRegistry(
+      transport ?? {
+        call,
+        route: {
+          get: () => Promise.reject(),
+          set: () => Promise.reject(),
+          subscribe: () => () => {}
+        },
+        subscribe: () => () => {},
+        close: () => {}
+      }
+    );
+    registries.set(call, registry);
+  }
+  return registry;
+};
+
 export function createSharedTable<
   R extends { readonly id: string },
   I extends Indexes = Record<never, never>
 >(alias: string, call: Call): ReadTable<R, I> {
+  const register = registryFor(call);
   return {
-    get: (id) => call("shared.get", { alias, id }) as Promise<R | null>,
+    get: subscribable<R["id"], R | null>(call, register, "shared.get", (id) => ({ alias, id })),
     getMany: (ids) => call("shared.getMany", { alias, ids }) as Promise<readonly (R | null)[]>,
-    list: (options = {}) => call("shared.list", { ...options, alias }) as Promise<Page<R>>
+    list: subscribable<ListOptions<R, I> | undefined, Page<R>>(
+      call,
+      register,
+      "shared.list",
+      (options = {}) => ({ ...options, alias })
+    )
   };
 }
 
@@ -145,16 +301,23 @@ export function createClient<
 ): Client<C, S, P> {
   const transport = options.transport ?? createPostMessageTransport();
   const call = transport.call;
+  const register = registryFor(call, transport);
   let identity: Promise<Me | null> | undefined;
   const urls = new Map<string, Map<string, Promise<string>>>();
   let closed = false;
   const tables = Object.fromEntries(
     Object.keys(manifest.tables).map((table) => {
       type R = Row<C, keyof C["tables"] & string>;
+      type I = TableIndexes<C["tables"][keyof C["tables"] & string]>;
       const operations: OwnedTable<C, keyof C["tables"] & string> = {
-        get: (id) => call("tables.get", { table, id }) as Promise<R | null>,
+        get: subscribable<R["id"], R | null>(call, register, "tables.get", (id) => ({ table, id })),
         getMany: (ids) => call("tables.getMany", { table, ids }) as Promise<readonly (R | null)[]>,
-        list: (args = {}) => call("tables.list", { ...args, table }) as Promise<Page<R>>,
+        list: subscribable<ListOptions<R, I> | undefined, Page<R>>(
+          call,
+          register,
+          "tables.list",
+          (args = {}) => ({ ...args, table })
+        ),
         insert: (row) => call("tables.insert", { table, row }) as Promise<R>,
         insertMany: (rows) => call("tables.insertMany", { table, rows }) as Promise<readonly R[]>,
         update: (id, patch) => call("tables.update", { table, id, patch }) as Promise<R>,

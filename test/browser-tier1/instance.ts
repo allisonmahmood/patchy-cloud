@@ -23,8 +23,9 @@ export const manifest = {
   tables: {
     rows: {
       description: "Labeled records keyed by id.",
-      columns: { label: { kind: "text" } },
-      indexes: {}
+      // PROTOTYPE for #313: an optional owner column and index so a viewer-dependent filter exists.
+      columns: { label: { kind: "text" }, owner: { kind: "text", optional: true } },
+      indexes: { byOwner: { columns: ["owner"] } }
     }
   },
   files: { assets: { description: "Browser fixture assets keyed by file name." } },
@@ -41,12 +42,18 @@ export interface Instance {
   foreignOrigin: string;
   wire: number;
   html: string;
+  /** PROTOTYPE for #313: the reactive fixture patch and a way to sever its streams. */
+  prototypeHtml: string;
+  dropStreams(): number;
+  openStreams(): number;
   platform: Client;
   runtimeRequests: Array<{ method: string; path: string; body: string }>;
   foreignRequests: string[];
   session(
     context: BrowserContext,
-    user?: "owner" | "colleague" | "expired" | "none"
+    user?: "owner" | "colleague" | "expired" | "none",
+    /** PROTOTYPE for #313: a session that expires while a stream is open. */
+    options?: { readonly expiresInSeconds?: number }
   ): Promise<void>;
   publish(scope?: "company" | "public", html?: string): Promise<Published>;
   company(): Promise<Client>;
@@ -136,6 +143,8 @@ export async function startInstance(): Promise<Instance> {
     const port = await listen(serverReservation);
     const runtimeRequests: Instance["runtimeRequests"] = [];
     const foreignRequests: string[] = [];
+    // PROTOTYPE for #313: live SSE responses, so the spec can sever them like a dropped network.
+    const streams = new Set<import("node:http").IncomingMessage>();
     foreign = createServer((request, response) => {
       foreignRequests.push(request.url ?? "/");
       if (request.url?.startsWith("/embed?")) {
@@ -200,6 +209,21 @@ export async function startInstance(): Promise<Instance> {
             headers: request.headers
           },
           (incoming) => {
+            // PROTOTYPE for #313: event streams are piped live; everything else stays buffered.
+            if (incoming.headers["content-type"]?.startsWith("text/event-stream")) {
+              streams.add(incoming);
+              response.writeHead(incoming.statusCode ?? 500, incoming.headers);
+              incoming.pipe(response);
+              incoming.on("close", () => {
+                streams.delete(incoming);
+                response.end();
+              });
+              response.on("close", () => {
+                streams.delete(incoming);
+                incoming.destroy();
+              });
+              return;
+            }
             const parts: Buffer[] = [];
             incoming.on("data", (chunk: Buffer) => parts.push(chunk));
             incoming.on("end", () => {
@@ -276,15 +300,33 @@ export async function startInstance(): Promise<Instance> {
       alias: { "patchy/client": path.join(root, "packages/patchy/dist/client.js") }
     });
     const html = `<!doctype html><html><head><title>Tier one acceptance</title><style>body{margin:0}td{height:20px}table{border-collapse:collapse}@media print{button{display:none}}</style></head><body><h1>Tier one acceptance</h1><p id="identity">waiting</p><p id="route"></p><button id="route-next">Next route</button><button id="download">Download file</button><img id="own-image" alt="Own file"><table><tbody id="rows"></tbody></table><script>${bundle.outputFiles[0]!.text.replaceAll("</script", "<\\/script")}</script></body></html>`;
+    // PROTOTYPE for #313: the reactive fixture patch, bundled beside the tier 1 one.
+    const prototypeBundle = await build({
+      entryPoints: [path.join(root, "test/browser-tier1/reactive-prototype-client.ts")],
+      bundle: true,
+      platform: "browser",
+      format: "iife",
+      write: false,
+      alias: { "patchy/client": path.join(root, "packages/patchy/dist/client.js") }
+    });
+    const prototypeHtml = `<!doctype html><html><head><title>Reactive prototype</title></head><body><h1>Reactive prototype</h1><p id="identity">waiting</p><p id="status">idle</p><button id="insert">Insert row</button><ul id="list"></ul><script>${prototypeBundle.outputFiles[0]!.text.replaceAll("</script", "<\\/script")}</script></body></html>`;
     return {
       origin,
       foreignOrigin,
       wire: WIRE_VERSION,
       html,
+      prototypeHtml,
+      dropStreams() {
+        const count = streams.size;
+        for (const stream of streams) stream.destroy();
+        streams.clear();
+        return count;
+      },
+      openStreams: () => streams.size,
       platform,
       runtimeRequests,
       foreignRequests,
-      async session(context, user = "owner") {
+      async session(context, user = "owner", options = {}) {
         await context.clearCookies();
         if (user === "none") {
           // A known signed-out development browser needs no live Clerk browser-registration hop.
@@ -301,7 +343,7 @@ export async function startInstance(): Promise<Instance> {
           email: user === "colleague" ? "colleague@patchy.local" : "dev@patchy.local",
           iat: now - 120,
           nbf: now - 120,
-          exp: user === "expired" ? now - 60 : now + 3600
+          exp: user === "expired" ? now - 60 : now + (options.expiresInSeconds ?? 3600)
         });
         await context.addCookies(
           signedInCookies(token)
