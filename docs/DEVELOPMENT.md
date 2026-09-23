@@ -95,6 +95,11 @@ that environment token and warns about it.
 | `pnpm dev logs`             | Print `dev.log`.                                                                                 |
 | `pnpm dev reset`            | Stop, wipe `.local/dev/`, and start a fresh seeded instance.                                     |
 
+A start or `reset` bundles the shell broker first. A broker that does not
+compile fails it on stderr before anything is recorded, stopped or wiped.
+`stop`, `status`, `logs`, `--dry-run` and confirming a healthy instance never
+build it.
+
 `reset` is also the answer when the migration ledger changes shape under an
 instance you already have, including the rewritten `0003_patches_baseline` and
 pre-merge instances that ran the old `0007_runtime_baseline` instead of
@@ -775,9 +780,8 @@ Install the matching Playwright Chromium and Firefox builds first. Native
 `window.print()` checks use isolated headed browsers, virtual PDF printers and
 `pdftotext`; they require a display (X11 for Chromium), never a physical printer.
 The resulting PDFs must contain both the first and last of 2,000 rows.
-The shell broker is bundled from the API schemas before builds, tests and each
-`pnpm dev` start (a broker that does not compile fails the start, never `stop`,
-`status` or `logs`); `@patchy/serving/shell` has no auth/platform imports so a local runtime can reuse it.
+The shell broker is bundled from the API schemas before builds and tests;
+`@patchy/serving/shell` has no auth/platform imports so a local runtime can reuse it.
 
 ## Running the server by hand
 

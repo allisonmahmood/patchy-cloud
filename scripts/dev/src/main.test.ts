@@ -69,6 +69,30 @@ it.layer(NodeServices.layer)("pnpm dev with a broker that does not compile", (it
   );
 
   it.effect(
+    "reset fails on the build before stopping or wiping anything",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const worktree = yield* brokenWorktree;
+        const supervisor = yield* spawner.spawn(
+          ChildProcess.make(process.execPath, ["-e", "setInterval(() => {}, 1000)"])
+        );
+        const plan = yield* computePlan(worktree, () => Effect.succeed(true));
+        yield* writePlan({ ...plan, pids: { supervisor: supervisor.pid } });
+
+        const reset = yield* pnpmDev(worktree, "reset");
+
+        assert.strictEqual(reset.exitCode, 1);
+        assert.include(reset.stderr, "broker.ts");
+        assert.isTrue(yield* alive(supervisor.pid));
+        assert.isTrue(yield* fs.exists(path.join(worktree, ".local/dev/plan.json")));
+      }).pipe(Effect.scoped),
+    30_000
+  );
+
+  it.effect(
     "start fails on the build before recording anything",
     () =>
       Effect.gen(function* () {
