@@ -22,7 +22,7 @@ Owned upload buffers transfer through the shipped `patchy/client` transport and
 detach; subviews copy only their selected bytes. Request byte defaults and
 operation classification are shared API definitions, also used by Runtime.
 
-The first runtime call is `me` with a null principal; its user id is pinned for later calls. Public `me` is null and public company-data operations fail even for signed-in readers. A changed or expired session stops the patch and asks for sign-in followed by a whole-page reload. Access loss is a first-party notice without a reload offer; validation errors belong to patch code. Already-admitted work retains its original attribution; a missing reply remains an unknown outcome.
+The first runtime call is `me` with a null principal; its user id is pinned for later calls. Public `me` is null and public company-data operations fail even for signed-in readers. A changed or expired session stops the patch and asks for sign-in followed by a whole-page reload. Access loss is a first-party notice without a reload offer; validation errors belong to patch code. Already-admitted work retains its original attribution; a missing reply remains an unknown outcome. Leaving the page closes the broker; a page restored from the back/forward cache reloads whole rather than reopening it.
 Only `access_denied`, `session_expired` and `principal_changed` are access-class
 stopping notices. `not_available_on_public` is an ordinary patch-visible refusal,
 and public patches retain their browser-owned route bridge.
