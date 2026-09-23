@@ -216,12 +216,24 @@ export async function executeConfig(
   if (options?.resolve === false) {
     return config;
   }
+  const indexPath = resolve(dirname(absolutePath), "patchy/_generated/index.json");
+  const index = await readFile(indexPath, "utf8").catch((cause: unknown) => {
+    throw new StaleGenerated({ cause });
+  });
+  return resolveStamps(config, index);
+}
+
+/**
+ * Stamps an evaluated config from a generated index's JSON source. Refuses, as
+ * StaleGenerated, an index from another release or manifest version, and stamps
+ * that no longer match the config's declarations.
+ */
+export const resolveStamps = (config: UnresolvedManifest, source: string): ExecutedManifest => {
   const declarations = Object.entries(config.uses);
   const uses: Record<string, (typeof Manifest.Type)["uses"][string]> = {};
-  const indexPath = resolve(dirname(absolutePath), "patchy/_generated/index.json");
   let index: typeof generatedIndexSchema.Type;
   try {
-    index = decodeIndex(await readFile(indexPath, "utf8"));
+    index = decodeIndex(source);
   } catch (cause) {
     throw new StaleGenerated({ cause });
   }
@@ -254,4 +266,4 @@ export async function executeConfig(
     uses[alias] = { ...declaration, id: stamp.id, revision: stamp.revision };
   }
   return decodeManifest({ ...config, uses, manifestVersion: MANIFEST_VERSION, release: RELEASE });
-}
+};

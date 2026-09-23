@@ -6,7 +6,7 @@ import type * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Api from "./Api.js";
 import { LocalError } from "./CliError.js";
-import { configFailure, executeConfig } from "./executeConfig.js";
+import { configFailure, executeConfig, resolveStamps } from "./executeConfig.js";
 import { ManagedProject, isProjectChanged, presentSkills, safePath } from "./ManagedProject.js";
 import * as Project from "./Project.js";
 import { RELEASE } from "./release.js";
@@ -140,6 +140,15 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
               message: `Generation returned inconsistent metadata for ${alias}.`
             });
         }
+        // Check the generated index against this one evaluation, as publishing does. Evaluating
+        // config again could see an imported file saved since generation.
+        const index = generated.files.find((file) => file.path === "patchy/_generated/index.json");
+        if (index === undefined)
+          return yield* new LocalError({ message: "Generation returned no declaration index." });
+        yield* Effect.try({
+          try: () => resolveStamps(unresolved, index.contents),
+          catch: configFailure
+        });
         const warnings = [...syncWarnings, ...(yield* primitiveReminders(root, manifest))];
         yield* io("Activate generated files", () =>
           transaction.activate(
@@ -149,15 +158,8 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
             { before: source, after: source }
           )
         ).pipe(Effect.uninterruptible);
-        const resolved = yield* Effect.tryPromise({
-          try: () => executeConfig(configPath),
-          catch: configFailure
-        });
         return {
-          manifest: {
-            ...resolved,
-            ...(repo.description === undefined ? {} : { description: repo.description })
-          },
+          manifest,
           identity,
           patchId: repo.patch ?? "localdev0000",
           ...(baseline === undefined ? {} : { baseline }),
