@@ -266,16 +266,17 @@ export const prepare = Effect.fn("DevResources.prepare")(function* (
       })
     );
   }
+  const owned = sha256(
+    encodeJson({
+      tables: prepared.manifest.tables,
+      files: prepared.manifest.files,
+      baseline: prepared.baseline
+    })
+  );
   const stamp = encodeJson({
     companyId: version.companyId,
     patchId: version.patchId,
-    owned: sha256(
-      encodeJson({
-        tables: prepared.manifest.tables,
-        files: prepared.manifest.files,
-        baseline: prepared.baseline
-      })
-    ),
+    owned,
     shared
   });
   const previous = yield* fs.readFileString(stampPath).pipe(
@@ -290,7 +291,8 @@ export const prepare = Effect.fn("DevResources.prepare")(function* (
     Option.isNone(previousState) ||
     previousState.value.companyId !== version.companyId ||
     previousState.value.patchId !== version.patchId ||
-    (prepared.baseline === undefined && changed) ||
+    // Unpublished owned schema changes recreate everything; shared fixture edits refresh only their source below.
+    (prepared.baseline === undefined && previousState.value.owned !== owned) ||
     !(yield* fs.exists(companyDir));
   const changedSources = new Set(
     Object.keys(shared).filter(
