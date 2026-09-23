@@ -35,11 +35,11 @@ export const ago = (iso: string, now: number): string => {
   return unit(Math.round(seconds / 86_400), "day");
 };
 
-// The index line: text up to the first sentence-ending period, semicolon or spaced
+// The index line: text up to the first sentence-ending period or ellipsis, semicolon or spaced
 // en dash, bounded to 80 code points. A period inside a token (".NET", "1.2") is not a boundary.
 const firstClause = (description: string): string => {
   const text = description.trim();
-  const boundary = text.search(/\.(?=\s|$)|;| – /u);
+  const boundary = text.search(/\.+(?=\s|$)|;| – /u);
   const clause = boundary === -1 ? text : text.slice(0, boundary).trimEnd();
   const points = Array.from(clause);
   return points.length > 80 ? `${points.slice(0, 79).join("").trimEnd()}…` : clause;
