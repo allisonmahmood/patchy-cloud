@@ -170,7 +170,7 @@ function mount(frame: HTMLIFrameElement): void {
       release(download.size);
     }
     downloads.clear();
-    window.removeEventListener("popstate", popstate);
+    window.removeEventListener("popstate", announceRoute);
     window.removeEventListener("pagehide", stop);
   };
   const notice = (code: string) => {
@@ -216,13 +216,13 @@ function mount(frame: HTMLIFrameElement): void {
     )
       notice(error.code);
   };
-  // Decoded once, as hosted parsing reads the address: bootstrap, set acknowledgements and
+  // Decoded once, as hosted parsing reads the address: bootstrap, route events after a set and
   // back/forward report one form for one history entry.
   const route = () => {
     const path = location.pathname;
     return base && path.startsWith(base + "/") ? decodeURIComponent(path.slice(base.length)) : "/";
   };
-  const popstate = () => {
+  const announceRoute = () => {
     if (ready) send({ v: wire, kind: "event", event: "route", data: { path: route() } });
   };
   const bootstrapTimer = window.setTimeout(() => notice("bootstrap_failed"), 10_000);
@@ -449,7 +449,7 @@ function mount(frame: HTMLIFrameElement): void {
         const next = new URL(location.href);
         next.pathname = base + path!;
         history.pushState(null, "", next);
-        reply = { value: { path: route() }, heldBytes: 0 };
+        reply = { value: null, heldBytes: 0 };
       } else if (op === "me") reply = { value: me, heldBytes: 0 };
       else reply = await runtime(request!.op, request!.args, bytes);
       replyBytes = reply.heldBytes;
@@ -493,6 +493,8 @@ function mount(frame: HTMLIFrameElement): void {
         },
         reply.bytes ? [reply.bytes] : []
       );
+      // Wire 1 acknowledges a set with null; this event then corrects the client's cached request.
+      if (op === "route.set") announceRoute();
     } catch (error) {
       failure(id, error instanceof Refusal ? error : lost());
     } finally {
@@ -522,7 +524,7 @@ function mount(frame: HTMLIFrameElement): void {
       notice("bootstrap_failed");
     }
   });
-  window.addEventListener("popstate", popstate);
+  window.addEventListener("popstate", announceRoute);
   window.addEventListener("pagehide", stop, { once: true });
   // Install the one-shot load handoff before permitting the initial document to load.
   frame.src = contentSrc;

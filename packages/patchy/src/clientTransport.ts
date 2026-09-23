@@ -37,11 +37,6 @@ export interface Port {
   start(): void;
   close(): void;
 }
-/** The `{ path }` carried by route events and route.set acknowledgements. */
-const routeOf = (data: unknown) =>
-  data !== null && typeof data === "object" && "path" in data && typeof data.path === "string"
-    ? data.path
-    : undefined;
 const lost = () =>
   new PatchyError(
     "unknown_outcome",
@@ -63,7 +58,10 @@ export function createPortTransport(
       if (!closed && listeners.has(listener)) listener(value);
     });
   };
+  // Adopts a set's request path on acknowledgement; the shell's route event then corrects it to the
+  // canonical decoded form. An unchanged path notifies nobody, so a set reports once.
   const updateRoute = (value: string) => {
+    if (value === path) return;
     path = value;
     for (const listener of listeners) notify(listener, value);
   };
@@ -73,7 +71,7 @@ export function createPortTransport(
       resolve(value: unknown): void;
       reject(error: unknown): void;
       timer: ReturnType<typeof setTimeout>;
-      route: boolean;
+      path?: string;
     }
   >();
   const onMessage: EventListener = (event) => {
@@ -82,8 +80,15 @@ export function createPortTransport(
     const value = reply as Record<string, unknown>;
     if (value.v !== WIRE_VERSION) return;
     if (value.kind === "event") {
-      const path = value.event === "route" ? routeOf(value.data) : undefined;
-      if (path !== undefined) updateRoute(path);
+      const data = value.data;
+      if (
+        value.event === "route" &&
+        data !== null &&
+        typeof data === "object" &&
+        "path" in data &&
+        typeof data.path === "string"
+      )
+        updateRoute(data.path);
       return;
     }
     if (typeof value.id !== "string") return;
@@ -102,12 +107,8 @@ export function createPortTransport(
         ...(value.value as object),
         bytes: value.bytes instanceof Uint8Array ? value.bytes : new Uint8Array(value.bytes)
       });
-    } else if (request.route) {
-      // Adopt the shell's canonical route, never the raw request.
-      const path = routeOf(value.value);
-      if (path !== undefined) updateRoute(path);
-      request.resolve(null);
     } else {
+      if (request.path !== undefined) updateRoute(request.path);
       request.resolve(value.value);
     }
   };
@@ -137,7 +138,18 @@ export function createPortTransport(
       pending.delete(id);
       reject(lost());
     }, timeoutMs);
-    pending.set(id, { resolve, reject, timer, route: op === "route.set" });
+    pending.set(id, {
+      resolve,
+      reject,
+      timer,
+      ...(op === "route.set" &&
+      args !== null &&
+      typeof args === "object" &&
+      "path" in args &&
+      typeof args.path === "string"
+        ? { path: args.path }
+        : {})
+    });
     const payload =
       bytes === undefined
         ? undefined

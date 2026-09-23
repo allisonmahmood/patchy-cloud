@@ -169,12 +169,10 @@ test("route bridge reports one decoded Unicode route after set, Back and reload"
 
   frame = await open(page, patch, "/caf%C3%A9");
   await expect(frame.locator("#route")).toHaveText("/café");
-  // An encoded request lands on the same entry, so the shell acknowledges its decoded form.
+  // An encoded request lands on the same entry; the shell's route event settles it decoded.
   await set(frame, "/next/caf%C3%A9");
   await expect(page).toHaveURL(`${patch.address}/next/caf%C3%A9`);
-  expect(
-    await frame.evaluate(() => (window as unknown as FixtureWindow).harness.client.route.get())
-  ).toBe("/next/café");
+  await expect(frame.locator("#route")).toHaveText("/next/café");
 });
 
 test("hostile navigation, pending real reads/writes, malformed, oversized and duplicate envelopes", async ({
