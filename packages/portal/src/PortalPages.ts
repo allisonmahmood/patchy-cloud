@@ -47,8 +47,6 @@ const decodeRollback = Schema.decodeUnknownEffect(
   })
 );
 const decodeRestore = Schema.decodeUnknownEffect(Schema.Struct({ expectedState: PatchState }));
-// Retire and delete confirmations carry the patch id they were rendered for, so a
-// name that now belongs to another patch never reaches that patch.
 const decodeRetire = Schema.decodeUnknownEffect(
   Schema.Struct({ expectedPatchId: Schema.String, expectedState: Schema.Literal("live") })
 );
@@ -269,10 +267,16 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Acti
           selectedOwnerId: form.user ?? "",
           acknowledged: form.ack === "1"
         });
-  const nameReused = render(name, {
-    status: 409,
-    notice: "This name now belongs to a different patch. Nothing was done."
-  });
+  // Retire and delete confirmations carry the patch id they were rendered for. A form
+  // without it, or whose name now belongs to another patch, stops on the card: a
+  // re-rendered confirmation would post at whichever patch holds the name now.
+  const otherPatch = (submitted: string | undefined) =>
+    render(name, {
+      status: 409,
+      notice: submitted
+        ? "This name now belongs to a different patch. Nothing was done."
+        : "This confirmation is out of date. Nothing was done."
+    });
   const run = Effect.gen(function* () {
     switch (action) {
       case "description": {
@@ -306,14 +310,16 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Acti
         break;
       }
       case "retire": {
+        if (form.expectedPatchId !== selected.patch.id)
+          return yield* otherPatch(form.expectedPatchId);
         const fields = yield* decodeRetire(form);
-        if (fields.expectedPatchId !== selected.patch.id) return yield* nameReused;
         yield* patches.retire(fields.expectedPatchId, actor, form.ack === "1");
         break;
       }
       case "delete": {
+        if (form.expectedPatchId !== selected.patch.id)
+          return yield* otherPatch(form.expectedPatchId);
         const fields = yield* decodeDelete(form);
-        if (fields.expectedPatchId !== selected.patch.id) return yield* nameReused;
         if (fields.confirm !== selected.patch.name) {
           const message = `Type ${selected.patch.name} to confirm. Nothing was done.`;
           return yield* redisplay(422, message, message);

@@ -762,18 +762,16 @@ it.layer(layer)("portal pages on a socket", (it) => {
         ];
         const { expectedPatchId, ...withoutId } = fields;
         assert.strictEqual(expectedPatchId, original.patchId);
-        for (const [submitted, status] of [
-          [fields, 409],
-          [withoutId, 422]
+        for (const [submitted, notice] of [
+          [fields, "This name now belongs to a different patch. Nothing was done."],
+          [withoutId, "This confirmation is out of date. Nothing was done."]
         ] as const) {
           const response = yield* post(path, workspace.owner, submitted);
-          assert.strictEqual(response.status, status);
-          assert.include(
-            text(yield* response.text),
-            status === 409
-              ? "This name now belongs to a different patch. Nothing was done."
-              : "Check the submitted fields and try again. Nothing was done."
-          );
+          assert.strictEqual(response.status, 409);
+          const html = yield* response.text;
+          assert.include(text(html), notice);
+          assert.strictEqual(heading(html), original.name);
+          assert.notInclude(forms(html), path);
           assert.deepStrictEqual(
             [
               yield* readPatch(workspace.owner, original.patchId),
