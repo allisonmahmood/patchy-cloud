@@ -486,7 +486,7 @@ export const make = (
             : Effect.fail(new InvalidRequest({}))
         ),
       bodyLimit,
-      // The largest per-operation body limit; the configured limits are independent.
+      // Must cover every runtimeBodyLimit branch: the limits are configured independently.
       maxCallBytes: Math.max(
         settings.rowBytes + settings.callBytes,
         settings.batchBytes + settings.callBytes,
