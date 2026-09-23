@@ -474,6 +474,30 @@ it.effect("operation body bounds count UTF-8 bytes and allow only the operation'
   )
 );
 
+it.effect("a single-row cap above the batch and postgres caps still admits the row", () =>
+  Effect.gen(function* () {
+    const api = yield* Fixtures.client;
+    const response = yield* api.call({
+      payload: envelope("tables.insert", { text: "é".repeat(600) }),
+      headers: authenticatedHeaders(),
+      responseMode: "response-only"
+    });
+    assert.strictEqual(response.status, 200);
+  }).pipe(
+    Effect.provide(
+      Fixtures.layer(
+        { me, "tables.insert": { kind: "mutation", run: () => Effect.succeed(null) } },
+        {
+          PATCHY_RUNTIME_ROW_BYTES: "2048",
+          PATCHY_RUNTIME_BATCH_BYTES: "512",
+          PATCHY_RUNTIME_CALL_BYTES: "512",
+          PATCHY_RUNTIME_POSTGRES_BYTES: "512"
+        }
+      )
+    )
+  )
+);
+
 it.effect("public calls refuse unknown operations before even malformed principal checks", () =>
   Effect.gen(function* () {
     const api = yield* Fixtures.client;

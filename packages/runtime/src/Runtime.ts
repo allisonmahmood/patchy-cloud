@@ -486,7 +486,12 @@ export const make = (
             : Effect.fail(new InvalidRequest({}))
         ),
       bodyLimit,
-      maxCallBytes: Math.max(settings.batchBytes + settings.callBytes, settings.postgresBytes),
+      // The largest per-operation body limit; the configured limits are independent.
+      maxCallBytes: Math.max(
+        settings.rowBytes + settings.callBytes,
+        settings.batchBytes + settings.callBytes,
+        settings.postgresBytes
+      ),
       fileBytes: settings.fileBytes
     });
   });
