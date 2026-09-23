@@ -24,22 +24,34 @@ const identity = new Identity({
   machine: { id: "preparation-machine", name: "Preparation test" }
 });
 
-/** A repo whose config takes its column name from an imported file, and an instance that answers generation with `index`. */
-const harness = Effect.fn("test.preparation.harness")(function* (
-  index: unknown,
-  duringGeneration: (root: string) => Effect.Effect<void, unknown, FileSystem.FileSystem>
-) {
+/**
+ * A repo whose config takes its column name from an imported file and declares `uses`, and an
+ * instance that answers generation with `index` and `metadata`.
+ */
+const harness = Effect.fn("test.preparation.harness")(function* ({
+  index,
+  uses = "{}",
+  metadata = { postgres: {}, shared: {} },
+  duringGeneration = () => Effect.void
+}: {
+  readonly index: unknown;
+  readonly uses?: string;
+  readonly metadata?: unknown;
+  readonly duringGeneration?: (root: string) => Effect.Effect<void, unknown, FileSystem.FileSystem>;
+}) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const root = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-preparation-" });
   yield* fs.writeFileString(path.join(root, "patchy.json"), JSON.stringify({ instance: apiUrl }));
   yield* fs.writeFileString(path.join(root, "package.json"), '{"type":"module"}');
   yield* fs.writeFileString(path.join(root, "fields.ts"), 'export const column = "title";\n');
+  yield* fs.makeDirectory(path.join(root, "fixtures"));
+  yield* fs.writeFileString(path.join(root, "fixtures/shared-contacts.sql"), "");
   yield* fs.writeFileString(
     path.join(root, "patchy.config.ts"),
-    `import { defineConfig, table, t } from ${JSON.stringify(builders)};\n` +
+    `import { defineConfig, table, t, sharedTable } from ${JSON.stringify(builders)};\n` +
       'import { column } from "./fields.ts";\n' +
-      'export default defineConfig({ name: "preparation-test", tier: 1, tables: { notes: table("Notes identified by id.", { [column]: t.text() }) } });\n'
+      `export default defineConfig({ name: "preparation-test", tier: 1, tables: { notes: table("Notes identified by id.", { [column]: t.text() }) }, uses: ${uses} });\n`
   );
   const generated: Array<typeof GenerateRequest.Type> = [];
   const client = HttpClient.make((request) =>
@@ -53,7 +65,7 @@ const harness = Effect.fn("test.preparation.harness")(function* (
       return respond({
         ok: true,
         uses: [],
-        metadata: { postgres: {}, shared: {} },
+        metadata,
         files: [{ path: "patchy/_generated/index.json", contents: JSON.stringify(index) }]
       });
     }).pipe(Effect.provide(NodeServices.layer))
@@ -73,9 +85,11 @@ it.layer(NodeServices.layer)("DevPreparation.prepare", (it) => {
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
-        const { generated, prepare } = yield* harness(currentIndex, (root) =>
-          fs.writeFileString(`${root}/fields.ts`, 'export const column = "body";\n')
-        );
+        const { generated, prepare } = yield* harness({
+          index: currentIndex,
+          duringGeneration: (root) =>
+            fs.writeFileString(`${root}/fields.ts`, 'export const column = "body";\n')
+        });
         const prepared = yield* prepare;
         assert.deepStrictEqual(Object.keys(generated[0]!.manifest.tables.notes!.columns), [
           "title"
@@ -89,16 +103,51 @@ it.layer(NodeServices.layer)("DevPreparation.prepare", (it) => {
     "refuses a generated index from another release",
     () =>
       Effect.gen(function* () {
-        const { prepare } = yield* harness(
-          { ...currentIndex, release: `${RELEASE}-stale` },
-          () => Effect.void
-        );
+        const { prepare } = yield* harness({
+          index: { ...currentIndex, release: `${RELEASE}-stale` }
+        });
         const exit = yield* Effect.exit(prepare);
         assert.isTrue(Exit.isFailure(exit));
         if (Exit.isFailure(exit))
           assert.strictEqual(
             Option.getOrUndefined(Exit.findErrorOption(exit))?.code,
             "stale_generated"
+          );
+      }),
+    { timeout: 30_000 }
+  );
+
+  it.effect(
+    "stamps declarations from the generated index and checks them against its metadata",
+    () =>
+      Effect.gen(function* () {
+        const contacts = {
+          kind: "sharedTable",
+          patchId: "abcdefghijkl",
+          table: "contacts",
+          id: "abcdefghijkl/contacts",
+          revision: 3
+        } as const;
+        const index = {
+          ...currentIndex,
+          uses: [{ alias: "contacts", id: contacts.id, revision: 3, declaration: contacts }]
+        };
+        const uses = '{ contacts: sharedTable("abcdefghijkl", "contacts") }';
+        const shared = (declaration: typeof contacts | { revision: number }) => ({
+          postgres: {},
+          shared: {
+            contacts: { declaration: { ...contacts, ...declaration }, tables: {}, uses: {} }
+          }
+        });
+        const { prepare } = yield* harness({ index, uses, metadata: shared(contacts) });
+        assert.deepStrictEqual((yield* prepare).manifest.uses, { contacts });
+        const stale = yield* harness({ index, uses, metadata: shared({ revision: 4 }) });
+        const exit = yield* Effect.exit(stale.prepare);
+        assert.isTrue(Exit.isFailure(exit));
+        if (Exit.isFailure(exit))
+          assert.strictEqual(
+            Option.getOrUndefined(Exit.findErrorOption(exit))?.message,
+            "Generation returned inconsistent metadata for contacts."
           );
       }),
     { timeout: 30_000 }

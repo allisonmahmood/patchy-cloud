@@ -153,11 +153,6 @@ export const start = Effect.fn("Dev.start")(function* <R>(
             new LocalError({
               message: "Could not read the patch repo while preparing dev.",
               cause
-            }),
-          SchemaError: (cause) =>
-            new LocalError({
-              message: "The instance returned invalid declaration metadata.",
-              cause
             })
         })
       );
