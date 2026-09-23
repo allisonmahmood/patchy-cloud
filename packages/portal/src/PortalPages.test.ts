@@ -635,6 +635,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
             );
             assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), before);
             const response = yield* post(path, person, {
+              expectedPatchId: patch.patchId,
               expectedState: action === "retire" ? "live" : "not-deleted",
               ...(action === "delete" ? { confirm: patch.name } : {})
             });
@@ -673,6 +674,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
         const later = yield* publishDependant(workspace.owner, `${action}-later`, source.patchId);
         const before = yield* readPatch(workspace.owner, source.patchId);
         const fields = {
+          expectedPatchId: source.patchId,
           expectedState: action === "retire" ? "live" : "not-deleted",
           ...(action === "delete" ? { confirm: source.name } : {})
         };
@@ -709,6 +711,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
         const page = yield* request(path, workspace.owner);
         assert.strictEqual(page.status, 200);
         const fields = {
+          expectedPatchId: patch.patchId,
           expectedState: hidden(yield* page.text, "expectedState")!,
           ...(action === "delete" ? { confirm: patch.name } : {})
         };
@@ -733,6 +736,54 @@ it.layer(layer)("portal pages on a socket", (it) => {
         assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), before);
       })
     );
+
+    it.effect(`refuses an old ${action} confirmation once its name belongs to another patch`, () =>
+      Effect.gen(function* () {
+        const workspace = yield* company();
+        const original = yield* publish(workspace.owner, `reused-${action}`);
+        const path = `${cardPath(original.name)}/${action}`;
+        const page = yield* (yield* request(path, workspace.owner)).text;
+        const fields = {
+          ...Object.fromEntries(
+            [...page.matchAll(/<input type="hidden" name="([^"]*)" value="([^"]*)">/g)].map(
+              (match) => [match[1]!, match[2]!]
+            )
+          ),
+          ...(action === "delete" ? { confirm: original.name } : {})
+        };
+        yield* publish(workspace.owner, `archived-${action}`, {
+          intent: "update",
+          patchId: original.patchId
+        });
+        const replacement = yield* publish(workspace.owner, original.name);
+        const before = [
+          yield* readPatch(workspace.owner, original.patchId),
+          yield* readPatch(workspace.owner, replacement.patchId)
+        ];
+        const { expectedPatchId, ...withoutId } = fields;
+        assert.strictEqual(expectedPatchId, original.patchId);
+        for (const [submitted, status] of [
+          [fields, 409],
+          [withoutId, 422]
+        ] as const) {
+          const response = yield* post(path, workspace.owner, submitted);
+          assert.strictEqual(response.status, status);
+          assert.include(
+            text(yield* response.text),
+            status === 409
+              ? "This name now belongs to a different patch. Nothing was done."
+              : "Check the submitted fields and try again. Nothing was done."
+          );
+          assert.deepStrictEqual(
+            [
+              yield* readPatch(workspace.owner, original.patchId),
+              yield* readPatch(workspace.owner, replacement.patchId)
+            ],
+            before
+          );
+        }
+      })
+    );
   }
 
   it.effect(
@@ -754,6 +805,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
           const page = yield* request(path, workspace.owner);
           assert.strictEqual(page.status, 200);
           const fields = {
+            expectedPatchId: source.patchId,
             expectedState: hidden(yield* page.text, "expectedState")!,
             confirm: source.name
           };
@@ -805,6 +857,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
         assert.match(text(html), /30.day/);
         assert.include(text(html), "7 Feb 2026");
         const response = yield* post(path, workspace.owner, {
+          expectedPatchId: source.patchId,
           expectedState: "not-deleted",
           confirm: source.name
         });
@@ -829,6 +882,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
       const submitted = '<script>alert("wrong")</script>';
       const path = `${cardPath(patch.name)}/delete?all=1`;
       const response = yield* post(path, workspace.owner, {
+        expectedPatchId: patch.patchId,
         expectedState: "not-deleted",
         confirm: submitted
       });
