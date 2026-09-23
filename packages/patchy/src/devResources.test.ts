@@ -231,7 +231,7 @@ it.live(
         notes: ["Keep my local work"],
         contacts: ["Updated contact"]
       });
-      // An owned schema change still recreates local data before the first publish.
+      // Even an additive owned schema change recreates local data before the first publish.
       const changed: Prepared = {
         ...prepared,
         manifest: {
@@ -239,7 +239,10 @@ it.live(
           tables: {
             notes: {
               ...prepared.manifest.tables.notes!,
-              columns: { title: { kind: "integer" } }
+              columns: {
+                ...prepared.manifest.tables.notes!.columns,
+                body: { kind: "text", optional: true }
+              }
             }
           }
         }
