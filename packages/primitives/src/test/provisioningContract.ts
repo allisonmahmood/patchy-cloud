@@ -525,6 +525,65 @@ export const refusals = Effect.fn("ProvisioningContract.refusals")(function* (co
   );
 });
 
+export const crossKindNames = Effect.fn("ProvisioningContract.crossKindNames")(function* (
+  companyId: string
+) {
+  const databases = yield* CompanyDatabases.CompanyDatabases;
+  const tables = yield* Tables.Tables;
+  const inventory = yield* Inventory.Inventory;
+  const patchId = "cross-kind-names";
+  const table = (description: string) => ({ description, columns: {}, indexes: {} });
+  yield* databases.ensureReady(companyId);
+  yield* databases.withCompany(companyId)(
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* databases.withPatchLock(patchId)(
+        tables.provision(patchId, {
+          ...manifest({ documents: table("Documents identified by their row id.") }),
+          files: { attachments: { description: "Attachments identified by file name." } }
+        })
+      );
+      const before = yield* inventory.read(patchId);
+      // Omission keeps a primitive in the cumulative inventory, so its name stays taken.
+      const cases = [
+        {
+          object: "documents",
+          next: {
+            ...manifest({ shouldNotExist: table("Never provisioned rows.") }),
+            files: { documents: { description: "Documents identified by file name." } }
+          }
+        },
+        {
+          object: "attachments",
+          next: manifest({
+            shouldNotExist: table("Never provisioned rows."),
+            attachments: table("Attachments identified by their row id.")
+          })
+        }
+      ];
+      for (const test of cases) {
+        yield* databases.withPatchLock(patchId)(
+          Effect.gen(function* () {
+            const error = yield* tables.provision(patchId, test.next).pipe(Effect.flip);
+            assert.instanceOf(error, Tables.NotAdditive);
+            if (error._tag !== "NotAdditive") return;
+            assert.deepStrictEqual(
+              error.changes.map((change) => change.object),
+              [test.object]
+            );
+            assert.include(error.changes[0]!.fix, "different name");
+            assert.deepStrictEqual(
+              yield* sql`SELECT to_regclass(${qualified(patchId, "shouldNotExist")})::text AS name`,
+              [{ name: null }]
+            );
+          })
+        );
+        assert.deepStrictEqual(yield* inventory.read(patchId), before);
+      }
+    })
+  );
+});
+
 export const emptyAndRollback = Effect.fn("ProvisioningContract.emptyAndRollback")(function* (
   companyId: string
 ) {

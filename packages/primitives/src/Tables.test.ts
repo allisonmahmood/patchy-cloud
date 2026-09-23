@@ -10,6 +10,7 @@ import * as Tables from "./Tables.js";
 import {
   additions,
   columnLimit,
+  crossKindNames,
   emptyAndRollback,
   indexKeyLimit,
   omissions,
@@ -57,6 +58,11 @@ for (const [name, layer] of [
     it.effect(
       "refuses every non-additive change before any DDL and names its object, change and fix",
       () => refusals("cmp_dev"),
+      30_000
+    );
+    it.effect(
+      "refuses a table or file store under a name the other kind already holds",
+      () => crossKindNames("cmp_dev"),
       30_000
     );
     it.effect(
