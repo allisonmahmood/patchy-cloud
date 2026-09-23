@@ -775,8 +775,9 @@ Install the matching Playwright Chromium and Firefox builds first. Native
 `window.print()` checks use isolated headed browsers, virtual PDF printers and
 `pdftotext`; they require a display (X11 for Chromium), never a physical printer.
 The resulting PDFs must contain both the first and last of 2,000 rows.
-The shell broker is bundled from the API schemas before builds and tests;
-`@patchy/serving/shell` has no auth/platform imports so a local runtime can reuse it.
+The shell broker is bundled from the API schemas before builds, tests and each
+`pnpm dev` start (a broker that does not compile fails the start, never `stop`,
+`status` or `logs`); `@patchy/serving/shell` has no auth/platform imports so a local runtime can reuse it.
 
 ## Running the server by hand
 
