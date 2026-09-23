@@ -355,5 +355,96 @@ it.layer(Layer.mergeAll(Testing.emptyLayer({}), NodeFileSystem.layer, NodePath.l
         }).pipe(Effect.scoped),
       30_000
     );
+
+    it.effect(
+      "fixtures keep the source's numeric, character and timestamp modifiers",
+      () =>
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql.unsafe(
+            "CREATE TABLE public.measures (id integer PRIMARY KEY, amount numeric(8,2), whole numeric(4), taken timestamp(0), stamped timestamptz(3), code character(4), label varchar(4), amounts numeric(8,2)[])"
+          );
+          const measuresSql = `INSERT INTO public.measures VALUES (1, 9.995, 9.5, '2024-01-02 03:04:05.6',
+            '2024-01-02 03:04:05.123456+00', 'ab', 'abcd', '{9.995,9}')`;
+          yield* sql.unsafe(measuresSql);
+          const snapshot = yield* discover;
+          const store = yield* ConnectionStore.ConnectionStore.pipe(
+            Effect.provide(
+              ConnectionStoreDev.layer([
+                { connection, snapshots: [{ revision: declaration.revision, snapshot }] }
+              ])
+            )
+          );
+          const measures = {
+            connection: "warehouse",
+            relation: { schema: "public", name: "measures" }
+          };
+          const reads = Effect.gen(function* () {
+            const handlers = yield* Operations.makeHandlers;
+            const call = (op: keyof typeof handlers, args: unknown) =>
+              handlers[op].run(args).pipe(Effect.provideService(Binding.Binding, binding));
+            assert.deepStrictEqual(
+              (yield* call("postgres.list", measures).pipe(Effect.flatMap(decodePage))).rows,
+              [
+                {
+                  id: 1,
+                  amount: "10.00",
+                  whole: "10",
+                  taken: "2024-01-02T03:04:06.000000",
+                  stamped: "2024-01-02T03:04:05.123000Z",
+                  code: "ab",
+                  label: "abcd",
+                  amounts: ["10.00", "9.00"]
+                }
+              ]
+            );
+            assert.deepStrictEqual(
+              (yield* call("postgres.query", {
+                connection: "warehouse",
+                sql: "SELECT octet_length(code) AS width FROM public.measures",
+                params: [],
+                shape: { width: { kind: "integer" } }
+              }).pipe(Effect.flatMap(decodeRows))).rows,
+              [{ width: 4 }]
+            );
+          });
+          yield* reads.pipe(
+            Effect.provideService(Execution.Execution, yield* nativeExecution(store)),
+            Effect.provideService(ConnectionStore.ConnectionStore, store)
+          );
+          const fs = yield* FileSystem.FileSystem;
+          const fixture = Effect.fn("test.parity.modifierFixture")(function* (contents: string) {
+            const root = yield* fs.makeTempDirectoryScoped({
+              prefix: "postgres-parity-modifiers-"
+            });
+            yield* fs.makeDirectory(`${root}/fixtures`);
+            yield* fs.writeFileString(`${root}/fixtures/postgres-warehouse.sql`, contents);
+            return Dev.dev(snapshot, {
+              connectionId: declaration.id,
+              handle: declaration.handle,
+              root
+            });
+          });
+          yield* reads.pipe(
+            Effect.provide(yield* fixture(measuresSql)),
+            Effect.provideService(ConnectionStore.ConnectionStore, store),
+            Effect.scoped
+          );
+          // A value the source column would refuse is refused locally too.
+          const failure = yield* Effect.flip(
+            Layer.build(
+              yield* fixture("INSERT INTO public.measures (id, label) VALUES (2, 'abcde')")
+            ).pipe(Effect.scoped)
+          );
+          assert.instanceOf(failure, Dev.FixtureInvalid);
+          if (failure instanceof Dev.FixtureInvalid)
+            assert.strictEqual(failure.details.sqlstate, "22001");
+          assert.include(
+            generate(declaration, snapshot).fixture,
+            String.raw`"\"amount\"": "\"pg_catalog\".\"numeric\"(8,2)" nullable`
+          );
+        }).pipe(Effect.scoped),
+      30_000
+    );
   }
 );

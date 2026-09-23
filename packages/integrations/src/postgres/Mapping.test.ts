@@ -7,7 +7,8 @@ import {
   quoteIdentifier,
   quoteLiteral,
   surface,
-  typeMapping
+  typeMapping,
+  typeModifiers
 } from "./Mapping.js";
 import { Snapshot, type ColumnType } from "@patchy/api/postgres-snapshot";
 
@@ -184,4 +185,40 @@ it("projects only int8 and numeric arrays through text, with or without element 
   assert.strictEqual(project({ ...array("_external_id", "int8"), baseSchema: "public" }), exact);
   assert.strictEqual(project(array("_int4", "int4")), "pg_catalog.to_jsonb(c)");
   assert.strictEqual(project(array("_text")), "pg_catalog.to_jsonb(c)");
+});
+
+it("renders only validated numeric, character and timestamp modifiers in fixture types", () => {
+  const snapshot = { version: 1 as const, enums: [], exclusions: [], relations: [] };
+  const stamps: typeof ColumnType.Type = {
+    ...type("_timestamptz"),
+    kind: "array",
+    element: { baseSchema: "pg_catalog", baseName: "timestamptz", kind: "base" }
+  };
+  // atttypmod values PostgreSQL stores for numeric(8,2), numeric(5,-2), character(4), timestamp(0).
+  assert.deepStrictEqual(typeModifiers(type("numeric"), 524294), [8, 2]);
+  assert.deepStrictEqual(typeModifiers(type("numeric"), 329730), [5, -2]);
+  assert.deepStrictEqual(typeModifiers(type("bpchar"), 8), [4]);
+  assert.deepStrictEqual(typeModifiers(type("timestamp"), 0), [0]);
+  assert.deepStrictEqual(typeModifiers(stamps, 3), [3]);
+  assert.isUndefined(typeModifiers(type("numeric"), -1));
+  assert.isUndefined(typeModifiers(type("time"), 3));
+
+  assert.strictEqual(
+    nativeType({ ...type("numeric"), modifiers: [8, 2] }, snapshot),
+    '"pg_catalog"."numeric"(8,2)'
+  );
+  assert.strictEqual(
+    nativeType({ ...stamps, modifiers: [3] }, snapshot),
+    '"pg_catalog"."timestamptz"(3)[]'
+  );
+  for (const invalid of [
+    { ...type("timestamp"), modifiers: [7] },
+    { ...type("varchar"), modifiers: [0] },
+    { ...type("numeric"), modifiers: [8, 2, 1] },
+    { ...type("int4"), modifiers: [4] }
+  ])
+    assert.isUndefined(nativeType(invalid, snapshot));
+  assert.deepStrictEqual(acceptedSourceTypes({ ...type("numeric"), modifiers: [8, 2] }, snapshot), [
+    '"pg_catalog"."numeric"'
+  ]);
 });

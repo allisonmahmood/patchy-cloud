@@ -5,7 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import { reservedRelation, surface, typeMapping } from "./Mapping.js";
+import { reservedRelation, surface, typeMapping, typeModifiers } from "./Mapping.js";
 import * as Metadata from "@patchy/api/postgres-snapshot";
 import * as SourceClient from "./SourceClient.js";
 import * as SourceNetwork from "./SourceNetwork.js";
@@ -197,6 +197,7 @@ const CatalogRelation = Schema.Struct({
 const CatalogColumn = Schema.Struct({
   ...Metadata.Column.fields,
   selectable: Schema.Boolean,
+  typmod: Schema.Int,
   enumOid: Schema.NullOr(Schema.Int)
 });
 const CatalogDetails = Schema.Struct({
@@ -281,7 +282,7 @@ export const discover = Effect.gen(function* () {
           'element', CASE WHEN base.typcategory = 'A' THEN jsonb_build_object(
             'baseSchema', element_ns.nspname, 'baseName', element.typname,
             'kind', CASE WHEN element.typtype = 'e' THEN 'enum' ELSE 'base' END) ELSE NULL END)),
-        'enumOid', CASE WHEN base.typtype = 'e' THEN base.oid::int
+        'typmod', a.atttypmod, 'enumOid', CASE WHEN base.typtype = 'e' THEN base.oid::int
           WHEN element.typtype = 'e' THEN element.oid::int ELSE NULL END) AS column_info
       FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_type original ON original.oid = a.atttypid
       JOIN pg_catalog.pg_namespace original_ns ON original_ns.oid = original.typnamespace
@@ -383,7 +384,14 @@ export const discover = Effect.gen(function* () {
           column: column.name,
           reason
         });
-      else columns.push({ name: column.name, type: column.type, nullable: column.nullable });
+      else {
+        const modifiers = typeModifiers(column.type, column.typmod);
+        columns.push({
+          name: column.name,
+          type: modifiers === undefined ? column.type : { ...column.type, modifiers },
+          nullable: column.nullable
+        });
+      }
     }
     const names = new Set(columns.map((column) => column.name));
     relations.push({

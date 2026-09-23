@@ -18,6 +18,10 @@ export const ColumnType = Schema.Struct({
   baseSchema: Name,
   baseName: Name,
   kind: Schema.Literals(["base", "enum", "array"]),
+  // Type modifiers in SQL order, e.g. numeric(8,2) is [8, 2]. They apply to an array's element.
+  modifiers: Schema.optionalKey(
+    Schema.Array(Schema.Int).check(Schema.isMinLength(1), Schema.isMaxLength(2))
+  ),
   element: Schema.optionalKey(
     Schema.Struct({
       baseSchema: Name,

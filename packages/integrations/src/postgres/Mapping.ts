@@ -163,11 +163,63 @@ export const typeMapping = (type: typeof ColumnType.Type): TypeMapping | undefin
   return undefined;
 };
 
-/** Never execute format_type output from a remote catalog as SQL. Domains use their resolved base. */
+// Modifier ranges in SQL order for the builtins whose modifiers fixture DDL reproduces.
+const modifierRanges: Readonly<Record<string, ReadonlyArray<readonly [number, number]>>> = {
+  numeric: [
+    [1, 1000],
+    [-1000, 1000]
+  ],
+  varchar: [[1, 10_485_760]],
+  bpchar: [[1, 10_485_760]],
+  timestamp: [[0, 6]],
+  timestamptz: [[0, 6]]
+};
+
+/** The builtin a column's modifiers apply to: its base type, or an array's element. */
+const modifiable = (type: typeof ColumnType.Type): string | undefined => {
+  const base = type.kind === "array" ? type.element : type.kind === "base" ? type : undefined;
+  return base?.baseSchema === "pg_catalog" && Object.hasOwn(modifierRanges, base.baseName)
+    ? base.baseName
+    : undefined;
+};
+
+/** Decodes a source pg_attribute.atttypmod, e.g. numeric(8,2) to [8, 2]. Domains carry -1. */
+export const typeModifiers = (
+  type: typeof ColumnType.Type,
+  typmod: number
+): ReadonlyArray<number> | undefined => {
+  const name = modifiable(type);
+  if (name === undefined || typmod < 0) return undefined;
+  if (name === "numeric") {
+    const packed = typmod - 4;
+    // The scale is a signed 11-bit field since PostgreSQL 15; earlier scales are non-negative.
+    return [(packed >> 16) & 0xffff, ((packed & 0x7ff) ^ 0x400) - 0x400];
+  }
+  return [name === "timestamp" || name === "timestamptz" ? typmod : typmod - 4];
+};
+
+/** "" without modifiers, "(8,2)" for valid ones, undefined when the type cannot take them. */
+const modifierSuffix = (type: typeof ColumnType.Type): string | undefined => {
+  if (type.modifiers === undefined) return "";
+  const name = modifiable(type);
+  const ranges = name === undefined ? undefined : modifierRanges[name];
+  return ranges !== undefined &&
+    type.modifiers.length <= ranges.length &&
+    type.modifiers.every((value, index) => value >= ranges[index]![0] && value <= ranges[index]![1])
+    ? `(${type.modifiers.join(",")})`
+    : undefined;
+};
+
+/**
+ * Never execute format_type output from a remote catalog as SQL; only validated modifiers are
+ * rendered. Domains use their resolved base without the domain's own modifiers.
+ */
 export const nativeType = (
   type: typeof ColumnType.Type,
   snapshot: typeof Snapshot.Type
 ): string | undefined => {
+  const modifiers = modifierSuffix(type);
+  if (modifiers === undefined) return undefined;
   if (type.kind === "enum") {
     return snapshot.enums.some(
       (item) => item.schema === type.baseSchema && item.name === type.baseName
@@ -182,7 +234,7 @@ export const nativeType = (
         { ...element, schema: element.baseSchema, name: element.baseName, sql: "" },
         snapshot
       );
-      return base === undefined ? undefined : `${base}[]`;
+      return base === undefined ? undefined : `${base}${modifiers}[]`;
     }
     if (
       type.baseSchema === "pg_catalog" &&
@@ -195,16 +247,16 @@ export const nativeType = (
   }
   return typeMapping(type) === undefined
     ? undefined
-    : `${quoteIdentifier(type.baseSchema)}.${quoteIdentifier(type.baseName)}`;
+    : `${quoteIdentifier(type.baseSchema)}.${quoteIdentifier(type.baseName)}${modifiers}`;
 };
 
-/** Catalog identity on the source, or the exact resolved type used by native fixture DDL. */
+/** Catalog identity on the source, or the resolved type used by native fixture DDL. pg_typeof has no modifiers. */
 export const acceptedSourceTypes = (
   type: typeof ColumnType.Type,
   snapshot: typeof Snapshot.Type
 ): ReadonlyArray<string> => {
   const source = `${quoteIdentifier(type.schema)}.${quoteIdentifier(type.name)}`;
-  const fixture = nativeType(type, snapshot);
+  const fixture = nativeType({ ...type, modifiers: undefined }, snapshot);
   return fixture === undefined || fixture === source ? [source] : [source, fixture];
 };
 
