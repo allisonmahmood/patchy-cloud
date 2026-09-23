@@ -304,6 +304,19 @@ export const prepare = Effect.fn("DevResources.prepare")(function* (
     yield* fs.remove(stampPath, { force: true });
     yield* fs.remove(companyDir, { recursive: true, force: true });
     yield* fs.remove(contentDir, { recursive: true, force: true });
+  } else if (Option.isSome(previousState) && changedSources.size > 0) {
+    // Forget changed sources before recreating them, so a fixture that fails to seed is retried next start.
+    yield* fs.writeFileString(
+      stampPath,
+      encodeJson({
+        ...previousState.value,
+        shared: Object.fromEntries(
+          Object.entries(previousState.value.shared).filter(
+            ([patchId]) => !changedSources.has(patchId)
+          )
+        )
+      })
+    );
   }
   const loaded = Layer.succeed(
     LoadedVersions.LoadedVersions,
