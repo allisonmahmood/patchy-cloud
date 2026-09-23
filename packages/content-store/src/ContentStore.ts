@@ -74,7 +74,10 @@ export class ContentStore extends Context.Service<
     ) => Effect.Effect<Uint8Array, InvalidObjectKey | ObjectNotFound | StoreUnavailable>;
     /** Removes the object; a key already empty is a success. */
     readonly delete: (key: string) => Effect.Effect<void, InvalidObjectKey | StoreUnavailable>;
-    /** Lazily enumerates objects whose keys start with prefix; empty means all objects. */
+    /**
+     * Lazily enumerates objects whose keys start with prefix; empty means all
+     * objects. Not a snapshot: an object deleted mid-listing may be skipped.
+     */
     readonly list: (
       prefix: string
     ) => Stream.Stream<StoredObject, InvalidObjectKey | StoreUnavailable>;

@@ -100,4 +100,29 @@ it.layer(Layer.merge(storeInTempDir, NodePath.layer))("FilesystemContentStore", 
       );
     })
   );
+
+  it.effect("keeps listing past an object deleted after it was enumerated", () =>
+    Effect.gen(function* () {
+      const service = yield* ContentStore.ContentStore;
+      const keys = ["a", "b", "c", "d", "e"].map((name) => `files/overlap/store/${name}`);
+      yield* Effect.forEach(keys, (key) => service.put(key, key));
+      // One directory's entries are enumerated together, so every other key is
+      // already enumerated by the time the first is listed.
+      const survivorBeside = (first: string) => (first === keys[0] ? keys[1] : keys[0]);
+      const listed = yield* service.list("files/overlap/").pipe(
+        Stream.zipWithIndex,
+        Stream.tap(([object, index]) =>
+          index === 0
+            ? Effect.forEach(
+                keys.filter((key) => key !== object.key && key !== survivorBeside(object.key)),
+                service.delete
+              )
+            : Effect.void
+        ),
+        Stream.map(([object]) => object.key),
+        Stream.runCollect
+      );
+      assert.deepStrictEqual(listed.toSorted(), [listed[0], survivorBeside(listed[0]!)].sort());
+    })
+  );
 });
