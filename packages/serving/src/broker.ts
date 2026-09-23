@@ -216,9 +216,11 @@ function mount(frame: HTMLIFrameElement): void {
     )
       notice(error.code);
   };
+  // Decoded once, as hosted parsing reads the address: bootstrap, set acknowledgements and
+  // back/forward report one form for one history entry.
   const route = () => {
     const path = location.pathname;
-    return base && path.startsWith(base + "/") ? path.slice(base.length) : "/";
+    return base && path.startsWith(base + "/") ? decodeURIComponent(path.slice(base.length)) : "/";
   };
   const popstate = () => {
     if (ready) send({ v: wire, kind: "event", event: "route", data: { path: route() } });
@@ -447,7 +449,7 @@ function mount(frame: HTMLIFrameElement): void {
         const next = new URL(location.href);
         next.pathname = base + path!;
         history.pushState(null, "", next);
-        reply = { value: null, heldBytes: 0 };
+        reply = { value: { path: route() }, heldBytes: 0 };
       } else if (op === "me") reply = { value: me, heldBytes: 0 };
       else reply = await runtime(request!.op, request!.args, bytes);
       replyBytes = reply.heldBytes;

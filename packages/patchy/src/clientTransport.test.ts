@@ -225,17 +225,23 @@ it("preserves bootstrap routes, acknowledges sets and receives popstate before i
     expect(paths).toEqual(["/notes/deep-link"]);
     expect(cancelled).not.toHaveBeenCalled();
 
-    const changed = client.route.set("/notes/next");
+    const changed = client.route.set("/notes/n%C3%A9xt");
     await requested.promise;
     expect(paths).toEqual(["/notes/deep-link"]);
     await expect(client.route.get()).resolves.toBe("/notes/deep-link");
-    channel.port2.postMessage({ v: 1, id: requests[0]!.id, kind: "result", value: null });
+    // The shell's acknowledgement carries the canonical route; the client adopts it.
+    channel.port2.postMessage({
+      v: 1,
+      id: requests[0]!.id,
+      kind: "result",
+      value: { path: "/notes/néxt" }
+    });
     await expect(changed).resolves.toBeNull();
-    expect(paths).toEqual(["/notes/deep-link", "/notes/next"]);
+    expect(paths).toEqual(["/notes/deep-link", "/notes/néxt"]);
     await expect(client.route.set("/rejected")).rejects.toMatchObject({ code: "invalid_request" });
-    await expect(client.route.get()).resolves.toBe("/notes/next");
-    expect(paths).toEqual(["/notes/deep-link", "/notes/next"]);
-    expect(requests.map((request) => request.args.path)).toEqual(["/notes/next", "/rejected"]);
+    await expect(client.route.get()).resolves.toBe("/notes/néxt");
+    expect(paths).toEqual(["/notes/deep-link", "/notes/néxt"]);
+    expect(requests.map((request) => request.args.path)).toEqual(["/notes/n%C3%A9xt", "/rejected"]);
 
     channel.port2.postMessage({
       v: 2,
@@ -257,7 +263,7 @@ it("preserves bootstrap routes, acknowledges sets and receives popstate before i
       data: { path: "/notes/back" }
     });
     await transport.call("me", {});
-    expect(paths).toEqual(["/notes/deep-link", "/notes/next", "/notes/back"]);
+    expect(paths).toEqual(["/notes/deep-link", "/notes/néxt", "/notes/back"]);
     await expect(client.route.get()).resolves.toBe("/notes/back");
 
     unsubscribe();
@@ -268,7 +274,7 @@ it("preserves bootstrap routes, acknowledges sets and receives popstate before i
       data: { path: "/notes/unsubscribed" }
     });
     await transport.call("me", {});
-    expect(paths).toEqual(["/notes/deep-link", "/notes/next", "/notes/back"]);
+    expect(paths).toEqual(["/notes/deep-link", "/notes/néxt", "/notes/back"]);
     await expect(client.route.get()).resolves.toBe("/notes/unsubscribed");
     client.route.subscribe(cancelled);
     client.close();

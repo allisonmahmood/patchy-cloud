@@ -149,6 +149,34 @@ test("route bridge, real client file URL, shell download, isolation and 2,000-ro
   expect(text).toContain("Print row 2000");
 });
 
+test("route bridge reports one decoded Unicode route after set, Back and reload", async ({
+  page,
+  instance
+}) => {
+  const patch = await instance.publish();
+  let frame = await open(page, patch);
+  const set = (target: typeof frame, path: string) =>
+    target.evaluate(
+      (path) => (window as unknown as FixtureWindow).harness.client.route.set(path),
+      path
+    );
+  await set(frame, "/café");
+  await expect(page).toHaveURL(`${patch.address}/caf%C3%A9`);
+  await expect(frame.locator("#route")).toHaveText("/café");
+  await set(frame, "/next");
+  await page.goBack();
+  await expect(frame.locator("#route")).toHaveText("/café");
+
+  frame = await open(page, patch, "/caf%C3%A9");
+  await expect(frame.locator("#route")).toHaveText("/café");
+  // An encoded request lands on the same entry, so the shell acknowledges its decoded form.
+  await set(frame, "/next/caf%C3%A9");
+  await expect(page).toHaveURL(`${patch.address}/next/caf%C3%A9`);
+  expect(
+    await frame.evaluate(() => (window as unknown as FixtureWindow).harness.client.route.get())
+  ).toBe("/next/café");
+});
+
 test("hostile navigation, pending real reads/writes, malformed, oversized and duplicate envelopes", async ({
   page,
   instance
