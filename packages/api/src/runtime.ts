@@ -317,10 +317,14 @@ export const RuntimeFailure = Schema.Struct({
 }).annotate({ identifier: "RuntimeFailure" });
 export type RuntimeFailure = typeof RuntimeFailure.Type;
 
-/** Each success value comes from that operation's response schema. */
+/**
+ * The server encodes each value with its operation's response schema before this envelope.
+ * `value` stays plain JSON: a union of every response would match a table row with `ok`
+ * and `rows` columns to a Postgres result and drop the row's other keys.
+ */
 export const RuntimeSuccess = Schema.Struct({
   ok: Schema.Literal(true),
-  value: Schema.Union(Object.values(runtimeOperations).map((operation) => operation.response))
+  value: Schema.Json
 }).annotate({ identifier: "RuntimeSuccess" });
 export type RuntimeSuccess = typeof RuntimeSuccess.Type;
 
