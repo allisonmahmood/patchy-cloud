@@ -678,6 +678,41 @@ it.layer(Patches.layer.pipe(Layer.provideMerge(Fixtures.database)))("Patches", (
       })
   );
 
+  it.effect("reserves an off patch's former names until reclamation", () =>
+    Effect.gen(function* () {
+      const service = yield* Patches.Patches;
+      for (const state of ["retired", "deleted"] as const) {
+        const formerName = `former-${state}`;
+        const original = yield* create({ manifest: { ...Fixtures.manifest, name: formerName } });
+        yield* update(original.patchId, {
+          manifest: { ...Fixtures.manifest, name: `renamed-${state}` }
+        });
+        if (state === "retired") yield* service.retire(original.patchId, owner);
+        else yield* service.delete(original.patchId, owner);
+        const taker = input({ manifest: { ...Fixtures.manifest, name: formerName } });
+        for (const attempt of [service.preflight(taker), Fixtures.record(taker)]) {
+          const exit = yield* Effect.exit(attempt);
+          assert.isTrue(Exit.isFailure(exit), `${state} former name was reusable`);
+          if (Exit.isFailure(exit)) assert.instanceOf(Cause.squash(exit.cause), Patches.NameTaken);
+        }
+        yield* service.restore(original.patchId, owner);
+        assert.strictEqual(
+          Option.getOrThrow(yield* service.resolveName(uploader.company.handle, formerName))
+            .patchId,
+          original.patchId
+        );
+        if (state === "deleted") {
+          yield* service.delete(original.patchId, owner);
+          yield* TestClock.adjust(30 * DAY);
+          yield* service.purgeDeleted(original.patchId);
+        }
+        // A live patch's former name, or a reclaimed one, is free to take.
+        const taken = yield* create({ manifest: { ...Fixtures.manifest, name: formerName } });
+        assert.strictEqual(taken.name, formerName);
+      }
+    })
+  );
+
   it.effect("backfills missing names in creation order without changing existing names", () =>
     Effect.gen(function* () {
       const service = yield* Patches.Patches;

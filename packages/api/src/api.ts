@@ -239,7 +239,7 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "and live-patch quota; updates do not. Omitted scope defaults to company on creates " +
           "and remains unchanged on updates. `manifest.name` is an exact company-scoped name " +
           "(3–32 lowercase letters, digits or hyphens, starting and ending with a letter or digit); " +
-          "a taken current name answers 409 `name_taken` on create or rename, including deleted patches. " +
+          "another patch's current name, or any name of a retired or deleted patch, answers 409 `name_taken` on create or rename. " +
           "`patches` and `connections` are reserved names and answer 422 `reserved_name` on create. " +
           "Without a name, creates derive one from `metadata.filename` without its extension (title when absent), " +
           "normalize it, fall back to `patch` and add `-2`, `-3`, etc. on collision. Updates with " +

@@ -1041,6 +1041,16 @@ export const make = Effect.gen(function* () {
     execute: (companyId) => sql`SELECT handle FROM companies WHERE id = ${companyId}`
   });
 
+  /**
+   * Whether the existing `patch_names` row may go to `patchId`: its own, or another
+   * live patch's former name. Retired and deleted patches keep every name until
+   * reclamation removes their rows. Shared by publish preflight and `claimName`.
+   */
+  const nameAvailable = (patchId: string) => sql`(patch_names.patch_id = ${patchId}
+    OR NOT patch_names.current AND EXISTS (
+      SELECT 1 FROM patches holder WHERE holder.id = patch_names.patch_id
+        AND holder.retired_at IS NULL AND holder.deleted_at IS NULL))`;
+
   const claimName = SqlSchema.findOneOption({
     Request: Schema.Struct({ companyId: Schema.String, patchId: Schema.String, name: PatchName }),
     Result: NameRow,
@@ -1049,7 +1059,7 @@ export const make = Effect.gen(function* () {
       VALUES (${companyId}, ${name}, ${patchId}, true)
       ON CONFLICT (company_id, name) DO UPDATE
       SET patch_id = EXCLUDED.patch_id, current = true
-      WHERE NOT patch_names.current
+      WHERE ${nameAvailable(patchId)}
       RETURNING name`
   });
 
@@ -1520,7 +1530,7 @@ export const make = Effect.gen(function* () {
     if (input.manifest.name !== undefined) {
       const occupied = yield* sql`
         SELECT 1 FROM patch_names WHERE company_id = ${input.companyId}
-          AND name = ${input.manifest.name} AND current AND patch_id <> ${input.patchId}`;
+          AND name = ${input.manifest.name} AND NOT ${nameAvailable(input.patchId)}`;
       if (occupied.length > 0) return yield* new NameTaken({ name: input.manifest.name });
     }
     yield* resolveDeclarations(input.manifest, input.companyId);
