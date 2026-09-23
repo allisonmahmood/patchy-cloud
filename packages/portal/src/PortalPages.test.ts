@@ -510,6 +510,15 @@ it.layer(layer)("portal pages on a socket", (it) => {
         assert.notInclude(line, description);
         assert.include(text(html.split(/<\/h1>/)[1] ?? ""), description);
       }
+      for (const [name, description] of [
+        ["leading-period", ".NET release health and deployment notes"],
+        ["inner-period", "Track release 1.2 rollouts"]
+      ] as const) {
+        const patch = yield* publish(workspace.owner, name, { description });
+        const html = yield* (yield* request(cardPath(patch.name), workspace.owner)).text;
+        const line = cardLinks(html).find((link) => link.href === cardPath(name))!.text;
+        assert.include(line, description);
+      }
       const blank = yield* publish(workspace.owner, "blank-description", { description: "" });
       const html = yield* (yield* request(cardPath(blank.name), workspace.member)).text;
       assert.include(text(html), "No description");
