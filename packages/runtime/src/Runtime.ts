@@ -99,7 +99,7 @@ export class Timeout extends Schema.TaggedError<Timeout>()("Timeout", {
   readonly code = "timeout" as const;
   readonly status = 504;
   override get message() {
-    return `The integration call exceeded its ${this.deadlineMs} ms service deadline.`;
+    return `The call exceeded its ${this.deadlineMs} ms service deadline.`;
   }
 }
 export class RateLimited extends Schema.TaggedError<RateLimited>()("RateLimited", {
@@ -433,14 +433,13 @@ export const make = (
           operation.kind === "mutation"
             ? settings.mutationDeadlineMs
             : settings.integrationDeadlineMs;
-        const runWithDeadline = integration
-          ? execute.pipe(
-              Effect.timeoutOrElse({
-                duration: deadlineMs,
-                orElse: () => Effect.fail(new Timeout({ deadlineMs }))
-              })
-            )
-          : execute;
+        // The logged deadline is the enforced one: past it the call fails with `timeout`.
+        const runWithDeadline = execute.pipe(
+          Effect.timeoutOrElse({
+            duration: deadlineMs,
+            orElse: () => Effect.fail(new Timeout({ deadlineMs }))
+          })
+        );
         const result = yield* options.record === undefined
           ? Effect.exit(runWithDeadline)
           : options.record({ input, operation, binding, deadlineMs }, runWithDeadline);

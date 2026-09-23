@@ -399,6 +399,57 @@ it.effect(
     })
 );
 
+it.effect("times out a mutation at its configured deadline and logs the deadline it enforced", () =>
+  Effect.gen(function* () {
+    const entered = yield* Deferred.make<Binding.Binding["Service"]>();
+    const released = yield* Deferred.make<void>();
+    yield* Effect.gen(function* () {
+      const api = yield* Fixtures.client;
+      const fiber = yield* api
+        .call({
+          payload: envelope("tables.insert"),
+          headers: authenticatedHeaders(),
+          responseMode: "response-only"
+        })
+        .pipe(Effect.forkChild);
+      const binding = yield* Deferred.await(entered);
+      const log = yield* RuntimeLog.RuntimeLog;
+      const lookup = { companyId: DEV_SEED.companyId, correlationId: binding.correlationId };
+      yield* TestClock.adjust(4_999);
+      assert.isFalse(yield* Deferred.isDone(released));
+      yield* TestClock.adjust(1);
+      const response = yield* Fiber.join(fiber);
+      const failure = decodeFailure(yield* response.json);
+      assert.strictEqual(response.status, 504);
+      assert.strictEqual(failure.code, "timeout");
+      assert.strictEqual(failure.correlationId, binding.correlationId);
+      assert.isTrue(yield* Deferred.isDone(released));
+      const call = yield* log.find(lookup);
+      assert.strictEqual(call?.outcome, "failure");
+      assert.strictEqual(call?.outcomeCode, "timeout");
+      assert.strictEqual(call?.deadlineMs, 5_000);
+      assert.strictEqual(call?.durationMs, 5_000);
+    }).pipe(
+      Effect.provide(
+        Fixtures.layer(
+          {
+            me,
+            "tables.insert": {
+              kind: "mutation",
+              run: () =>
+                Effect.gen(function* () {
+                  yield* Deferred.succeed(entered, yield* Binding.Binding);
+                  return yield* Effect.never;
+                }).pipe(Effect.ensuring(Deferred.succeed(released, undefined)))
+            }
+          },
+          { PATCHY_RUNTIME_MUTATION_DEADLINE_MS: "5000" }
+        )
+      )
+    );
+  })
+);
+
 it.effect(
   "a never-returning handler is logged pending before execution and remains unknown after interruption",
   () =>
@@ -417,9 +468,9 @@ it.effect(
         const log = yield* RuntimeLog.RuntimeLog;
         const lookup = { companyId: DEV_SEED.companyId, correlationId: binding.correlationId };
         assert.strictEqual((yield* log.find(lookup))?.outcome, "pending");
-        yield* TestClock.adjust(30_001);
-        assert.strictEqual((yield* log.find(lookup))?.outcome, "unknown");
         yield* Fiber.interrupt(fiber);
+        assert.strictEqual((yield* log.find(lookup))?.outcome, "pending");
+        yield* TestClock.adjust(30_001);
         assert.strictEqual((yield* log.find(lookup))?.outcome, "unknown");
       }).pipe(
         Effect.provide(
