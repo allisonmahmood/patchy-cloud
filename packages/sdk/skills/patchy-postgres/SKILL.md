@@ -54,7 +54,7 @@ const result = await patchy.connections.sales.query(
 
 The result is `{ ok: true, rows }`. Shape kinds use the column language; `.optional()` admits null, but `.default()` and `t.ref()` are refused. Missing or duplicate result names and null in a non-optional column fail; extra result columns are dropped. `isPatchyError(error, "shape_mismatch")` from `patchy/client` narrows the shared error's `code`, `message` and `details`. `invalid_query` may include SQLSTATE and position; fix the query instead of hiding the error.
 
-Type mapping matters: int2/int4 are numbers; int8 and numeric are strings, not JavaScript numbers. Floats must be finite. Timestamptz is UTC ISO, date is `YYYY-MM-DD`, timestamp without zone has no timezone, JSON and arrays are `unknown`. Domains use their resolved type. Use the generated context for exclusions rather than guessing conversions.
+Type mapping matters: int2/int4 are numbers; int8 and numeric are strings, not JavaScript numbers. Floats must be finite. Timestamptz is UTC ISO, date is `YYYY-MM-DD`, timestamp without zone has no timezone, JSON and arrays are `unknown`; int8 and numeric array elements are strings too. Domains use their resolved type. Use the generated context for exclusions rather than guessing conversions.
 
 Calls are constrained reads through the role the admin supplied, not a production sandbox for development. No writes or multiple statements. Bounds: 256 KiB request including parameters, 1,000 rows and 8 MiB result per call, 10-second statement timeout and 15-second service deadline. Every integration call is logged for company admins. Respect `timeout`, `too_large`, `source_unavailable` and access refusals.
 
