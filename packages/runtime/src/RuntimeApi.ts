@@ -6,13 +6,19 @@ import * as Stream from "effect/Stream";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
-import { PatchyApi, RuntimeEnvelope, RuntimeFailure, RuntimeSuccess } from "@patchy/api";
+import { PatchyApi, RuntimeEnvelope, RuntimeFailure } from "@patchy/api";
 import * as Runtime from "./Runtime.js";
 
 const decodeCall = Schema.decodeUnknownEffect(Schema.fromJsonString(RuntimeEnvelope), {
   onExcessProperty: "error"
 });
-const encodeSuccess = Schema.encodeUnknownEffect(RuntimeSuccess);
+/** Runtime.handler already encoded the value with its own operation's response schema.
+ * Re-encoding through the union of every response would pick whichever member matches
+ * first and drop the rest of a row, so the success body only checks that it is JSON.
+ */
+const encodeSuccess = Schema.encodeUnknownEffect(
+  Schema.Struct({ ok: Schema.Literal(true), value: Schema.Json })
+);
 const encodeFailure = Schema.encodeSync(RuntimeFailure);
 const noStore = { "cache-control": "no-store" };
 

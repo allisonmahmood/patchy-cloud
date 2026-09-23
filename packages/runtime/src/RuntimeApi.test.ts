@@ -2,12 +2,13 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { WIRE_VERSION } from "@patchy/api";
+import { runtimeOperations, WIRE_VERSION } from "@patchy/api";
 import { PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { client, headers, patchId, versionId, publicVersionId } from "./test/fixtures.js";
 import * as Fixtures from "./test/fixtures.js";
 import { me } from "./me.js";
+import * as Runtime from "./Runtime.js";
 
 it.layer(Fixtures.layer())("runtime HTTP admission", (it) => {
   it.effect(
@@ -404,7 +405,7 @@ it.effect("reserved PUT enforces browser headers and its viewer limit before ref
   }).pipe(Effect.provide(Fixtures.layer()))
 );
 
-it.effect("the HTTP success boundary refuses a handler value outside the wire schema", () =>
+it.effect("the HTTP success boundary refuses a handler value that is not JSON", () =>
   Effect.gen(function* () {
     const api = yield* client;
     const response = yield* api.call({
@@ -422,5 +423,48 @@ it.effect("the HTTP success boundary refuses a handler value outside the wire sc
     assert.strictEqual(response.status, 503);
     assert.include(yield* response.json, { code: "source_unavailable" });
     assert.notProperty(yield* response.json, "correlationId");
-  }).pipe(Effect.provide(Fixtures.layer({ me: { ...me, run: () => Effect.succeed(true) } })))
+  }).pipe(Effect.provide(Fixtures.layer({ me: { ...me, run: () => Effect.succeed(1n) } })))
+);
+
+const row = {
+  id: "row-1",
+  createdAt: "2026-09-21T00:00:00.000Z",
+  updatedAt: "2026-09-21T00:00:00.000Z",
+  ok: true,
+  rows: [{ label: "ordinary nested value" }],
+  title: "Snapshot label"
+};
+
+it.effect("a table row shaped like another operation's result keeps every column", () =>
+  Effect.gen(function* () {
+    const api = yield* client;
+    const response = yield* api.call({
+      payload: {
+        patchId,
+        versionId,
+        principal: { userId: DEV_SEED.userId },
+        wire: WIRE_VERSION,
+        op: "tables.get",
+        args: { table: "notes", id: "row-1" }
+      },
+      headers: { ...headers({ userId: DEV_SEED.userId }), cookie: signedInCookies() },
+      responseMode: "response-only"
+    });
+    assert.strictEqual(response.status, 200);
+    assert.deepStrictEqual(yield* response.json, { ok: true, value: row });
+  }).pipe(
+    Effect.provide(
+      Fixtures.layer({
+        me,
+        "tables.get": Runtime.handler(
+          {
+            kind: runtimeOperations["tables.get"].kind,
+            input: runtimeOperations["tables.get"].request.fields.args,
+            output: runtimeOperations["tables.get"].response
+          },
+          () => Effect.succeed(row)
+        )
+      })
+    )
+  )
 );
