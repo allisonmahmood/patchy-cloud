@@ -6,7 +6,7 @@ import type * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Api from "./Api.js";
 import { LocalError } from "./CliError.js";
-import { configFailure, executeConfig } from "./executeConfig.js";
+import { configFailure, executeConfig, resolveStamps } from "./executeConfig.js";
 import { ManagedProject, isProjectChanged, presentSkills, safePath } from "./ManagedProject.js";
 import * as Project from "./Project.js";
 import { RELEASE } from "./release.js";
@@ -29,7 +29,6 @@ export class FixtureMissing extends Schema.TaggedError<FixtureMissing>()("DevFix
   }
 }
 
-const decodeManifest = Schema.decodeUnknownEffect(Manifest, { onExcessProperty: "error" });
 const encodeManifest = Schema.encodeSync(Schema.fromJsonString(Manifest));
 const io = <A>(operation: string, run: () => Promise<A>) =>
   Effect.tryPromise({
@@ -95,31 +94,24 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
             }
           })
           .pipe(Effect.catch((error) => Api.classify(error, "Generation failed.")));
-        const uses: Record<string, (typeof Manifest.Type)["uses"][string]> = Object.create(null);
-        const stamps = new Map(generated.uses.map((stamp) => [stamp.alias, stamp]));
-        if (
-          stamps.size !== generated.uses.length ||
-          stamps.size !== Object.keys(unresolved.uses).length
-        )
-          return yield* new LocalError({
-            message: "Generation returned an inconsistent declaration set."
-          });
-        for (const [alias, declaration] of Object.entries(unresolved.uses)) {
-          const stamp = stamps.get(alias);
-          if (stamp === undefined)
-            return yield* new LocalError({ message: `Generation returned no stamp for ${alias}.` });
-          uses[alias] = { ...declaration, id: stamp.id, revision: stamp.revision };
-        }
-        const manifest = yield* decodeManifest({ ...unresolved, uses });
+        // Stamp this one evaluation from the generated index, with the checks publishing applies.
+        // Evaluating config again could see an imported file saved since generation.
+        const index = generated.files.find((file) => file.path === "patchy/_generated/index.json");
+        if (index === undefined)
+          return yield* new LocalError({ message: "Generation returned no declaration index." });
+        const manifest = yield* Effect.try({
+          try: () => resolveStamps(unresolved, index.contents),
+          catch: configFailure
+        });
         const metadata = generated.metadata;
         if (
           Object.keys(metadata.postgres).length + Object.keys(metadata.shared).length !==
-          stamps.size
+          Object.keys(manifest.uses).length
         )
           return yield* new LocalError({
             message: "Generation returned inconsistent declaration metadata."
           });
-        for (const [alias, declaration] of Object.entries(uses)) {
+        for (const [alias, declaration] of Object.entries(manifest.uses)) {
           const actual =
             declaration.kind === "postgres"
               ? metadata.postgres[alias]?.declaration
@@ -149,15 +141,8 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
             { before: source, after: source }
           )
         ).pipe(Effect.uninterruptible);
-        const resolved = yield* Effect.tryPromise({
-          try: () => executeConfig(configPath),
-          catch: configFailure
-        });
         return {
-          manifest: {
-            ...resolved,
-            ...(repo.description === undefined ? {} : { description: repo.description })
-          },
+          manifest,
           identity,
           patchId: repo.patch ?? "localdev0000",
           ...(baseline === undefined ? {} : { baseline }),
