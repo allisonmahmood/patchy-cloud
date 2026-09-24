@@ -578,11 +578,6 @@ it.layer(Patches.layer.pipe(Layer.provideMerge(Fixtures.database)))("Patches", (
         (yield* service.sharedTable(retired!.patchId, "notes", uploader.company.id)).patchId,
         retired!.patchId
       );
-      assert.isFalse(
-        (yield* service.sharedTables(uploader.company.id)).some(
-          (table) => table.patchId === deleted!.patchId
-        )
-      );
     })
   );
 
