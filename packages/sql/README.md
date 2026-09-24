@@ -8,7 +8,7 @@ The `@effect/sql-pg` client layer, Effect's Migrator over the capability package
 
 ## Decoding rows
 
-A capability decodes rows through `SqlSchema` with a `Schema.Class` result, in one module per capability. The native `@effect/sql-pg` client decodes `int8` to `bigint` and timestamps to epoch milliseconds; the pool's row codecs override both so rows keep `int8` as a decimal string and timestamps as `Date` (a plain `timestamp` read as UTC wall time), the shapes PGlite answers in `@patchy/company-database`, and the override lives here rather than in every row schema:
+A capability decodes rows through `SqlSchema` with a `Schema.Class` result, in one module per capability. The native `@effect/sql-pg` client decodes `int8` to `bigint` and timestamps to `Date` (a plain `timestamp` read as UTC wall time); the pool's row codecs keep `int8` as a decimal string, so rows answer the shapes PGlite answers in `@patchy/company-database`, and the override lives here rather than in every row schema:
 
 ```ts
 class TokenRow extends Schema.Class<TokenRow>("TokenRow")({
