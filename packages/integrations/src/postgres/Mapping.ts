@@ -90,6 +90,11 @@ const json: TypeMapping = {
   project: (column) => `pg_catalog.to_jsonb(${column})`,
   is: Schema.is(Schema.Json)
 };
+/** int8/numeric elements cross as text, as on the query path, so JSON never rounds them. Nulls and dimensions survive. */
+const exactArray: TypeMapping = {
+  ...json,
+  project: (column) => `pg_catalog.to_jsonb(${column}::pg_catalog.text[])`
+};
 const timestamp = (withTimezone: boolean): TypeMapping => ({
   ...text,
   project: (column) =>
@@ -144,7 +149,14 @@ const builtins: Readonly<Record<string, TypeMapping>> = {
 
 export const typeMapping = (type: typeof ColumnType.Type): TypeMapping | undefined => {
   if (type.kind === "enum") return text;
-  if (type.kind === "array") return json;
+  if (type.kind === "array") {
+    // Snapshots without element metadata name the builtin array type, e.g. pg_catalog._int8.
+    const element =
+      type.element === undefined
+        ? `${type.baseSchema}.${type.baseName.slice(1)}`
+        : `${type.element.baseSchema}.${type.element.baseName}`;
+    return element === "pg_catalog.int8" || element === "pg_catalog.numeric" ? exactArray : json;
+  }
   if (type.baseName === "citext") return text;
   if (type.baseSchema === "pg_catalog" && Object.hasOwn(builtins, type.baseName))
     return builtins[type.baseName];

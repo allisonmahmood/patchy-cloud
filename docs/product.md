@@ -731,8 +731,9 @@ integers and finite floats become numbers; int8 and numeric become strings,
 never rounded doubles. Text-like values, UUIDs and enums become strings.
 Timestamptz is UTC ISO at full precision, date is `YYYY-MM-DD`, and timestamp
 without time zone is `YYYY-MM-DDTHH:MM:SS.ffffff` without an offset. JSON and
-arrays are unknown; domains resolve to their base types. Unsupported columns
-and locally unrepresentable relations are excluded and named.
+arrays are unknown, though int8 and numeric array elements stay strings; domains
+resolve to their base types. Unsupported columns and locally unrepresentable
+relations are excluded and named.
 
 `query(sql, params, shape)` is the explicit **escape hatch**. Shapes use the
 table column language, without refs or defaults: missing columns, duplicate

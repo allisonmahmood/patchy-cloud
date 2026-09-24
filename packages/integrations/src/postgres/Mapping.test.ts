@@ -168,3 +168,20 @@ it("accepts only the source identity and fixture-native spelling for arrays of d
   );
   assert.deepStrictEqual(acceptedSourceTypes(type("int4"), snapshot), ['"pg_catalog"."int4"']);
 });
+
+it("projects only int8 and numeric arrays through text, with or without element metadata", () => {
+  const array = (baseName: string, element?: string): typeof ColumnType.Type => ({
+    ...type(baseName),
+    kind: "array",
+    ...(element === undefined
+      ? {}
+      : { element: { baseSchema: "pg_catalog", baseName: element, kind: "base" as const } })
+  });
+  const project = (column: typeof ColumnType.Type) => typeMapping(column)!.project("c");
+  const exact = "pg_catalog.to_jsonb(c::pg_catalog.text[])";
+  assert.strictEqual(project(array("_int8")), exact);
+  assert.strictEqual(project(array("_numeric", "numeric")), exact);
+  assert.strictEqual(project({ ...array("_external_id", "int8"), baseSchema: "public" }), exact);
+  assert.strictEqual(project(array("_int4", "int4")), "pg_catalog.to_jsonb(c)");
+  assert.strictEqual(project(array("_text")), "pg_catalog.to_jsonb(c)");
+});

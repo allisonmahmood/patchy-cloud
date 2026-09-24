@@ -1,6 +1,12 @@
 import { NodeFileSystem, NodePath } from "@effect/platform-node";
 import { assert, it } from "@effect/vitest";
-import { CURRENT_RELEASE, PostgresKeyRows, PostgresPage, WIRE_VERSION } from "@patchy/api";
+import {
+  CURRENT_RELEASE,
+  PostgresKeyRows,
+  PostgresPage,
+  PostgresRows,
+  WIRE_VERSION
+} from "@patchy/api";
 import { Binding } from "@patchy/runtime";
 import * as Testing from "@patchy/sql/testing";
 import * as Effect from "effect/Effect";
@@ -72,6 +78,7 @@ const expected = [
 ];
 const decodePage = Schema.decodeUnknownEffect(PostgresPage);
 const decodeKeys = Schema.decodeUnknownEffect(PostgresKeyRows);
+const decodeRows = Schema.decodeUnknownEffect(PostgresRows);
 
 // The same handlers and pinned metadata are exercised with each real execution surface.
 const exercise = Effect.gen(function* () {
@@ -116,6 +123,61 @@ const exercise = Effect.gen(function* () {
   return call;
 });
 
+const discover = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  return yield* sql.withTransaction(
+    Source.discover.pipe(
+      Effect.provideService(SourceClient.SourceClient, {
+        query: (statement, parameters = []) =>
+          sql.unsafe(statement, parameters).pipe(
+            Effect.mapError(
+              (cause) =>
+                new SourceClient.SourceUnavailable({
+                  stage: "query",
+                  cause: Redacted.make(cause)
+                })
+            )
+          )
+      })
+    )
+  );
+});
+
+// Replace only transport acquisition with this isolated cluster, not native execution policy.
+const nativeExecution = Effect.fn("test.parity.nativeExecution")(function* (
+  store: ConnectionStore.ConnectionStore["Service"]
+) {
+  const sql = yield* SqlClient.SqlClient;
+  const databases = yield* sql<{ database: string }>`SELECT current_database() AS database`;
+  const url = new URL(inject("postgres").adminUrl);
+  url.pathname = `/${databases[0]!.database}`;
+  return yield* Execution.makeWithClient(
+    Effect.fn("test.parity.openNative")(function* () {
+      const client = yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          const client = new Pg.Client({ connectionString: url.toString() });
+          client.on("error", () => Execution.destroy(client));
+          return client;
+        }),
+        (client) => Effect.sync(() => Execution.destroy(client))
+      );
+      yield* Effect.tryPromise({
+        try: () => client.connect(),
+        catch: (cause) =>
+          new SourceClient.SourceUnavailable({ stage: "connect", cause: Redacted.make(cause) })
+      });
+      return client;
+    }),
+    (_settings, client) => Effect.sync(() => Execution.destroy(client))
+  ).pipe(
+    Effect.provideService(ConnectionStore.ConnectionStore, {
+      ...store,
+      poolCredentials: () =>
+        Effect.succeed(Redacted.make("postgres://reader:secret@fixture.example/fixture"))
+    })
+  );
+});
+
 it.layer(Layer.mergeAll(Testing.emptyLayer({}), NodeFileSystem.layer, NodePath.layer))(
   "discovered Postgres native/dev parity",
   (it) => {
@@ -130,22 +192,7 @@ it.layer(Layer.mergeAll(Testing.emptyLayer({}), NodeFileSystem.layer, NodePath.l
           );
           yield* sql.unsafe("CREATE TABLE public.excluded (location point)");
           yield* sql.unsafe(fixtureSql);
-          const snapshot = yield* sql.withTransaction(
-            Source.discover.pipe(
-              Effect.provideService(SourceClient.SourceClient, {
-                query: (statement, parameters = []) =>
-                  sql.unsafe(statement, parameters).pipe(
-                    Effect.mapError(
-                      (cause) =>
-                        new SourceClient.SourceUnavailable({
-                          stage: "query",
-                          cause: Redacted.make(cause)
-                        })
-                    )
-                  )
-              })
-            )
-          );
+          const snapshot = yield* discover;
           const generated = generate(declaration, snapshot);
           assert.include(generated.context, "public.excluded");
           assert.include(generated.context, "unsupported_type");
@@ -156,38 +203,7 @@ it.layer(Layer.mergeAll(Testing.emptyLayer({}), NodeFileSystem.layer, NodePath.l
               ])
             )
           );
-          const databases = yield* sql<{ database: string }>`SELECT current_database() AS database`;
-          const url = new URL(inject("postgres").adminUrl);
-          url.pathname = `/${databases[0]!.database}`;
-          // Replace only transport acquisition with this isolated cluster, not native execution policy.
-          const native = yield* Execution.makeWithClient(
-            Effect.fn("test.parity.openNative")(function* () {
-              const client = yield* Effect.acquireRelease(
-                Effect.sync(() => {
-                  const client = new Pg.Client({ connectionString: url.toString() });
-                  client.on("error", () => Execution.destroy(client));
-                  return client;
-                }),
-                (client) => Effect.sync(() => Execution.destroy(client))
-              );
-              yield* Effect.tryPromise({
-                try: () => client.connect(),
-                catch: (cause) =>
-                  new SourceClient.SourceUnavailable({
-                    stage: "connect",
-                    cause: Redacted.make(cause)
-                  })
-              });
-              return client;
-            }),
-            (_settings, client) => Effect.sync(() => Execution.destroy(client))
-          ).pipe(
-            Effect.provideService(ConnectionStore.ConnectionStore, {
-              ...store,
-              poolCredentials: () =>
-                Effect.succeed(Redacted.make("postgres://reader:secret@fixture.example/fixture"))
-            })
-          );
+          const native = yield* nativeExecution(store);
           const nativeCall = yield* exercise.pipe(
             Effect.provideService(Execution.Execution, native),
             Effect.provideService(ConnectionStore.ConnectionStore, store)
@@ -249,6 +265,93 @@ it.layer(Layer.mergeAll(Testing.emptyLayer({}), NodeFileSystem.layer, NodePath.l
             if (failure instanceof Execution.InvalidQuery)
               assert.strictEqual(failure.details.sqlstate, sqlstate);
           }
+        }).pipe(Effect.scoped),
+      30_000
+    );
+
+    it.effect(
+      "keeps int8 and numeric array elements exact on relation reads, like query",
+      () =>
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql.unsafe("CREATE DOMAIN public.external_id AS bigint");
+          yield* sql.unsafe("CREATE DOMAIN public.id_list AS bigint[]");
+          yield* sql.unsafe(
+            "CREATE TABLE public.ledger (id integer PRIMARY KEY, ids bigint[], amounts numeric[], refs public.external_id[], listed public.id_list, grid bigint[], counts integer[])"
+          );
+          const ledgerSql = `INSERT INTO public.ledger VALUES (1, '{9007199254740992,9007199254740993}',
+            '{9007199254740993.123456,NULL}', '{9007199254740993}', '{9007199254740993}',
+            '{{1,9007199254740993},{NULL,2}}', '{1,NULL}')`;
+          yield* sql.unsafe(ledgerSql);
+          const snapshot = yield* discover;
+          const store = yield* ConnectionStore.ConnectionStore.pipe(
+            Effect.provide(
+              ConnectionStoreDev.layer([
+                { connection, snapshots: [{ revision: declaration.revision, snapshot }] }
+              ])
+            )
+          );
+          const row = {
+            id: 1,
+            ids: ["9007199254740992", "9007199254740993"],
+            amounts: ["9007199254740993.123456", null],
+            refs: ["9007199254740993"],
+            listed: ["9007199254740993"],
+            grid: [
+              ["1", "9007199254740993"],
+              [null, "2"]
+            ],
+            counts: [1, null]
+          };
+          const ledger = {
+            connection: "warehouse",
+            relation: { schema: "public", name: "ledger" }
+          };
+          const reads = Effect.gen(function* () {
+            const handlers = yield* Operations.makeHandlers;
+            const call = (op: keyof typeof handlers, args: unknown) =>
+              handlers[op].run(args).pipe(Effect.provideService(Binding.Binding, binding));
+            assert.deepStrictEqual(
+              (yield* call("postgres.list", ledger).pipe(Effect.flatMap(decodePage))).rows,
+              [row]
+            );
+            assert.deepStrictEqual(
+              (yield* call("postgres.get", { ...ledger, key: { id: 1 } }).pipe(
+                Effect.flatMap(decodeKeys)
+              )).rows,
+              [row]
+            );
+            assert.deepStrictEqual(
+              (yield* call("postgres.getMany", { ...ledger, keys: [{ id: 1 }] }).pipe(
+                Effect.flatMap(decodeKeys)
+              )).rows,
+              [row]
+            );
+            assert.deepStrictEqual(
+              (yield* call("postgres.query", {
+                connection: "warehouse",
+                sql: "SELECT ids, amounts FROM public.ledger",
+                params: [],
+                shape: { ids: { kind: "json" }, amounts: { kind: "json" } }
+              }).pipe(Effect.flatMap(decodeRows))).rows,
+              [{ ids: row.ids, amounts: row.amounts }]
+            );
+          });
+          yield* reads.pipe(
+            Effect.provideService(Execution.Execution, yield* nativeExecution(store)),
+            Effect.provideService(ConnectionStore.ConnectionStore, store)
+          );
+          const fs = yield* FileSystem.FileSystem;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "postgres-parity-arrays-" });
+          yield* fs.makeDirectory(`${root}/fixtures`);
+          yield* fs.writeFileString(`${root}/fixtures/postgres-warehouse.sql`, ledgerSql);
+          yield* reads.pipe(
+            Effect.provide(
+              Dev.dev(snapshot, { connectionId: declaration.id, handle: declaration.handle, root })
+            ),
+            Effect.provideService(ConnectionStore.ConnectionStore, store),
+            Effect.scoped
+          );
         }).pipe(Effect.scoped),
       30_000
     );
