@@ -95,6 +95,11 @@ that environment token and warns about it.
 | `pnpm dev logs`             | Print `dev.log`.                                                                                 |
 | `pnpm dev reset`            | Stop, wipe `.local/dev/`, and start a fresh seeded instance.                                     |
 
+A start or `reset` bundles the shell broker first. A broker that does not
+compile fails it on stderr before anything is recorded, stopped or wiped.
+`stop`, `status`, `logs`, `--dry-run` and confirming a healthy instance never
+build it.
+
 `reset` is also the answer when the migration ledger changes shape under an
 instance you already have, including the rewritten `0003_patches_baseline` and
 pre-merge instances that ran the old `0007_runtime_baseline` instead of

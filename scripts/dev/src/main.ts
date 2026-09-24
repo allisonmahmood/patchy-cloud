@@ -5,7 +5,9 @@
  *   pnpm dev --dry-run --json print the plan, touch nothing
  *   pnpm dev status | stop | logs | reset
  *
- * `start` writes `.local/dev/plan.json` and spawns `supervise` detached; the
+ * A start or reset first bundles the shell broker (nothing else compiles it,
+ * so a broken broker never blocks `stop`). `start` then writes
+ * `.local/dev/plan.json` and spawns `supervise` detached; the
  * supervisor owns the processes (see supervisor.ts) and records their pids
  * back into the same file. Every command is scoped to the worktree that
  * contains the current directory.
@@ -26,6 +28,14 @@ import { isPortFree } from "./ports.js";
 import { alive, signal } from "./process.js";
 import { layout, readPlan, writePlan } from "./state.js";
 import { supervise } from "./supervisor.js";
+
+class BrokerBuildFailed extends Schema.TaggedError<BrokerBuildFailed>()("BrokerBuildFailed", {
+  exitCode: Schema.Number
+}) {
+  override get message() {
+    return `The shell broker failed to build (exit ${this.exitCode}); see its errors above.`;
+  }
+}
 
 class SupervisorExited extends Schema.TaggedError<SupervisorExited>()("SupervisorExited", {
   logFile: Schema.String
@@ -152,14 +162,35 @@ const dev = Command.make(
   Effect.fn(function* ({ json, dryRun }) {
     const plan = yield* currentPlan(dryRun);
     if (dryRun || (yield* isRunning(plan))) return yield* printPlan(plan, json);
+    yield* buildBroker(plan.worktree);
     yield* printPlan(yield* start(plan), json);
   }, userFacing)
 ).pipe(Command.withDescription("Start this worktree's local Patchy Cloud instance (idempotent)"));
 
 /**
+ * Bundles the shell broker the server serves. Start and reset call it before
+ * they record, stop or wipe anything, so a broker that does not compile
+ * leaves the instance as it was; stop, status and logs never wait on it.
+ * Errors go to stderr; stdout stays the plan for `--json`.
+ */
+const buildBroker = Effect.fn("buildBroker")(function* (worktree: string) {
+  const path = yield* Path.Path;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const exitCode = yield* spawner.exitCode(
+    ChildProcess.make(process.execPath, [path.join(worktree, "scripts/build-serving-broker.mjs")], {
+      cwd: worktree,
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "inherit"
+    })
+  );
+  if (exitCode !== 0) return yield* new BrokerBuildFailed({ exitCode });
+});
+
+/**
  * Writes the plan, spawns the supervisor detached, records its pid at once
  * (so a second start during initdb sees it and refuses), then waits for
- * `/healthz`.
+ * `/healthz`. Callers build the broker first.
  */
 const start = Effect.fn("start")(function* (plan: Plan) {
   const path = yield* Path.Path;
@@ -295,14 +326,16 @@ const reset = Command.make(
   { json },
   Effect.fn(function* ({ json }) {
     const fs = yield* FileSystem.FileSystem;
-    const stateDir = yield* stateDirOf(yield* worktree);
+    const root = yield* worktree;
+    yield* buildBroker(root);
+    const stateDir = yield* stateDirOf(root);
     // Reset is the recovery path, so an unreadable plan.json is wiped, not fatal.
     const recorded = yield* readPlan(stateDir).pipe(
       Effect.catchTags({ SchemaError: () => Effect.succeed(Option.none()) })
     );
     if (Option.isSome(recorded)) yield* stopInstance(recorded.value);
     yield* fs.remove(stateDir, { recursive: true, force: true });
-    const plan = yield* computePlan(yield* worktree, isPortFree);
+    const plan = yield* computePlan(root, isPortFree);
     yield* printPlan(yield* start(plan), json);
   }, userFacing)
 ).pipe(Command.withDescription("Stop, wipe .local/dev, and start a fresh seeded instance"));

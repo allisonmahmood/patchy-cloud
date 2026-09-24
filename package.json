@@ -11,7 +11,7 @@
   "packageManager": "pnpm@11.5.2",
   "scripts": {
     "build": "turbo run build",
-    "dev": "node scripts/build-serving-broker.mjs && node --import tsx --conditions=development scripts/dev/src/main.ts",
+    "dev": "node --import tsx --conditions=development scripts/dev/src/main.ts",
     "patchy": "node --import tsx --conditions=development packages/patchy/src/index.ts",
     "seed:dev": "node scripts/seed-dev.mjs",
     "test": "vitest run",
