@@ -48,10 +48,14 @@ const decodeRollback = Schema.decodeUnknownEffect(
 );
 const decodeRestore = Schema.decodeUnknownEffect(Schema.Struct({ expectedState: PatchState }));
 const decodeRetire = Schema.decodeUnknownEffect(
-  Schema.Struct({ expectedState: Schema.Literal("live") })
+  Schema.Struct({ expectedPatchId: Schema.String, expectedState: Schema.Literal("live") })
 );
 const decodeDelete = Schema.decodeUnknownEffect(
-  Schema.Struct({ expectedState: Schema.Literal("not-deleted"), confirm: Schema.String })
+  Schema.Struct({
+    expectedPatchId: Schema.String,
+    expectedState: Schema.Literal("not-deleted"),
+    confirm: Schema.String
+  })
 );
 const decodeReassign = Schema.decodeUnknownEffect(
   Schema.Struct({ expectedOwnerUserId: Schema.String, user: Schema.String })
@@ -263,6 +267,16 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Acti
           selectedOwnerId: form.user ?? "",
           acknowledged: form.ack === "1"
         });
+  // Retire and delete confirmations carry the patch id they were rendered for. A form
+  // without it, or whose name now belongs to another patch, stops on the card: a
+  // re-rendered confirmation would post at whichever patch holds the name now.
+  const otherPatch = (submitted: string | undefined) =>
+    render(name, {
+      status: 409,
+      notice: submitted
+        ? "This name now belongs to a different patch. Nothing was done."
+        : "This confirmation is out of date. Nothing was done."
+    });
   const run = Effect.gen(function* () {
     switch (action) {
       case "description": {
@@ -296,17 +310,21 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Acti
         break;
       }
       case "retire": {
-        yield* decodeRetire(form);
-        yield* patches.retire(selected.patch.id, actor, form.ack === "1");
+        if (form.expectedPatchId !== selected.patch.id)
+          return yield* otherPatch(form.expectedPatchId);
+        const fields = yield* decodeRetire(form);
+        yield* patches.retire(fields.expectedPatchId, actor, form.ack === "1");
         break;
       }
       case "delete": {
+        if (form.expectedPatchId !== selected.patch.id)
+          return yield* otherPatch(form.expectedPatchId);
         const fields = yield* decodeDelete(form);
         if (fields.confirm !== selected.patch.name) {
           const message = `Type ${selected.patch.name} to confirm. Nothing was done.`;
           return yield* redisplay(422, message, message);
         }
-        yield* patches.delete(selected.patch.id, actor, form.ack === "1");
+        yield* patches.delete(fields.expectedPatchId, actor, form.ack === "1");
         break;
       }
       case "reassign": {

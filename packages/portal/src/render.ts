@@ -368,7 +368,7 @@ export const renderConfirmation = (input: {
       verb = "Retire";
       consequence = `Nobody can open <code>${escapeHtml(patch.name)}</code> until it is restored. Its page, versions, tables, files and name are kept indefinitely. The owner or an admin can restore it.`;
       const groups = dependantGroups(card);
-      fields = `${hidden("expectedState", "live")}${confirmationDependants(groups)}${groups.length === 0 ? "" : confirmationAcknowledgement("I understand these patches will lose access to its tables.", acknowledged)}`;
+      fields = `${hidden("expectedPatchId", patch.id)}${hidden("expectedState", "live")}${confirmationDependants(groups)}${groups.length === 0 ? "" : confirmationAcknowledgement("I understand these patches will lose access to its tables.", acknowledged)}`;
       break;
     }
     case "delete": {
@@ -386,7 +386,7 @@ export const renderConfirmation = (input: {
         input.nameError === undefined
           ? ""
           : `<p class="field-error" id="confirm-error" role="alert">${escapeHtml(input.nameError)}</p>`;
-      fields = `${hidden("expectedState", "not-deleted")}${dependants}<label class="field-label" for="confirm">Type ${escapeHtml(patch.name)} to confirm</label><input class="field" id="confirm" name="confirm" value="${escapeAttribute(input.submittedName ?? "")}" required autocomplete="off" spellcheck="false" aria-describedby="confirm-hint${input.nameError === undefined ? "" : " confirm-error"}"${input.nameError === undefined ? "" : ' aria-invalid="true"'}><p class="field-hint" id="confirm-hint">Enter the patch name exactly.</p>${nameError}`;
+      fields = `${hidden("expectedPatchId", patch.id)}${hidden("expectedState", "not-deleted")}${dependants}<label class="field-label" for="confirm">Type ${escapeHtml(patch.name)} to confirm</label><input class="field" id="confirm" name="confirm" value="${escapeAttribute(input.submittedName ?? "")}" required autocomplete="off" spellcheck="false" aria-describedby="confirm-hint${input.nameError === undefined ? "" : " confirm-error"}"${input.nameError === undefined ? "" : ' aria-invalid="true"'}><p class="field-hint" id="confirm-hint">Enter the patch name exactly.</p>${nameError}`;
       break;
     }
     case "restore": {
