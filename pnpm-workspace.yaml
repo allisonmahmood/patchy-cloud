@@ -9,7 +9,7 @@ catalog:
   # its own release line.
   effect: 4.0.0-rc.115
   "@effect/platform-node": 4.0.0-rc.115
-  "@effect/sql-pg": 4.0.0-rc.115
+  "@effect/sql-pg": 4.0.0-rc.117
   "@effect/sql-pglite": 4.0.0-rc.115
   "@effect/vitest": 4.0.0-rc.115
   "@effect/language-service": 0.87.2

@@ -13,7 +13,7 @@ catalogs:
 overrides:
   effect: 4.0.0-rc.115
   '@effect/platform-node': 4.0.0-rc.115
-  '@effect/sql-pg': 4.0.0-rc.115
+  '@effect/sql-pg': 4.0.0-rc.117
   '@effect/sql-pglite': 4.0.0-rc.115
   '@effect/vitest': 4.0.0-rc.115
   '@effect/language-service': 0.87.2
@@ -32,8 +32,8 @@ importers:
         specifier: 4.0.0-rc.115
         version: 4.0.0-rc.115(effect@4.0.0-rc.115)(redis@6.2.1)
       '@effect/sql-pg':
-        specifier: 4.0.0-rc.115
-        version: 4.0.0-rc.115(effect@4.0.0-rc.115)
+        specifier: 4.0.0-rc.117
+        version: 4.0.0-rc.117(effect@4.0.0-rc.115)
       '@effect/vitest':
         specifier: 4.0.0-rc.115
         version: 4.0.0-rc.115(effect@4.0.0-rc.115)(vitest@5.0.1(@types/node@22.20.3)(vite@8.3.0(@types/node@22.20.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.1)))
@@ -252,8 +252,8 @@ importers:
   packages/company-database:
     dependencies:
       '@effect/sql-pg':
-        specifier: 4.0.0-rc.115
-        version: 4.0.0-rc.115(effect@4.0.0-rc.115)
+        specifier: 4.0.0-rc.117
+        version: 4.0.0-rc.117(effect@4.0.0-rc.115)
       '@effect/sql-pglite':
         specifier: 4.0.0-rc.115
         version: 4.0.0-rc.115(effect@4.0.0-rc.115)
@@ -689,8 +689,8 @@ importers:
   packages/sql:
     dependencies:
       '@effect/sql-pg':
-        specifier: 4.0.0-rc.115
-        version: 4.0.0-rc.115(effect@4.0.0-rc.115)
+        specifier: 4.0.0-rc.117
+        version: 4.0.0-rc.117(effect@4.0.0-rc.115)
       effect:
         specifier: 4.0.0-rc.115
         version: 4.0.0-rc.115
@@ -867,8 +867,8 @@ packages:
       effect: 4.0.0-rc.115
       redis: '>=5.0.0 <7.0.0'
 
-  '@effect/sql-pg@4.0.0-rc.115':
-    resolution: {integrity: sha512-TLdzqBvGF/HwAKpWTw/5ih7JqVkkakVSb4aD6amzMaavFfFl4vsqqeKjSBijwuzbOMANNN0HqnEt/9fgjTsFEA==}
+  '@effect/sql-pg@4.0.0-rc.117':
+    resolution: {integrity: sha512-UQwKoulwVUQ5w4/lMonKf02VbMqZTrhgZXEreOWlTNNNVPYjlBZKBJNJmLPKZMHPMlHHltKjoi504uT/N9S2aQ==}
     peerDependencies:
       effect: 4.0.0-rc.115
 
@@ -2800,7 +2800,7 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
-  '@effect/sql-pg@4.0.0-rc.115(effect@4.0.0-rc.115)':
+  '@effect/sql-pg@4.0.0-rc.117(effect@4.0.0-rc.115)':
     dependencies:
       effect: 4.0.0-rc.115
 
