@@ -7,7 +7,7 @@ catalog:
   # Effect 4 release candidates ship in lockstep; Dependabot bumps these
   # together (see .github/dependabot.yml). Only the language service has
   # its own release line.
-  effect: 4.0.0-rc.115
+  effect: 4.0.0-rc.117
   "@effect/platform-node": 4.0.0-rc.115
   "@effect/sql-pg": 4.0.0-rc.115
   "@effect/sql-pglite": 4.0.0-rc.115
