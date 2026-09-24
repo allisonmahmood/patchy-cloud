@@ -8,7 +8,6 @@ import * as PgClient from "@effect/sql-pg/PgClient";
 import * as PgTypes from "@effect/sql-pg/PgTypes";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -39,12 +38,11 @@ const mapCodec = <A, B>(
 
 /**
  * The row codecs every Patchy pool shares. The native client decodes `int8`
- * to `bigint` and timestamps to epoch milliseconds; Patchy keeps `int8` as a
- * decimal string and timestamps as `Date`, so row schemas stay `Schema.Date`
- * and PGlite (see `@patchy/company-database`) answers the same shapes. A plain
- * `timestamp` is read as UTC wall time on both. Inferred parameters arrive as
- * the built-in codec's value: a `bigint` for an integer beyond `int4`, epoch
- * milliseconds for a `Date`.
+ * to `bigint`; Patchy keeps it as a decimal string, the shape PGlite (see
+ * `@patchy/company-database`) answers too. Timestamps need no override: the
+ * native client already decodes them to `Date`, a plain `timestamp` as UTC
+ * wall time, so row schemas stay `Schema.Date`. An inferred parameter for an
+ * integer beyond `int4` arrives as the built-in codec's `bigint`.
  */
 const rowCodecs = PgTypes.makeRegistry();
 rowCodecs.register(
@@ -52,21 +50,6 @@ rowCodecs.register(
   mapCodec<bigint, string | bigint>(PgTypes.OID.int8, String, BigInt),
   { arrayOid: PgTypes.OID.int8Array }
 );
-for (const [oid, arrayOid] of [
-  [PgTypes.OID.timestamptz, PgTypes.OID.timestamptzArray],
-  [PgTypes.OID.timestamp, PgTypes.OID.timestampArray]
-] as const) {
-  rowCodecs.register(
-    oid,
-    mapCodec<number, Date | number>(
-      oid,
-      // The `globalDate` guardrail forbids `new Date`; this is the same instant.
-      (millis) => DateTime.toDateUtc(DateTime.makeUnsafe(millis)),
-      (value) => (value instanceof Date ? value.getTime() : value)
-    ),
-    { arrayOid }
-  );
-}
 
 /** The URL parameters the native client reads; `pg` also read `ssl`, `statement_timeout` and more. */
 const URL_PARAMETERS = new Set([
