@@ -1,5 +1,5 @@
 import { test as base, expect } from "@playwright/test";
-import type { Frame, Page } from "@playwright/test";
+import type { BrowserContext, Frame, Page } from "@playwright/test";
 import { startInstance } from "./instance.js";
 import type { Instance, Published } from "./instance.js";
 import type { FixtureWindow } from "./fixture-client.js";
@@ -19,15 +19,16 @@ export const test = base.extend<object, { instance: Instance }>({
     { scope: "worker", timeout: 120_000 }
   ]
 });
-test.beforeEach(async ({ context, instance }) => {
-  // Offline even with real developer credentials in the invoking shell. Clerk JS is not faked.
+/** Every context a test drives: offline even with real developer credentials in the invoking shell. Clerk JS is not faked. */
+export async function prepare(context: BrowserContext, instance: Instance) {
   await context.route("**/*", async (route) => {
     const url = new URL(route.request().url());
     if (["127.0.0.1", "localhost"].includes(url.hostname)) await route.continue();
     else await route.abort("blockedbyclient");
   });
   await instance.session(context);
-});
+}
+test.beforeEach(({ context, instance }) => prepare(context, instance));
 export async function open(page: Page, patch: Published, suffix = ""): Promise<Frame> {
   expect((await page.goto(patch.address + suffix))?.status()).toBe(200);
   await expect(page.frameLocator("#patch").locator("#identity")).not.toHaveText("waiting");

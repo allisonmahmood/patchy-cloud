@@ -530,5 +530,10 @@ function mount(frame: HTMLIFrameElement): void {
   frame.src = contentSrc;
 }
 
+// Back/forward caching resumes a document whose broker and client closed on pagehide.
+// Reload for a fresh broker; pending work is never replayed and the old port stays closed.
+addEventListener("pageshow", (event) => {
+  if (event.persisted) location.reload();
+});
 const frame = document.getElementById("patch");
 if (frame instanceof HTMLIFrameElement) mount(frame);

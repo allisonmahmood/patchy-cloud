@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import type { FixtureWindow } from "./fixture-client.js";
-import { test, expect, open, notice } from "./fixtures.js";
+import { test, expect, open, notice, prepare } from "./fixtures.js";
 import { printFirefoxFrame } from "./firefox-print.js";
 import { printChromiumFrame } from "./chromium-print.js";
 
@@ -173,6 +173,46 @@ test("route bridge reports one decoded Unicode route after set, Back and reload"
   await set(frame, "/next/caf%C3%A9");
   await expect(page).toHaveURL(`${patch.address}/next/caf%C3%A9`);
   await expect(frame.locator("#route")).toHaveText("/next/café");
+});
+
+test("Back to a cached public patch leaves a working client", async ({
+  playwright,
+  browserName,
+  instance
+}) => {
+  test.skip(browserName !== "chromium", "Chromium is the browser whose BFCache flag we control.");
+  // Playwright disables BFCache, and its headless shell cannot cache; use full Chromium unflagged.
+  const browser = await playwright.chromium.launch({
+    channel: "chromium",
+    ignoreDefaultArgs: ["--disable-back-forward-cache"]
+  });
+  try {
+    const context = await browser.newContext();
+    await prepare(context, instance);
+    const page = await context.newPage();
+    const patch = await instance.publish("public");
+    const frame = await open(page, patch, "/items/2");
+    // Playwright loses a restored document's child frames, so click like a person: by position.
+    const button = (await frame.getByRole("button", { name: "Next route" }).boundingBox())!;
+    await page.evaluate(() =>
+      addEventListener("pageshow", (event) => {
+        if (event.persisted) sessionStorage.setItem("restored", "yes");
+      })
+    );
+    await page.goto(`${instance.foreignOrigin}/elsewhere`);
+    // A restored document fires pageshow, not load.
+    await page.goBack({ waitUntil: "commit" });
+    await expect
+      .poll(() => page.evaluate(() => sessionStorage.getItem("restored")).catch(() => null))
+      .toBe("yes");
+    // A reloading shell races the click, so retry it; a closed client never navigates.
+    await expect(async () => {
+      await page.mouse.click(button.x + button.width / 2, button.y + button.height / 2);
+      await expect(page).toHaveURL(`${patch.address}/items/3`, { timeout: 1_000 });
+    }).toPass({ timeout: 15_000 });
+  } finally {
+    await browser.close();
+  }
 });
 
 test("hostile navigation, pending real reads/writes, malformed, oversized and duplicate envelopes", async ({
