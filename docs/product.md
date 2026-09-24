@@ -755,7 +755,8 @@ Patch development uses local fixtures, not live source rows or production creden
 The **dev binding** supplies the same Postgres execution dependency without
 loading the keyring or runtime log. One PGlite database per connection under
 `.patchy/dev/` is shared by its aliases, with source-native types: numeric filters
-and ordering remain numeric, not string comparisons.
+and ordering remain numeric, not string comparisons. Numeric precision and scale,
+character length and timestamp precision carry over; a domain's own modifiers do not.
 
 Agent-authored rows come from `fixtures/postgres-<handle>.sql`, loaded on the
 privileged initialization path and validated. A missing fixture names the file
