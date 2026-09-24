@@ -81,6 +81,12 @@ export function classify(method: string, requestTarget: string): Target {
   if (method === "GET" && pathname === "/api/release") return { kind: "public" };
   if (method === "POST" && pathname === "/api/publish") return { kind: "publish" };
   // Browser runtime admission owns its session, audience and per-viewer limit.
+  // PROTOTYPE for #313, not for merge: the subscription stream admits like a runtime call.
+  if (
+    (method === "POST" && /^\/api\/runtime\/prototype\/stream(\/[^/]+)?$/.test(pathname)) ||
+    (method === "GET" && pathname === "/api/runtime/prototype/stats")
+  )
+    return { kind: "runtime" };
   if (
     (method === "POST" && pathname === "/api/runtime/call") ||
     ((method === "PUT" || method === "GET") &&

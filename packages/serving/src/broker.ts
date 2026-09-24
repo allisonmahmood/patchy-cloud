@@ -1,4 +1,5 @@
 /// <reference lib="dom" />
+/// <reference lib="es2024.promise" />
 // @effect-diagnostics globalTimers:off globalFetch:off
 // This browser entry owns platform I/O; it never creates an Effect runtime.
 import {
@@ -23,6 +24,19 @@ const decodeFailure = Schema.decodeUnknownSync(RuntimeFailure);
 const isMe = Schema.is(runtimeOperations.me.response);
 const routeArguments = Schema.Struct({ path: Schema.String });
 const decodeRoute = Schema.decodeUnknownSync(routeArguments, { onExcessProperty: "error" });
+// PROTOTYPE for #313, not for merge: the frame's subscribe/unsubscribe arguments.
+const subscribeArguments = Schema.Struct({
+  id: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(64)),
+  op: Schema.String,
+  args: Schema.Unknown
+});
+const decodeSubscribe = Schema.decodeUnknownSync(subscribeArguments, { onExcessProperty: "error" });
+const unsubscribeArguments = Schema.Struct({ id: Schema.String });
+const decodeUnsubscribe = Schema.decodeUnknownSync(unsubscribeArguments, {
+  onExcessProperty: "error"
+});
+const STREAM_BACKOFF_MS = 500;
+const STREAM_BACKOFF_MAX_MS = 5000;
 const decoder = new TextDecoder();
 type Operation = keyof typeof runtimeOperations;
 type Reply = { value: unknown; bytes?: ArrayBuffer; heldBytes: number };
@@ -170,6 +184,7 @@ function mount(frame: HTMLIFrameElement): void {
       release(download.size);
     }
     downloads.clear();
+    closeStream();
     window.removeEventListener("popstate", popstate);
     window.removeEventListener("pagehide", stop);
   };
@@ -196,6 +211,11 @@ function mount(frame: HTMLIFrameElement): void {
       stop();
     }
   };
+  const escalate = (code: string) => {
+    if (code === "shell_outdated") stale();
+    else if (code === "session_expired" || code === "principal_changed" || code === "access_denied")
+      notice(code);
+  };
   const failure = (id: string, error: Refusal) => {
     send({
       v: wire,
@@ -208,13 +228,7 @@ function mount(frame: HTMLIFrameElement): void {
         ...(error.correlationId === undefined ? {} : { correlationId: error.correlationId })
       }
     });
-    if (error.code === "shell_outdated") stale();
-    else if (
-      error.code === "session_expired" ||
-      error.code === "principal_changed" ||
-      error.code === "access_denied"
-    )
-      notice(error.code);
+    escalate(error.code);
   };
   const route = () => {
     const path = location.pathname;
@@ -352,6 +366,194 @@ function mount(frame: HTMLIFrameElement): void {
       clearTimeout(timeout);
     }
   };
+  // PROTOTYPE for #313, not for merge. One SSE stream per document, opened lazily on the
+  // first subscription and closed on the last; every server frame is forwarded to the
+  // patch frame as {kind:"event", event:"subscription", data}. Byte accounting is skipped.
+  type Stream = { id?: string; controller: AbortController; ready: Promise<string> };
+  const subscriptions = new Map<string, { op: string; args: unknown }>();
+  const sent = new Set<string>();
+  let stream: Stream | undefined;
+  let resume = false;
+  let backoff = STREAM_BACKOFF_MS;
+  let reconnectTimer: number | undefined;
+  const streamEvent = (data: unknown) =>
+    send({ v: wire, kind: "event", event: "subscription", data });
+  const streamInit = (body: unknown, signal?: AbortSignal): RequestInit => ({
+    credentials: "same-origin",
+    redirect: "error",
+    referrerPolicy: "same-origin",
+    method: "POST",
+    headers: new Headers({
+      "X-Patchy-Wire": String(wire),
+      "X-Patchy-Principal": JSON.stringify(principal),
+      "Content-Type": "application/json"
+    }),
+    body: JSON.stringify(body),
+    ...(signal === undefined ? {} : { signal })
+  });
+  const refusalFrom = async (response: Response): Promise<Refusal> => {
+    try {
+      const body: unknown = await response.json();
+      if (body && typeof body === "object" && "ok" in body && body.ok === false) {
+        const error = decodeFailure(body);
+        return new Refusal(error.code, error.error, error.details, error.correlationId);
+      }
+    } catch {
+      /* fall through */
+    }
+    return lost();
+  };
+  const closeStream = () => {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = undefined;
+    const current = stream;
+    stream = undefined;
+    sent.clear();
+    resume = false;
+    current?.controller.abort();
+  };
+  const pump = async (
+    body: ReadableStream<Uint8Array>,
+    current: Stream,
+    hello: PromiseWithResolvers<string>
+  ) => {
+    const reader = body.getReader();
+    const text = new TextDecoder();
+    let buffer = "";
+    let stopped = false;
+    try {
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done || closed) break;
+        buffer += text.decode(chunk.value, { stream: true });
+        let at: number;
+        while ((at = buffer.indexOf("\n\n")) !== -1) {
+          const frame = buffer.slice(0, at);
+          buffer = buffer.slice(at + 2);
+          for (const line of frame.split("\n")) {
+            if (!line.startsWith("data:")) continue;
+            let event: { type?: unknown; streamId?: unknown; code?: unknown };
+            try {
+              event = JSON.parse(line.slice(5)) as typeof event;
+            } catch {
+              continue;
+            }
+            if (event.type === "hello" && typeof event.streamId === "string") {
+              current.id = event.streamId;
+              backoff = STREAM_BACKOFF_MS;
+              hello.resolve(event.streamId);
+            } else if (event.type === "stop") {
+              stopped = true;
+              streamEvent(event);
+              if (typeof event.code === "string") escalate(event.code);
+              return;
+            } else streamEvent(event);
+          }
+        }
+      }
+    } catch {
+      /* dropped */
+    } finally {
+      void reader.cancel().catch(() => {});
+      hello.reject(lost());
+      if (!closed && !stopped && stream === current) {
+        // Dropped without a stopping notice: reconnect with backoff and ask for a resync.
+        stream = undefined;
+        sent.clear();
+        if (subscriptions.size > 0) {
+          resume = true;
+          reconnectTimer = window.setTimeout(openStream, backoff);
+          backoff = Math.min(backoff * 2, STREAM_BACKOFF_MAX_MS);
+        }
+      }
+    }
+  };
+  const openStream = () => {
+    if (closed || stream !== undefined || subscriptions.size === 0) return;
+    reconnectTimer = undefined;
+    const controller = new AbortController();
+    const entries = [...subscriptions].map(([id, entry]) => ({ id, ...entry }));
+    const hello = Promise.withResolvers<string>();
+    const current: Stream = { controller, ready: hello.promise };
+    stream = current;
+    void hello.promise.catch(() => {});
+    void (async () => {
+      let response: Response;
+      try {
+        response = await fetch(
+          "/api/runtime/prototype/stream",
+          streamInit(
+            { patchId, versionId, principal, wire, resume, subscriptions: entries },
+            controller.signal
+          )
+        );
+      } catch {
+        // Network failure: reuse the drop path so the caller sees the same backoff.
+        hello.reject(lost());
+        if (stream === current) {
+          stream = undefined;
+          if (!closed && subscriptions.size > 0) {
+            resume = true;
+            reconnectTimer = window.setTimeout(openStream, backoff);
+            backoff = Math.min(backoff * 2, STREAM_BACKOFF_MAX_MS);
+          }
+        }
+        return;
+      }
+      if (!response.ok || !response.body) {
+        const refusal = await refusalFrom(response);
+        if (stream === current) stream = undefined;
+        hello.reject(refusal);
+        escalate(refusal.code);
+        return;
+      }
+      for (const entry of entries) sent.add(entry.id);
+      await pump(response.body, current, hello);
+    })();
+  };
+  const subscribe = async (id: string, op: string, args: unknown) => {
+    subscriptions.set(id, { op, args });
+    const opened = stream === undefined;
+    if (opened) openStream();
+    const current = stream!;
+    try {
+      const streamId = await current.ready;
+      if (sent.has(id)) return;
+      sent.add(id);
+      const response = await fetch(
+        `/api/runtime/prototype/stream/${encodeURIComponent(streamId)}`,
+        streamInit({ patchId, versionId, principal, wire, add: [{ id, op, args }], remove: [] })
+      );
+      if (!response.ok) {
+        sent.delete(id);
+        // 404: the stream is gone; the reconnect path re-sends every desired subscription.
+        if (response.status === 404) return;
+        throw await refusalFrom(response);
+      }
+    } catch (error) {
+      if (error instanceof Refusal && error.code !== "unknown_outcome") {
+        subscriptions.delete(id);
+        if (subscriptions.size === 0) closeStream();
+        throw error;
+      }
+      // Lost: the subscription stays desired and the reconnect path carries it.
+    }
+  };
+  const unsubscribe = async (id: string) => {
+    subscriptions.delete(id);
+    if (subscriptions.size === 0) return closeStream();
+    if (stream === undefined || !sent.has(id)) return;
+    sent.delete(id);
+    try {
+      const streamId = await stream.ready;
+      await fetch(
+        `/api/runtime/prototype/stream/${encodeURIComponent(streamId)}`,
+        streamInit({ patchId, versionId, principal, wire, add: [], remove: [id] })
+      );
+    } catch {
+      /* the server drops it with the stream or ignores an unknown id */
+    }
+  };
   const identify = () => {
     identity ??= runtime("me", {}).then(({ value, heldBytes }) => {
       if (!isMe(value)) {
@@ -410,7 +612,13 @@ function mount(frame: HTMLIFrameElement): void {
           throw invalid();
       }
       const op = message.op;
-      if (op !== "route.set" && op !== "download" && !Object.hasOwn(runtimeOperations, op))
+      if (
+        op !== "route.set" &&
+        op !== "download" &&
+        op !== "subscribe" &&
+        op !== "unsubscribe" &&
+        !Object.hasOwn(runtimeOperations, op)
+      )
         throw invalid();
       if (pending.size >= MAX_PENDING)
         throw new Refusal(
@@ -433,8 +641,22 @@ function mount(frame: HTMLIFrameElement): void {
       admitted = true;
       let request: RuntimeRequest | undefined;
       let path: string | undefined;
+      let subscription: typeof subscribeArguments.Type | undefined;
+      let subscriptionId: string | undefined;
       try {
         if (op === "route.set") path = routePath(decodeRoute(message.args).path);
+        else if (op === "subscribe") {
+          subscription = decodeSubscribe(message.args);
+          // Refuse loudly, never degrade: nothing can observe commits on a company connection.
+          if (subscription.op.startsWith("postgres."))
+            throw new Refusal(
+              "invalid_request",
+              "Subscriptions over company Postgres connections are not supported: Patchy cannot observe commits on a connection it does not own. Poll on an interval instead."
+            );
+          // The read must be one the shell would accept as a call; the server decides the rest.
+          const read = decodeRequest({ op: subscription.op, args: subscription.args });
+          if (runtimeOperations[read.op].kind !== "read") throw invalid();
+        } else if (op === "unsubscribe") subscriptionId = decodeUnsubscribe(message.args).id;
         else
           request = decodeRequest({ op: op === "download" ? "files.get" : op, args: message.args });
       } catch (error) {
@@ -443,7 +665,13 @@ function mount(frame: HTMLIFrameElement): void {
       const me = await identify();
       if (closed) return;
       let reply: Reply;
-      if (op === "route.set") {
+      if (op === "subscribe") {
+        await subscribe(subscription!.id, subscription!.op, subscription!.args);
+        reply = { value: null, heldBytes: 0 };
+      } else if (op === "unsubscribe") {
+        await unsubscribe(subscriptionId!);
+        reply = { value: null, heldBytes: 0 };
+      } else if (op === "route.set") {
         const next = new URL(location.href);
         next.pathname = base + path!;
         history.pushState(null, "", next);

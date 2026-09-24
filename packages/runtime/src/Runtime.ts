@@ -19,6 +19,8 @@ import { newInternalId } from "@patchy/core";
 import { Limits } from "@patchy/limits";
 import * as Binding from "./Binding.js";
 import * as LoadedVersions from "./LoadedVersions.js";
+// PROTOTYPE for #313: the after-commit wake and the subscription re-run ceiling.
+import * as PrototypeInvalidation from "./PrototypeInvalidation.js";
 
 const diagnostics = {
   cause: Schema.optionalKey(Schema.Defect()),
@@ -242,6 +244,10 @@ export const byteLimits = {
 
 export const config = Config.all({
   callsPerMinute: Config.Int("PATCHY_RUNTIME_CALLS_PER_MINUTE").pipe(Config.withDefault(300)),
+  // PROTOTYPE for #313: subscription re-runs have their own ceiling, separate from the viewer's.
+  subscriptionRerunsPerMinute: Config.Int("PATCHY_RUNTIME_SUBSCRIPTION_RERUNS_PER_MINUTE").pipe(
+    Config.withDefault(3000)
+  ),
   callBytes: Config.Int("PATCHY_RUNTIME_CALL_BYTES").pipe(
     Config.withDefault(runtimeByteLimits.callBytes)
   ),
@@ -281,7 +287,9 @@ export class Runtime extends Context.Service<
     readonly fileBytes: number;
     readonly call: (
       input: typeof RuntimeEnvelope.Type,
-      byteLength?: number
+      byteLength?: number,
+      /** PROTOTYPE for #313: "subscription" re-runs count against their own ceiling. */
+      scope?: CallScope
     ) => Effect.Effect<unknown, RuntimeError, HttpServerRequest.HttpServerRequest>;
     readonly putFile: (
       input: typeof RuntimeEnvelope.Type,
@@ -292,6 +300,9 @@ export class Runtime extends Context.Service<
     ) => Effect.Effect<FileBody, RuntimeError, HttpServerRequest.HttpServerRequest>;
   }
 >()("@patchy/runtime/Runtime") {}
+
+/** PROTOTYPE for #313: which rate-limit bucket a call spends from. */
+export type CallScope = "viewer" | "subscription";
 
 export interface Execution {
   readonly input: typeof RuntimeEnvelope.Type;
@@ -325,6 +336,8 @@ export const make = (
     const limits = yield* Limits.Limits;
     const settings = yield* config;
     const origin = options.origin;
+    // PROTOTYPE for #313: optional so existing test fixtures need no extra layer.
+    const invalidation = yield* Effect.serviceOption(PrototypeInvalidation.PrototypeInvalidation);
     const bodyLimit = (op: string) => runtimeBodyLimit(op, settings);
 
     const dispatch = <A>(
@@ -332,7 +345,8 @@ export const make = (
       run: (
         operation: Handler
       ) => Effect.Effect<A, RuntimeError, Binding.Binding | HttpServerRequest.HttpServerRequest>,
-      byteLength?: number
+      byteLength?: number,
+      scope: CallScope = "viewer"
     ) =>
       Effect.gen(function* () {
         const operation = Object.hasOwn(handlers, input.op) ? handlers[input.op] : undefined;
@@ -413,8 +427,11 @@ export const make = (
               return yield* new PrincipalChanged({});
           }
           const attempt = yield* limits.consume({
-            key: `runtime:${identity?.user.id ?? `anonymous:${Option.getOrElse(request.remoteAddress, () => "")}`}:${version.patchId}`,
-            limit: settings.callsPerMinute,
+            key: `runtime${scope === "subscription" ? "-subscription" : ""}:${identity?.user.id ?? `anonymous:${Option.getOrElse(request.remoteAddress, () => "")}`}:${version.patchId}`,
+            limit:
+              scope === "subscription"
+                ? settings.subscriptionRerunsPerMinute
+                : settings.callsPerMinute,
             window: "1 minute"
           });
           if (!attempt.allowed)
@@ -461,17 +478,27 @@ export const make = (
             ...(options.record === undefined ? {} : { correlationId: binding.correlationId })
           });
         }
+        // PROTOTYPE for #313: the after-commit hook. Every writer passes this point; the
+        // wake names the resource key only (table:<patch>/<name>, store:<patch>/<name>).
+        if (operation.kind === "mutation" && Option.isSome(invalidation)) {
+          const resource = operation.resource?.(input.args) ?? null;
+          if (resource !== null)
+            yield* invalidation.value.notify([
+              `${input.op.startsWith("files.") ? "store" : "table"}:${binding.patchId}/${resource}`
+            ]);
+        }
         return result.value;
       });
     return Runtime.of({
-      call: (input, byteLength) =>
+      call: (input, byteLength, scope) =>
         dispatch(
           input,
           (operation) =>
             operation.transport === undefined
               ? operation.run(input.args)
               : Effect.fail(new InvalidRequest({})),
-          byteLength
+          byteLength,
+          scope
         ),
       putFile: (input, readBytes) =>
         dispatch(input, (operation) =>

@@ -64,6 +64,9 @@ import {
   RuntimeProduction,
   RuntimeApi,
   RuntimeLog,
+  // PROTOTYPE for #313, not for merge.
+  PrototypeInvalidation,
+  PrototypeStreamApi,
   me,
   migrations as runtimeMigrations
 } from "@patchy/runtime";
@@ -137,6 +140,8 @@ const services = Layer.mergeAll(
     )
   ),
   Layer.provideMerge(RuntimeLog.layer),
+  // PROTOTYPE for #313: one in-process wake bus shared by Runtime's dispatch and the stream routes.
+  Layer.provideMerge(PrototypeInvalidation.layer),
   Layer.provide(migrated)
 );
 
@@ -224,6 +229,8 @@ const landing = HttpRouter.use((router) =>
 /** The routes and middleware as one router application. */
 const app = Layer.mergeAll(
   api,
+  // PROTOTYPE for #313, not for merge.
+  PrototypeStreamApi.layer,
   SdkApi.tarballLayer,
   Pages.layer,
   PortalPages.layer,
