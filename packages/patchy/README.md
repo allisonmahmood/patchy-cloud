@@ -112,8 +112,11 @@ logged for company admins in the cloud, not in local dev.
 `client.route.get(): Promise<string>` reads the patch-relative path, including
 the initial deep link. `client.route.set(path): Promise<null>` asks the shell to
 push a new path without navigating the frame. Paths start with `/` and must not
-contain a query, fragment, traversal or another origin. Routing works on both
-company and public patches. `client.route.subscribe(listener)` returns an
+contain a query, fragment, traversal or another origin. The initial link and
+back/forward report routes percent-decoded. A set first reports the path as
+requested; the shell's route event right after it settles an encoded request
+such as `set("/caf%C3%A9")` on `/café`. Routing works on both company and public
+patches. `client.route.subscribe(listener)` returns an
 unsubscribe function; listeners receive the initial route, acknowledged sets
 and browser back/forward changes. Notifications are asynchronous; unsubscribe
 and `client.close()` stop them, including notifications queued before cleanup.

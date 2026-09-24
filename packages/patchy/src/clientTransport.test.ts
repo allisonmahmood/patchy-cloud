@@ -232,6 +232,13 @@ it("preserves bootstrap routes, acknowledges sets and receives popstate before i
     channel.port2.postMessage({ v: 1, id: requests[0]!.id, kind: "result", value: null });
     await expect(changed).resolves.toBeNull();
     expect(paths).toEqual(["/notes/deep-link", "/notes/next"]);
+    // The shell's route event after a set repeats an unchanged path without notifying again.
+    channel.port2.postMessage({
+      v: 1,
+      kind: "event",
+      event: "route",
+      data: { path: "/notes/next" }
+    });
     await expect(client.route.set("/rejected")).rejects.toMatchObject({ code: "invalid_request" });
     await expect(client.route.get()).resolves.toBe("/notes/next");
     expect(paths).toEqual(["/notes/deep-link", "/notes/next"]);

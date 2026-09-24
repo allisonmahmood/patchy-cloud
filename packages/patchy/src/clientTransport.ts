@@ -58,7 +58,10 @@ export function createPortTransport(
       if (!closed && listeners.has(listener)) listener(value);
     });
   };
+  // Adopts a set's request path on acknowledgement; the shell's route event then corrects it to the
+  // canonical decoded form. An unchanged path notifies nobody, so a set reports once.
   const updateRoute = (value: string) => {
+    if (value === path) return;
     path = value;
     for (const listener of listeners) notify(listener, value);
   };
