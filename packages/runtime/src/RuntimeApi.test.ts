@@ -1,13 +1,16 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
+import * as HttpApi from "effect/unstable/httpapi/HttpApi";
+import * as HttpApiTest from "effect/unstable/httpapi/HttpApiTest";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { WIRE_VERSION } from "@patchy/api";
+import { RuntimeGroup, runtimeOperations, WIRE_VERSION } from "@patchy/api";
 import { PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { client, headers, patchId, versionId, publicVersionId } from "./test/fixtures.js";
 import * as Fixtures from "./test/fixtures.js";
 import { me } from "./me.js";
+import * as Runtime from "./Runtime.js";
 
 it.layer(Fixtures.layer())("runtime HTTP admission", (it) => {
   it.effect(
@@ -404,7 +407,7 @@ it.effect("reserved PUT enforces browser headers and its viewer limit before ref
   }).pipe(Effect.provide(Fixtures.layer()))
 );
 
-it.effect("the HTTP success boundary refuses a handler value outside the wire schema", () =>
+it.effect("the HTTP success boundary refuses a handler value that is not JSON", () =>
   Effect.gen(function* () {
     const api = yield* client;
     const response = yield* api.call({
@@ -422,5 +425,62 @@ it.effect("the HTTP success boundary refuses a handler value outside the wire sc
     assert.strictEqual(response.status, 503);
     assert.include(yield* response.json, { code: "source_unavailable" });
     assert.notProperty(yield* response.json, "correlationId");
-  }).pipe(Effect.provide(Fixtures.layer({ me: { ...me, run: () => Effect.succeed(true) } })))
+  }).pipe(Effect.provide(Fixtures.layer({ me: { ...me, run: () => Effect.succeed(1n) } })))
+);
+
+const row = {
+  id: "row-1",
+  createdAt: "2026-09-21T00:00:00.000Z",
+  updatedAt: "2026-09-21T00:00:00.000Z",
+  ok: true,
+  rows: [{ label: "ordinary nested value" }],
+  title: "Snapshot label"
+};
+const rowOperations = [
+  { op: "tables.insert", args: { table: "notes", row: { title: row.title } } },
+  { op: "tables.get", args: { table: "notes", id: row.id } },
+  { op: "tables.update", args: { table: "notes", id: row.id, patch: { title: row.title } } }
+] as const;
+// Real per-operation codecs whose result collides with the Postgres `{ ok, rows }` shape.
+const rowHandlers = Object.fromEntries(
+  rowOperations.map(({ op }) => [
+    op,
+    Runtime.handler(
+      {
+        kind: runtimeOperations[op].kind,
+        input: runtimeOperations[op].request.fields.args,
+        output: runtimeOperations[op].response
+      },
+      () => Effect.succeed(row)
+    )
+  ])
+);
+
+// The real runtime group, so `call` decodes through the same RuntimeSuccess as makeClient.
+const RuntimeClientApi = HttpApi.make("patchy").add(RuntimeGroup);
+
+it.effect("the API client decodes a row shaped like a Postgres result with every column", () =>
+  Effect.gen(function* () {
+    const api = yield* HttpApiTest.groups(RuntimeClientApi, ["runtime"], {
+      baseUrl: PUBLIC_BASE_URL
+    });
+    for (const { op, args } of rowOperations) {
+      const result = yield* api.call({
+        payload: {
+          patchId,
+          versionId,
+          principal: { userId: DEV_SEED.userId },
+          wire: WIRE_VERSION,
+          op,
+          args
+        },
+        headers: {
+          ...headers({ userId: DEV_SEED.userId }),
+          cookie: signedInCookies(),
+          origin: PUBLIC_BASE_URL
+        }
+      });
+      assert.deepStrictEqual(result, { ok: true, value: row }, op);
+    }
+  }).pipe(Effect.provide(Fixtures.layer({ me, ...rowHandlers })))
 );
