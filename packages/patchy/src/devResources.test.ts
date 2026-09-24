@@ -133,6 +133,129 @@ VALUES ('invented-contact', 'Invented contact', 'missing-member');\n`;
 );
 
 it.live(
+  "an unpublished patch keeps its own rows when only a shared fixture changes",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-fixture-owned-data-" });
+      const stateDir = path.join(root, ".patchy", "dev");
+      const fixturePath = path.join(root, "fixtures", "shared-contacts.sql");
+      const declaration = {
+        kind: "sharedTable" as const,
+        patchId: "refsource001",
+        table: "contacts",
+        id: "refsource001/contacts",
+        revision: 1
+      };
+      const prepared: Prepared = {
+        patchId: "localdev0000",
+        manifest: {
+          release: RELEASE,
+          manifestVersion: MANIFEST_VERSION,
+          tier: 1,
+          tables: {
+            notes: {
+              description: "Locally created notes by id.",
+              columns: { title: { kind: "text" } },
+              indexes: {}
+            }
+          },
+          files: {},
+          uses: { contacts: declaration }
+        },
+        identity: new Identity({
+          user: { id: "local-user", email: "local@example.test", name: "Local" },
+          company: { id: "local-company", handle: "local", name: "Local" },
+          role: "admin",
+          machine: { id: "local-machine", name: "Local machine" }
+        }),
+        metadata: yield* decodeMetadata({
+          postgres: {},
+          shared: {
+            contacts: {
+              declaration,
+              tables: {
+                contacts: {
+                  description: "Contacts by id.",
+                  columns: { title: { kind: "text" } },
+                  indexes: {},
+                  shared: true
+                }
+              },
+              uses: {}
+            }
+          }
+        })
+      };
+      const contact = (title: string) =>
+        fs.writeFileString(
+          fixturePath,
+          `INSERT INTO "p_refsource001"."contacts" ("id", "title") VALUES ('invented-contact', '${title}');\n`
+        );
+      const session = Effect.fn("test.fixtureOwnedData")(function* (
+        current: Prepared,
+        insert?: string
+      ) {
+        const resources = yield* DevResources.prepare(current, root, stateDir);
+        const binding = Binding.Binding.of({
+          ...resources.version,
+          identity: {
+            user: current.identity.user,
+            company: current.identity.company,
+            role: current.identity.role
+          },
+          principal: { userId: current.identity.user.id },
+          correlationId: "fixture-owned-data"
+        });
+        const call = (op: keyof typeof resources.handlers, args: unknown) =>
+          resources.handlers[op].run(args).pipe(Effect.provideService(Binding.Binding, binding));
+        if (insert !== undefined)
+          yield* call("tables.insert", { table: "notes", row: { title: insert } });
+        const notes = yield* call("tables.list", { table: "notes" }).pipe(
+          Effect.flatMap(decodePage)
+        );
+        const contacts = yield* call("shared.list", { alias: "contacts" }).pipe(
+          Effect.flatMap(decodePage)
+        );
+        return {
+          notes: notes.rows.map((row) => row.title),
+          contacts: contacts.rows.map((row) => row.title)
+        };
+      });
+      yield* fs.makeDirectory(path.dirname(fixturePath));
+      yield* contact("First contact");
+      yield* session(prepared, "Keep my local work").pipe(Effect.scoped);
+      yield* contact("Updated contact");
+      assert.deepStrictEqual(yield* session(prepared).pipe(Effect.scoped), {
+        notes: ["Keep my local work"],
+        contacts: ["Updated contact"]
+      });
+      // Even an additive owned schema change recreates local data before the first publish.
+      const changed: Prepared = {
+        ...prepared,
+        manifest: {
+          ...prepared.manifest,
+          tables: {
+            notes: {
+              ...prepared.manifest.tables.notes!,
+              columns: {
+                ...prepared.manifest.tables.notes!.columns,
+                body: { kind: "text", optional: true }
+              }
+            }
+          }
+        }
+      };
+      assert.deepStrictEqual(yield* session(changed).pipe(Effect.scoped), {
+        notes: [],
+        contacts: ["Updated contact"]
+      });
+    }).pipe(Effect.provide(NodeServices.layer)),
+  { timeout: 60_000 }
+);
+
+it.live(
   "retains published columns, indexes, tables and stores across fresh, additive and recreated state",
   () =>
     Effect.gen(function* () {
