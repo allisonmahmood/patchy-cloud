@@ -325,14 +325,27 @@ const diff = Effect.fn("Tables.diff")(function* (
     oldColumnCounts.set(column.table, (oldColumnCounts.get(column.table) ?? 0) + 1);
   }
 
+  // Omitted primitives stay in the inventory, so a name stays with its first kind.
   for (const store of Object.keys(manifest.files)) {
     if (oldStores.has(store)) continue;
+    if (oldTables.has(store))
+      changes.push({
+        object: store,
+        change: "adding a file store under an existing table's name",
+        fix: "give the file store a different name"
+      });
     newStores.push(store);
     provisioned.stores.push(store);
   }
   for (const [table, definition] of Object.entries(manifest.tables)) {
     const oldTable = oldTables.get(table);
     if (!oldTable) {
+      if (oldStores.has(table))
+        changes.push({
+          object: table,
+          change: "adding a table under an existing file store's name",
+          fix: "give the table a different name"
+        });
       newTables.push(table);
       provisioned.tables.push(table);
     } else if (oldTable.shared !== (definition.shared === true)) {

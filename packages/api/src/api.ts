@@ -225,6 +225,7 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "over 2,000 bytes, and added columns that expand existing rows over the row limit. " +
           "`not_additive` names every refused object, change and fix. Omitted tables and stores remain in " +
           "the cumulative inventory with their data and appear as `unused`; a required column cannot be omitted. " +
+          "A new table or store cannot take a name the other kind holds in the inventory, even omitted. " +
           "A publish replaces descriptions of the primitives it defines; omission and rollback preserve them. " +
           "Description-only changes do not advance the schema revision. The revision advances for schema or sharing changes, never for a new bundle alone. " +
           "File mode (empty definitions and no repo name, or file metadata) onto cumulative inventory " +
