@@ -61,7 +61,11 @@ const seed = Layer.effectDiscard(
   })
 );
 
-export const layer = (handlers: Readonly<Record<string, Runtime.Handler>> = { me }) =>
+/** `config` overrides runtime settings, such as byte limits, on top of the test defaults. */
+export const layer = (
+  handlers: Readonly<Record<string, Runtime.Handler>> = { me },
+  config: Readonly<Record<string, string>> = {}
+) =>
   Layer.mergeAll(RuntimeApi.layer, HttpServer.layerServices).pipe(
     Layer.provideMerge(RuntimeProduction.layer(handlers)),
     Layer.provideMerge(
@@ -77,7 +81,11 @@ export const layer = (handlers: Readonly<Record<string, Runtime.Handler>> = { me
     Layer.provideMerge(seed.pipe(Layer.provideMerge(Testing.layer()))),
     Layer.provide(
       ConfigProvider.layer(
-        ConfigProvider.fromUnknown({ ...clerkEnv(), PATCHY_RUNTIME_CALLS_PER_MINUTE: "3" })
+        ConfigProvider.fromUnknown({
+          ...clerkEnv(),
+          PATCHY_RUNTIME_CALLS_PER_MINUTE: "3",
+          ...config
+        })
       )
     )
   );
