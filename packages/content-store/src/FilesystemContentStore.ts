@@ -93,7 +93,14 @@ export const make = Effect.gen(function* () {
             if (entry.isDirectory() && (prefix.startsWith(key + "/") || key.startsWith(prefix))) {
               yield* walk(file, key + "/");
             } else if (entry.isFile() && key.startsWith(prefix)) {
-              yield { key, lastModified: (await stat(file)).mtimeMs };
+              // Deleted since it was enumerated: skip it rather than fail the whole listing.
+              const stats = await stat(file).catch((error: unknown) => {
+                if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+                  return undefined;
+                }
+                throw error;
+              });
+              if (stats !== undefined) yield { key, lastModified: stats.mtimeMs };
             }
           }
         }
