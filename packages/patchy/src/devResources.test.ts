@@ -256,6 +256,108 @@ it.live(
 );
 
 it.live(
+  "reseeds a shared source when a failed fixture edit is reverted, keeping owned rows",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-fixture-retry-" });
+      const stateDir = path.join(root, ".patchy", "dev");
+      const fixturePath = path.join(root, "fixtures", "shared-contacts.sql");
+      const declaration = {
+        kind: "sharedTable" as const,
+        patchId: "refsource001",
+        table: "contacts",
+        id: "refsource001/contacts",
+        revision: 1
+      };
+      const notes = {
+        description: "Locally created notes by id.",
+        columns: { title: { kind: "text" as const } },
+        indexes: {}
+      };
+      const prepared: Prepared = {
+        patchId: "localdev0000",
+        manifest: {
+          release: RELEASE,
+          manifestVersion: MANIFEST_VERSION,
+          tier: 1,
+          tables: { notes },
+          files: {},
+          uses: { contacts: declaration }
+        },
+        baseline: new PatchInventory({ schemaRevision: 1, tables: { notes }, files: {} }),
+        identity: new Identity({
+          user: { id: "local-user", email: "local@example.test", name: "Local" },
+          company: { id: "local-company", handle: "local", name: "Local" },
+          role: "admin",
+          machine: { id: "local-machine", name: "Local machine" }
+        }),
+        metadata: yield* decodeMetadata({
+          postgres: {},
+          shared: {
+            contacts: {
+              declaration,
+              tables: {
+                contacts: {
+                  description: "Contacts by id.",
+                  columns: { title: { kind: "text" } },
+                  indexes: {},
+                  shared: true
+                }
+              },
+              uses: {}
+            }
+          }
+        })
+      };
+      const fixture = (column: string) =>
+        fs.writeFileString(
+          fixturePath,
+          `INSERT INTO "p_refsource001"."contacts" ("id", "${column}") VALUES ('invented-contact', 'Initial contact');\n`
+        );
+      const session = Effect.fn("test.fixtureRetry")(function* (insert?: string) {
+        const resources = yield* DevResources.prepare(prepared, root, stateDir);
+        const binding = Binding.Binding.of({
+          ...resources.version,
+          identity: {
+            user: prepared.identity.user,
+            company: prepared.identity.company,
+            role: prepared.identity.role
+          },
+          principal: { userId: prepared.identity.user.id },
+          correlationId: "fixture-retry"
+        });
+        const call = (op: keyof typeof resources.handlers, args: unknown) =>
+          resources.handlers[op].run(args).pipe(Effect.provideService(Binding.Binding, binding));
+        if (insert !== undefined)
+          yield* call("tables.insert", { table: "notes", row: { title: insert } });
+        const owned = yield* call("tables.list", { table: "notes" }).pipe(
+          Effect.flatMap(decodePage)
+        );
+        const contacts = yield* call("shared.list", { alias: "contacts" }).pipe(
+          Effect.flatMap(decodePage)
+        );
+        return {
+          notes: owned.rows.map((row) => row.title),
+          contacts: contacts.rows.map((row) => row.title)
+        };
+      });
+      const expected = { notes: ["Keep my local work"], contacts: ["Initial contact"] };
+      yield* fs.makeDirectory(path.dirname(fixturePath));
+      yield* fixture("title");
+      assert.deepStrictEqual(yield* session("Keep my local work").pipe(Effect.scoped), expected);
+      yield* fixture("titel");
+      const failure = yield* session().pipe(Effect.scoped, Effect.flip);
+      assert.strictEqual(failure._tag, "SharedFixtureInvalid");
+      yield* fixture("title");
+      assert.deepStrictEqual(yield* session().pipe(Effect.scoped), expected);
+      assert.deepStrictEqual(yield* session().pipe(Effect.scoped), expected);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  { timeout: 60_000 }
+);
+
+it.live(
   "retains published columns, indexes, tables and stores across fresh, additive and recreated state",
   () =>
     Effect.gen(function* () {
