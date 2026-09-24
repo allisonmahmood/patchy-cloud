@@ -609,6 +609,8 @@ export class RuntimeGroup extends HttpApiGroup.make("runtime", { topLevel: true 
           "and invalid pagination `invalid_cursor`. Unknown operations answer `invalid_request`. " +
           "Failures are `{ ok: false, error, code, details?, correlationId? }`; every table mutation is " +
           "logged before execution and logged failures carry their runtime-log correlation id. " +
+          "Table and file mutations have a 30-second deadline (`PATCHY_RUNTIME_MUTATION_DEADLINE_MS`), " +
+          "the same one their log records; past it the call fails `timeout` (504). " +
           "Table and file reads are not logged. `files.list { store, prefix?, limit?, cursor? }` " +
           "returns `{ files: [{ name, size, contentType, updatedAt }], cursor }`, ordered by name " +
           "with a literal prefix and a keyset cursor bound to patch, store and prefix. Pages default " +
@@ -637,7 +639,8 @@ export class RuntimeGroup extends HttpApiGroup.make("runtime", { topLevel: true 
           "in their required headers; the body contains only raw file bytes. " +
           runtimeFileContract +
           "An admitted PUT is logged before reading its body and answers `{ ok: true, value: null }` " +
-          "with `no-store`. A failed or oversized upload preserves the previous file."
+          "with `no-store`. The 30-second mutation deadline includes reading the body; past it the " +
+          "PUT fails `timeout` (504). A failed or oversized upload preserves the previous file."
       )
     ),
     HttpApiEndpoint.get("getFile", "/runtime/files/:patchId/:versionId/:store/*", {
