@@ -14,7 +14,7 @@ overrides:
   effect: 4.0.0-rc.115
   '@effect/platform-node': 4.0.0-rc.115
   '@effect/sql-pg': 4.0.0-rc.115
-  '@effect/sql-pglite': 4.0.0-rc.115
+  '@effect/sql-pglite': 4.0.0-rc.117
   '@effect/vitest': 4.0.0-rc.115
   '@effect/language-service': 0.87.2
 
@@ -255,8 +255,8 @@ importers:
         specifier: 4.0.0-rc.115
         version: 4.0.0-rc.115(effect@4.0.0-rc.115)
       '@effect/sql-pglite':
-        specifier: 4.0.0-rc.115
-        version: 4.0.0-rc.115(effect@4.0.0-rc.115)
+        specifier: 4.0.0-rc.117
+        version: 4.0.0-rc.117(effect@4.0.0-rc.115)
       '@electric-sql/pglite':
         specifier: 0.5.8
         version: 0.5.8
@@ -432,8 +432,8 @@ importers:
         specifier: 4.0.0-rc.115
         version: 4.0.0-rc.115(effect@4.0.0-rc.115)(redis@6.2.1)
       '@effect/sql-pglite':
-        specifier: 4.0.0-rc.115
-        version: 4.0.0-rc.115(effect@4.0.0-rc.115)
+        specifier: 4.0.0-rc.117
+        version: 4.0.0-rc.117(effect@4.0.0-rc.115)
       '@effect/vitest':
         specifier: 4.0.0-rc.115
         version: 4.0.0-rc.115(effect@4.0.0-rc.115)(vitest@5.0.1(@types/node@22.20.3)(vite@8.3.0(@types/node@22.20.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.1)))
@@ -872,8 +872,8 @@ packages:
     peerDependencies:
       effect: 4.0.0-rc.115
 
-  '@effect/sql-pglite@4.0.0-rc.115':
-    resolution: {integrity: sha512-ybYdGNrks/j2qYe2RHG7NsdeYThGjFKg6S1ziHQXMhmyKyTS35Az+kK1389+o+m/1DOpvMqDqwG80UOYPAV2LQ==}
+  '@effect/sql-pglite@4.0.0-rc.117':
+    resolution: {integrity: sha512-3tuqVBkZrLkt1VqUCVHgrDlUtPJPT6JHCSchvTZ2pwabi9RtzRqXrUogmk5yGMHxs27HboNQ0IZlXkpeDKADng==}
     peerDependencies:
       effect: 4.0.0-rc.115
 
@@ -2804,7 +2804,7 @@ snapshots:
     dependencies:
       effect: 4.0.0-rc.115
 
-  '@effect/sql-pglite@4.0.0-rc.115(effect@4.0.0-rc.115)':
+  '@effect/sql-pglite@4.0.0-rc.117(effect@4.0.0-rc.115)':
     dependencies:
       '@electric-sql/pglite': 0.5.8
       effect: 4.0.0-rc.115
