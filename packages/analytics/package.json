@@ -22,7 +22,7 @@
   },
   "dependencies": {
     "effect": "catalog:",
-    "posthog-node": "^5.52.4"
+    "posthog-node": "^5.52.5"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
