@@ -31,4 +31,5 @@ build() { # <name> <dir> <cmd>
 [ "${ONLY:-}" = host ] || EXEC_TAG=exec-$TAG
 [ "${ONLY:-}" = exec ] || HOST_TAG=host-$TAG
 printf 'EXEC_TAG=%s\nHOST_TAG=%s\n' "$EXEC_TAG" "$HOST_TAG" > infra/.tags
+[ -n "${EXEC_SECRET:-}" ] && printf 'EXEC_SECRET=%s\n' "$EXEC_SECRET" >> infra/.tags
 cat infra/.tags

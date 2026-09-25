@@ -324,6 +324,7 @@ async function invokeInner(p: {
   let result: any;
   let error: string | undefined;
   let lastCapability = "";
+  const attemptCapabilities: string[] = [];
   let execOut: any;
   let rollbackState: string | undefined;
   let deduplicated: string | undefined;
@@ -365,6 +366,7 @@ async function invokeInner(p: {
         refusals: []
       };
       lastCapability = inv.capability;
+      attemptCapabilities.push(inv.capability);
       byCapability.set(inv.capability, inv);
       const e0 = Date.now();
       const abort = new AbortController();
@@ -481,6 +483,7 @@ async function invokeInner(p: {
           try {
             if (inject === "lost-commit-reply") {
               // Send COMMIT, then destroy the socket before the reply arrives.
+              client.on("error", () => {}); // the destroyed socket reports on the client
               const commit = client.query("COMMIT");
               setTimeout(() => (client as any).connection.stream.destroy(), 2);
               await commit;
@@ -496,7 +499,7 @@ async function invokeInner(p: {
           } catch (e: any) {
             timing.commitMs = Date.now() - c0;
             client.release(true);
-            endCapability(inv, "invocation_ended");
+            endCapability(inv, e.code === "40001" ? "attempt_superseded" : "invocation_ended");
             if (e.code === "40001" && attempts < 3 && Date.now() < deadlineAt - 200) {
               timing[`attempt${attempts}`] = "40001@commit";
               continue;
@@ -562,7 +565,7 @@ async function invokeInner(p: {
       deduplicated,
       hostEpoch: pool.epoch,
       timing,
-      debug: { capability: lastCapability }
+      debug: { capability: lastCapability, attemptCapabilities }
     }
   };
 }
@@ -634,7 +637,7 @@ async function admin(url: URL, req: IncomingMessage, res: ServerResponse) {
     }
     case "/admin/pg-activity": {
       const r = await db.query(
-        "select pid, state, left(query, 40) as query, now() - xact_start as xact_age from pg_stat_activity where application_name = 'tier2-host' and (state = 'active' or state like 'idle in transaction%')"
+        "select pid, state, left(query, 40) as query, now() - xact_start as xact_age from pg_stat_activity where application_name = 'tier2-host' and (state = 'active' or state like 'idle in transaction%') and query not like '%pg_stat_activity%'"
       );
       return send(res, 200, {
         openTransactions: r.rows.length,

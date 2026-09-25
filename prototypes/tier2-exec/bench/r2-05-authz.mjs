@@ -80,11 +80,10 @@ const pair = await Promise.all([
 ]);
 const retried = pair.find((r) => r.attempts > 1);
 if (retried) {
-  const inv = await admin(`/admin/invocation?id=${retried.id}`);
   row(
     "attempt 1 callback token after the 40001 re-invocation (attempts=" + retried.attempts + ")",
     "403 capability_refused (attempt_superseded)",
-    await cb(retried.debug.capability === inv.capability ? "n/a" : retried.debug.capability, {
+    await cb(retried.debug.attemptCapabilities[0], {
       op: "tables.list",
       args: { table: "counters" }
     })
@@ -98,8 +97,8 @@ if (retried) {
 // Previous process generation: kill via abuse.loop, then replay that invocation's token.
 const loop = await invoke({ company: "acme", handler: "abuse.loop" });
 row(
-  "callback token of an invocation killed with its process generation",
-  "403 capability_refused (invocation_ended)",
+  `callback token of an invocation whose process was killed (${loop.outcome})`,
+  "403 capability_refused",
   await cb(loop.debug.capability, { op: "tables.list", args: { table: "contacts" } })
 );
 // Guest reaching the supervisor.
