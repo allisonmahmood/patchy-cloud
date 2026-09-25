@@ -1,0 +1,12 @@
+{
+  "name": "tier2-neon-bench",
+  "private": true,
+  "description": "PROTOTYPE for #311: Neon Postgres measurements from an ECS Fargate task (lane B)",
+  "type": "module",
+  "dependencies": {
+    "pg": "^8.23.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.15.0"
+  }
+}
