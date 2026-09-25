@@ -17,7 +17,7 @@ const DEADLINE_MS = 5000;
 // The exec watchdog fires before the host deadline so its kill is what the host sees.
 const WATCHDOG_MS = 4500;
 const ACTION_BUDGET_MS = 30_000;
-const SLOTS = Number(process.env.SLOTS ?? 4);
+let SLOTS = Number(process.env.SLOTS ?? 4);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // Bundles and manifest produced by handlers/build.mjs, copied in by infra/build.sh.
@@ -450,6 +450,9 @@ async function admin(url: URL, req: IncomingMessage, res: ServerResponse) {
           return send(res, 200, { arn, events, gaveUpAfterMs: Date.now() - t0 });
       }
     }
+    case "/admin/slots": // raise the per-company cap for the memory measurement
+      SLOTS = Number(url.searchParams.get("n") ?? 4);
+      return send(res, 200, { slots: SLOTS });
     case "/admin/echo":
       return send(res, 200, { hostUrl, taskArn: process.env.TASK_ARN, startedAt });
   }
@@ -507,6 +510,7 @@ server.listen(PORT, () =>
 process.on("SIGTERM", () => {
   console.log(`[host] SIGTERM with ${streams.size} streams open`);
   for (const s of streams) s.end(`event: bye\ndata: {"reason":"sigterm"}\n\n`);
-  server.close(() => process.exit(0));
-  setTimeout(() => process.exit(0), 5000);
+  server.close();
+  pool.stopAll("host sigterm").finally(() => process.exit(0));
+  setTimeout(() => process.exit(0), 20_000);
 });

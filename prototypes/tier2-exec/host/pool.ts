@@ -217,3 +217,9 @@ export function snapshot() {
   });
   return { poolSize: POOL_SIZE, idleMs: IDLE_MS, tasks: tasks.map(rel), history: history.map(rel) };
 }
+
+// On host shutdown stop every exec task this host started; the pool is
+// in-memory, so a new host would otherwise orphan them.
+export function stopAll(reason: string) {
+  return Promise.all([...tasks].map((t) => stopTask(t, reason)));
+}

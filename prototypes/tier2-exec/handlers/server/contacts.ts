@@ -69,3 +69,15 @@ export const bump = t.mutation<{ name: string }>({
     return { value: next };
   }
 });
+
+// Same as bump with a host-side pause between the read and the write, so two
+// concurrent writers reliably overlap and one of them hits 40001.
+export const bumpSlow = t.mutation<{ name: string; ms: number }>({
+  handler: async (ctx, { name, ms }) => {
+    const [row] = await ctx.tables.list("counters", { name });
+    await ctx.run.sleep(ms);
+    const next = (row?.value ?? 0) + 1;
+    await ctx.tables.update("counters", { name }, { value: next });
+    return { value: next };
+  }
+});
