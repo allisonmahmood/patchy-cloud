@@ -1,5 +1,21 @@
 # Patchy Cloud Development
 
+## T3 Code
+
+The root `t3.json` defaults new threads to isolated worktrees and offers five
+actions. In T3 Code's project actions menu, import each action from **From
+t3.json** once. Imported actions are saved copies; later changes to `t3.json`
+do not update them automatically.
+
+**Setup** runs `pnpm install --frozen-lockfile` when T3 creates a worktree and
+holds the agent until installation exits. **Start dev**, **Stop dev** and
+**Restart dev** control that worktree's local instance. **Check** runs lint,
+typecheck and offline tests in sequence, stopping at the first failure.
+
+Dev startup stays manual and requires the [Clerk development keys](#clerk-keys).
+Open the URL printed by the runner; each worktree gets its own port. Closing an
+action's terminal does not stop the dev instance, so use **Stop dev** when done.
+
 ## The local instance: `pnpm dev`
 
 Use Node 22.22.0+ and the pnpm version in `package.json`, with dependencies installed

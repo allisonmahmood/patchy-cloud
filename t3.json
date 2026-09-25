@@ -1,0 +1,33 @@
+{
+  "$schema": "https://t3.codes/schema/t3.json",
+  "defaultThreadEnvMode": "worktree",
+  "scripts": [
+    {
+      "name": "Setup",
+      "command": "pnpm install --frozen-lockfile",
+      "icon": "configure",
+      "runOnWorktreeCreate": true,
+      "async": false
+    },
+    {
+      "name": "Start dev",
+      "command": "pnpm dev",
+      "icon": "play"
+    },
+    {
+      "name": "Stop dev",
+      "command": "pnpm dev stop",
+      "icon": "configure"
+    },
+    {
+      "name": "Restart dev",
+      "command": "pnpm dev stop && pnpm dev",
+      "icon": "play"
+    },
+    {
+      "name": "Check",
+      "command": "pnpm lint && pnpm typecheck && pnpm test",
+      "icon": "test"
+    }
+  ]
+}
