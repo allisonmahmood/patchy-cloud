@@ -65,7 +65,7 @@ import { contentHash, validateHtml } from "@patchy/core";
 import { Limits } from "@patchy/limits";
 // PROTOTYPE for #314: tier 2 publish re-derives the handler map by loading the bundle.
 import { Engine } from "@patchy/execution";
-import { canonicalHandlers, handlersOf } from "@patchy/api";
+import { diffHandlers, handlersOf } from "@patchy/api";
 import * as Content from "./Content.js";
 import * as Patches from "./Patches.js";
 import * as PatchesConfig from "./PatchesConfig.js";
@@ -407,11 +407,11 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
                   ? `The server bundle could not be loaded: ${derived.failure.reason}`
                   : "The execution engine is unavailable; try again."
               );
-            const declared = handlersOf(manifest.handlers);
-            if (canonicalHandlers(declared) !== canonicalHandlers(derived.success))
+            const disagreement = diffHandlers(handlersOf(manifest.handlers), derived.success);
+            if (disagreement !== undefined)
               return rejected(
                 "invalid_manifest",
-                `The manifest's handlers disagree with the server bundle (declared ${Object.keys(declared).sort().join(", ") || "none"}; bundle ${Object.keys(derived.success).sort().join(", ") || "none"}). Rebuild with patchy publish.`
+                `The manifest's handlers disagree with the server bundle at ${disagreement}. Rebuild with patchy publish.`
               );
           } else if (payload.server !== undefined)
             return rejected("tier_mismatch", "Only a tier 2 publish carries a server bundle.");

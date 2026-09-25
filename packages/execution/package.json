@@ -23,6 +23,7 @@
   "dependencies": {
     "@effect/platform-node": "catalog:",
     "@patchy/api": "workspace:*",
+    "@patchy/company-database": "workspace:*",
     "@patchy/core": "workspace:*",
     "@patchy/runtime": "workspace:*",
     "effect": "catalog:",

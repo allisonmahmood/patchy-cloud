@@ -38,12 +38,23 @@ export type HandlerDescriptor = {
 const scalarKinds = new Set(["text", "integer", "number", "boolean", "timestamp", "json"]);
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
+// PROTOTYPE for #314 round 2: the grammar is closed; a descriptor carries only its own keys.
+const descriptorKeys: Record<string, ReadonlySet<string>> = {
+  ref: new Set(["kind", "table", "optional"]),
+  row: new Set(["kind", "table", "optional"]),
+  object: new Set(["kind", "fields", "optional"]),
+  array: new Set(["kind", "items", "optional"]),
+  enum: new Set(["kind", "values", "optional"]),
+  nullable: new Set(["kind", "inner", "optional"])
+};
+const scalarKeys = new Set(["kind", "optional"]);
 
 /** Structural check of a descriptor; `depth` bounds hostile nesting. */
 export const isTypeDescriptor = (value: unknown, depth = 0): value is TypeDescriptor => {
   if (depth > 16 || !isRecord(value) || typeof value.kind !== "string") return false;
   if (value.optional !== undefined && typeof value.optional !== "boolean") return false;
-  if (Object.hasOwn(value, "default")) return false;
+  const allowedKeys = descriptorKeys[value.kind] ?? scalarKeys;
+  if (!Object.keys(value).every((key) => allowedKeys.has(key))) return false;
   switch (value.kind) {
     case "ref":
     case "row":
@@ -68,8 +79,10 @@ export const isTypeDescriptor = (value: unknown, depth = 0): value is TypeDescri
   }
 };
 
+const handlerKeys = new Set(["kind", "args", "result", "errors"]);
 export const isHandlerDescriptor = (value: unknown): value is HandlerDescriptor =>
   isRecord(value) &&
+  Object.keys(value).every((key) => handlerKeys.has(key)) &&
   (value.kind === "query" || value.kind === "mutation" || value.kind === "action") &&
   isTypeDescriptor(value.args) &&
   (value.args as TypeDescriptor).kind === "object" &&
@@ -100,10 +113,24 @@ const isIso = (value: string) =>
  * or undefined when the value conforms. Unknown object fields are refused so a handler never
  * sees an argument its declaration did not name.
  */
+/** A pinned manifest's table definitions, for `t.row` validation. */
+export type TableShapes = Readonly<
+  Record<
+    string,
+    {
+      readonly columns: Readonly<
+        Record<string, { readonly kind: string; readonly optional?: boolean | undefined }>
+      >;
+    }
+  >
+>;
+const systemColumns = { id: "text", createdAt: "timestamp", updatedAt: "timestamp" } as const;
+
 export const checkValue = (
   descriptor: TypeDescriptor,
   value: unknown,
-  path = "$"
+  path = "$",
+  tables?: TableShapes
 ): string | undefined => {
   switch (descriptor.kind) {
     case "text":
@@ -128,19 +155,52 @@ export const checkValue = (
         ? undefined
         : `${path}: expected one of ${descriptor.values.join(", ")}`;
     case "nullable":
-      return value === null ? undefined : checkValue(descriptor.inner, value, path);
+      return value === null ? undefined : checkValue(descriptor.inner, value, path, tables);
     case "array": {
       if (!Array.isArray(value)) return `${path}: expected an array`;
       for (let index = 0; index < value.length; index++) {
-        const problem = checkValue(descriptor.items, value[index], `${path}[${index}]`);
+        const problem = checkValue(descriptor.items, value[index], `${path}[${index}]`, tables);
         if (problem !== undefined) return problem;
       }
       return undefined;
     }
-    case "row":
-      return isRecord(value) && typeof value.id === "string"
-        ? undefined
-        : `${path}: expected a ${descriptor.table} row`;
+    case "row": {
+      // PROTOTYPE for #314 round 2: the declared row shape from the pinned manifest, system
+      // columns included, no unknown keys; without table shapes only the id is checked.
+      if (!isRecord(value) || typeof value.id !== "string")
+        return `${path}: expected a ${descriptor.table} row`;
+      const table = tables?.[descriptor.table];
+      if (table === undefined)
+        return tables === undefined
+          ? undefined
+          : `${path}: table ${descriptor.table} is not declared`;
+      const columns: Record<string, { kind: string; optional?: boolean | undefined }> = {
+        ...Object.fromEntries(
+          Object.entries(systemColumns).map(([name, kind]) => [name, { kind }])
+        ),
+        ...table.columns
+      };
+      for (const key of Object.keys(value)) {
+        if (!Object.hasOwn(columns, key))
+          return `${path}.${key}: not a column of ${descriptor.table}`;
+      }
+      for (const [name, column] of Object.entries(columns)) {
+        const field = value[name];
+        if (field === null || field === undefined) {
+          if (column.optional === true) continue;
+          return `${path}.${name}: missing`;
+        }
+        const kind = column.kind === "ref" ? "text" : column.kind;
+        if (!scalarKinds.has(kind)) return `${path}.${name}: unsupported column kind ${kind}`;
+        const problem = checkValue(
+          { kind: kind as "text" | "integer" | "number" | "boolean" | "timestamp" | "json" },
+          field,
+          `${path}.${name}`
+        );
+        if (problem !== undefined) return problem;
+      }
+      return undefined;
+    }
     case "object": {
       if (!isRecord(value)) return `${path}: expected an object`;
       for (const key of Object.keys(value)) {
@@ -152,12 +212,49 @@ export const checkValue = (
           if (field.optional === true) continue;
           return `${path}.${key}: missing`;
         }
-        const problem = checkValue(field, value[key], `${path}.${key}`);
+        const problem = checkValue(field, value[key], `${path}.${key}`, tables);
         if (problem !== undefined) return problem;
       }
       return undefined;
     }
   }
+};
+
+/**
+ * PROTOTYPE for #314 round 2: the first path at which two handler maps differ, for the publish
+ * refusal (`notes.add.args.fields.title.kind: declared text, bundle says integer`).
+ */
+export const diffHandlers = (declared: Handlers, derived: Handlers): string | undefined => {
+  const walk = (a: unknown, b: unknown, path: string): string | undefined => {
+    if (isRecord(a) && isRecord(b)) {
+      for (const key of new Set([...Object.keys(a), ...Object.keys(b)])) {
+        if (!Object.hasOwn(a, key)) return `${path}.${key}: not declared, bundle has it`;
+        if (!Object.hasOwn(b, key)) return `${path}.${key}: declared, bundle does not have it`;
+        const problem = walk(a[key], b[key], `${path}.${key}`);
+        if (problem !== undefined) return problem;
+      }
+      return undefined;
+    }
+    if (Array.isArray(a) && Array.isArray(b)) {
+      if (a.length !== b.length)
+        return `${path}: declared ${a.length} entries, bundle says ${b.length}`;
+      for (let index = 0; index < a.length; index++) {
+        const problem = walk(a[index], b[index], `${path}[${index}]`);
+        if (problem !== undefined) return problem;
+      }
+      return undefined;
+    }
+    return a === b
+      ? undefined
+      : `${path}: declared ${JSON.stringify(a)}, bundle says ${JSON.stringify(b)}`;
+  };
+  for (const name of new Set([...Object.keys(declared), ...Object.keys(derived)])) {
+    if (!Object.hasOwn(declared, name)) return `${name}: not declared, bundle has it`;
+    if (!Object.hasOwn(derived, name)) return `${name}: declared, bundle does not have it`;
+    const problem = walk(declared[name], derived[name], name);
+    if (problem !== undefined) return problem;
+  }
+  return undefined;
 };
 
 /** Key-order-independent form for comparing a manifest's handlers with the engine's discovery. */
