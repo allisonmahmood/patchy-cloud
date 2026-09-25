@@ -5,7 +5,8 @@ import pg from "pg";
 export const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL,
   max: 20,
-  idleTimeoutMillis: 60_000
+  idleTimeoutMillis: 60_000,
+  application_name: "tier2-host"
 });
 pool.on("error", (e) => console.log(`[db] idle client error (Neon dropped it?): ${e.message}`));
 
@@ -20,6 +21,14 @@ export async function migrate() {
       started_at timestamptz, ended_at timestamptz, timing jsonb);
     create table if not exists operations (
       id bigserial primary key, invocation_id text, attempt int, op text, principal text, ms real, at timestamptz default now());
+    -- round 2: per-call mutation keys, written inside the mutation's transaction.
+    create table if not exists mutation_keys (
+      company text not null, key text not null, invocation_id text, result jsonb, committed_at timestamptz default now(), primary key (company, key));
+    -- round 2: host epochs and the pool state, so a replacement host inherits bindings.
+    create table if not exists hosts (epoch bigserial primary key, started_at timestamptz default now(), note text);
+    create table if not exists pool_tasks (
+      task_arn text primary key, url text, state text not null, company text, owner_epoch bigint, process_mode text,
+      run_task_at timestamptz, ready_at timestamptz, bound_at timestamptz, last_used timestamptz);
   `);
 }
 

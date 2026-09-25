@@ -8,20 +8,24 @@ cd "$(dirname "$0")/.."
 . infra/.tags
 POOL_SIZE=${POOL_SIZE:-2}
 IDLE_MS=${IDLE_MS:-60000}
+PROCESS_MODE=${PROCESS_MODE:-company}
+# Shared secret between host and supervisors; kept in infra/.tags so redeploys reuse it.
+grep -q '^EXEC_SECRET=' infra/.tags || printf 'EXEC_SECRET=%s\n' "$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')" >> infra/.tags
+. infra/.tags
 
 logs() { printf '{"logDriver":"awslogs","options":{"awslogs-group":"%s","awslogs-region":"us-east-1","awslogs-stream-prefix":"%s"}}' "$SPIKE_LOG_GROUP" "$1"; }
 
 # Exec task: no task role at all, bootstrap SG, private subnet (chosen at RunTask).
 EXEC_TD=$(aws ecs register-task-definition --family tier2-spike-exec --network-mode awsvpc --requires-compatibilities FARGATE \
   --cpu 512 --memory 1024 --execution-role-arn "$SPIKE_TASK_EXECUTION_ROLE_ARN" \
-  --container-definitions "[{\"name\":\"exec\",\"image\":\"$SPIKE_ECR_URI:$EXEC_TAG\",\"essential\":true,\"portMappings\":[{\"containerPort\":8080}],\"environment\":[{\"name\":\"RSS_LIMIT_MB\",\"value\":\"512\"}],\"logConfiguration\":$(logs exec)}]" \
+  --container-definitions "[{\"name\":\"exec\",\"image\":\"$SPIKE_ECR_URI:$EXEC_TAG\",\"essential\":true,\"portMappings\":[{\"containerPort\":8080}],\"environment\":[{\"name\":\"RSS_LIMIT_MB\",\"value\":\"512\"},{\"name\":\"EXEC_SECRET\",\"value\":\"$EXEC_SECRET\"},{\"name\":\"PROCESS_MODE\",\"value\":\"$PROCESS_MODE\"}],\"logConfiguration\":$(logs exec)}]" \
   --query 'taskDefinition.taskDefinitionArn' --output text)
 echo "exec task def: $EXEC_TD"
 
 # Host task: public subnet + public IP (reaches Neon without NAT), behind the ALB.
 # The disposable user's keys ride in task env so the host can RunTask: spike shortcut.
 env_json() { printf '{"name":"%s","value":"%s"}' "$1" "$2"; }
-HOST_ENV="[$(env_json DATABASE_URL "$DATABASE_URL"),$(env_json AWS_ACCESS_KEY_ID "$AWS_ACCESS_KEY_ID"),$(env_json AWS_SECRET_ACCESS_KEY "$AWS_SECRET_ACCESS_KEY"),$(env_json AWS_REGION us-east-1),$(env_json SPIKE_ECS_CLUSTER "$SPIKE_ECS_CLUSTER"),$(env_json SPIKE_PRIVATE_SUBNET "$SPIKE_PRIVATE_SUBNET"),$(env_json SPIKE_SG_EXEC_BOOTSTRAP "$SPIKE_SG_EXEC_BOOTSTRAP"),$(env_json SPIKE_SG_EXEC_SEALED "$SPIKE_SG_EXEC_SEALED"),$(env_json EXEC_TASK_DEF "$EXEC_TD"),$(env_json POOL_SIZE "$POOL_SIZE"),$(env_json IDLE_MS "$IDLE_MS")]"
+HOST_ENV="[$(env_json DATABASE_URL "$DATABASE_URL"),$(env_json AWS_ACCESS_KEY_ID "$AWS_ACCESS_KEY_ID"),$(env_json AWS_SECRET_ACCESS_KEY "$AWS_SECRET_ACCESS_KEY"),$(env_json AWS_REGION us-east-1),$(env_json SPIKE_ECS_CLUSTER "$SPIKE_ECS_CLUSTER"),$(env_json SPIKE_PRIVATE_SUBNET "$SPIKE_PRIVATE_SUBNET"),$(env_json SPIKE_SG_EXEC_BOOTSTRAP "$SPIKE_SG_EXEC_BOOTSTRAP"),$(env_json SPIKE_SG_EXEC_SEALED "$SPIKE_SG_EXEC_SEALED"),$(env_json EXEC_TASK_DEF "$EXEC_TD"),$(env_json POOL_SIZE "$POOL_SIZE"),$(env_json IDLE_MS "$IDLE_MS"),$(env_json EXEC_SECRET "$EXEC_SECRET"),$(env_json EXEC_PROCESS_MODE "$PROCESS_MODE")]"
 HOST_TD=$(aws ecs register-task-definition --family tier2-spike-host --network-mode awsvpc --requires-compatibilities FARGATE \
   --cpu 512 --memory 1024 --execution-role-arn "$SPIKE_TASK_EXECUTION_ROLE_ARN" --task-role-arn "$SPIKE_HOST_TASK_ROLE_ARN" \
   --container-definitions "[{\"name\":\"host\",\"image\":\"$SPIKE_ECR_URI:$HOST_TAG\",\"essential\":true,\"portMappings\":[{\"containerPort\":8080}],\"stopTimeout\":30,\"environment\":$HOST_ENV,\"logConfiguration\":$(logs host)}]" \

@@ -10,7 +10,7 @@ export type Ctx = {
     insert(table: string, row: Row): Promise<Row>;
     update(table: string, where: Row, set: Row): Promise<Row[]>;
   };
-  run: { sleep(ms: number): Promise<void> };
+  run: { sleep(ms: number): Promise<void>; slowSql(ms: number): Promise<void> };
   log(...args: unknown[]): void;
 };
 

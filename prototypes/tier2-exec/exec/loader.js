@@ -61,7 +61,7 @@ export default {
     }
 
     if (url.pathname === "/invoke") {
-      const { invocationId, capability, hostUrl, handler, args, viewer, limits } = body;
+      const { invocationId, capability, hostUrl, handler, args, viewer, limits, generation } = body;
       let worker;
       try {
         worker = getWorker(env, ctx, name, bundle, compatibilityDate);
@@ -69,7 +69,7 @@ export default {
         return json({ ok: false, error: String(e?.message ?? e) }, 409);
       }
       const firstLoad = !loaded.has(name);
-      invocations.set(invocationId, { capability, hostUrl, name });
+      invocations.set(invocationId, { capability, hostUrl, name, generation });
       const t0 = Date.now();
       try {
         const ep = worker.getEntrypoint(undefined, {
@@ -109,7 +109,11 @@ export class Callbacks extends WorkerEntrypoint {
     if (!inv) throw new Error("callback refused: invocation ended");
     const res = await fetch(`${inv.hostUrl}/callback`, {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${inv.capability}` },
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${inv.capability}`,
+        "x-exec-generation": String(inv.generation ?? 0)
+      },
       body: JSON.stringify({ op, args })
     });
     const out = await res.json();

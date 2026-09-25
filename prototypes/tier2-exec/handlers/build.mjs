@@ -32,7 +32,7 @@ export default {
         insert: (table, row) => cb.call("tables.insert", { table, row }),
         update: (table, where, set) => cb.call("tables.update", { table, where, set }),
       },
-      run: { sleep: (ms) => cb.call("util.sleep", { ms }) },
+      run: { sleep: (ms) => cb.call("util.sleep", { ms }), slowSql: (ms) => cb.call("util.slowSql", { ms }) },
       log: (...a) => console.log("[guest]", ...a),
     };
     try {
@@ -54,7 +54,8 @@ for (const m of modules) {
 }
 writeFileSync(join(here, "dist", "manifest.json"), JSON.stringify(manifest, null, 2));
 
-for (const version of ["v1", "v2"]) {
+const versions = Array.from({ length: Number(process.env.VERSIONS ?? 20) }, (_, i) => `v${i + 1}`);
+for (const version of versions) {
   await build({
     entryPoints: [join(here, "entry.gen.ts")],
     bundle: true,
@@ -67,4 +68,11 @@ for (const version of ["v1", "v2"]) {
     logLevel: "warning"
   });
 }
-console.log("built", modules, "->", Object.keys(manifest).length, "handlers, versions v1 v2");
+console.log(
+  "built",
+  modules,
+  "->",
+  Object.keys(manifest).length,
+  "handlers, versions",
+  versions.length
+);

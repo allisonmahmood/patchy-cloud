@@ -81,3 +81,35 @@ export const bumpSlow = t.mutation<{ name: string; ms: number }>({
     return { value: next };
   }
 });
+
+// Insert, then a slow SQL statement inside the same transaction, then insert
+// again: the deadline expires mid-callback.
+export const slowWrite = t.mutation<{ prefix: string; ms: number }>({
+  handler: async (ctx, { prefix, ms }) => {
+    await ctx.tables.insert("contacts", { name: `${prefix}-before`, email: "a@example.com" });
+    await ctx.run.slowSql(ms);
+    await ctx.tables.insert("contacts", { name: `${prefix}-after`, email: "b@example.com" });
+    return { done: true };
+  }
+});
+
+// Same, but the handler catches the failed callback and tries to write again:
+// the late callback from the expired attempt must be refused by name.
+export const slowWriteThenRetry = t.mutation<{ prefix: string; ms: number }>({
+  handler: async (ctx, { prefix, ms }) => {
+    await ctx.tables.insert("contacts", { name: `${prefix}-before`, email: "a@example.com" });
+    let first = "ok";
+    try {
+      await ctx.run.slowSql(ms);
+    } catch (e: any) {
+      first = String(e?.message ?? e);
+    }
+    let second = "ok";
+    try {
+      await ctx.tables.insert("contacts", { name: `${prefix}-late`, email: "c@example.com" });
+    } catch (e: any) {
+      second = String(e?.message ?? e);
+    }
+    return { first, second };
+  }
+});

@@ -45,3 +45,13 @@ export const internet = t.query({
     return results;
   }
 });
+
+// Can guest code reach the supervisor's management endpoints on the task's
+// own loopback? (Only the loader's Outbound loopback should exist.)
+export const supervisor = t.query({
+  handler: async () => [
+    await tryFetch("http://127.0.0.1:8080/stats"),
+    await tryFetch("http://localhost:8080/healthz"),
+    await tryFetch("http://127.0.0.1:8787/healthz")
+  ]
+});

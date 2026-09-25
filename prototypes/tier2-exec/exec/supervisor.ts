@@ -1,7 +1,13 @@
-// PROTOTYPE for #311: the execution task's supervisor. Owns the workerd child,
-// proxies /bind and /invoke to it on localhost, reads its RSS from /proc, and
-// kills + restarts it when an invocation overruns its wall-clock budget or RSS
-// crosses the bound. Listens on 8080, the only port the security groups allow.
+// PROTOTYPE for #311: the execution task's supervisor. Owns the workerd
+// processes, proxies /bind and /invoke to them on localhost, reads RSS from
+// /proc, and kills + restarts a process when an invocation overruns its
+// wall-clock budget or RSS crosses the bound. Listens on 8080.
+//
+// Round 2: PROCESS_MODE=company runs one workerd for every patch version of
+// the company (round 1); PROCESS_MODE=patch runs one workerd per loaded
+// company/patch@version, reaped after PROCESS_IDLE_MS idle. Every management
+// request needs the shared secret and carries the host's owner epoch; an
+// epoch lower than the highest seen is refused as stale.
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFileSync, existsSync } from "node:fs";
@@ -12,9 +18,11 @@ const here = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 8080);
 // The npm bin is a Node shim; spawn the real binary so kill() hits workerd itself.
 const WORKERD = join(here, "node_modules", "@cloudflare", "workerd-linux-64", "bin", "workerd");
-const WORKERD_PORT = Number(process.env.WORKERD_PORT ?? 8787);
-const WORKERD_URL = `http://127.0.0.1:${WORKERD_PORT}`;
+const BASE_PORT = Number(process.env.WORKERD_PORT ?? 8787);
 const RSS_LIMIT_MB = Number(process.env.RSS_LIMIT_MB ?? 512);
+const MODE = (process.env.PROCESS_MODE ?? "company") as "company" | "patch";
+const PROCESS_IDLE_MS = Number(process.env.PROCESS_IDLE_MS ?? 60_000);
+const SECRET = process.env.EXEC_SECRET ?? "";
 const startedAt = Date.now();
 
 type InFlight = {
@@ -24,18 +32,31 @@ type InFlight = {
   startedAt: number;
   reject: (e: Error) => void;
 };
-let child: ChildProcess | undefined;
-let generation = 0;
-let ready: Promise<void> = Promise.resolve();
-const inFlight = new Map<string, InFlight>();
+type Proc = {
+  name: string; // "*" in company mode, the worker name in patch mode
+  port: number;
+  child?: ChildProcess;
+  generation: number;
+  ready: Promise<void>;
+  inFlight: Map<string, InFlight>;
+  lastUsed: number;
+  spawnedAt: number;
+  spawnMs?: number;
+};
+const procs = new Map<string, Proc>();
+let nextPort = BASE_PORT;
+let highestEpoch = 0;
 const kills: Array<{
   at: number;
+  proc: string;
   reason: string;
   generation: number;
   inFlight: string[];
   restartMs?: number;
   detail?: string;
 }> = [];
+const reaped: Array<{ at: number; proc: string; idleMs: number }> = [];
+const rejected: Array<{ at: number; why: string; path: string }> = [];
 
 function rssMB(pid: number | undefined) {
   if (!pid) return 0;
@@ -55,64 +76,89 @@ async function waitFor(url: string, timeoutMs: number) {
       if (r.ok) return Date.now() - t0;
     } catch {}
     if (Date.now() - t0 > timeoutMs) throw new Error(`workerd did not come up in ${timeoutMs} ms`);
-    await new Promise((r) => setTimeout(r, 25));
+    await new Promise((r) => setTimeout(r, 10));
   }
 }
 
-function startWorkerd() {
-  generation++;
+function spawnWorkerd(p: Proc) {
+  p.generation++;
   const t0 = Date.now();
-  child = spawn(
+  const child = spawn(
     WORKERD,
     [
       "serve",
       join(here, "config.capnp"),
       "--experimental",
-      `--socket-addr=http=127.0.0.1:${WORKERD_PORT}`
+      `--socket-addr=http=127.0.0.1:${p.port}`
     ],
     { stdio: ["ignore", "inherit", "inherit"] }
   );
+  p.child = child;
   const pid = child.pid;
   child.on("exit", (code, signal) =>
-    console.log(`[supervisor] workerd pid ${pid} exited code=${code} signal=${signal}`)
+    console.log(`[supervisor] ${p.name} workerd pid ${pid} exited code=${code} signal=${signal}`)
   );
-  ready = waitFor(`${WORKERD_URL}/healthz`, 15000).then(
-    (ms) =>
-      console.log(`[supervisor] workerd generation ${generation} pid ${pid} ready in ${ms} ms`),
+  p.ready = waitFor(`http://127.0.0.1:${p.port}/healthz`, 15000).then(
+    (ms) => {
+      p.spawnMs = Date.now() - t0;
+      console.log(
+        `[supervisor] ${p.name} generation ${p.generation} pid ${pid} port ${p.port} ready in ${ms} ms`
+      );
+    },
     (e) => {
       console.log(
-        `[supervisor] workerd generation ${generation} failed to start (${e.message}); retrying`
+        `[supervisor] ${p.name} generation ${p.generation} failed to start (${e.message}); retrying`
       );
-      child?.kill("SIGKILL");
-      startWorkerd();
-      return ready;
+      child.kill("SIGKILL");
+      spawnWorkerd(p);
+      return p.ready;
     }
   );
   return t0;
 }
 
-function kill(reason: string, detail?: string) {
-  const victims = [...inFlight.values()];
+function procFor(name: string, create = true): Proc | undefined {
+  const key = MODE === "company" ? "*" : name;
+  let p = procs.get(key);
+  if (!p && create) {
+    p = {
+      name: key,
+      port: nextPort++,
+      generation: 0,
+      ready: Promise.resolve(),
+      inFlight: new Map(),
+      lastUsed: Date.now(),
+      spawnedAt: Date.now()
+    };
+    procs.set(key, p);
+    spawnWorkerd(p);
+  }
+  return p;
+}
+
+function kill(p: Proc, reason: string, detail?: string) {
+  const victims = [...p.inFlight.values()];
   const rec = {
     at: Date.now(),
+    proc: p.name,
     reason,
-    generation,
+    generation: p.generation,
     inFlight: victims.map((v) => `${v.id}:${v.handler}`),
     detail
   };
   kills.push(rec);
   console.log(
-    `[supervisor] KILL workerd: ${reason} ${detail ?? ""} in-flight=${rec.inFlight.join(",")}`
+    `[supervisor] KILL ${p.name}: ${reason} ${detail ?? ""} in-flight=${rec.inFlight.join(",")}`
   );
   for (const v of victims) v.reject(new Error(`watchdog_killed:${reason}`));
-  inFlight.clear();
+  p.inFlight.clear();
   const t0 = Date.now();
-  const old = child!;
+  const old = p.child!;
   // Respawn only once the old process is gone, or the port is still held.
-  ready = new Promise<void>((resolve) => {
+  p.ready = new Promise<void>((resolve) => {
     old.once("exit", () => {
-      startWorkerd();
-      ready.then(() => {
+      spawnWorkerd(p);
+      p.ready.then(() => {
         rec.restartMs = Date.now() - t0;
         resolve();
       });
@@ -121,15 +167,29 @@ function kill(reason: string, detail?: string) {
   old.kill("SIGKILL");
 }
 
-// Watchdog: wall-clock per invocation and RSS bound, checked every 100 ms.
+function reap(p: Proc) {
+  const idleMs = Date.now() - p.lastUsed;
+  reaped.push({ at: Date.now(), proc: p.name, idleMs });
+  console.log(`[supervisor] REAP ${p.name} after ${idleMs} ms idle`);
+  procs.delete(p.name);
+  p.child?.kill("SIGKILL");
+}
+
+// Watchdog: wall-clock per invocation and RSS bound per process, every 100 ms;
+// in patch mode also the idle reaper.
 setInterval(() => {
   const now = Date.now();
-  for (const v of inFlight.values()) {
-    if (now - v.startedAt > v.budgetMs)
-      return kill("wall_clock", `${v.handler} ran ${now - v.startedAt} ms > ${v.budgetMs} ms`);
+  for (const p of procs.values()) {
+    for (const v of p.inFlight.values()) {
+      if (now - v.startedAt > v.budgetMs) {
+        kill(p, "wall_clock", `${v.handler} ran ${now - v.startedAt} ms > ${v.budgetMs} ms`);
+        break;
+      }
+    }
+    const rss = rssMB(p.child?.pid);
+    if (rss > RSS_LIMIT_MB) kill(p, "rss", `${rss} MB > ${RSS_LIMIT_MB} MB`);
+    if (MODE === "patch" && p.inFlight.size === 0 && now - p.lastUsed > PROCESS_IDLE_MS) reap(p);
   }
-  const rss = rssMB(child?.pid);
-  if (rss > RSS_LIMIT_MB) return kill("rss", `${rss} MB > ${RSS_LIMIT_MB} MB`);
 }, 100);
 
 function readBody(req: IncomingMessage) {
@@ -139,7 +199,6 @@ function readBody(req: IncomingMessage) {
     req.on("end", () => resolve(s));
   });
 }
-
 function send(res: ServerResponse, status: number, body: unknown) {
   res.writeHead(status, { "content-type": "application/json" });
   res.end(JSON.stringify(body));
@@ -170,48 +229,92 @@ async function probe() {
   };
 }
 
+function stats() {
+  const list = [...procs.values()].map((p) => ({
+    proc: p.name,
+    port: p.port,
+    pid: p.child?.pid,
+    generation: p.generation,
+    rssMB: rssMB(p.child?.pid),
+    inFlight: p.inFlight.size,
+    idleMs: Date.now() - p.lastUsed,
+    spawnMs: p.spawnMs
+  }));
+  const workerdRssMB = list.reduce((a, p) => a + p.rssMB, 0);
+  const supervisorRssMB = rssMB(process.pid);
+  return {
+    mode: MODE,
+    processIdleMs: PROCESS_IDLE_MS,
+    processes: list.length,
+    workerdRssMB,
+    supervisorRssMB,
+    aggregateRssMB: workerdRssMB + supervisorRssMB,
+    procs: list,
+    kills,
+    reaped,
+    rejected: rejected.slice(-20),
+    highestEpoch,
+    rssLimitMB: RSS_LIMIT_MB,
+    generation: MODE === "company" ? procs.get("*")?.generation : undefined
+  };
+}
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", "http://x");
   try {
-    if (url.pathname === "/healthz") {
-      await ready;
-      const r = await fetch(`${WORKERD_URL}/healthz`, { signal: AbortSignal.timeout(1000) });
-      return send(res, r.ok ? 200 : 503, {
-        ok: r.ok,
-        generation,
+    if (url.pathname === "/healthz")
+      return send(res, 200, {
+        ok: true,
+        mode: MODE,
+        processes: procs.size,
         uptimeMs: Date.now() - startedAt
       });
+    // Everything below is management: shared secret, then the owner-epoch fence.
+    if (SECRET && req.headers["x-exec-secret"] !== SECRET) {
+      rejected.push({ at: Date.now(), why: "bad_secret", path: url.pathname });
+      return send(res, 401, { error: "unauthorized" });
     }
-    if (url.pathname === "/stats") {
-      return send(res, 200, {
-        generation,
-        workerdRssMB: rssMB(child?.pid),
-        supervisorRssMB: rssMB(process.pid),
-        inFlight: inFlight.size,
-        kills,
-        rssLimitMB: RSS_LIMIT_MB
+    const epoch = Number(req.headers["x-owner-epoch"] ?? 0);
+    if (epoch < highestEpoch) {
+      rejected.push({
+        at: Date.now(),
+        why: `stale_epoch ${epoch} < ${highestEpoch}`,
+        path: url.pathname
       });
+      return send(res, 412, { error: "stale_epoch", epoch, highestEpoch });
     }
+    if (epoch > highestEpoch) {
+      console.log(`[supervisor] owner epoch ${highestEpoch} -> ${epoch}`);
+      highestEpoch = epoch;
+    }
+    if (url.pathname === "/epoch")
+      return send(res, 200, { highestEpoch, mode: MODE, processes: procs.size });
+    if (url.pathname === "/stats") return send(res, 200, stats());
     if (url.pathname === "/probe") return send(res, 200, await probe());
     if (url.pathname === "/outbound-attempts") {
-      const r = await fetch(`${WORKERD_URL}/outbound-attempts`);
-      return send(res, 200, await r.json());
+      const all = [];
+      for (const p of procs.values())
+        all.push(...(await (await fetch(`http://127.0.0.1:${p.port}/outbound-attempts`)).json()));
+      return send(res, 200, all);
     }
     if (url.pathname === "/bind" || url.pathname === "/invoke") {
-      await ready;
       const raw = await readBody(req);
       const body = JSON.parse(raw);
-      const gen = generation;
+      const p = procFor(body.name)!;
+      await p.ready;
+      const gen = p.generation;
       const t0 = Date.now();
-      const forward = fetch(`${WORKERD_URL}${url.pathname}`, {
+      p.lastUsed = t0;
+      // The loader stamps callbacks with the process generation the attempt started on.
+      const forward = fetch(`http://127.0.0.1:${p.port}${url.pathname}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: raw
+        body: JSON.stringify({ ...body, generation: gen })
       });
       let result: Response;
       if (url.pathname === "/invoke") {
         const killed = new Promise<never>((_, reject) => {
-          inFlight.set(body.invocationId, {
+          p.inFlight.set(body.invocationId, {
             id: body.invocationId,
             handler: body.handler,
             budgetMs: body.budgetMs ?? 5000,
@@ -226,28 +329,38 @@ const server = createServer(async (req, res) => {
           return send(res, 503, {
             ok: false,
             error: String(e.message),
-            generation,
+            generation: p.generation,
+            mode: MODE,
+            proc: p.name,
             kill: k,
             execMs: Date.now() - t0
           });
         } finally {
-          inFlight.delete(body.invocationId);
+          p.inFlight.delete(body.invocationId);
+          p.lastUsed = Date.now();
         }
       } else {
         result = await forward;
       }
       const out = await result.json();
-      return send(res, result.status, { ...out, generation: gen, execMs: Date.now() - t0 });
+      return send(res, result.status, {
+        ...out,
+        generation: gen,
+        mode: MODE,
+        proc: p.name,
+        spawnMs: p.spawnMs,
+        execMs: Date.now() - t0
+      });
     }
     send(res, 404, { error: "not_found" });
   } catch (e: any) {
-    send(res, 500, { ok: false, error: String(e?.message ?? e), generation });
+    send(res, 500, { ok: false, error: String(e?.message ?? e) });
   }
 });
 
-startWorkerd();
+if (MODE === "company") procFor("*");
 server.listen(PORT, () =>
   console.log(
-    `[supervisor] listening on ${PORT}, workerd at ${WORKERD_URL}, rss limit ${RSS_LIMIT_MB} MB`
+    `[supervisor] listening on ${PORT}, mode ${MODE}, rss limit ${RSS_LIMIT_MB} MB, secret ${SECRET ? "set" : "NOT set"}`
   )
 );
