@@ -66,8 +66,7 @@ A mutation's writes are not atomic across callbacks. `probe.writeThenThrow` inse
 - **Stopping guest execution**: a handler that sleeps past the deadline is refused correctly, but nothing kills a CPU-spinning handler in the serving engine (no watchdog by decision). A `for(;;){}` _inside a handler_ would stall the one serving workerd for that instance; not run against the instance for that reason. Publish-time `for(;;){}` at module top level is handled because inspection uses a throwaway process.
 - **`ctx.shared`, `ctx.files`, `ctx.connections`, `ctx.run`, the mutation key, subscriptions, `useQuery`**: not in this slice.
 - **`ctx.log` in the cloud**: lines are `Effect.logInfo` with the correlation id, not columns on `runtime_calls`.
-- **Existing tests**: `packages/sdk/src/SdkApi.test.ts` asserts the package's export list and now sees `./server` (expected red on this branch, not touched). The offline suite was interrupted by the host once while running beside typecheck and lint; the rerun status is in the PR body.
-- **`pnpm lint`**: status in the PR body.
+- **Checks on the branch**: `pnpm typecheck` green (38/38); `pnpm lint` green; `pnpm test` 935 passed, 6 failed, of which three (`integrations/postgres/Runtime`, `integrations/postgres/Operations`, `company-database/PgliteCompanyDatabases`) were 5 s timeouts under load and pass alone, one (`api-md`) was the rendered `docs/API.md` and is refreshed, and two are expected reds left as they are: `packages/sdk/src/SdkApi.test.ts` asserts the package's export list (now `./server` too) and `packages/runtime/src/migrations.test.ts` asserts the exact patches migrations landed (now `0009_patches_server_artifact` too).
 
 ## Design notes for the map
 
