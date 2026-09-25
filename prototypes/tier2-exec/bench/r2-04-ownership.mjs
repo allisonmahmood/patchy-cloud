@@ -7,7 +7,7 @@ import { execFileSync } from "node:child_process";
 import { invoke, admin, H, save, sleep } from "./lib.mjs";
 const cluster = process.env.SPIKE_ECS_CLUSTER;
 const out = {};
-await admin("/admin/reset?company=acme", "POST");
+// No reset here: the k-host-replacement key from r2-03 must survive into this run.
 await invoke({ company: "acme", handler: "contacts.ping" });
 await invoke({ company: "beta", handler: "contacts.ping" });
 const before = await admin("/admin/echo");

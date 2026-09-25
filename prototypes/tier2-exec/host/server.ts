@@ -226,6 +226,8 @@ async function invoke(req: IncomingMessage, res: ServerResponse) {
   if (!kind || !bundles[version])
     return send(res, 404, { error: "no_such_handler", handler, version });
   if (shuttingDown) return send(res, 503, { error: "host_shutting_down" });
+  if (pool.superseded)
+    return send(res, 503, { error: "stale_owner", outcome: "stale_owner", hostEpoch: pool.epoch });
   const principal =
     as === "viewer"
       ? `user:${viewer}`
@@ -421,6 +423,7 @@ async function invokeInner(p: {
       clearTimeout((inv as any).timer);
       execOut = await r.json();
       if (r.status === 412) {
+        pool.markSuperseded();
         endCapability(inv, "invocation_ended");
         await rollback(inv);
         outcome = "stale_owner";

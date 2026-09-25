@@ -53,6 +53,10 @@ const binding = new Map<string, Promise<Task>>();
 let seq = 0;
 
 export const setEpoch = (e: number) => (epoch = e);
+// Set when any supervisor answered 412 stale_epoch: a newer host owns the
+// tasks now, so this host must stop starting, stopping or binding anything.
+export let superseded = false;
+export const markSuperseded = () => (superseded = true);
 export const setProcessMode = (m: string) => (processMode = m);
 export const execHeaders = () => ({
   "content-type": "application/json",
@@ -196,6 +200,17 @@ function remove(task: Task) {
 }
 
 export async function stopTask(task: Task, reason = "released") {
+  remove(task);
+  // Fence the ECS call on the table: a row owned by a higher epoch is not ours to stop.
+  const owner = (
+    await db.query("select owner_epoch from pool_tasks where task_arn = $1", [key(task)])
+  ).rows[0]?.owner_epoch;
+  if (superseded || (owner !== undefined && Number(owner) > epoch)) {
+    console.log(
+      `[pool] ${task.id} NOT stopped (${reason}): owned by epoch ${owner ?? "?"}, this host is epoch ${epoch}${superseded ? ", superseded" : ""}`
+    );
+    return;
+  }
   task.state = "stopping";
   remove(task);
   task.times.stopped = Date.now();
@@ -208,6 +223,7 @@ export async function stopTask(task: Task, reason = "released") {
 }
 
 export function ensure() {
+  if (superseded) return;
   const spare = tasks.filter((t) => t.state === "starting" || t.state === "ready").length;
   for (let i = spare; i < POOL_SIZE; i++) startTask().then(ensure, () => {});
 }
@@ -326,6 +342,7 @@ export async function adopt() {
 export function start() {
   ensure();
   setInterval(() => {
+    if (superseded) return;
     for (const t of tasks)
       if (t.state === "bound" && Date.now() - t.lastUsed > IDLE_MS)
         stopTask(t, "idle").then(ensure);
@@ -345,6 +362,7 @@ export function snapshot() {
   });
   return {
     epoch,
+    superseded,
     processMode,
     poolSize: POOL_SIZE,
     idleMs: IDLE_MS,
