@@ -26,7 +26,6 @@ export function starterFiles(options: {
         }
       : {};
   return {
-    ...tier2,
     "patchy.json": json({ instance, description: purpose }),
     "fixtures/.gitkeep": "",
     "package.json": json({
@@ -77,7 +76,9 @@ export function starterFiles(options: {
     }),
     "AGENTS.md": `# Purpose\n\n${purpose}\n\nThe purpose above is independent of the published description in \`patchy.json\`.\n\n# Working here\n\nInstallation already ran. Do not reinstall to start building. Run \`pnpm patchy --help\` for commands; test with \`patchy dev\` (\`pnpm patchy dev\` from this repo).\n\n- \`patchy.json\`: instance, optional patch id, published description and its sync stamp. Edit the description here; cloud edits pull down at refresh, dev start and publish.\n- \`patchy.config.ts\`: owned tables and file stores with their descriptions, and declared connections/shared tables.\n- \`src/main.ts\`, \`index.html\`: the browser UI; \`vite.config.ts\` builds one HTML file.\n${tier === 2 ? "- `server/*.ts`: the handlers (queries, mutations, actions) the browser calls through `patchy.server.<file>.<export>`; they run on Patchy's engine, never in the browser. Read `.agents/skills/patchy-server/SKILL.md` first.\n" : ""}- \`fixtures/\`: local rows only, never production data.\n- \`patchy/_generated/index.json\`: generated index linking every declaration, revision, context and skill. Never edit generated files.\n- \`.agents/skills/patchy-loop/SKILL.md\`: the local build loop.\n- \`.agents/skills/patchy-tables/SKILL.md\`: owned tables.\n- \`.agents/skills/patchy-files/SKILL.md\`: owned files.\n${tier === 2 ? "- `.agents/skills/patchy-server/SKILL.md`: server handlers, their context, errors and the import rule.\n" : ""}- Integration skills appear under \`.agents/skills/patchy-postgres/SKILL.md\` and \`.agents/skills/patchy-shared-tables/SKILL.md\` when declared.\n\nRun \`pnpm patchy refresh\` after editing declarations. Deleting \`.patchy/\` destroys local rows and files.\n`,
     "CLAUDE.md": "@AGENTS.md\n",
-    ".gitignore": ".patchy/\nnode_modules/\ndist/\n"
+    ".gitignore": ".patchy/\nnode_modules/\ndist/\n",
+    // Last, so the tier 2 client and handler module replace the tier 1 client above.
+    ...tier2
   };
 }
 

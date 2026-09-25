@@ -80,12 +80,14 @@ export type FieldDescriptor = Column | Descriptor;
 export type Fields = Readonly<Record<string, FieldDescriptor>>;
 abstract class DescriptorBase<Optional extends boolean> {
   constructor(readonly isOptional: Optional) {}
+  abstract readonly descriptor: "object" | "array" | "enum" | "nullable" | "row";
   abstract toJSON(): Record<string, unknown>;
 }
 export class ObjectDescriptor<
   F extends Fields = Fields,
   Optional extends boolean = false
 > extends DescriptorBase<Optional> {
+  readonly descriptor = "object" as const;
   constructor(
     readonly fields: F,
     isOptional: Optional
@@ -103,6 +105,7 @@ export class ArrayDescriptor<
   I extends FieldDescriptor = FieldDescriptor,
   Optional extends boolean = false
 > extends DescriptorBase<Optional> {
+  readonly descriptor = "array" as const;
   constructor(
     readonly items: I,
     isOptional: Optional
@@ -120,6 +123,7 @@ export class EnumDescriptor<
   V extends string = string,
   Optional extends boolean = false
 > extends DescriptorBase<Optional> {
+  readonly descriptor = "enum" as const;
   constructor(
     readonly values: readonly V[],
     isOptional: Optional
@@ -137,6 +141,7 @@ export class NullableDescriptor<
   I extends FieldDescriptor = FieldDescriptor,
   Optional extends boolean = false
 > extends DescriptorBase<Optional> {
+  readonly descriptor = "nullable" as const;
   constructor(
     readonly inner: I,
     isOptional: Optional
@@ -154,6 +159,7 @@ export class RowDescriptor<
   T extends string = string,
   Optional extends boolean = false
 > extends DescriptorBase<Optional> {
+  readonly descriptor = "row" as const;
   constructor(
     readonly table: T,
     isOptional: Optional
@@ -174,25 +180,31 @@ export type Descriptor =
   | NullableDescriptor<FieldDescriptor, boolean>
   | RowDescriptor<string, boolean>;
 
-/** The TypeScript type a descriptor admits, with `t.row` resolved against the config `C`. */
-export type Infer<D, C extends Config = Config> =
-  D extends Column<infer K, boolean, boolean, infer Target>
-    ? K extends "ref"
-      ? Id<Target>
-      : Value<K, Target>
-    : D extends ObjectDescriptor<infer F, boolean>
-      ? InferObject<F, C>
-      : D extends ArrayDescriptor<infer I, boolean>
-        ? readonly Infer<I, C>[]
-        : D extends EnumDescriptor<infer V, boolean>
-          ? V
-          : D extends NullableDescriptor<infer I, boolean>
-            ? Infer<I, C> | null
-            : D extends RowDescriptor<infer T, boolean>
-              ? T extends keyof C["tables"] & string
-                ? Row<C, T>
-                : never
-              : never;
+/**
+ * The TypeScript type a descriptor admits, with `t.row` resolved against the config `C`.
+ * Matched on plain property shapes, never on the classes: inferring through `Column`'s
+ * `this`-typed methods sends the checker into a structurally recursive comparison.
+ */
+export type Infer<D, C extends Config = Config> = D extends {
+  readonly descriptor: "object";
+  readonly fields: infer F;
+}
+  ? InferObject<F, C>
+  : D extends { readonly descriptor: "array"; readonly items: infer I }
+    ? readonly Infer<I, C>[]
+    : D extends { readonly descriptor: "enum"; readonly values: readonly (infer V)[] }
+      ? V
+      : D extends { readonly descriptor: "nullable"; readonly inner: infer I }
+        ? Infer<I, C> | null
+        : D extends { readonly descriptor: "row"; readonly table: infer T }
+          ? T extends keyof C["tables"] & string
+            ? Row<C, T>
+            : never
+          : D extends { readonly kind: infer K extends ColumnKind; readonly table: infer Target }
+            ? K extends "ref"
+              ? Id<Target & string>
+              : Value<K, Target & string>
+            : never;
 type OptionalFields<F> = {
   [K in keyof F]: F[K] extends { readonly isOptional: true } ? K : never;
 }[keyof F];

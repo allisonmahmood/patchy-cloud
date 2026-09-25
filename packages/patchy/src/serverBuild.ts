@@ -197,7 +197,7 @@ export const buildServerBundle = Effect.fn("buildServerBundle")(function* (root:
           minify: false,
           sourcemap: false,
           target: "es2022",
-          rollupOptions: { output: { inlineDynamicImports: true } }
+          rolldownOptions: { output: { codeSplitting: false } }
         }
       }),
     catch: failed("Server bundle build failed. Fix the errors in server/ before publishing.")

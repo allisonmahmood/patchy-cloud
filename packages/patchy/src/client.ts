@@ -45,7 +45,7 @@ export type ListOptions<R, I extends Indexes> = ListWindow &
         >;
       }[keyof I]
   );
-type TableIndexes<T extends TableDefinition> = T["indexes"] & {
+export type TableIndexes<T extends TableDefinition> = T["indexes"] & {
   readonly [
     N in Exclude<keyof T["columns"], keyof T["indexes"]> as T["columns"][N]["kind"] extends "ref"
       ? N
@@ -115,7 +115,7 @@ export interface Client<
   readonly shared: FactoryResults<S>;
   readonly connections: FactoryResults<P>;
   /** PROTOTYPE for #314: `patchy.server.<module>.<export>(args)` on a tier 2 version. */
-  readonly server: ServerClient<M>;
+  readonly server: ServerClient<M, C>;
   readonly route: Transport["route"];
   me(): Promise<Me | null>;
   close(): void;
@@ -143,7 +143,10 @@ export function createSharedTable<
  * refusal is a `PatchyError` as for every other operation. Modules are the `server/*.ts` names
  * generation saw; a new file needs `patchy refresh`, a changed export does not.
  */
-export function createServerClient<M>(modules: readonly string[], call: Call): ServerClient<M> {
+export function createServerClient<M, C extends Config>(
+  modules: readonly string[],
+  call: Call
+): ServerClient<M, C> {
   const entries = modules.map((module) => {
     const handlers = new Proxy(
       {},
@@ -165,7 +168,7 @@ export function createServerClient<M>(modules: readonly string[], call: Call): S
     );
     return [module, handlers] as const;
   });
-  return Object.fromEntries(entries) as ServerClient<M>;
+  return Object.fromEntries(entries) as ServerClient<M, C>;
 }
 
 /** Config is a type only; the locally executed manifest supplies the declared runtime names. */
@@ -284,7 +287,7 @@ export function createClient<
     files,
     shared: instantiate(options.shared, "sharedTable"),
     connections: instantiate(options.connections, "postgres"),
-    server: createServerClient<M>(options.serverModules ?? [], call),
+    server: createServerClient<M, C>(options.serverModules ?? [], call),
     route: transport.route,
     me: () => (identity ??= call("me", {}) as Promise<Me | null>),
     close: () => {

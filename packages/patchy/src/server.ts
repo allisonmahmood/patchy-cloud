@@ -8,7 +8,7 @@
 // only by these types. Skipped in this slice: `ctx.shared`, `ctx.files`, `ctx.connections`,
 // `ctx.run` and the mutation key.
 import type { Config, FieldDescriptor, Infer, Json, ObjectDescriptor, Row } from "./config.js";
-import type { OwnedTable, ReadTable } from "./client.js";
+import type { OwnedTable, ReadTable, TableIndexes } from "./client.js";
 export { t } from "./config.js";
 export { HandlerError, isHandlerError } from "./handlerError.js";
 
@@ -21,16 +21,8 @@ export interface Viewer {
   readonly admin: boolean;
 }
 
-type TableIndexesOf<C extends Config, N extends keyof C["tables"] & string> = Parameters<
-  OwnedTable<C, N>["list"]
->[0] extends { readonly index?: infer I } | undefined
-  ? I extends string
-    ? Record<I, { readonly columns: readonly string[] }>
-    : Record<never, never>
-  : Record<never, never>;
-
 export type QueryTables<C extends Config> = {
-  readonly [N in keyof C["tables"] & string]: ReadTable<Row<C, N>, TableIndexesOf<C, N>>;
+  readonly [N in keyof C["tables"] & string]: ReadTable<Row<C, N>, TableIndexes<C["tables"][N]>>;
 };
 export type MutationTables<C extends Config> = {
   readonly [N in keyof C["tables"] & string]: OwnedTable<C, N>;
@@ -104,18 +96,21 @@ export const isHandler = (value: unknown): value is Handler =>
   (value as { __patchy?: unknown }).__patchy === "handler" &&
   typeof (value as { handler?: unknown }).handler === "function";
 
-/** What the generated client exposes for a module's handlers, typed from the module itself. */
-export type ServerModuleClient<M> = {
-  readonly [K in keyof M as M[K] extends Handler ? K : never]: M[K] extends Handler<
-    HandlerKind,
-    infer Args,
-    infer Result,
-    string,
-    infer C
-  >
+/**
+ * What the generated client exposes for a module's handlers, typed from the module itself. The
+ * config type is passed in, never inferred back out of `Context<C, Kind>`: that inference walks
+ * the whole table-client surface and is excessively deep for the checker.
+ */
+export type ServerModuleClient<M, C extends Config> = {
+  readonly [
+    K in keyof M as M[K] extends { readonly __patchy: "handler" } ? K : never
+  ]: M[K] extends {
+    readonly args: infer Args;
+    readonly result: infer Result;
+  }
     ? (args: Infer<Args, C>) => Promise<Infer<Result, C>>
     : never;
 };
-export type ServerClient<Modules> = {
-  readonly [M in keyof Modules]: ServerModuleClient<Modules[M]>;
+export type ServerClient<Modules, C extends Config> = {
+  readonly [M in keyof Modules]: ServerModuleClient<Modules[M], C>;
 };
