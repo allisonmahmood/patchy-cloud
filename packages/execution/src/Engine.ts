@@ -181,6 +181,9 @@ export class Engine extends Context.Service<
     /** Process generation and the watchdog's kills, for the smoke and the README. */
     readonly stats: Effect.Effect<{
       readonly generation: number;
+      /** Live capabilities and in-flight invocations (round 3's leak check). */
+      readonly capabilities: number;
+      readonly inflight: number;
       readonly kills: ReadonlyArray<{
         readonly at: number;
         readonly restartMs: number;
@@ -394,6 +397,18 @@ export const make = (options: { readonly binary: string }) =>
       })
     ).pipe(Effect.forkScoped);
 
+    // Round 3's leak check: the host-side registries, logged when they change (5 s grain).
+    let lastStats = "";
+    yield* Effect.forever(
+      Effect.gen(function* () {
+        yield* Effect.sleep("5 seconds");
+        const line = `capabilities=${registry.size} inflight=${inflight.size} overrun=${overrun.size} generation=${generation}`;
+        if (line === lastStats) return;
+        lastStats = line;
+        yield* Effect.logInfo(`execution stats: ${line}`);
+      })
+    ).pipe(Effect.forkScoped);
+
     // The callback listener: loopback only, capability as bearer, nothing administrative.
     const listener = HttpRouter.use((router) =>
       router.add(
@@ -540,7 +555,12 @@ export const make = (options: { readonly binary: string }) =>
       outboundAttempts,
       spawnMs: serving.spawnMs,
       callbackOrigin,
-      stats: Effect.sync(() => ({ generation, kills: [...kills] }))
+      stats: Effect.sync(() => ({
+        generation,
+        capabilities: registry.size,
+        inflight: inflight.size,
+        kills: [...kills]
+      }))
     });
   });
 

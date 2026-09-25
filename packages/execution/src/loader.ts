@@ -38,7 +38,7 @@ async function guest(worker, props, body) {
 export default {
   async fetch(req, env, ctx) {
     const url = new URL(req.url);
-    if (url.pathname === "/healthz") return json({ ok: true, loaded: [...loaded.keys()] });
+    if (url.pathname === "/healthz") return json({ ok: true, loaded: [...loaded.keys()], invocations: invocations.size });
     if (url.pathname === "/outbound-attempts") return json(outboundAttempts);
     const body = await req.json();
     const { name, bundle } = body;
