@@ -36,12 +36,19 @@ const isBare = (source: string) =>
   !source.startsWith("data:") &&
   !/^[a-zA-Z]:[\\/]/.test(source);
 
+/** React idioms come through `patchy/preact`, which loads compat once; these never resolve. */
+const banned = new Set(["react", "react-dom", "preact/compat", "preact/debug/"]);
+
 const allowed = (graph: keyof typeof allowlist, source: string) =>
   source === "patchy" ||
   source.startsWith("patchy/") ||
-  // Vite injects its module-preload polyfill into the HTML entry; it is not patch code.
-  source.startsWith("vite/") ||
-  allowlist[graph].some((name) => source === name || source.startsWith(`${name}/`));
+  // The scaffold sets build.modulePreload: false; a repo that did not still gets Vite's own
+  // polyfill injected into the HTML entry under exactly this id, and it is not patch code.
+  source === "vite/modulepreload-polyfill" ||
+  (!banned.has(source) &&
+    !source.startsWith("react/") &&
+    !source.startsWith("react-dom/") &&
+    allowlist[graph].some((name) => source === name || source.startsWith(`${name}/`)));
 
 export class ImportRefused extends Error {
   override readonly name = "ImportRefused";
@@ -51,10 +58,12 @@ export class ImportRefused extends Error {
     graph: keyof typeof allowlist
   ) {
     super(
-      `Import of "${source}" in ${importer} is not available on this release. ` +
-        `Bare imports in ${graph === "client" ? "src/" : "server/"} resolve only to patchy${
-          allowlist[graph].length ? ` and ${allowlist[graph].join(", ")}` : ""
-        }; copy it into \`src/\` or ask Patchy for the capability.`
+      banned.has(source) || source.startsWith("react/") || source.startsWith("react-dom/")
+        ? `Import of "${source}" in ${importer} is refused: import render, hooks and forwardRef from patchy/preact, which loads compat once; never react, react-dom or preact/compat.`
+        : `Import of "${source}" in ${importer} is not available on this release. ` +
+            `Bare imports in ${graph === "client" ? "src/" : "server/"} resolve only to patchy${
+              allowlist[graph].length ? ` and ${allowlist[graph].join(", ")}` : ""
+            }; copy it into \`src/\` or ask Patchy for the capability.`
     );
   }
 }
@@ -160,7 +169,9 @@ export const importRefusal = (error: unknown, depth = 0): string | undefined => 
   const record = error as { message?: unknown; cause?: unknown; errors?: unknown };
   const sentence =
     typeof record.message === "string"
-      ? /Import of "[^"]+" in [^\n]*?ask Patchy for the capability\./.exec(record.message)
+      ? /Import of "[^"]+" in [^\n]*?(?:ask Patchy for the capability|preact\/compat)\./.exec(
+          record.message
+        )
       : null;
   if (sentence !== null) return sentence[0];
   const nested = Array.isArray(record.errors) ? record.errors : [];

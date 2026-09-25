@@ -104,7 +104,13 @@ export class GenerationUnavailable extends Schema.TaggedError<GenerationUnavaila
 
 const coreSkills = ["patchy-loop", "patchy-tables", "patchy-files"];
 // PROTOTYPE for #314: `patchy-server` is implied by tier 2.
-const knownSkills = [...coreSkills, "patchy-postgres", "patchy-shared-tables", "patchy-server"];
+const knownSkills = [
+  ...coreSkills,
+  "patchy-postgres",
+  "patchy-shared-tables",
+  "patchy-server",
+  "patchy-preact"
+];
 const root = "patchy/_generated";
 const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
 const quote = Schema.encodeSync(Schema.fromJsonString(Schema.String));
@@ -170,7 +176,9 @@ export const generate = Effect.fn("Generation.generate")(function* (
   const skills = new Set([
     ...coreSkills,
     ...request.skills,
-    ...(request.manifest.tier === 2 ? ["patchy-server"] : [])
+    ...(request.manifest.tier === 2 ? ["patchy-server"] : []),
+    // PROTOTYPE for #314: Preact with compat semantics is the scaffold on every scripted tier.
+    ...(request.manifest.tier >= 1 ? ["patchy-preact"] : [])
   ]);
   for (const skill of skills) {
     if (!knownSkills.includes(skill))
