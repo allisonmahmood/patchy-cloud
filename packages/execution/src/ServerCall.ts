@@ -16,6 +16,12 @@
 // issued to that same invocation; declared `errors` are enforced host-side. An action's
 // `ctx.run` re-enters the same path for a sibling handler under the parent's remaining
 // deadline, each nested mutation in its own transaction and slot.
+//
+// Round 3 step 4: every callback's table key is traced per attempt (table grain, a shared alias
+// resolved to the owner's table). A committed attempt that wrote wakes subscribers by key
+// (Invalidation.notify, after COMMIT); a query run under the subscription stream's
+// `Invalidation.Subscribed` reports what it read as its dependencies, and anything but a query
+// is refused there.
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Config from "effect/Config";
@@ -30,7 +36,7 @@ import {
   type ServerCallReply
 } from "@patchy/api";
 import type { CompanyDatabases } from "@patchy/company-database";
-import { Binding, Runtime } from "@patchy/runtime/core";
+import { Binding, Invalidation, Runtime } from "@patchy/runtime/core";
 import * as Engine from "./Engine.js";
 import * as Transaction from "./Transaction.js";
 
@@ -102,7 +108,11 @@ type Attempt = {
   readonly reply?: ServerCallReply;
   readonly failure?: Runtime.RuntimeError;
   readonly outcome: Transaction.Outcome;
+  /** Table keys the attempt's callbacks read or wrote, and the subset they wrote. */
+  readonly touched?: ReadonlySet<string>;
+  readonly written?: ReadonlySet<string>;
 };
+type Subscribed = { readonly dependencies: Set<string> } | undefined;
 
 /**
  * `handlers` are the callback targets and should be built over `Transaction.joiningDatabases`
@@ -130,12 +140,34 @@ export const make = (handlers: Readonly<Record<string, Runtime.Handler>>, option
       handlerName: string,
       handlerArgs: unknown,
       deadlineAt: number,
-      depth: number
+      depth: number,
+      subscribed?: Subscribed
     ) => Effect.Effect<ServerCallReply, Runtime.RuntimeError> = Effect.fn("ServerCall.invoke")(
-      function* (binding, handlerName, handlerArgs, deadlineAt, depth) {
+      function* (binding, handlerName, handlerArgs, deadlineAt, depth, subscribed) {
         const descriptor = handlersOf(binding.manifest.handlers)[handlerName];
         if (descriptor === undefined || binding.server === undefined)
           return yield* new Runtime.InvalidRequest({});
+        // A subscription re-runs on every wake: only a query may be subscribed.
+        if (subscribed !== undefined && descriptor.kind !== "query")
+          return yield* new Runtime.InvalidRequest({
+            cause: new Error(
+              `only a query can be subscribed; ${handlerName} is a ${descriptor.kind}`
+            )
+          });
+        /** The wake key of a callback: its table, or the owner's table for a shared alias. */
+        const keyOf = (op: string, args: unknown): string | undefined => {
+          const record =
+            args !== null && typeof args === "object" ? (args as Record<string, unknown>) : {};
+          if (op.startsWith("tables.") && typeof record.table === "string")
+            return Invalidation.tableKey(binding.patchId, record.table);
+          if (op.startsWith("shared.") && typeof record.alias === "string") {
+            const use = Object.hasOwn(binding.manifest.uses, record.alias)
+              ? binding.manifest.uses[record.alias]
+              : undefined;
+            if (use?.kind === "sharedTable") return Invalidation.tableKey(use.patchId, use.table);
+          }
+          return undefined;
+        };
         const problem = checkValue(descriptor.args, handlerArgs, "$", binding.manifest.tables);
         if (problem !== undefined)
           return yield* new Runtime.InvalidRequest({ cause: new Error(`arguments: ${problem}`) });
@@ -150,6 +182,7 @@ export const make = (handlers: Readonly<Record<string, Runtime.Handler>>, option
           new HandlerTimeout({ correlationId: binding.correlationId, deadlineMs: deadline });
 
         const attempt = Effect.fn("ServerCall.attempt")(function* (number: number) {
+          yield* Effect.annotateCurrentSpan("attempt", number);
           const left = yield* remaining;
           if (left <= 0)
             return {
@@ -161,6 +194,8 @@ export const make = (handlers: Readonly<Record<string, Runtime.Handler>>, option
           }).pipe(Effect.provideContext(databases));
           // Every refusal this host issued to the guest, in order; the guest's report is a hint.
           const issued: Runtime.OperationError[] = [];
+          const touched = new Set<string>();
+          const written = new Set<string>();
           const callback: Engine.Invocation["callback"] = (op, callbackArgs) =>
             scope.submit(
               Effect.gen(function* () {
@@ -225,6 +260,11 @@ export const make = (handlers: Readonly<Record<string, Runtime.Handler>>, option
                     status: 403,
                     message: `A ${descriptor.kind} may not call ${op}.`
                   });
+                const key = keyOf(op, callbackArgs);
+                if (key !== undefined) {
+                  touched.add(key);
+                  if (target.kind === "mutation") written.add(key);
+                }
                 return yield* target.run(callbackArgs).pipe(
                   Effect.provideService(Binding.Binding, binding),
                   Effect.catch((error) =>
@@ -317,7 +357,7 @@ export const make = (handlers: Readonly<Record<string, Runtime.Handler>>, option
           const outcome = yield* scope.finish(
             reply !== undefined && reply.ok ? "commit" : "rollback"
           );
-          return { reply, failure, outcome } as Attempt;
+          return { reply, failure, outcome, touched, written } as Attempt;
         });
 
         const run = Effect.gen(function* () {
@@ -334,6 +374,15 @@ export const make = (handlers: Readonly<Record<string, Runtime.Handler>>, option
                 )
               )
             );
+            // Wake after the commit (an action's writes commit one by one, without a transaction).
+            if (
+              result.written !== undefined &&
+              result.written.size > 0 &&
+              (result.outcome._tag === "committed" || descriptor.kind === "action")
+            )
+              yield* Invalidation.notify([...result.written]);
+            if (subscribed !== undefined && result.outcome._tag === "committed")
+              for (const key of result.touched ?? []) subscribed.dependencies.add(key);
             switch (result.outcome._tag) {
               case "serialization_failure":
                 yield* log(`serialization failure on attempt ${number}`);
@@ -392,7 +441,15 @@ export const make = (handlers: Readonly<Record<string, Runtime.Handler>>, option
           const binding = yield* Binding.Binding;
           if (binding.manifest.tier !== 2) return yield* new Runtime.InvalidRequest({});
           const startedAt = yield* Clock.currentTimeMillis;
-          return yield* invokeHandler(binding, args.handler, args.args, startedAt + deadline, 0);
+          const subscribed = yield* Invalidation.Subscribed;
+          return yield* invokeHandler(
+            binding,
+            args.handler,
+            args.args,
+            startedAt + deadline,
+            0,
+            subscribed
+          );
         })
     );
   });

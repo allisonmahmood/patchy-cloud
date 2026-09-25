@@ -14,7 +14,7 @@ import * as path from "node:path";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { RuntimeGroup, type Identity } from "@patchy/api";
 import { Engine, workerdBinary } from "@patchy/execution";
-import { RuntimeDev, RuntimeApi } from "@patchy/runtime/dev";
+import { RuntimeDev, RuntimeApi, Invalidation, SubscriptionStream } from "@patchy/runtime/dev";
 import { Limits } from "@patchy/limits";
 import {
   brokerScript,
@@ -120,6 +120,8 @@ export const serve = Effect.fn("Dev.serve")(function* (
     const bound = yield* resources
       .setServer(bundle, handlers)
       .pipe(Effect.mapError((cause) => new LocalError({ message: cause.message, cause })));
+    // PROTOTYPE for #314 round 3: live subscriptions re-run on the new bundle.
+    yield* Invalidation.notify([Invalidation.versionKey(resources.version.patchId)]);
     yield* Console.log(
       `Server build bound as ${bound.digest.slice(0, 19)} (${Object.keys(handlers).join(", ")}) in ${(yield* Clock.currentTimeMillis) - started} ms (bind ${bound.bindMs} ms).`
     );
@@ -234,7 +236,13 @@ export const serve = Effect.fn("Dev.serve")(function* (
       }
     }).pipe(Layer.provide([Limits.layer, Layer.succeedContext(resources.context)]));
     return HttpRouter.serve(
-      Layer.mergeAll(HttpApiBuilder.layer(api).pipe(Layer.provide(RuntimeApi.layer)), pages, guard),
+      Layer.mergeAll(
+        HttpApiBuilder.layer(api).pipe(Layer.provide(RuntimeApi.layer)),
+        // PROTOTYPE for #314 round 3: tier 2 query subscriptions, one stream per document.
+        SubscriptionStream.layer,
+        pages,
+        guard
+      ),
       { disableLogger: true, disableListenLog: true }
     ).pipe(Layer.provide(runtime));
   };

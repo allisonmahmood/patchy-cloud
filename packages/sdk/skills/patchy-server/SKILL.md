@@ -48,11 +48,11 @@ export const add = mutation({
 
 - **query**: reads the patch's tables; no writes. `ctx.tables` is read-only in TypeScript and the engine refuses a write from a query at the wire (`access_denied`), so the types are not the enforcement.
 - **mutation**: reads and writes the patch's tables inside one transaction per invocation. Every table call joins it; it commits only after the handler returned and its result validated, and rolls back on a `HandlerError`, any other throw, an invalid result or the deadline, so a row written before a throw is gone. A mutation may execute up to three times within one call: on a serialization conflict the attempt is rolled back and the whole handler runs again. Aborted attempts leave no database writes; only the successful attempt commits, and a handler that catches a table error and returns anyway still does not commit. Keep effects within the tables; external effects belong in actions. Logs may repeat. Past three attempts the call fails with `source_unavailable`.
-- **action**: for effects outside the transactional domain: its table calls run one by one with no transaction and no retry. Connections, files and calling other handlers are not available yet.
+- **action**: for effects outside the transactional domain: its table calls run one by one with no transaction and no retry. Files are not available yet.
 
 ## Shapes: `t` for arguments and results
 
-`t.text()`, `t.integer()`, `t.number()`, `t.boolean()`, `t.timestamp()`, `t.json()` and `t.ref("<table>")` as in tables, plus `t.object({ ... })`, `t.array(inner)`, `t.enum(["a", "b"])`, `t.nullable(inner)` and `t.row("<table>")` (a full row of an owned table). `args` must be a `t.object`. `.optional()` on a field means the key may be omitted; use `t.nullable` for an explicit null. `.default()` is table-only and refused here. Unknown argument fields are refused.
+`t.text()`, `t.integer()`, `t.number()`, `t.boolean()`, `t.timestamp()`, `t.json()` and `t.ref("<table>")` as in tables, plus `t.object({ ... })`, `t.array(inner)`, `t.enum(["a", "b"])`, `t.nullable(inner)` and `t.row("<table>")` (a full row of an owned table). `args` must be a `t.object`. `.optional()` on a field means the key may be omitted; use `t.nullable` for an explicit null. `.default()` is table-only and refused here. Unknown argument fields are refused. Arguments and results are readonly in TypeScript: `t.array` is `readonly T[]` and `t.object` fields are `readonly`, on the client and in the handler, so copy before you sort or change one (`[...rows].sort(...)`, `{ ...row, title }`).
 
 ## The context
 
@@ -97,7 +97,27 @@ try {
 }
 ```
 
-Types come from `server/` itself: renaming an export or changing `args` breaks the client at typecheck, with no regeneration. Adding or removing a file under `server/` needs `pnpm patchy refresh`. There is no `.subscribe` and no `useQuery` in this release; read again after a mutation.
+Types come from `server/` itself: renaming an export or changing `args` breaks the client at typecheck, with no regeneration. Adding or removing a file under `server/` needs `pnpm patchy refresh`.
+
+## Live queries: `.subscribe`
+
+A query can be subscribed instead of called. Patchy re-runs it as the viewer whenever a commit touches a table its last run read (your own tables, or a shared table's owner writing it), and hands you the whole result each time it changed:
+
+```ts
+const stop = patchy.server.notes.list.subscribe({}, (notes) => render(notes), {
+  onError: (error) => showError(error), // a HandlerError from a re-run, or the refusal that ended it
+  onStatus: (status) => showStatus(status) // "up-to-date", "resyncing" (keep showing data), "stopped"
+});
+// later
+stop();
+```
+
+- Render the whole result every time; it is not a diff. Coalescing skips intermediate writes, and two subscriptions update independently, so a count and a list can briefly disagree; return related values from one query when a screen needs them to agree.
+- A list with `limit` is a window, not the table: a write outside the window does not change the result.
+- Only queries have `.subscribe`; subscribing a mutation or an action is refused. Company Postgres data never wakes a subscription: `ctx.connections` is action-only.
+- Call `stop()` when the view goes away. Subscribing again to the same handler and arguments within a second reuses the live subscription.
+- There is no `useQuery` for Preact in this release: subscribe in `useEffect` and return `stop`.
+- In `pnpm patchy dev`, editing `server/` re-runs live subscriptions on the new bundle.
 
 ## Running locally
 

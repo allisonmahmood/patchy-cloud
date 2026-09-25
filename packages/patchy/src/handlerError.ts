@@ -27,6 +27,6 @@ export function isHandlerError(error: unknown, code?: string): error is HandlerE
     error.name === "HandlerError" &&
     (error as { source?: unknown }).source === "handler" &&
     typeof (error as { code?: unknown }).code === "string" &&
-    (code === undefined || (error as { code: string }).code === code)
+    (code === undefined || (error as { code?: unknown }).code === code)
   );
 }

@@ -138,11 +138,35 @@ export type ServerModuleClient<M, C extends Config> = {
   readonly [
     K in keyof M as M[K] extends { readonly __patchy: "handler" } ? K : never
   ]: M[K] extends {
+    readonly kind: infer Kind;
     readonly args: infer Args;
     readonly result: infer Result;
   }
-    ? (args: Infer<Args, C>) => Promise<Infer<Result, C>>
+    ? Kind extends "query"
+      ? QueryClient<Infer<Args, C>, Infer<Result, C>>
+      : (args: Infer<Args, C>) => Promise<Infer<Result, C>>
     : never;
+};
+
+/** PROTOTYPE for #314 round 3: where a subscription stands; data is kept through `resyncing`. */
+export type SubscriptionStatus = "up-to-date" | "resyncing" | "stopped";
+export interface SubscribeOptions {
+  /** A handler error from a re-run (`HandlerError`) or a refusal that ended it (`PatchyError`). */
+  readonly onError?: (error: Error) => void;
+  readonly onStatus?: (status: SubscriptionStatus) => void;
+}
+export type Unsubscribe = () => void;
+/**
+ * A query on the client: call it once, or subscribe. A subscription re-runs the query as the
+ * viewer whenever a commit touches a table its last run read, and delivers the whole result
+ * each time it changed; the returned function ends it.
+ */
+export type QueryClient<A, T> = ((args: A) => Promise<T>) & {
+  readonly subscribe: (
+    args: A,
+    onSnapshot: (value: T) => void,
+    options?: SubscribeOptions
+  ) => Unsubscribe;
 };
 export type ServerClient<Modules, C extends Config> = {
   readonly [M in keyof Modules]: ServerModuleClient<Modules[M], C>;

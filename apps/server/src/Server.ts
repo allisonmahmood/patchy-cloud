@@ -73,6 +73,8 @@ import {
   RuntimeProduction,
   RuntimeApi,
   RuntimeLog,
+  // PROTOTYPE for #314 round 3: tier 2 query subscriptions.
+  SubscriptionStream,
   me,
   migrations as runtimeMigrations
 } from "@patchy/runtime";
@@ -270,6 +272,8 @@ const landing = HttpRouter.use((router) =>
 /** The routes and middleware as one router application. */
 const app = Layer.mergeAll(
   api,
+  // PROTOTYPE for #314 round 3: the subscription stream beside the runtime call route.
+  SubscriptionStream.layer,
   SdkApi.tarballLayer,
   Pages.layer,
   PortalPages.layer,

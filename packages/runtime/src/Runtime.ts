@@ -1,3 +1,4 @@
+// PROTOTYPE for #314 round 3: a tier 1 table write wakes subscriptions (see Invalidation).
 import * as Cause from "effect/Cause";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
@@ -19,6 +20,8 @@ import { newInternalId } from "@patchy/core";
 import { Limits } from "@patchy/limits";
 import * as Binding from "./Binding.js";
 import * as LoadedVersions from "./LoadedVersions.js";
+// PROTOTYPE for #314 round 3: a tier 1 table write wakes tier 2 subscriptions (#313's hook).
+import * as Invalidation from "./Invalidation.js";
 
 const diagnostics = {
   cause: Schema.optionalKey(Schema.Defect()),
@@ -459,6 +462,13 @@ export const make = (
             cause: result.cause,
             ...(options.record === undefined ? {} : { correlationId: binding.correlationId })
           });
+        }
+        // PROTOTYPE for #314 round 3: after a tier 1 table write commits, wake by key only.
+        // A tier 2 mutation's writes wake from ServerCall, after its own transaction commits.
+        if (operation.kind === "mutation" && input.op.startsWith("tables.")) {
+          const table = operation.resource?.(input.args) ?? null;
+          if (table !== null)
+            yield* Invalidation.notify([Invalidation.tableKey(binding.patchId, table)]);
         }
         return result.value;
       });
