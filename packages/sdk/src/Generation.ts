@@ -390,11 +390,55 @@ export const generate = Effect.fn("Generation.generate")(function* (
     })
   );
   // PROTOTYPE for #314: the builders bound to the config's table types (#296 point 10).
-  if (request.manifest.tier === 2)
+  if (request.manifest.tier === 2) {
+    // Round 3: the declared shared tables and connections ride into handlers through the same
+    // generated client factories the browser uses; the guest entry instantiates them.
+    const sharedImports = Object.keys(shared).map(
+      (alias, index) =>
+        `import { createClient as shared${index} } from ${JSON.stringify(shared[alias])};`
+    );
+    const connectionImports = Object.keys(factories).map(
+      (alias, index) =>
+        `import { createClient as connection${index} } from ${JSON.stringify(factories[alias])};`
+    );
+    const sharedEntries = Object.keys(shared).map(
+      (alias, index) => `${JSON.stringify(alias)}: shared${index}`
+    );
+    const connectionEntries = Object.keys(factories).map(
+      (alias, index) => `${JSON.stringify(alias)}: connection${index}`
+    );
     files.set(
       `${root}/server.ts`,
-      'import type config from "../../patchy.config.js";\nimport { bind } from "patchy/server";\n\n/** query, mutation and action with ctx.tables typed from patchy.config.ts. */\nexport const { query, mutation, action } = bind<typeof config>();\nexport { t, HandlerError } from "patchy/server";\nexport type { Context, Viewer } from "patchy/server";\n'
+      [
+        'import type config from "../../patchy.config.js";',
+        'import { bind } from "patchy/server";',
+        ...sharedImports,
+        ...connectionImports,
+        "",
+        "/** The declared shared tables and connections as client factories; the guest entry instantiates them per invocation. */",
+        `export const uses = { shared: { ${sharedEntries.join(", ")} }, connections: { ${connectionEntries.join(", ")} } };`,
+        "type Uses = {",
+        `  readonly shared: { ${Object.keys(shared)
+          .map(
+            (alias, index) => `readonly ${JSON.stringify(alias)}: ReturnType<typeof shared${index}>`
+          )
+          .join("; ")} };`,
+        `  readonly connections: { ${Object.keys(factories)
+          .map(
+            (alias, index) =>
+              `readonly ${JSON.stringify(alias)}: ReturnType<typeof connection${index}>`
+          )
+          .join("; ")} };`,
+        "};",
+        "",
+        "/** query, mutation and action with ctx.tables, ctx.shared and ctx.connections typed from patchy.config.ts. */",
+        "export const { query, mutation, action } = bind<typeof config, Uses>();",
+        'export { t, HandlerError } from "patchy/server";',
+        'export type { Context, Viewer } from "patchy/server";',
+        ""
+      ].join("\n")
     );
+  }
   files.set(
     `${root}/README.md`,
     "# Generated Patchy files\n\nDo not edit this directory. Edit patchy.config.ts, then run patchy refresh. Import patchy from ./client.js; index.json lists definitions, declarations, revision stamps, skills and contexts. manifest.json is written locally by the CLI, never by the server.\n\nInstall already ran during patchy init. Test with patchy dev. Fixtures contain synthetic local data only. Deleting .patchy/ destroys local rows and files; it does not delete company data.\n"

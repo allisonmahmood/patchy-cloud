@@ -28,10 +28,34 @@ export type MutationTables<C extends Config> = {
   readonly [N in keyof C["tables"] & string]: OwnedTable<C, N>;
 };
 
-/** One context shape, narrowed per kind: a query's tables are read-only. */
-export interface Context<C extends Config, Kind extends HandlerKind> {
+/** PROTOTYPE for #314 round 3: what generation resolved from the config's `uses`. */
+export interface Uses {
+  readonly shared: Readonly<Record<string, unknown>>;
+  readonly connections: Readonly<Record<string, unknown>>;
+}
+export type NoUses = {
+  readonly shared: Record<never, never>;
+  readonly connections: Record<never, never>;
+};
+
+/** A sibling handler run from an action; typed loosely, the manifest validates at the wire. */
+export type Run = {
+  readonly [module: string]: {
+    readonly [handler: string]: (args?: Readonly<Record<string, Json>>) => Promise<unknown>;
+  };
+};
+
+/**
+ * One context shape, narrowed per kind (#296 point 4): a query's tables are read-only and it
+ * may read shared tables; a mutation reaches only its own tables; an action also reaches
+ * declared connections and runs sibling handlers. The host refuses what the types hide.
+ */
+export interface Context<C extends Config, Kind extends HandlerKind, U extends Uses = NoUses> {
   readonly viewer: Viewer;
   readonly tables: Kind extends "query" ? QueryTables<C> : MutationTables<C>;
+  readonly shared: Kind extends "mutation" ? Record<never, never> : U["shared"];
+  readonly connections: Kind extends "action" ? U["connections"] : Record<never, never>;
+  readonly run: Kind extends "action" ? Run : Record<never, never>;
   /** Appends to the invocation's runtime log entry; `patchy dev logs` prints it locally. */
   readonly log: (message: string, details?: Json) => void;
 }
@@ -44,14 +68,15 @@ export interface Handler<
   Args extends ArgsDescriptor = ArgsDescriptor,
   Result extends FieldDescriptor = FieldDescriptor,
   Errors extends string = string,
-  C extends Config = Config
+  C extends Config = Config,
+  U extends Uses = Uses
 > {
   readonly __patchy: "handler";
   readonly kind: Kind;
   readonly args: Args;
   readonly result: Result;
   readonly errors: readonly Errors[];
-  readonly handler: (ctx: Context<C, Kind>, args: Infer<Args, C>) => Promise<Infer<Result, C>>;
+  readonly handler: (ctx: Context<C, Kind, U>, args: Infer<Args, C>) => Promise<Infer<Result, C>>;
 }
 
 export interface Declaration<
@@ -59,19 +84,20 @@ export interface Declaration<
   Args extends ArgsDescriptor,
   Result extends FieldDescriptor,
   Errors extends string,
-  C extends Config
+  C extends Config,
+  U extends Uses = NoUses
 > {
   readonly args: Args;
   readonly result: Result;
   readonly errors?: readonly Errors[];
-  readonly handler: (ctx: Context<C, Kind>, args: Infer<Args, C>) => Promise<Infer<Result, C>>;
+  readonly handler: (ctx: Context<C, Kind, U>, args: Infer<Args, C>) => Promise<Infer<Result, C>>;
 }
 
 const declare =
-  <C extends Config, Kind extends HandlerKind>(kind: Kind) =>
+  <C extends Config, U extends Uses, Kind extends HandlerKind>(kind: Kind) =>
   <Args extends ArgsDescriptor, Result extends FieldDescriptor, Errors extends string = never>(
-    definition: Declaration<Kind, Args, Result, Errors, C>
-  ): Handler<Kind, Args, Result, Errors, C> => {
+    definition: Declaration<Kind, Args, Result, Errors, C, U>
+  ): Handler<Kind, Args, Result, Errors, C, U> => {
     if (definition.args === undefined || definition.result === undefined)
       throw new Error(`A ${kind} declares both args and result.`);
     return {
@@ -84,11 +110,15 @@ const declare =
     };
   };
 
-/** The builders bound to a config type; generation emits this call in `_generated/server.ts`. */
-export const bind = <C extends Config>() => ({
-  query: declare<C, "query">("query"),
-  mutation: declare<C, "mutation">("mutation"),
-  action: declare<C, "action">("action")
+/**
+ * The builders bound to a config type and to what generation resolved from `uses`; generation
+ * emits this call in `_generated/server.ts` together with the client factories the guest entry
+ * uses to build `ctx.shared` and `ctx.connections` over the callback stub.
+ */
+export const bind = <C extends Config, U extends Uses = NoUses>() => ({
+  query: declare<C, U, "query">("query"),
+  mutation: declare<C, U, "mutation">("mutation"),
+  action: declare<C, U, "action">("action")
 });
 
 export const { query, mutation, action } = bind<Config>();

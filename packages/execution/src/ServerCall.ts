@@ -13,7 +13,9 @@
 // a serialization failure anywhere marks the attempt abort-only and re-invokes the handler,
 // mutations only, up to three attempts with a fresh capability each; the outcome is what the
 // commit phase says. Refusal codes the guest reports are checked against the refusal the host
-// issued to that same invocation; declared `errors` are enforced host-side.
+// issued to that same invocation; declared `errors` are enforced host-side. An action's
+// `ctx.run` re-enters the same path for a sibling handler under the parent's remaining
+// deadline, each nested mutation in its own transaction and slot.
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Config from "effect/Config";
@@ -70,6 +72,7 @@ export const invocationsPerCompany = Config.Int("PATCHY_INVOCATIONS_PER_COMPANY"
   Config.withDefault(4)
 );
 const MAX_ATTEMPTS = 3;
+const MAX_RUN_DEPTH = 4;
 const isRuntimeCode = Schema.is(RuntimeCode);
 
 /** Which callback operations each kind may reach; everything else is refused by the host. */
@@ -95,6 +98,12 @@ export interface Options {
 
 const operation = runtimeOperations["server.call"];
 
+type Attempt = {
+  readonly reply?: ServerCallReply;
+  readonly failure?: Runtime.RuntimeError;
+  readonly outcome: Transaction.Outcome;
+};
+
 /**
  * `handlers` are the callback targets and should be built over `Transaction.joiningDatabases`
  * so their table operations run on the invocation's held connection.
@@ -114,6 +123,260 @@ export const make = (handlers: Readonly<Record<string, Runtime.Handler>>, option
       }
       return semaphore;
     };
+
+    /** One invocation of `<module>.<export>` under a binding, to an absolute deadline. */
+    const invokeHandler: (
+      binding: Binding.Binding["Service"],
+      handlerName: string,
+      handlerArgs: unknown,
+      deadlineAt: number,
+      depth: number
+    ) => Effect.Effect<ServerCallReply, Runtime.RuntimeError> = Effect.fn("ServerCall.invoke")(
+      function* (binding, handlerName, handlerArgs, deadlineAt, depth) {
+        const descriptor = handlersOf(binding.manifest.handlers)[handlerName];
+        if (descriptor === undefined || binding.server === undefined)
+          return yield* new Runtime.InvalidRequest({});
+        const problem = checkValue(descriptor.args, handlerArgs, "$", binding.manifest.tables);
+        if (problem !== undefined)
+          return yield* new Runtime.InvalidRequest({ cause: new Error(`arguments: ${problem}`) });
+        const log = (line: string, details?: unknown) =>
+          options.log(
+            binding,
+            `${handlerName} ${binding.correlationId}${depth > 0 ? ` (nested ${depth})` : ""}: ${line}`,
+            details
+          );
+        const remaining = Effect.map(Clock.currentTimeMillis, (now) => deadlineAt - now);
+        const timedOut = () =>
+          new HandlerTimeout({ correlationId: binding.correlationId, deadlineMs: deadline });
+
+        const attempt = Effect.fn("ServerCall.attempt")(function* (number: number) {
+          const left = yield* remaining;
+          if (left <= 0)
+            return {
+              failure: timedOut(),
+              outcome: { _tag: "rolled_back", reason: "deadline" }
+            } as Attempt;
+          const scope = yield* Transaction.open(binding.companyId, descriptor.kind, {
+            statementTimeoutMs: left
+          }).pipe(Effect.provideContext(databases));
+          // Every refusal this host issued to the guest, in order; the guest's report is a hint.
+          const issued: Runtime.OperationError[] = [];
+          const callback: Engine.Invocation["callback"] = (op, callbackArgs) =>
+            scope.submit(
+              Effect.gen(function* () {
+                const refuse = (error: Runtime.OperationError) =>
+                  Effect.gen(function* () {
+                    issued.push(error);
+                    yield* log(`refused ${op}: ${error.message}`);
+                    return yield* Effect.fail({
+                      code: error.code,
+                      message: error.message,
+                      ...(error.details === undefined ? {} : { details: error.details })
+                    });
+                  });
+                const fromRuntime = (error: Runtime.RuntimeError): Runtime.OperationError => ({
+                  code: error.code,
+                  status: error.status,
+                  message: error.message,
+                  ...("details" in error && error.details !== undefined
+                    ? { details: error.details }
+                    : {})
+                });
+                if (op === "run") {
+                  // An action runs a sibling: its own invocation, transaction and slot, under
+                  // this one's remaining deadline. The reply travels as the callback's value so
+                  // the guest rethrows a HandlerError as its own.
+                  if (descriptor.kind !== "action")
+                    return yield* refuse({
+                      code: "access_denied",
+                      status: 403,
+                      message: `Only an action may run another handler; ${handlerName} is a ${descriptor.kind}.`
+                    });
+                  const request = callbackArgs as { handler?: unknown; args?: unknown } | null;
+                  if (
+                    request === null ||
+                    typeof request !== "object" ||
+                    typeof request.handler !== "string" ||
+                    depth >= MAX_RUN_DEPTH
+                  )
+                    return yield* refuse({
+                      code: "invalid_request",
+                      status: 400,
+                      message: "Invalid run request."
+                    });
+                  return yield* invokeHandler(
+                    binding,
+                    request.handler,
+                    request.args ?? {},
+                    deadlineAt,
+                    depth + 1
+                  ).pipe(Effect.catch((error) => refuse(fromRuntime(error))));
+                }
+                const target = Object.hasOwn(handlers, op) ? handlers[op] : undefined;
+                if (target === undefined || target.transport !== undefined || op === "server.call")
+                  return yield* refuse({
+                    code: "invalid_request",
+                    status: 400,
+                    message: `Unknown callback operation ${op}.`
+                  });
+                if (!permitted(descriptor.kind, op, target))
+                  return yield* refuse({
+                    code: "access_denied",
+                    status: 403,
+                    message: `A ${descriptor.kind} may not call ${op}.`
+                  });
+                return yield* target.run(callbackArgs).pipe(
+                  Effect.provideService(Binding.Binding, binding),
+                  Effect.catch((error) =>
+                    Effect.gen(function* () {
+                      if (Transaction.isSerializationFailure(error))
+                        scope.abort("serialization_failure");
+                      return yield* refuse(fromRuntime(error));
+                    })
+                  )
+                );
+              })
+            );
+          const invoked = yield* engine
+            .invoke({
+              name: `${binding.patchId}@${binding.versionId}#${binding.server!.digest}`,
+              bundle: options
+                .bundle(binding)
+                .pipe(
+                  Effect.mapError(
+                    (cause) => new Engine.EngineUnavailable({ stage: "bundle", cause })
+                  )
+                ),
+              handler: handlerName,
+              args: handlerArgs,
+              viewer: binding.identity,
+              deadlineMs: Math.max(1, yield* remaining),
+              callback
+            })
+            .pipe(Effect.result);
+          let reply: ServerCallReply | undefined;
+          let failure: Runtime.RuntimeError | undefined;
+          if (invoked._tag === "Failure") {
+            const error = invoked.failure;
+            if (error._tag === "InvocationTimeout") {
+              yield* log(`handler_timeout after ${deadline} ms`);
+              scope.abort("deadline");
+              failure = timedOut();
+            } else if (error._tag === "ProcessKilled") {
+              yield* log(`killed with the execution process (generation ${error.generation})`);
+              scope.abort("failed");
+              failure = timedOut();
+            } else {
+              scope.abort("failed");
+              failure = new Runtime.SourceUnavailable({ cause: error });
+            }
+          } else {
+            const guest = invoked.success;
+            for (const line of guest.log ?? []) yield* log(line.message, line.details);
+            if (guest.ok) {
+              const violation = checkValue(
+                descriptor.result,
+                guest.result ?? null,
+                "$",
+                binding.manifest.tables
+              );
+              if (violation === undefined) reply = { ok: true, value: guest.result ?? null };
+              else {
+                yield* log(`handler_failed: result does not match its declaration (${violation})`);
+                failure = new HandlerFailed({ correlationId: binding.correlationId });
+              }
+            } else if (guest.error === "handler") {
+              if (descriptor.errors?.includes(guest.code) === true)
+                reply = {
+                  ok: false,
+                  source: "handler",
+                  code: guest.code,
+                  ...(guest.details === undefined ? {} : { details: guest.details })
+                };
+              else {
+                yield* log(`handler_failed: undeclared handler error code ${guest.code}`);
+                failure = new HandlerFailed({ correlationId: binding.correlationId });
+              }
+            } else if (
+              guest.error === "refused" &&
+              isRuntimeCode(guest.code) &&
+              issued.some((error) => error.code === guest.code)
+            ) {
+              // Answer with the refusal this host issued to this invocation, never the guest's version.
+              const own = issued.find((error) => error.code === guest.code)!;
+              failure = { ...own, correlationId: binding.correlationId };
+            } else {
+              yield* log(
+                `handler_failed: ${guest.error}${"message" in guest && guest.message !== undefined ? ` ${guest.message}` : ""}`,
+                "stack" in guest ? guest.stack : undefined
+              );
+              failure = new HandlerFailed({ correlationId: binding.correlationId });
+            }
+          }
+          // The guest's return decides nothing once the attempt is abort-only; finish sees that.
+          const outcome = yield* scope.finish(
+            reply !== undefined && reply.ok ? "commit" : "rollback"
+          );
+          return { reply, failure, outcome } as Attempt;
+        });
+
+        const run = Effect.gen(function* () {
+          for (let number = 1; ; number++) {
+            const result = yield* Effect.scoped(attempt(number)).pipe(
+              Effect.catchTag("TransactionOpenFailed", (error) =>
+                Effect.fail(
+                  error.code === "busy"
+                    ? new Busy({ correlationId: binding.correlationId, cause: error.cause })
+                    : new Runtime.SourceUnavailable({
+                        cause: error.cause,
+                        correlationId: binding.correlationId
+                      })
+                )
+              )
+            );
+            switch (result.outcome._tag) {
+              case "serialization_failure":
+                yield* log(`serialization failure on attempt ${number}`);
+                if (descriptor.kind === "mutation" && number < MAX_ATTEMPTS) continue;
+                return yield* new Runtime.SourceUnavailable({
+                  cause: new Error(`serialization failure after ${number} attempts`),
+                  correlationId: binding.correlationId
+                });
+              case "unknown":
+                yield* log(
+                  "commit outcome unknown",
+                  Transaction.describeChain(result.outcome.cause)
+                );
+                return yield* new Runtime.UnknownOutcome({
+                  cause: result.outcome.cause,
+                  correlationId: binding.correlationId
+                });
+              case "committed":
+                if (result.failure !== undefined) return yield* Effect.fail(result.failure);
+                return result.reply!;
+              case "rolled_back":
+                if (result.failure !== undefined) return yield* Effect.fail(result.failure);
+                if (result.reply !== undefined && !result.reply.ok) return result.reply;
+                // A valid result whose transaction did not commit is never reported as success.
+                yield* log(`rolled back before commit (${result.outcome.reason})`);
+                return yield* result.outcome.reason === "deadline"
+                  ? timedOut()
+                  : new Runtime.SourceUnavailable({
+                      cause: new Error(`rolled back: ${result.outcome.reason}`),
+                      correlationId: binding.correlationId
+                    });
+            }
+          }
+        });
+        const admitted = yield* slotOf(binding.companyId).withPermitsIfAvailable(1)(run);
+        if (Option.isNone(admitted)) {
+          yield* log(`busy: ${perCompany} invocations already running for the company`);
+          return yield* new Busy({ correlationId: binding.correlationId });
+        }
+        return admitted.value;
+      }
+    );
+
     return Runtime.handler(
       {
         kind: operation.kind,
@@ -128,229 +391,8 @@ export const make = (handlers: Readonly<Record<string, Runtime.Handler>>, option
         Effect.gen(function* () {
           const binding = yield* Binding.Binding;
           if (binding.manifest.tier !== 2) return yield* new Runtime.InvalidRequest({});
-          const descriptor = handlersOf(binding.manifest.handlers)[args.handler];
-          if (descriptor === undefined || binding.server === undefined)
-            return yield* new Runtime.InvalidRequest({});
-          const problem = checkValue(descriptor.args, args.args, "$", binding.manifest.tables);
-          if (problem !== undefined)
-            return yield* new Runtime.InvalidRequest({
-              cause: new Error(`arguments: ${problem}`)
-            });
-          const log = (line: string, details?: unknown) =>
-            options.log(binding, `${args.handler} ${binding.correlationId}: ${line}`, details);
           const startedAt = yield* Clock.currentTimeMillis;
-          const remaining = Effect.map(
-            Clock.currentTimeMillis,
-            (now) => deadline - (now - startedAt)
-          );
-          const timedOut = () =>
-            new HandlerTimeout({ correlationId: binding.correlationId, deadlineMs: deadline });
-
-          type Attempt = {
-            readonly reply?: ServerCallReply;
-            readonly failure?: Runtime.RuntimeError;
-            readonly outcome: Transaction.Outcome;
-          };
-          const attempt = Effect.fn("ServerCall.attempt")(function* (number: number) {
-            const left = yield* remaining;
-            if (left <= 0)
-              return {
-                failure: timedOut(),
-                outcome: { _tag: "rolled_back", reason: "deadline" }
-              } as Attempt;
-            const scope = yield* Transaction.open(binding.companyId, descriptor.kind, {
-              statementTimeoutMs: left
-            }).pipe(Effect.provideContext(databases));
-            // Every refusal this host issued to the guest, in order; the guest's report is a hint.
-            const issued: Runtime.OperationError[] = [];
-            const callback: Engine.Invocation["callback"] = (op, callbackArgs) =>
-              scope.submit(
-                Effect.gen(function* () {
-                  const target = Object.hasOwn(handlers, op) ? handlers[op] : undefined;
-                  const refuse = (error: Runtime.OperationError) =>
-                    Effect.gen(function* () {
-                      issued.push(error);
-                      yield* log(`refused ${op}: ${error.message}`);
-                      return yield* Effect.fail({
-                        code: error.code,
-                        message: error.message,
-                        ...(error.details === undefined ? {} : { details: error.details })
-                      });
-                    });
-                  if (
-                    target === undefined ||
-                    target.transport !== undefined ||
-                    op === "server.call"
-                  )
-                    return yield* refuse({
-                      code: "invalid_request",
-                      status: 400,
-                      message: `Unknown callback operation ${op}.`
-                    });
-                  if (!permitted(descriptor.kind, op, target))
-                    return yield* refuse({
-                      code: "access_denied",
-                      status: 403,
-                      message: `A ${descriptor.kind} may not call ${op}.`
-                    });
-                  return yield* target.run(callbackArgs).pipe(
-                    Effect.provideService(Binding.Binding, binding),
-                    Effect.catch((error) =>
-                      Effect.gen(function* () {
-                        if (Transaction.isSerializationFailure(error))
-                          scope.abort("serialization_failure");
-                        return yield* refuse({
-                          code: error.code,
-                          status: error.status,
-                          message: error.message,
-                          ...("details" in error && error.details !== undefined
-                            ? { details: error.details }
-                            : {})
-                        });
-                      })
-                    )
-                  );
-                })
-              );
-            const invoked = yield* engine
-              .invoke({
-                name: `${binding.patchId}@${binding.versionId}#${binding.server!.digest}`,
-                bundle: options
-                  .bundle(binding)
-                  .pipe(
-                    Effect.mapError(
-                      (cause) => new Engine.EngineUnavailable({ stage: "bundle", cause })
-                    )
-                  ),
-                handler: args.handler,
-                args: args.args,
-                viewer: binding.identity,
-                deadlineMs: Math.max(1, yield* remaining),
-                callback
-              })
-              .pipe(Effect.result);
-            let reply: ServerCallReply | undefined;
-            let failure: Runtime.RuntimeError | undefined;
-            if (invoked._tag === "Failure") {
-              const error = invoked.failure;
-              if (error._tag === "InvocationTimeout") {
-                yield* log(`handler_timeout after ${deadline} ms`);
-                scope.abort("deadline");
-                failure = timedOut();
-              } else if (error._tag === "ProcessKilled") {
-                yield* log(`killed with the execution process (generation ${error.generation})`);
-                scope.abort("failed");
-                failure = timedOut();
-              } else {
-                scope.abort("failed");
-                failure = new Runtime.SourceUnavailable({ cause: error });
-              }
-            } else {
-              const guest = invoked.success;
-              for (const line of guest.log ?? []) yield* log(line.message, line.details);
-              if (guest.ok) {
-                const violation = checkValue(
-                  descriptor.result,
-                  guest.result ?? null,
-                  "$",
-                  binding.manifest.tables
-                );
-                if (violation === undefined) reply = { ok: true, value: guest.result ?? null };
-                else {
-                  yield* log(
-                    `handler_failed: result does not match its declaration (${violation})`
-                  );
-                  failure = new HandlerFailed({ correlationId: binding.correlationId });
-                }
-              } else if (guest.error === "handler") {
-                if (descriptor.errors?.includes(guest.code) === true)
-                  reply = {
-                    ok: false,
-                    source: "handler",
-                    code: guest.code,
-                    ...(guest.details === undefined ? {} : { details: guest.details })
-                  };
-                else {
-                  yield* log(`handler_failed: undeclared handler error code ${guest.code}`);
-                  failure = new HandlerFailed({ correlationId: binding.correlationId });
-                }
-              } else if (
-                guest.error === "refused" &&
-                isRuntimeCode(guest.code) &&
-                issued.some((error) => error.code === guest.code)
-              ) {
-                // Answer with the refusal this host issued to this invocation, never the guest's version.
-                const own = issued.find((error) => error.code === guest.code)!;
-                failure = { ...own, correlationId: binding.correlationId };
-              } else {
-                yield* log(
-                  `handler_failed: ${guest.error}${"message" in guest && guest.message !== undefined ? ` ${guest.message}` : ""}`,
-                  "stack" in guest ? guest.stack : undefined
-                );
-                failure = new HandlerFailed({ correlationId: binding.correlationId });
-              }
-            }
-            // The guest's return decides nothing once the attempt is abort-only; finish sees that.
-            const outcome = yield* scope.finish(
-              reply !== undefined && reply.ok ? "commit" : "rollback"
-            );
-            return { reply, failure, outcome } as Attempt;
-          });
-
-          const run = Effect.gen(function* () {
-            for (let number = 1; ; number++) {
-              const result = yield* Effect.scoped(attempt(number)).pipe(
-                Effect.catchTag("TransactionOpenFailed", (error) =>
-                  Effect.fail(
-                    error.code === "busy"
-                      ? new Busy({ correlationId: binding.correlationId, cause: error.cause })
-                      : new Runtime.SourceUnavailable({
-                          cause: error.cause,
-                          correlationId: binding.correlationId
-                        })
-                  )
-                )
-              );
-              switch (result.outcome._tag) {
-                case "serialization_failure":
-                  yield* log(`serialization failure on attempt ${number}`);
-                  if (descriptor.kind === "mutation" && number < MAX_ATTEMPTS) continue;
-                  return yield* new Runtime.SourceUnavailable({
-                    cause: new Error(`serialization failure after ${number} attempts`),
-                    correlationId: binding.correlationId
-                  });
-                case "unknown":
-                  yield* log(
-                    "commit outcome unknown",
-                    Transaction.describeChain(result.outcome.cause)
-                  );
-                  return yield* new Runtime.UnknownOutcome({
-                    cause: result.outcome.cause,
-                    correlationId: binding.correlationId
-                  });
-                case "committed":
-                  if (result.failure !== undefined) return yield* Effect.fail(result.failure);
-                  return result.reply!;
-                case "rolled_back":
-                  if (result.failure !== undefined) return yield* Effect.fail(result.failure);
-                  if (result.reply !== undefined && !result.reply.ok) return result.reply;
-                  // A valid result whose transaction did not commit is never reported as success.
-                  yield* log(`rolled back before commit (${result.outcome.reason})`);
-                  return yield* result.outcome.reason === "deadline"
-                    ? timedOut()
-                    : new Runtime.SourceUnavailable({
-                        cause: new Error(`rolled back: ${result.outcome.reason}`),
-                        correlationId: binding.correlationId
-                      });
-              }
-            }
-          });
-          const admitted = yield* slotOf(binding.companyId).withPermitsIfAvailable(1)(run);
-          if (Option.isNone(admitted)) {
-            yield* log(`busy: ${perCompany} invocations already running for the company`);
-            return yield* new Busy({ correlationId: binding.correlationId });
-          }
-          return admitted.value;
+          return yield* invokeHandler(binding, args.handler, args.args, startedAt + deadline, 0);
         })
     );
   });

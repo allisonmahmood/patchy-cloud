@@ -20,5 +20,13 @@ export function isHandlerError<Code extends string>(
 ): error is HandlerError<Code>;
 export function isHandlerError(error: unknown): error is HandlerError;
 export function isHandlerError(error: unknown, code?: string): error is HandlerError {
-  return error instanceof HandlerError && (code === undefined || error.code === code);
+  // Structural, not instanceof: `patchy/server` and `patchy/client` are bundled separately, so a
+  // guest that throws through one and narrows through the other sees two classes.
+  return (
+    error instanceof Error &&
+    error.name === "HandlerError" &&
+    (error as { source?: unknown }).source === "handler" &&
+    typeof (error as { code?: unknown }).code === "string" &&
+    (code === undefined || (error as { code: string }).code === code)
+  );
 }

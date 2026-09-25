@@ -56,10 +56,24 @@ export const add = mutation({
 
 ## The context
 
-- `ctx.viewer`: `{ user: { id, name, email }, company: { id, handle, name }, admin }`, never null. Own tables are reached as the patch; there is no API to pick an identity.
+- `ctx.viewer`: `{ user: { id, name, email }, company: { id, handle, name }, admin }`, never null. Own tables are reached as the patch; shared tables and connections as the viewer, checked per call; there is no API to pick an identity.
 - `ctx.tables.<name>`: the same client as the browser's (`get`, `getMany`, `list`, and in a mutation or action `insert`, `insertMany`, `update`, `delete`), with the same bounds and refusals (`row_not_found`, `unique_violation`, `too_large`).
+- `ctx.shared.<alias>`: a declared shared table, read-only (`get`, `getMany`, `list`), in a query or an action. Declare it with `pnpm patchy add shared-table <patchId>/<table> --as <alias>` (see `../patchy-shared-tables/SKILL.md`); the local runtime reads its `fixtures/shared-<alias>.sql` rows.
+- `ctx.connections.<alias>`: a declared company Postgres connection with the generated client (`query` and the relations' `list`, `get`, `getMany`), in an action only. Declare it with `pnpm patchy add postgres/<handle> --as <alias>` (see `../patchy-postgres/SKILL.md`); the bounds are the connection's (read-only, 1,000 rows, 10-second statements).
+- `ctx.run.<module>.<handler>(args)`: in an action only, runs a sibling query or mutation of this patch under the action's remaining deadline; each mutation is its own transaction; a `HandlerError` the sibling throws is rethrown to you.
 - `ctx.log(message, details?)`: up to 100 lines per invocation, printed by `pnpm patchy dev logs` locally and kept in the runtime log in the cloud. Never log secrets.
-- Not in this release: `ctx.shared`, `ctx.files`, `ctx.connections`, `ctx.run`.
+- Not in this release: `ctx.files`.
+
+| Reaches                  | query    | mutation | action |
+| ------------------------ | -------- | -------- | ------ |
+| `ctx.tables` reads       | yes      | yes      | yes    |
+| `ctx.tables` writes      | no       | yes      | yes    |
+| `ctx.shared` reads       | yes      | no       | yes    |
+| `ctx.connections`        | no       | no       | yes    |
+| `ctx.run`                | no       | no       | yes    |
+| one transaction, retried | snapshot | yes      | no     |
+
+The types leave the refused cells out of the context, and the host refuses them at the wire too (`access_denied`).
 
 ## Errors
 
