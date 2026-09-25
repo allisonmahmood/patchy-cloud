@@ -75,17 +75,23 @@ async function endpointState(): Promise<string> {
   const b = await neon("GET", `/projects/${PROJECT}/endpoints/${ENDPOINT}`);
   return `${b.endpoint.current_state}${b.endpoint.pending_state ? `->${b.endpoint.pending_state}` : ""}`;
 }
+// Neon marks start_compute "skipped" when a connection already woke the compute; that counts as done.
 async function waitOps(ops: any[]) {
+  const seen: string[] = [];
   for (const op of ops ?? []) {
     for (;;) {
       const b = await neon("GET", `/projects/${PROJECT}/operations/${op.id}`);
-      const s = b.operation.status;
-      if (s === "finished") break;
-      if (s === "failed" || s === "error" || s === "cancelled" || s === "skipped")
-        throw new Error(`operation ${op.action} ${s}`);
+      const st = b.operation.status;
+      if (st === "finished" || st === "skipped") {
+        seen.push(`${op.action}=${st}`);
+        break;
+      }
+      if (st === "failed" || st === "error" || st === "cancelled")
+        throw new Error(`operation ${op.action} ${st}`);
       await sleep(500);
     }
   }
+  return seen.join(", ");
 }
 async function endpointAction(action: "suspend" | "restart") {
   const t0 = now();
