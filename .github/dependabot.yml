@@ -23,9 +23,11 @@ updates:
       # glob handed every `@effect/*` package to patch-updates; that group
       # refuses an RC bump as not a patch release and lets the package fall
       # through to a pull request of its own (#273, #344). An exact name beats
-      # any other group. Add an @effect package here when it joins the catalog
-      # in pnpm-workspace.yaml; @effect/language-service is left out on purpose
-      # because it has its own release line.
+      # any other group; the packages still sit in patch-updates as well, and
+      # stay out of its pull request only because this group runs first. Add
+      # an @effect package here when it joins the RC lockstep (the 4.0.0-rc
+      # entries in the pnpm-workspace.yaml catalog); @effect/language-service
+      # is left out on purpose because it has its own release line.
       effect:
         patterns:
           - effect
