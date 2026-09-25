@@ -14,7 +14,7 @@ import {
 import { Files, TableOperations, Tables } from "@patchy/primitives";
 import { LoadedVersions, me, Runtime } from "@patchy/runtime/core";
 // PROTOTYPE for #314
-import { Engine, ServerCall } from "@patchy/execution";
+import { Engine, ServerCall, Transaction } from "@patchy/execution";
 import { sha256 as digestOf } from "@patchy/core";
 import type { Handlers } from "@patchy/api";
 import * as Console from "effect/Console";
@@ -204,23 +204,37 @@ const make = Effect.fn("DevResources.make")(function* (prepared: Prepared, state
   // bundle for a binding is the one its digest names, kept in memory per build.
   const bundles = new Map<string, string>();
   const engine = yield* Effect.serviceOption(Engine.Engine);
+  // Round 3: callback targets are table handlers over the joining databases, so a callback runs
+  // on the invocation's held connection instead of borrowing a second one.
+  const joiningTables =
+    prepared.manifest.tier === 2 && Option.isSome(engine)
+      ? yield* TableOperations.make.pipe(
+          Effect.provideService(
+            CompanyDatabases.CompanyDatabases,
+            Transaction.joiningDatabases(databases)
+          )
+        )
+      : {};
   const handlers =
     prepared.manifest.tier === 2 && Option.isSome(engine)
       ? {
           ...base,
-          "server.call": yield* ServerCall.make(base, {
-            bundle: (binding) => {
-              const bundle =
-                binding.server === undefined ? undefined : bundles.get(binding.server.digest);
-              return bundle === undefined
-                ? Effect.fail(new Runtime.SourceUnavailable({ cause: new Error("bundle gone") }))
-                : Effect.succeed(bundle);
-            },
-            log: (binding, line, details) =>
-              Console.log(
-                `[${binding.identity?.user.email ?? "anonymous"}] ${line}${details === undefined ? "" : ` ${encodeJson(details)}`}`
-              )
-          }).pipe(Effect.provideService(Engine.Engine, engine.value))
+          "server.call": yield* ServerCall.make(
+            { ...base, ...joiningTables },
+            {
+              bundle: (binding) => {
+                const bundle =
+                  binding.server === undefined ? undefined : bundles.get(binding.server.digest);
+                return bundle === undefined
+                  ? Effect.fail(new Runtime.SourceUnavailable({ cause: new Error("bundle gone") }))
+                  : Effect.succeed(bundle);
+              },
+              log: (binding, line, details) =>
+                Console.log(
+                  `[${binding.identity?.user.email ?? "anonymous"}] ${line}${details === undefined ? "" : ` ${encodeJson(details)}`}`
+                )
+            }
+          ).pipe(Effect.provideService(Engine.Engine, engine.value))
         }
       : base;
   if (state.changed || state.initialize) yield* fs.writeFileString(state.stampPath, state.stamp);

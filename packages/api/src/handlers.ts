@@ -53,7 +53,9 @@ const scalarKeys = new Set(["kind", "optional"]);
 export const isTypeDescriptor = (value: unknown, depth = 0): value is TypeDescriptor => {
   if (depth > 16 || !isRecord(value) || typeof value.kind !== "string") return false;
   if (value.optional !== undefined && typeof value.optional !== "boolean") return false;
-  const allowedKeys = descriptorKeys[value.kind] ?? scalarKeys;
+  const allowedKeys = Object.hasOwn(descriptorKeys, value.kind)
+    ? descriptorKeys[value.kind]!
+    : scalarKeys;
   if (!Object.keys(value).every((key) => allowedKeys.has(key))) return false;
   switch (value.kind) {
     case "ref":
@@ -185,10 +187,12 @@ export const checkValue = (
           return `${path}.${key}: not a column of ${descriptor.table}`;
       }
       for (const [name, column] of Object.entries(columns)) {
+        // Every column is present on a row; an optional one is present as null.
+        if (!Object.hasOwn(value, name)) return `${path}.${name}: missing`;
         const field = value[name];
-        if (field === null || field === undefined) {
+        if (field === null) {
           if (column.optional === true) continue;
-          return `${path}.${name}: missing`;
+          return `${path}.${name}: null`;
         }
         const kind = column.kind === "ref" ? "text" : column.kind;
         if (!scalarKinds.has(kind)) return `${path}.${name}: unsupported column kind ${kind}`;

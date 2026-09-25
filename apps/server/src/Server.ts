@@ -44,7 +44,7 @@ import {
   FilesystemContentStore
 } from "@patchy/content-store";
 // PROTOTYPE for #314: the execution engine beside the runtime, one process per server.
-import { Engine, ServerCall, bundledWorkerdBinary } from "@patchy/execution";
+import { Engine, ServerCall, Transaction, bundledWorkerdBinary } from "@patchy/execution";
 import {
   ConnectionPages,
   ConnectionsApi,
@@ -66,6 +66,7 @@ import {
 } from "@patchy/patches";
 import { PortalPages } from "@patchy/portal";
 import { Tables, TableOperations, Files } from "@patchy/primitives";
+import { CompanyDatabases } from "@patchy/company-database";
 import { Pages, renderHome, servingHeaders, TrustedProxies } from "@patchy/serving";
 import {
   Runtime,
@@ -125,26 +126,37 @@ const services = Layer.mergeAll(
       const postgres = yield* PostgresOperations.makeHandlers;
       const store = yield* ContentStore.ContentStore;
       const handlers = { me, ...tables, ...files, ...postgres };
-      // PROTOTYPE for #314: `server.call` resolves callbacks to the sibling handlers; the bundle
-      // is the version's recorded object, read on the engine's first load of that version.
-      const serverCall = yield* ServerCall.make(handlers, {
-        bundle: (binding) =>
-          binding.server === undefined
-            ? Effect.fail(new Runtime.InvalidRequest({}))
-            : store
-                .get(binding.server.objectKey)
-                .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))),
-        log: (binding, line, details) =>
-          Effect.logInfo(line).pipe(
-            Effect.annotateLogs({
-              patchId: binding.patchId,
-              versionId: binding.versionId,
-              userId: binding.identity?.user.id ?? "",
-              correlationId: binding.correlationId,
-              ...(details === undefined ? {} : { details })
-            })
-          )
-      });
+      // PROTOTYPE for #314: `server.call` resolves callbacks to sibling handlers built over the
+      // joining databases, so a callback runs on the invocation's held connection (round 3);
+      // the bundle is the version's recorded object, read on the engine's first load.
+      const databases = yield* CompanyDatabases.CompanyDatabases;
+      const joiningTables = yield* TableOperations.make.pipe(
+        Effect.provideService(
+          CompanyDatabases.CompanyDatabases,
+          Transaction.joiningDatabases(databases)
+        )
+      );
+      const serverCall = yield* ServerCall.make(
+        { ...handlers, ...joiningTables },
+        {
+          bundle: (binding) =>
+            binding.server === undefined
+              ? Effect.fail(new Runtime.InvalidRequest({}))
+              : store
+                  .get(binding.server.objectKey)
+                  .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))),
+          log: (binding, line, details) =>
+            Effect.logInfo(line).pipe(
+              Effect.annotateLogs({
+                patchId: binding.patchId,
+                versionId: binding.versionId,
+                userId: binding.identity?.user.id ?? "",
+                correlationId: binding.correlationId,
+                ...(details === undefined ? {} : { details })
+              })
+            )
+        }
+      );
       return RuntimeProduction.layer({ ...handlers, "server.call": serverCall });
     })
   ).pipe(Layer.provide([LoadedVersions.layer, PostgresExecution.layer, engine]))

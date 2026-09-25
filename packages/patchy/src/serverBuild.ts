@@ -42,9 +42,8 @@ const banned = new Set(["react", "react-dom", "preact/compat", "preact/debug/"])
 const allowed = (graph: keyof typeof allowlist, source: string) =>
   source === "patchy" ||
   source.startsWith("patchy/") ||
-  // The scaffold sets build.modulePreload: false; a repo that did not still gets Vite's own
-  // polyfill injected into the HTML entry under exactly this id, and it is not patch code.
-  source === "vite/modulepreload-polyfill" ||
+  // The scaffolds set build.modulePreload: false; Vite's own polyfill import is refused like
+  // any other, so a repo that turned the preload back on hears it at build time.
   (!banned.has(source) &&
     !source.startsWith("react/") &&
     !source.startsWith("react-dom/") &&

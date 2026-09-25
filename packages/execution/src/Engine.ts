@@ -403,6 +403,9 @@ export const make = (options: { readonly binary: string }) =>
           const request = yield* HttpServerRequest.HttpServerRequest;
           const authorization = request.headers.authorization ?? "";
           const capability = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
+          // Parse first, then check liveness: an invocation that ended while the body was read
+          // must not run this callback (round 3, astra's fence).
+          const body = yield* request.json.pipe(Effect.orElseSucceed(() => null));
           const callback = registry.get(capability);
           if (callback === undefined)
             return HttpServerResponse.jsonUnsafe(
@@ -413,7 +416,6 @@ export const make = (options: { readonly binary: string }) =>
               },
               { status: 403 }
             );
-          const body = yield* request.json.pipe(Effect.orElseSucceed(() => null));
           if (!isRecord(body) || typeof body.op !== "string")
             return HttpServerResponse.jsonUnsafe(
               { ok: false, code: "invalid_request", message: "Malformed callback." },
@@ -505,9 +507,7 @@ export const make = (options: { readonly binary: string }) =>
         Effect.catchTag(
           "EngineUnavailable",
           (error): Effect.Effect<never, EngineUnavailable | ProcessKilled> =>
-            killed.has(invocationId)
-              ? Effect.fail(new ProcessKilled({ generation }))
-              : Effect.fail(error)
+            killed.has(invocationId) ? new ProcessKilled({ generation }) : Effect.fail(error)
         ),
         // The capability ends here whatever the guest is still doing; a late callback is refused.
         Effect.ensuring(

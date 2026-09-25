@@ -5,15 +5,16 @@
 // the arguments must fit the descriptor before invocation and the result after it. Everything
 // an invocation needs is read from the `Binding` at admission and closed over for its whole
 // life; a rebuild in dev binds a new version, it never mutates this one. Callbacks resolve to
-// the sibling runtime handlers (`tables.*`) under that same binding, and a query's callbacks
-// are refused by the host when they would write.
+// the sibling runtime handlers under that same binding, gated per kind (a query's writes and
+// every kind's off-limits capability are refused by the host, never only by the types).
 //
-// Round 2: every attempt opens one company transaction at admission (Transaction.ts) that
-// the callbacks join; it commits only after the result validated and rolls back otherwise.
-// A serialization failure re-invokes the whole handler, mutations only, up to three
-// attempts, each with a fresh capability so a late callback from an earlier attempt is
-// refused. Refusal codes the guest reports are never trusted: the host answers with the
-// refusal it issued itself, or `handler_failed`.
+// Round 3: one invocation deadline spans admission, every attempt and settlement; each attempt
+// opens one company transaction (Transaction.ts) whose scope is ready before the guest runs;
+// a serialization failure anywhere marks the attempt abort-only and re-invokes the handler,
+// mutations only, up to three attempts with a fresh capability each; the outcome is what the
+// commit phase says. Refusal codes the guest reports are checked against the refusal the host
+// issued to that same invocation; declared `errors` are enforced host-side.
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Config from "effect/Config";
 import * as Option from "effect/Option";
@@ -64,15 +65,20 @@ export class Busy extends Schema.TaggedError<Busy>()("ServerCallBusy", {
 
 /** Wall-clock deadline per invocation; below the runtime's mutation deadline so this fires first. */
 export const deadlineMs = Config.Int("PATCHY_HANDLER_DEADLINE_MS").pipe(Config.withDefault(10_000));
+/** Concurrent invocations per company: the pool's four connections, one per invocation. */
+export const invocationsPerCompany = Config.Int("PATCHY_INVOCATIONS_PER_COMPANY").pipe(
+  Config.withDefault(4)
+);
 const MAX_ATTEMPTS = 3;
-/**
- * Concurrent invocations per company. The company pool has four connections; an invocation's
- * transaction holds one for its whole life and each of its callbacks borrows a second through
- * the table handlers' own `withCompany`, so two invocations is what four slots carry. Past it:
- * `busy`, fail-fast, never a wait. A build would fold the callback's borrow into the held one.
- */
-const INVOCATIONS_PER_COMPANY = 2;
 const isRuntimeCode = Schema.is(RuntimeCode);
+
+/** Which callback operations each kind may reach; everything else is refused by the host. */
+const permitted = (kind: "query" | "mutation" | "action", op: string, target: Runtime.Handler) => {
+  if (op.startsWith("shared.")) return kind !== "mutation";
+  if (op.startsWith("postgres.")) return kind === "action";
+  if (op.startsWith("tables.")) return kind !== "query" || target.kind === "read";
+  return false;
+};
 
 export interface Options {
   /** The exact bytes the binding's version recorded; asked for on the engine's first load. */
@@ -89,17 +95,21 @@ export interface Options {
 
 const operation = runtimeOperations["server.call"];
 
+/**
+ * `handlers` are the callback targets and should be built over `Transaction.joiningDatabases`
+ * so their table operations run on the invocation's held connection.
+ */
 export const make = (handlers: Readonly<Record<string, Runtime.Handler>>, options: Options) =>
   Effect.gen(function* () {
     const engine = yield* Engine.Engine;
     const deadline = yield* deadlineMs;
-    // Captured once: callbacks run on the transaction fiber, which needs the company databases.
+    const perCompany = yield* invocationsPerCompany;
     const databases = yield* Effect.context<CompanyDatabases.CompanyDatabases>();
     const slots = new Map<string, Semaphore.Semaphore>();
     const slotOf = (companyId: string) => {
       let semaphore = slots.get(companyId);
       if (semaphore === undefined) {
-        semaphore = Semaphore.makeUnsafe(INVOCATIONS_PER_COMPANY);
+        semaphore = Semaphore.makeUnsafe(perCompany);
         slots.set(companyId, semaphore);
       }
       return semaphore;
@@ -128,23 +138,38 @@ export const make = (handlers: Readonly<Record<string, Runtime.Handler>>, option
             });
           const log = (line: string, details?: unknown) =>
             options.log(binding, `${args.handler} ${binding.correlationId}: ${line}`, details);
+          const startedAt = yield* Clock.currentTimeMillis;
+          const remaining = Effect.map(
+            Clock.currentTimeMillis,
+            (now) => deadline - (now - startedAt)
+          );
+          const timedOut = () =>
+            new HandlerTimeout({ correlationId: binding.correlationId, deadlineMs: deadline });
 
+          type Attempt = {
+            readonly reply?: ServerCallReply;
+            readonly failure?: Runtime.RuntimeError;
+            readonly outcome: Transaction.Outcome;
+          };
           const attempt = Effect.fn("ServerCall.attempt")(function* (number: number) {
-            const scope = yield* Transaction.open(binding.companyId, descriptor.kind).pipe(
-              Effect.provideContext(databases)
-            );
-            // The last refusal this host issued to the guest; the guest's own report is only a hint.
-            let issued: Runtime.OperationError | undefined;
-            // A 40001 at a statement inside a callback surfaces as the table handler's refusal;
-            // it is the transaction's serialization failure and the attempt is retried.
-            let serialized = false;
+            const left = yield* remaining;
+            if (left <= 0)
+              return {
+                failure: timedOut(),
+                outcome: { _tag: "rolled_back", reason: "deadline" }
+              } as Attempt;
+            const scope = yield* Transaction.open(binding.companyId, descriptor.kind, {
+              statementTimeoutMs: left
+            }).pipe(Effect.provideContext(databases));
+            // Every refusal this host issued to the guest, in order; the guest's report is a hint.
+            const issued: Runtime.OperationError[] = [];
             const callback: Engine.Invocation["callback"] = (op, callbackArgs) =>
               scope.submit(
                 Effect.gen(function* () {
                   const target = Object.hasOwn(handlers, op) ? handlers[op] : undefined;
                   const refuse = (error: Runtime.OperationError) =>
                     Effect.gen(function* () {
-                      issued = error;
+                      issued.push(error);
                       yield* log(`refused ${op}: ${error.message}`);
                       return yield* Effect.fail({
                         code: error.code,
@@ -162,25 +187,26 @@ export const make = (handlers: Readonly<Record<string, Runtime.Handler>>, option
                       status: 400,
                       message: `Unknown callback operation ${op}.`
                     });
-                  if (descriptor.kind === "query" && target.kind !== "read")
+                  if (!permitted(descriptor.kind, op, target))
                     return yield* refuse({
                       code: "access_denied",
                       status: 403,
-                      message: `A query may not call ${op}; declare a mutation for writes.`
+                      message: `A ${descriptor.kind} may not call ${op}.`
                     });
                   return yield* target.run(callbackArgs).pipe(
                     Effect.provideService(Binding.Binding, binding),
                     Effect.catch((error) =>
-                      refuse({
-                        ...(Transaction.isSerializationFailure(error)
-                          ? ((serialized = true), {})
-                          : {}),
-                        code: error.code,
-                        status: error.status,
-                        message: error.message,
-                        ...("details" in error && error.details !== undefined
-                          ? { details: error.details }
-                          : {})
+                      Effect.gen(function* () {
+                        if (Transaction.isSerializationFailure(error))
+                          scope.abort("serialization_failure");
+                        return yield* refuse({
+                          code: error.code,
+                          status: error.status,
+                          message: error.message,
+                          ...("details" in error && error.details !== undefined
+                            ? { details: error.details }
+                            : {})
+                        });
                       })
                     )
                   );
@@ -199,30 +225,26 @@ export const make = (handlers: Readonly<Record<string, Runtime.Handler>>, option
                 handler: args.handler,
                 args: args.args,
                 viewer: binding.identity,
-                deadlineMs: deadline,
+                deadlineMs: Math.max(1, yield* remaining),
                 callback
               })
               .pipe(Effect.result);
-            // Decide before touching the transaction: commit only on a validated result.
             let reply: ServerCallReply | undefined;
             let failure: Runtime.RuntimeError | undefined;
             if (invoked._tag === "Failure") {
               const error = invoked.failure;
               if (error._tag === "InvocationTimeout") {
-                yield* log(`handler_timeout after ${error.deadlineMs} ms`);
-                failure = new HandlerTimeout({
-                  correlationId: binding.correlationId,
-                  deadlineMs: error.deadlineMs
-                });
+                yield* log(`handler_timeout after ${deadline} ms`);
+                scope.abort("deadline");
+                failure = timedOut();
               } else if (error._tag === "ProcessKilled") {
-                // Collateral of the watchdog: its transaction rolls back below, so the outcome is
-                // a confirmed non-commit and reported as handler_timeout, never unknown_outcome.
                 yield* log(`killed with the execution process (generation ${error.generation})`);
-                failure = new HandlerTimeout({
-                  correlationId: binding.correlationId,
-                  deadlineMs: deadline
-                });
-              } else failure = new Runtime.SourceUnavailable({ cause: error });
+                scope.abort("failed");
+                failure = timedOut();
+              } else {
+                scope.abort("failed");
+                failure = new Runtime.SourceUnavailable({ cause: error });
+              }
             } else {
               const guest = invoked.success;
               for (const line of guest.log ?? []) yield* log(line.message, line.details);
@@ -241,19 +263,25 @@ export const make = (handlers: Readonly<Record<string, Runtime.Handler>>, option
                   failure = new HandlerFailed({ correlationId: binding.correlationId });
                 }
               } else if (guest.error === "handler") {
-                reply = {
-                  ok: false,
-                  source: "handler",
-                  code: guest.code,
-                  ...(guest.details === undefined ? {} : { details: guest.details })
-                };
+                if (descriptor.errors?.includes(guest.code) === true)
+                  reply = {
+                    ok: false,
+                    source: "handler",
+                    code: guest.code,
+                    ...(guest.details === undefined ? {} : { details: guest.details })
+                  };
+                else {
+                  yield* log(`handler_failed: undeclared handler error code ${guest.code}`);
+                  failure = new HandlerFailed({ correlationId: binding.correlationId });
+                }
               } else if (
                 guest.error === "refused" &&
-                issued !== undefined &&
-                isRuntimeCode(guest.code)
+                isRuntimeCode(guest.code) &&
+                issued.some((error) => error.code === guest.code)
               ) {
-                // Answer with the refusal this host issued, never the guest's version of it.
-                failure = { ...issued, correlationId: binding.correlationId };
+                // Answer with the refusal this host issued to this invocation, never the guest's version.
+                const own = issued.find((error) => error.code === guest.code)!;
+                failure = { ...own, correlationId: binding.correlationId };
               } else {
                 yield* log(
                   `handler_failed: ${guest.error}${"message" in guest && guest.message !== undefined ? ` ${guest.message}` : ""}`,
@@ -262,53 +290,64 @@ export const make = (handlers: Readonly<Record<string, Runtime.Handler>>, option
                 failure = new HandlerFailed({ correlationId: binding.correlationId });
               }
             }
-            // A handler error aborts the transaction like any throw (#296 point 6).
-            const decision = reply !== undefined && reply.ok ? "commit" : "rollback";
-            const finished = yield* scope.finish(decision);
-            const outcome =
-              serialized && finished._tag === "rolled_back"
-                ? ({ _tag: "serialization_failure" } as const)
-                : finished;
-            return { reply, failure, outcome, number };
+            // The guest's return decides nothing once the attempt is abort-only; finish sees that.
+            const outcome = yield* scope.finish(
+              reply !== undefined && reply.ok ? "commit" : "rollback"
+            );
+            return { reply, failure, outcome } as Attempt;
           });
 
-          const admitted = yield* slotOf(binding.companyId).withPermitsIfAvailable(1)(
-            Effect.gen(function* () {
-              for (let number = 1; ; number++) {
-                const result = yield* Effect.scoped(attempt(number));
-                switch (result.outcome._tag) {
-                  case "serialization_failure":
-                    yield* log(`serialization failure on attempt ${number}`);
-                    if (descriptor.kind === "mutation" && number < MAX_ATTEMPTS) continue;
-                    return yield* new Runtime.SourceUnavailable({
-                      cause: new Error(`serialization failure after ${number} attempts`),
-                      correlationId: binding.correlationId
-                    });
-                  case "unavailable":
-                    return yield* result.outcome.code === "busy"
-                      ? new Busy({ correlationId: binding.correlationId })
+          const run = Effect.gen(function* () {
+            for (let number = 1; ; number++) {
+              const result = yield* Effect.scoped(attempt(number)).pipe(
+                Effect.catchTag("TransactionOpenFailed", (error) =>
+                  Effect.fail(
+                    error.code === "busy"
+                      ? new Busy({ correlationId: binding.correlationId, cause: error.cause })
                       : new Runtime.SourceUnavailable({
-                          cause: result.outcome.cause,
+                          cause: error.cause,
                           correlationId: binding.correlationId
-                        });
-                  case "unknown":
-                    yield* log("commit outcome unknown");
-                    return yield* new Runtime.UnknownOutcome({
-                      cause: result.outcome.cause,
-                      correlationId: binding.correlationId
-                    });
-                  case "committed":
-                  case "rolled_back":
-                    if (result.failure !== undefined) return yield* Effect.fail(result.failure);
-                    return result.reply!;
-                }
+                        })
+                  )
+                )
+              );
+              switch (result.outcome._tag) {
+                case "serialization_failure":
+                  yield* log(`serialization failure on attempt ${number}`);
+                  if (descriptor.kind === "mutation" && number < MAX_ATTEMPTS) continue;
+                  return yield* new Runtime.SourceUnavailable({
+                    cause: new Error(`serialization failure after ${number} attempts`),
+                    correlationId: binding.correlationId
+                  });
+                case "unknown":
+                  yield* log(
+                    "commit outcome unknown",
+                    Transaction.describeChain(result.outcome.cause)
+                  );
+                  return yield* new Runtime.UnknownOutcome({
+                    cause: result.outcome.cause,
+                    correlationId: binding.correlationId
+                  });
+                case "committed":
+                  if (result.failure !== undefined) return yield* Effect.fail(result.failure);
+                  return result.reply!;
+                case "rolled_back":
+                  if (result.failure !== undefined) return yield* Effect.fail(result.failure);
+                  if (result.reply !== undefined && !result.reply.ok) return result.reply;
+                  // A valid result whose transaction did not commit is never reported as success.
+                  yield* log(`rolled back before commit (${result.outcome.reason})`);
+                  return yield* result.outcome.reason === "deadline"
+                    ? timedOut()
+                    : new Runtime.SourceUnavailable({
+                        cause: new Error(`rolled back: ${result.outcome.reason}`),
+                        correlationId: binding.correlationId
+                      });
               }
-            })
-          );
+            }
+          });
+          const admitted = yield* slotOf(binding.companyId).withPermitsIfAvailable(1)(run);
           if (Option.isNone(admitted)) {
-            yield* log(
-              `busy: ${INVOCATIONS_PER_COMPANY} invocations already running for the company`
-            );
+            yield* log(`busy: ${perCompany} invocations already running for the company`);
             return yield* new Busy({ correlationId: binding.correlationId });
           }
           return admitted.value;
