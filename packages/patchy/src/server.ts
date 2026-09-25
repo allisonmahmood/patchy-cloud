@@ -1,0 +1,121 @@
+// PROTOTYPE for #314: the server function contract (#296), the `patchy/server` entry.
+//
+// A tier 2 patch's `server/*.ts` files export handlers built here. A handler is one of three
+// kinds and is named `<file>.<export>` on the wire. `patchy/_generated/server.ts` re-exports the
+// builders bound to the config's table types (`bind<typeof config>()`), so `ctx.tables.notes` is
+// typed without a generic. Enforcement is the host's: the wire validates `args` before the
+// handler runs and `result` after it; a query's writes are refused by the callback host, not
+// only by these types. Skipped in this slice: `ctx.shared`, `ctx.files`, `ctx.connections`,
+// `ctx.run` and the mutation key.
+import type { Config, FieldDescriptor, Infer, Json, ObjectDescriptor, Row } from "./config.js";
+import type { OwnedTable, ReadTable } from "./client.js";
+export { t } from "./config.js";
+export { HandlerError, isHandlerError } from "./handlerError.js";
+
+export type HandlerKind = "query" | "mutation" | "action";
+
+/** Never null on a company version; public tier 2 is not in this slice. */
+export interface Viewer {
+  readonly user: { readonly id: string; readonly name: string; readonly email: string };
+  readonly company: { readonly id: string; readonly handle: string; readonly name: string };
+  readonly admin: boolean;
+}
+
+type TableIndexesOf<C extends Config, N extends keyof C["tables"] & string> = Parameters<
+  OwnedTable<C, N>["list"]
+>[0] extends { readonly index?: infer I } | undefined
+  ? I extends string
+    ? Record<I, { readonly columns: readonly string[] }>
+    : Record<never, never>
+  : Record<never, never>;
+
+export type QueryTables<C extends Config> = {
+  readonly [N in keyof C["tables"] & string]: ReadTable<Row<C, N>, TableIndexesOf<C, N>>;
+};
+export type MutationTables<C extends Config> = {
+  readonly [N in keyof C["tables"] & string]: OwnedTable<C, N>;
+};
+
+/** One context shape, narrowed per kind: a query's tables are read-only. */
+export interface Context<C extends Config, Kind extends HandlerKind> {
+  readonly viewer: Viewer;
+  readonly tables: Kind extends "query" ? QueryTables<C> : MutationTables<C>;
+  /** Appends to the invocation's runtime log entry; `patchy dev logs` prints it locally. */
+  readonly log: (message: string, details?: Json) => void;
+}
+
+export interface Handler<
+  Kind extends HandlerKind = HandlerKind,
+  Args extends ObjectDescriptor = ObjectDescriptor,
+  Result extends FieldDescriptor = FieldDescriptor,
+  Errors extends string = string,
+  C extends Config = Config
+> {
+  readonly __patchy: "handler";
+  readonly kind: Kind;
+  readonly args: Args;
+  readonly result: Result;
+  readonly errors: readonly Errors[];
+  readonly handler: (ctx: Context<C, Kind>, args: Infer<Args, C>) => Promise<Infer<Result, C>>;
+}
+
+export interface Declaration<
+  Kind extends HandlerKind,
+  Args extends ObjectDescriptor,
+  Result extends FieldDescriptor,
+  Errors extends string,
+  C extends Config
+> {
+  readonly args: Args;
+  readonly result: Result;
+  readonly errors?: readonly Errors[];
+  readonly handler: (ctx: Context<C, Kind>, args: Infer<Args, C>) => Promise<Infer<Result, C>>;
+}
+
+const declare =
+  <C extends Config, Kind extends HandlerKind>(kind: Kind) =>
+  <Args extends ObjectDescriptor, Result extends FieldDescriptor, Errors extends string = never>(
+    definition: Declaration<Kind, Args, Result, Errors, C>
+  ): Handler<Kind, Args, Result, Errors, C> => {
+    if (definition.args === undefined || definition.result === undefined)
+      throw new Error(`A ${kind} declares both args and result.`);
+    return {
+      __patchy: "handler",
+      kind,
+      args: definition.args,
+      result: definition.result,
+      errors: definition.errors ?? [],
+      handler: definition.handler
+    };
+  };
+
+/** The builders bound to a config type; generation emits this call in `_generated/server.ts`. */
+export const bind = <C extends Config>() => ({
+  query: declare<C, "query">("query"),
+  mutation: declare<C, "mutation">("mutation"),
+  action: declare<C, "action">("action")
+});
+
+export const { query, mutation, action } = bind<Config>();
+
+export const isHandler = (value: unknown): value is Handler =>
+  value !== null &&
+  typeof value === "object" &&
+  (value as { __patchy?: unknown }).__patchy === "handler" &&
+  typeof (value as { handler?: unknown }).handler === "function";
+
+/** What the generated client exposes for a module's handlers, typed from the module itself. */
+export type ServerModuleClient<M> = {
+  readonly [K in keyof M as M[K] extends Handler ? K : never]: M[K] extends Handler<
+    HandlerKind,
+    infer Args,
+    infer Result,
+    string,
+    infer C
+  >
+    ? (args: Infer<Args, C>) => Promise<Infer<Result, C>>
+    : never;
+};
+export type ServerClient<Modules> = {
+  readonly [M in keyof Modules]: ServerModuleClient<Modules[M]>;
+};

@@ -64,8 +64,141 @@ export const t = {
   boolean: () => new Column("boolean", false, false),
   timestamp: () => new Column("timestamp", false, false),
   json: () => new Column("json", false, false),
-  ref: <const Target extends string>(table: Target) => new Column("ref", false, false, table)
+  ref: <const Target extends string>(table: Target) => new Column("ref", false, false, table),
+  // PROTOTYPE for #314: handler argument and result shapes.
+  object: <const F extends Fields>(fields: F) => new ObjectDescriptor(fields, false),
+  array: <const I extends FieldDescriptor>(items: I) => new ArrayDescriptor(items, false),
+  enum: <const V extends string>(values: readonly V[]) => new EnumDescriptor(values, false),
+  nullable: <const I extends FieldDescriptor>(inner: I) => new NullableDescriptor(inner, false),
+  row: <const T extends string>(table: T) => new RowDescriptor(table, false)
 };
+
+// PROTOTYPE for #314: descriptors for handler arguments and results. Serialised to JSON
+// beside the column descriptors; `optional` on a field means the key may be omitted, `nullable`
+// admits null. `.default()` keeps its table-only meaning and is refused in a handler descriptor.
+export type FieldDescriptor = Column | Descriptor;
+export type Fields = Readonly<Record<string, FieldDescriptor>>;
+abstract class DescriptorBase<Optional extends boolean> {
+  constructor(readonly isOptional: Optional) {}
+  abstract toJSON(): Record<string, unknown>;
+}
+export class ObjectDescriptor<
+  F extends Fields = Fields,
+  Optional extends boolean = false
+> extends DescriptorBase<Optional> {
+  constructor(
+    readonly fields: F,
+    isOptional: Optional
+  ) {
+    super(isOptional);
+  }
+  optional(this: ObjectDescriptor<F, false>): ObjectDescriptor<F, true> {
+    return new ObjectDescriptor(this.fields, true);
+  }
+  toJSON() {
+    return { kind: "object", fields: this.fields, ...(this.isOptional ? { optional: true } : {}) };
+  }
+}
+export class ArrayDescriptor<
+  I extends FieldDescriptor = FieldDescriptor,
+  Optional extends boolean = false
+> extends DescriptorBase<Optional> {
+  constructor(
+    readonly items: I,
+    isOptional: Optional
+  ) {
+    super(isOptional);
+  }
+  optional(this: ArrayDescriptor<I, false>): ArrayDescriptor<I, true> {
+    return new ArrayDescriptor(this.items, true);
+  }
+  toJSON() {
+    return { kind: "array", items: this.items, ...(this.isOptional ? { optional: true } : {}) };
+  }
+}
+export class EnumDescriptor<
+  V extends string = string,
+  Optional extends boolean = false
+> extends DescriptorBase<Optional> {
+  constructor(
+    readonly values: readonly V[],
+    isOptional: Optional
+  ) {
+    super(isOptional);
+  }
+  optional(this: EnumDescriptor<V, false>): EnumDescriptor<V, true> {
+    return new EnumDescriptor(this.values, true);
+  }
+  toJSON() {
+    return { kind: "enum", values: this.values, ...(this.isOptional ? { optional: true } : {}) };
+  }
+}
+export class NullableDescriptor<
+  I extends FieldDescriptor = FieldDescriptor,
+  Optional extends boolean = false
+> extends DescriptorBase<Optional> {
+  constructor(
+    readonly inner: I,
+    isOptional: Optional
+  ) {
+    super(isOptional);
+  }
+  optional(this: NullableDescriptor<I, false>): NullableDescriptor<I, true> {
+    return new NullableDescriptor(this.inner, true);
+  }
+  toJSON() {
+    return { kind: "nullable", inner: this.inner, ...(this.isOptional ? { optional: true } : {}) };
+  }
+}
+export class RowDescriptor<
+  T extends string = string,
+  Optional extends boolean = false
+> extends DescriptorBase<Optional> {
+  constructor(
+    readonly table: T,
+    isOptional: Optional
+  ) {
+    super(isOptional);
+  }
+  optional(this: RowDescriptor<T, false>): RowDescriptor<T, true> {
+    return new RowDescriptor(this.table, true);
+  }
+  toJSON() {
+    return { kind: "row", table: this.table, ...(this.isOptional ? { optional: true } : {}) };
+  }
+}
+export type Descriptor =
+  | ObjectDescriptor<Fields, boolean>
+  | ArrayDescriptor<FieldDescriptor, boolean>
+  | EnumDescriptor<string, boolean>
+  | NullableDescriptor<FieldDescriptor, boolean>
+  | RowDescriptor<string, boolean>;
+
+/** The TypeScript type a descriptor admits, with `t.row` resolved against the config `C`. */
+export type Infer<D, C extends Config = Config> =
+  D extends Column<infer K, boolean, boolean, infer Target>
+    ? K extends "ref"
+      ? Id<Target>
+      : Value<K, Target>
+    : D extends ObjectDescriptor<infer F, boolean>
+      ? InferObject<F, C>
+      : D extends ArrayDescriptor<infer I, boolean>
+        ? readonly Infer<I, C>[]
+        : D extends EnumDescriptor<infer V, boolean>
+          ? V
+          : D extends NullableDescriptor<infer I, boolean>
+            ? Infer<I, C> | null
+            : D extends RowDescriptor<infer T, boolean>
+              ? T extends keyof C["tables"] & string
+                ? Row<C, T>
+                : never
+              : never;
+type OptionalFields<F> = {
+  [K in keyof F]: F[K] extends { readonly isOptional: true } ? K : never;
+}[keyof F];
+type InferObject<F, C extends Config> = {
+  readonly [K in Exclude<keyof F, OptionalFields<F>>]: Infer<F[K], C>;
+} & { readonly [K in OptionalFields<F>]?: Infer<F[K], C> };
 
 export type Columns = Readonly<Record<string, Column>>;
 export type IndexDefinition = { readonly columns: readonly string[]; readonly unique?: boolean };

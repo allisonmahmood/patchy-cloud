@@ -23,7 +23,10 @@ export const errorCodes = {
   rate_limited: true,
   too_many_requests: true,
   busy: true,
-  offset_exhausted: true
+  offset_exhausted: true,
+  // PROTOTYPE for #314
+  handler_failed: true,
+  handler_timeout: true
 } as const;
 export type ErrorCode = keyof typeof errorCodes;
 export type RelationIdentifier = { readonly schema: string; readonly name: string };

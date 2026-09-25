@@ -37,7 +37,14 @@ import {
   OrphanSweep,
   migrations as companyDatabaseMigrations
 } from "@patchy/company-database";
-import { AzureContentStore, BlobContainer, FilesystemContentStore } from "@patchy/content-store";
+import {
+  AzureContentStore,
+  BlobContainer,
+  ContentStore,
+  FilesystemContentStore
+} from "@patchy/content-store";
+// PROTOTYPE for #314: the execution engine beside the runtime, one process per server.
+import { Engine, ServerCall, bundledWorkerdBinary } from "@patchy/execution";
 import {
   ConnectionPages,
   ConnectionsApi,
@@ -61,6 +68,7 @@ import { PortalPages } from "@patchy/portal";
 import { Tables, TableOperations, Files } from "@patchy/primitives";
 import { Pages, renderHome, servingHeaders, TrustedProxies } from "@patchy/serving";
 import {
+  Runtime,
   RuntimeProduction,
   RuntimeApi,
   RuntimeLog,
@@ -97,6 +105,9 @@ const migrated = Layer.effectDiscard(
   })
 );
 
+/** PROTOTYPE for #314: one workerd process for the server's lifetime. */
+const engine = Layer.unwrap(Effect.map(bundledWorkerdBinary, (binary) => Engine.layer({ binary })));
+
 /**
  * The services, over the migrated database. Analytics reports nothing unless
  * a key is configured.
@@ -112,9 +123,31 @@ const services = Layer.mergeAll(
       const tables = yield* TableOperations.make;
       const files = yield* Files.make;
       const postgres = yield* PostgresOperations.makeHandlers;
-      return RuntimeProduction.layer({ me, ...tables, ...files, ...postgres });
+      const store = yield* ContentStore.ContentStore;
+      const handlers = { me, ...tables, ...files, ...postgres };
+      // PROTOTYPE for #314: `server.call` resolves callbacks to the sibling handlers; the bundle
+      // is the version's recorded object, read on the engine's first load of that version.
+      const serverCall = yield* ServerCall.make(handlers, {
+        bundle: (binding) =>
+          binding.server === undefined
+            ? Effect.fail(new Runtime.InvalidRequest({}))
+            : store
+                .get(binding.server.objectKey)
+                .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))),
+        log: (binding, line, details) =>
+          Effect.logInfo(line).pipe(
+            Effect.annotateLogs({
+              patchId: binding.patchId,
+              versionId: binding.versionId,
+              userId: binding.identity?.user.id ?? "",
+              correlationId: binding.correlationId,
+              ...(details === undefined ? {} : { details })
+            })
+          )
+      });
+      return RuntimeProduction.layer({ ...handlers, "server.call": serverCall });
     })
-  ).pipe(Layer.provide([LoadedVersions.layer, PostgresExecution.layer]))
+  ).pipe(Layer.provide([LoadedVersions.layer, PostgresExecution.layer, engine]))
 ).pipe(
   Layer.provideMerge(
     Layer.mergeAll(
@@ -172,7 +205,8 @@ export const sweeper = Layer.effectDiscard(
 const api = Layer.mergeAll(HttpApiBuilder.layer(PatchyApi), ApiGuard.notFound).pipe(
   Layer.provide([
     AuthApi.layer,
-    PatchesApi.layer,
+    // PROTOTYPE for #314: publish discovery loads tier 2 bundles through the engine.
+    PatchesApi.layer.pipe(Layer.provide(engine)),
     ConnectionsApi.layer,
     SdkApi.layer,
     RuntimeApi.layer

@@ -15,7 +15,8 @@ const distDir = path.join(packageDir, "dist");
 const packageJson = JSON.parse(await readFile(path.join(packageDir, "package.json"), "utf8"));
 const rootSkillsDir = path.join(repoRoot, "skills");
 const packageSkillsDir = path.join(packageDir, "skills");
-const publicEntries = ["config", "client", "dev"];
+// PROTOTYPE for #314: `server` is the handler contract, bundled for the browser-like guest.
+const publicEntries = ["config", "client", "server", "dev"];
 
 const literals = async (file) => {
   const source = ts.createSourceFile(
@@ -78,7 +79,9 @@ await esbuild.build({
 });
 await esbuild.build({
   ...common,
-  entryPoints: ["config", "client"].map((name) => path.join(packageDir, `src/${name}.ts`)),
+  entryPoints: ["config", "client", "server"].map((name) =>
+    path.join(packageDir, `src/${name}.ts`)
+  ),
   outdir: distDir,
   platform: "browser",
   target: "es2022",

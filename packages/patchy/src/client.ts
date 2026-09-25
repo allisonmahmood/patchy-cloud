@@ -1,4 +1,4 @@
-import type { Config, Id, Indexes, Insert, Row, TableDefinition, Update } from "./config.js";
+import type { Config, Id, Indexes, Insert, Json, Row, TableDefinition, Update } from "./config.js";
 import {
   createPostMessageTransport,
   type Call,
@@ -6,7 +6,11 @@ import {
   type Transport
 } from "./clientTransport.js";
 import { PatchyError } from "./clientError.js";
+// PROTOTYPE for #314
+import { HandlerError } from "./handlerError.js";
+import type { ServerClient } from "./server.js";
 export * from "./clientError.js";
+export { HandlerError, isHandlerError } from "./handlerError.js";
 export type { Call, Me, Operation, Route, Transport } from "./clientTransport.js";
 
 export interface Page<R> {
@@ -103,12 +107,15 @@ type Aliases<C extends Config, Kind extends "postgres" | "sharedTable"> = {
 export interface Client<
   C extends Config,
   S extends Factories = Record<never, never>,
-  P extends Factories = Record<never, never>
+  P extends Factories = Record<never, never>,
+  M = Record<never, never>
 > {
   readonly tables: { readonly [N in keyof C["tables"] & string]: OwnedTable<C, N> };
   readonly files: { readonly [N in keyof C["files"]]: FileStore };
   readonly shared: FactoryResults<S>;
   readonly connections: FactoryResults<P>;
+  /** PROTOTYPE for #314: `patchy.server.<module>.<export>(args)` on a tier 2 version. */
+  readonly server: ServerClient<M>;
   readonly route: Transport["route"];
   me(): Promise<Me | null>;
   close(): void;
@@ -130,19 +137,53 @@ export function createSharedTable<
   };
 }
 
+/**
+ * PROTOTYPE for #314: `patchy.server.<module>.<export>(args)`. A handler's own error arrives as
+ * a successful reply with `source: "handler"` and is rethrown as `HandlerError`; a Patchy
+ * refusal is a `PatchyError` as for every other operation. Modules are the `server/*.ts` names
+ * generation saw; a new file needs `patchy refresh`, a changed export does not.
+ */
+export function createServerClient<M>(modules: readonly string[], call: Call): ServerClient<M> {
+  const entries = modules.map((module) => {
+    const handlers = new Proxy(
+      {},
+      {
+        get: (_target, name) =>
+          typeof name === "string"
+            ? async (args: unknown = {}) => {
+                const reply = (await call("server.call", {
+                  handler: `${module}.${name}`,
+                  args
+                })) as
+                  | { readonly ok: true; readonly value: unknown }
+                  | { readonly ok: false; readonly code: string; readonly details?: Json };
+                if (reply.ok) return reply.value;
+                throw new HandlerError(reply.code, reply.details);
+              }
+            : undefined
+      }
+    );
+    return [module, handlers] as const;
+  });
+  return Object.fromEntries(entries) as ServerClient<M>;
+}
+
 /** Config is a type only; the locally executed manifest supplies the declared runtime names. */
 export function createClient<
   C extends Config,
   S extends Factories = Record<never, never>,
-  P extends Factories = Record<never, never>
+  P extends Factories = Record<never, never>,
+  M = Record<never, never>
 >(
   manifest: ClientManifest,
   options: {
     readonly transport?: Transport;
     readonly shared: S & Record<Aliases<C, "sharedTable">, Factory>;
     readonly connections: P & Record<Aliases<C, "postgres">, Factory>;
+    /** PROTOTYPE for #314: the `server/` module names generation saw. */
+    readonly serverModules?: readonly string[];
   }
-): Client<C, S, P> {
+): Client<C, S, P, M> {
   const transport = options.transport ?? createPostMessageTransport();
   const call = transport.call;
   let identity: Promise<Me | null> | undefined;
@@ -243,6 +284,7 @@ export function createClient<
     files,
     shared: instantiate(options.shared, "sharedTable"),
     connections: instantiate(options.connections, "postgres"),
+    server: createServerClient<M>(options.serverModules ?? [], call),
     route: transport.route,
     me: () => (identity ??= call("me", {}) as Promise<Me | null>),
     close: () => {
@@ -259,5 +301,5 @@ export function createClient<
       }
       urls.clear();
     }
-  } as Client<C, S, P>;
+  } as Client<C, S, P, M>;
 }

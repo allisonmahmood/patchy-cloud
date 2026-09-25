@@ -103,7 +103,8 @@ export class GenerationUnavailable extends Schema.TaggedError<GenerationUnavaila
 }
 
 const coreSkills = ["patchy-loop", "patchy-tables", "patchy-files"];
-const knownSkills = [...coreSkills, "patchy-postgres", "patchy-shared-tables"];
+// PROTOTYPE for #314: `patchy-server` is implied by tier 2.
+const knownSkills = [...coreSkills, "patchy-postgres", "patchy-shared-tables", "patchy-server"];
 const root = "patchy/_generated";
 const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
 const quote = Schema.encodeSync(Schema.fromJsonString(Schema.String));
@@ -166,7 +167,11 @@ export const generate = Effect.fn("Generation.generate")(function* (
     });
   if (request.manifest.manifestVersion !== MANIFEST_VERSION)
     return yield* new UnsupportedManifestVersion({ version: request.manifest.manifestVersion });
-  const skills = new Set([...coreSkills, ...request.skills]);
+  const skills = new Set([
+    ...coreSkills,
+    ...request.skills,
+    ...(request.manifest.tier === 2 ? ["patchy-server"] : [])
+  ]);
   for (const skill of skills) {
     if (!knownSkills.includes(skill))
       return yield* new UnknownProjectSkill({ skill: skill.slice(0, 128) });
@@ -368,7 +373,20 @@ export const generate = Effect.fn("Generation.generate")(function* (
     files.set(path, contents);
     skillFiles.push({ name, path });
   }
-  files.set(`${root}/client.ts`, generateClient({ shared, connections: factories }));
+  files.set(
+    `${root}/client.ts`,
+    generateClient({
+      shared,
+      connections: factories,
+      ...(request.manifest.tier === 2 ? { serverModules: request.serverModules ?? [] } : {})
+    })
+  );
+  // PROTOTYPE for #314: the builders bound to the config's table types (#296 point 10).
+  if (request.manifest.tier === 2)
+    files.set(
+      `${root}/server.ts`,
+      'import type config from "../../patchy.config.js";\nimport { bind } from "patchy/server";\n\n/** query, mutation and action with ctx.tables typed from patchy.config.ts. */\nexport const { query, mutation, action } = bind<typeof config>();\nexport { t, HandlerError } from "patchy/server";\nexport type { Context, Viewer } from "patchy/server";\n'
+    );
   files.set(
     `${root}/README.md`,
     "# Generated Patchy files\n\nDo not edit this directory. Edit patchy.config.ts, then run patchy refresh. Import patchy from ./client.js; index.json lists definitions, declarations, revision stamps, skills and contexts. manifest.json is written locally by the CLI, never by the server.\n\nInstall already ran during patchy init. Test with patchy dev. Fixtures contain synthetic local data only. Deleting .patchy/ destroys local rows and files; it does not delete company data.\n"

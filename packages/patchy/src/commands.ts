@@ -534,7 +534,7 @@ const publish = Command.make(
           yield* Output.notice(
             `Publishing to ${instance.apiUrl} (target came from ${Instance.describeSource(instance.source)}).`
           );
-          const { manifest, html, warnings } = yield* prepareRepoPublish(repo, apiToken);
+          const { manifest, html, warnings, server } = yield* prepareRepoPublish(repo, apiToken);
           const project = yield* Project.readRepo(repo);
           const attempt = new State.PendingPublish({
             ownerUserId: identity.user.id,
@@ -543,6 +543,8 @@ const publish = Command.make(
             request: new PublishRequest({
               manifest,
               html,
+              // PROTOTYPE for #314: the second artifact of a tier 2 version.
+              ...(server === undefined ? {} : { server }),
               ...(project.patch === undefined ? {} : { patchId: project.patch }),
               ...(Option.isSome(options.share) ? { scope: options.share.value } : {}),
               ...(options.force ? { force: true } : {}),
@@ -958,7 +960,8 @@ const init = Command.make(
   "init",
   {
     dir: Argument.String("dir").pipe(Argument.optional),
-    tier: Flag.Literals("tier", ["0", "1"]).pipe(Flag.withDefault("1")),
+    // PROTOTYPE for #314: tier 2 lays down server/ beside the client.
+    tier: Flag.Literals("tier", ["0", "1", "2"]).pipe(Flag.withDefault("1")),
     purpose: Flag.String("purpose").pipe(Flag.optional)
   },
   (options) =>
@@ -969,7 +972,7 @@ const init = Command.make(
           yield* Cwd,
           token,
           options.dir,
-          options.tier === "0" ? 0 : 1,
+          options.tier === "0" ? 0 : options.tier === "2" ? 2 : 1,
           options.purpose
         );
       })

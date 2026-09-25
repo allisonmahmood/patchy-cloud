@@ -41,6 +41,8 @@ import { activateStarter, starterFiles, writeInitialGeneration } from "./initPro
 import { RELEASE } from "./release.js";
 import { processResult } from "./processResult.js";
 import { primitiveReminders } from "./primitiveReminders.js";
+// PROTOTYPE for #314
+import { serverModules } from "./serverBuild.js";
 
 const repoSchema = Schema.Struct({
   instance: Schema.String,
@@ -459,13 +461,16 @@ export const generate = Effect.fn("Project.generate")(function* (
     skills = skills.filter((name) => name !== skill);
   }
   const client = yield* Api.client(token);
+  // PROTOTYPE for #314: generation types `patchy.server.<module>` from the server/ file names.
+  const modules = yield* serverModules(cwd);
   const generated = yield* client
     .generate({
       payload: {
         release,
         manifest,
         skills,
-        ...(repo.patch === undefined ? {} : { patchId: repo.patch })
+        ...(repo.patch === undefined ? {} : { patchId: repo.patch }),
+        ...(modules.length === 0 ? {} : { serverModules: modules })
       }
     })
     .pipe(Effect.catch((error) => refusal(error, "Generation failed.")));
@@ -700,7 +705,7 @@ export const init = Effect.fn("Project.init")(function* (
   cwd: string,
   token: Redacted.Redacted,
   directory: Option.Option<string>,
-  tier: 0 | 1,
+  tier: 0 | 1 | 2,
   purposeOption: Option.Option<string>
 ) {
   const fs = yield* FileSystem.FileSystem;

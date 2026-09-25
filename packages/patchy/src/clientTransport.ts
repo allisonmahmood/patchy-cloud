@@ -11,7 +11,9 @@ export type Operation =
   | `tables.${"get" | "getMany" | "list" | "insert" | "insertMany" | "update" | "delete"}`
   | `shared.${"get" | "getMany" | "list"}`
   | `files.${"get" | "put" | "list" | "delete"}`
-  | `postgres.${"get" | "getMany" | "list" | "query"}`;
+  | `postgres.${"get" | "getMany" | "list" | "query"}`
+  // PROTOTYPE for #314
+  | "server.call";
 export type Call = (op: Operation, args: unknown, bytes?: Uint8Array) => Promise<unknown>;
 export interface Route {
   get(): Promise<string>;

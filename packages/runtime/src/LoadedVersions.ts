@@ -12,6 +12,8 @@ export interface LoadedVersion {
   /** Effective audience: historical versions of public patches remain company-only. */
   readonly scope: typeof SharingScope.Type;
   readonly wireVersion: number;
+  // PROTOTYPE for #314: a tier 2 version's server bundle, pinned with its manifest at admission.
+  readonly server?: { readonly objectKey: string; readonly digest: string } | undefined;
 }
 
 /** Patches supplies this port; Runtime never imports the patch repository. */

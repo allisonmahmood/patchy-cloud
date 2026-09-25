@@ -333,6 +333,9 @@ export interface PatchVersion {
   readonly manifest: typeof Manifest.Type;
   readonly publishKey: string;
   readonly payloadDigest: string;
+  // PROTOTYPE for #314: the tier 2 server bundle's object and content hash, null below tier 2.
+  readonly serverObjectKey: string | null;
+  readonly serverHash: string | null;
 }
 
 export class PublishKeyTaken extends Schema.TaggedError<PublishKeyTaken>()("PublishKeyTaken", {
@@ -455,6 +458,9 @@ export interface RecordInput extends PublishTarget {
   readonly payloadDigest: string;
   readonly publicBaseUrl: string;
   readonly warnings: ReadonlyArray<string>;
+  // PROTOTYPE for #314
+  readonly serverObjectKey?: string | undefined;
+  readonly serverHash?: string | undefined;
   readonly livePatchQuota?: number;
   readonly force?: boolean;
   readonly description?: string;
@@ -527,6 +533,8 @@ class VersionRow extends Schema.Class<VersionRow>("VersionRow")({
   manifest: Manifest,
   publishKey: Schema.String,
   payloadDigest: Schema.String,
+  serverObjectKey: Schema.NullOr(Schema.String),
+  serverHash: Schema.NullOr(Schema.String),
   createdAt: Stamp
 }) {}
 
@@ -811,6 +819,8 @@ const toVersion = (row: VersionRow): PatchVersion => ({
   manifest: row.manifest,
   publishKey: row.publishKey,
   payloadDigest: row.payloadDigest,
+  serverObjectKey: row.serverObjectKey,
+  serverHash: row.serverHash,
   createdAt: iso(row.createdAt)
 });
 
@@ -842,6 +852,7 @@ const VERSION_COLUMNS = `
   git_commit_sha AS "gitCommitSha", original_filename AS "originalFilename",
   tier, release, manifest_version AS "manifestVersion", wire_version AS "wireVersion",
   schema_revision AS "schemaRevision", manifest, publish_key AS "publishKey", payload_digest AS "payloadDigest",
+  server_object_key AS "serverObjectKey", server_hash AS "serverHash",
   created_at AS "createdAt"`;
 
 /** Seeds legacy patches' names from titles in creation order, without changing existing claims. */
@@ -1065,7 +1076,10 @@ export const make = Effect.gen(function* () {
     Request: Schema.String,
     Result: ObjectKey,
     execute: (patchId) =>
-      sql`SELECT object_key AS "objectKey" FROM patch_versions WHERE patch_id = ${patchId}`
+      sql`SELECT object_key AS "objectKey" FROM patch_versions WHERE patch_id = ${patchId}
+        UNION ALL
+        SELECT server_object_key AS "objectKey" FROM patch_versions
+        WHERE patch_id = ${patchId} AND server_object_key IS NOT NULL`
   });
 
   // Company/public sharing admits every member of this company in any lifecycle
@@ -1602,6 +1616,7 @@ export const make = Effect.gen(function* () {
           AND NOT EXISTS (
             SELECT 1 FROM patch_versions
             WHERE patch_versions.object_key = pending_patch_objects.object_key
+              OR patch_versions.server_object_key = pending_patch_objects.object_key
           )
         ORDER BY expires_at, object_key
         LIMIT ${limit}
@@ -1653,6 +1668,16 @@ export const make = Effect.gen(function* () {
             RETURNING object_key`;
           if (pending.length === 0)
             return yield* new PendingObjectExpired({ objectKey: input.objectKey });
+          // PROTOTYPE for #314: the server object's intent is consumed in the same transaction.
+          if (input.serverObjectKey !== undefined) {
+            const pendingServer = yield* sql`
+              DELETE FROM pending_patch_objects
+              WHERE object_key = ${input.serverObjectKey} AND NOT claimed
+                AND expires_at > ${stamp(millis)}
+              RETURNING object_key`;
+            if (pendingServer.length === 0)
+              return yield* new PendingObjectExpired({ objectKey: input.serverObjectKey });
+          }
           let versionNumber: number;
           let scope: Patch["scope"] = input.scope ?? "company";
           let companyId = input.companyId;
@@ -1767,7 +1792,8 @@ export const make = Effect.gen(function* () {
             created_by_machine_token_id, source_ip, user_agent, cli_version,
             git_branch, git_commit_sha, original_filename,
             owner_user_id, tier, release, manifest_version, wire_version, schema_revision,
-            manifest, publish_key, payload_digest, publish_response, publish_status, created_at
+            manifest, publish_key, payload_digest, publish_response, publish_status, created_at,
+            server_object_key, server_hash
           ) VALUES (
             ${input.versionId}, ${input.patchId}, ${versionNumber}, ${input.objectKey},
             ${input.contentHash}, ${input.fileSize}, ${input.machineTokenId}, ${input.sourceIp},
@@ -1775,7 +1801,8 @@ export const make = Effect.gen(function* () {
             ${input.filename}, ${input.ownerUserId}, ${input.manifest.tier}, ${input.manifest.release},
             ${input.manifest.manifestVersion}, ${input.wireVersion}, ${resources.schemaRevision},
             ${encodeManifest(input.manifest)}::jsonb, ${input.publishKey}, ${input.payloadDigest},
-            ${responseJson}::jsonb, ${status}, ${stamp(millis)}
+            ${responseJson}::jsonb, ${status}, ${stamp(millis)},
+            ${input.serverObjectKey ?? null}, ${input.serverHash ?? null}
           ) ON CONFLICT (owner_user_id, publish_key) DO NOTHING
           RETURNING publish_response::text AS "responseBody"`.pipe(
             Effect.flatMap(decodeResponseBodies)

@@ -124,6 +124,9 @@ importers:
       '@patchy/content-store':
         specifier: workspace:*
         version: link:../../packages/content-store
+      '@patchy/execution':
+        specifier: workspace:*
+        version: link:../../packages/execution
       '@patchy/integrations':
         specifier: workspace:*
         version: link:../../packages/integrations
@@ -314,6 +317,34 @@ importers:
         specifier: 'catalog:'
         version: 7.3.0
 
+  packages/execution:
+    dependencies:
+      '@effect/platform-node':
+        specifier: 4.0.0-rc.117
+        version: 4.0.0-rc.117(effect@4.0.0-rc.117)(redis@6.2.1)
+      '@patchy/api':
+        specifier: workspace:*
+        version: link:../api
+      '@patchy/core':
+        specifier: workspace:*
+        version: link:../core
+      '@patchy/runtime':
+        specifier: workspace:*
+        version: link:../runtime
+      effect:
+        specifier: 4.0.0-rc.117
+        version: 4.0.0-rc.117
+      workerd:
+        specifier: 1.20260924.1
+        version: 1.20260924.1
+    devDependencies:
+      '@effect/vitest':
+        specifier: 4.0.0-rc.117
+        version: 4.0.0-rc.117(effect@4.0.0-rc.117)(vitest@5.0.1(@types/node@22.20.4)(vite@8.3.0(@types/node@22.20.4)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1)))
+      vitest:
+        specifier: ^5.0.1
+        version: 5.0.1(@types/node@22.20.4)(vite@8.3.0(@types/node@22.20.4)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))
+
   packages/integrations:
     dependencies:
       '@electric-sql/pglite':
@@ -393,6 +424,9 @@ importers:
       '@patchy/core':
         specifier: workspace:*
         version: link:../core
+      '@patchy/execution':
+        specifier: workspace:*
+        version: link:../execution
       '@patchy/integrations':
         specifier: workspace:*
         version: link:../integrations
@@ -452,6 +486,9 @@ importers:
       '@patchy/core':
         specifier: workspace:*
         version: link:../core
+      '@patchy/execution':
+        specifier: workspace:*
+        version: link:../execution
       '@patchy/integrations':
         specifier: workspace:*
         version: link:../integrations
@@ -849,6 +886,36 @@ packages:
         optional: true
       react-dom:
         optional: true
+
+  '@cloudflare/workerd-darwin-64@1.20260924.1':
+    resolution: {integrity: sha512-OIflQWQkhkzbsFRUBU8IPI06NWNW99wDWEAZtFOZU8kXhH8BYzDaX3HZqBtD0tnQO5qklBHdNseYaNWokOGLFw==}
+    engines: {node: '>=16'}
+    cpu: [x64]
+    os: [darwin]
+
+  '@cloudflare/workerd-darwin-arm64@1.20260924.1':
+    resolution: {integrity: sha512-SKpCvVOyFxMmBMdNzBbxPw+cdTTQtLcXyTJGynZ4QYb8Bqqiru08vI+xpuOq+83RDjq5IkRowYayMdeaFQEHwg==}
+    engines: {node: '>=16'}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@cloudflare/workerd-linux-64@1.20260924.1':
+    resolution: {integrity: sha512-pe96BKJ919Lp00jgRnibzgDs2Ke1HrzM3wvip8r0Qm6/rOlQdcBp4O5HIIn27aYeBpG9/Txgil3yxXcKIRM4bw==}
+    engines: {node: '>=16'}
+    cpu: [x64]
+    os: [linux]
+
+  '@cloudflare/workerd-linux-arm64@1.20260924.1':
+    resolution: {integrity: sha512-WQ16r9ZmrcTH4tNWg6Fv23jnv5VAWWjUfq0wuyIwQbQDZfaHS0pPJkJjZ5fEXUaVUYsHn3kdpTcGzDXVzfmDpg==}
+    engines: {node: '>=16'}
+    cpu: [arm64]
+    os: [linux]
+
+  '@cloudflare/workerd-windows-64@1.20260924.1':
+    resolution: {integrity: sha512-O7ksqniQ9fknn7yUZN63wIYMW2zd+poflMHfrBLqFDTb6XZwI0nVU7nX7XGcH1YFl1UQ87NG48/mt04Vy8mEuQ==}
+    engines: {node: '>=16'}
+    cpu: [x64]
+    os: [win32]
 
   '@effect/language-service@0.87.2':
     resolution: {integrity: sha512-CfiSoaVQO8pZgaMZGw5VvMvRGybsJ2LaSDoLYaqiVGvo/YYPYVR2GzUKY0h1NtIweq/+SQ5XLrvtzPIttWQ0GQ==}
@@ -2547,6 +2614,11 @@ packages:
     resolution: {integrity: sha512-BN22B5eaMMI9UMtjrGd5g5eCYPpCPDUy0FJXbYsaT5zYxjFOckS53SQDE3pWkVoWpHXVb3BrYcEN4Twa55B5cA==}
     engines: {node: '>=0.10.0'}
 
+  workerd@1.20260924.1:
+    resolution: {integrity: sha512-uafggYbSNnGaO1Xoa6xX9mNIOU6Pu0EtKD6bg/FTLOztZsOpXTFtAUWKptk4SumYqBwuXZtO1/Gxv3P07QX6uA==}
+    engines: {node: '>=16'}
+    hasBin: true
+
   ws@8.21.3:
     resolution: {integrity: sha512-201TZ/kPWxoPr/OKWjquZR1SWKXcvxdH+e1xrx89b3YbmzLMFCLfnaG1HFIgWzJOEWZ7MvpK++odZufgYR50Rw==}
     engines: {node: '>=10.0.0'}
@@ -2777,6 +2849,21 @@ snapshots:
       dequal: 2.0.3
       glob-to-regexp: 0.4.1
       js-cookie: 3.0.8
+
+  '@cloudflare/workerd-darwin-64@1.20260924.1':
+    optional: true
+
+  '@cloudflare/workerd-darwin-arm64@1.20260924.1':
+    optional: true
+
+  '@cloudflare/workerd-linux-64@1.20260924.1':
+    optional: true
+
+  '@cloudflare/workerd-linux-arm64@1.20260924.1':
+    optional: true
+
+  '@cloudflare/workerd-windows-64@1.20260924.1':
+    optional: true
 
   '@effect/language-service@0.87.2': {}
 
@@ -4130,6 +4217,14 @@ snapshots:
       stackback: 0.0.2
 
   word-wrap@1.2.5: {}
+
+  workerd@1.20260924.1:
+    optionalDependencies:
+      '@cloudflare/workerd-darwin-64': 1.20260924.1
+      '@cloudflare/workerd-darwin-arm64': 1.20260924.1
+      '@cloudflare/workerd-linux-64': 1.20260924.1
+      '@cloudflare/workerd-linux-arm64': 1.20260924.1
+      '@cloudflare/workerd-windows-64': 1.20260924.1
 
   ws@8.21.3: {}
 

@@ -1,0 +1,35 @@
+{
+  "name": "@patchy/execution",
+  "version": "0.0.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "description": "PROTOTYPE for #314: the execution engine. Spawns workerd with the loader Worker, binds tier 2 server bundles, invokes handlers with a per-invocation capability, and answers their callbacks on a loopback listener.",
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@effect/platform-node": "catalog:",
+    "@patchy/api": "workspace:*",
+    "@patchy/core": "workspace:*",
+    "@patchy/runtime": "workspace:*",
+    "effect": "catalog:",
+    "workerd": "1.20260924.1"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "vitest": "^5.0.1"
+  }
+}
