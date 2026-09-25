@@ -1,6 +1,7 @@
 /// <reference lib="es2024.promise" />
 // @effect-diagnostics globalTimers:off globalFetch:off
 // Browser adapters deliberately use platform APIs, with no Effect runtime in the bundle.
+// PROTOTYPE for #314 round 3: #313's subscription transport (the "#313" markers below) lifted in.
 import { PatchyError, decodeError } from "./clientError.js";
 import { WIRE_VERSION } from "./release.js";
 
@@ -8,19 +9,34 @@ export type Operation =
   | "me"
   | "route.set"
   | "download"
+  // PROTOTYPE for #313, not for merge: broker-local subscription management.
+  | "subscribe"
+  | "unsubscribe"
   | `tables.${"get" | "getMany" | "list" | "insert" | "insertMany" | "update" | "delete"}`
   | `shared.${"get" | "getMany" | "list"}`
   | `files.${"get" | "put" | "list" | "delete"}`
-  | `postgres.${"get" | "getMany" | "list" | "query"}`;
+  | `postgres.${"get" | "getMany" | "list" | "query"}`
+  // PROTOTYPE for #314
+  | "server.call";
 export type Call = (op: Operation, args: unknown, bytes?: Uint8Array) => Promise<unknown>;
 export interface Route {
   get(): Promise<string>;
   set(path: string): Promise<null>;
   subscribe(listener: (path: string) => void): () => void;
 }
+/** PROTOTYPE for #313, not for merge: what the shell forwards from the subscription stream. */
+export type SubscriptionEvent =
+  | { readonly type: "snapshot"; readonly revision: number; readonly value: unknown }
+  | { readonly type: "up-to-date" }
+  | { readonly type: "must-resync" }
+  | { readonly type: "error"; readonly error: PatchyError }
+  | { readonly type: "stop"; readonly code: string };
+export type SubscriptionListener = (event: SubscriptionEvent) => void;
 export interface Transport {
   readonly call: Call;
   readonly route: Route;
+  /** PROTOTYPE for #313: registers a subscribed read; the returned function ends it. */
+  readonly subscribe: (op: Operation, args: unknown, listener: SubscriptionListener) => () => void;
   close(): void;
 }
 export interface Me {
@@ -74,6 +90,31 @@ export function createPortTransport(
       path?: string;
     }
   >();
+  // PROTOTYPE for #313: subscription listeners keyed by the id the client chose.
+  const subscriptions = new Map<string, SubscriptionListener>();
+  const deliver = (data: unknown) => {
+    if (data === null || typeof data !== "object") return;
+    const event = data as Record<string, unknown>;
+    const targets =
+      typeof event.id === "string"
+        ? [subscriptions.get(event.id)].filter((listener) => listener !== undefined)
+        : [...subscriptions.values()];
+    for (const listener of targets) {
+      if (event.type === "snapshot" && typeof event.revision === "number")
+        listener({ type: "snapshot", revision: event.revision, value: event.value });
+      else if (event.type === "up-to-date") listener({ type: "up-to-date" });
+      else if (event.type === "must-resync") listener({ type: "must-resync" });
+      else if (event.type === "stop" && typeof event.code === "string")
+        listener({ type: "stop", code: event.code });
+      else if (event.type === "error")
+        listener({
+          type: "error",
+          error:
+            decodeError({ code: event.code, message: event.error }) ??
+            new PatchyError("unknown_outcome", "The subscription failed.", {})
+        });
+    }
+  };
   const onMessage: EventListener = (event) => {
     const reply: unknown = (event as MessageEvent).data;
     if (reply === null || typeof reply !== "object") return;
@@ -81,6 +122,7 @@ export function createPortTransport(
     if (value.v !== WIRE_VERSION) return;
     if (value.kind === "event") {
       const data = value.data;
+      if (value.event === "subscription") return deliver(data);
       if (
         value.event === "route" &&
         data !== null &&
@@ -125,6 +167,7 @@ export function createPortTransport(
     }
     pending.clear();
     listeners.clear();
+    subscriptions.clear();
   };
   port.addEventListener("message", onMessage);
   port.addEventListener("messageerror", close);
@@ -188,6 +231,22 @@ export function createPortTransport(
           listeners.delete(subscription);
         };
       }
+    },
+    subscribe: (op, args, listener) => {
+      if (closed) return () => {};
+      const id = `s${++sequence}`;
+      subscriptions.set(id, listener);
+      void call("subscribe", { id, op, args }).catch((error: unknown) => {
+        if (!subscriptions.delete(id)) return;
+        listener({
+          type: "error",
+          error: error instanceof PatchyError ? error : lost()
+        });
+      });
+      return () => {
+        if (!subscriptions.delete(id)) return;
+        void call("unsubscribe", { id }).catch(() => {});
+      };
     },
     close
   };
@@ -285,6 +344,23 @@ export function createPostMessageTransport(
           unsubscribe?.();
         };
       }
+    },
+    subscribe: (op, args, listener) => {
+      let active = !closed;
+      let unsubscribe: (() => void) | undefined;
+      void ready.then(
+        (transport) => {
+          if (active && !closed) unsubscribe = transport.subscribe(op, args, listener);
+        },
+        (error: unknown) => {
+          if (active)
+            listener({ type: "error", error: error instanceof PatchyError ? error : lost() });
+        }
+      );
+      return () => {
+        active = false;
+        unsubscribe?.();
+      };
     },
     close
   };
@@ -387,6 +463,9 @@ export function createHttpTransport(options: HttpTransportOptions): Transport {
       subscribe: () => {
         throw browserOnly();
       }
+    },
+    subscribe: () => {
+      throw browserOnly();
     },
     close: () => controller.abort()
   };

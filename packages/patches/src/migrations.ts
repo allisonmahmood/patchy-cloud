@@ -102,5 +102,14 @@ export const migrations: Migrations = {
     ADD COLUMN visit_count BIGINT NOT NULL DEFAULT 0`,
     `CREATE INDEX patches_deleted_at_idx ON patches(deleted_at)
     WHERE deleted_at IS NOT NULL`
+  ),
+  // PROTOTYPE for #314: a tier 2 version stores its server bundle as a second object; the
+  // hash pins the bytes the engine executes and names the loaded worker.
+  "0009_patches_server_artifact": ddl(
+    `ALTER TABLE patch_versions
+    ADD COLUMN server_object_key TEXT,
+    ADD COLUMN server_hash TEXT`,
+    `CREATE UNIQUE INDEX patch_versions_server_object_key_idx ON patch_versions(server_object_key)
+    WHERE server_object_key IS NOT NULL`
   )
 };

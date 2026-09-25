@@ -10,6 +10,8 @@ import * as SchemaGetter from "effect/SchemaGetter";
 import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
 import { isPatchId } from "@patchy/core";
 import { Snapshot } from "./postgresSnapshot.js";
+// PROTOTYPE for #314: tier 2 manifests carry handler descriptors; publishes carry a server bundle.
+import { Handlers } from "./handlers.js";
 
 export const CURRENT_RELEASE = "0.0.1";
 export const MANIFEST_VERSION = 1;
@@ -397,7 +399,9 @@ export const Manifest = Schema.Struct({
   tier: Schema.Literals([0, 1, 2, 3]),
   tables: definitions(TableDefinition),
   files: definitions(FileStoreDefinition),
-  uses: definitions(Schema.Union([PostgresDeclaration, SharedTableDeclaration]))
+  uses: definitions(Schema.Union([PostgresDeclaration, SharedTableDeclaration])),
+  // PROTOTYPE for #314: present on tier 2 only; the server re-derives and compares it.
+  handlers: Schema.optionalKey(Handlers)
 }).check(distinctPrimitiveNames);
 
 /** Generation resolves declarations; existing stamps are hints, never authority. */
@@ -459,7 +463,10 @@ export const GenerateRequest = Schema.Struct({
   release: NonEmptyText,
   manifest: GenerationManifest,
   patchId: Schema.optionalKey(PatchId),
-  skills: Schema.Array(NonEmptyText)
+  skills: Schema.Array(NonEmptyText),
+  // PROTOTYPE for #314: the `server/*.ts` module names, so the generated client can type
+  // `patchy.server.<module>` from a type-only import of each module.
+  serverModules: Schema.optionalKey(Schema.Array(DefinitionName))
 });
 
 /** Portable relative paths only; the CLI additionally rejects filesystem symlinks. */
@@ -613,6 +620,8 @@ export class PublishMetadata extends Schema.Class<PublishMetadata>("PublishMetad
 export class PublishRequest extends Schema.Class<PublishRequest>("PublishRequest")({
   manifest: Manifest,
   html: Schema.String,
+  // PROTOTYPE for #314: the tier 2 server bundle (one ESM module), stored beside the HTML.
+  server: Schema.optionalKey(Schema.String),
   patchId: Schema.optionalKey(PatchId),
   scope: Schema.optionalKey(SharingScope),
   force: Schema.optionalKey(Schema.Boolean),

@@ -17,6 +17,14 @@ import { RELEASE } from "./release.js";
 import { processResult } from "./processResult.js";
 import * as Project from "./Project.js";
 import { primitiveReminders } from "./primitiveReminders.js";
+// PROTOTYPE for #314
+import {
+  buildServerBundle,
+  discoverHandlers,
+  importCheck,
+  importRefusal,
+  loadVite
+} from "./serverBuild.js";
 
 const decodePackage = Schema.decodeUnknownSync(
   Schema.fromJsonString(
@@ -223,7 +231,7 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
     "patchy.json description",
     "invalid_manifest"
   );
-  const manifest = yield* Effect.tryPromise({
+  const executed = yield* Effect.tryPromise({
     try: async () =>
       decodeManifest({
         ...(await executeConfig(path.join(cwd, "patchy.config.ts"))),
@@ -231,6 +239,13 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
       }),
     catch: configFailure
   });
+  // PROTOTYPE for #314: on tier 2 the server bundle is built first and its handlers, derived by
+  // loading the exact bytes in the engine, are written into the manifest beside tables/files/uses.
+  const server = executed.tier === 2 ? yield* buildServerBundle(cwd) : undefined;
+  const manifest =
+    server === undefined
+      ? executed
+      : { ...executed, handlers: yield* discoverHandlers(cwd, server.bundle) };
   const warnings = [...syncWarnings, ...(yield* primitiveReminders(cwd, manifest))];
   // Definitions can change without generation; only index.json owns declaration stamps.
   const destination = yield* Effect.tryPromise({
@@ -260,19 +275,26 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
   const html = yield* Effect.scoped(
     Effect.gen(function* () {
       const output = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-publish-" });
-      const build = yield* processResult(cwd, process.execPath, [
-        path.join(cwd, "node_modules/vite/bin/vite.js"),
-        "build",
-        "--outDir",
-        output,
-        "--emptyOutDir"
-      ]);
-      if (build.code !== 0)
-        return yield* new LocalError({
-          message:
-            "Vite build failed. Run `pnpm exec vite build` and fix the single-file build before publishing.",
-          cause: build
-        });
+      // PROTOTYPE for #314: the repo's Vite runs in-process so the import check plugin applies.
+      const vite = yield* loadVite(cwd);
+      yield* Effect.tryPromise({
+        try: () =>
+          vite.build({
+            root: cwd,
+            logLevel: "silent",
+            clearScreen: false,
+            plugins: [importCheck(cwd, "client")],
+            build: { outDir: output, emptyOutDir: true }
+          }),
+        catch: (cause) =>
+          importRefusal(cause) !== undefined
+            ? new LocalError({ message: importRefusal(cause)!, code: "import_refused", cause })
+            : new LocalError({
+                message:
+                  "Vite build failed. Run `pnpm exec vite build` and fix the single-file build before publishing.",
+                cause
+              })
+      });
       const entries = yield* fs.readDirectory(output, { recursive: true });
       const files: string[] = [];
       for (const entry of entries) {
@@ -296,7 +318,12 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
     )
   );
   yield* validateRepoBundle(cwd, manifest, html);
-  return { manifest, html, warnings };
+  return {
+    manifest,
+    html,
+    warnings,
+    ...(server === undefined ? {} : { server: server.bundle, serverDigest: server.digest })
+  };
 });
 
 /** Publish and watched dev builds enforce the same artifact and tier contract. */
@@ -338,11 +365,17 @@ export const validateRepoBundle = Effect.fn("validateRepoBundle")(function* (
         new LocalError({ message: "Could not inspect server/ for the evident tier.", cause })
     )
   );
-  if (server || manifest.tier >= 2)
+  // PROTOTYPE for #314: tier 2 is served when server/ is present; tier 3 remains unserved.
+  if (manifest.tier === 2 && !server)
+    return yield* new LocalError({
+      message: "Tier 2 needs a server/ directory with at least one handler module.",
+      code: "tier_mismatch"
+    });
+  if ((server && manifest.tier < 2) || manifest.tier >= 3)
     return yield* new LocalError({
       message: server
-        ? "server/ requires tier 2, which is not served yet. Remove server code before publishing."
-        : "Tier 2 and above are not served yet.",
+        ? "server/ requires tier 2. Set tier: 2 in patchy.config.ts or remove server code before publishing."
+        : "Tier 3 and above are not served yet.",
       code: "tier_mismatch"
     });
   if (manifest.tier === 0) {

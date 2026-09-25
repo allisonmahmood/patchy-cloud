@@ -19,10 +19,19 @@ import * as Patches from "./Patches.js";
 
 export interface PublishInput extends Omit<
   Patches.RecordInput,
-  "intent" | "patchId" | "versionId" | "objectKey" | "contentHash" | "fileSize"
+  | "intent"
+  | "patchId"
+  | "versionId"
+  | "objectKey"
+  | "contentHash"
+  | "fileSize"
+  | "serverObjectKey"
+  | "serverHash"
 > {
   readonly patchId: string | null;
   readonly html: string;
+  /** PROTOTYPE for #314: the tier 2 server bundle, stored beside the HTML. */
+  readonly server?: string | undefined;
 }
 
 export class Content extends Context.Service<
@@ -56,12 +65,18 @@ export class Content extends Context.Service<
     readonly read: (
       version: Patches.PatchVersion
     ) => Effect.Effect<string, ContentStore.InvalidObjectKey | ContentStore.StoreUnavailable>;
+    /** PROTOTYPE for #314: the exact server bundle bytes a version recorded. */
+    readonly readServer: (
+      version: Patches.PatchVersion
+    ) => Effect.Effect<string, ContentStore.InvalidObjectKey | ContentStore.StoreUnavailable>;
   }
 >()("@patchy/patches/Content") {}
 
 /** Where a version's bytes go. */
 export const objectKey = (patchId: string, versionId: string) =>
   `patches/${patchId}/versions/${versionId}.html`;
+export const serverObjectKey = (patchId: string, versionId: string) =>
+  `patches/${patchId}/versions/${versionId}.server.js`;
 
 export const make = Effect.gen(function* () {
   const patches = yield* Patches.Patches;
@@ -77,9 +92,18 @@ export const make = Effect.gen(function* () {
       ownerUserId: input.ownerUserId
     } satisfies Patches.PublishTarget;
 
+    const serverKey = input.server === undefined ? undefined : serverObjectKey(patchId, versionId);
     yield* patches.preflight({ ...input, ...target });
     yield* patches.prepareObject(key).pipe(
       Effect.andThen(store.put(key, input.html)),
+      // PROTOTYPE for #314: the second artifact gets its own intent and put.
+      Effect.andThen(
+        serverKey === undefined || input.server === undefined
+          ? Effect.void
+          : patches
+              .prepareObject(serverKey)
+              .pipe(Effect.andThen(store.put(serverKey, input.server)))
+      ),
       // Together with record's 60-second deadline, this stays inside the
       // five-minute intent lease and leaves time for interrupted I/O to settle.
       Effect.timeout("60 seconds"),
@@ -94,15 +118,23 @@ export const make = Effect.gen(function* () {
       versionId,
       objectKey: key,
       contentHash: contentHash(input.html),
-      fileSize: new TextEncoder().encode(input.html).length
+      fileSize: new TextEncoder().encode(input.html).length,
+      ...(serverKey === undefined || input.server === undefined
+        ? {}
+        : { serverObjectKey: serverKey, serverHash: contentHash(input.server) })
     });
   });
 
   const read = Effect.fn("Content.read")((version: Patches.PatchVersion) =>
     store.get(version.objectKey).pipe(Effect.catchTags({ ObjectNotFound: Effect.die }))
   );
+  const readServer = Effect.fn("Content.readServer")((version: Patches.PatchVersion) =>
+    version.serverObjectKey === null
+      ? Effect.die(new Error("This version has no server bundle."))
+      : store.get(version.serverObjectKey).pipe(Effect.catchTags({ ObjectNotFound: Effect.die }))
+  );
 
-  return Content.of({ publish, read });
+  return Content.of({ publish, read, readServer });
 });
 
 /** Over `Patches` and the content store. */

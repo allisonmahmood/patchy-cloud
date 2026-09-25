@@ -6,12 +6,15 @@
  * `stop` into interruption, which runs the same finalizers.
  *
  * Every log line lands in `.local/dev/dev.log` with one `[service]` prefix.
+ *
+ * PROTOTYPE for #314 round 3: passes three limits through for the load runs (see `limits`).
  */
 import EmbeddedPostgres from "embedded-postgres";
 import * as Config from "effect/Config";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Redacted from "effect/Redacted";
@@ -206,6 +209,24 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
   // nothing exported in the agent's shell (another DATABASE_URL, a storage
   // driver, an API token) leaks in.
   yield* say(`clerk keys: ${Object.keys(clerk).join(", ") || "none"} (${devEnvFile})`);
+  // PROTOTYPE for #314 round 3: the limits the load runs set from the runner's shell (the
+  // runtime's per-viewer call rate, invocations per company, the company pool's connections);
+  // everything else stays closed.
+  const limits: Record<string, string> = {};
+  for (const key of [
+    "PATCHY_RUNTIME_CALLS_PER_MINUTE",
+    "PATCHY_INVOCATIONS_PER_COMPANY",
+    "PATCHY_COMPANY_POOL_CONNECTIONS"
+  ]) {
+    const value = yield* Config.option(Config.String(key));
+    if (Option.isSome(value)) limits[key] = value.value;
+  }
+  if (Object.keys(limits).length > 0)
+    yield* say(
+      `limits: ${Object.entries(limits)
+        .map(([key, value]) => `${key}=${value}`)
+        .join(" ")}`
+    );
   const server = yield* spawner.spawn(
     ChildProcess.make(
       process.execPath,
@@ -220,6 +241,7 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
         env: {
           ...inherited,
           ...clerk,
+          ...limits,
           PATCHY_CREDENTIAL_KEYS: Redacted.value(credentialKeys),
           PORT: String(plan.ports.server),
           DATABASE_URL: plan.databaseUrl,

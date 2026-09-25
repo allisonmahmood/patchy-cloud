@@ -1,4 +1,6 @@
-import type { Config, Id, Indexes, Insert, Row, TableDefinition, Update } from "./config.js";
+// @effect-diagnostics globalTimers:off
+// Browser client with no Effect runtime in the bundle; the subscription grace window is a platform timer.
+import type { Config, Id, Indexes, Insert, Json, Row, TableDefinition, Update } from "./config.js";
 import {
   createPostMessageTransport,
   type Call,
@@ -6,8 +8,116 @@ import {
   type Transport
 } from "./clientTransport.js";
 import { PatchyError } from "./clientError.js";
+// PROTOTYPE for #314
+import { HandlerError } from "./handlerError.js";
+import type { ServerClient, SubscribeOptions, Unsubscribe } from "./server.js";
 export * from "./clientError.js";
-export type { Call, Me, Operation, Route, Transport } from "./clientTransport.js";
+export { HandlerError, isHandlerError } from "./handlerError.js";
+export type {
+  Call,
+  Me,
+  Operation,
+  Route,
+  SubscriptionEvent,
+  Transport
+} from "./clientTransport.js";
+export type { SubscribeOptions, SubscriptionStatus, Unsubscribe } from "./server.js";
+
+type Reply =
+  | { readonly ok: true; readonly value: unknown }
+  | { readonly ok: false; readonly code: string; readonly details?: Json };
+
+/** The one canonicalisation of subscription arguments: sorted keys, no undefined. */
+const canonical = (value: unknown): string => {
+  const sort = (item: unknown): unknown =>
+    Array.isArray(item)
+      ? item.map(sort)
+      : item !== null && typeof item === "object"
+        ? Object.fromEntries(
+            Object.keys(item)
+              .sort()
+              .filter((key) => (item as Record<string, unknown>)[key] !== undefined)
+              .map((key) => [key, sort((item as Record<string, unknown>)[key])])
+          )
+        : item;
+  return JSON.stringify(sort(value));
+};
+
+const GRACE_MS = 1000;
+interface Entry {
+  readonly listeners: Set<{
+    readonly onSnapshot: (value: unknown) => void;
+    readonly options: SubscribeOptions;
+  }>;
+  unsubscribe?: Unsubscribe;
+  revision: number;
+  last: { readonly reply: Reply } | undefined;
+  grace?: ReturnType<typeof setTimeout>;
+}
+
+/**
+ * PROTOTYPE for #314 round 3 (#313's registry): one live subscription per handler and
+ * canonical arguments, shared by every caller (refcount), kept for a grace second after the
+ * last unsubscribe so a remount reuses it; a per-subscription revision drops stale or
+ * duplicate snapshots. A handler error in a re-run reaches `onError`; the last good value stays.
+ */
+function createRegistry(transport: Transport) {
+  const entries = new Map<string, Entry>();
+  const deliver = (
+    listener: { onSnapshot: (value: unknown) => void; options: SubscribeOptions },
+    reply: Reply
+  ) =>
+    reply.ok
+      ? listener.onSnapshot(reply.value)
+      : listener.options.onError?.(new HandlerError(reply.code, reply.details));
+  return (
+    handler: string,
+    args: unknown,
+    onSnapshot: (value: unknown) => void,
+    options: SubscribeOptions = {}
+  ): Unsubscribe => {
+    const key = `${handler} ${canonical(args)}`;
+    let entry = entries.get(key);
+    if (entry === undefined) {
+      const created: Entry = { listeners: new Set(), revision: 0, last: undefined };
+      entry = created;
+      entries.set(key, created);
+      created.unsubscribe = transport.subscribe("server.call", { handler, args }, (event) => {
+        if (event.type === "snapshot") {
+          if (event.revision <= created.revision) return;
+          created.revision = event.revision;
+          const reply = event.value as Reply;
+          created.last = { reply };
+          for (const listener of created.listeners) deliver(listener, reply);
+        } else if (event.type === "must-resync") {
+          // Continuity was lost: the next snapshot starts a new revision clock. Data is kept.
+          created.revision = 0;
+          for (const listener of created.listeners) listener.options.onStatus?.("resyncing");
+        } else if (event.type === "up-to-date") {
+          for (const listener of created.listeners) listener.options.onStatus?.("up-to-date");
+        } else if (event.type === "stop") {
+          for (const listener of created.listeners) listener.options.onStatus?.("stopped");
+        } else {
+          for (const listener of created.listeners) listener.options.onError?.(event.error);
+        }
+      });
+    }
+    clearTimeout(entry.grace);
+    const listener = { onSnapshot, options };
+    entry.listeners.add(listener);
+    if (entry.last !== undefined) deliver(listener, entry.last.reply);
+    return () => {
+      const current = entries.get(key);
+      if (current === undefined || !current.listeners.delete(listener)) return;
+      if (current.listeners.size > 0) return;
+      current.grace = setTimeout(() => {
+        if (entries.get(key) !== current || current.listeners.size > 0) return;
+        entries.delete(key);
+        current.unsubscribe?.();
+      }, GRACE_MS);
+    };
+  };
+}
 
 export interface Page<R> {
   readonly rows: readonly R[];
@@ -41,7 +151,7 @@ export type ListOptions<R, I extends Indexes> = ListWindow &
         >;
       }[keyof I]
   );
-type TableIndexes<T extends TableDefinition> = T["indexes"] & {
+export type TableIndexes<T extends TableDefinition> = T["indexes"] & {
   readonly [
     N in Exclude<keyof T["columns"], keyof T["indexes"]> as T["columns"][N]["kind"] extends "ref"
       ? N
@@ -103,12 +213,15 @@ type Aliases<C extends Config, Kind extends "postgres" | "sharedTable"> = {
 export interface Client<
   C extends Config,
   S extends Factories = Record<never, never>,
-  P extends Factories = Record<never, never>
+  P extends Factories = Record<never, never>,
+  M = Record<never, never>
 > {
   readonly tables: { readonly [N in keyof C["tables"] & string]: OwnedTable<C, N> };
   readonly files: { readonly [N in keyof C["files"]]: FileStore };
   readonly shared: FactoryResults<S>;
   readonly connections: FactoryResults<P>;
+  /** PROTOTYPE for #314: `patchy.server.<module>.<export>(args)` on a tier 2 version. */
+  readonly server: ServerClient<M, C>;
   readonly route: Transport["route"];
   me(): Promise<Me | null>;
   close(): void;
@@ -130,19 +243,75 @@ export function createSharedTable<
   };
 }
 
+/**
+ * PROTOTYPE for #314: `patchy.server.<module>.<export>(args)`. A handler's own error arrives as
+ * a successful reply with `source: "handler"` and is rethrown as `HandlerError`; a Patchy
+ * refusal is a `PatchyError` as for every other operation. Modules are the `server/*.ts` names
+ * generation saw; a new file needs `patchy refresh`, a changed export does not.
+ */
+export function createServerClient<M, C extends Config>(
+  modules: readonly string[],
+  call: Call,
+  /** PROTOTYPE for #314 round 3: the transport subscriptions ride; omitted, `.subscribe` throws. */
+  transport?: Transport
+): ServerClient<M, C> {
+  const register = transport === undefined ? undefined : createRegistry(transport);
+  const entries = modules.map((module) => {
+    const handlers = new Proxy(
+      {},
+      {
+        get: (_target, name) =>
+          typeof name === "string"
+            ? Object.assign(
+                async (args: unknown = {}) => {
+                  const reply = (await call("server.call", {
+                    handler: `${module}.${name}`,
+                    args
+                  })) as Reply;
+                  if (reply.ok) return reply.value;
+                  throw new HandlerError(reply.code, reply.details);
+                },
+                {
+                  // Only a query may be subscribed; the server refuses anything else.
+                  subscribe: (
+                    args: unknown,
+                    onSnapshot: (value: unknown) => void,
+                    options?: SubscribeOptions
+                  ): Unsubscribe => {
+                    if (register === undefined)
+                      throw new PatchyError(
+                        "invalid_request",
+                        "Subscriptions need the browser shell.",
+                        {}
+                      );
+                    return register(`${module}.${name}`, args ?? {}, onSnapshot, options);
+                  }
+                }
+              )
+            : undefined
+      }
+    );
+    return [module, handlers] as const;
+  });
+  return Object.fromEntries(entries) as ServerClient<M, C>;
+}
+
 /** Config is a type only; the locally executed manifest supplies the declared runtime names. */
 export function createClient<
   C extends Config,
   S extends Factories = Record<never, never>,
-  P extends Factories = Record<never, never>
+  P extends Factories = Record<never, never>,
+  M = Record<never, never>
 >(
   manifest: ClientManifest,
   options: {
     readonly transport?: Transport;
     readonly shared: S & Record<Aliases<C, "sharedTable">, Factory>;
     readonly connections: P & Record<Aliases<C, "postgres">, Factory>;
+    /** PROTOTYPE for #314: the `server/` module names generation saw. */
+    readonly serverModules?: readonly string[];
   }
-): Client<C, S, P> {
+): Client<C, S, P, M> {
   const transport = options.transport ?? createPostMessageTransport();
   const call = transport.call;
   let identity: Promise<Me | null> | undefined;
@@ -243,6 +412,7 @@ export function createClient<
     files,
     shared: instantiate(options.shared, "sharedTable"),
     connections: instantiate(options.connections, "postgres"),
+    server: createServerClient<M, C>(options.serverModules ?? [], call, transport),
     route: transport.route,
     me: () => (identity ??= call("me", {}) as Promise<Me | null>),
     close: () => {
@@ -259,5 +429,5 @@ export function createClient<
       }
       urls.clear();
     }
-  } as Client<C, S, P>;
+  } as Client<C, S, P, M>;
 }

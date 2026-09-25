@@ -124,6 +124,18 @@ export const TablePage = Schema.Struct({
   cursor: Schema.NullOr(Schema.String)
 });
 
+/** PROTOTYPE for #314: what `server.call` answers. */
+export const ServerCallReply = Schema.Union([
+  Schema.Struct({ ok: Schema.Literal(true), value: Schema.Json }),
+  Schema.Struct({
+    ok: Schema.Literal(false),
+    source: Schema.Literal("handler"),
+    code: Schema.String,
+    details: Schema.optionalKey(Schema.Json)
+  })
+]).annotate({ identifier: "ServerCallReply" });
+export type ServerCallReply = typeof ServerCallReply.Type;
+
 /** Byte operations carry their bytes outside the JSON arguments. */
 export const runtimeOperations = {
   ...postgresOperations,
@@ -237,6 +249,20 @@ export const runtimeOperations = {
     }),
     response: Schema.Null,
     kind: "mutation"
+  },
+  // PROTOTYPE for #314: one operation for every handler kind. Admitted only on a tier 2
+  // version; treated as a mutation for the shell's Origin check. A handler's own error is a
+  // successful reply carrying `source: "handler"`; Patchy's refusals keep the failure shape.
+  "server.call": {
+    request: Schema.Struct({
+      op: Schema.Literal("server.call"),
+      args: Schema.Struct({
+        handler: Schema.String.check(Schema.isMinLength(3), Schema.isMaxLength(128)),
+        args: Schema.Record(Schema.String, Schema.Json)
+      })
+    }),
+    response: ServerCallReply,
+    kind: "mutation"
   }
 } as const;
 
@@ -303,7 +329,10 @@ export const RuntimeCode = Schema.Literals([
   "rate_limited",
   "too_many_requests",
   "busy",
-  "offset_exhausted"
+  "offset_exhausted",
+  // PROTOTYPE for #314: tier 2 refusals.
+  "handler_failed",
+  "handler_timeout"
 ]).annotate({ identifier: "RuntimeCode" });
 export type RuntimeCode = typeof RuntimeCode.Type;
 

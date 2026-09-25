@@ -16,6 +16,10 @@ export const make = Effect.gen(function* () {
         companyId: patch.companyId,
         manifest: version.manifest,
         wireVersion: version.wireVersion,
+        // PROTOTYPE for #314: the pinned server bundle a tier 2 invocation executes.
+        ...(version.serverObjectKey === null || version.serverHash === null
+          ? {}
+          : { server: { objectKey: version.serverObjectKey, digest: version.serverHash } }),
         scope:
           patch.scope === "public" && patch.currentVersionId === version.id
             ? ("public" as const)

@@ -17,6 +17,9 @@ import * as Sql from "@patchy/sql";
 import * as CompanyDatabases from "./CompanyDatabases.js";
 import * as Inventory from "./Inventory.js";
 
+// PROTOTYPE for #314 round 3: `connectionsPerCompany` (PATCHY_COMPANY_POOL_CONNECTIONS, default 4)
+// so the load runs can see what the pool alone changes; everything else is unchanged.
+
 export class CompanyDatabaseConfig extends Context.Service<
   CompanyDatabaseConfig,
   {
@@ -24,6 +27,8 @@ export class CompanyDatabaseConfig extends Context.Service<
     readonly dataUrl: Redacted.Redacted<string>;
     readonly maxBackends: number;
     readonly capacity: number;
+    /** Pool connections and operation permits per company; 4 unless configured. */
+    readonly connectionsPerCompany?: number;
   }
 >()("@patchy/company-database/PgCompanyDatabases/CompanyDatabaseConfig") {}
 
@@ -62,7 +67,11 @@ export const config = Config.all({
     Schema.Int.check(Schema.isGreaterThanOrEqualTo(4)),
     "PATCHY_COMPANY_DB_MAX_BACKENDS"
   ).pipe(Config.withDefault(200)),
-  capacity: Config.succeed(100)
+  capacity: Config.succeed(100),
+  connectionsPerCompany: Config.schema(
+    Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+    "PATCHY_COMPANY_POOL_CONNECTIONS"
+  ).pipe(Config.withDefault(4))
 });
 
 const duplicateDatabase = Schema.is(Schema.Struct({ code: Schema.Literal("42P04") }));
@@ -271,26 +280,27 @@ export const make = Effect.gen(function* () {
 
   // Reserve retained maxima, not only live operations. The reservation outlives pool.end().
   let reservedBackends = 0;
+  const perCompany = settings.connectionsPerCompany ?? 4;
   const registry = yield* RcMap.make({
     capacity: settings.capacity,
     idleTimeToLive: "60 seconds",
     lookup: Effect.fn("CompanyDatabases.openPool")(function* (key: PoolKey) {
       yield* Effect.acquireRelease(
         Effect.suspend(() => {
-          if (reservedBackends + 4 > settings.maxBackends) {
+          if (reservedBackends + perCompany > settings.maxBackends) {
             return Effect.fail(
               new CompanyDatabases.Busy({ resource: "backend budget", limit: settings.maxBackends })
             );
           }
-          reservedBackends += 4;
+          reservedBackends += perCompany;
           return Effect.void;
         }),
         () =>
           Effect.sync(() => {
-            reservedBackends -= 4;
+            reservedBackends -= perCompany;
           })
       );
-      const sql = yield* pool(settings.dataUrl, 4, key.databaseName).pipe(
+      const sql = yield* pool(settings.dataUrl, perCompany, key.databaseName).pipe(
         Effect.mapError(
           (cause) =>
             new CompanyDatabases.CompanyDatabaseError({
@@ -304,7 +314,7 @@ export const make = Effect.gen(function* () {
         context: Context.make(SqlClient.SqlClient, sql).pipe(
           Context.add(CompanyDatabases.CompanyConnection, sql)
         ),
-        permits: yield* Semaphore.make(4)
+        permits: yield* Semaphore.make(perCompany)
       };
     })
   });
@@ -352,7 +362,10 @@ export const make = Effect.gen(function* () {
               entry.permits.withPermitsIfAvailable(1)
             );
             if (Option.isNone(result)) {
-              return yield* new CompanyDatabases.Busy({ resource: "company operations", limit: 4 });
+              return yield* new CompanyDatabases.Busy({
+                resource: "company operations",
+                limit: perCompany
+              });
             }
             return result.value;
           })

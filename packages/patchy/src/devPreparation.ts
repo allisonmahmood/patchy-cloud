@@ -11,6 +11,8 @@ import { ManagedProject, isProjectChanged, presentSkills, safePath } from "./Man
 import * as Project from "./Project.js";
 import { RELEASE } from "./release.js";
 import { primitiveReminders } from "./primitiveReminders.js";
+// PROTOTYPE for #314
+import { serverModules } from "./serverBuild.js";
 
 export const Prepared = Schema.Struct({
   manifest: Manifest,
@@ -84,13 +86,15 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
           if (info.type !== "File") return yield* new FixtureMissing({ path: relative });
         }
         const skills = yield* io("Read project skills", () => presentSkills(root));
+        const modules = yield* serverModules(root);
         const generated = yield* client
           .generate({
             payload: {
               release: RELEASE,
               manifest: unresolved,
               skills,
-              ...(repo.patch === undefined ? {} : { patchId: repo.patch })
+              ...(repo.patch === undefined ? {} : { patchId: repo.patch }),
+              ...(modules.length === 0 ? {} : { serverModules: modules })
             }
           })
           .pipe(Effect.catch((error) => Api.classify(error, "Generation failed.")));

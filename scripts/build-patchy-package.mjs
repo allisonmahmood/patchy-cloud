@@ -15,7 +15,8 @@ const distDir = path.join(packageDir, "dist");
 const packageJson = JSON.parse(await readFile(path.join(packageDir, "package.json"), "utf8"));
 const rootSkillsDir = path.join(repoRoot, "skills");
 const packageSkillsDir = path.join(packageDir, "skills");
-const publicEntries = ["config", "client", "dev"];
+// PROTOTYPE for #314: `server` is the handler contract, bundled for the browser-like guest.
+const publicEntries = ["config", "client", "server", "preact", "dev"];
 
 const literals = async (file) => {
   const source = ts.createSourceFile(
@@ -78,12 +79,16 @@ await esbuild.build({
 });
 await esbuild.build({
   ...common,
-  entryPoints: ["config", "client"].map((name) => path.join(packageDir, `src/${name}.ts`)),
+  entryPoints: ["config", "client", "server", "preact"].map((name) =>
+    path.join(packageDir, `src/${name}.ts`)
+  ),
   outdir: distDir,
   platform: "browser",
   target: "es2022",
   // Config builders stay lightweight; executeConfig loads the separate Node bundle on demand.
-  external: ["./executeConfig.js"]
+  // PROTOTYPE for #314: preact stays the patch's own single copy; a bundled second copy would
+  // break hooks and signals silently.
+  external: ["./executeConfig.js", "preact", "preact/*", "@preact/*"]
 });
 await esbuild.build({
   ...common,
@@ -100,6 +105,7 @@ const declarations = await rollup({
   input: Object.fromEntries(
     publicEntries.map((name) => [name, path.join(packageDir, `src/${name}.ts`)])
   ),
+  external: [/^preact(\/|$)/, /^@preact\//],
   plugins: [
     dts({
       tsconfig: path.join(packageDir, "tsconfig.build.json"),

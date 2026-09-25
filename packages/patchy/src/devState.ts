@@ -18,7 +18,9 @@ export const Daemon = Schema.Struct({
   nonce: Schema.String,
   pid: Schema.Int,
   birth: Schema.String,
-  url: Schema.optionalKey(Schema.String)
+  url: Schema.optionalKey(Schema.String),
+  // PROTOTYPE for #314: the second viewer's mount on a tier 2 repo.
+  colleagueUrl: Schema.optionalKey(Schema.String)
 });
 export type Daemon = typeof Daemon.Type;
 const decodeDaemon = Schema.decodeUnknownSync(Schema.fromJsonString(Daemon));

@@ -51,3 +51,6 @@ allowBuilds:
   "@embedded-postgres/linux-ia32": true
   "@embedded-postgres/linux-ppc64": true
   simple-git-hooks: true
+  # PROTOTYPE for #314: workerd's postinstall only downloads a binary when the platform
+  # package is missing; @cloudflare/workerd-linux-64 ships it, so the script stays off.
+  workerd: false

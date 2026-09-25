@@ -63,6 +63,9 @@ import {
 } from "@patchy/api";
 import { contentHash, validateHtml } from "@patchy/core";
 import { Limits } from "@patchy/limits";
+// PROTOTYPE for #314: tier 2 publish re-derives the handler map by loading the bundle.
+import { Engine } from "@patchy/execution";
+import { diffHandlers, handlersOf } from "@patchy/api";
 import * as Content from "./Content.js";
 import * as Patches from "./Patches.js";
 import * as PatchesConfig from "./PatchesConfig.js";
@@ -260,6 +263,9 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
     const maxShareBodyBytes = maxHtmlBytes * 3;
     const currentRelease = yield* PatchesConfig.release;
     const livePatchesPerUser = yield* PatchesConfig.livePatchesPerUser;
+    // PROTOTYPE for #314: optional so the existing test layers need no engine; without it a
+    // tier 2 publish is refused, never admitted unchecked.
+    const engine = yield* Effect.serviceOption(Engine.Engine);
 
     const readOne = Effect.fn("PatchesApi.readOne")(function* (
       patchRef: string,
@@ -379,8 +385,36 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             })
           );
           if (HttpServerResponse.isHttpServerResponse(payload)) return payload;
-          if (manifest.tier >= 2)
-            return rejected("tier_mismatch", "Tier 2 and above are not served yet.");
+          if (manifest.tier >= 3)
+            return rejected("tier_mismatch", "Tier 3 and above are not served yet.");
+          // PROTOTYPE for #314: a tier 2 version needs its server bundle, and the handler map it
+          // declares must equal what the engine derives from the exact bytes about to be stored.
+          if (manifest.tier === 2) {
+            if (Option.isNone(engine))
+              return rejected("tier_mismatch", "This instance has no execution engine for tier 2.");
+            if (payload.server === undefined || payload.server.trim() === "")
+              return rejected("invalid_manifest", "A tier 2 publish carries a server bundle.");
+            if (Buffer.byteLength(payload.server, "utf8") > maxBundleBytes)
+              return refuse(PayloadTooLarge, {
+                ok: false,
+                error: `Server bundle exceeds ${maxBundleBytes} bytes.`
+              });
+            const derived = yield* engine.value.inspect(payload.server).pipe(Effect.result);
+            if (derived._tag === "Failure")
+              return rejected(
+                "invalid_manifest",
+                derived.failure._tag === "InspectionFailed"
+                  ? `The server bundle could not be loaded: ${derived.failure.reason}`
+                  : "The execution engine is unavailable; try again."
+              );
+            const disagreement = diffHandlers(handlersOf(manifest.handlers), derived.success);
+            if (disagreement !== undefined)
+              return rejected(
+                "invalid_manifest",
+                `The manifest's handlers disagree with the server bundle at ${disagreement}. Rebuild with patchy publish.`
+              );
+          } else if (payload.server !== undefined)
+            return rejected("tier_mismatch", "Only a tier 2 publish carries a server bundle.");
           const bytes = Buffer.byteLength(payload.html, "utf8");
           let title = manifest.name || "Untitled Patch";
           let warnings: string[] = [];
@@ -433,6 +467,9 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
               description: metadata.description ?? manifest.description,
               title,
               html: payload.html,
+              ...(manifest.tier === 2 && payload.server !== undefined
+                ? { server: payload.server }
+                : {}),
               filename: cleanText(metadata.filename),
               repoOrg: cleanText(metadata.repoOrg),
               repoName: cleanText(metadata.repoName),

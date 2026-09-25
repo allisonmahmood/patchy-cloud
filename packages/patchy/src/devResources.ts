@@ -12,7 +12,12 @@ import {
   PostgresOperations
 } from "@patchy/integrations/dev";
 import { Files, TableOperations, Tables } from "@patchy/primitives";
-import { LoadedVersions, me } from "@patchy/runtime/core";
+import { LoadedVersions, me, Runtime } from "@patchy/runtime/core";
+// PROTOTYPE for #314
+import { Engine, ServerCall, Transaction } from "@patchy/execution";
+import { sha256 as digestOf } from "@patchy/core";
+import type { Handlers } from "@patchy/api";
+import * as Console from "effect/Console";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -194,10 +199,53 @@ const make = Effect.fn("DevResources.make")(function* (prepared: Prepared, state
     });
   }
   const postgres = yield* PostgresOperations.makeHandlers;
-  const handlers = { me, ...(yield* TableOperations.make), ...(yield* Files.make), ...postgres };
+  const base = { me, ...(yield* TableOperations.make), ...(yield* Files.make), ...postgres };
+  // PROTOTYPE for #314: on tier 2 the `server.call` handler runs beside the table handlers; the
+  // bundle for a binding is the one its digest names, kept in memory per build.
+  const bundles = new Map<string, string>();
+  const engine = yield* Effect.serviceOption(Engine.Engine);
+  // Round 3: callback targets are table handlers over the joining databases, so a callback runs
+  // on the invocation's held connection instead of borrowing a second one.
+  const joiningTables =
+    prepared.manifest.tier === 2 && Option.isSome(engine)
+      ? yield* TableOperations.make.pipe(
+          Effect.provideService(
+            CompanyDatabases.CompanyDatabases,
+            Transaction.joiningDatabases(databases)
+          )
+        )
+      : {};
+  const handlers =
+    prepared.manifest.tier === 2 && Option.isSome(engine)
+      ? {
+          ...base,
+          "server.call": yield* ServerCall.make(
+            { ...base, ...joiningTables },
+            {
+              bundle: (binding) => {
+                const bundle =
+                  binding.server === undefined ? undefined : bundles.get(binding.server.digest);
+                return bundle === undefined
+                  ? Effect.fail(new Runtime.SourceUnavailable({ cause: new Error("bundle gone") }))
+                  : Effect.succeed(bundle);
+              },
+              log: (binding, line, details) =>
+                Console.log(
+                  `[${binding.identity?.user.email ?? "anonymous"}] ${line}${details === undefined ? "" : ` ${encodeJson(details)}`}`
+                )
+            }
+          ).pipe(Effect.provideService(Engine.Engine, engine.value))
+        }
+      : base;
   if (state.changed || state.initialize) yield* fs.writeFileString(state.stampPath, state.stamp);
-  return { handlers, version: state.version };
+  return { handlers, bundles, engine };
 });
+
+/** PROTOTYPE for #314: binds a rebuilt server bundle and swaps the loaded version to it. */
+export type SetServer = (
+  bundle: string,
+  handlers: Handlers
+) => Effect.Effect<{ readonly digest: string; readonly bindMs: number }, Engine.EngineUnavailable>;
 
 /** Local databases and bytes are disposable; the server's published inventory is authority. */
 export const prepare = Effect.fn("DevResources.prepare")(function* (
@@ -318,17 +366,24 @@ export const prepare = Effect.fn("DevResources.prepare")(function* (
       })
     );
   }
+  // PROTOTYPE for #314: the loaded version is swapped whole on a server rebuild; admission reads
+  // it once, so an in-flight call keeps the version (bundle digest and handlers) it started with.
+  let current: LoadedVersions.LoadedVersion = version;
   const loaded = Layer.succeed(
     LoadedVersions.LoadedVersions,
     LoadedVersions.LoadedVersions.of({
       find: (patchId, requestedVersion) => {
         if (requestedVersion !== undefined)
           return Effect.succeed(
-            patchId === version.patchId && requestedVersion === version.versionId
-              ? Option.some(version)
+            patchId === current.patchId && requestedVersion === current.versionId
+              ? Option.some(current)
               : Option.none()
           );
-        return Effect.succeed(Option.fromUndefinedOr(versions.get(patchId)));
+        return Effect.succeed(
+          patchId === current.patchId
+            ? Option.some(current)
+            : Option.fromUndefinedOr(versions.get(patchId))
+        );
       }
     })
   );
@@ -406,5 +461,32 @@ export const prepare = Effect.fn("DevResources.prepare")(function* (
     versions,
     fixtures
   }).pipe(Effect.provideContext(context));
-  return { ...preparedResources, context };
+  const engine = Option.getOrUndefined(preparedResources.engine);
+  const setServer: SetServer | undefined =
+    engine === undefined
+      ? undefined
+      : (bundle, handlers) =>
+          Effect.gen(function* () {
+            const digest = digestOf(bundle);
+            preparedResources.bundles.set(digest, bundle);
+            const bound = yield* engine.bind(
+              `${version.patchId}@${version.versionId}#${digest}`,
+              bundle
+            );
+            current = {
+              ...current,
+              manifest: { ...current.manifest, handlers },
+              server: { objectKey: digest, digest }
+            };
+            versions.set(version.patchId, current);
+            return { digest, bindMs: bound.bindMs };
+          });
+  return {
+    handlers: preparedResources.handlers,
+    context,
+    version,
+    /** PROTOTYPE for #314: the version admission sees now; a rebuild swaps it whole. */
+    currentVersion: () => current,
+    setServer
+  };
 });

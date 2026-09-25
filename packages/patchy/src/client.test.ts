@@ -1,3 +1,4 @@
+// PROTOTYPE for #314 round 3: the Operation union gains the shell-local subscribe/unsubscribe (as in #313).
 import { resolveObjectURL } from "node:buffer";
 import { expect, it } from "vitest";
 import { build } from "esbuild";
@@ -151,7 +152,7 @@ it("infers the owned facade and generated aliases without widening index, id, or
   const source = `import { createClient, createSharedTable, type Call, type ErrorCode, type Operation, type Me, type FileMetadata } from "patchy/client";
 import { defineConfig, table, t, files, postgres, sharedTable, type Id } from "patchy/config";
 type Equal<A, B> = [A] extends [B] ? [B] extends [A] ? true : false : false;
-const operationsConform: Equal<Operation, "route.set" | "download" | ${Object.keys(
+const operationsConform: Equal<Operation, "route.set" | "download" | "subscribe" | "unsubscribe" | ${Object.keys(
     runtimeOperations
   )
     .map((name) => JSON.stringify(name))

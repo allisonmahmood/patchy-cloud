@@ -10,13 +10,49 @@ import { safePath } from "./ManagedProject.js";
 export function starterFiles(options: {
   instance: string;
   name: string;
-  tier: 0 | 1;
+  tier: 0 | 1 | 2;
   purpose: string;
   tarball: string;
 }): Record<string, string> {
   const { instance, name, tier, purpose, tarball } = options;
   const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
-  return {
+  // PROTOTYPE for #314: tier 2 lays down server/notes.ts and a client that calls it. The
+  // client stays vanilla TypeScript here; the Preact scaffold of #296 is deferred.
+  // PROTOTYPE for #314 round 2: the tier 2 scaffold is Preact with compat semantics, exactly
+  // the #296 point 14 recipe: empty root, src/main.tsx + src/App.tsx, exact pins in
+  // dependencies, jsx react-jsx + jsxImportSource preact in tsconfig and oxc.jsx.importSource in
+  // the Vite config so the two cannot disagree, modulePreload off, preact/debug only behind an
+  // awaited dynamic import in the DEV branch. No preset, router or test runner.
+  const tier2: Record<string, string> =
+    tier === 2
+      ? {
+          "server/notes.ts": `import { query, mutation, t, HandlerError } from "../patchy/_generated/server.js";\n\n/** Every note, newest first. */\nexport const list = query({\n  args: t.object({}),\n  result: t.array(t.row("notes")),\n  handler: async (ctx) => (await ctx.tables.notes.list({ limit: 100 })).rows\n});\n\n/** Adds a note as the viewer; an empty title is the handler's own error, not a refusal. */\nexport const add = mutation({\n  args: t.object({ title: t.text() }),\n  result: t.row("notes"),\n  errors: ["empty_title"],\n  handler: async (ctx, { title }) => {\n    if (title.trim() === "") throw new HandlerError("empty_title");\n    ctx.log("adding a note", { by: ctx.viewer.user.email });\n    return ctx.tables.notes.insert({ title: title.trim() });\n  }\n});\n`,
+          "src/main.tsx": `import { render } from "patchy/preact";\nimport { App } from "./App.js";\n\n// Debug helpers only in the local dev shell, never shipped: the build drops this branch.\nif (import.meta.env.DEV) await import("preact/debug");\n\nrender(<App />, document.getElementById("root")!);\n`,
+          "src/App.tsx": `import { forwardRef, useCallback, useEffect, useRef, useState } from "patchy/preact";\nimport { patchy, isHandlerError } from "../patchy/_generated/client.js";\n\ntype Note = Awaited<ReturnType<typeof patchy.server.notes.list>>[number];\n\n/** A ref on a function component: compat forwards it, so the parent can focus the input. */\nconst TitleInput = forwardRef<HTMLInputElement, { value: string; onChange: (value: string) => void; keystrokes: number }>(\n  ({ value, onChange, keystrokes }, ref) => (\n    <label>\n      Title{" "}\n      <input ref={ref} name="title" value={value} onChange={(event) => onChange(event.currentTarget.value)} data-keystrokes={keystrokes} />\n    </label>\n  )\n);\n\nexport function App() {\n  const [notes, setNotes] = useState<readonly Note[]>([]);\n  const [title, setTitle] = useState("");\n  const [keystrokes, setKeystrokes] = useState(0);\n  const [error, setError] = useState("");\n  const [viewer, setViewer] = useState("");\n  const input = useRef<HTMLInputElement>(null);\n  const refresh = useCallback(async () => setNotes(await patchy.server.notes.list({})), []);\n  useEffect(() => {\n    void refresh().catch((cause: unknown) => setError(String(cause)));\n    void patchy.me().then((me) => setViewer(me === null ? "" : \`Signed in as \${me.user.name}\`));\n  }, [refresh]);\n  const save = async () => {\n    try {\n      await patchy.server.notes.add({ title });\n      setTitle("");\n      setError("");\n      await refresh();\n      input.current?.focus();\n    } catch (cause) {\n      setError(isHandlerError(cause, "empty_title") ? "A note needs a title." : String(cause));\n    }\n  };\n  return (\n    <main>\n      <h1>Notes</h1>\n      <p id="viewer">{viewer}</p>\n      {/* The sandbox blocks native form submission; save through the broker instead. */}\n      <form id="notes" onSubmit={(event) => event.preventDefault()} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void save(); } }}>\n        <TitleInput ref={input} value={title} keystrokes={keystrokes} onChange={(value) => { setTitle(value); setKeystrokes((n) => n + 1); }} />\n        <button type="button" onClick={() => void save()}>Add note</button>\n      </form>\n      <p id="error" role="alert">{error}</p>\n      <ul id="list">{notes.map((note) => <li key={note.id}>{note.title}</li>)}</ul>\n    </main>\n  );\n}\n`,
+          "vite.config.ts":
+            'import { defineConfig } from "vite";\nimport { viteSingleFile } from "vite-plugin-singlefile";\n\n// jsxImportSource here and in tsconfig.json name the same runtime, so the two cannot disagree.\nexport default defineConfig({\n  plugins: [viteSingleFile()],\n  oxc: { jsx: { importSource: "preact" } },\n  build: { modulePreload: false },\n  server: { host: "127.0.0.1" }\n});\n',
+          "tsconfig.json": json({
+            compilerOptions: {
+              target: "ES2022",
+              lib: ["ES2022", "DOM", "DOM.Iterable"],
+              module: "ESNext",
+              moduleResolution: "Bundler",
+              jsx: "react-jsx",
+              jsxImportSource: "preact",
+              strict: true,
+              noEmit: true,
+              isolatedModules: true,
+              verbatimModuleSyntax: true,
+              resolveJsonModule: true,
+              esModuleInterop: true,
+              skipLibCheck: true,
+              types: ["node", "vite/client"]
+            },
+            include: ["src", "server", "patchy", "patchy.config.ts", "vite.config.ts"]
+          })
+        }
+      : {};
+  const files: Record<string, string> = {
     "patchy.json": json({ instance, description: purpose }),
     "fixtures/.gitkeep": "",
     "package.json": json({
@@ -24,22 +60,28 @@ export function starterFiles(options: {
       private: true,
       type: "module",
       scripts: { typecheck: "tsc --noEmit", build: "vite build" },
+      // Exact pins in dependencies, not devDependencies, so the allowlist check reads one field.
+      ...(tier === 2 ? { dependencies: { preact: "10.29.8", "@preact/signals": "2.11.2" } } : {}),
       devDependencies: {
         patchy: tarball,
         typescript: "^6.0.3",
         vite: "^8.3.0",
         "vite-plugin-singlefile": "^2.3.3",
-        "@types/node": "^22.19.0"
+        "@types/node": "^22.19.0",
+        // PROTOTYPE for #314: the engine `patchy dev` and `patchy publish` run handlers in.
+        ...(tier === 2 ? { workerd: "1.20260924.1" } : {})
       }
     }),
     "patchy.config.ts": `import { defineConfig, table, t } from "patchy/config";\n\nexport default defineConfig({\n  name: ${JSON.stringify(name)},\n  tier: ${tier},\n  tables: { notes: table("One note per id, with a title.", { title: t.text() }) },\n  files: {},\n  uses: {}\n});\n`,
     "index.html":
-      tier === 1
-        ? '<!doctype html>\n<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Notes</title></head><body><h1>Notes</h1><form id="notes"><label>Title <input name="title" required></label><button type="button">Add note</button></form><p id="error" role="alert"></p><ul id="list"></ul><script type="module" src="/src/main.ts"></script></body></html>\n'
-        : '<!doctype html>\n<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>My patch</title></head><body><h1>My patch</h1><p>A static page. Change the config to tier 1 before adding browser code.</p></body></html>\n',
+      tier === 2
+        ? '<!doctype html>\n<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Notes</title></head><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>\n'
+        : tier === 1
+          ? '<!doctype html>\n<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Notes</title></head><body><h1>Notes</h1><form id="notes"><label>Title <input name="title" required></label><button type="button">Add note</button></form><p id="error" role="alert"></p><ul id="list"></ul><script type="module" src="/src/main.ts"></script></body></html>\n'
+          : '<!doctype html>\n<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>My patch</title></head><body><h1>My patch</h1><p>A static page. Change the config to tier 1 before adding browser code.</p></body></html>\n',
     "src/main.ts": `import { patchy } from "../patchy/_generated/client.js";\n\nconst form = document.querySelector<HTMLFormElement>("#notes")!;\nconst list = document.querySelector<HTMLUListElement>("#list")!;\nconst error = document.querySelector<HTMLParagraphElement>("#error")!;\nasync function render() {\n  const page = await patchy.tables.notes.list({ limit: 100 });\n  list.replaceChildren(...page.rows.map((note) => {\n    const item = document.createElement("li");\n    item.textContent = note.title;\n    return item;\n  }));\n}\nfunction save() {\n  if (!form.reportValidity()) return;\n  const title = String(new FormData(form).get("title") ?? "").trim();\n  if (!title) return;\n  void (async () => {\n    await patchy.tables.notes.insert({ title });\n    form.reset();\n    await render();\n  })().catch((cause: unknown) => { error.textContent = cause instanceof Error ? cause.message : String(cause); });\n}\n// The sandbox blocks native form submission; save through the broker instead.\nform.querySelector("button")!.addEventListener("click", save);\nform.addEventListener("keydown", (event) => {\n  if (event.key === "Enter" && event.target instanceof HTMLInputElement && !event.isComposing) {\n    event.preventDefault();\n    save();\n  }\n});\nvoid render().catch((cause: unknown) => { error.textContent = cause instanceof Error ? cause.message : String(cause); });\n`,
     "vite.config.ts":
-      'import { defineConfig } from "vite";\nimport { viteSingleFile } from "vite-plugin-singlefile";\n\nexport default defineConfig({ plugins: [viteSingleFile()], server: { host: "127.0.0.1" } });\n',
+      'import { defineConfig } from "vite";\nimport { viteSingleFile } from "vite-plugin-singlefile";\n\nexport default defineConfig({ plugins: [viteSingleFile()], build: { modulePreload: false }, server: { host: "127.0.0.1" } });\n',
     "tsconfig.json": json({
       compilerOptions: {
         target: "ES2022",
@@ -53,12 +95,22 @@ export function starterFiles(options: {
         skipLibCheck: true,
         types: ["node", "vite/client"]
       },
-      include: ["src", "patchy", "patchy.config.ts", "vite.config.ts"]
+      include: [
+        "src",
+        "patchy",
+        "patchy.config.ts",
+        "vite.config.ts",
+        ...(tier === 2 ? ["server"] : [])
+      ]
     }),
-    "AGENTS.md": `# Purpose\n\n${purpose}\n\nThe purpose above is independent of the published description in \`patchy.json\`.\n\n# Working here\n\nInstallation already ran. Do not reinstall to start building. Run \`pnpm patchy --help\` for commands; test with \`patchy dev\` (\`pnpm patchy dev\` from this repo).\n\n- \`patchy.json\`: instance, optional patch id, published description and its sync stamp. Edit the description here; cloud edits pull down at refresh, dev start and publish.\n- \`patchy.config.ts\`: owned tables and file stores with their descriptions, and declared connections/shared tables.\n- \`src/main.ts\`, \`index.html\`: the browser UI; \`vite.config.ts\` builds one HTML file.\n- \`fixtures/\`: local rows only, never production data.\n- \`patchy/_generated/index.json\`: generated index linking every declaration, revision, context and skill. Never edit generated files.\n- \`.agents/skills/patchy-loop/SKILL.md\`: the local build loop.\n- \`.agents/skills/patchy-tables/SKILL.md\`: owned tables.\n- \`.agents/skills/patchy-files/SKILL.md\`: owned files.\n- Integration skills appear under \`.agents/skills/patchy-postgres/SKILL.md\` and \`.agents/skills/patchy-shared-tables/SKILL.md\` when declared.\n\nRun \`pnpm patchy refresh\` after editing declarations. Deleting \`.patchy/\` destroys local rows and files.\n`,
+    "AGENTS.md": `# Purpose\n\n${purpose}\n\nThe purpose above is independent of the published description in \`patchy.json\`.\n\n# Working here\n\nInstallation already ran. Do not reinstall to start building. Run \`pnpm patchy --help\` for commands; test with \`patchy dev\` (\`pnpm patchy dev\` from this repo).\n\n- \`patchy.json\`: instance, optional patch id, published description and its sync stamp. Edit the description here; cloud edits pull down at refresh, dev start and publish.\n- \`patchy.config.ts\`: owned tables and file stores with their descriptions, and declared connections/shared tables.\n- ${tier === 2 ? "`src/main.tsx`, `src/App.tsx`" : "`src/main.ts`"}, \`index.html\`: the browser UI${tier === 2 ? " (Preact with compat semantics through `patchy/preact`; read `.agents/skills/patchy-preact/SKILL.md`)" : ""}; \`vite.config.ts\` builds one HTML file.\n${tier === 2 ? "- `server/*.ts`: the handlers (queries, mutations, actions) the browser calls through `patchy.server.<file>.<export>`; they run on Patchy's engine, never in the browser. Read `.agents/skills/patchy-server/SKILL.md` first.\n" : ""}- \`fixtures/\`: local rows only, never production data.\n- \`patchy/_generated/index.json\`: generated index linking every declaration, revision, context and skill. Never edit generated files.\n- \`.agents/skills/patchy-loop/SKILL.md\`: the local build loop.\n- \`.agents/skills/patchy-tables/SKILL.md\`: owned tables.\n- \`.agents/skills/patchy-files/SKILL.md\`: owned files.\n${tier === 2 ? "- `.agents/skills/patchy-server/SKILL.md`: server handlers, their context, errors and the import rule.\n" : ""}- Integration skills appear under \`.agents/skills/patchy-postgres/SKILL.md\` and \`.agents/skills/patchy-shared-tables/SKILL.md\` when declared.\n\nRun \`pnpm patchy refresh\` after editing declarations. Deleting \`.patchy/\` destroys local rows and files.\n`,
     "CLAUDE.md": "@AGENTS.md\n",
-    ".gitignore": ".patchy/\nnode_modules/\ndist/\n"
+    ".gitignore": ".patchy/\nnode_modules/\ndist/\n",
+    // Last, so the tier 2 files replace the tier 1 client, Vite config and tsconfig above.
+    ...tier2
   };
+  if (tier === 2) delete files["src/main.ts"];
+  return files;
 }
 
 /** The caller discards the entire init stage on failure; no nested transaction is needed. */

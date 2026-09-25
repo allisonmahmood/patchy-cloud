@@ -56,6 +56,8 @@ export interface ExecutedManifest {
   readonly uses: Readonly<
     Record<string, Declaration & { readonly id: string; readonly revision: number }>
   >;
+  // PROTOTYPE for #314: tier 2 handler descriptors, written by the publish build, not config.
+  readonly handlers?: Readonly<Record<string, Json>>;
 }
 
 /** Generation resolves declarations on the instance, before there can be local stamps. */
