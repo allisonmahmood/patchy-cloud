@@ -94,23 +94,21 @@ export default {
 };
 
 // The capability broker: forwards a guest's operation to the host with the per-invocation
-// capability the guest never holds. A refusal comes back as a thrown error carrying the code.
+// capability the guest never holds. A refusal is returned as data, not thrown: an Error's own
+// properties do not survive the RPC hop into the guest isolate, so the guest entry rethrows it.
 export class Callbacks extends WorkerEntrypoint {
   async call(op, args) {
     const inv = invocations.get(this.ctx.props.invocationId);
-    if (!inv) throw Object.assign(new Error("callback refused: invocation ended"), { patchyRefusal: { code: "capability_refused" } });
+    if (!inv) return { ok: false, code: "capability_refused", message: "callback refused: invocation ended" };
     const res = await fetch(inv.hostUrl + "/callback", {
       method: "POST",
       headers: { "content-type": "application/json", authorization: "Bearer " + inv.capability },
       body: JSON.stringify({ op, args })
     });
     const out = await res.json();
-    if (!res.ok || out.ok !== true) {
-      throw Object.assign(new Error("callback refused: " + (out.code ?? res.status)), {
-        patchyRefusal: { code: out.code ?? "capability_refused", details: out.details, message: out.message }
-      });
-    }
-    return out.result;
+    if (!res.ok || out.ok !== true)
+      return { ok: false, code: out.code ?? "capability_refused", message: out.message ?? ("callback refused: " + res.status), details: out.details };
+    return { ok: true, result: out.result };
   }
 }
 

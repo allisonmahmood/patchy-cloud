@@ -94,6 +94,7 @@ const report = (record: Daemon, stateDir: string, warnings: readonly string[] = 
       ok: true,
       healthy: true,
       url: record.url,
+      ...(record.colleagueUrl === undefined ? {} : { colleagueUrl: record.colleagueUrl }),
       logPath: logPath(stateDir),
       stop,
       pid: record.pid,
@@ -101,7 +102,13 @@ const report = (record: Daemon, stateDir: string, warnings: readonly string[] = 
       identity: record.identity,
       warnings
     },
-    [...warnings, record.url!, `Log: ${logPath(stateDir)}`, `Stop: ${stop}`]
+    [
+      ...warnings,
+      record.url!,
+      ...(record.colleagueUrl === undefined ? [] : [`As colleague: ${record.colleagueUrl}`]),
+      `Log: ${logPath(stateDir)}`,
+      `Stop: ${stop}`
+    ]
   );
 };
 

@@ -7,7 +7,7 @@
 // handler runs and `result` after it; a query's writes are refused by the callback host, not
 // only by these types. Skipped in this slice: `ctx.shared`, `ctx.files`, `ctx.connections`,
 // `ctx.run` and the mutation key.
-import type { Config, FieldDescriptor, Infer, Json, ObjectDescriptor, Row } from "./config.js";
+import type { Config, FieldDescriptor, Infer, Json, Row } from "./config.js";
 import type { OwnedTable, ReadTable, TableIndexes } from "./client.js";
 export { t } from "./config.js";
 export { HandlerError, isHandlerError } from "./handlerError.js";
@@ -36,9 +36,12 @@ export interface Context<C extends Config, Kind extends HandlerKind> {
   readonly log: (message: string, details?: Json) => void;
 }
 
+/** `args` is always an object descriptor; both constraints are structural, never the classes. */
+export type ArgsDescriptor = FieldDescriptor & { readonly descriptor: "object" };
+
 export interface Handler<
   Kind extends HandlerKind = HandlerKind,
-  Args extends ObjectDescriptor = ObjectDescriptor,
+  Args extends ArgsDescriptor = ArgsDescriptor,
   Result extends FieldDescriptor = FieldDescriptor,
   Errors extends string = string,
   C extends Config = Config
@@ -53,7 +56,7 @@ export interface Handler<
 
 export interface Declaration<
   Kind extends HandlerKind,
-  Args extends ObjectDescriptor,
+  Args extends ArgsDescriptor,
   Result extends FieldDescriptor,
   Errors extends string,
   C extends Config
@@ -66,7 +69,7 @@ export interface Declaration<
 
 const declare =
   <C extends Config, Kind extends HandlerKind>(kind: Kind) =>
-  <Args extends ObjectDescriptor, Result extends FieldDescriptor, Errors extends string = never>(
+  <Args extends ArgsDescriptor, Result extends FieldDescriptor, Errors extends string = never>(
     definition: Declaration<Kind, Args, Result, Errors, C>
   ): Handler<Kind, Args, Result, Errors, C> => {
     if (definition.args === undefined || definition.result === undefined)

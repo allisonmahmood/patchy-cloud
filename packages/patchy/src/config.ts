@@ -76,7 +76,12 @@ export const t = {
 // PROTOTYPE for #314: descriptors for handler arguments and results. Serialised to JSON
 // beside the column descriptors; `optional` on a field means the key may be omitted, `nullable`
 // admits null. `.default()` keeps its table-only meaning and is refused in a handler descriptor.
-export type FieldDescriptor = Column | Descriptor;
+// Structural on purpose: constraining on the classes makes the checker compare their
+// `this`-typed methods recursively ("excessively deep") once handlers reference them.
+export interface FieldDescriptor {
+  readonly isOptional: boolean;
+  toJSON(): Record<string, unknown>;
+}
 export type Fields = Readonly<Record<string, FieldDescriptor>>;
 abstract class DescriptorBase<Optional extends boolean> {
   constructor(readonly isOptional: Optional) {}

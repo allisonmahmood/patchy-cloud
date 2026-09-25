@@ -124,7 +124,13 @@ export default {
     if (!isHandler(definition)) return json({ ok: false, error: "no_such_handler" });
     const log = [];
     const callbacks = ctx.props.callbacks;
-    const call = (op, args) => callbacks.call(op, args);
+    const call = async (op, args) => {
+      const reply = await callbacks.call(op, args);
+      if (reply.ok) return reply.result;
+      throw Object.assign(new Error(reply.message ?? "callback refused: " + reply.code), {
+        patchyRefusal: { code: reply.code, message: reply.message, details: reply.details }
+      });
+    };
     const tables = new Proxy({}, { get: (_target, table) => (typeof table === "string" ? tableClient(call, table) : undefined) });
     const context = {
       viewer: body.viewer,
@@ -167,15 +173,12 @@ export const serverModules = Effect.fn("serverModules")(function* (root: string)
     .sort();
 });
 
-/** One ESM module for the engine; the import check runs on this graph. */
-export const buildServerBundle = Effect.fn("buildServerBundle")(function* (root: string) {
+/** The generated guest entry under `.patchy/`, imported by both the publish and dev builds. */
+export const writeServerEntry = Effect.fn("writeServerEntry")(function* (
+  root: string,
+  modules: readonly string[]
+) {
   const fs = yield* FileSystem.FileSystem;
-  const modules = yield* serverModules(root);
-  if (modules.length === 0)
-    return yield* new LocalError({
-      message: "A tier 2 repo needs at least one server/<module>.ts exporting a handler."
-    });
-  const vite = yield* loadVite(root);
   const entry = path.join(root, ".patchy", "server-entry.ts");
   yield* fs.makeDirectory(path.dirname(entry), { recursive: true }).pipe(
     Effect.andThen(fs.writeFileString(entry, guestEntry(modules))),
@@ -183,6 +186,18 @@ export const buildServerBundle = Effect.fn("buildServerBundle")(function* (root:
       (cause) => new LocalError({ message: "Could not write the server entry.", cause })
     )
   );
+  return entry;
+});
+
+/** One ESM module for the engine; the import check runs on this graph. */
+export const buildServerBundle = Effect.fn("buildServerBundle")(function* (root: string) {
+  const modules = yield* serverModules(root);
+  if (modules.length === 0)
+    return yield* new LocalError({
+      message: "A tier 2 repo needs at least one server/<module>.ts exporting a handler."
+    });
+  const vite = yield* loadVite(root);
+  const entry = yield* writeServerEntry(root, modules);
   const output = yield* Effect.tryPromise({
     try: () =>
       vite.build({
