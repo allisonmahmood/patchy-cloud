@@ -16,14 +16,25 @@ updates:
       # to stable and stops following 4.x prereleases, which is what we want.
       # .github/workflows/pr-labels.yml tags these PRs `effect-rc-bump`; the
       # runbook for finishing one lives in AGENTS.md -> Effect RC bumps.
+      #
+      # The members are named one by one rather than as `@effect/*`. Dependabot
+      # assigns a dependency to the group with the most specific pattern, and a
+      # group with no patterns (patch-updates below) outranks a wildcard, so the
+      # glob handed every `@effect/*` package to patch-updates; that group
+      # refuses an RC bump as not a patch release and lets the package fall
+      # through to a pull request of its own (#273, #344). An exact name beats
+      # any other group; the packages still sit in patch-updates as well, and
+      # stay out of its pull request only because this group runs first. Add
+      # an @effect package here when it joins the RC lockstep (the 4.0.0-rc
+      # entries in the pnpm-workspace.yaml catalog); @effect/language-service
+      # is left out on purpose because it has its own release line.
       effect:
         patterns:
           - effect
-          - "@effect/*"
-        # The language service has its own release line; let it flow as an
-        # ordinary update instead of muddying the RC changelog.
-        exclude-patterns:
-          - "@effect/language-service"
+          - "@effect/platform-node"
+          - "@effect/sql-pg"
+          - "@effect/sql-pglite"
+          - "@effect/vitest"
       patch-updates:
         update-types:
           - patch
