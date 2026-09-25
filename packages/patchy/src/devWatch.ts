@@ -12,7 +12,13 @@ import { LocalError } from "./CliError.js";
 import { validateRepoBundle } from "./repoBuild.js";
 import { io } from "./devState.js";
 // PROTOTYPE for #314
-import { importCheck, loadVite, serverModules, writeServerEntry } from "./serverBuild.js";
+import {
+  importCheck,
+  importRefusal,
+  loadVite,
+  serverModules,
+  writeServerEntry
+} from "./serverBuild.js";
 
 type Build = { readonly files: readonly string[]; readonly html: string } | LocalError;
 const isLocalError = Schema.is(LocalError);
@@ -60,6 +66,7 @@ export const watch = Effect.fn("Dev.watch")(function* (root: string, stateDir: s
             builds,
             new LocalError({
               message:
+                importRefusal(event.error) ??
                 "Vite build failed. Fix the source or vite.config.ts; the last successful bundle stays served.",
               cause: event.error
             })
@@ -157,9 +164,8 @@ export const watchServer = Effect.fn("Dev.watchServer")(function* (root: string,
             builds,
             new LocalError({
               message:
-                event.error.name === "ImportRefused"
-                  ? event.error.message
-                  : "Server bundle build failed. Fix server/; the last bound bundle stays served.",
+                importRefusal(event.error) ??
+                "Server bundle build failed. Fix server/; the last bound bundle stays served.",
               cause: event.error
             })
           );

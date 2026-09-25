@@ -127,7 +127,7 @@ export const serve = Effect.fn("Dev.serve")(function* (
   if (nextServerBuild !== undefined) yield* bindServer(yield* nextServerBuild);
 
   const shellPolicy = shellContentSecurityPolicy(prepared.manifest.tier);
-  const version = resources.version();
+  const version = resources.version;
   const content = `/~content/${version.patchId}/${version.versionId}` as const;
 
   /** One listener: its routes, guard and runtime bound to one identity. */

@@ -18,7 +18,13 @@ import { processResult } from "./processResult.js";
 import * as Project from "./Project.js";
 import { primitiveReminders } from "./primitiveReminders.js";
 // PROTOTYPE for #314
-import { buildServerBundle, discoverHandlers, importCheck, loadVite } from "./serverBuild.js";
+import {
+  buildServerBundle,
+  discoverHandlers,
+  importCheck,
+  importRefusal,
+  loadVite
+} from "./serverBuild.js";
 
 const decodePackage = Schema.decodeUnknownSync(
   Schema.fromJsonString(
@@ -281,8 +287,8 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
             build: { outDir: output, emptyOutDir: true }
           }),
         catch: (cause) =>
-          cause instanceof Error && cause.name === "ImportRefused"
-            ? new LocalError({ message: cause.message, code: "import_refused", cause })
+          importRefusal(cause) !== undefined
+            ? new LocalError({ message: importRefusal(cause)!, code: "import_refused", cause })
             : new LocalError({
                 message:
                   "Vite build failed. Run `pnpm exec vite build` and fix the single-file build before publishing.",

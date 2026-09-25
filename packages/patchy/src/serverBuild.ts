@@ -151,10 +151,32 @@ export default {
 };
 `;
 
-const failed = (message: string) => (cause: unknown) =>
-  cause instanceof ImportRefused
-    ? new LocalError({ message: cause.message, code: "import_refused", cause })
-    : new LocalError({ message, cause });
+/**
+ * Rolldown wraps a plugin's thrown error, so the refusal is found by walking `cause` and
+ * `errors` for the agreed sentence rather than by class.
+ */
+export const importRefusal = (error: unknown, depth = 0): string | undefined => {
+  if (depth > 8 || error === null || typeof error !== "object") return undefined;
+  const record = error as { message?: unknown; cause?: unknown; errors?: unknown };
+  const sentence =
+    typeof record.message === "string"
+      ? /Import of "[^"]+" in [^\n]*?ask Patchy for the capability\./.exec(record.message)
+      : null;
+  if (sentence !== null) return sentence[0];
+  const nested = Array.isArray(record.errors) ? record.errors : [];
+  for (const candidate of [record.cause, ...nested]) {
+    const found = importRefusal(candidate, depth + 1);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+};
+
+const failed = (message: string) => (cause: unknown) => {
+  const refusal = importRefusal(cause);
+  return refusal === undefined
+    ? new LocalError({ message, cause })
+    : new LocalError({ message: refusal, code: "import_refused", cause });
+};
 
 /** The `server/*.ts` module names, one level deep; nothing else is a handler module. */
 export const serverModules = Effect.fn("serverModules")(function* (root: string) {

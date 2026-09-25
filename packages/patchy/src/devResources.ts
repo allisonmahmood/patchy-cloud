@@ -470,7 +470,9 @@ export const prepare = Effect.fn("DevResources.prepare")(function* (
   return {
     handlers: preparedResources.handlers,
     context,
-    version: () => current,
+    version,
+    /** PROTOTYPE for #314: the version admission sees now; a rebuild swaps it whole. */
+    currentVersion: () => current,
     setServer
   };
 });
