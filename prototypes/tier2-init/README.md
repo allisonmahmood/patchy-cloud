@@ -56,9 +56,9 @@ Open the published address in a signed-in browser: the page lists notes through 
 
 `--json` on a tier 2 publish is the tier 1 document unchanged (no handler count); on `dev` it gains `colleagueUrl`.
 
-## Transactions: the stated gap
+## Transactions: the round 1 gap, closed in round 2
 
-A mutation's writes are not atomic across callbacks. `probe.writeThenThrow` inserted a row and then threw `HandlerError("after_write")`: the client got the handler error and the row `persist?` stayed in the company database. The skill says so. Holding one company transaction across callbacks is #310's design and was not bolted on.
+In round 1 a mutation's writes were not atomic across callbacks (`writeThenThrow` left its row). Round 2 holds one company transaction per invocation host-side; see `## Round 2`. The skill's sentence about atomicity is updated there.
 
 ## What stalled or was skipped
 
@@ -79,3 +79,41 @@ A mutation's writes are not atomic across callbacks. `probe.writeThenThrow` inse
 - **Vite 8 library mode is enough for the server bundle** (`rolldownOptions.output.codeSplitting = false`); Vite's own `vite/modulepreload-polyfill` import is allowlisted, or `build.modulePreload: false` in the scaffold would remove it.
 - **workerd pinned at 1.20260924.1** (a day older than the spike's), so pnpm's `minimumReleaseAge` needed no exclusion; its postinstall is off and the platform package's binary is spawned directly. The patch repo installs it as a devDependency with `--ignore-scripts`.
 - **The engine in the server is one process per server**; a rebuilt version is a new worker name (`patch@version#digest`), the bundle is pushed on `bundle_required`.
+
+## Round 2 (2026-09-25, same laptop)
+
+### 1. Preact scaffold with compat semantics
+
+- The tier 2 scaffold is now the #296 point 14 recipe: `index.html` with an empty root, `src/main.tsx` (awaits `preact/debug` in a `DEV` branch, then renders) and `src/App.tsx`; exact pins `preact 10.29.8` and `@preact/signals 2.11.2` in `dependencies`; tsconfig `jsx: react-jsx`, `jsxImportSource: preact`, `isolatedModules`, `verbatimModuleSyntax`; `vite.config.ts` with `oxc.jsx.importSource: "preact"` and `build.modulePreload: false` (tier 1's config also turns the preload off).
+- `patchy/preact` (new, `packages/patchy/src/preact.ts`) imports `preact/compat` once and re-exports `render`, hooks, `forwardRef`, `memo`, `createPortal`, `startTransition`/`useTransition`, `flushSync` and the signals API. The package build marks `preact`, `preact/*` and `@preact/*` external (bundle and `.d.ts`) so the patch keeps one copy; `preact` and `@preact/signals` are optional peer dependencies of `patchy`.
+- The import check no longer allows `vite/*`; only the exact `vite/modulepreload-polyfill` id (for a repo that did not turn the preload off), and it refuses `react`, `react-dom` and `preact/compat` from patch code with a message pointing at `patchy/preact`.
+- `patchy-preact` project skill, served on tier 1 and tier 2 (`packages/sdk/skills/patchy-preact/SKILL.md`): "Preact with compat semantics", what compat gives, what it does not emulate, the refused imports, the data pattern. `AGENTS.md` names it on tier 2.
+- Measured: fresh `init --tier 2` against an empty pnpm store 22.3 s (the store had served stale tarball bytes by URL before; note below); scaffold `tsc` 1.06 s; built document 37.9 KB, **14.5 KB gzip** against **4.8 KB** for the vanilla client (+9.7 KB: preact 4.9 + hooks 1.6 + compat 4.1 + signals, tree-shaken); `onChange` on the controlled input fired **5 of 5** keystrokes; add through the form 112-114 ms in the dev shell and on the published page; the `forwardRef` ref focused the input after the add; the `empty_title` handler error rendered. Published as version 9 of the smoke patch.
+- pnpm note: `init`'s `pnpm install` runs in a fresh temp directory, so a `.npmrc` next to it is not read and `npm_config_store_dir` was not honoured either; the throwaway `/tmp/.pnpm-store` had cached the tarball by URL. Deleting that store was what made the fresh init install real bytes. A build should give the release tarball a content-addressed URL.
+
+### 2. One company transaction per mutation across callbacks
+
+- `packages/execution/src/Transaction.ts` (new): a mutation opens one company transaction **at admission** (simpler than on first callback, and the gap between admission and the first callback is a held connection, not a correctness risk) on its own fiber: `BEGIN` through the existing `withCompany` + `withTransaction`, then `SET TRANSACTION ISOLATION LEVEL SERIALIZABLE`; a query gets `REPEATABLE READ READ ONLY`, an action the serialised fiber with no transaction. Every callback is a job on that fiber, so callbacks serialise on the transaction and the table handlers' own `withTransaction` becomes a savepoint on the same connection (a `unique_violation` rolls back its savepoint, the invocation continues). Completion joins the running job, drains and refuses the rest, shuts the queue (a callback that had already been parsed is refused, never run against a closed transaction), then commits only when the driver says commit, which `ServerCall` says only after the handler returned and the result validated; a handler error, an invalid result, `handler_failed`, the deadline and a process loss all roll back.
+- A 40001 anywhere (at a statement inside a callback, where the table handler had mapped it to a refusal, or at commit) re-invokes the whole handler, mutations only, up to three attempts, each `engine.invoke` minting a fresh capability so a late callback from attempt one is refused. On PGlite `SET TRANSACTION ISOLATION LEVEL SERIALIZABLE` is accepted; PGlite is one connection, so concurrent transactions serialise behind its acquirer and 40001 never occurs there.
+- Bound: two concurrent invocations per company, `busy` fail-fast past that. The company pool has four connections; an invocation's transaction holds one for its life and each callback borrows a second through the table handlers' own `withCompany`, so four slots carry two invocations. A build folds the callback's borrow into the held connection and gets the full four.
+- Measured on the instance's Postgres: **`writeThenThrow` leaves 0 rows** (three runs); ten-callback mutation **p50 14 ms server-side** (12-24; 18 ms wall incl. curl); `writeThenTimeout` (insert, then sleep past the deadline): `handler_timeout` at 10.01 s and **0 rows** (rollback confirmed); eight concurrent `bump`s on one counter row with the client retrying `busy`: **total 8, one row, 3 serialization retries, 12 `busy` refusals, 462 ms wall**. On PGlite (`patchy dev`): `writeThenThrow` 0 rows, ten-callback **p50 22 ms wall**, paired concurrent bumps 1→8 in order with no retries and no `busy`, `writeThenTimeout` 0 rows.
+- Skill: `patchy-server` now says a mutation's callbacks share one transaction that commits after the handler returns and the result validates, and that a 40001 re-runs the handler, so mutations must be safe to run twice.
+
+### 3. Astra's code points
+
+- `t.row("<table>")` validates the declared row shape from the pinned manifest: system columns, every column's kind, optionality, no unknown keys (`probe.fakeRow` → `handler_failed`, log `$.createdAt: expected an ISO timestamp`; real rows from `notes.list` pass).
+- Descriptor grammar is closed: a descriptor carries only its own keys, a handler descriptor only `kind/args/result/errors`.
+- `ServerCall` never casts a guest-reported refusal code: the host keeps the refusal it issued in the callback closure and answers with that (status and details intact); anything else the guest reports is `handler_failed`.
+- Discovery disagreement names the path: `notes.add.kind: declared "query", bundle says "mutation"`, `notes.list: not declared, bundle has it`.
+
+### 4. Watchdog (stretch)
+
+- When an invocation times out the engine records it as overrun; every 250 ms the watchdog probes the serving workerd's `/healthz` (500 ms) while anything is overrun; a spinning isolate blocks workerd's one thread, so an unanswered probe after a 1 s margin is the evidence, and the process is `SIGKILL`ed and respawned. In-flight invocations of that process fail as `ProcessKilled`; `ServerCall` rolls their transaction back and reports `handler_timeout` (a confirmed non-commit), never `unknown_outcome`, which stays reserved for a commit whose reply was lost. Bundles are pushed again on the next `bundle_required`.
+- Measured: `probe.spin` (`for(;;){}` inside a handler) → `handler_timeout` at 10.03 s; a `probe.whoami` sent 1 s later blocked behind it and hit its own deadline at 10.01 s (its own timeout came before the kill, so the `ProcessKilled` classification was not the path it took); the process was replaced 18 ms after the kill decision (kill to healthy replacement); `notes.list` answered 23 ms later; exactly one workerd alive afterwards. This is execution compatibility with production's loader and binary, not Fargate containment: no RSS bound, no per-process isolation, one process per instance.
+
+### Round 2 stall list
+
+- The four-slot bound is two invocations per company until the callback's borrow is folded into the held connection.
+- The `ProcessKilled` classification path exists but the measured sibling timed out on its own deadline first; a sibling admitted later than `deadline - margin` before the kill would take it.
+- Tier 1 keeps the vanilla scaffold; the `patchy-preact` skill is served there anyway.
+- Checks after round 2: `pnpm typecheck` green (38/38); `pnpm lint` green; `pnpm test` 937 passed, 3 failed: the two expected reds from round 1 (SDK export list, migration ledger) and one 5 s timeout in `integrations/postgres/Runtime.test.ts` that passes alone. `apps/server/src/{Server,ApiGuard}.test.ts` had been timing out in their hooks since round 1 because the engine's health poll used `Effect.sleep` under the harness's `TestClock`; the poll is wall-clock now and both files pass (27/27).

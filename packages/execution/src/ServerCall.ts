@@ -214,6 +214,14 @@ export const make = (handlers: Readonly<Record<string, Runtime.Handler>>, option
                   correlationId: binding.correlationId,
                   deadlineMs: error.deadlineMs
                 });
+              } else if (error._tag === "ProcessKilled") {
+                // Collateral of the watchdog: its transaction rolls back below, so the outcome is
+                // a confirmed non-commit and reported as handler_timeout, never unknown_outcome.
+                yield* log(`killed with the execution process (generation ${error.generation})`);
+                failure = new HandlerTimeout({
+                  correlationId: binding.correlationId,
+                  deadlineMs: deadline
+                });
               } else failure = new Runtime.SourceUnavailable({ cause: error });
             } else {
               const guest = invoked.success;

@@ -47,8 +47,8 @@ export const add = mutation({
 ## The three kinds
 
 - **query**: reads the patch's tables; no writes. `ctx.tables` is read-only in TypeScript and the engine refuses a write from a query at the wire (`access_denied`), so the types are not the enforcement.
-- **mutation**: reads and writes the patch's tables. In this release **a mutation's writes are not yet atomic across callbacks**: a row inserted before a later throw stays inserted. Write last, validate first.
-- **action**: for effects outside the transactional domain. In this release it has the same context as a mutation; connections, files and calling other handlers are not available yet.
+- **mutation**: reads and writes the patch's tables inside one transaction per invocation. Every table call joins it; it commits only after the handler returned and its result validated, and rolls back on a `HandlerError`, any other throw, an invalid result or the deadline, so a row written before a throw is gone. On a serialization conflict Patchy runs the whole handler again (up to three times), so a mutation must be safe to run twice; keep effects inside the tables.
+- **action**: for effects outside the transactional domain: its table calls run one by one with no transaction and no retry. Connections, files and calling other handlers are not available yet.
 
 ## Shapes: `t` for arguments and results
 

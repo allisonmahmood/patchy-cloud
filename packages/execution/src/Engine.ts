@@ -9,7 +9,7 @@
 //
 // Not here, by decision on #298/#314: the supervisor watchdog, RSS bounds, process pools and
 // Fargate. A CPU-spinning guest is not stopped in this slice; its deadline is a host timeout.
-// @effect-diagnostics nodeBuiltinImport:off globalFetch:off globalFetchInEffect:off preferSchemaOverJson:off -- the engine owns a child process, a temp dir, a port reservation and plain HTTP to workerd on loopback; request bodies to the loader are its own JSON.
+// @effect-diagnostics nodeBuiltinImport:off globalFetch:off globalFetchInEffect:off preferSchemaOverJson:off globalTimers:off -- the engine owns a child process, a temp dir, a port reservation and plain HTTP to workerd on loopback; request bodies to the loader are its own JSON; waiting for the child is wall-clock, never the Effect clock (a TestClock would hang it).
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { createServer } from "node:http";
@@ -46,6 +46,18 @@ export class EngineUnavailable extends Schema.TaggedError<EngineUnavailable>()(
   readonly status = 503;
   override get message() {
     return `The execution engine is unavailable at ${this.stage}${this.detail === undefined ? "" : `: ${this.detail}`}.`;
+  }
+}
+
+/**
+ * PROTOTYPE for #314 round 2: the serving process was killed by the watchdog while this
+ * invocation was in flight; the host decides the outcome from its own transaction.
+ */
+export class ProcessKilled extends Schema.TaggedError<ProcessKilled>()("ProcessKilled", {
+  generation: Schema.Int
+}) {
+  override get message() {
+    return `The execution process was replaced (generation ${this.generation}) while the handler ran.`;
   }
 }
 
@@ -153,7 +165,7 @@ export class Engine extends Context.Service<
     ) => Effect.Effect<{ readonly bindMs: number; readonly loadMs: number }, EngineUnavailable>;
     readonly invoke: (
       input: Invocation
-    ) => Effect.Effect<GuestReply, EngineUnavailable | InvocationTimeout>;
+    ) => Effect.Effect<GuestReply, EngineUnavailable | InvocationTimeout | ProcessKilled>;
     /** Derives the handler map from a bundle in a throwaway process; no capabilities. */
     readonly inspect: (
       bundle: string,
@@ -166,8 +178,20 @@ export class Engine extends Context.Service<
     >;
     readonly spawnMs: number;
     readonly callbackOrigin: string;
+    /** Process generation and the watchdog's kills, for the smoke and the README. */
+    readonly stats: Effect.Effect<{
+      readonly generation: number;
+      readonly kills: ReadonlyArray<{
+        readonly at: number;
+        readonly restartMs: number;
+        readonly victims: ReadonlyArray<string>;
+      }>;
+    }>;
   }
 >()("@patchy/execution/Engine") {}
+
+/** How long a timed-out invocation may keep the process unresponsive before it is replaced. */
+const WATCHDOG_MARGIN_MS = 1_000;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
@@ -248,24 +272,28 @@ const spawnWorkerd = Effect.fn("Engine.spawnWorkerd")(function* (binary: string)
     (child) => Effect.sync(() => child.kill("SIGKILL"))
   );
   const url = `http://127.0.0.1:${port}`;
-  for (let attempt = 0; ; attempt++) {
-    if (child.exitCode !== null)
-      return yield* new EngineUnavailable({
+  // Wall-clock polling in plain Node: the layer is built under a TestClock in the server's
+  // tests, where an Effect.sleep here would never elapse.
+  yield* Effect.tryPromise({
+    try: async () => {
+      for (let attempt = 0; ; attempt++) {
+        if (child.exitCode !== null)
+          throw new Error(`workerd exited with ${child.exitCode}: ${stderr.join("").slice(-500)}`);
+        const healthy = await fetch(`${url}/healthz`)
+          .then((response) => response.ok)
+          .catch(() => false);
+        if (healthy) return;
+        if (attempt > 1500) throw new Error("workerd never became healthy");
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+    },
+    catch: (cause) =>
+      new EngineUnavailable({
         stage: "spawn",
-        detail: `workerd exited with ${child.exitCode}: ${stderr.join("").slice(-500)}`
-      });
-    const healthy = yield* Effect.tryPromise({
-      try: async () => (await fetch(`${url}/healthz`)).ok,
-      catch: () => new EngineUnavailable({ stage: "spawn" })
-    }).pipe(Effect.orElseSucceed(() => false));
-    if (healthy) break;
-    if (attempt > 1500)
-      return yield* new EngineUnavailable({
-        stage: "spawn",
-        detail: "workerd never became healthy"
-      });
-    yield* Effect.sleep("10 millis");
-  }
+        detail: cause instanceof Error ? cause.message : String(cause),
+        cause
+      })
+  });
   const spawnMs = (yield* Clock.currentTimeMillis) - started;
   return { url, child, spawnMs } satisfies Process;
 });
@@ -320,8 +348,51 @@ export const inspectBundle = (binary: string, bundle: string, timeoutMs = 5_000)
 
 export const make = (options: { readonly binary: string }) =>
   Effect.gen(function* () {
-    const serving = yield* spawnWorkerd(options.binary);
+    // Mutable on purpose: the watchdog replaces the serving process. Execution compatibility
+    // with production is the loader and the binary; this is not containment.
+    let serving = yield* spawnWorkerd(options.binary);
+    let generation = 1;
     const registry = new Map<string, Invocation["callback"]>();
+    const inflight = new Set<string>();
+    const overrun = new Map<string, number>();
+    const killed = new Set<string>();
+    const kills: Array<{ at: number; restartMs: number; victims: ReadonlyArray<string> }> = [];
+    const kill = Effect.fn("Engine.kill")(function* () {
+      const at = yield* Clock.currentTimeMillis;
+      const victims = [...inflight];
+      for (const id of victims) killed.add(id);
+      serving.child.kill("SIGKILL");
+      overrun.clear();
+      serving = yield* spawnWorkerd(options.binary);
+      generation++;
+      const restartMs = (yield* Clock.currentTimeMillis) - at;
+      kills.push({ at, restartMs, victims });
+      yield* Effect.logInfo(
+        `execution watchdog: process replaced (generation ${generation}) in ${restartMs} ms; ${victims.length} invocation(s) in flight`
+      );
+    });
+    // The watchdog: while a timed-out invocation may still be running, probe the process; a
+    // spinning isolate blocks workerd's one thread, so an unanswered probe is the evidence.
+    yield* Effect.forever(
+      Effect.gen(function* () {
+        yield* Effect.sleep("250 millis");
+        if (overrun.size === 0) return;
+        const now = yield* Clock.currentTimeMillis;
+        const healthy = yield* Effect.tryPromise({
+          try: async (signal) => (await fetch(`${serving.url}/healthz`, { signal })).ok,
+          catch: () => new EngineUnavailable({ stage: "spawn" })
+        }).pipe(
+          Effect.timeoutOrElse({ duration: 500, orElse: () => Effect.succeed(false) }),
+          Effect.orElseSucceed(() => false)
+        );
+        if (healthy) {
+          overrun.clear();
+          return;
+        }
+        if (now - Math.min(...overrun.values()) > WATCHDOG_MARGIN_MS)
+          yield* kill().pipe(Effect.catch(() => Effect.void));
+      })
+    ).pipe(Effect.forkScoped);
 
     // The callback listener: loopback only, capability as bearer, nothing administrative.
     const listener = HttpRouter.use((router) =>
@@ -401,6 +472,7 @@ export const make = (options: { readonly binary: string }) =>
       const capability = `cap_${randomBytes(18).toString("base64url")}`;
       const invocationId = `inv_${randomBytes(9).toString("hex")}`;
       registry.set(capability, input.callback);
+      inflight.add(invocationId);
       const send = (bundle?: string) =>
         post("invoke", `${serving.url}/invoke`, {
           name: input.name,
@@ -423,10 +495,28 @@ export const make = (options: { readonly binary: string }) =>
       }).pipe(
         Effect.timeoutOrElse({
           duration: input.deadlineMs,
-          orElse: () => Effect.fail(new InvocationTimeout({ deadlineMs: input.deadlineMs }))
+          orElse: () =>
+            Effect.gen(function* () {
+              // The guest may still be running; the watchdog decides whether the process lives.
+              overrun.set(invocationId, yield* Clock.currentTimeMillis);
+              return yield* Effect.fail(new InvocationTimeout({ deadlineMs: input.deadlineMs }));
+            })
         }),
+        Effect.catchTag(
+          "EngineUnavailable",
+          (error): Effect.Effect<never, EngineUnavailable | ProcessKilled> =>
+            killed.has(invocationId)
+              ? Effect.fail(new ProcessKilled({ generation }))
+              : Effect.fail(error)
+        ),
         // The capability ends here whatever the guest is still doing; a late callback is refused.
-        Effect.ensuring(Effect.sync(() => registry.delete(capability)))
+        Effect.ensuring(
+          Effect.sync(() => {
+            registry.delete(capability);
+            inflight.delete(invocationId);
+            killed.delete(invocationId);
+          })
+        )
       );
     });
 
@@ -449,7 +539,8 @@ export const make = (options: { readonly binary: string }) =>
       inspect,
       outboundAttempts,
       spawnMs: serving.spawnMs,
-      callbackOrigin
+      callbackOrigin,
+      stats: Effect.sync(() => ({ generation, kills: [...kills] }))
     });
   });
 
