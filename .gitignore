@@ -23,3 +23,6 @@ packages/patchy/artifacts/
 
 # Vitest 5 reporter and attachment output
 .vitest/
+
+# Neon CLI project context, written by `neon link`.
+.neon
