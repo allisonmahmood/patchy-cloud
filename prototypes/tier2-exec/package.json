@@ -1,0 +1,12 @@
+{
+  "name": "tier2-exec-spike",
+  "private": true,
+  "description": "PROTOTYPE for #311: tier 2 execution-service spike on ECS Fargate + Neon",
+  "type": "module",
+  "scripts": {
+    "build:handlers": "node handlers/build.mjs"
+  },
+  "dependencies": {
+    "esbuild": "^0.25.0"
+  }
+}
