@@ -1,0 +1,8 @@
+# PROTOTYPE for #311
+node_modules/
+handlers/dist/
+host/bundles/
+infra/.tags
+infra/*.tar
+bench/out/
+handlers/entry.gen.ts

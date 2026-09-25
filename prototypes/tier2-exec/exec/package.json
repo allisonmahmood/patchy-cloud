@@ -1,0 +1,9 @@
+{
+  "name": "tier2-exec-spike-exec",
+  "private": true,
+  "description": "PROTOTYPE for #311: execution container (workerd + supervisor)",
+  "type": "module",
+  "dependencies": {
+    "workerd": "1.20260925.1"
+  }
+}
