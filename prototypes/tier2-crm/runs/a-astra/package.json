@@ -1,0 +1,22 @@
+{
+  "name": "crm-a-astra",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/*.test.mjs",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "preact": "10.29.8",
+    "@preact/signals": "2.11.2"
+  },
+  "devDependencies": {
+    "patchy": "http://127.0.0.1:24076/sdk/ba06b2c8af9464ec/patchy-0.0.1.tgz",
+    "typescript": "^6.0.3",
+    "vite": "^8.3.0",
+    "vite-plugin-singlefile": "^2.3.3",
+    "@types/node": "^22.19.0",
+    "workerd": "1.20260924.1"
+  }
+}
