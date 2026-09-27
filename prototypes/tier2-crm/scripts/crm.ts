@@ -6,7 +6,7 @@
 //   pnpm prototype:crm unshare | reshare      the contracts owner publishes with sharing off / on
 //   pnpm prototype:crm reset                  reshare and restore every original document
 //   pnpm prototype:crm init <dir> --variant a|b
-//   pnpm prototype:crm browser owner|colleague <url>
+//   pnpm prototype:crm browser owner|colleague <url>...   one signed-in window, a tab per URL
 //   pnpm prototype:crm finance                (re)build the Neon finance database only
 //
 // Everything lives under .local/prototype-crm/ (gitignored). The instance runs with offline
@@ -615,8 +615,9 @@ function init(dir: string, variant: string) {
   say(`  export PATCHY_API_URL=${apiUrl} PATCHY_API_TOKEN=${token} PATCHY_STATE_DIR=${agentState}`);
 }
 
-async function browser(user: string, url: string, check = false) {
-  if (user !== "owner" && user !== "colleague") fail("browser owner|colleague <url>");
+async function browser(user: string, urls: ReadonlyArray<string>, check = false) {
+  if (user !== "owner" && user !== "colleague") fail("browser owner|colleague <url>...");
+  const url = urls[0] ?? fail("browser owner|colleague <url>...");
   const { chromium } = await import("@playwright/test");
   const target = new URL(url);
   const launched = await chromium.launch({ headless: check });
@@ -637,6 +638,8 @@ async function browser(user: string, url: string, check = false) {
   );
   const page = await context.newPage();
   const response = await page.goto(url);
+  // Every further URL opens as another tab in the same signed-in window.
+  for (const extra of check ? [] : urls.slice(1)) await (await context.newPage()).goto(extra);
   if (check) {
     // --check: headless, reports what the signed-in viewer's shell loaded, then exits.
     await page.waitForTimeout(3000);
@@ -652,7 +655,7 @@ async function browser(user: string, url: string, check = false) {
     await launched.close();
     return;
   }
-  say(`Signed in as ${USERS[user as User].email} at ${url}. Close the window to end.`);
+  say(`Signed in as ${USERS[user as User].email} at ${urls.join(", ")}. Close the window to end.`);
   await new Promise((resolve) => launched.on("disconnected", resolve));
 }
 
@@ -715,7 +718,7 @@ switch (command) {
   case "browser":
     await browser(
       rest[0] ?? "owner",
-      rest[1] ?? fail("browser owner|colleague <url> [--check]"),
+      rest.slice(1).filter((arg) => arg !== "--check"),
       rest.includes("--check")
     );
     break;
