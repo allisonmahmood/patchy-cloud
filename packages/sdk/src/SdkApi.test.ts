@@ -85,9 +85,10 @@ it.layer(layer)("the packed SDK release", (it) => {
         assert.strictEqual(release.release, CURRENT_RELEASE);
         assert.strictEqual(release.manifestVersion, MANIFEST_VERSION);
         assert.strictEqual(release.wireVersion, WIRE_VERSION);
-        assert.strictEqual(
+        // PROTOTYPE for #315: the tarball URL is content-addressed.
+        assert.match(
           release.package.tarball,
-          `https://patchy.example/sdk/patchy-${release.release}.tgz`
+          new RegExp(`^https://patchy\\.example/sdk/[0-9a-f]{16}/patchy-${release.release}\\.tgz$`)
         );
 
         const download = yield* client.get(new URL(release.package.tarball).pathname);

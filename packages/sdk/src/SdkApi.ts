@@ -132,17 +132,17 @@ export const layer: Layer.Layer<
 export const tarballLayer = HttpRouter.use((router) =>
   Effect.gen(function* () {
     const artifact = yield* Artifact.Artifact;
-    yield* router.add(
-      "GET",
-      `/sdk/${artifact.filename}`,
-      HttpServerResponse.uint8Array(artifact.bytes, {
-        contentType: "application/octet-stream",
-        headers: {
-          "cache-control": "public, max-age=31536000, immutable",
-          "content-disposition": `attachment; filename="${artifact.filename}"`,
-          "x-content-type-options": "nosniff"
-        }
-      })
-    );
+    const tarball = HttpServerResponse.uint8Array(artifact.bytes, {
+      contentType: "application/octet-stream",
+      headers: {
+        "cache-control": "public, max-age=31536000, immutable",
+        "content-disposition": `attachment; filename="${artifact.filename}"`,
+        "x-content-type-options": "nosniff"
+      }
+    });
+    // PROTOTYPE for #315: the content-addressed path is the one the release names; the
+    // version-only path stays for pins written before it.
+    yield* router.add("GET", artifact.path, tarball);
+    yield* router.add("GET", `/sdk/${artifact.filename}`, tarball);
   })
 );

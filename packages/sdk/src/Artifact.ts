@@ -41,6 +41,8 @@ export class Artifact extends Context.Service<
   {
     readonly release: Release;
     readonly filename: string;
+    /** PROTOTYPE for #315: the content-addressed path the release document names. */
+    readonly path: `/sdk/${string}`;
     readonly bytes: Uint8Array;
   }
 >()("@patchy/sdk/Artifact") {}
@@ -92,12 +94,17 @@ export const make = Effect.gen(function* () {
       actual: integrity
     });
   }
+  // PROTOTYPE for #315: the tarball URL carries a digest of its bytes, so a rebuilt release with
+  // an unchanged version is a new URL and pnpm's store (keyed by URL) cannot serve stale bytes.
+  const digest = createHash("sha256").update(bytes).digest("hex").slice(0, 16);
+  const path = `/sdk/${digest}/${filename}` as const;
   return Artifact.of({
     filename,
+    path,
     bytes,
     release: new Release({
       release: metadata.release,
-      package: { tarball: `${base.replace(/\/+$/, "")}/sdk/${filename}`, integrity },
+      package: { tarball: `${base.replace(/\/+$/, "")}${path}`, integrity },
       manifestVersion: metadata.manifestVersion,
       wireVersion: metadata.wireVersion
     })
