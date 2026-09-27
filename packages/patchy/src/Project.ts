@@ -1,3 +1,4 @@
+import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
 import * as Exit from "effect/Exit";
@@ -43,6 +44,8 @@ import { processResult } from "./processResult.js";
 import { primitiveReminders } from "./primitiveReminders.js";
 // PROTOTYPE for #314
 import { serverModules } from "./serverBuild.js";
+// PROTOTYPE for #315
+import { parseVariant, pinsFor, readVariant } from "./variant.js";
 
 const repoSchema = Schema.Struct({
   instance: Schema.String,
@@ -481,7 +484,9 @@ export const generate = Effect.fn("Project.generate")(function* (
         manifest,
         skills,
         ...(repo.patch === undefined ? {} : { patchId: repo.patch }),
-        ...(modules.length === 0 ? {} : { serverModules: modules })
+        ...(modules.length === 0 ? {} : { serverModules: modules }),
+        // PROTOTYPE for #315
+        ...(readVariant(cwd) === "wide" ? { variant: "wide" as const } : {})
       }
     })
     .pipe(Effect.catch((error) => refusal(error, "Generation failed.")));
@@ -551,12 +556,45 @@ export const refresh = Effect.fn("Project.refresh")(function* (
         const pinChanged = previousPin !== tarball;
         const from = /patchy-([^/]+)\.tgz(?:[?#].*)?$/.exec(previousPin)?.[1] ?? previousPin;
         const skills = yield* localIO("Read project skills", () => presentSkills(cwd));
+        // PROTOTYPE for #315: the variant's exact client pins are managed like the patchy pin.
+        // A tier 2 repo (it pins preact) gets every pin its recorded variant names.
+        const clientPins =
+          pkg.dependencies !== null && typeof pkg.dependencies === "object"
+            ? (pkg.dependencies as Record<string, unknown>)
+            : undefined;
+        const wanted = pinsFor(readVariant(cwd));
+        const pinsChanged =
+          clientPins !== undefined &&
+          "preact" in clientPins &&
+          Object.entries(wanted).some(([name, version]) => clientPins[name] !== version);
         const needsInstall =
-          pinChanged || !(yield* fs.exists(executable).pipe(Effect.orElseSucceed(() => false)));
+          pinChanged ||
+          pinsChanged ||
+          !(yield* fs.exists(executable).pipe(Effect.orElseSucceed(() => false)));
         if (pinChanged) {
           yield* localIO("Update package pin", () => transaction.setPin(previousPin, tarball)).pipe(
             Effect.uninterruptible
           );
+        }
+        if (pinsChanged) {
+          const text = yield* fs
+            .readFileString(packagePath)
+            .pipe(
+              Effect.mapError(
+                (cause) => new LocalError({ message: "Could not read package.json.", cause })
+              )
+            );
+          const current = yield* parse("Read package.json", () => decodePackage(text));
+          yield* fs
+            .writeFileString(
+              packagePath,
+              json({ ...current, dependencies: { ...clientPins, ...wanted } })
+            )
+            .pipe(
+              Effect.mapError(
+                (cause) => new LocalError({ message: "Could not write the managed pins.", cause })
+              )
+            );
         }
         if (needsInstall) {
           yield* localIO("Preserve previous installation", () => transaction.prepareInstall()).pipe(
@@ -843,7 +881,15 @@ export const init = Effect.fn("Project.init")(function* (
     decodeName(candidate.length >= 3 ? candidate : "my-patch")
   );
   const tarball = new URL(release.package.tarball, `${instance.apiUrl}/`).href;
-  const files = starterFiles({ instance: instance.apiUrl, name, tier, purpose, tarball });
+  // PROTOTYPE for #315: prototype-only; whoever runs init for a fresh agent chooses it.
+  const variant = parseVariant(
+    Option.getOrUndefined(
+      yield* Config.option(Config.String("PATCHY_PROTOTYPE_VARIANT")).pipe(
+        Effect.orElseSucceed(() => Option.none<string>())
+      )
+    )
+  );
+  const files = starterFiles({ instance: instance.apiUrl, name, tier, purpose, tarball, variant });
   yield* Effect.acquireUseRelease(
     fs
       .makeTempDirectory({ directory: parent, prefix: ".patchy-init-" })

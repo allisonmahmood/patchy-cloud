@@ -5,6 +5,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { isManagedOutputPath } from "@patchy/api";
 import { safePath } from "./ManagedProject.js";
+import { pinsFor, type Variant } from "./variant.js";
 
 /** Starter sources contain company configuration, never the authenticated person's identity. */
 export function starterFiles(options: {
@@ -13,8 +14,11 @@ export function starterFiles(options: {
   tier: 0 | 1 | 2;
   purpose: string;
   tarball: string;
+  /** PROTOTYPE for #315: the client allowlist variant, recorded once in patchy.json. */
+  variant?: Variant;
 }): Record<string, string> {
   const { instance, name, tier, purpose, tarball } = options;
+  const variant = options.variant ?? "restricted";
   const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
   // PROTOTYPE for #314: tier 2 lays down server/notes.ts and a client that calls it. The
   // client stays vanilla TypeScript here; the Preact scaffold of #296 is deferred.
@@ -53,7 +57,11 @@ export function starterFiles(options: {
         }
       : {};
   const files: Record<string, string> = {
-    "patchy.json": json({ instance, description: purpose }),
+    "patchy.json": json({
+      instance,
+      description: purpose,
+      ...(tier === 2 && variant === "wide" ? { prototypeVariant: variant } : {})
+    }),
     "fixtures/.gitkeep": "",
     "package.json": json({
       name,
@@ -61,7 +69,7 @@ export function starterFiles(options: {
       type: "module",
       scripts: { typecheck: "tsc --noEmit", build: "vite build" },
       // Exact pins in dependencies, not devDependencies, so the allowlist check reads one field.
-      ...(tier === 2 ? { dependencies: { preact: "10.29.8", "@preact/signals": "2.11.2" } } : {}),
+      ...(tier === 2 ? { dependencies: { ...pinsFor(variant) } } : {}),
       devDependencies: {
         patchy: tarball,
         typescript: "^6.0.3",
@@ -103,7 +111,7 @@ export function starterFiles(options: {
         ...(tier === 2 ? ["server"] : [])
       ]
     }),
-    "AGENTS.md": `# Purpose\n\n${purpose}\n\nThe purpose above is independent of the published description in \`patchy.json\`.\n\n# Working here\n\nInstallation already ran. Do not reinstall to start building. Run \`pnpm patchy --help\` for commands; test with \`patchy dev\` (\`pnpm patchy dev\` from this repo).\n\n- \`patchy.json\`: instance, optional patch id, published description and its sync stamp. Edit the description here; cloud edits pull down at refresh, dev start and publish.\n- \`patchy.config.ts\`: owned tables and file stores with their descriptions, and declared connections/shared tables.\n- ${tier === 2 ? "`src/main.tsx`, `src/App.tsx`" : "`src/main.ts`"}, \`index.html\`: the browser UI${tier === 2 ? " (Preact with compat semantics through `patchy/preact`; read `.agents/skills/patchy-preact/SKILL.md`)" : ""}; \`vite.config.ts\` builds one HTML file.\n${tier === 2 ? "- `server/*.ts`: the handlers (queries, mutations, actions) the browser calls through `patchy.server.<file>.<export>`; they run on Patchy's engine, never in the browser. Read `.agents/skills/patchy-server/SKILL.md` first.\n" : ""}- \`fixtures/\`: local rows only, never production data.\n- \`patchy/_generated/index.json\`: generated index linking every declaration, revision, context and skill. Never edit generated files.\n- \`.agents/skills/patchy-loop/SKILL.md\`: the local build loop.\n- \`.agents/skills/patchy-tables/SKILL.md\`: owned tables.\n- \`.agents/skills/patchy-files/SKILL.md\`: owned files.\n${tier === 2 ? "- `.agents/skills/patchy-server/SKILL.md`: server handlers, their context, errors and the import rule.\n" : ""}- Integration skills appear under \`.agents/skills/patchy-postgres/SKILL.md\` and \`.agents/skills/patchy-shared-tables/SKILL.md\` when declared.\n\nRun \`pnpm patchy refresh\` after editing declarations. Deleting \`.patchy/\` destroys local rows and files.\n`,
+    "AGENTS.md": `# Purpose\n\n${purpose}\n\nThe purpose above is independent of the published description in \`patchy.json\`.\n\n# Working here\n\nInstallation already ran. Do not reinstall to start building. Run \`pnpm patchy --help\` for commands; test with \`patchy dev\` (\`pnpm patchy dev\` from this repo).\n\n- \`patchy.json\`: instance, optional patch id, published description and its sync stamp. Edit the description here; cloud edits pull down at refresh, dev start and publish.\n- \`patchy.config.ts\`: owned tables and file stores with their descriptions, and declared connections/shared tables.\n- ${tier === 2 ? "`src/main.tsx`, `src/App.tsx`" : "`src/main.ts`"}, \`index.html\`: the browser UI${tier === 2 ? " (Preact with compat semantics through `patchy/preact`; read `.agents/skills/patchy-preact/SKILL.md`)" : ""}; \`vite.config.ts\` builds one HTML file.\n${tier === 2 ? "- `server/*.ts`: the handlers (queries, mutations, actions) the browser calls through `patchy.server.<file>.<export>`; they run on Patchy's engine, never in the browser. Read `.agents/skills/patchy-server/SKILL.md` first.\n" : ""}- \`fixtures/\`: local rows only, never production data.\n- \`patchy/_generated/index.json\`: generated index linking every declaration, revision, context and skill. Never edit generated files.\n- \`.agents/skills/patchy-loop/SKILL.md\`: the local build loop.\n- \`.agents/skills/patchy-tables/SKILL.md\`: owned tables.\n- \`.agents/skills/patchy-files/SKILL.md\`: owned files.\n${tier === 2 ? "- `.agents/skills/patchy-server/SKILL.md`: server handlers, their context, errors and the import rule.\n" : ""}- Integration skills appear under \`.agents/skills/patchy-postgres/SKILL.md\`, \`.agents/skills/patchy-shared-tables/SKILL.md\`${tier === 2 ? " and `.agents/skills/patchy-shared-stores/SKILL.md`" : ""} when declared.\n\nRun \`pnpm patchy refresh\` after editing declarations. Deleting \`.patchy/\` destroys local rows and files.\n`,
     "CLAUDE.md": "@AGENTS.md\n",
     ".gitignore": ".patchy/\nnode_modules/\ndist/\n",
     // Last, so the tier 2 files replace the tier 1 client, Vite config and tsconfig above.

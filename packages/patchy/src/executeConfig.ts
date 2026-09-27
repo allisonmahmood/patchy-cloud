@@ -12,7 +12,9 @@ import {
   PatchName,
   PostgresDeclaration,
   SharedTableDeclaration,
-  sharedTableId
+  sharedTableId,
+  SharedStoreDeclaration,
+  sharedStoreId
 } from "@patchy/api";
 import * as Schema from "effect/Schema";
 import type { ColumnKind, Declaration, IndexDefinition, Json } from "./config.js";
@@ -81,6 +83,12 @@ const configSchema = Schema.Struct({
         kind: SharedTableDeclaration.fields.kind,
         patchId: SharedTableDeclaration.fields.patchId,
         table: SharedTableDeclaration.fields.table
+      }),
+      // PROTOTYPE for #315
+      Schema.Struct({
+        kind: SharedStoreDeclaration.fields.kind,
+        patchId: SharedStoreDeclaration.fields.patchId,
+        store: SharedStoreDeclaration.fields.store
       })
     ])
   )
@@ -92,7 +100,11 @@ const generatedIndexSchema = Schema.Struct({
     Schema.Struct({
       alias: Schema.String,
       id: PostgresDeclaration.fields.id,
-      declaration: Schema.Union([PostgresDeclaration, SharedTableDeclaration]),
+      declaration: Schema.Union([
+        PostgresDeclaration,
+        SharedTableDeclaration,
+        SharedStoreDeclaration
+      ]),
       revision: PostgresDeclaration.fields.revision
     })
   )
@@ -262,7 +274,12 @@ export const resolveStamps = (config: UnresolvedManifest, source: string): Execu
         (generated.kind !== "sharedTable" ||
           declaration.patchId !== generated.patchId ||
           declaration.table !== generated.table ||
-          stamp.id !== sharedTableId(declaration.patchId, declaration.table)))
+          stamp.id !== sharedTableId(declaration.patchId, declaration.table))) ||
+      (declaration.kind === "sharedStore" &&
+        (generated.kind !== "sharedStore" ||
+          declaration.patchId !== generated.patchId ||
+          declaration.store !== generated.store ||
+          stamp.id !== sharedStoreId(declaration.patchId, declaration.store)))
     )
       throw new StaleGenerated();
     uses[alias] = { ...declaration, id: stamp.id, revision: stamp.revision };

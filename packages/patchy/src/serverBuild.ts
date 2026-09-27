@@ -21,12 +21,13 @@ import { sha256 } from "@patchy/core";
 import { Engine, workerdBinary } from "@patchy/execution";
 import type * as Vite from "vite";
 import { LocalError } from "./CliError.js";
+import { clientAllowlist, readVariant } from "./variant.js";
 
 /** The release's allowlist per graph; the server list is `patchy` only. */
-const allowlist = {
+const allowlist: Record<"client" | "server", readonly string[]> = {
   client: ["preact", "@preact/signals"],
   server: []
-} as const;
+};
 
 const isBare = (source: string) =>
   !source.startsWith(".") &&
@@ -39,7 +40,7 @@ const isBare = (source: string) =>
 /** React idioms come through `patchy/preact`, which loads compat once; these never resolve. */
 const banned = new Set(["react", "react-dom", "preact/compat", "preact/debug/"]);
 
-const allowed = (graph: keyof typeof allowlist, source: string) =>
+const allowed = (list: readonly string[], source: string) =>
   source === "patchy" ||
   source.startsWith("patchy/") ||
   // The scaffolds set build.modulePreload: false; Vite's own polyfill import is refused like
@@ -47,37 +48,43 @@ const allowed = (graph: keyof typeof allowlist, source: string) =>
   (!banned.has(source) &&
     !source.startsWith("react/") &&
     !source.startsWith("react-dom/") &&
-    allowlist[graph].some((name) => source === name || source.startsWith(`${name}/`)));
+    list.some((name) => source === name || source.startsWith(`${name}/`)));
 
 export class ImportRefused extends Error {
   override readonly name = "ImportRefused";
   constructor(
     readonly source: string,
     readonly importer: string,
-    graph: keyof typeof allowlist
+    graph: keyof typeof allowlist,
+    list: readonly string[] = allowlist[graph]
   ) {
     super(
       banned.has(source) || source.startsWith("react/") || source.startsWith("react-dom/")
         ? `Import of "${source}" in ${importer} is refused: import render, hooks and forwardRef from patchy/preact, which loads compat once; never react, react-dom or preact/compat.`
         : `Import of "${source}" in ${importer} is not available on this release. ` +
             `Bare imports in ${graph === "client" ? "src/" : "server/"} resolve only to patchy${
-              allowlist[graph].length ? ` and ${allowlist[graph].join(", ")}` : ""
+              list.length ? ` and ${list.join(", ")}` : ""
             }; copy it into \`src/\` or ask Patchy for the capability.`
     );
   }
 }
 
 /** Refuses off-list bare imports from patch code; dependencies' own imports are theirs. */
-export const importCheck = (root: string, graph: keyof typeof allowlist): Vite.Plugin => ({
-  name: "patchy-import-check",
-  enforce: "pre",
-  resolveId(source, importer) {
-    if (importer === undefined || !isBare(source) || allowed(graph, source)) return null;
-    const relative = path.relative(root, importer.split("?")[0] ?? importer);
-    if (relative.startsWith("..") || relative.split(path.sep).includes("node_modules")) return null;
-    throw new ImportRefused(source, relative, graph);
-  }
-});
+export const importCheck = (root: string, graph: keyof typeof allowlist): Vite.Plugin => {
+  // PROTOTYPE for #315: the client list follows the repo's recorded variant (see variant.ts).
+  const list = graph === "client" ? clientAllowlist(readVariant(root)) : allowlist.server;
+  return {
+    name: "patchy-import-check",
+    enforce: "pre",
+    resolveId(source, importer) {
+      if (importer === undefined || !isBare(source) || allowed(list, source)) return null;
+      const relative = path.relative(root, importer.split("?")[0] ?? importer);
+      if (relative.startsWith("..") || relative.split(path.sep).includes("node_modules"))
+        return null;
+      throw new ImportRefused(source, relative, graph, list);
+    }
+  };
+};
 
 export const loadVite = (root: string) =>
   Effect.tryPromise({

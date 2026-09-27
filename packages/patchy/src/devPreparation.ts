@@ -13,6 +13,7 @@ import { RELEASE } from "./release.js";
 import { primitiveReminders } from "./primitiveReminders.js";
 // PROTOTYPE for #314
 import { serverModules } from "./serverBuild.js";
+import { readVariant } from "./variant.js";
 
 export const Prepared = Schema.Struct({
   manifest: Manifest,
@@ -98,7 +99,9 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
               manifest: unresolved,
               skills,
               ...(repo.patch === undefined ? {} : { patchId: repo.patch }),
-              ...(modules.length === 0 ? {} : { serverModules: modules })
+              ...(modules.length === 0 ? {} : { serverModules: modules }),
+              // PROTOTYPE for #315
+              ...(readVariant(root) === "wide" ? { variant: "wide" as const } : {})
             }
           })
           .pipe(Effect.catch((error) => Api.classify(error, "Generation failed.")));

@@ -5,6 +5,10 @@ description: Add a company Postgres connection, read its generated relations, wr
 
 # Company Postgres reads
 
+<!-- PROTOTYPE for #315: the tier 2 action path. -->
+
+On tier 2 the page has no `patchy.connections`: the same generated client is `ctx.connections.<alias>` inside an action (see `../patchy-server/SKILL.md`), and the page calls the action. Everything below about relations, `query` shapes, types and bounds holds there; read `patchy.connections.sales` as `ctx.connections.sales`. A query cannot reach a connection, so company data never drives a subscription: call the action again when the figures should refresh.
+
 Read `../patchy-loop/SKILL.md` first. Every readable row is available to whoever can open the patch; hiding a column in the UI does not protect it. Tier 1 has no outbound access or client storage. Company credentials stay behind Patchy, never in config, source, CLI arguments or agent transcripts. Development uses invented local fixture rows, never production data.
 
 ## Declare a connected source

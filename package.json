@@ -20,6 +20,8 @@
     "test:packed-cli-e2e": "node scripts/packed-cli-e2e.mjs",
     "test:postgres-concurrency": "vitest run --config vitest.postgres.config.ts",
     "test:prototype-crm": "playwright test -c playwright.prototype-crm.config.ts",
+    "prototype:crm": "node --import tsx --conditions=development prototypes/tier2-crm/scripts/crm.ts",
+    "prototype:crm-fixtures": "node --import tsx --conditions=development prototypes/tier2-crm/scripts/crm.ts fixtures",
     "prepare": "node scripts/build-serving-broker.mjs && effect-language-service patch && simple-git-hooks",
     "lint": "eslint \"**/*.{ts,mts,cts,tsx}\"",
     "typecheck": "node scripts/build-serving-broker.mjs && effect-language-service patch && turbo run typecheck",

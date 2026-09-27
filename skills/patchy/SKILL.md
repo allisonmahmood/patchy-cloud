@@ -88,7 +88,7 @@ Inside that repo read `AGENTS.md`, `.agents/skills/patchy-loop/SKILL.md` and
 The project skills teach tables, files and declarations in Patchy's own terms.
 Use the discovery chain above before adding a dependency.
 `pnpm patchy add postgres/<handle> --as <alias>`
-or `pnpm patchy add shared-table <patchId>/<table> --as <alias>` adds a declaration
+or `pnpm patchy add shared-table <patchId>/<table> --as <alias>` (or, for a tier 2 repo, `pnpm patchy add shared-store <patchId>/<store> --as <alias>`; PROTOTYPE for #315) adds a declaration
 and generates its client, context, fixture stub and skill. `pnpm patchy remove <alias>`
 reverses it while leaving its fixture. `pnpm patchy refresh` updates the pin,
 generated files and present skills transactionally; never manually edit

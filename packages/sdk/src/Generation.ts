@@ -152,6 +152,7 @@ const knownSkills = [
   "patchy-shared-tables",
   // PROTOTYPE for #315
   "patchy-shared-stores",
+  "patchy-packages",
   "patchy-server",
   "patchy-preact"
 ];
@@ -222,7 +223,9 @@ export const generate = Effect.fn("Generation.generate")(function* (
     ...request.skills,
     ...(request.manifest.tier === 2 ? ["patchy-server"] : []),
     // PROTOTYPE for #314: Preact with compat semantics is the scaffold on every scripted tier.
-    ...(request.manifest.tier >= 1 ? ["patchy-preact"] : [])
+    ...(request.manifest.tier >= 1 ? ["patchy-preact"] : []),
+    // PROTOTYPE for #315: variant B names its admitted packages; variant A never sees them.
+    ...(request.manifest.tier === 2 && request.variant === "wide" ? ["patchy-packages"] : [])
   ]);
   for (const skill of skills) {
     if (!knownSkills.includes(skill))
@@ -550,8 +553,9 @@ export function createClient(alias: string, call: ServerCallback) { return creat
         "",
         "/** query, mutation and action with ctx.tables, ctx.shared and ctx.connections typed from patchy.config.ts. */",
         "export const { query, mutation, action } = bind<typeof config, Uses>();",
-        'export { t, HandlerError } from "patchy/server";',
-        'export type { Context, Viewer } from "patchy/server";',
+        'export { t, HandlerError, isHandlerError } from "patchy/server";',
+        // PROTOTYPE for #315: the file shapes a handler returns and receives.
+        'export type { Context, Viewer, FileEntry, FileHandle, Upload } from "patchy/server";',
         ""
       ].join("\n")
     );

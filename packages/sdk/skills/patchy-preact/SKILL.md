@@ -4,13 +4,14 @@ description: Build the browser UI of a patch with Preact through patchy/preact (
 ---
 
 <!-- PROTOTYPE for #314 -->
+<!-- PROTOTYPE for #315: useQuery and useFileUrl. -->
 
 # Preact with compat semantics
 
 The scaffold's UI is Preact 10 with its compatibility layer loaded once by `patchy/preact`, before anything renders. Write components in the React idiom you know; do not call it React and do not install React. Two rules the build enforces:
 
 - Import `render`, hooks, `forwardRef`, `memo`, `createPortal` and signals from `patchy/preact`. Imports of `react`, `react-dom` and `preact/compat` are refused by the build (`Import of "react" ... is refused`). `preact` and `@preact/signals` themselves are on the allowlist; `preact/jsx-runtime` is what your JSX compiles to.
-- Everything else comes from `patchy` or the release's allowlist; any other bare import fails with `copy it into src/ or ask Patchy for the capability`.
+- Everything else comes from `patchy` or the release's allowlist (`preact`, `@preact/signals`, and any packages `../patchy-packages/SKILL.md` lists when that skill is present); any other bare import fails with `copy it into src/ or ask Patchy for the capability`.
 
 ## The scaffold
 
@@ -28,4 +29,38 @@ The scaffold's UI is Preact 10 with its compatibility layer loaded once by `patc
 
 ## Data
 
-Call handlers with `patchy.server.<module>.<export>(args)` from an event handler or a `useEffect`; hold results in `useState` or a signal. For a live list, subscribe to a query in a `useEffect` and return the unsubscribe: `useEffect(() => patchy.server.notes.list.subscribe({}, setNotes), [])` (see `../patchy-server/SKILL.md`; there is no `useQuery` in this release). Without a subscription, read again after a mutation. Branch on `isHandlerError(error, "<code>")` for a handler's own errors and treat `PatchyError`s as the platform's. Native form submission is blocked in the frame: use `type="button"` and an Enter handler that calls the handler, with `event.preventDefault()` on the form.
+Read with a live query and render what it returns:
+
+```tsx
+import { useQuery, useFileUrl } from "patchy/preact";
+import type { FileHandle } from "patchy/client";
+import { patchy } from "../patchy/_generated/client.js";
+
+function Pipeline() {
+  const { data, error, status } = useQuery(patchy.server.deals.pipeline, {});
+  if (error) return <p role="alert">{error.message}</p>;
+  if (data === undefined) return <p>Loading…</p>;
+  return (
+    <ul>
+      {data.map((deal) => (
+        <li key={deal.id}>{deal.title}</li>
+      ))}
+    </ul>
+  );
+}
+
+function Thumbnail({ handle }: { handle: FileHandle }) {
+  const { url, error } = useFileUrl(handle);
+  return error ? (
+    <span>{error.code === "not_found" ? "Replaced" : "Unavailable"}</span>
+  ) : url ? (
+    <img src={url} />
+  ) : null;
+}
+```
+
+- `useQuery(query, args)` subscribes while mounted and returns `{ data, error, status }`: `data` is the last good result, `error` a `HandlerError` from a re-run or a `PatchyError` refusal (while it is set, `data` may be stale), `status` `loading`, `up-to-date`, `resyncing` (after a reconnect or a hidden tab; keep showing `data`) or `suspended`.
+- `useFileUrl(handle)` returns `{ url, error }` for a handle a handler returned, and releases the URL on unmount; a failed redemption never keeps a stale image.
+- Call mutations and actions from event handlers: `await patchy.server.deals.create({...})`. A subscribed query updates itself after the write; there is no refetch to write.
+- Branch on `isHandlerError(error, "<code>")` for a handler's own errors and treat `PatchyError`s as the platform's. Native form submission is blocked in the frame: use `type="button"` and an Enter handler that calls the handler, with `event.preventDefault()` on the form.
+- Import `FileHandle` and `Upload` types from `patchy/client`.

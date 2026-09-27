@@ -486,7 +486,9 @@ export const GenerateRequest = Schema.Struct({
   skills: Schema.Array(NonEmptyText),
   // PROTOTYPE for #314: the `server/*.ts` module names, so the generated client can type
   // `patchy.server.<module>` from a type-only import of each module.
-  serverModules: Schema.optionalKey(Schema.Array(DefinitionName))
+  serverModules: Schema.optionalKey(Schema.Array(DefinitionName)),
+  // PROTOTYPE for #315: the repo's client allowlist variant; "wide" serves its package skill.
+  variant: Schema.optionalKey(Schema.Literal("wide"))
 });
 
 /** Portable relative paths only; the CLI additionally rejects filesystem symlinks. */

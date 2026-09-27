@@ -5,6 +5,8 @@ description: Declare another patch's shared table, read its generated client, au
 
 # Shared-table reads
 
+<!-- PROTOTYPE for #315: stores have their own sibling skill. -->
+
 Read `../patchy-loop/SKILL.md` first. Every readable row is available to whoever can open the patch, subject to the source's live access: UI filters are not authorization. Tier 1 has no outbound access or client storage. Build with invented local fixtures, never production rows, and never manually edit generated clients, context or revision stamps.
 
 ## Declare, seed locally, read
@@ -22,7 +24,7 @@ Deleted patches need their id and `--state all` at both detail levels. A
 `wrong_state` refusal is exit 2 with the needed state flag, not proof of absence.
 Null inventory means unavailable. Branch on `declarable` and `reason`, not
 `hint`: ask the named owner about `not_shared`, arrange restoration for
-`source_off`, and use an owned store for files marked `not_shareable`.
+`source_off`. For a shared file store, see `../patchy-shared-stores/SKILL.md`.
 
 In application source, if the declaration's generated alias is `contacts`:
 
