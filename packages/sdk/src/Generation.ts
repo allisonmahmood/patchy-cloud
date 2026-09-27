@@ -83,7 +83,8 @@ export type GenerationRefused =
   | UnknownProjectSkill
   | UnsafeGeneratedPath
   | ConnectionNotConnected
-  | PatchNotOpenable;
+  | PatchNotOpenable
+  | SharedStoreNeedsTier2;
 export class GenerationUnavailable extends Schema.TaggedError<GenerationUnavailable>()(
   "GenerationUnavailable",
   {
@@ -103,11 +104,54 @@ export class GenerationUnavailable extends Schema.TaggedError<GenerationUnavaila
 }
 
 const coreSkills = ["patchy-loop", "patchy-tables", "patchy-files"];
+
+/** PROTOTYPE for #315: tier 1 cannot read a shared file store in this prototype (stated gap). */
+export class SharedStoreNeedsTier2 extends Schema.TaggedError<SharedStoreNeedsTier2>()(
+  "SharedStoreNeedsTier2",
+  { alias: Schema.String }
+) {
+  readonly code = "invalid_manifest" as const;
+  override get message() {
+    return `Shared file store ${this.alias} is read from tier 2 server functions; this repo is not tier 2.`;
+  }
+}
+
+/**
+ * PROTOTYPE for #315: the sample files laid down once in `fixtures/shared-<alias>/`: a one-page
+ * PDF and an SVG thumbnail, both text so they travel as generated files.
+ */
+const sampleFiles = (store: string): Record<string, string> => {
+  const text = `Sample from ${store}`.replace(/[()\\]/g, "");
+  const stream = `BT /F1 18 Tf 72 720 Td (${text}) Tj ET`;
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+    `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"
+  ];
+  let pdf = "%PDF-1.4\n";
+  const offsets: number[] = [];
+  objects.forEach((object, index) => {
+    offsets.push(pdf.length);
+    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets
+    .map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`)
+    .join("")}trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return {
+    "sample.pdf": pdf,
+    "sample.svg": `<svg xmlns="http://www.w3.org/2000/svg" width="160" height="120" viewBox="0 0 160 120"><rect width="160" height="120" fill="#e8eef7"/><text x="80" y="66" font-family="sans-serif" font-size="14" text-anchor="middle" fill="#334">sample</text></svg>\n`
+  };
+};
 // PROTOTYPE for #314: `patchy-server` is implied by tier 2.
 const knownSkills = [
   ...coreSkills,
   "patchy-postgres",
   "patchy-shared-tables",
+  // PROTOTYPE for #315
+  "patchy-shared-stores",
   "patchy-server",
   "patchy-preact"
 ];
@@ -209,12 +253,16 @@ export const generate = Effect.fn("Generation.generate")(function* (
     context: string;
   }> = [];
   const shared: Record<string, string> = Object.create(null);
+  // PROTOTYPE for #315: shared-store client factories, server-side only.
+  const sharedStores: Record<string, string> = Object.create(null);
   const metadata: {
     postgres: Record<string, (typeof DeclarationMetadata.Type)["postgres"][string]>;
     shared: Record<string, (typeof DeclarationMetadata.Type)["shared"][string]>;
+    stores: Record<string, NonNullable<(typeof DeclarationMetadata.Type)["stores"]>[string]>;
   } = {
     postgres: Object.create(null),
-    shared: Object.create(null)
+    shared: Object.create(null),
+    stores: Object.create(null)
   };
   const factories: Record<string, string> = Object.create(null);
   const available = Object.values(request.manifest.uses).some((entry) => entry.kind === "postgres")
@@ -271,6 +319,71 @@ export const generate = Effect.fn("Generation.generate")(function* (
         revision: resolved.revision,
         declaration: resolved,
         skill: ".agents/skills/patchy-postgres/SKILL.md",
+        context,
+        client,
+        fixture
+      });
+    } else if (declaration.kind === "sharedStore") {
+      // PROTOTYPE for #315: a shared file store, read from tier 2 server functions only.
+      if (request.manifest.tier !== 2) return yield* new SharedStoreNeedsTier2({ alias });
+      const source = yield* patches
+        .sharedStore(declaration.patchId, declaration.store, companyId)
+        .pipe(
+          Effect.catchTags({
+            SqlError: Effect.die,
+            CompanyIdentityMismatch: Effect.die,
+            CompanyDatabaseError: (cause) =>
+              Effect.fail(
+                new GenerationUnavailable({
+                  stage: "shared-table",
+                  resource: `${declaration.patchId}/${declaration.store}`.slice(0, 256),
+                  cause
+                })
+              ),
+            CompanyDatabaseNotReady: (cause) =>
+              Effect.fail(
+                new GenerationUnavailable({
+                  stage: "shared-table",
+                  resource: `${declaration.patchId}/${declaration.store}`.slice(0, 256),
+                  cause
+                })
+              ),
+            PatchNotOpenable: (cause) =>
+              Effect.fail(
+                new PatchNotOpenable({
+                  patchId: declaration.patchId,
+                  table: declaration.store,
+                  cause
+                })
+              )
+          })
+        );
+      const resolved = { ...declaration, id: source.id, revision: source.schemaRevision };
+      metadata.stores[alias] = { declaration: resolved, description: source.description };
+      const fixture = `fixtures/shared-${alias}/`;
+      files.set(
+        client,
+        `import { createSharedStore } from "patchy/server";
+import type { ServerCallback } from "patchy/server";
+/** ${source.id}: read-only, re-authorised live on every read. */
+export function createClient(alias: string, call: ServerCallback) { return createSharedStore(alias, call); }
+`
+      );
+      files.set(
+        context,
+        definitionContext(`Shared file store ${alias}`, { ...source, fixture }) +
+          `\nRead-only, from server functions: \`ctx.shared.${alias}.list()\` and \`stat(name)\` in queries and actions, \`get(name)\` in actions. Every entry carries a \`handle\` the page redeems with \`patchy.files.url(handle)\`. Sharing and source access are checked live on every read and redemption.\n\nIn \`patchy dev\`, the files under \`${fixture}\` are loaded into a local copy of this store at start; existing files are never overwritten. Name them like the source's files. Never copy company files here.\n`
+      );
+      for (const [name, contents] of Object.entries(sampleFiles(source.store)))
+        files.set(`${fixture}${name}`, contents);
+      sharedStores[alias] = `./uses/${alias}.js`;
+      skills.add("patchy-shared-stores");
+      uses.push({
+        alias,
+        id: source.id,
+        revision: source.schemaRevision,
+        declaration: resolved,
+        skill: ".agents/skills/patchy-shared-stores/SKILL.md",
         context,
         client,
         fixture
@@ -381,18 +494,22 @@ export const generate = Effect.fn("Generation.generate")(function* (
     files.set(path, contents);
     skillFiles.push({ name, path });
   }
+  // PROTOTYPE for #315: a tier 2 page is server-only: its client has no tables, stores, shares
+  // or connections, only `patchy.server`, `patchy.files` (handles and staging) and `me`.
   files.set(
     `${root}/client.ts`,
-    generateClient({
-      shared,
-      connections: factories,
-      ...(request.manifest.tier === 2 ? { serverModules: request.serverModules ?? [] } : {})
-    })
+    generateClient(
+      request.manifest.tier === 2
+        ? { serverModules: request.serverModules ?? [], serverOnly: true }
+        : { shared, connections: factories }
+    )
   );
   // PROTOTYPE for #314: the builders bound to the config's table types (#296 point 10).
   if (request.manifest.tier === 2) {
     // Round 3: the declared shared tables and connections ride into handlers through the same
     // generated client factories the browser uses; the guest entry instantiates them.
+    // PROTOTYPE for #315: shared stores ride beside shared tables under `ctx.shared`.
+    Object.assign(shared, sharedStores);
     const sharedImports = Object.keys(shared).map(
       (alias, index) =>
         `import { createClient as shared${index} } from ${JSON.stringify(shared[alias])};`
@@ -457,10 +574,12 @@ export const generate = Effect.fn("Generation.generate")(function* (
   for (const path of files.keys()) {
     if (!isManagedOutputPath(path)) return yield* new UnsafeGeneratedPath({ path });
   }
+  const { stores, ...tablesAndConnections } = metadata;
   return {
     ok: true as const,
     files: [...files].map(([path, contents]) => ({ path, contents })),
-    metadata,
+    // PROTOTYPE for #315: `stores` only when a shared store is declared.
+    metadata: Object.keys(stores).length === 0 ? tablesAndConnections : metadata,
     uses: uses.map(({ alias, id, revision }) => ({ alias, id, revision }))
   };
 });

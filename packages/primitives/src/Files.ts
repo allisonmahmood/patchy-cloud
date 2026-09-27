@@ -78,8 +78,10 @@ const resource: Runtime.Handler["resource"] = (args) =>
   isName(args.name)
     ? `${args.store}/${args.name}`
     : null;
-const objectKey = (patchId: string, store: string, objectId: string) =>
-  `files/${patchId}/${store}/${objectId}`;
+// PROTOTYPE for #315: object keys drop the store (#303 point 8), so adopting a staged upload is
+// a pointer write with no copy. The store argument stays for the call sites' shape.
+const objectKey = (patchId: string, _store: string, objectId: string) =>
+  `files/${patchId}/${objectId}`;
 const decodePut = Schema.decodeUnknownEffect(runtimeOperations["files.put"].request.fields.args, {
   onExcessProperty: "error"
 });

@@ -1,3 +1,4 @@
+// PROTOTYPE for #315: object keys drop the store (files/<patchId>/<objectId>).
 import { createHash } from "node:crypto";
 import { NodeFileSystem } from "@effect/platform-node";
 import { assert } from "@effect/vitest";
@@ -183,7 +184,7 @@ const concurrentWritesContract = Effect.fn("test.filesContract.concurrentWrites"
   assert.strictEqual(row!.sha256, digest(result.bytes));
   assert.include(candidates.map(digest), row!.sha256);
   const content = yield* ContentStore.ContentStore;
-  const objects = yield* content.list(`files/${binding.patchId}/docs/`).pipe(Stream.runCollect);
+  const objects = yield* content.list(`files/${binding.patchId}/`).pipe(Stream.runCollect);
   assert.strictEqual(objects.length, 2);
   assert.strictEqual(new Set(objects.map((object) => object.key)).size, 2);
   for (const object of objects) {
@@ -290,11 +291,11 @@ const namesAndDeletionContract = Effect.fn("test.filesContract.namesAndDeletion"
   );
   yield* put("remove.bin", new Uint8Array([9]));
   const content = yield* ContentStore.ContentStore;
-  const before = yield* content.list(`files/${binding.patchId}/docs/`).pipe(Stream.runCollect);
+  const before = yield* content.list(`files/${binding.patchId}/`).pipe(Stream.runCollect);
   yield* remove("remove.bin");
   yield* remove("remove.bin");
   assert.strictEqual((yield* get("remove.bin").pipe(Effect.flip)).code, "invalid_request");
-  const after = yield* content.list(`files/${binding.patchId}/docs/`).pipe(Stream.runCollect);
+  const after = yield* content.list(`files/${binding.patchId}/`).pipe(Stream.runCollect);
   assert.deepStrictEqual(
     after.map((object) => object.key).sort(),
     before.map((object) => object.key).sort()

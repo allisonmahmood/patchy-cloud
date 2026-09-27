@@ -14,7 +14,13 @@ import * as path from "node:path";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { RuntimeGroup, type Identity } from "@patchy/api";
 import { Engine, workerdBinary } from "@patchy/execution";
-import { RuntimeDev, RuntimeApi, Invalidation, SubscriptionStream } from "@patchy/runtime/dev";
+import {
+  RuntimeDev,
+  RuntimeApi,
+  Invalidation,
+  SubscriptionStream,
+  FileRoutes
+} from "@patchy/runtime/dev";
 import { Limits } from "@patchy/limits";
 import {
   brokerScript,
@@ -240,6 +246,8 @@ export const serve = Effect.fn("Dev.serve")(function* (
         HttpApiBuilder.layer(api).pipe(Layer.provide(RuntimeApi.layer)),
         // PROTOTYPE for #314 round 3: tier 2 query subscriptions, one stream per document.
         SubscriptionStream.layer,
+        // PROTOTYPE for #315: staging and handle redemption, per viewer mount.
+        FileRoutes.layer,
         pages,
         guard
       ),

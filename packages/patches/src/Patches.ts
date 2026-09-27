@@ -29,7 +29,8 @@ import {
   SharingScope,
   type SharedTableDeclaration,
   TableDefinition,
-  sharedTableId
+  sharedTableId,
+  sharedStoreId
 } from "@patchy/api";
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
 import { Tables } from "@patchy/primitives";
@@ -388,6 +389,15 @@ export class PatchNotOpenable extends Schema.TaggedError<PatchNotOpenable>()("Pa
   }
 }
 
+/** PROTOTYPE for #315: a live, shared file store in the same company (#303 point 2). */
+export interface SharedStore {
+  readonly id: string;
+  readonly patchId: string;
+  readonly store: string;
+  readonly description: string;
+  readonly schemaRevision: number;
+}
+
 export interface SharedTable {
   readonly id: string;
   readonly patchId: string;
@@ -644,6 +654,12 @@ export class Patches extends Context.Service<
       table: string,
       companyId: string
     ) => Effect.Effect<SharedTable, PatchNotOpenable | DatabaseError | SqlError>;
+    /** PROTOTYPE for #315: a live same-company store that its source shares. */
+    readonly sharedStore: (
+      patchId: string,
+      store: string,
+      companyId: string
+    ) => Effect.Effect<SharedStore, PatchNotOpenable | DatabaseError | SqlError>;
     /** Durably reserves a fresh object key before any bytes can be written. */
     readonly prepareObject: (objectKey: string) => Effect.Effect<void, SqlError>;
     /**
@@ -928,6 +944,8 @@ export const make = Effect.gen(function* () {
       WHERE patches.id = ${patchId}`
   });
 
+  // PROTOTYPE for #315: a shared-store declaration is a read like a shared table's, with the
+  // store's name where the table's would be, so dependants and reads cover stores too.
   const companyPatchRows = SqlSchema.findAll({
     Request: Schema.Struct({ companyId: Schema.String, userId: Schema.String }),
     Result: ReadPatchRow,
@@ -940,13 +958,13 @@ export const make = Effect.gen(function* () {
           SELECT jsonb_agg(declarations ORDER BY declarations.alias, declarations."patchId", declarations."table")
           FROM (
             SELECT DISTINCT declaration.key AS alias,
-              declaration.value->>'patchId' AS "patchId", declaration.value->>'table' AS "table"
+              declaration.value->>'patchId' AS "patchId", COALESCE(declaration.value->>'table', declaration.value->>'store') AS "table"
             FROM patch_versions
             CROSS JOIN LATERAL jsonb_each(patch_versions.manifest->'uses') AS declaration
             WHERE patch_versions.patch_id = patches.id
-              AND declaration.value->>'kind' = 'sharedTable'
+              AND declaration.value->>'kind' IN ('sharedTable', 'sharedStore')
               AND declaration.value->>'id' =
-                (declaration.value->>'patchId') || '/' || (declaration.value->>'table')
+                (declaration.value->>'patchId') || '/' || (COALESCE(declaration.value->>'table', declaration.value->>'store'))
           ) declarations
         ), '[]'::jsonb) AS reads
       FROM patches
@@ -1362,6 +1380,27 @@ export const make = Effect.gen(function* () {
     } satisfies SharedTable;
   });
 
+  const sharedStore = Effect.fn("Patches.sharedStore")(function* (
+    patchId: string,
+    store: string,
+    companyId: string
+  ) {
+    const source = yield* find(patchId);
+    if (Option.isNone(source) || source.value.patch.companyId !== companyId)
+      return yield* new PatchNotOpenable({ patchId, table: store });
+    const snapshot = yield* readInventory(companyId, patchId);
+    const entry = snapshot?.stores.find((candidate) => candidate.name === store);
+    if (snapshot === null || entry === undefined || !entry.shared)
+      return yield* new PatchNotOpenable({ patchId, table: store });
+    return {
+      id: sharedStoreId(patchId, store),
+      patchId,
+      store,
+      description: entry.description,
+      schemaRevision: snapshot.schemaRevision
+    } satisfies SharedStore;
+  });
+
   const resolveDeclarations = Effect.fn("Patches.resolveDeclarations")(function* (
     manifest: typeof Manifest.Type,
     companyId: string
@@ -1372,6 +1411,19 @@ export const make = Effect.gen(function* () {
     for (const declaration of declarations) {
       if (declaration.kind === "postgres") {
         yield* connections.resolve(companyId, declaration);
+        continue;
+      }
+      if (declaration.kind === "sharedStore") {
+        if (declaration.id !== sharedStoreId(declaration.patchId, declaration.store))
+          return yield* new PatchNotOpenable({
+            patchId: declaration.patchId,
+            table: declaration.store
+          });
+        const store = yield* sharedStore(declaration.patchId, declaration.store, companyId);
+        if (declaration.revision < store.schemaRevision)
+          warnings.push(
+            `Shared store \`${store.id}\`: declared revision ${declaration.revision} is behind source revision ${store.schemaRevision}.`
+          );
         continue;
       }
       if (declaration.kind !== "sharedTable") continue;
@@ -1396,16 +1448,16 @@ export const make = Effect.gen(function* () {
     }),
     Result: DeclaringPatches,
     execute: ({ patchId, companyId }) => sql`
-      SELECT declaration.value->>'table' AS "table", count(DISTINCT patches.id)::int AS count
+      SELECT COALESCE(declaration.value->>'table', declaration.value->>'store') AS "table", count(DISTINCT patches.id)::int AS count
       FROM patches
       JOIN patch_versions ON patch_versions.patch_id = patches.id
       CROSS JOIN LATERAL jsonb_each(patch_versions.manifest->'uses') AS declaration
       WHERE patches.company_id = ${companyId}
         AND ${serving}
-        AND declaration.value->>'kind' = 'sharedTable'
+        AND declaration.value->>'kind' IN ('sharedTable', 'sharedStore')
         AND declaration.value->>'patchId' = ${patchId}
-        AND declaration.value->>'id' = ${patchId} || '/' || (declaration.value->>'table')
-      GROUP BY declaration.value->>'table'`
+        AND declaration.value->>'id' = ${patchId} || '/' || (COALESCE(declaration.value->>'table', declaration.value->>'store'))
+      GROUP BY COALESCE(declaration.value->>'table', declaration.value->>'store')`
   });
 
   const dependantRows = SqlSchema.findAll({
@@ -1422,10 +1474,10 @@ export const make = Effect.gen(function* () {
       JOIN patch_versions ON patch_versions.patch_id = patches.id
       CROSS JOIN LATERAL jsonb_each(patch_versions.manifest->'uses') AS declaration
       WHERE patches.company_id = ${companyId} AND ${serving}
-        AND declaration.value->>'kind' = 'sharedTable'
+        AND declaration.value->>'kind' IN ('sharedTable', 'sharedStore')
         AND declaration.value->>'patchId' = ${patchId}
-        AND declaration.value->>'id' = ${patchId} || '/' || (declaration.value->>'table')
-        AND ${affected === null ? sql`true` : sql`declaration.value->>'table' IN ${sql.in(affected)}`}
+        AND declaration.value->>'id' = ${patchId} || '/' || (COALESCE(declaration.value->>'table', declaration.value->>'store'))
+        AND ${affected === null ? sql`true` : sql`COALESCE(declaration.value->>'table', declaration.value->>'store') IN ${sql.in(affected)}`}
       ORDER BY patches.name, patches.id`
   });
   const refuseDependants = Effect.fn("Patches.refuseDependants")(function* (
@@ -1443,7 +1495,7 @@ export const make = Effect.gen(function* () {
     Result: Schema.Struct({ ...OffSource.fields, name: Schema.NullOr(Schema.String) }),
     execute: ({ patchId, companyId }) => sql`
       SELECT DISTINCT declaration.value->>'patchId' AS "patchId", source.name,
-        declaration.value->>'table' AS "table",
+        COALESCE(declaration.value->>'table', declaration.value->>'store') AS "table",
         CASE WHEN source.id IS NULL THEN 'gone'
           WHEN source.deleted_at IS NOT NULL THEN 'deleted'
           WHEN source.retired_at IS NOT NULL THEN 'retired'
@@ -1453,7 +1505,7 @@ export const make = Effect.gen(function* () {
       CROSS JOIN LATERAL jsonb_each(patch_versions.manifest->'uses') AS declaration
       LEFT JOIN patches source ON source.id = declaration.value->>'patchId'
         AND source.company_id = ${companyId} AND source.disabled_at IS NULL
-      WHERE patches.id = ${patchId} AND declaration.value->>'kind' = 'sharedTable'
+      WHERE patches.id = ${patchId} AND declaration.value->>'kind' IN ('sharedTable', 'sharedStore')
         AND (source.id IS NULL OR source.deleted_at IS NOT NULL OR source.retired_at IS NOT NULL)
       ORDER BY "patchId", "table"`
   });
@@ -1536,7 +1588,11 @@ export const make = Effect.gen(function* () {
       input.patchId,
       companyId,
       input.force,
-      plan.sharing.filter((table) => input.manifest.tables[table]!.shared !== true)
+      // PROTOTYPE for #315: a store the manifest unshares refuses like a table.
+      [
+        ...plan.sharing.filter((table) => input.manifest.tables[table]!.shared !== true),
+        ...plan.storeSharing.filter((store) => input.manifest.files[store]!.shared !== true)
+      ]
     );
     if (snapshot !== null) {
       yield* databases.withCompany(companyId)(
@@ -1576,12 +1632,10 @@ export const make = Effect.gen(function* () {
               if (isFileMode(input)) return yield* new HasPrimitives({ patchId: input.patchId });
               const snapshot = yield* inventoryStore.read(input.patchId);
               const plan = yield* tables.diff(input.manifest, snapshot);
-              yield* refuseDependants(
-                input.patchId,
-                input.companyId,
-                input.force,
-                plan.sharing.filter((table) => input.manifest.tables[table]!.shared !== true)
-              );
+              yield* refuseDependants(input.patchId, input.companyId, input.force, [
+                ...plan.sharing.filter((table) => input.manifest.tables[table]!.shared !== true),
+                ...plan.storeSharing.filter((store) => input.manifest.files[store]!.shared !== true)
+              ]);
               return yield* tables.provision(input.patchId, input.manifest);
             })
           );
@@ -1741,21 +1795,28 @@ export const make = Effect.gen(function* () {
           }
           const declarationWarnings = yield* resolveDeclarations(input.manifest, companyId);
           const resources = yield* provision({ ...input, companyId });
-          const declaringPatches = resources.sharing.some(
-            (table) => input.manifest.tables[table]!.shared !== true
-          )
-            ? new Map(
-                (yield* declaringPatchRows({
-                  patchId: input.patchId,
-                  companyId
-                })).map((row) => [row.table, row.count])
-              )
-            : new Map<string, number>();
-          const sharingWarnings = resources.sharing.map((table) =>
-            input.manifest.tables[table]!.shared === true
-              ? `\`${table}\` is now shared.`
-              : `\`${table}\` is no longer shared; ${declaringPatches.get(table) ?? 0} declaring patches are affected.`
-          );
+          const declaringPatches =
+            resources.sharing.some((table) => input.manifest.tables[table]!.shared !== true) ||
+            resources.storeSharing.some((store) => input.manifest.files[store]!.shared !== true)
+              ? new Map(
+                  (yield* declaringPatchRows({
+                    patchId: input.patchId,
+                    companyId
+                  })).map((row) => [row.table, row.count])
+                )
+              : new Map<string, number>();
+          const sharingWarnings = [
+            ...resources.sharing.map((table) =>
+              input.manifest.tables[table]!.shared === true
+                ? `\`${table}\` is now shared.`
+                : `\`${table}\` is no longer shared; ${declaringPatches.get(table) ?? 0} declaring patches are affected.`
+            ),
+            ...resources.storeSharing.map((store) =>
+              input.manifest.files[store]!.shared === true
+                ? `File store \`${store}\` is now shared.`
+                : `File store \`${store}\` is no longer shared; ${declaringPatches.get(store) ?? 0} declaring patches are affected.`
+            )
+          ];
           const publicUrl = address(input.publicBaseUrl, companyHandle, name);
           const response = new (input.intent === "create" ? PublishCreated : PublishUpdated)({
             ok: true,
@@ -2077,6 +2138,7 @@ export const make = Effect.gen(function* () {
     withDependencyLock,
     companyInventory,
     sharedTable,
+    sharedStore,
     prepareObject,
     claimObjects,
     completeObject,

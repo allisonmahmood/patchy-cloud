@@ -7,8 +7,9 @@
 // handler runs and `result` after it; a query's writes are refused by the callback host, not
 // only by these types. Skipped in this slice: `ctx.shared`, `ctx.files`, `ctx.connections`,
 // `ctx.run` and the mutation key.
-import type { Config, FieldDescriptor, Infer, Json, Row } from "./config.js";
+import type { Config, FieldDescriptor, FileHandle, Infer, Json, Row, Upload } from "./config.js";
 import type { OwnedTable, ReadTable, TableIndexes } from "./client.js";
+export type { FileHandle, Upload } from "./config.js";
 export { t } from "./config.js";
 export { HandlerError, isHandlerError } from "./handlerError.js";
 
@@ -38,6 +39,75 @@ export type NoUses = {
   readonly connections: Record<never, never>;
 };
 
+/**
+ * PROTOTYPE for #315: one file as a handler sees it. `handle` is minted for this viewer, patch
+ * and loaded version; return it to the page (typed `t.fileHandle()`) so the page can show or
+ * download exactly these bytes. Returning it is the selection: the page sees what handlers return.
+ */
+export interface FileEntry {
+  readonly name: string;
+  /** Bytes, measured by Patchy. */
+  readonly size: number;
+  /** As written; a staged upload's type is the page's claim, not proof. */
+  readonly contentType: string;
+  readonly updatedAt: string;
+  readonly handle: FileHandle;
+}
+export interface FilePage {
+  readonly files: readonly FileEntry[];
+  /** Pass back as `cursor` for the next page; null on the last page. */
+  readonly cursor: string | null;
+}
+export interface FileListOptions {
+  /** Only names starting with this. */
+  readonly prefix?: string;
+  /** 1–1000, default 100. Names are ordered bytewise ascending. */
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+/** A file's entry and its bytes, in an action. */
+export interface FileContent {
+  readonly entry: FileEntry;
+  readonly bytes: Uint8Array;
+}
+/** A store in a query: metadata only. */
+export interface QueryFileStore {
+  list(options?: FileListOptions): Promise<FilePage>;
+  /** The file's entry, or null when no file has this name. */
+  stat(name: string): Promise<FileEntry | null>;
+}
+/** A store the loaded version defines, in an action. */
+export interface ActionFileStore extends QueryFileStore {
+  /** The bytes enter the isolate; null when no file has this name. */
+  get(name: string): Promise<FileContent | null>;
+  /**
+   * Points `name` at new bytes and returns the new entry (with its handle). An Upload is adopted
+   * once, with no copy; its contentType is used unless you pass one. Plain bytes need
+   * `{ contentType }`. Replacing a name makes every older handle for it answer `not_found`.
+   */
+  put(
+    name: string,
+    content: Upload | Uint8Array,
+    options?: { readonly contentType?: string }
+  ): Promise<FileEntry>;
+  /** False when no file had this name. Older handles for it answer `not_found`. */
+  delete(name: string): Promise<boolean>;
+}
+/** Another patch's shared store: read-only, re-authorised live on every read. */
+export interface SharedStore extends QueryFileStore {
+  /** Actions only; the host refuses it in a query. */
+  get(name: string): Promise<FileContent | null>;
+}
+type QueryShared<S> = {
+  readonly [K in keyof S]: S[K] extends SharedStore ? QueryFileStore : S[K];
+};
+export type QueryFiles<C extends Config> = {
+  readonly [S in keyof C["files"] & string]: QueryFileStore;
+};
+export type ActionFiles<C extends Config> = {
+  readonly [S in keyof C["files"] & string]: ActionFileStore;
+};
+
 /** A sibling handler run from an action; typed loosely, the manifest validates at the wire. */
 export type Run = {
   readonly [module: string]: {
@@ -53,7 +123,17 @@ export type Run = {
 export interface Context<C extends Config, Kind extends HandlerKind, U extends Uses = NoUses> {
   readonly viewer: Viewer;
   readonly tables: Kind extends "query" ? QueryTables<C> : MutationTables<C>;
-  readonly shared: Kind extends "mutation" ? Record<never, never> : U["shared"];
+  /** PROTOTYPE for #315: list/stat in queries and actions; get, put and delete in actions. */
+  readonly files: Kind extends "query"
+    ? QueryFiles<C>
+    : Kind extends "action"
+      ? ActionFiles<C>
+      : Record<never, never>;
+  readonly shared: Kind extends "mutation"
+    ? Record<never, never>
+    : Kind extends "query"
+      ? QueryShared<U["shared"]>
+      : U["shared"];
   readonly connections: Kind extends "action" ? U["connections"] : Record<never, never>;
   readonly run: Kind extends "action" ? Run : Record<never, never>;
   /** Appends to the invocation's runtime log entry; `patchy dev logs` prints it locally. */
@@ -100,6 +180,20 @@ const declare =
   ): Handler<Kind, Args, Result, Errors, C, U> => {
     if (definition.args === undefined || definition.result === undefined)
       throw new Error(`A ${kind} declares both args and result.`);
+    // PROTOTYPE for #315: the host refuses these too; failing at module init names the handler.
+    const has = (value: unknown, fileKind: string): boolean =>
+      value !== null &&
+      typeof value === "object" &&
+      ((value as { kind?: unknown }).kind === fileKind ||
+        Object.values(value).some((inner) => has(inner, fileKind)));
+    const args = JSON.parse(JSON.stringify(definition.args)) as unknown;
+    const result = JSON.parse(JSON.stringify(definition.result)) as unknown;
+    if (has(args, "fileHandle"))
+      throw new Error("t.fileHandle() is legal in results only, never in arguments.");
+    if (has(result, "upload"))
+      throw new Error("t.upload() is legal in action arguments only, never in results.");
+    if (kind !== "action" && has(args, "upload"))
+      throw new Error(`t.upload() is legal in action arguments only; this handler is a ${kind}.`);
     return {
       __patchy: "handler",
       kind,
@@ -149,7 +243,12 @@ export type ServerModuleClient<M, C extends Config> = {
 };
 
 /** PROTOTYPE for #314 round 3: where a subscription stands; data is kept through `resyncing`. */
-export type SubscriptionStatus = "up-to-date" | "resyncing" | "stopped";
+export type SubscriptionStatus =
+  | "up-to-date"
+  | "resyncing"
+  | "stopped"
+  // PROTOTYPE for #315: hidden past the grace; resumes with `resyncing` when visible again.
+  | "suspended";
 export interface SubscribeOptions {
   /** A handler error from a re-run (`HandlerError`) or a refusal that ended it (`PatchyError`). */
   readonly onError?: (error: Error) => void;
@@ -171,3 +270,55 @@ export type QueryClient<A, T> = ((args: A) => Promise<T>) & {
 export type ServerClient<Modules, C extends Config> = {
   readonly [M in keyof Modules]: ServerModuleClient<Modules[M], C>;
 };
+
+// --- PROTOTYPE for #315: the guest-side file clients over the callback stub ------------------
+
+/** The guest entry's callback stub: one host operation, its JSON reply or a thrown refusal. */
+export type ServerCallback = (op: string, args: unknown) => Promise<unknown>;
+
+const toBase64 = (bytes: Uint8Array): string => {
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 0x8000)
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  return btoa(binary);
+};
+const fromBase64 = (text: string): Uint8Array => {
+  const binary = atob(text);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+};
+const content = (value: unknown): FileContent | null => {
+  if (value === null) return null;
+  const reply = value as { entry: FileEntry; bytes: string };
+  return { entry: reply.entry, bytes: fromBase64(reply.bytes) };
+};
+
+/** `ctx.files.<store>`; the host gates each operation by the handler's kind. */
+export const createFileStore = (store: string, call: ServerCallback): ActionFileStore => ({
+  list: (options = {}) => call("serverFiles.list", { ...options, store }) as Promise<FilePage>,
+  stat: (name) => call("serverFiles.stat", { store, name }) as Promise<FileEntry | null>,
+  get: async (name) => content(await call("serverFiles.get", { store, name })),
+  put: (name, value, options = {}) =>
+    (value instanceof Uint8Array
+      ? call("serverFiles.put", {
+          store,
+          name,
+          bytes: toBase64(value),
+          ...(options.contentType === undefined ? {} : { contentType: options.contentType })
+        })
+      : call("serverFiles.put", {
+          store,
+          name,
+          upload: value.token,
+          ...(options.contentType === undefined ? {} : { contentType: options.contentType })
+        })) as Promise<FileEntry>,
+  delete: (name) => call("serverFiles.delete", { store, name }) as Promise<boolean>
+});
+
+/** `ctx.shared.<alias>` for a declared shared store; generated `uses/<alias>.ts` calls this. */
+export const createSharedStore = (alias: string, call: ServerCallback): SharedStore => ({
+  list: (options = {}) => call("sharedFiles.list", { ...options, alias }) as Promise<FilePage>,
+  stat: (name) => call("sharedFiles.stat", { alias, name }) as Promise<FileEntry | null>,
+  get: async (name) => content(await call("sharedFiles.get", { alias, name }))
+});

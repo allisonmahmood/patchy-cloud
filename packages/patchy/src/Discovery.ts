@@ -203,7 +203,13 @@ export const list = Effect.fn("Discovery.list")(function* (
     const result = yield* client
       .primitive({ params: { patchRef, name: detail }, query: { state } })
       .pipe(Effect.catch(refusal));
-    return yield* Output.report(encodePrimitive(result), primitiveLines(result));
+    return yield* Output.report(encodePrimitive(result), [
+      ...primitiveLines(result),
+      // PROTOTYPE for #315: the declaration line for a shared store.
+      ...(result.kind === "store" && result.shared
+        ? [`Declare: patchy add shared-store ${patchRef}/${result.name} --as <alias>`]
+        : [])
+    ]);
   }
   const result = yield* client
     .detail({ params: { patchRef }, query: { state } })
@@ -220,8 +226,12 @@ export const list = Effect.fn("Discovery.list")(function* (
       if (hint !== undefined) lines.push(`    ${hint}`);
     }
     lines.push("Stores:");
-    for (const store of result.inventory.stores)
-      lines.push(`  ${store.name}: ${store.description}`, `    ${store.hint}`);
+    // PROTOTYPE for #315: a shared store shows its add hint, like a table.
+    for (const store of result.inventory.stores) {
+      lines.push(`  ${store.name}: ${store.description}`);
+      const hint = store.hint ?? store.reason;
+      if (hint !== undefined) lines.push(`    ${hint}`);
+    }
   }
   lines.push("Reads:");
   for (const read of result.reads)

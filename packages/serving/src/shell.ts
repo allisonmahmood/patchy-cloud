@@ -18,6 +18,8 @@ interface PatchPage {
   readonly route?: string;
   /** Address prefix, including the version selector on a historical address. */
   readonly base?: string;
+  /** PROTOTYPE for #315: the hidden grace before the shell suspends subscriptions. */
+  readonly hiddenGraceMs?: number;
 }
 
 /** One renderer, selected by the loaded version rather than the patch's current tier. */
@@ -47,7 +49,7 @@ export function renderPatchWrapper(options: PatchPage): string {
     ${scripted ? 'allow="clipboard-write *"' : ""}
     ${
       scripted
-        ? `data-patch-id="${escapeAttribute(options.patch.id)}" data-version-id="${escapeAttribute(options.version.id)}" data-wire="${options.version.wireVersion}" data-nonce="${escapeAttribute(options.nonce)}" data-base="${escapeAttribute(options.base)}" data-route="${escapeAttribute(options.route ?? "/")}" data-content-src="${escapeAttribute(content)}"`
+        ? `data-patch-id="${escapeAttribute(options.patch.id)}" data-version-id="${escapeAttribute(options.version.id)}" data-wire="${options.version.wireVersion}" data-nonce="${escapeAttribute(options.nonce)}" data-base="${escapeAttribute(options.base)}" data-route="${escapeAttribute(options.route ?? "/")}" data-content-src="${escapeAttribute(content)}"${options.hiddenGraceMs === undefined ? "" : ` data-hidden-grace="${Number(options.hiddenGraceMs)}"`}`
         : `srcdoc="${escapeAttribute(options.html)}"`
     }></iframe>
   <!-- patch:${escapeHtml(options.patch.id)} version:${Number(options.version.versionNumber)} -->

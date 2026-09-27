@@ -65,7 +65,7 @@ import {
   PatchesApi
 } from "@patchy/patches";
 import { PortalPages } from "@patchy/portal";
-import { Tables, TableOperations, Files } from "@patchy/primitives";
+import { Tables, TableOperations, Files, ServerFiles } from "@patchy/primitives";
 import { CompanyDatabases } from "@patchy/company-database";
 import { Pages, renderHome, servingHeaders, TrustedProxies } from "@patchy/serving";
 import {
@@ -75,6 +75,7 @@ import {
   RuntimeLog,
   // PROTOTYPE for #314 round 3: tier 2 query subscriptions.
   SubscriptionStream,
+  FileRoutes,
   me,
   migrations as runtimeMigrations
 } from "@patchy/runtime";
@@ -138,9 +139,18 @@ const services = Layer.mergeAll(
           Transaction.joiningDatabases(databases)
         )
       );
+      // PROTOTYPE for #315: tier 2 files over the same joining databases: the callbacks run on
+      // the invocation's connection; staging, redemption and upload lookups borrow their own.
+      const serverFiles = yield* ServerFiles.make.pipe(
+        Effect.provideService(
+          CompanyDatabases.CompanyDatabases,
+          Transaction.joiningDatabases(databases)
+        )
+      );
       const serverCall = yield* ServerCall.make(
-        { ...handlers, ...joiningTables },
+        { ...handlers, ...joiningTables, ...serverFiles.callbacks },
         {
+          resolveUpload: serverFiles.resolveUpload,
           bundle: (binding) =>
             binding.server === undefined
               ? Effect.fail(new Runtime.InvalidRequest({}))
@@ -159,7 +169,11 @@ const services = Layer.mergeAll(
             )
         }
       );
-      return RuntimeProduction.layer({ ...handlers, "server.call": serverCall });
+      return RuntimeProduction.layer({
+        ...handlers,
+        ...serverFiles.routes,
+        "server.call": serverCall
+      });
     })
   ).pipe(Layer.provide([LoadedVersions.layer, PostgresExecution.layer, engine]))
 ).pipe(
@@ -274,6 +288,8 @@ const app = Layer.mergeAll(
   api,
   // PROTOTYPE for #314 round 3: the subscription stream beside the runtime call route.
   SubscriptionStream.layer,
+  // PROTOTYPE for #315: staging and handle redemption.
+  FileRoutes.layer,
   SdkApi.tarballLayer,
   Pages.layer,
   PortalPages.layer,

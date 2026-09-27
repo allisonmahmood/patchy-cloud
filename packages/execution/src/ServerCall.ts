@@ -30,7 +30,9 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import {
   checkValue,
+  containsKind,
   handlersOf,
+  type TypeDescriptor,
   RuntimeCode,
   runtimeOperations,
   type ServerCallReply
@@ -83,6 +85,11 @@ const isRuntimeCode = Schema.is(RuntimeCode);
 
 /** Which callback operations each kind may reach; everything else is refused by the host. */
 const permitted = (kind: "query" | "mutation" | "action", op: string, target: Runtime.Handler) => {
+  // PROTOTYPE for #315: list and metadata in queries and actions, bytes and writes in actions
+  // only; a mutation reaches no files (#303 points 2, 6 and 8).
+  if (op === "serverFiles.list" || op === "serverFiles.stat") return kind !== "mutation";
+  if (op === "sharedFiles.list" || op === "sharedFiles.stat") return kind !== "mutation";
+  if (op.startsWith("serverFiles.") || op.startsWith("sharedFiles.")) return kind === "action";
   if (op.startsWith("shared.")) return kind !== "mutation";
   if (op.startsWith("postgres.")) return kind === "action";
   if (op.startsWith("tables.")) return kind !== "query" || target.kind === "read";
@@ -100,7 +107,49 @@ export interface Options {
     line: string,
     details?: unknown
   ) => Effect.Effect<void>;
+  /**
+   * PROTOTYPE for #315: a staged upload the binding's viewer may adopt, with Patchy's measured
+   * size and the page's claimed type; substituted into `t.upload()` arguments before invocation.
+   */
+  readonly resolveUpload?: (
+    binding: Binding.Binding["Service"],
+    token: string
+  ) => Effect.Effect<
+    { readonly token: string; readonly size: number; readonly contentType: string },
+    Runtime.RuntimeError
+  >;
 }
+
+/** PROTOTYPE for #315: replaces every `t.upload()` value with the host's record of it. */
+const substituteUploads = (
+  descriptor: TypeDescriptor,
+  value: unknown,
+  resolve: (token: string) => Effect.Effect<unknown, Runtime.RuntimeError>
+): Effect.Effect<unknown, Runtime.RuntimeError> =>
+  Effect.gen(function* () {
+    if (value === undefined || value === null) return value;
+    switch (descriptor.kind) {
+      case "upload":
+        return yield* resolve((value as { token: string }).token);
+      case "object": {
+        const record = value as Record<string, unknown>;
+        const next: Record<string, unknown> = {};
+        for (const [key, field] of Object.entries(record))
+          next[key] = Object.hasOwn(descriptor.fields, key)
+            ? yield* substituteUploads(descriptor.fields[key]!, field, resolve)
+            : field;
+        return next;
+      }
+      case "array":
+        return yield* Effect.forEach(value as ReadonlyArray<unknown>, (item) =>
+          substituteUploads(descriptor.items, item, resolve)
+        );
+      case "nullable":
+        return yield* substituteUploads(descriptor.inner, value, resolve);
+      default:
+        return value;
+    }
+  });
 
 const operation = runtimeOperations["server.call"];
 
@@ -154,23 +203,52 @@ export const make = (handlers: Readonly<Record<string, Runtime.Handler>>, option
               `only a query can be subscribed; ${handlerName} is a ${descriptor.kind}`
             )
           });
-        /** The wake key of a callback: its table, or the owner's table for a shared alias. */
-        const keyOf = (op: string, args: unknown): string | undefined => {
+        /**
+         * The wake keys of a callback: its table or store, or the owner's for a shared alias.
+         * PROTOTYPE for #315: store grain for files, and a shared read also depends on its
+         * source's lifecycle key, so an unshare re-runs the subscriber at once.
+         */
+        const keysOf = (op: string, args: unknown): ReadonlyArray<string> => {
           const record =
             args !== null && typeof args === "object" ? (args as Record<string, unknown>) : {};
           if (op.startsWith("tables.") && typeof record.table === "string")
-            return Invalidation.tableKey(binding.patchId, record.table);
-          if (op.startsWith("shared.") && typeof record.alias === "string") {
+            return [Invalidation.tableKey(binding.patchId, record.table)];
+          if (op.startsWith("serverFiles.") && typeof record.store === "string")
+            return [Invalidation.storeKey(binding.patchId, record.store)];
+          if (
+            (op.startsWith("shared.") || op.startsWith("sharedFiles.")) &&
+            typeof record.alias === "string"
+          ) {
             const use = Object.hasOwn(binding.manifest.uses, record.alias)
               ? binding.manifest.uses[record.alias]
               : undefined;
-            if (use?.kind === "sharedTable") return Invalidation.tableKey(use.patchId, use.table);
+            if (use?.kind === "sharedTable")
+              return [
+                Invalidation.tableKey(use.patchId, use.table),
+                Invalidation.sourceKey(use.patchId)
+              ];
+            if (use?.kind === "sharedStore")
+              return [
+                Invalidation.storeKey(use.patchId, use.store),
+                Invalidation.sourceKey(use.patchId)
+              ];
           }
-          return undefined;
+          return [];
         };
         const problem = checkValue(descriptor.args, handlerArgs, "$", binding.manifest.tables);
         if (problem !== undefined)
           return yield* new Runtime.InvalidRequest({ cause: new Error(`arguments: ${problem}`) });
+        // PROTOTYPE for #315: the guest's Upload is only a token; the host supplies the rest.
+        if (containsKind(descriptor.args, "upload")) {
+          if (descriptor.kind !== "action" || options.resolveUpload === undefined)
+            return yield* new Runtime.InvalidRequest({
+              cause: new Error("t.upload() is legal in action arguments only")
+            });
+          const resolveUpload = options.resolveUpload;
+          handlerArgs = yield* substituteUploads(descriptor.args, handlerArgs, (token) =>
+            resolveUpload(binding, token)
+          );
+        }
         const log = (line: string, details?: unknown) =>
           options.log(
             binding,
@@ -260,10 +338,9 @@ export const make = (handlers: Readonly<Record<string, Runtime.Handler>>, option
                     status: 403,
                     message: `A ${descriptor.kind} may not call ${op}.`
                   });
-                const key = keyOf(op, callbackArgs);
-                if (key !== undefined) {
+                for (const key of keysOf(op, callbackArgs)) {
                   touched.add(key);
-                  if (target.kind === "mutation") written.add(key);
+                  if (target.kind === "mutation" && !key.startsWith("source:")) written.add(key);
                 }
                 return yield* target.run(callbackArgs).pipe(
                   Effect.provideService(Binding.Binding, binding),
@@ -344,7 +421,14 @@ export const make = (handlers: Readonly<Record<string, Runtime.Handler>>, option
             ) {
               // Answer with the refusal this host issued to this invocation, never the guest's version.
               const own = issued.find((error) => error.code === guest.code)!;
-              failure = { ...own, correlationId: binding.correlationId };
+              // PROTOTYPE for #315: marked as refused inside the handler, so the shell and the
+              // subscription stream treat it as the handler's outcome (a shared source going
+              // away), not as the viewer losing the document.
+              failure = {
+                ...own,
+                details: { ...own.details, refusedIn: "handler" },
+                correlationId: binding.correlationId
+              };
             } else {
               yield* log(
                 `handler_failed: ${guest.error}${"message" in guest && guest.message !== undefined ? ` ${guest.message}` : ""}`,
@@ -381,7 +465,12 @@ export const make = (handlers: Readonly<Record<string, Runtime.Handler>>, option
               (result.outcome._tag === "committed" || descriptor.kind === "action")
             )
               yield* Invalidation.notify([...result.written]);
-            if (subscribed !== undefined && result.outcome._tag === "committed")
+            // PROTOTYPE for #315: a query's reads are dependencies even when it failed, so a
+            // subscription refused by an unshare recovers when the source shares again.
+            if (
+              subscribed !== undefined &&
+              (result.outcome._tag === "committed" || descriptor.kind === "query")
+            )
               for (const key of result.touched ?? []) subscribed.dependencies.add(key);
             switch (result.outcome._tag) {
               case "serialization_failure":

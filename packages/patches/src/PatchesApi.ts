@@ -48,6 +48,7 @@ import {
   PatchDetail,
   PrimitiveDetail,
   type PatchTableSummary,
+  type PatchStoreSummary,
   PayloadTooLarge,
   rateLimited,
   readBody,
@@ -66,6 +67,8 @@ import { Limits } from "@patchy/limits";
 // PROTOTYPE for #314: tier 2 publish re-derives the handler map by loading the bundle.
 import { Engine } from "@patchy/execution";
 import { diffHandlers, handlersOf } from "@patchy/api";
+// PROTOTYPE for #315: a source's lifecycle change wakes the subscriptions that read its shares.
+import { Invalidation } from "@patchy/runtime/core";
 import * as Content from "./Content.js";
 import * as Patches from "./Patches.js";
 import * as PatchesConfig from "./PatchesConfig.js";
@@ -124,6 +127,33 @@ const tableSummary = (
         declarable: false,
         reason: "not_shared",
         hint: `Not shared. Ask ${row.owner.name} to share this table.`
+      };
+};
+/** PROTOTYPE for #315: a store's discovery line mirrors a table's, with the store's add hint. */
+const storeSummary = (
+  row: Patches.ReadPatch,
+  name: string,
+  store: (typeof PatchInventory.Type.files)[string]
+): typeof PatchStoreSummary.Type => {
+  const common = { name, description: store.description, shared: store.shared === true };
+  if (row.patch.state !== "live")
+    return {
+      ...common,
+      declarable: false,
+      reason: "source_off",
+      hint: `This source is ${row.patch.state}. Ask ${row.owner.name} or an admin to restore it.`
+    };
+  return store.shared === true
+    ? {
+        ...common,
+        declarable: true,
+        hint: `patchy add shared-store ${row.patch.id}/${name} --as <alias>`
+      }
+    : {
+        ...common,
+        declarable: false,
+        reason: "not_shared",
+        hint: `Not shared. Ask ${row.owner.name} to share this file store.`
       };
 };
 const lifecycleFailure = <S extends Schema.Top & Schema.Codec<{ readonly code: string }, unknown>>(
@@ -548,6 +578,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
               htmlBytes: bytes
             }
           });
+          yield* Invalidation.notify([Invalidation.sourceKey(recorded.patchId)]);
           return HttpServerResponse.text(recorded.responseBody, {
             status: recorded.status,
             contentType: "application/json"
@@ -610,13 +641,9 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
                         tables: Object.entries(inventory.tables).map(([name, table]) =>
                           tableSummary(row, name, table)
                         ),
-                        stores: Object.entries(inventory.files).map(([name, store]) => ({
-                          name,
-                          description: store.description,
-                          declarable: false as const,
-                          reason: "not_shareable" as const,
-                          hint: "File stores are not shareable yet."
-                        }))
+                        stores: Object.entries(inventory.files).map(([name, store]) =>
+                          storeSummary(row, name, store)
+                        )
                       },
                 reads: row.reads
               })
@@ -659,7 +686,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
                 kind: table === undefined ? "store" : "table",
                 name: params.name,
                 description: (table ?? store)!.description,
-                shared: table?.shared === true,
+                shared: (table ?? store)?.shared === true,
                 schemaRevision: inventory.schemaRevision,
                 columns:
                   table === undefined
@@ -743,6 +770,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             .retire(params.patchId, { userId: identity.user.id, admin: false }, payload.force)
             .pipe(Effect.catchTags(ownerFailures));
           if (HttpServerResponse.isHttpServerResponse(patch)) return patch;
+          yield* Invalidation.notify([Invalidation.sourceKey(patch.id)]);
           return new Retired({
             ok: true,
             patchId: patch.id,
@@ -763,6 +791,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             .restore(params.patchId, { userId: identity.user.id, admin: false }, payload.force)
             .pipe(Effect.catchTags(ownerFailures));
           if (HttpServerResponse.isHttpServerResponse(patch)) return patch;
+          yield* Invalidation.notify([Invalidation.sourceKey(patch.id)]);
           return new Restored({ ok: true, patchId: patch.id, state: "live" });
         })
       )
@@ -782,6 +811,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             )
             .pipe(Effect.catchTags(ownerFailures));
           if (HttpServerResponse.isHttpServerResponse(result)) return result;
+          yield* Invalidation.notify([Invalidation.sourceKey(result.patch.id)]);
           return new RolledBack({
             ok: true,
             patchId: result.patch.id,
@@ -821,6 +851,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             .delete(params.patchId, { userId: identity.user.id, admin: false }, query.force)
             .pipe(Effect.catchTags(ownerFailures));
           if (HttpServerResponse.isHttpServerResponse(patch)) return patch;
+          yield* Invalidation.notify([Invalidation.sourceKey(patch.id)]);
           yield* analytics.track({
             name: "patch.deleted",
             principalId: identity.user.id,

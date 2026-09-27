@@ -1048,7 +1048,7 @@ const add = Command.make(
     )
 ).pipe(
   Command.withDescription(
-    "Add a Postgres connection or shared-table declaration and generate its files."
+    "Add a Postgres connection, shared-table or shared-store declaration and generate its files."
   )
 );
 

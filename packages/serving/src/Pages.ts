@@ -7,7 +7,7 @@
  * under are `serving-headers.ts`.
  */
 import * as Clock from "effect/Clock";
-import type { ConfigError } from "effect/Config";
+import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -171,12 +171,18 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (kind: "address" | "c
     })
   );
 
+  // PROTOTYPE for #315: how long a hidden document keeps its subscriptions (#313/#297).
+  const hiddenGraceMs = yield* Config.Int("PATCHY_PROTOTYPE_HIDDEN_GRACE_MS").pipe(
+    Config.withDefault(30_000),
+    Effect.orDie
+  );
   const response = HttpServerResponse.text(
     kind === "content"
       ? html
       : renderPatchWrapper({
           ...served.value,
           html,
+          hiddenGraceMs,
           head: isPublic ? undefined : sessionScripts(session),
           ...(selection !== undefined && served.value.version.tier >= 1
             ? {
@@ -273,7 +279,7 @@ const otherPages = HttpRouter.use((router) =>
 
 export const layer: Layer.Layer<
   never,
-  ConfigError,
+  Config.ConfigError,
   | HttpRouter.HttpRouter
   | Session.Session
   | Companies.Companies

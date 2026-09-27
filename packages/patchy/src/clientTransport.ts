@@ -17,7 +17,11 @@ export type Operation =
   | `files.${"get" | "put" | "list" | "delete"}`
   | `postgres.${"get" | "getMany" | "list" | "query"}`
   // PROTOTYPE for #314
-  | "server.call";
+  | "server.call"
+  // PROTOTYPE for #315: the tier 2 file exceptions, broker-local.
+  | "files.stage"
+  | "files.redeem"
+  | "files.save";
 export type Call = (op: Operation, args: unknown, bytes?: Uint8Array) => Promise<unknown>;
 export interface Route {
   get(): Promise<string>;
@@ -29,6 +33,8 @@ export type SubscriptionEvent =
   | { readonly type: "snapshot"; readonly revision: number; readonly value: unknown }
   | { readonly type: "up-to-date" }
   | { readonly type: "must-resync" }
+  // PROTOTYPE for #315: the shell released the stream while the document was hidden.
+  | { readonly type: "suspended" }
   | { readonly type: "error"; readonly error: PatchyError }
   | { readonly type: "stop"; readonly code: string };
 export type SubscriptionListener = (event: SubscriptionEvent) => void;
@@ -104,6 +110,7 @@ export function createPortTransport(
         listener({ type: "snapshot", revision: event.revision, value: event.value });
       else if (event.type === "up-to-date") listener({ type: "up-to-date" });
       else if (event.type === "must-resync") listener({ type: "must-resync" });
+      else if (event.type === "suspended") listener({ type: "suspended" });
       else if (event.type === "stop" && typeof event.code === "string")
         listener({ type: "stop", code: event.code });
       else if (event.type === "error")

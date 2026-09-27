@@ -216,7 +216,9 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
   for (const key of [
     "PATCHY_RUNTIME_CALLS_PER_MINUTE",
     "PATCHY_INVOCATIONS_PER_COMPANY",
-    "PATCHY_COMPANY_POOL_CONNECTIONS"
+    "PATCHY_COMPANY_POOL_CONNECTIONS",
+    // PROTOTYPE for #315: the hidden-document grace, shortened for checks.
+    "PATCHY_PROTOTYPE_HIDDEN_GRACE_MS"
   ]) {
     const value = yield* Config.option(Config.String(key));
     if (Option.isSome(value)) limits[key] = value.value;

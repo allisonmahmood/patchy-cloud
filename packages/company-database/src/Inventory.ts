@@ -44,7 +44,9 @@ export class Index extends Schema.Class<Index>("Inventory.Index")({
 export class Store extends Schema.Class<Store>("Inventory.Store")({
   patchId: Schema.String,
   name: Schema.String,
-  description: Schema.String
+  description: Schema.String,
+  // PROTOTYPE for #315: a store is shared whole, like a table.
+  shared: Schema.Boolean
 }) {}
 
 export class Snapshot extends Schema.Class<Snapshot>("Inventory.Snapshot")({
@@ -85,7 +87,9 @@ export class Inventory extends Context.Service<
     ) => Effect.Effect<void, SqlError, CompanyDatabases.PatchLock>;
     readonly putColumn: (row: Column) => Effect.Effect<void, SqlError, CompanyDatabases.PatchLock>;
     readonly putIndex: (row: Index) => Effect.Effect<void, SqlError, CompanyDatabases.PatchLock>;
-    readonly putStore: (row: Store) => Effect.Effect<void, SqlError, CompanyDatabases.PatchLock>;
+    readonly putStore: (
+      row: Omit<Store, "shared"> & { readonly shared?: boolean }
+    ) => Effect.Effect<void, SqlError, CompanyDatabases.PatchLock>;
     readonly bumpRevision: (
       patchId: string
     ) => Effect.Effect<number, SqlError, CompanyDatabases.PatchLock>;
@@ -138,7 +142,7 @@ const findStores = SqlSchema.findAll({
   Result: Store,
   execute: Effect.fn("Inventory.findStores")(function* (patchId) {
     const sql = yield* SqlClient.SqlClient;
-    return yield* sql`SELECT "patch_id" AS "patchId", "name", "description" FROM "patchy"."stores"
+    return yield* sql`SELECT "patch_id" AS "patchId", "name", "description", "shared" FROM "patchy"."stores"
       WHERE "patch_id" = ${patchId} ORDER BY "name"`;
   })
 });
@@ -201,7 +205,7 @@ const read = Effect.fn("Inventory.read")(
 const putTable = Effect.fn("Inventory.putTable")(function* (row: Omit<Table, "createdAt">) {
   const sql = yield* lockedClient(row.patchId);
   yield* sql`INSERT INTO "patchy"."tables" ("patch_id", "name", "description", "shared")
-      VALUES (${row.patchId}, ${row.name}, ${row.description}, ${row.shared})
+      VALUES (${row.patchId}, ${row.name}, ${row.description}, ${row.shared === true})
       ON CONFLICT ("patch_id", "name") DO UPDATE SET
         "description" = EXCLUDED."description", "shared" = EXCLUDED."shared"`;
 });
@@ -222,11 +226,14 @@ const putIndex = Effect.fn("Inventory.putIndex")(function* (row: Index) {
       ON CONFLICT ("patch_id", "table", "name") DO NOTHING`;
 });
 
-const putStore = Effect.fn("Inventory.putStore")(function* (row: Store) {
+const putStore = Effect.fn("Inventory.putStore")(function* (
+  row: Omit<Store, "shared"> & { readonly shared?: boolean }
+) {
   const sql = yield* lockedClient(row.patchId);
-  yield* sql`INSERT INTO "patchy"."stores" ("patch_id", "name", "description")
-      VALUES (${row.patchId}, ${row.name}, ${row.description})
-      ON CONFLICT ("patch_id", "name") DO UPDATE SET "description" = EXCLUDED."description"`;
+  yield* sql`INSERT INTO "patchy"."stores" ("patch_id", "name", "description", "shared")
+      VALUES (${row.patchId}, ${row.name}, ${row.description}, ${row.shared === true})
+      ON CONFLICT ("patch_id", "name") DO UPDATE SET
+        "description" = EXCLUDED."description", "shared" = EXCLUDED."shared"`;
 });
 
 const bumpRevision = Effect.fn("Inventory.bumpRevision")(function* (patchId: string) {
@@ -251,6 +258,39 @@ export const upgrade = Effect.gen(function* () {
   if (present.length === 0) {
     yield* sql.unsafe('ALTER TABLE "patchy"."columns" ADD COLUMN IF NOT EXISTS "ref_table" text');
   }
+  // PROTOTYPE for #315: shared stores, staged uploads and the handle lookup by object.
+  const stores = yield* sql`SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'patchy' AND table_name = 'stores' AND column_name = 'shared'`;
+  const storesTable = yield* sql`SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'patchy' AND table_name = 'stores'`;
+  if (stores.length === 0 && storesTable.length > 0) {
+    yield* sql.unsafe(
+      'ALTER TABLE "patchy"."stores" ADD COLUMN IF NOT EXISTS "shared" boolean NOT NULL DEFAULT false'
+    );
+  }
+  const uploads = yield* sql`SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'patchy' AND table_name = 'uploads'`;
+  if (uploads.length === 0 && storesTable.length > 0) yield* filesUpgrade;
+});
+
+/** PROTOTYPE for #315: staged uploads (#303 point 8) and the object lookup handles redeem through. */
+const filesUpgrade = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql.unsafe(`CREATE TABLE IF NOT EXISTS "patchy"."uploads" (
+    "token_hash" text PRIMARY KEY,
+    "object_id" text NOT NULL,
+    "patch_id" text NOT NULL,
+    "version_id" text NOT NULL,
+    "user_id" text NOT NULL,
+    "size" bigint NOT NULL CHECK ("size" >= 0),
+    "content_type" text NOT NULL,
+    "sha256" text NOT NULL,
+    "created_at" timestamptz NOT NULL DEFAULT now(),
+    "adopted_at" timestamptz
+  )`);
+  yield* sql.unsafe(
+    'CREATE INDEX IF NOT EXISTS "files_object_id" ON "patchy"."files" ("object_id")'
+  );
 });
 
 /** Shared bootstrap for PostgreSQL and PGlite; never submit multiple statements in one call. */
@@ -296,6 +336,7 @@ export const initialize = Effect.gen(function* () {
     "patch_id" text NOT NULL REFERENCES "patchy"."patches" ("patch_id") ON DELETE CASCADE,
     "name" text NOT NULL,
     "description" text NOT NULL,
+    "shared" boolean NOT NULL DEFAULT false,
     PRIMARY KEY ("patch_id", "name")
   )`);
   yield* sql.unsafe(`CREATE TABLE IF NOT EXISTS "patchy"."files" (
@@ -310,6 +351,7 @@ export const initialize = Effect.gen(function* () {
     PRIMARY KEY ("patch_id", "store", "name"),
     FOREIGN KEY ("patch_id", "store") REFERENCES "patchy"."stores" ("patch_id", "name") ON DELETE CASCADE
   )`);
+  yield* filesUpgrade;
   yield* sql.unsafe(`CREATE TABLE IF NOT EXISTS "patchy"."orphan_namespaces" (
     "namespace" text PRIMARY KEY,
     "first_seen_at" timestamptz NOT NULL DEFAULT now()

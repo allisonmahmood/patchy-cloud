@@ -79,11 +79,15 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
           const relative =
             declaration.kind === "postgres"
               ? `fixtures/postgres-${declaration.handle}.sql`
-              : `fixtures/shared-${alias}.sql`;
+              : declaration.kind === "sharedStore"
+                ? `fixtures/shared-${alias}`
+                : `fixtures/shared-${alias}.sql`;
           const fixture = yield* io("Read fixture path", () => safePath(root, relative));
           if (!(yield* fs.exists(fixture))) return yield* new FixtureMissing({ path: relative });
           const info = yield* fs.stat(fixture);
-          if (info.type !== "File") return yield* new FixtureMissing({ path: relative });
+          // PROTOTYPE for #315: a shared store's fixture is a directory of sample files.
+          if (info.type !== (declaration.kind === "sharedStore" ? "Directory" : "File"))
+            return yield* new FixtureMissing({ path: relative });
         }
         const skills = yield* io("Read project skills", () => presentSkills(root));
         const modules = yield* serverModules(root);
@@ -109,7 +113,9 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
         });
         const metadata = generated.metadata;
         if (
-          Object.keys(metadata.postgres).length + Object.keys(metadata.shared).length !==
+          Object.keys(metadata.postgres).length +
+            Object.keys(metadata.shared).length +
+            Object.keys(metadata.stores ?? {}).length !==
           Object.keys(manifest.uses).length
         )
           return yield* new LocalError({
@@ -119,7 +125,9 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
           const actual =
             declaration.kind === "postgres"
               ? metadata.postgres[alias]?.declaration
-              : metadata.shared[alias]?.declaration;
+              : declaration.kind === "sharedStore"
+                ? metadata.stores?.[alias]?.declaration
+                : metadata.shared[alias]?.declaration;
           if (
             actual === undefined ||
             actual.kind !== declaration.kind ||
@@ -130,7 +138,10 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
               actual.handle !== declaration.handle) ||
             (actual.kind === "sharedTable" &&
               declaration.kind === "sharedTable" &&
-              (actual.patchId !== declaration.patchId || actual.table !== declaration.table))
+              (actual.patchId !== declaration.patchId || actual.table !== declaration.table)) ||
+            (actual.kind === "sharedStore" &&
+              declaration.kind === "sharedStore" &&
+              (actual.patchId !== declaration.patchId || actual.store !== declaration.store))
           )
             return yield* new LocalError({
               message: `Generation returned inconsistent metadata for ${alias}.`

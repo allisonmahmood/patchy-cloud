@@ -11,6 +11,8 @@ import { PatchyError } from "./clientError.js";
 // PROTOTYPE for #314
 import { HandlerError } from "./handlerError.js";
 import type { ServerClient, SubscribeOptions, Unsubscribe } from "./server.js";
+import type { FileHandle, Upload } from "./config.js";
+export type { FileHandle, Upload } from "./config.js";
 export * from "./clientError.js";
 export { HandlerError, isHandlerError } from "./handlerError.js";
 export type {
@@ -51,7 +53,7 @@ interface Entry {
   }>;
   unsubscribe?: Unsubscribe;
   revision: number;
-  last: { readonly reply: Reply } | undefined;
+  last: { readonly reply: Reply } | { readonly error: Error } | undefined;
   grace?: ReturnType<typeof setTimeout>;
 }
 
@@ -93,11 +95,15 @@ function createRegistry(transport: Transport) {
           // Continuity was lost: the next snapshot starts a new revision clock. Data is kept.
           created.revision = 0;
           for (const listener of created.listeners) listener.options.onStatus?.("resyncing");
+        } else if (event.type === "suspended") {
+          for (const listener of created.listeners) listener.options.onStatus?.("suspended");
         } else if (event.type === "up-to-date") {
           for (const listener of created.listeners) listener.options.onStatus?.("up-to-date");
         } else if (event.type === "stop") {
           for (const listener of created.listeners) listener.options.onStatus?.("stopped");
         } else {
+          // PROTOTYPE for #315: a later listener hears the refusal too, not a stale value.
+          created.last = { error: event.error };
           for (const listener of created.listeners) listener.options.onError?.(event.error);
         }
       });
@@ -105,7 +111,9 @@ function createRegistry(transport: Transport) {
     clearTimeout(entry.grace);
     const listener = { onSnapshot, options };
     entry.listeners.add(listener);
-    if (entry.last !== undefined) deliver(listener, entry.last.reply);
+    if (entry.last !== undefined)
+      if ("reply" in entry.last) deliver(listener, entry.last.reply);
+      else options.onError?.(entry.last.error);
     return () => {
       const current = entries.get(key);
       if (current === undefined || !current.listeners.delete(listener)) return;
@@ -257,38 +265,47 @@ export function createServerClient<M, C extends Config>(
 ): ServerClient<M, C> {
   const register = transport === undefined ? undefined : createRegistry(transport);
   const entries = modules.map((module) => {
+    // PROTOTYPE for #315: one function per handler, so `patchy.server.m.q` is a stable
+    // identity (hook dependencies, the useQuery key) rather than a new function per access.
+    const made = new Map<string, unknown>();
     const handlers = new Proxy(
       {},
       {
         get: (_target, name) =>
-          typeof name === "string"
-            ? Object.assign(
-                async (args: unknown = {}) => {
-                  const reply = (await call("server.call", {
-                    handler: `${module}.${name}`,
-                    args
-                  })) as Reply;
-                  if (reply.ok) return reply.value;
-                  throw new HandlerError(reply.code, reply.details);
-                },
-                {
-                  // Only a query may be subscribed; the server refuses anything else.
-                  subscribe: (
-                    args: unknown,
-                    onSnapshot: (value: unknown) => void,
-                    options?: SubscribeOptions
-                  ): Unsubscribe => {
-                    if (register === undefined)
-                      throw new PatchyError(
-                        "invalid_request",
-                        "Subscriptions need the browser shell.",
-                        {}
-                      );
-                    return register(`${module}.${name}`, args ?? {}, onSnapshot, options);
-                  }
-                }
-              )
-            : undefined
+          typeof name !== "string"
+            ? undefined
+            : (made.get(name) ??
+              made
+                .set(
+                  name,
+                  Object.assign(
+                    async (args: unknown = {}) => {
+                      const reply = (await call("server.call", {
+                        handler: `${module}.${name}`,
+                        args
+                      })) as Reply;
+                      if (reply.ok) return reply.value;
+                      throw new HandlerError(reply.code, reply.details);
+                    },
+                    {
+                      // Only a query may be subscribed; the server refuses anything else.
+                      subscribe: (
+                        args: unknown,
+                        onSnapshot: (value: unknown) => void,
+                        options?: SubscribeOptions
+                      ): Unsubscribe => {
+                        if (register === undefined)
+                          throw new PatchyError(
+                            "invalid_request",
+                            "Subscriptions need the browser shell.",
+                            {}
+                          );
+                        return register(`${module}.${name}`, args ?? {}, onSnapshot, options);
+                      }
+                    }
+                  )
+                )
+                .get(name))
       }
     );
     return [module, handlers] as const;
@@ -430,4 +447,88 @@ export function createClient<
       urls.clear();
     }
   } as Client<C, S, P, M>;
+}
+
+// --- PROTOTYPE for #315: the tier 2 page client ----------------------------------------------
+
+/**
+ * A tier 2 page's files: it names no file, it redeems handlers' handles and stages uploads for
+ * an action to adopt. Every redemption is re-authorised by Patchy for this viewer and document.
+ */
+export interface PageFiles {
+  /**
+   * A frame-local blob URL for `<img src>` or `<embed>`. Revoke it with `URL.revokeObjectURL`
+   * when done, or use `useFileUrl` from `patchy/preact`, which does. Rejects with PatchyError
+   * `not_found` when the file was replaced or deleted since the handle was minted, and
+   * `access_denied` when the viewer can no longer reach its store.
+   */
+  url(handle: FileHandle): Promise<string>;
+  /** Asks the shell to download the file, named `filename` or its own name. */
+  download(handle: FileHandle, filename?: string): Promise<null>;
+  /**
+   * Stores bytes for this viewer and document and returns a single-use Upload to pass to an
+   * action argument typed `t.upload()`; the action adopts it with `ctx.files.<store>.put`.
+   * `contentType` is your claim; the action sees it and Patchy's measured size.
+   */
+  stage(
+    bytes: Uint8Array | ArrayBuffer | Blob,
+    options: { readonly contentType: string }
+  ): Promise<Upload>;
+}
+export interface ServerOnlyClient<C extends Config, M = Record<never, never>> {
+  readonly server: ServerClient<M, C>;
+  readonly files: PageFiles;
+  readonly route: Transport["route"];
+  me(): Promise<Me | null>;
+  close(): void;
+}
+
+const pageFilesKey = Symbol.for("patchy.pageFiles");
+/** The document's tier 2 files, for `patchy/preact`'s hooks (separate bundles share the global). */
+export const currentPageFiles = (): PageFiles | undefined =>
+  (globalThis as { [pageFilesKey]?: PageFiles })[pageFilesKey];
+
+export function createServerOnlyClient<C extends Config, M = Record<never, never>>(
+  _manifest: unknown,
+  options: {
+    readonly transport?: Transport;
+    readonly serverModules?: readonly string[];
+  } = {}
+): ServerOnlyClient<C, M> {
+  const transport = options.transport ?? createPostMessageTransport();
+  const call = transport.call;
+  let identity: Promise<Me | null> | undefined;
+  const redeem = (handle: FileHandle) =>
+    call("files.redeem", { handle }) as Promise<{
+      readonly bytes: Uint8Array<ArrayBuffer>;
+      readonly contentType: string;
+      readonly name: string;
+    }>;
+  const files: PageFiles = {
+    url: async (handle) => {
+      const { bytes, contentType } = await redeem(handle);
+      return URL.createObjectURL(new Blob([bytes], { type: contentType }));
+    },
+    download: (handle, filename) =>
+      call("files.save", {
+        handle,
+        ...(filename === undefined ? {} : { filename })
+      }) as Promise<null>,
+    stage: async (input, { contentType }) => {
+      const bytes =
+        input instanceof Uint8Array
+          ? input
+          : new Uint8Array(input instanceof ArrayBuffer ? input : await input.arrayBuffer());
+      return (await call("files.stage", { contentType }, bytes)) as Upload;
+    }
+  };
+  const server = createServerClient<M, C>(options.serverModules ?? [], call, transport);
+  (globalThis as { [pageFilesKey]?: PageFiles })[pageFilesKey] = files;
+  return {
+    server,
+    files,
+    route: transport.route,
+    me: () => (identity ??= call("me", {}) as Promise<Me | null>),
+    close: () => transport.close()
+  };
 }

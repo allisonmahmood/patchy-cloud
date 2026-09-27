@@ -62,6 +62,12 @@ const changeSchema = Schema.Union([
         kind: Schema.Literal("sharedTable"),
         patchId: Schema.String,
         table: Schema.String
+      }),
+      // PROTOTYPE for #315
+      Schema.Struct({
+        kind: Schema.Literal("sharedStore"),
+        patchId: Schema.String,
+        store: Schema.String
       })
     ])
   }),
@@ -456,7 +462,12 @@ export const generate = Effect.fn("Project.generate")(function* (
     removedKind &&
     !Object.values(manifest.uses).some((declaration) => declaration.kind === removedKind)
   ) {
-    const skill = removedKind === "postgres" ? "patchy-postgres" : "patchy-shared-tables";
+    const skill =
+      removedKind === "postgres"
+        ? "patchy-postgres"
+        : removedKind === "sharedStore"
+          ? "patchy-shared-stores"
+          : "patchy-shared-tables";
     if (skills.includes(skill)) removedSkills.push(skill);
     skills = skills.filter((name) => name !== skill);
   }
@@ -693,9 +704,55 @@ export const add = Effect.fn("Project.add")(function* (
     if (!shared?.declarable) return yield* new RejectedError(notOpenable);
     declaration = { kind: "sharedTable", patchId: source.id, table: shared.name };
     defaultAlias = shared.name;
+  } else if (integration === "shared-store") {
+    // PROTOTYPE for #315: another patch's shared file store, declared by alias (#303 point 2).
+    const parts = Option.isSome(target) ? target.value.split("/") : [];
+    if (parts.length !== 2 || !parts[0] || !parts[1] || Option.isNone(as))
+      return yield* new LocalError({
+        message: "Use patchy add shared-store <patchId>/<store> --as <alias>."
+      });
+    const notOpenable = {
+      refusal: {
+        ok: false as const,
+        code: "patch_not_openable",
+        error: `That shared file store is not available to you. Ask its owner or an admin at ${instance.apiUrl}/company.`
+      }
+    };
+    const observed: { status?: number } = {};
+    const http = yield* HttpClient.HttpClient;
+    const sourceClient = yield* Api.client(token).pipe(
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.tap(http, (response) =>
+          Effect.sync(() => {
+            observed.status = response.status;
+          })
+        )
+      )
+    );
+    const source = yield* sourceClient
+      .detail({ params: { patchRef: parts[0] }, query: { state: "all" } })
+      .pipe(
+        Effect.catch((error) =>
+          observed.status === 404
+            ? Effect.fail(new RejectedError({ ...notOpenable, cause: error }))
+            : refusal(error, "Could not read the shared source.")
+        )
+      );
+    if (source.inventory === null)
+      return yield* new UnreachableError({
+        instanceUrl: instance.apiUrl,
+        code: "source_unavailable",
+        message: "The shared source's inventory is unavailable. Try again later."
+      });
+    const store = source.inventory.stores.find((entry) => entry.name === parts[1]);
+    if (!store?.declarable) return yield* new RejectedError(notOpenable);
+    declaration = { kind: "sharedStore", patchId: source.id, store: store.name };
+    defaultAlias = store.name;
   } else
     return yield* new LocalError({
-      message: "Use patchy add postgres/<handle> or patchy add shared-table <patchId>/<table>."
+      message:
+        "Use patchy add postgres/<handle>, patchy add shared-table <patchId>/<table> or patchy add shared-store <patchId>/<store> --as <alias>."
     });
   const alias = Option.getOrElse(as, () => defaultAlias);
   yield* refresh(cwd, token, { kind: "add", alias, declaration });

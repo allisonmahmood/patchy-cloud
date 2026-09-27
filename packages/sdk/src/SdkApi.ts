@@ -104,6 +104,8 @@ export const layer: Layer.Layer<
               UnsafeGeneratedPath: rejected,
               SdkConnectionNotConnected: rejected,
               SdkPatchNotOpenable: rejected,
+              // PROTOTYPE for #315
+              SharedStoreNeedsTier2: rejected,
               GenerationUnavailable: (error) =>
                 Effect.succeed(
                   refuse(

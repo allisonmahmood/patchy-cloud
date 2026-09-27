@@ -102,7 +102,10 @@ export default tseslint.config(
       "apps/server/src/start.ts",
       "test/postgres.ts",
       "test/clerk.ts",
-      "scripts/test-clerk.ts"
+      "scripts/test-clerk.ts",
+      // PROTOTYPE for #315: the proofs print their numbers; the prototype scripts are CLIs.
+      "test/prototype-crm/**/*.ts",
+      "prototypes/tier2-crm/**/*.ts"
     ],
     rules: {
       "no-console": "off"
@@ -120,7 +123,10 @@ export default tseslint.config(
       "test/browser/fixtures.ts",
       "test/browser/instance.ts",
       "test/browser-tier1/instance.ts",
-      "test/browser-tier1/setup.ts"
+      "test/browser-tier1/setup.ts",
+      // PROTOTYPE for #315
+      "test/prototype-crm/**/*.ts",
+      "prototypes/tier2-crm/**/*.ts"
     ],
     rules: {
       "no-restricted-properties": "off"

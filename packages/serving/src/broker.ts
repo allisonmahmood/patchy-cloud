@@ -37,6 +37,17 @@ const unsubscribeArguments = Schema.Struct({ id: Schema.String });
 const decodeUnsubscribe = Schema.decodeUnknownSync(unsubscribeArguments, {
   onExcessProperty: "error"
 });
+// PROTOTYPE for #315: the tier 2 file exceptions (#303 points 7 and 8), broker-local ops.
+const stageArguments = Schema.Struct({ contentType: Schema.String.check(Schema.isMaxLength(255)) });
+const decodeStage = Schema.decodeUnknownSync(stageArguments, { onExcessProperty: "error" });
+const handleArguments = Schema.Struct({
+  handle: Schema.String.check(Schema.isPattern(/^fh_[A-Za-z0-9_-]{54}$/)),
+  filename: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(255)))
+});
+const decodeHandle = Schema.decodeUnknownSync(handleArguments, { onExcessProperty: "error" });
+const fileOps = new Set(["files.stage", "files.redeem", "files.save"]);
+/** Redeemed bytes kept per handle; a hit is still re-authorised by the server (If-None-Match). */
+const MAX_CACHED = 16 * MiB;
 const STREAM_BACKOFF_MS = 500;
 const STREAM_BACKOFF_MAX_MS = 5000;
 const decoder = new TextDecoder();
@@ -165,6 +176,9 @@ function mount(frame: HTMLIFrameElement): void {
   const downloads = new Map<string, { size: number; timer: number }>();
   let identity: Promise<RuntimeMe> | undefined;
   let principal: RuntimePrincipal = null;
+  // PROTOTYPE for #315: hidden-document suspension state (see onVisibility below).
+  let suspended = false;
+  let hiddenTimer: number | undefined;
   const reserve = (size: number) => {
     if (size > MAX_HELD - held) throw tooLarge(MAX_HELD);
     held += size;
@@ -187,6 +201,8 @@ function mount(frame: HTMLIFrameElement): void {
     }
     downloads.clear();
     closeStream();
+    clearTimeout(hiddenTimer);
+    document.removeEventListener("visibilitychange", onVisibility);
     window.removeEventListener("popstate", announceRoute);
     window.removeEventListener("pagehide", stop);
   };
@@ -213,12 +229,17 @@ function mount(frame: HTMLIFrameElement): void {
       stop();
     }
   };
-  const escalate = (code: string) => {
+  // PROTOTYPE for #315: a refusal contained in the patch's own outcome (a handle whose source
+  // went away, a shared read refused inside a handler) is the page's to present; only the
+  // viewer losing the document itself replaces it with a notice.
+  const escalate = (code: string, contained = false) => {
     if (code === "shell_outdated") stale();
-    else if (code === "session_expired" || code === "principal_changed" || code === "access_denied")
-      notice(code);
+    else if (code === "session_expired" || code === "principal_changed") notice(code);
+    else if (code === "access_denied" && !contained) notice(code);
   };
-  const failure = (id: string, error: Refusal) => {
+  const containedIn = (op: string, error: Refusal) =>
+    fileOps.has(op) || error.details?.refusedIn === "handler";
+  const failure = (id: string, error: Refusal, op = "") => {
     send({
       v: wire,
       id,
@@ -230,7 +251,7 @@ function mount(frame: HTMLIFrameElement): void {
         ...(error.correlationId === undefined ? {} : { correlationId: error.correlationId })
       }
     });
-    escalate(error.code);
+    escalate(error.code, containedIn(op, error));
   };
   // Decoded once, as hosted parsing reads the address: bootstrap, route events after a set and
   // back/forward report one form for one history entry.
@@ -370,6 +391,94 @@ function mount(frame: HTMLIFrameElement): void {
       clearTimeout(timeout);
     }
   };
+  // PROTOTYPE for #315: staging and redemption, beside the JSON runtime call.
+  const cache = new Map<
+    string,
+    { etag: string; bytes: Uint8Array<ArrayBuffer>; contentType: string; name: string }
+  >();
+  let cached = 0;
+  const remember = (handle: string, entry: NonNullable<ReturnType<typeof cache.get>>) => {
+    const previous = cache.get(handle);
+    if (previous) cached -= previous.bytes.byteLength;
+    cache.delete(handle);
+    if (entry.bytes.byteLength > MAX_CACHED) return;
+    cache.set(handle, entry);
+    cached += entry.bytes.byteLength;
+    for (const [key, value] of cache) {
+      if (cached <= MAX_CACHED) break;
+      cache.delete(key);
+      cached -= value.bytes.byteLength;
+    }
+  };
+  const forget = (handle: string) => {
+    const previous = cache.get(handle);
+    if (previous) cached -= previous.bytes.byteLength;
+    cache.delete(handle);
+  };
+  const fileHeaders = () =>
+    new Headers({ "X-Patchy-Wire": String(wire), "X-Patchy-Principal": JSON.stringify(principal) });
+  /** Every call reaches the server: a cached copy is used only when it answers 304. */
+  const redeem = async (handle: string) => {
+    if (closed) throw lost();
+    const headers = fileHeaders();
+    const hit = cache.get(handle);
+    if (hit) headers.set("If-None-Match", `"${hit.etag}"`);
+    let response: Response;
+    try {
+      response = await fetch(
+        `/api/runtime/handles/${[patchId, versionId, handle].map(encodeURIComponent).join("/")}`,
+        {
+          credentials: "same-origin",
+          redirect: "error",
+          referrerPolicy: "same-origin",
+          headers,
+          cache: "no-store"
+        }
+      );
+    } catch {
+      throw lost();
+    }
+    if (closed) throw lost();
+    if (response.status === 304 && hit) return hit;
+    if (!response.ok) {
+      forget(handle);
+      throw await refusalFrom(response);
+    }
+    const bytes = await readBody(response, MAX_FILE);
+    const entry = {
+      etag: (response.headers.get("ETag") ?? "").replaceAll('"', ""),
+      bytes,
+      contentType: response.headers.get("Content-Type") ?? "application/octet-stream",
+      name: decodeURIComponent(response.headers.get("X-Patchy-File-Name") ?? "file")
+    };
+    remember(handle, entry);
+    return entry;
+  };
+  const stageBytes = async (contentType: string, bytes: ArrayBuffer): Promise<unknown> => {
+    if (closed) throw lost();
+    const headers = fileHeaders();
+    headers.set("Content-Type", contentType);
+    let response: Response;
+    try {
+      response = await fetch(
+        `/api/runtime/uploads/${[patchId, versionId].map(encodeURIComponent).join("/")}`,
+        {
+          method: "PUT",
+          credentials: "same-origin",
+          redirect: "error",
+          referrerPolicy: "same-origin",
+          headers,
+          body: bytes
+        }
+      );
+    } catch {
+      throw lost();
+    }
+    if (!response.ok) throw await refusalFrom(response);
+    const body = (await response.json()) as { ok?: unknown; value?: unknown };
+    if (body.ok !== true) throw lost();
+    return body.value;
+  };
   // PROTOTYPE for #313, not for merge. One SSE stream per document, opened lazily on the
   // first subscription and closed on the last; every server frame is forwarded to the
   // patch frame as {kind:"event", event:"subscription", data}. Byte accounting is skipped.
@@ -472,8 +581,41 @@ function mount(frame: HTMLIFrameElement): void {
       }
     }
   };
+  // PROTOTYPE for #315 (#313/#297): after a hidden grace the document releases its stream and
+  // with it every server-side subscription; the desired set stays here. On becoming visible it
+  // reopens with resume:true, so the server says must-resync, the page keeps its last values as
+  // provisional ("resyncing") and each query re-runs as the viewer. A snapshot in flight at
+  // suspension is dropped with the aborted stream; the resumed run supersedes it.
+  const hiddenGraceMs =
+    Number(frame.dataset.hiddenGrace) > 0 ? Number(frame.dataset.hiddenGrace) : 30_000;
+  const suspend = () => {
+    hiddenTimer = undefined;
+    if (closed || suspended) return;
+    suspended = true;
+    const current = stream;
+    stream = undefined;
+    sent.clear();
+    clearTimeout(reconnectTimer);
+    reconnectTimer = undefined;
+    current?.controller.abort();
+    streamEvent({ type: "suspended" });
+  };
+  function onVisibility() {
+    if (closed) return;
+    if (document.visibilityState === "hidden") {
+      hiddenTimer ??= window.setTimeout(suspend, hiddenGraceMs);
+      return;
+    }
+    clearTimeout(hiddenTimer);
+    hiddenTimer = undefined;
+    if (!suspended) return;
+    suspended = false;
+    resume = true;
+    openStream();
+  }
+  document.addEventListener("visibilitychange", onVisibility);
   const openStream = () => {
-    if (closed || stream !== undefined || subscriptions.size === 0) return;
+    if (closed || suspended || stream !== undefined || subscriptions.size === 0) return;
     reconnectTimer = undefined;
     const controller = new AbortController();
     const entries = [...subscriptions].map(([id, entry]) => ({ id, ...entry }));
@@ -517,6 +659,8 @@ function mount(frame: HTMLIFrameElement): void {
   };
   const subscribe = async (id: string, op: string, args: unknown) => {
     subscriptions.set(id, { op, args });
+    // Hidden past the grace: the resume carries every desired subscription.
+    if (suspended) return;
     const opened = stream === undefined;
     if (opened) openStream();
     const current = stream!;
@@ -621,6 +765,7 @@ function mount(frame: HTMLIFrameElement): void {
         op !== "download" &&
         op !== "subscribe" &&
         op !== "unsubscribe" &&
+        !fileOps.has(op) &&
         !Object.hasOwn(runtimeOperations, op)
       )
         throw invalid();
@@ -630,7 +775,11 @@ function mount(frame: HTMLIFrameElement): void {
           `At most ${MAX_PENDING} requests may be outstanding.`
         );
       const payload = message.bytes;
-      if (op === "files.put" ? !(payload instanceof ArrayBuffer) : payload !== undefined)
+      if (
+        op === "files.put" || op === "files.stage"
+          ? !(payload instanceof ArrayBuffer)
+          : payload !== undefined
+      )
         throw invalid();
       const bytes = payload as ArrayBuffer | undefined;
       if (bytes && bytes.byteLength > MAX_FILE) throw tooLarge(MAX_FILE);
@@ -647,8 +796,12 @@ function mount(frame: HTMLIFrameElement): void {
       let path: string | undefined;
       let subscription: typeof subscribeArguments.Type | undefined;
       let subscriptionId: string | undefined;
+      let fileArgs: { handle?: string; filename?: string; contentType?: string } | undefined;
       try {
         if (op === "route.set") path = routePath(decodeRoute(message.args).path);
+        else if (op === "files.stage") fileArgs = decodeStage(message.args);
+        else if (op === "files.redeem" || op === "files.save")
+          fileArgs = decodeHandle(message.args);
         else if (op === "subscribe") {
           subscription = decodeSubscribe(message.args);
           // Refuse loudly, never degrade: nothing can observe commits on a company connection.
@@ -672,7 +825,46 @@ function mount(frame: HTMLIFrameElement): void {
       const me = await identify();
       if (closed) return;
       let reply: Reply;
-      if (op === "subscribe") {
+      if (op === "files.stage") {
+        reply = { value: await stageBytes(fileArgs!.contentType!, bytes!), heldBytes: 0 };
+      } else if (op === "files.redeem") {
+        const entry = await redeem(fileArgs!.handle!);
+        // The cache keeps its copy; the frame receives its own transferable buffer.
+        const copy = entry.bytes.slice();
+        reserve(copy.byteLength);
+        reply = {
+          value: { contentType: entry.contentType, name: entry.name },
+          bytes: copy.buffer,
+          heldBytes: copy.byteLength
+        };
+      } else if (op === "files.save") {
+        const entry = await redeem(fileArgs!.handle!);
+        reserve(entry.bytes.byteLength);
+        let url: string;
+        try {
+          url = URL.createObjectURL(new Blob([entry.bytes], { type: "application/octet-stream" }));
+        } catch (error) {
+          release(entry.bytes.byteLength);
+          throw error;
+        }
+        const timer = window.setTimeout(() => {
+          URL.revokeObjectURL(url);
+          const download = downloads.get(url);
+          if (download) {
+            release(download.size);
+            downloads.delete(url);
+          }
+        }, 10_000);
+        downloads.set(url, { size: entry.bytes.byteLength, timer });
+        const anchor = Object.assign(document.createElement("a"), {
+          href: url,
+          download: (fileArgs!.filename ?? entry.name).split("/").at(-1)!
+        });
+        document.body.append(anchor);
+        anchor.click();
+        anchor.remove();
+        reply = { value: null, heldBytes: 0 };
+      } else if (op === "subscribe") {
         await subscribe(subscription!.id, subscription!.op, subscription!.args);
         reply = { value: null, heldBytes: 0 };
       } else if (op === "unsubscribe") {
@@ -729,7 +921,11 @@ function mount(frame: HTMLIFrameElement): void {
       // Wire 1 acknowledges a set with null; this event then corrects the client's cached request.
       if (op === "route.set") announceRoute();
     } catch (error) {
-      failure(id, error instanceof Refusal ? error : lost());
+      failure(
+        id,
+        error instanceof Refusal ? error : lost(),
+        typeof message.op === "string" ? message.op : ""
+      );
     } finally {
       release(replyBytes);
       if (admitted) pending.delete(id);

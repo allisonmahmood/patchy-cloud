@@ -35,6 +35,8 @@ export interface Provisioned {
   readonly warnings: readonly string[];
   readonly schemaRevision: number;
   readonly sharing: readonly string[];
+  /** PROTOTYPE for #315: stores whose sharing this manifest changes. */
+  readonly storeSharing: readonly string[];
 }
 
 export interface Plan extends Provisioned {
@@ -258,7 +260,10 @@ export const inventoryManifest = (
   return {
     tables,
     files: Object.fromEntries(
-      snapshot.stores.map((store) => [store.name, { description: store.description }])
+      snapshot.stores.map((store) => [
+        store.name,
+        { description: store.description, ...(store.shared ? { shared: true } : {}) }
+      ])
     )
   };
 };
@@ -303,6 +308,7 @@ const diff = Effect.fn("Tables.diff")(function* (
   const newIndexes: Array<{ table: string; name: string }> = [];
   const newStores: string[] = [];
   const sharing: string[] = [];
+  const storeSharing: string[] = [];
   const oldTables = new Map(snapshot?.tables.map((table) => [table.name, table]));
   const oldColumns = new Map(
     snapshot?.columns.map((column) => [`${column.table}.${column.name}`, column])
@@ -310,7 +316,7 @@ const diff = Effect.fn("Tables.diff")(function* (
   const oldIndexes = new Map(
     snapshot?.indexes.map((index) => [`${index.table}.${index.name}`, index])
   );
-  const oldStores = new Set(snapshot?.stores.map((store) => store.name));
+  const oldStores = new Map(snapshot?.stores.map((store) => [store.name, store]));
   const sharedTargets = new Set(
     Object.values(manifest.uses)
       .filter(
@@ -326,8 +332,16 @@ const diff = Effect.fn("Tables.diff")(function* (
   }
 
   // Omitted primitives stay in the inventory, so a name stays with its first kind.
-  for (const store of Object.keys(manifest.files)) {
-    if (oldStores.has(store)) continue;
+  for (const [store, definition] of Object.entries(manifest.files)) {
+    const oldStore = oldStores.get(store);
+    if (oldStore !== undefined) {
+      // PROTOTYPE for #315: only a store the manifest defines can change sharing; omission never does.
+      if (oldStore.shared !== (definition.shared === true)) {
+        storeSharing.push(store);
+        provisioned.stores.push(store);
+      }
+      continue;
+    }
     if (oldTables.has(store))
       changes.push({
         object: store,
@@ -477,7 +491,12 @@ const diff = Effect.fn("Tables.diff")(function* (
   }
   if (changes.length > 0) return yield* new NotAdditive({ changes });
   const changed =
-    newTables.length + newColumns.length + newIndexes.length + newStores.length + sharing.length >
+    newTables.length +
+      newColumns.length +
+      newIndexes.length +
+      newStores.length +
+      sharing.length +
+      storeSharing.length >
     0;
   return {
     provisioned,
@@ -488,7 +507,8 @@ const diff = Effect.fn("Tables.diff")(function* (
     newColumns,
     newIndexes,
     newStores,
-    sharing
+    sharing,
+    storeSharing
   } satisfies Plan;
 });
 
@@ -616,15 +636,24 @@ export const make = Effect.gen(function* () {
         });
     }
     for (const name of plan.newStores)
-      yield* inventory.putStore({ patchId, name, description: manifest.files[name]!.description });
+      yield* inventory.putStore({
+        patchId,
+        name,
+        description: manifest.files[name]!.description,
+        shared: manifest.files[name]!.shared === true
+      });
     for (const store of snapshot?.stores ?? []) {
       if (!Object.hasOwn(manifest.files, store.name)) continue;
       const definition = manifest.files[store.name]!;
-      if (store.description !== definition.description)
+      if (
+        store.description !== definition.description ||
+        store.shared !== (definition.shared === true)
+      )
         yield* inventory.putStore({
           patchId,
           name: store.name,
-          description: definition.description
+          description: definition.description,
+          shared: definition.shared === true
         });
     }
     const schemaRevision = schemaChanged
@@ -635,6 +664,7 @@ export const make = Effect.gen(function* () {
       unused: plan.unused,
       warnings: plan.warnings,
       sharing: plan.sharing,
+      storeSharing: plan.storeSharing,
       schemaRevision
     };
   });

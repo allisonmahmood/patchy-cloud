@@ -4,6 +4,8 @@ export interface ClientTemplateOptions {
   readonly connections?: Readonly<Record<string, string>>;
   /** PROTOTYPE for #314: `server/*.ts` names; each is a type-only import on the client. */
   readonly serverModules?: readonly string[];
+  /** PROTOTYPE for #315: the tier 2 page client, which reaches data only through handlers. */
+  readonly serverOnly?: boolean;
 }
 
 /** Finished template: importing the config must never execute it in the frame. */
@@ -35,5 +37,9 @@ export function generateClient(options: ClientTemplateOptions = {}): string {
   const serverTypes = modules
     .map((name, index) => `${JSON.stringify(name)}: typeof server${index}`)
     .join("; ");
+  if (options.serverOnly === true) {
+    imports[2] = 'import { createServerOnlyClient } from "patchy/client";';
+    return `${imports.join("\n")}\n\ntype ServerModules = { ${serverTypes} };\nexport const patchy = createServerOnlyClient<typeof config, ServerModules>(manifest, { serverModules: ${JSON.stringify(modules)} });\nexport default patchy;\n`;
+  }
   return `${imports.join("\n")}\n\nconst shared = { ${shared} };\nconst connections = { ${connections} };\ntype ServerModules = { ${serverTypes} };\nexport const patchy = createClient<typeof config, typeof shared, typeof connections, ServerModules>(manifest, { shared, connections, serverModules: ${JSON.stringify(modules)} });\nexport default patchy;\n`;
 }

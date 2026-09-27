@@ -70,8 +70,32 @@ export const t = {
   array: <const I extends FieldDescriptor>(items: I) => new ArrayDescriptor(items, false),
   enum: <const V extends string>(values: readonly V[]) => new EnumDescriptor(values, false),
   nullable: <const I extends FieldDescriptor>(inner: I) => new NullableDescriptor(inner, false),
-  row: <const T extends string>(table: T) => new RowDescriptor(table, false)
+  row: <const T extends string>(table: T) => new RowDescriptor(table, false),
+  // PROTOTYPE for #315: an authorised file handle (results only) and a staged upload (action
+  // arguments only). The host validates both; neither is authority when it comes from a guest.
+  fileHandle: () => new FileKindDescriptor("fileHandle", false),
+  upload: () => new FileKindDescriptor("upload", false)
 };
+
+declare const fileHandleBrand: unique symbol;
+/**
+ * PROTOTYPE for #315: an opaque token a handler returns with a file's metadata. The page
+ * redeems it through the shell for that file's exact bytes; it is bound to the viewer, the
+ * patch and the loaded version, and grants nothing on its own.
+ */
+export type FileHandle = string & { readonly [fileHandleBrand]: true };
+declare const uploadBrand: unique symbol;
+/**
+ * PROTOTYPE for #315: bytes the shell staged for this viewer and document, adopted once by an
+ * action's `ctx.files.<store>.put`. In an action, `size` is Patchy's measurement
+ * (authoritative) and `contentType` is the page's claim (not proof).
+ */
+export interface Upload {
+  readonly token: string;
+  readonly size: number;
+  readonly contentType: string;
+  readonly [uploadBrand]: true;
+}
 
 // PROTOTYPE for #314: descriptors for handler arguments and results. Serialised to JSON
 // beside the column descriptors; `optional` on a field means the key may be omitted, `nullable`
@@ -85,7 +109,7 @@ export interface FieldDescriptor {
 export type Fields = Readonly<Record<string, FieldDescriptor>>;
 abstract class DescriptorBase<Optional extends boolean> {
   constructor(readonly isOptional: Optional) {}
-  abstract readonly descriptor: "object" | "array" | "enum" | "nullable" | "row";
+  abstract readonly descriptor: "object" | "array" | "enum" | "nullable" | "row" | "file";
   abstract toJSON(): Record<string, unknown>;
 }
 export class ObjectDescriptor<
@@ -178,7 +202,27 @@ export class RowDescriptor<
     return { kind: "row", table: this.table, ...(this.isOptional ? { optional: true } : {}) };
   }
 }
+/** PROTOTYPE for #315: `t.fileHandle()` and `t.upload()`. */
+export class FileKindDescriptor<
+  K extends "fileHandle" | "upload" = "fileHandle" | "upload",
+  Optional extends boolean = false
+> extends DescriptorBase<Optional> {
+  readonly descriptor = "file" as const;
+  constructor(
+    readonly fileKind: K,
+    isOptional: Optional
+  ) {
+    super(isOptional);
+  }
+  optional(this: FileKindDescriptor<K, false>): FileKindDescriptor<K, true> {
+    return new FileKindDescriptor(this.fileKind, true);
+  }
+  toJSON() {
+    return { kind: this.fileKind, ...(this.isOptional ? { optional: true } : {}) };
+  }
+}
 export type Descriptor =
+  | FileKindDescriptor<"fileHandle" | "upload", boolean>
   | ObjectDescriptor<Fields, boolean>
   | ArrayDescriptor<FieldDescriptor, boolean>
   | EnumDescriptor<string, boolean>
@@ -205,11 +249,15 @@ export type Infer<D, C extends Config = Config> = D extends {
           ? T extends keyof C["tables"] & string
             ? Row<C, T>
             : never
-          : D extends { readonly kind: infer K extends ColumnKind; readonly table: infer Target }
-            ? K extends "ref"
-              ? Id<Target & string>
-              : Value<K, Target & string>
-            : never;
+          : D extends { readonly descriptor: "file"; readonly fileKind: infer K }
+            ? K extends "fileHandle"
+              ? FileHandle
+              : Upload
+            : D extends { readonly kind: infer K extends ColumnKind; readonly table: infer Target }
+              ? K extends "ref"
+                ? Id<Target & string>
+                : Value<K, Target & string>
+              : never;
 type OptionalFields<F> = {
   [K in keyof F]: F[K] extends { readonly isOptional: true } ? K : never;
 }[keyof F];
@@ -241,6 +289,8 @@ type NormalizeIndexes<I> = {
 export type NonEmptyString<S extends string> = S extends "" ? never : S;
 export interface FileStoreDefinition {
   readonly description: string;
+  /** PROTOTYPE for #315: shared whole with the company; other patches declare it by alias. */
+  readonly shared?: boolean;
 }
 
 const validateDescription = (description: string): void => {
@@ -273,10 +323,11 @@ export const table = <
 };
 
 export const files = <const Description extends string>(
-  description: NonEmptyString<Description>
+  description: NonEmptyString<Description>,
+  options: { readonly shared?: boolean } = {}
 ): FileStoreDefinition => {
   validateDescription(description);
-  return { description };
+  return { description, ...(options.shared === undefined ? {} : { shared: options.shared }) };
 };
 export const postgres = <const Handle extends string>(handle: Handle) => ({
   kind: "postgres" as const,
@@ -290,9 +341,19 @@ export const sharedTable = <const Patch extends string, const Table extends stri
   patchId,
   table
 });
+/** PROTOTYPE for #315: another patch's shared file store, read from server functions. */
+export const sharedStore = <const Patch extends string, const Store extends string>(
+  patchId: Patch,
+  store: Store
+) => ({
+  kind: "sharedStore" as const,
+  patchId,
+  store
+});
 export type Declaration =
   | { readonly kind: "postgres"; readonly handle: string }
-  | { readonly kind: "sharedTable"; readonly patchId: string; readonly table: string };
+  | { readonly kind: "sharedTable"; readonly patchId: string; readonly table: string }
+  | { readonly kind: "sharedStore"; readonly patchId: string; readonly store: string };
 export interface Config {
   readonly name: string;
   readonly tier: 0 | 1 | 2 | 3;

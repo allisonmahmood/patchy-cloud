@@ -26,7 +26,9 @@ export const errorCodes = {
   offset_exhausted: true,
   // PROTOTYPE for #314
   handler_failed: true,
-  handler_timeout: true
+  handler_timeout: true,
+  // PROTOTYPE for #315: a handle whose file was replaced or deleted; an unknown staged upload.
+  not_found: true
 } as const;
 export type ErrorCode = keyof typeof errorCodes;
 export type RelationIdentifier = { readonly schema: string; readonly name: string };

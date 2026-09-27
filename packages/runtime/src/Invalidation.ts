@@ -16,6 +16,14 @@ let wakes = 0;
 
 export const tableKey = (patchId: string, table: string) => `table:${patchId}/${table}`;
 export const versionKey = (patchId: string) => `version:${patchId}`;
+/** PROTOTYPE for #315: a file store's writes, at store grain. */
+export const storeKey = (patchId: string, store: string) => `store:${patchId}/${store}`;
+/**
+ * PROTOTYPE for #315: a source patch's publish or lifecycle change (sharing, retire, delete,
+ * restore, rollback). A run that read a shared table or store depends on its source's key, so
+ * an unshare re-runs the subscriber at once and it is refused then, not on some later wake.
+ */
+export const sourceKey = (patchId: string) => `source:${patchId}`;
 
 /** Wakes every listener with the keys a commit touched. */
 export const notify = (keys: ReadonlyArray<string>) =>

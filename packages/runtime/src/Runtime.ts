@@ -178,18 +178,34 @@ export interface JsonHandler extends HandlerMetadata {
 
 export interface BytesPutHandler extends HandlerMetadata {
   readonly transport: "bytes-put";
-  readonly kind: "mutation";
+  // PROTOTYPE for #315: staging is an unlogged read-kind transport (#303 point 8).
+  readonly kind: "mutation" | "read";
   readonly run: (
     args: unknown,
     bytes: Uint8Array
-  ) => Effect.Effect<null, RuntimeError, Binding.Binding>;
+  ) => Effect.Effect<unknown, RuntimeError, Binding.Binding>;
 }
+
+/** PROTOTYPE for #315: a handle redemption also names the file and may answer "not modified". */
+export type FileReply = FileBody & {
+  readonly name?: string;
+  readonly etag?: string;
+  readonly notModified?: boolean;
+};
 
 export interface BytesGetHandler extends HandlerMetadata {
   readonly transport: "bytes-get";
   readonly kind: "read";
-  readonly run: (args: unknown) => Effect.Effect<FileBody, RuntimeError, Binding.Binding>;
+  readonly run: (args: unknown) => Effect.Effect<FileReply, RuntimeError, Binding.Binding>;
 }
+
+/**
+ * PROTOTYPE for #315: a tier 2 page is server-only (#296): it reaches data through its handlers,
+ * never the primitives directly, so a patch's filter by viewer cannot be bypassed from the page.
+ * Staging and handle redemption are the shell-level exceptions, and exist only on tier 2.
+ */
+const tier2Operations = new Set(["me", "server.call", "files.stage", "files.redeem"]);
+const tier2Only = new Set(["files.stage", "files.redeem"]);
 
 export type Handler = JsonHandler | BytesPutHandler | BytesGetHandler;
 
@@ -289,10 +305,10 @@ export class Runtime extends Context.Service<
     readonly putFile: (
       input: typeof RuntimeEnvelope.Type,
       readBytes: Effect.Effect<Uint8Array, RuntimeError, HttpServerRequest.HttpServerRequest>
-    ) => Effect.Effect<null, RuntimeError, HttpServerRequest.HttpServerRequest>;
+    ) => Effect.Effect<unknown, RuntimeError, HttpServerRequest.HttpServerRequest>;
     readonly getFile: (
       input: typeof RuntimeEnvelope.Type
-    ) => Effect.Effect<FileBody, RuntimeError, HttpServerRequest.HttpServerRequest>;
+    ) => Effect.Effect<FileReply, RuntimeError, HttpServerRequest.HttpServerRequest>;
   }
 >()("@patchy/runtime/Runtime") {}
 
@@ -379,6 +395,14 @@ export const make = (
             requestAdmission.value !== version.wireVersion)
         )
           return yield* new ShellOutdated({});
+        if (version.manifest.tier === 2 ? !tier2Operations.has(input.op) : tier2Only.has(input.op))
+          return yield* new InvalidRequest({
+            cause: new Error(
+              version.manifest.tier === 2
+                ? `A tier 2 page reaches data through its server functions; ${input.op} is refused.`
+                : `${input.op} exists only on tier 2.`
+            )
+          });
         let identity: Binding.Binding["Service"]["identity"] = null;
         if (version.scope === "public") {
           if (input.op !== "me") return yield* new PublicUnavailable({});
@@ -469,6 +493,14 @@ export const make = (
           const table = operation.resource?.(input.args) ?? null;
           if (table !== null)
             yield* Invalidation.notify([Invalidation.tableKey(binding.patchId, table)]);
+        }
+        // PROTOTYPE for #315: a tier 1 store write wakes at store grain (a shared store's readers).
+        if (operation.kind === "mutation" && input.op.startsWith("files.")) {
+          const resource = operation.resource?.(input.args) ?? null;
+          if (resource !== null)
+            yield* Invalidation.notify([
+              Invalidation.storeKey(binding.patchId, resource.split("/")[0]!)
+            ]);
         }
         return result.value;
       });

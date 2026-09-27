@@ -332,7 +332,9 @@ export const RuntimeCode = Schema.Literals([
   "offset_exhausted",
   // PROTOTYPE for #314: tier 2 refusals.
   "handler_failed",
-  "handler_timeout"
+  "handler_timeout",
+  // PROTOTYPE for #315: a file handle whose file was replaced or deleted, an unknown upload.
+  "not_found"
 ]).annotate({ identifier: "RuntimeCode" });
 export type RuntimeCode = typeof RuntimeCode.Type;
 

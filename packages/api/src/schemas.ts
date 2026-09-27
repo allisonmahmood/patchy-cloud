@@ -363,7 +363,11 @@ export const TableDefinition = Schema.Struct({
       ) || "An index names an unknown column."
   )
 );
-export const FileStoreDefinition = Schema.Struct({ description: PrimitiveDescription });
+// PROTOTYPE for #315: a store may be shared whole with the company (#303 point 1).
+export const FileStoreDefinition = Schema.Struct({
+  description: PrimitiveDescription,
+  shared: Schema.optionalKey(Schema.Boolean)
+});
 export const PostgresDeclaration = Schema.Struct({
   kind: Schema.Literal("postgres"),
   handle: NonEmptyText,
@@ -377,6 +381,15 @@ export const SharedTableDeclaration = Schema.Struct({
   kind: Schema.Literal("sharedTable"),
   patchId: PatchId,
   table: DefinitionName,
+  id: NonEmptyText,
+  revision: Revision
+});
+/** PROTOTYPE for #315: a shared file store declared by alias (#303 point 2); id is `<patchId>/<store>`. */
+export const sharedStoreId = (patchId: string, store: string): string => `${patchId}/${store}`;
+export const SharedStoreDeclaration = Schema.Struct({
+  kind: Schema.Literal("sharedStore"),
+  patchId: PatchId,
+  store: DefinitionName,
   id: NonEmptyText,
   revision: Revision
 });
@@ -399,7 +412,9 @@ export const Manifest = Schema.Struct({
   tier: Schema.Literals([0, 1, 2, 3]),
   tables: definitions(TableDefinition),
   files: definitions(FileStoreDefinition),
-  uses: definitions(Schema.Union([PostgresDeclaration, SharedTableDeclaration])),
+  uses: definitions(
+    Schema.Union([PostgresDeclaration, SharedTableDeclaration, SharedStoreDeclaration])
+  ),
   // PROTOTYPE for #314: present on tier 2 only; the server re-derives and compares it.
   handlers: Schema.optionalKey(Handlers)
 }).check(distinctPrimitiveNames);
@@ -416,6 +431,11 @@ export const GenerationManifest = Schema.Struct({
       }),
       Schema.Struct({
         ...SharedTableDeclaration.fields,
+        id: Schema.optionalKey(NonEmptyText),
+        revision: Schema.optionalKey(Revision)
+      }),
+      Schema.Struct({
+        ...SharedStoreDeclaration.fields,
         id: Schema.optionalKey(NonEmptyText),
         revision: Schema.optionalKey(Revision)
       })
@@ -477,7 +497,9 @@ export const isManagedOutputPath = (path: string): boolean => {
   return (
     path.startsWith("patchy/_generated/") ||
     /^\.agents\/skills\/patchy-[a-z0-9-]+\/SKILL\.md$/.test(path) ||
-    /^fixtures\/(?:postgres-[a-z0-9-]+|shared-[a-z][a-zA-Z0-9]*)\.sql$/.test(path)
+    /^fixtures\/(?:postgres-[a-z0-9-]+|shared-[a-z][a-zA-Z0-9]*)\.sql$/.test(path) ||
+    // PROTOTYPE for #315: sample files for a declared shared store, laid down once.
+    /^fixtures\/shared-[a-z][a-zA-Z0-9]*\/[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(path)
   );
 };
 export const DeclarationMetadata = Schema.Struct({
@@ -492,6 +514,13 @@ export const DeclarationMetadata = Schema.Struct({
       tables: Schema.Record(Schema.String, TableDefinition),
       uses: Schema.Record(Schema.String, SharedTableDeclaration)
     })
+  ),
+  // PROTOTYPE for #315: declared shared file stores, resolved.
+  stores: Schema.optionalKey(
+    Schema.Record(
+      Schema.String,
+      Schema.Struct({ declaration: SharedStoreDeclaration, description: Schema.String })
+    )
   )
 });
 
@@ -541,12 +570,14 @@ export const PatchTableSummary = Schema.Struct({
   reason: Schema.optionalKey(Schema.Literals(["not_shared", "source_off"])),
   hint: Schema.optionalKey(Schema.String)
 });
+// PROTOTYPE for #315: stores are shareable; the summary mirrors a table's.
 export const PatchStoreSummary = Schema.Struct({
   name: Schema.String,
   description: Schema.String,
-  declarable: Schema.Literal(false),
-  reason: Schema.Literal("not_shareable"),
-  hint: Schema.String
+  shared: Schema.Boolean,
+  declarable: Schema.Boolean,
+  reason: Schema.optionalKey(Schema.Literals(["not_shared", "source_off"])),
+  hint: Schema.optionalKey(Schema.String)
 });
 export const PatchRead = Schema.Struct({
   alias: Schema.String,

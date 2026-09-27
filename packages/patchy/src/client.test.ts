@@ -152,7 +152,7 @@ it("infers the owned facade and generated aliases without widening index, id, or
   const source = `import { createClient, createSharedTable, type Call, type ErrorCode, type Operation, type Me, type FileMetadata } from "patchy/client";
 import { defineConfig, table, t, files, postgres, sharedTable, type Id } from "patchy/config";
 type Equal<A, B> = [A] extends [B] ? [B] extends [A] ? true : false : false;
-const operationsConform: Equal<Operation, "route.set" | "download" | "subscribe" | "unsubscribe" | ${Object.keys(
+const operationsConform: Equal<Operation, "route.set" | "download" | "subscribe" | "unsubscribe" | "files.stage" | "files.redeem" | "files.save" | ${Object.keys(
     runtimeOperations
   )
     .map((name) => JSON.stringify(name))

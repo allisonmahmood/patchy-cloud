@@ -24,7 +24,15 @@ export type TypeDescriptor =
   | { readonly kind: "array"; readonly items: TypeDescriptor; readonly optional?: boolean }
   | { readonly kind: "enum"; readonly values: readonly string[]; readonly optional?: boolean }
   | { readonly kind: "nullable"; readonly inner: TypeDescriptor; readonly optional?: boolean }
-  | { readonly kind: "row"; readonly table: string; readonly optional?: boolean };
+  | { readonly kind: "row"; readonly table: string; readonly optional?: boolean }
+  // PROTOTYPE for #315: an authorised file handle (results only) and a staged upload (action
+  // arguments only), both validated host-side; the guest's copy is never authority.
+  | { readonly kind: "fileHandle" | "upload"; readonly optional?: boolean };
+
+/** PROTOTYPE for #315: `fh_` + base64url(24-byte object id suffix + 16-byte MAC), fixed length. */
+export const FILE_HANDLE_PATTERN = /^fh_[A-Za-z0-9_-]{54}$/;
+/** PROTOTYPE for #315: `upl_` + 24 random bytes in base64url. */
+export const UPLOAD_TOKEN_PATTERN = /^upl_[A-Za-z0-9_-]{32}$/;
 
 // A type alias, not an interface: object literal types carry an implicit index signature, so
 // a descriptor map is assignable to the schema's `Record<string, Json>`.
@@ -36,6 +44,7 @@ export type HandlerDescriptor = {
 };
 
 const scalarKinds = new Set(["text", "integer", "number", "boolean", "timestamp", "json"]);
+const fileKinds = new Set(["fileHandle", "upload"]);
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
 // PROTOTYPE for #314 round 2: the grammar is closed; a descriptor carries only its own keys.
@@ -77,8 +86,42 @@ export const isTypeDescriptor = (value: unknown, depth = 0): value is TypeDescri
     case "nullable":
       return isTypeDescriptor(value.inner, depth + 1);
     default:
-      return scalarKinds.has(value.kind);
+      return scalarKinds.has(value.kind) || fileKinds.has(value.kind);
   }
+};
+
+/** PROTOTYPE for #315: whether a descriptor contains a `fileHandle` or `upload` anywhere. */
+export const containsKind = (
+  descriptor: TypeDescriptor,
+  kind: "fileHandle" | "upload",
+  depth = 0
+): boolean => {
+  if (depth > 16) return false;
+  switch (descriptor.kind) {
+    case "object":
+      return Object.values(descriptor.fields).some((field) => containsKind(field, kind, depth + 1));
+    case "array":
+      return containsKind(descriptor.items, kind, depth + 1);
+    case "nullable":
+      return containsKind(descriptor.inner, kind, depth + 1);
+    default:
+      return descriptor.kind === kind;
+  }
+};
+
+/**
+ * PROTOTYPE for #315: where file kinds may appear (#303 points 6 and 8). A handle is evidence of
+ * the server's selection, so it is legal in results only; an upload is adopted by an action, so
+ * it is legal in an action's arguments only.
+ */
+export const filePlacementProblem = (descriptor: HandlerDescriptor): string | undefined => {
+  if (containsKind(descriptor.args, "fileHandle"))
+    return "t.fileHandle() is legal in results only, never in arguments.";
+  if (containsKind(descriptor.result, "upload"))
+    return "t.upload() is legal in action arguments only, never in results.";
+  if (descriptor.kind !== "action" && containsKind(descriptor.args, "upload"))
+    return `t.upload() is legal in action arguments only; this handler is a ${descriptor.kind}.`;
+  return undefined;
 };
 
 const handlerKeys = new Set(["kind", "args", "result", "errors"]);
@@ -90,7 +133,8 @@ export const isHandlerDescriptor = (value: unknown): value is HandlerDescriptor 
   (value.args as TypeDescriptor).kind === "object" &&
   isTypeDescriptor(value.result) &&
   (value.errors === undefined ||
-    (Array.isArray(value.errors) && value.errors.every((code) => typeof code === "string")));
+    (Array.isArray(value.errors) && value.errors.every((code) => typeof code === "string"))) &&
+  filePlacementProblem(value as HandlerDescriptor) === undefined;
 
 const handlerName = /^[a-z][a-zA-Z0-9]{0,62}\.[a-zA-Z_$][a-zA-Z0-9_$]{0,62}$/;
 export const isHandlerName = (name: string): boolean => handlerName.test(name);
@@ -152,6 +196,17 @@ export const checkValue = (
         : `${path}: expected an ISO timestamp`;
     case "json":
       return value === undefined ? `${path}: expected JSON` : undefined;
+    case "fileHandle":
+      return typeof value === "string" && FILE_HANDLE_PATTERN.test(value)
+        ? undefined
+        : `${path}: expected a file handle`;
+    case "upload":
+      // Only the token is read; the host substitutes the measured size and claimed type.
+      return isRecord(value) &&
+        typeof value.token === "string" &&
+        UPLOAD_TOKEN_PATTERN.test(value.token)
+        ? undefined
+        : `${path}: expected an Upload from patchy.files.stage`;
     case "enum":
       return typeof value === "string" && descriptor.values.includes(value)
         ? undefined

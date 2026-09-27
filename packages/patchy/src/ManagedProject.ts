@@ -207,8 +207,20 @@ export class ManagedProject {
     ]);
     const fixtures: ManagedFile[] = [];
     for (const root of roots) await this.snapshot(root);
+    // PROTOTYPE for #315: a shared store's sample directory is laid down only when missing.
+    const presentDirectories = new Set<string>();
+    for (const file of staged) {
+      const directory = /^fixtures\/shared-[^/]+\//.exec(file.path)?.[0];
+      if (
+        directory !== undefined &&
+        (await info(await safePath(this.root, directory.slice(0, -1))))
+      )
+        presentDirectories.add(directory);
+    }
     for (const file of staged) {
       if (file.path.startsWith("fixtures/")) {
+        const directory = /^fixtures\/shared-[^/]+\//.exec(file.path)?.[0];
+        if (directory !== undefined && presentDirectories.has(directory)) continue;
         const existing = await info(await safePath(this.root, file.path));
         if (existing) {
           if (!existing.isFile()) throw new Error(`Fixture is not a regular file: ${file.path}`);

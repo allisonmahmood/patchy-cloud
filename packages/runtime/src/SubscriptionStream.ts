@@ -274,6 +274,32 @@ export const layer = HttpRouter.use((router) =>
                 if (Cause.hasInterrupts(result.cause)) return;
                 const error = Cause.findErrorOption(result.cause);
                 const code = Option.isSome(error) ? error.value.code : "source_unavailable";
+                // PROTOTYPE for #315: a refusal inside the handler (a shared source unshared,
+                // retired or deleted) is the query's outcome, not the viewer losing the
+                // document: deliver it now, keep the subscription on what this run read (the
+                // source's key included), and deliver the next good result in full.
+                if (
+                  Option.isSome(error) &&
+                  "details" in error.value &&
+                  error.value.details?.refusedIn === "handler"
+                ) {
+                  traced.dependencies.add(Invalidation.versionKey(state.patchId));
+                  subscription.dependencies = traced.dependencies;
+                  for (const key of subscription.wokenDuringRun)
+                    if (traced.dependencies.has(key)) subscription.dirty = true;
+                  subscription.wokenDuringRun.clear();
+                  subscription.last = undefined;
+                  subscription.revision += 1;
+                  counters.deliveries += 1;
+                  yield* emit({
+                    type: "error",
+                    id: subscription.id,
+                    code,
+                    error: error.value.message,
+                    recoverable: true
+                  });
+                  continue;
+                }
                 if (stoppingCodes.has(code)) {
                   yield* stop(code);
                   return;

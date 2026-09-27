@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off -- PROTOTYPE for #315: the dev fixture loader hashes sample bytes.
+import { createHash } from "node:crypto";
 import * as PgliteClient from "@effect/sql-pglite/PgliteClient";
 import { WIRE_VERSION } from "@patchy/api";
 import type { PatchInventory } from "@patchy/api";
@@ -11,7 +13,8 @@ import {
   PostgresExecution,
   PostgresOperations
 } from "@patchy/integrations/dev";
-import { Files, TableOperations, Tables } from "@patchy/primitives";
+import { Files, ServerFiles, TableOperations, Tables } from "@patchy/primitives";
+import { ContentStore } from "@patchy/content-store";
 import { LoadedVersions, me, Runtime } from "@patchy/runtime/core";
 // PROTOTYPE for #314
 import { Engine, ServerCall, Transaction } from "@patchy/execution";
@@ -122,9 +125,37 @@ const baselineSnapshot = (
     ),
     stores: Object.entries(baseline.files).map(
       ([name, definition]) =>
-        new Inventory.Store({ patchId, name, description: definition.description })
+        new Inventory.Store({
+          patchId,
+          name,
+          description: definition.description,
+          shared: definition.shared === true
+        })
     )
   });
+
+/** PROTOTYPE for #315: a declared shared store's sample files, loaded into its local copy. */
+interface StoreFixture {
+  readonly patchId: string;
+  readonly store: string;
+  readonly path: string;
+  readonly files: ReadonlyArray<{ readonly name: string; readonly bytes: Uint8Array }>;
+}
+const contentTypes: Readonly<Record<string, string>> = {
+  pdf: "application/pdf",
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+  svg: "image/svg+xml",
+  txt: "text/plain",
+  csv: "text/csv",
+  json: "application/json",
+  md: "text/markdown"
+};
+const contentTypeOf = (name: string) =>
+  contentTypes[name.slice(name.lastIndexOf(".") + 1).toLowerCase()] ?? "application/octet-stream";
 
 interface LocalState {
   readonly stampPath: string;
@@ -139,6 +170,7 @@ interface LocalState {
     readonly path: string;
     readonly contents: string;
   }>;
+  readonly storeFixtures: ReadonlyArray<StoreFixture>;
 }
 
 const make = Effect.fn("DevResources.make")(function* (prepared: Prepared, state: LocalState) {
@@ -198,6 +230,33 @@ const make = Effect.fn("DevResources.make")(function* (prepared: Prepared, state
       catch: (cause) => new SharedFixtureInvalid({ path: fixture.path, cause })
     });
   }
+  // PROTOTYPE for #315: sample files into the local copy of each declared shared store; a name
+  // already present is never overwritten, so files the dev loop wrote survive a restart.
+  const content = yield* ContentStore.ContentStore;
+  for (const fixture of state.storeFixtures) {
+    for (const file of fixture.files) {
+      const exists = yield* databases.withCompany(companyId)(
+        Effect.gen(function* () {
+          const sql = yield* CompanyDatabases.CompanyConnection;
+          const rows = yield* sql`SELECT 1 FROM patchy.files
+            WHERE patch_id = ${fixture.patchId} AND store = ${fixture.store} AND name = ${file.name}`;
+          return rows.length > 0;
+        })
+      );
+      if (exists) continue;
+      const objectId = `obj_${sha256(`${fixture.patchId}/${fixture.store}/${file.name}`).slice(0, 24)}`;
+      yield* content.putBytes(ServerFiles.objectKey(fixture.patchId, objectId), file.bytes);
+      yield* databases.withCompany(companyId)(
+        Effect.gen(function* () {
+          const sql = yield* CompanyDatabases.CompanyConnection;
+          yield* sql`INSERT INTO patchy.files (patch_id, store, name, object_id, size, content_type, sha256)
+            VALUES (${fixture.patchId}, ${fixture.store}, ${file.name}, ${objectId}, ${file.bytes.byteLength},
+              ${contentTypeOf(file.name)}, ${createHash("sha256").update(file.bytes).digest("hex")})
+            ON CONFLICT (patch_id, store, name) DO NOTHING`;
+        })
+      );
+    }
+  }
   const postgres = yield* PostgresOperations.makeHandlers;
   const base = { me, ...(yield* TableOperations.make), ...(yield* Files.make), ...postgres };
   // PROTOTYPE for #314: on tier 2 the `server.call` handler runs beside the table handlers; the
@@ -215,13 +274,25 @@ const make = Effect.fn("DevResources.make")(function* (prepared: Prepared, state
           )
         )
       : {};
-  const handlers =
+  // PROTOTYPE for #315: tier 2 files over the joining databases, as on the server.
+  const serverFiles =
     prepared.manifest.tier === 2 && Option.isSome(engine)
+      ? yield* ServerFiles.make.pipe(
+          Effect.provideService(
+            CompanyDatabases.CompanyDatabases,
+            Transaction.joiningDatabases(databases)
+          )
+        )
+      : undefined;
+  const handlers =
+    prepared.manifest.tier === 2 && Option.isSome(engine) && serverFiles !== undefined
       ? {
           ...base,
+          ...serverFiles.routes,
           "server.call": yield* ServerCall.make(
-            { ...base, ...joiningTables },
+            { ...base, ...joiningTables, ...serverFiles.callbacks },
             {
+              resolveUpload: serverFiles.resolveUpload,
               bundle: (binding) => {
                 const bundle =
                   binding.server === undefined ? undefined : bundles.get(binding.server.digest);
@@ -290,6 +361,49 @@ export const prepare = Effect.fn("DevResources.prepare")(function* (
         ...prepared.manifest,
         tables: sourceTables,
         files: existing?.manifest.files ?? {},
+        uses: Tables.inventoryReferences(sourceTables)
+      }
+    });
+  }
+  // PROTOTYPE for #315: a declared shared store's local copy lives in the source's version, with
+  // its sample files from `fixtures/shared-<alias>/` (a directory, required like a .sql fixture).
+  const storeFixtures: StoreFixture[] = [];
+  for (const [alias, { declaration, description }] of Object.entries(
+    prepared.metadata.stores ?? {}
+  )) {
+    const relative = `fixtures/shared-${alias}`;
+    const fixturePath = yield* checkedPath(root, relative);
+    const info = yield* fs.stat(fixturePath).pipe(Effect.option);
+    if (Option.isNone(info) || info.value.type !== "Directory")
+      return yield* new FixtureMissing({ path: `${relative}/` });
+    const names = (yield* fs.readDirectory(fixturePath))
+      .filter((name) => !name.startsWith(".") && /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(name))
+      .sort();
+    const files: Array<{ name: string; bytes: Uint8Array }> = [];
+    for (const name of names) {
+      const filePath = yield* checkedPath(root, `${relative}/${name}`);
+      if ((yield* fs.stat(filePath)).type !== "File") continue;
+      files.push({ name, bytes: yield* fs.readFile(filePath) });
+    }
+    storeFixtures.push({
+      patchId: declaration.patchId,
+      store: declaration.store,
+      path: relative,
+      files
+    });
+    const existing = versions.get(declaration.patchId);
+    const sourceTables = existing?.manifest.tables ?? {};
+    versions.set(declaration.patchId, {
+      ...version,
+      patchId: declaration.patchId,
+      manifest: {
+        ...prepared.manifest,
+        tier: 2,
+        tables: sourceTables,
+        files: {
+          ...existing?.manifest.files,
+          [declaration.store]: { description, shared: true }
+        },
         uses: Tables.inventoryReferences(sourceTables)
       }
     });
@@ -459,7 +573,8 @@ export const prepare = Effect.fn("DevResources.prepare")(function* (
     changedSources,
     version,
     versions,
-    fixtures
+    fixtures,
+    storeFixtures
   }).pipe(Effect.provideContext(context));
   const engine = Option.getOrUndefined(preparedResources.engine);
   const setServer: SetServer | undefined =
