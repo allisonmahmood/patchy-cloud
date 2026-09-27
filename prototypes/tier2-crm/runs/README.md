@@ -12,3 +12,5 @@ Each directory is one fresh agent's CRM, built from the project skills alone on 
 | `b-astra` | astra                             | 43 m 52 s | 94             |
 
 `REPORT.md` in each is the agent's own account; `SCORES.md` is the independent verifier's. `node_modules`, `.patchy`, the lockfile, generated files and the served skills are left out; `pnpm prototype:crm init <dir> --variant a|b` recreates a tree to drop a run's sources into.
+
+The repo's commit hook ran Prettier over these files, so their layout here is not what the agents wrote; the verifier's line-length and CSS measures come from the original trees.
