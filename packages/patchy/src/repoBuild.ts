@@ -186,7 +186,16 @@ export const checkRepoRelease = Effect.fn("checkRepoRelease")(function* (
   if (pin !== tarball)
     return yield* new ReleaseMismatch({
       component: "pin",
-      loaded: /patchy-([^/]+)\.tgz(?:[?#].*)?$/.exec(pin)?.[1] ?? pin,
+      // PROTOTYPE for #315: URLs are content-addressed, so the same version rebuilt differs by
+      // its digest segment; name it so the refusal does not read "0.0.1 does not match 0.0.1".
+      loaded:
+        /\/sdk\/([0-9a-f]{16})\/patchy-([^/]+)\.tgz(?:[?#].*)?$/
+          .exec(pin)
+          ?.slice(1)
+          .reverse()
+          .join(" build ") ??
+        /patchy-([^/]+)\.tgz(?:[?#].*)?$/.exec(pin)?.[1] ??
+        pin,
       current: release.release
     });
   yield* checkRelease(release.release, { cli: RELEASE });

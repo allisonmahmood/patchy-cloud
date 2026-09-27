@@ -319,6 +319,8 @@ export function App() {
 `;
 
 function publishContracts(force = false) {
+  // The release URL is content-addressed: a rebuilt instance means a new pin first.
+  cli(contractsRepo, ["refresh", "--json"]);
   const out = cli(contractsRepo, ["publish", "--json", ...(force ? ["--force"] : [])]);
   const result = lastJson(out);
   writeFileSync(
@@ -403,8 +405,11 @@ async function financeSetup() {
     ]);
     if (exists.rowCount === 0) await server.query(`CREATE DATABASE ${FINANCE_DATABASE}`);
     const role = await server.query("SELECT 1 FROM pg_roles WHERE rolname = $1", [FINANCE_ROLE]);
+    // Neon refuses naming the SUPERUSER attribute on ALTER; a re-run only resets login and password.
     await server.query(
-      `${role.rowCount === 0 ? "CREATE" : "ALTER"} ROLE ${FINANCE_ROLE} WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT PASSWORD '${password}'`
+      role.rowCount === 0
+        ? `CREATE ROLE ${FINANCE_ROLE} WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT PASSWORD '${password}'`
+        : `ALTER ROLE ${FINANCE_ROLE} WITH LOGIN PASSWORD '${password}'`
     );
   } finally {
     await server.end();
@@ -579,9 +584,12 @@ function init(dir: string, variant: string) {
   const { apiUrl, token } = instance();
   if (!["a", "b"].includes(variant)) fail("--variant a (patchy only) or b (wide)");
   const target = path.resolve(dir);
+  // The agent's CLI state sits beside its tree, never in ~/.patchy.
+  const agentState = `${target}.patchy-state`;
   const env = {
     PATCHY_API_URL: apiUrl,
     PATCHY_API_TOKEN: token,
+    PATCHY_STATE_DIR: agentState,
     PATCHY_PROTOTYPE_VARIANT: variant === "b" ? "wide" : "restricted"
   };
   cli(
@@ -604,14 +612,14 @@ function init(dir: string, variant: string) {
     `Initialised ${target} (variant ${variant.toUpperCase()}); data/contacts.csv copied; typecheck passed.`
   );
   say("Give the agent this environment (the CLI is then authenticated as Dev Machine):");
-  say(`  export PATCHY_API_URL=${apiUrl} PATCHY_API_TOKEN=${token}`);
+  say(`  export PATCHY_API_URL=${apiUrl} PATCHY_API_TOKEN=${token} PATCHY_STATE_DIR=${agentState}`);
 }
 
-async function browser(user: string, url: string) {
+async function browser(user: string, url: string, check = false) {
   if (user !== "owner" && user !== "colleague") fail("browser owner|colleague <url>");
   const { chromium } = await import("@playwright/test");
   const target = new URL(url);
-  const launched = await chromium.launch({ headless: false });
+  const launched = await chromium.launch({ headless: check });
   const context = await launched.newContext();
   await context.route("**/*", (route) =>
     ["127.0.0.1", "localhost"].includes(new URL(route.request().url()).hostname)
@@ -628,7 +636,22 @@ async function browser(user: string, url: string) {
     }))
   );
   const page = await context.newPage();
-  await page.goto(url);
+  const response = await page.goto(url);
+  if (check) {
+    // --check: headless, reports what the signed-in viewer's shell loaded, then exits.
+    await page.waitForTimeout(3000);
+    const frame = page.frames().find((candidate) => candidate.url().includes("/~content/"));
+    say(
+      JSON.stringify({
+        status: response?.status(),
+        url: page.url(),
+        frame: frame !== undefined,
+        text: frame === undefined ? null : (await frame.locator("body").innerText()).slice(0, 200)
+      })
+    );
+    await launched.close();
+    return;
+  }
   say(`Signed in as ${USERS[user as User].email} at ${url}. Close the window to end.`);
   await new Promise((resolve) => launched.on("disconnected", resolve));
 }
@@ -690,7 +713,11 @@ switch (command) {
     break;
   }
   case "browser":
-    await browser(rest[0] ?? "owner", rest[1] ?? fail("browser owner|colleague <url>"));
+    await browser(
+      rest[0] ?? "owner",
+      rest[1] ?? fail("browser owner|colleague <url> [--check]"),
+      rest.includes("--check")
+    );
     break;
   default:
     say(

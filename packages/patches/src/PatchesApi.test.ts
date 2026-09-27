@@ -1210,8 +1210,10 @@ it.layer(
             {
               name: "photos",
               description: "Receipt photos.",
+              // PROTOTYPE for #315: stores are shareable; an unshared one reads like a table.
+              shared: false,
               declarable: false,
-              reason: "not_shareable",
+              reason: "not_shared",
               hint: expect.any(String)
             }
           ]

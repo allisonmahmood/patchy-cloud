@@ -1048,6 +1048,7 @@ const add = Command.make(
     )
 ).pipe(
   Command.withDescription(
+    // PROTOTYPE for #315: shared-store declarations.
     "Add a Postgres connection, shared-table or shared-store declaration and generate its files."
   )
 );

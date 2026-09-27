@@ -537,6 +537,61 @@ test("step 11: unsharing refuses redemption at once, leaves the consumer's recor
   });
 });
 
+test("step 4: omitting the store or rolling the source back never changes sharing", async ({
+  instance
+}) => {
+  const rollback = async (versionNumber: number) => {
+    const response = await fetch(`${instance.origin}/api/patches/${contracts.patchId}/rollback`, {
+      method: "POST",
+      headers: { authorization: "Bearer patchy-dev-token", "content-type": "application/json" },
+      body: JSON.stringify({ versionNumber })
+    });
+    return response.status;
+  };
+  // A version that omits the store: the store stays shared and the consumer keeps reading.
+  const omitted = await instance.publish({
+    patchId: contracts.patchId,
+    manifest: { ...contractsManifest(instance, true), files: {} },
+    html: built.contracts.html,
+    server: built.contracts.server
+  });
+  expect(omitted.status, JSON.stringify(omitted.body)).toBe(200);
+  const direct = () =>
+    colleague.frame.evaluate(async () => {
+      try {
+        await (window as unknown as Win).harness.contracts();
+        return "ok";
+      } catch (error) {
+        return (error as { code?: string }).code ?? String(error);
+      }
+    });
+  expect(await direct()).toBe("ok");
+  // Unshare, then roll back to the shared first version: sharing stays off.
+  const unshared = await instance.publish({
+    patchId: contracts.patchId,
+    manifest: contractsManifest(instance, false),
+    html: built.contracts.html,
+    server: built.contracts.server,
+    force: true
+  });
+  expect(unshared.status).toBe(200);
+  expect(await rollback(1)).toBe(200);
+  expect(await direct()).toBe("access_denied");
+  const reshared = await instance.publish({
+    patchId: contracts.patchId,
+    manifest: contractsManifest(instance, true),
+    html: built.contracts.html,
+    server: built.contracts.server
+  });
+  expect(reshared.status).toBe(200);
+  expect(await direct()).toBe("ok");
+  record("omissionAndRollback", {
+    afterOmission: "ok",
+    afterUnshareThenRollbackToShared: "access_denied",
+    afterReshare: "ok"
+  });
+});
+
 test("step 11: a handle tried as another viewer and inside another patch is refused", async ({
   browser,
   instance
