@@ -25,41 +25,14 @@ const encodeFailure = Schema.encodeSync(RuntimeFailure);
 const noStore = { "cache-control": "no-store" };
 
 export const failure = (error: Runtime.RuntimeError) => {
-  const retryAfter =
-    (error.code === "rate_limited" ||
-      error.code === "limit_exceeded" ||
-      error.code === "too_many_requests" ||
-      error.code === "busy") &&
-    "retryAfterSeconds" in error
-      ? error.retryAfterSeconds
-      : undefined;
-  return HttpServerResponse.jsonUnsafe(
-    encodeFailure({
-      ok: false,
-      source: "patchy",
-      code: error.code,
-      error: error.message,
-      ...("limitId" in error && error.limitId !== undefined ? { limitId: error.limitId } : {}),
-      ...("limitId" in error && error.limitId !== undefined && error.scope !== undefined
-        ? { scope: error.scope }
-        : {}),
-      ...("limitId" in error && error.limitId !== undefined && error.value !== undefined
-        ? { value: error.value }
-        : {}),
-      ...(retryAfter === undefined ? {} : { retryAfter }),
-      ...("details" in error && error.details !== undefined ? { details: error.details } : {}),
-      ...("correlationId" in error && error.correlationId !== undefined
-        ? { correlationId: error.correlationId }
-        : {})
-    }),
-    {
-      status: error.status,
-      headers: {
-        ...noStore,
-        ...(retryAfter === undefined ? {} : { "retry-after": String(retryAfter) })
-      }
+  const body = Runtime.toFailure(error);
+  return HttpServerResponse.jsonUnsafe(encodeFailure(body), {
+    status: error.status,
+    headers: {
+      ...noStore,
+      ...(body.retryAfter === undefined ? {} : { "retry-after": String(body.retryAfter) })
     }
-  );
+  });
 };
 
 const recordFailure = Effect.fnUntraced(function* (error: Runtime.RuntimeError) {

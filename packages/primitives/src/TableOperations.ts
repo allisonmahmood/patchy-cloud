@@ -5,7 +5,7 @@ import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import type * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
 import {
   DefinitionName,
@@ -20,9 +20,10 @@ import {
   TableRow
 } from "@patchy/api";
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
-import { Binding, LoadedVersions, Runtime } from "@patchy/runtime/core";
+import { Binding, LoadedVersions, Runtime, Wakes } from "@patchy/runtime/core";
 import { boundedRows } from "./bounded-rows.js";
 import { inventoryManifest } from "./Tables.js";
+import * as ReadSnapshot from "./ReadSnapshot.js";
 
 export class TableNotDeclared extends Schema.TaggedError<TableNotDeclared>()("TableNotDeclared", {
   table: Schema.String
@@ -253,35 +254,40 @@ const resource: Runtime.Handler["resource"] = (args) =>
     ? args.table
     : null;
 
-export const make = Effect.gen(function* () {
+export const makeAccess = Effect.gen(function* () {
   const databases = yield* CompanyDatabases.CompanyDatabases;
   const inventory = yield* Inventory.Inventory;
   const versions = yield* LoadedVersions.LoadedVersions;
-  const settings = yield* config;
   const withCompany = <A>(
     companyId: string,
     effect: Effect.Effect<A, Runtime.RuntimeError, CompanyDatabases.CompanyConnection>
   ) =>
-    databases
-      .withCompany(companyId)(effect)
-      .pipe(
-        Effect.catchTags({
-          Busy: (cause) =>
-            Effect.fail(
-              new Busy({
-                resource: cause.resource,
-                scope: cause.scope,
-                limitId: cause.limitId,
-                value: cause.value,
-                retryAfterSeconds: cause.retryAfterSeconds,
-                cause
-              })
-            ),
-          CompanyDatabaseError: (cause) => Effect.fail(new Runtime.SourceUnavailable({ cause })),
-          CompanyDatabaseNotReady: (cause) => Effect.fail(new Runtime.SourceUnavailable({ cause })),
-          CompanyIdentityMismatch: (cause) => Effect.fail(new Runtime.SourceUnavailable({ cause }))
-        })
-      );
+    Effect.gen(function* () {
+      const snapshot = yield* Effect.serviceOption(ReadSnapshot.ReadSnapshot);
+      if (Option.isSome(snapshot) && snapshot.value.companyId === companyId)
+        return yield* effect.pipe(
+          Effect.provideService(CompanyDatabases.CompanyConnection, snapshot.value.sql),
+          Effect.provideService(SqlClient.SqlClient, snapshot.value.sql)
+        );
+      return yield* databases.withCompany(companyId)(effect);
+    }).pipe(
+      Effect.catchTags({
+        Busy: (cause) =>
+          Effect.fail(
+            new Busy({
+              resource: cause.resource,
+              scope: cause.scope,
+              limitId: cause.limitId,
+              value: cause.value,
+              retryAfterSeconds: cause.retryAfterSeconds,
+              cause
+            })
+          ),
+        CompanyDatabaseError: (cause) => Effect.fail(new Runtime.SourceUnavailable({ cause })),
+        CompanyDatabaseNotReady: (cause) => Effect.fail(new Runtime.SourceUnavailable({ cause })),
+        CompanyIdentityMismatch: (cause) => Effect.fail(new Runtime.SourceUnavailable({ cause }))
+      })
+    );
   const withTable = <A>(name: string, run: TableQuery<A>) =>
     Effect.gen(function* () {
       const binding = yield* Binding.Binding;
@@ -348,6 +354,29 @@ export const make = Effect.gen(function* () {
       )
     );
   });
+  return { withTable, withSharedTable };
+});
+
+export const make = Effect.gen(function* () {
+  const { withTable, withSharedTable } = yield* makeAccess;
+  const settings = yield* config;
+  const wakes = yield* Wakes.Wakes;
+  const withWriteTable = <A>(name: string, run: TableQuery<A>) =>
+    Effect.gen(function* () {
+      const binding = yield* Binding.Binding;
+      const result = yield* withTable(name, (sql, table, qualified, patchId, tableName) =>
+        sql.withTransaction(
+          Effect.gen(function* () {
+            const result = yield* run(sql, table, qualified, patchId, tableName);
+            yield* sql`UPDATE patchy.tables SET resource_revision = resource_revision + 1
+              WHERE patch_id = ${patchId} AND name = ${tableName}`;
+            return result;
+          })
+        )
+      );
+      yield* wakes.publish([`table:${binding.patchId}:${name}`]);
+      return result;
+    });
   const insert = Effect.fn("TableOperations.insertRow")(function* (
     sql: SqlClient.SqlClient,
     table: Table,
@@ -434,7 +463,7 @@ export const make = Effect.gen(function* () {
       rowCount: () => 1
     },
     (args) =>
-      withTable(args.table, (sql, table, qualified) =>
+      withWriteTable(args.table, (sql, table, qualified) =>
         Effect.gen(function* () {
           yield* byteLimit(args.row, settings.rowBytes, "runtime.row.bytes");
           yield* validateRow(args.table, table, args.row, true);
@@ -451,7 +480,7 @@ export const make = Effect.gen(function* () {
       rowCount: (value) => (Array.isArray(value) ? value.length : null)
     },
     (args) =>
-      withTable(args.table, (sql, table, qualified) =>
+      withWriteTable(args.table, (sql, table, qualified) =>
         Effect.gen(function* () {
           if (args.rows.length > settings.maxItems)
             return yield* new ItemLimit({ maxItems: settings.maxItems });
@@ -489,7 +518,7 @@ export const make = Effect.gen(function* () {
       rowCount: () => 1
     },
     (args) =>
-      withTable(args.table, (sql, table, qualified) =>
+      withWriteTable(args.table, (sql, table, qualified) =>
         Effect.gen(function* () {
           yield* byteLimit(args.patch, settings.rowBytes, "runtime.row.bytes");
           yield* validateRow(args.table, table, args.patch, false);
@@ -528,7 +557,7 @@ export const make = Effect.gen(function* () {
       resource
     },
     (args) =>
-      withTable(args.table, (sql, _table, qualified) =>
+      withWriteTable(args.table, (sql, _table, qualified) =>
         Effect.as(sql.unsafe(`DELETE FROM ${qualified} WHERE "id" = $1`, [args.id]), null)
       )
   );

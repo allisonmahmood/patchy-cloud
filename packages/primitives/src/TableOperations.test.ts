@@ -13,11 +13,13 @@ import { PgliteCompanyDatabases } from "@patchy/company-database/dev";
 import * as Testing from "@patchy/company-database/testing";
 import * as Tables from "./Tables.js";
 import * as TableOperations from "./TableOperations.js";
+import * as TestWakes from "./test/wakes.js";
 import { Binding, LoadedVersions } from "@patchy/runtime";
 import {
   boundsContract,
   expandedResultsContract,
   indexKeyContract,
+  revisionsContract,
   operationsContract,
   sharedOperationsContract,
   setup,
@@ -29,8 +31,14 @@ const decodePage = Schema.decodeUnknownEffect(TablePage);
 const versions = Layer.succeed(LoadedVersions.LoadedVersions, {
   find: () => Effect.succeed(Option.none())
 });
-const postgres = Tables.layer.pipe(Layer.provideMerge([Testing.layer(), versions]));
+const postgres = Tables.layer.pipe(
+  Layer.provideMerge([Testing.layer(), versions]),
+  Layer.provideMerge(TestWakes.layer)
+);
 it.layer(postgres)("TableOperations / Postgres", (it) => {
+  it.effect("commits revisions and wakes atomically and reads subscription snapshots", () =>
+    revisionsContract("cmp_dev")
+  );
   it.effect(
     "obeys the seven operation contracts and stable version-bound cursors",
     () => operationsContract("cmp_dev"),
@@ -196,7 +204,7 @@ it.layer(postgres)("TableOperations / Postgres", (it) => {
   );
 });
 
-it.layer(NodeFileSystem.layer)("TableOperations / PGlite", (it) => {
+it.layer(Layer.merge(NodeFileSystem.layer, TestWakes.layer))("TableOperations / PGlite", (it) => {
   it.effect(
     "runs the same operations, cursors and bounds over the dev database",
     () =>
@@ -214,6 +222,7 @@ it.layer(NodeFileSystem.layer)("TableOperations / PGlite", (it) => {
         );
         yield* Effect.gen(function* () {
           yield* operationsContract("local-company");
+          yield* revisionsContract("local-company");
           yield* sharedOperationsContract("local-company");
           yield* boundsContract("local-company");
           yield* expandedResultsContract("local-company");

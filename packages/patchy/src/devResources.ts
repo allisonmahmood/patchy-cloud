@@ -1,7 +1,12 @@
 import * as PgliteClient from "@effect/sql-pglite/PgliteClient";
 import { WIRE_VERSION } from "@patchy/api";
 import type { PatchInventory } from "@patchy/api";
-import { CompanyDatabases, Inventory, PgliteCompanyDatabases } from "@patchy/company-database/dev";
+import {
+  CompanyDatabases,
+  Inventory,
+  PgliteCompanyDatabases,
+  ResourceChanges
+} from "@patchy/company-database/dev";
 import { FilesystemContentStore } from "@patchy/content-store";
 import { sha256 } from "@patchy/core";
 import {
@@ -11,8 +16,8 @@ import {
   PostgresExecution,
   PostgresOperations
 } from "@patchy/integrations/dev";
-import { Files, TableOperations, Tables } from "@patchy/primitives";
-import { LoadedVersions, me } from "@patchy/runtime/core";
+import { Files, TableOperations, Tables, SubscriptionReads } from "@patchy/primitives";
+import { LoadedVersions, Wakes, me } from "@patchy/runtime/core";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -49,6 +54,10 @@ export class SharedFixtureInvalid extends Schema.TaggedError<SharedFixtureInvali
   }
 }
 
+const resourceChanges = Layer.effect(
+  ResourceChanges.ResourceChanges,
+  Effect.map(Wakes.Wakes, (wakes) => ResourceChanges.ResourceChanges.of({ publish: wakes.publish }))
+).pipe(Layer.provideMerge(Wakes.layer));
 const versionId = "ver_000000000000000000000000";
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const epoch = DateTime.toDateUtc(DateTime.makeUnsafe(0));
@@ -80,6 +89,7 @@ const baselineSnapshot = (
           patchId,
           name,
           description: definition.description,
+          resourceRevision: "0",
           shared: definition.shared === true,
           createdAt: epoch
         })
@@ -117,7 +127,12 @@ const baselineSnapshot = (
     ),
     stores: Object.entries(baseline.files).map(
       ([name, definition]) =>
-        new Inventory.Store({ patchId, name, description: definition.description })
+        new Inventory.Store({
+          patchId,
+          name,
+          description: definition.description,
+          resourceRevision: "0"
+        })
     )
   });
 
@@ -212,7 +227,9 @@ export const prepare = Effect.fn("DevResources.prepare")(function* (
   const companyDir = yield* checkedPath(local, "company");
   const contentDir = yield* checkedPath(local, "content");
   const stampPath = yield* checkedPath(local, "schema.json");
-  const tables = yield* Tables.make.pipe(Effect.provide(Inventory.layer));
+  const tables = yield* Tables.make.pipe(
+    Effect.provide(Inventory.layer.pipe(Layer.provide(resourceChanges)))
+  );
   yield* tables.diff(
     prepared.manifest,
     prepared.baseline === undefined ? null : baselineSnapshot(prepared.patchId, prepared.baseline)
@@ -395,7 +412,12 @@ export const prepare = Effect.fn("DevResources.prepare")(function* (
       )
     )
   );
-  const context = yield* Layer.build(Tables.layer.pipe(Layer.provideMerge(resources)));
+  const context = yield* Layer.build(
+    Layer.mergeAll(Tables.layer, SubscriptionReads.layerDev).pipe(
+      Layer.provideMerge(resources),
+      Layer.provideMerge(resourceChanges)
+    )
+  );
   const preparedResources = yield* make(prepared, {
     stampPath,
     stamp,

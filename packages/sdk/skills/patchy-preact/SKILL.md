@@ -48,18 +48,19 @@ interruptible. `useDeferredValue` does not defer work. `useInsertionEffect`
 has layout-effect semantics. Bound expensive work and page data rather than
 expecting scheduler priority to keep the UI responsive.
 
-For the current tier 1 client, perform bounded table or integration reads in an
-effect, with visible loading and error states. After a successful write, re-read
-the affected view. Ignore an old request's result after its inputs change or
-the component unmounts. A read failure is not an empty successful result.
+Use `useQuery` for subscribed table screens. For one-shot table reads or
+integration reads, use an effect with visible loading and error states. Ignore
+an old request's result after its inputs change or the component unmounts.
+A read failure is not an empty successful result.
 
-## useQuery and the runtime boundary
+## useQuery
 
-`useQuery(handler, args)` accepts a generated query callable, not an arbitrary
-promise, table method, mutation or action. It returns `{ status, data, error,
-loading }`. Status is `"loading"`, `"ready"` or `"error"`. Render `data` when
-present and show a separate error or loading notice; the hook retains the last
-data through a stream error.
+`useQuery(query, args)` accepts a table's `list` or `get` callable, including
+shared tables. Pass list options or a get row id. It returns
+`{ status, data, error, loading }`. Status is `"loading"`, `"ready"` or `"error"`.
+Render `data` when present and show a separate error or loading notice; the hook
+retains the last data through a stream error. See `../patchy-tables/SKILL.md`
+for whole-result rendering, table-grain wakes and permanent errors.
 
 The adapter shares a subscription for the same handler and canonical arguments.
 Object key order does not change identity; omitted fields and object fields set
@@ -67,11 +68,11 @@ to `undefined` have the same identity. A short unmount/remount retains the
 subscription. Keep query arguments JSON-compatible and call the hook at the top
 level like the other hooks.
 
-The adapter and generated server types ship in this release. The hosted stream
-and tier 2 execution do not: generated server subscriptions return
-`server_required`, and tier 1 `list`/`get` methods have no `.subscribe` yet.
-Do not promise live updates or replace that missing runtime with polling.
-`useFileUrl`, file handles and staged uploads are not available yet.
+Tier 1 table subscriptions run over the shell stream in hosted company pages
+and `patchy dev`. Generated server query types are available, but hosted handler
+subscriptions are not admitted yet. Arbitrary promises, `getMany`, integrations,
+mutations and actions are not query callables. `useFileUrl`, file handles and
+staged uploads are not available yet.
 
 ## Development and helpers
 

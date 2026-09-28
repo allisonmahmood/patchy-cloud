@@ -6,6 +6,8 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
+import { Transform } from "node:stream";
+import { StringDecoder } from "node:string_decoder";
 import { build } from "esbuild";
 import { Client } from "pg";
 import type EmbeddedPostgres from "embedded-postgres";
@@ -57,6 +59,8 @@ export interface Instance {
   pauseStreams(paused: boolean): void;
   /** Drop the next stream's first bytes but retain its upstream socket until released. */
   loseNextStreamHello(): () => void;
+  /** Drop one admitted frame without interrupting either side of the live stream. */
+  loseNextAdmitted(sequence: number): Promise<void>;
   readonly streamConnections: Set<string>;
   company(): Promise<Client>;
   close(): Promise<void>;
@@ -153,6 +157,7 @@ export async function startInstance(options: { tls?: boolean } = {}): Promise<In
     const streamClosers = new Set<() => void>();
     let streamsPaused = false;
     let abandonNextStream: ((release: () => void) => void) | undefined;
+    let dropAdmitted: { readonly sequence: number; readonly dropped: () => void } | undefined;
     const foreignRequests: string[] = [];
     foreign = createServer((request, response) => {
       foreignRequests.push(request.url ?? "/");
@@ -288,6 +293,46 @@ export async function startInstance(options: { tls?: boolean } = {}): Promise<In
                 incoming.resume();
                 return;
               }
+              const decoder = new StringDecoder("utf8");
+              let buffered = "";
+              incoming
+                .pipe(
+                  new Transform({
+                    transform(chunk: Buffer, _encoding, callback) {
+                      buffered += decoder.write(chunk);
+                      let boundary: RegExpExecArray | null;
+                      while ((boundary = /\r?\n\r?\n/.exec(buffered)) !== null) {
+                        const event = buffered.slice(0, boundary.index + boundary[0].length);
+                        buffered = buffered.slice(event.length);
+                        const data = event.split(/\r?\n/).find((line) => line.startsWith("data:"));
+                        if (dropAdmitted && data) {
+                          const frame: unknown = JSON.parse(data.slice(5));
+                          if (
+                            frame !== null &&
+                            typeof frame === "object" &&
+                            "type" in frame &&
+                            frame.type === "admitted" &&
+                            "sequence" in frame &&
+                            frame.sequence === dropAdmitted.sequence
+                          ) {
+                            const dropped = dropAdmitted.dropped;
+                            dropAdmitted = undefined;
+                            dropped();
+                            continue;
+                          }
+                        }
+                        this.push(event);
+                      }
+                      callback();
+                    },
+                    flush(callback) {
+                      this.push(buffered + decoder.end());
+                      callback();
+                    }
+                  })
+                )
+                .pipe(response);
+              return;
             }
             incoming.pipe(response);
           }
@@ -362,7 +407,11 @@ export async function startInstance(options: { tls?: boolean } = {}): Promise<In
       platform: "browser",
       format: "iife",
       write: false,
-      alias: { "patchy/client": path.join(root, "packages/patchy/dist/client.js") }
+      define: { "import.meta.env.DEV": "false" },
+      alias: {
+        "patchy/client": path.join(root, "packages/patchy/dist/client.js"),
+        "patchy/preact": path.join(root, "packages/patchy/dist/preact.js")
+      }
     });
     const html = `<!doctype html><html><head><title>Tier one acceptance</title><style>body{margin:0}td{height:20px}table{border-collapse:collapse}@media print{button{display:none}}</style></head><body><h1>Tier one acceptance</h1><p id="identity">waiting</p><p id="route"></p><button id="route-next">Next route</button><button id="download">Download file</button><img id="own-image" alt="Own file"><table><tbody id="rows"></tbody></table><script>${bundle.outputFiles[0]!.text.replaceAll("</script", "<\\/script")}</script></body></html>`;
     return {
@@ -387,6 +436,11 @@ export async function startInstance(options: { tls?: boolean } = {}): Promise<In
           release?.();
           release = undefined;
         };
+      },
+      loseNextAdmitted(sequence) {
+        const { promise, resolve } = Promise.withResolvers<void>();
+        dropAdmitted = { sequence, dropped: resolve };
+        return promise;
       },
       async restart() {
         await stopChild(child!);

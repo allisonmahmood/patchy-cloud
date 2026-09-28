@@ -230,6 +230,12 @@ const addFields = (event: Accumulator, fields: EventFields) => {
   }
 };
 
+/** Links a resource wake to its write without copying request arguments or results. */
+export const currentEventId: Effect.Effect<string | undefined> = Effect.map(
+  current,
+  (event) => event?.eventId
+);
+
 export const enrich = (fields: EventFields): Effect.Effect<void> =>
   Effect.map(current, (event) => {
     if (event) addFields(event, fields);

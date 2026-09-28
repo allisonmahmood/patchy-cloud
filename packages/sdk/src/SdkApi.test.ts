@@ -746,8 +746,6 @@ it.layer(layer)("SDK company generation", (it) => {
       assert.isFalse(
         index.capabilities.some(({ entrypoints }) => entrypoints.includes("patchy/csv"))
       );
-      const subscriptions = index.capabilities.find(({ id }) => id === "core.query-adapter")!;
-      assert.include(subscriptions.limits, "server_required");
     })
   );
 

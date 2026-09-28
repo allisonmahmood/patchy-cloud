@@ -1322,7 +1322,8 @@ it.layer(
     Layer.provideMerge(Fixtures.integrations),
     Layer.provideMerge(
       Tables.layer.pipe(Layer.provideMerge(CompanyTesting.layer({ maxBackends: 0 })))
-    )
+    ),
+    Layer.provideMerge(Fixtures.resourceChanges)
   )
 )("primitive-free publish", (it) => {
   it.effect("needs neither a placement nor an available company lease", () =>

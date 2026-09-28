@@ -30,6 +30,9 @@ healthy; this keeps instance discovery scoped here. `init` installs the release,
 so run the pinned `pnpm patchy dev --json` without reinstalling.
 Open its `url` and exercise the real generated client through the local shell:
 insert/list, file upload/`url(name)`, and declared Postgres/shared fixtures as applicable.
+For subscriptions, open two copies: save through one and observe the other's
+`useQuery` result without reload. Local dev uses the real subscription stream
+over owned tables and shared fixtures; fixture/config changes still need restart.
 Done means the observed local result, not an ordinary Vite preview or a cloud read.
 
 `patchy dev` is detached and idempotent; its `status`, `stop`, `logs` and `reset`

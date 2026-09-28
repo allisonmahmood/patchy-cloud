@@ -54,6 +54,19 @@ the abandoned connection closes; the generation fence is never bypassed. Frames
 cross the existing bound port as `{ v, kind: "event", event: "stream", data }`.
 The core transport maintains the clock estimate without handing patch code a credential.
 
+The stream and its subscription POSTs must reach the same replica. A successful
+stream sets the opaque, HTTP-only `patchy_stream_affinity` application cookie
+under `/api/runtime`; it is routing state, never authority. Multi-replica ingress
+must use application-cookie affinity, not independent round-robin requests.
+For ALB the target group attributes are `stickiness.enabled=true`,
+`stickiness.type=app_cookie`,
+`stickiness.app_cookie.cookie_name=patchy_stream_affinity` and
+`stickiness.app_cookie.duration_seconds=604800`, with cross-zone balancing enabled.
+The browser sends both the application and ALB-generated cookies. On target loss,
+a stale-generation refusal forces reconnect and re-admission on the replacement;
+no subscription state or presence row is replicated. See
+[ALB application-based stickiness](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/edit-target-group-attributes.html#application-based-stickiness).
+
 A document is connected only while its stream is open. The host derives company,
 patch and viewer counts in memory, without a presence row or heartbeat.
 The registry limits a viewer to eight connected documents per patch. A further
@@ -63,9 +76,13 @@ to 16 MiB. Overflow discards pending frames and closes with
 `closed { reason: "slow_consumer" }`; the shell reconnects. Each close emits one
 stream wide event with delivered bytes, peak subscriptions and its close reason.
 
-Publish, rollback, retire and delete enqueue a patch-local wake after commit.
-A scoped worker coalesces repeated wakes and rereads durable authority without
-holding the publishing request open. Initial snapshots and lifecycle dispatch
+Every resource write and publish, rollback, sharing or lifecycle change commits
+a revision in the same transaction. After commit, deduplicated resource keys wake
+local subscribers and travel through Postgres NOTIFY to one listener per host.
+Hints contain no rows or bytes and are not durable. Scoped workers coalesce wakes,
+reread durable revisions and authority, and reconcile every 30 seconds by default.
+They also reconcile after a listener reconnect or a document reconnect.
+Publishing does not wait for subscriber reads. Initial snapshots and lifecycle dispatch
 share a gate per patch, not per host: a delayed callback cannot overwrite a newer
 version or stop a restored document, and unrelated patches proceed independently.
 Retire and delete stop affected documents. Re-admission checks the existing patch
@@ -95,8 +112,8 @@ HTTP listener closes. Already-admitted work is not replayed.
 The selected [S-C treatment](https://github.com/allisonmahmood/patchy-cloud/issues/385#issuecomment-5862481797)
 is the served frame's named visual exception: a bottom-centre page-state pill,
 widening for actions, built from core's shell component subset. Reconnecting
-appears after two seconds and currently clears on `hello`. The revisions ticket
-replaces that boundary with reconciliation to subscription fences. A new-version
+appears after two seconds and clears only when the current desired subscriptions
+have reached their reconciliation fences, not on `hello`. A new-version
 offer has **Not now**, retained across reconnect until the next publish, and
 **Hide**, which collapses without dismissing. A tier 2 served version over a
 lower-tier document shows **Reload to keep saving**, without dismissal. A rollback
@@ -105,9 +122,20 @@ dismissal return focus to the frame. Reload warns that unsaved edits may be lost
 and opens the currently served address, even from a numbered-version document,
 preserving the client route, query and fragment.
 
-This stream carries lifecycle frames only. Subscriptions, revision fences,
-cross-host delivery and periodic document reconciliation land with the revisions
-ticket. `starting`, `ready` and `start_failed` are wire contracts for the fleet
+Tier 1 owned and shared-table `list` and `get` subscriptions return whole snapshots
+with decimal-string revision vectors. A missing `get` still depends on its table.
+The shell sends ordered subscribe/unsubscribe changes or replaces the complete
+desired set on reconnect. Generation and sequence fences discard obsolete work;
+a persistent sequence gap requests a resync. Equal vectors receive up-to-date
+without a read, and unchanged results advance their vectors without sending data.
+Refused reads retain observed source dependencies so restore and reshare can recover.
+
+Each document allows 64 subscriptions, each patch 256 and each company 1024;
+each snapshot is bounded to 8 MiB. Reruns are limited to two
+per company and one per patch. Overflow and stale-generation work never leave
+unbounded listeners or queues.
+
+`starting`, `ready` and `start_failed` remain wire contracts for the fleet
 controller, which owns their emission and waiting UI.
 
 ## Tier-scoped promise

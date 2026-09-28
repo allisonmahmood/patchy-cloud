@@ -4,8 +4,17 @@ import {
   createPortTransport,
   createPostMessageTransport
 } from "./clientTransport.js";
-import { createClient, createServerClient, PatchyError, isHandlerError } from "./client.js";
-import { defineConfig, files } from "./config.js";
+import {
+  createClient,
+  createSharedTable,
+  createServerClient,
+  PatchyError,
+  isHandlerError,
+  type QueryRegistry,
+  type QuerySnapshot,
+  type Call
+} from "./client.js";
+import { defineConfig, files, table, t, sharedTable, type Id } from "./config.js";
 import type { Port } from "./clientTransport.js";
 import type { Handler } from "./server.js";
 
@@ -538,4 +547,196 @@ it("HTTP distinguishes declared handler errors, platform refusals and business-s
   } finally {
     transport.close();
   }
+});
+
+it("shares table subscriptions with hook stores and retains data through transient and permanent stream errors", async () => {
+  const port = new FakePort();
+  const transport = createPortTransport(port);
+  const config = defineConfig({
+    name: "subscriptions",
+    tier: 1,
+    tables: { notes: table("Team notes.", { title: t.text() }) },
+    uses: { team: sharedTable("source", "notes") }
+  });
+  const shared = {
+    team: (alias: string, call: Call, queries: QueryRegistry) =>
+      createSharedTable<{ readonly id: string; readonly title: string }>(alias, call, queries)
+  };
+  const client = createClient<typeof config, typeof shared>(config, {
+    transport,
+    shared,
+    connections: {}
+  });
+  const own: QuerySnapshot<unknown>[] = [];
+  const sharedRows: QuerySnapshot<unknown>[] = [];
+  client.tables.notes.get.subscribe("new-row" as Id<"notes">, (snapshot) => own.push(snapshot));
+  const hook = client.tables.notes.get.__patchyQueryStore('"new-row"');
+  hook.subscribe(() => {});
+  client.shared.team.list.subscribe({ limit: 20 }, (snapshot) => sharedRows.push(snapshot));
+  const requests = port.sent.filter((request) => request.op === "subscriptions.subscribe");
+  expect(requests).toHaveLength(2);
+  const ownRequest = requests[0]!.args;
+  const sharedRequest = requests[1]!.args;
+  if (
+    !ownRequest ||
+    typeof ownRequest !== "object" ||
+    !("id" in ownRequest) ||
+    !sharedRequest ||
+    typeof sharedRequest !== "object" ||
+    !("id" in sharedRequest)
+  )
+    throw new Error("Subscription commands must identify their query.");
+  const ownId = ownRequest.id;
+  const sharedId = sharedRequest.id;
+  for (const request of requests) port.reply({ v: 1, kind: "result", id: request.id, value: null });
+  const stream = (data: unknown) => port.reply({ v: 1, kind: "event", event: "stream", data });
+  stream({
+    type: "snapshot",
+    id: ownId,
+    revision: "1",
+    result: null,
+    vector: { "table:own:notes": "0" }
+  });
+  expect(hook.getSnapshot()).toMatchObject({ status: "ready", data: null });
+  stream({
+    type: "snapshot",
+    id: ownId,
+    revision: "2",
+    result: { id: "new-row", title: "Appeared" },
+    vector: { "table:own:notes": "1" }
+  });
+  expect(own.at(-1)?.data).toEqual({ id: "new-row", title: "Appeared" });
+  const page = { rows: [{ id: "shared", title: "Whole page" }], cursor: null };
+  stream({
+    type: "snapshot",
+    id: sharedId,
+    revision: "1",
+    result: page,
+    vector: { "table:source:notes": "1", "patch:source": "2" }
+  });
+  stream({
+    type: "error",
+    id: sharedId,
+    permanent: false,
+    error: {
+      ok: false,
+      source: "patchy",
+      code: "access_denied",
+      error: "Source unshared",
+      details: { alias: "team" }
+    }
+  });
+  expect(sharedRows.at(-1)).toMatchObject({
+    status: "error",
+    data: page,
+    error: { code: "access_denied", details: { alias: "team" } }
+  });
+  stream({
+    type: "up-to-date",
+    id: sharedId,
+    revision: "1",
+    vector: { "table:source:notes": "1", "patch:source": "3" }
+  });
+  expect(sharedRows.at(-1)).toEqual({
+    status: "ready",
+    data: page,
+    error: undefined,
+    loading: false
+  });
+  stream({
+    type: "error",
+    id: sharedId,
+    permanent: true,
+    error: {
+      ok: false,
+      source: "patchy",
+      code: "limit_exceeded",
+      error: "Snapshot too large",
+      scope: "viewer",
+      limitId: "subscriptions.snapshot.bytes",
+      value: 8388608
+    }
+  });
+  const ended = sharedRows.at(-1);
+  expect(ended).toMatchObject({
+    status: "error",
+    data: page,
+    error: { limitId: "subscriptions.snapshot.bytes", value: 8388608 }
+  });
+  stream({
+    type: "snapshot",
+    id: sharedId,
+    revision: "2",
+    result: { rows: [], cursor: null },
+    vector: {}
+  });
+  stream({ type: "hello", generation: "next", serverTime: 100 });
+  expect(sharedRows.at(-1)).toBe(ended);
+  expect(port.sent.filter((request) => request.op === "subscriptions.subscribe")).toHaveLength(2);
+  client.shared.team.list.subscribe({ limit: 20 }, () => {});
+  expect(port.sent.filter((request) => request.op === "subscriptions.subscribe")).toHaveLength(3);
+  const resumed = port.sent.at(-1)!;
+  port.reply({ v: 1, kind: "result", id: resumed.id, value: null });
+  client.close();
+  await Promise.resolve();
+});
+
+it("does not resurrect a refused subscription on reconnect and allows an explicit retry", async () => {
+  const port = new FakePort();
+  const transport = createPortTransport(port);
+  const config = defineConfig({
+    name: "notes",
+    tier: 1,
+    tables: { notes: table("Notes.", { title: t.text() }) }
+  });
+  const client = createClient<typeof config>(config, { transport, shared: {}, connections: {} });
+  const seen: QuerySnapshot<unknown>[] = [];
+  client.tables.notes.list.subscribe({}, (snapshot) => seen.push(snapshot));
+  const request = port.sent[0]!;
+  port.reply({
+    v: 1,
+    kind: "error",
+    id: request.id,
+    error: {
+      source: "patchy",
+      code: "limit_exceeded",
+      message: "Document full",
+      scope: "viewer",
+      limitId: "subscriptions.document",
+      value: 64
+    }
+  });
+  await Promise.resolve();
+  expect(seen.at(-1)).toMatchObject({ status: "error", error: { code: "limit_exceeded" } });
+  port.reply({
+    v: 1,
+    kind: "event",
+    event: "stream",
+    data: { type: "hello", generation: "next", serverTime: 100 }
+  });
+  expect(port.sent).toHaveLength(1);
+  client.tables.notes.list.subscribe({}, () => {});
+  expect(port.sent).toHaveLength(2);
+  port.reply({ v: 1, kind: "result", id: port.sent[1]!.id, value: null });
+  client.close();
+  await Promise.resolve();
+});
+
+it("refuses server subscriptions as not admitted instead of dispatching them as primitive queries", () => {
+  const port = new FakePort();
+  const transport = createPortTransport(port);
+  type Modules = { leads: { list: Handler<"query", Record<string, never>, readonly string[]> } };
+  const client = createServerClient<Modules>({ transport });
+  const seen: QuerySnapshot<readonly string[]>[] = [];
+  client.server.leads.list.subscribe({}, (snapshot) => seen.push(snapshot));
+  expect(seen.at(-1)).toMatchObject({
+    status: "error",
+    error: {
+      source: "patchy",
+      code: "server_required",
+      message: "This runtime does not admit server subscriptions."
+    }
+  });
+  expect(port.sent).toEqual([]);
+  client.close();
 });

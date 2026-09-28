@@ -1,6 +1,6 @@
 ---
 name: patchy-tables
-description: Define Patchy-owned tables, read or mutate rows, add indexes, or change a published schema.
+description: Define Patchy-owned tables, read or mutate rows, subscribe screens with list/get or useQuery, add indexes, or change a published schema.
 ---
 
 # Owned tables
@@ -78,6 +78,52 @@ Rows are bounded to 1 MiB, batches to 1,000 items and 8 MiB, list/getMany result
 `list({ index?, eq?, range?, order?, limit?, cursor? })` returns `{ rows, cursor }`. Pages default to 100, maximum 1,000. Without an index, order is `(createdAt, id)`, newest first. With an index, equality must cover its leading columns; at most one trailing column can have a range, such as `range: { column: "createdAt", gte: "2026-01-01T00:00:00.000Z" }` on the built-in index. `order` is `"asc"` or `"desc"`; id breaks ties.
 
 Pass a non-null returned cursor to the same query for the next page. Cursors are opaque and bound to index/order, not snapshots. Stop on null; a changed query starts a fresh page. Declare the index the UI needs and filter on the server instead of downloading all rows. Index definitions may use `["column"]` or `{ columns: ["column"], unique: true }`.
+
+## Subscribed screens
+
+On company pages, subscribe instead of re-reading after each write:
+
+```tsx
+import { useQuery } from "patchy/preact";
+import { patchy } from "../patchy/_generated/client.js";
+
+export function Notes() {
+  const query = useQuery(patchy.tables.notes.list, { limit: 20 });
+  return (
+    <section>
+      {query.loading && <p>Loading notes...</p>}
+      {query.error && <p role="alert">{query.error.message}</p>}
+      {query.data?.rows.map((note) => (
+        <p key={note.id}>{note.title}</p>
+      ))}
+    </section>
+  );
+}
+```
+
+The framework-free forms are `list.subscribe(options, onSnapshot)` and
+`get.subscribe(id, onSnapshot)`. They return an unsubscribe function. Both deliver
+`{ status, data, error, loading }`; `data` is the whole `{ rows, cursor }` page
+for list, or the row or null for get. Shared tables expose the same forms.
+Render the whole latest result, not an appended row or a guessed local diff.
+A successful write does not replace the subscribed result; its committed change
+wakes the subscription.
+
+`get` wakes at table grain, including when a previously missing row appears.
+Identical queries share one subscription. Keep arguments JSON-compatible and
+dispose framework-free subscriptions when their screen ends. A short remount
+keeps the current result.
+
+Transient errors keep the last value and recover through the stream. A permanent
+error ends the subscription with its last value kept; it stays ended until the
+page explicitly subscribes again. Render errors separately rather than clearing
+the previous result. A shared-source refusal remains subscribed so restoring
+sharing or the source can recover without changing the consumer.
+
+There are at most 64 subscriptions per document, 256 per patch and 1,024 per
+company. The newest is refused without evicting another. Each snapshot is at
+most 8 MiB; an oversized result ends only that subscription. Public pages and
+company Postgres reads do not support subscriptions.
 
 ## Published schemas are additive
 

@@ -77,7 +77,9 @@ import {
   RuntimeFailure,
   RuntimeSuccess,
   RuntimeEventStream,
-  ServerCallReply
+  ServerCallReply,
+  RuntimeSubscriptionRequest,
+  RuntimeSubscriptionAccepted
 } from "./runtime.js";
 
 /** The identity a valid bearer token resolves to, provided to every protected handler. */
@@ -727,6 +729,12 @@ export class RuntimeStreamGroup extends HttpApiGroup.make("runtimeStream", { top
           "and Unix milliseconds; the current `{type:'served',versionId,tier}` follows. " +
           "Replacing an open document requires its latest generation in " +
           "`X-Patchy-Generation`; a stale replacement is `invalid_request` (409). " +
+          "A successful stream sets the opaque `patchy_stream_affinity` cookie, scoped to " +
+          "`/api/runtime` with `HttpOnly` and `SameSite=Strict`; it is `Secure` when the trusted " +
+          "public base URL uses HTTPS. Multi-replica ingress must enable application-cookie " +
+          "stickiness with cookie name `patchy_stream_affinity`, routing the stream and its " +
+          "subscription POSTs to the same replica. Round-robin routing without affinity is " +
+          "unsupported. If failover loses the generation, a 409 triggers reconnect and fresh admission. " +
           "Publish and rollback send `served`; lost authority sends " +
           "`access_denied`, `principal_changed` or `session_expired`. `revoked` is reserved pending " +
           "the version-revocation decision in #425; no version-revocation state or action exists yet. " +
@@ -736,9 +744,38 @@ export class RuntimeStreamGroup extends HttpApiGroup.make("runtimeStream", { top
           "return without changing loaded version. Expiry of the authenticated token ends the " +
           "stream normally. A refreshable stale token answers `session_refresh_required` (401), " +
           "so the browser refreshes its cookie without discarding the document. Only definitive " +
-          "session loss is `session_expired`. There are no subscription endpoints yet. " +
+          "session loss is `session_expired`. Tier 1 table subscriptions share this stream. " +
           "The registry bounds `stream.documents` at 8 per viewer per patch and " +
           "`stream.buffer.bytes` at 16 MiB; overflow closes with `slow_consumer`."
+      )
+    ),
+    HttpApiEndpoint.post("subscriptions", "/runtime/subscriptions", {
+      headers: {
+        ...runtimeHeaders,
+        "sec-fetch-site": Schema.optionalKey(Schema.String)
+      },
+      payload: RuntimeSubscriptionRequest,
+      success: RuntimeSubscriptionAccepted,
+      error: runtimeErrors
+    }).annotateMerge(
+      describe(
+        "Reconcile a document's subscriptions using its cookie, principal, loaded version, " +
+          "document nonce and current stream generation. Deltas `{type:'subscribe',sequence,subscription}` " +
+          "and `{type:'unsubscribe',sequence,id}` apply in order, starting at sequence 1. " +
+          "A subscription is `{id,op,args,vector?,revision?}`; tier 1 supports `tables.list`, " +
+          "`tables.get`, `shared.list` and `shared.get`. `get` watches the whole table. " +
+          "`{type:'replace',sequence,subscriptions}` installs the full desired set and supersedes " +
+          "buffered deltas through that sequence; older replacements are refused. All requests " +
+          "also carry `patchId`, `versionId`, `documentId` and `generation`. A gap after 5 seconds " +
+          "or more than 64 buffered deltas sends `resync_required`. `admitted` names the last " +
+          "applied sequence. `snapshot` carries `id`, decimal query `revision`, `result` and " +
+          "a resource revision `vector`; `up-to-date` carries `id`, `revision` and `vector` when " +
+          "the result is unchanged or resume reaches an equal vector without running the query. " +
+          "`error` carries `id`, `permanent` and the structured runtime or handler `error`. " +
+          "Permanent failures remove the subscription, preserving its last browser value. " +
+          "Access refusals on a shared source retain dependencies so a reshare recovers. " +
+          "The newest subscription is refused at 64 per document, 256 per patch or 1024 per " +
+          "company; snapshots are at most 8 MiB. Periodic durable reconciliation repairs missed wakes."
       )
     )
   )

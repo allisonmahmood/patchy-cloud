@@ -43,6 +43,14 @@ The only methods are `get(id)`, `getMany(ids)` and `list({ index?, eq?, range?, 
 
 `list` returns `{ rows, cursor }`, using the source's declared indexes. Equality covers leading columns and at most one trailing column has a range `{ column, gt?, gte?, lt?, lte? }`. Without an index, order is creation time and id, newest first. Pass the same query and a non-null cursor for the next page; null ends pagination. Pages default to 100, at most 1,000; getMany is bounded to 1,000 ids and 8 MiB, and list/getMany results to 8 MiB. Declare and use the appropriate index rather than fetching everything to filter in the browser.
 
+`list.subscribe(options, onSnapshot)`, `get.subscribe(id, onSnapshot)` and
+`useQuery(patchy.shared.contacts.list, options)` keep company screens live.
+Follow `../patchy-tables/SKILL.md` for whole-result rendering and error handling.
+Source unshare, retirement or deletion reports a recoverable subscription error,
+keeping the last result and dependencies; restoring the source or its sharing
+can recover the subscription unchanged. Losing document authority still stops
+the page.
+
 ## Access and revisions
 
 A declaration grants no authority. Each call requires an admitted viewer who can still open the source and a table that is still shared. Public patches have no data access even for signed-in members. `patch_not_openable` during generation means the source is unavailable: restore access with the source owner or correct the declaration; company administration is at `/company`. Runtime access loss is `access_denied`; preserve the shell's notice rather than rendering an empty successful table.

@@ -1,5 +1,6 @@
 import { createClient } from "patchy/client";
-import type { RuntimeStreamFrame } from "@patchy/api";
+import { createElement, render, useQuery } from "patchy/preact";
+import type { RuntimeStreamFrame } from "../../packages/api/src/index.js";
 
 export interface FixtureWindow extends Window {
   harness: {
@@ -16,6 +17,7 @@ export interface FixtureWindow extends Window {
     raw(value: unknown, transfer?: Transferable[]): void;
     image(): Promise<void>;
     printRows(): void;
+    subscribeRows(): void;
   };
 }
 
@@ -58,6 +60,22 @@ const harness: FixtureWindow["harness"] = {
       row.append(cell);
       body.append(row);
     }
+  },
+  subscribeRows() {
+    const root = document.createElement("section");
+    root.id = "subscribed-screen";
+    document.body.append(root);
+    function Rows() {
+      const snapshot = useQuery(client.tables.rows!.list, {});
+      return createElement(
+        "pre",
+        { id: "subscription-rows" },
+        snapshot.data === undefined
+          ? (snapshot.error?.message ?? "loading")
+          : JSON.stringify(snapshot.data.rows.map((row) => row.label))
+      );
+    }
+    render(createElement(Rows, {}), root);
   }
 };
 host.harness = harness;

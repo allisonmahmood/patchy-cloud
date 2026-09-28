@@ -17,11 +17,12 @@ import {
   TableRow,
   WIRE_VERSION
 } from "@patchy/api";
-import { CompanyDatabases } from "@patchy/company-database";
+import { CompanyDatabases, Inventory } from "@patchy/company-database";
 import { ContractLimits } from "@patchy/limits";
-import { Binding, LoadedVersions } from "@patchy/runtime";
+import { Binding, LoadedVersions, Wakes } from "@patchy/runtime";
 import * as Tables from "../Tables.js";
 import * as TableOperations from "../TableOperations.js";
+import * as SubscriptionReads from "../SubscriptionReads.js";
 
 const decodeRow = Schema.decodeUnknownEffect(TableRow);
 const decodeRows = Schema.decodeUnknownEffect(Schema.Array(TableRow));
@@ -348,6 +349,89 @@ export const operationsContract = Effect.fn("test.operationsContract")(function*
   assert.deepStrictEqual(yield* call("tables.insertMany", { table: "notes", rows: [] }), []);
 });
 
+export const revisionsContract = Effect.fn("test.revisionsContract")(function* (companyId: string) {
+  const { binding, databases } = yield* setup(companyId, "revisions001");
+  const inventory = yield* Inventory.Inventory;
+  const key = `table:${binding.patchId}:notes`;
+  const revision = databases.withCompany(companyId)(
+    inventory
+      .read(binding.patchId)
+      .pipe(
+        Effect.map(
+          (snapshot) => snapshot!.tables.find((table) => table.name === "notes")!.resourceRevision
+        )
+      )
+  );
+  const initial = BigInt(yield* revision);
+  const committed: Array<{ keys: readonly string[]; revision: string }> = [];
+  const handlers = yield* TableOperations.make.pipe(
+    Effect.provideService(
+      Wakes.Wakes,
+      Wakes.Wakes.of({
+        publish: (keys) =>
+          Effect.gen(function* () {
+            committed.push({ keys, revision: yield* revision });
+          }),
+        subscribe: () => Effect.void
+      })
+    )
+  );
+  const call = (op: keyof typeof handlers, args: unknown) =>
+    handlers[op].run(args).pipe(Effect.provideService(Binding.Binding, binding));
+  const reader = yield* SubscriptionReads.makeDev.pipe(
+    Effect.provideService(LoadedVersions.LoadedVersions, {
+      find: () => Effect.succeed(Option.some(binding))
+    })
+  );
+  const query = { op: "tables.list", args: { table: "notes" }, binding };
+  const empty = yield* reader.read(query);
+  assert.deepStrictEqual(empty.result, { rows: [], cursor: null });
+  assert.strictEqual(empty.vector[key], String(initial));
+  const one = yield* call("tables.insert", {
+    table: "notes",
+    row: { title: "one", slug: "one" }
+  }).pipe(Effect.flatMap(decodeRow));
+  yield* call("tables.update", { table: "notes", id: one.id, patch: { title: "updated" } });
+  yield* call("tables.insertMany", {
+    table: "notes",
+    rows: [
+      { title: "two", slug: "two" },
+      { title: "three", slug: "three" }
+    ]
+  });
+  yield* call("tables.delete", { table: "notes", id: one.id });
+  const committedRevision = String(initial + 4n);
+  assert.strictEqual(yield* revision, committedRevision);
+  assert.deepStrictEqual(
+    committed,
+    [1n, 2n, 3n, 4n].map((offset) => ({
+      keys: [key],
+      revision: String(initial + offset)
+    }))
+  );
+  const failed = yield* call("tables.insertMany", {
+    table: "notes",
+    rows: [
+      { title: "rollback", slug: "new" },
+      { title: "duplicate", slug: "two" }
+    ]
+  }).pipe(Effect.flip);
+  assert.strictEqual(failed.code, "unique_violation");
+  assert.strictEqual(yield* revision, committedRevision);
+  assert.strictEqual(committed.length, 4);
+  const current = yield* reader.read(query);
+  assert.strictEqual(current.vector[key], committedRevision);
+  const page = yield* decodePage(current.result);
+  assert.deepStrictEqual(page.rows.map((row) => row.slug).sort(), ["three", "two"]);
+  const missing = yield* reader.read({
+    op: "tables.get",
+    args: { table: "notes", id: one.id },
+    binding
+  });
+  assert.isNull(missing.result);
+  assert.deepStrictEqual(missing.vector, current.vector);
+});
+
 export const sharedOperationsContract = Effect.fn("test.sharedOperationsContract")(function* (
   companyId: string
 ) {
@@ -410,6 +494,30 @@ export const sharedOperationsContract = Effect.fn("test.sharedOperationsContract
   const handlers = yield* TableOperations.make.pipe(
     Effect.provideService(LoadedVersions.LoadedVersions, versions)
   );
+  const reader = yield* SubscriptionReads.makeDev.pipe(
+    Effect.provideService(LoadedVersions.LoadedVersions, versions)
+  );
+  const subscribed = yield* reader.read({
+    op: "shared.get",
+    args: { alias: "contacts", id: rows[0]!.id },
+    binding
+  });
+  assert.deepStrictEqual(subscribed.result, rows[0]);
+  assert.deepStrictEqual(Object.keys(subscribed.vector).sort(), [
+    `patch:${source.binding.patchId}`,
+    `table:${source.binding.patchId}:notes`
+  ]);
+  const attempted: string[] = [];
+  const refused = yield* reader
+    .read({
+      op: "shared.get",
+      args: { alias: "contacts", id: rows[0]!.id },
+      binding: { ...binding, identity: null },
+      onDependency: (key) => attempted.push(key)
+    })
+    .pipe(Effect.flip);
+  assert.strictEqual(refused.code, "access_denied");
+  assert.deepStrictEqual(attempted.sort(), Object.keys(subscribed.vector).sort());
   const call = (op: keyof typeof handlers, args: unknown) =>
     handlers[op].run(args).pipe(Effect.provideService(Binding.Binding, binding));
   assert.deepStrictEqual(

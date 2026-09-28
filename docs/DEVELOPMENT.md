@@ -644,7 +644,7 @@ The stream acceptance suite runs against a disposable Postgres, offline-signed
 browser sessions, the built server and a local TLS HTTP/2 ingress:
 
 ```sh
-pnpm exec playwright test test/browser-tier1/stream.spec.ts --config=playwright.tier1.config.ts --project=chromium
+pnpm exec playwright test test/browser-tier1/stream.spec.ts test/browser-tier1/subscriptions.spec.ts --config=playwright.tier1.config.ts --project=chromium
 ```
 
 It requires `openssl` for a temporary self-signed certificate, not production
@@ -652,9 +652,18 @@ credentials or a live ingress. Chromium's network protocol report must show
 `h2` for all seven simultaneous document streams; a publish must reach all
 seven before they close. The suite also checks editing through publish,
 rollback, dismissal, missed retirement, token refresh versus a signed-out session,
-an ingress cut and host restart. Browser TLS trust is relaxed
-only for this disposable certificate. The local patch dev runtime keeps its
-existing build-reload loop; the hosted document stream is not mounted there yet.
+an ingress cut and host restart. The subscription scenario uses two viewers:
+one writes while the other's `useQuery` screen updates without reload, then
+checks retained data and the reconnecting pill through an interrupted stream.
+Browser TLS trust is relaxed only for this disposable certificate.
+The local patch runtime mounts the same subscription stream over its real owned
+tables and declared fixtures, with a fixed local viewer. Config and fixture edits
+still require restart; code builds retain the existing whole-shell reload loop.
+For a multi-replica ingress, route `/api/runtime/stream` and
+`/api/runtime/subscriptions` to the same target using `patchy_stream_affinity`
+application-cookie stickiness; see ADR-0010 for the ALB attributes. Round-robin
+subscription POSTs cannot operate a process-local stream registry. No load
+balancer or production configuration is needed for the single-host local loop.
 The `async-exit-hook` dependency patch preserves failure exit codes when embedded
 Postgres shuts down; without it, a failed Vitest suite can exit successfully.
 

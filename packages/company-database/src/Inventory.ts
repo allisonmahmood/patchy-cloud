@@ -7,6 +7,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import * as CompanyDatabases from "./CompanyDatabases.js";
+import * as ResourceChanges from "./ResourceChanges.js";
 
 export class Patch extends Schema.Class<Patch>("Inventory.Patch")({
   patchId: Schema.String,
@@ -19,6 +20,7 @@ export class Table extends Schema.Class<Table>("Inventory.Table")({
   name: Schema.String,
   description: Schema.String,
   shared: Schema.Boolean,
+  resourceRevision: Schema.String,
   createdAt: Schema.Date
 }) {}
 
@@ -44,7 +46,8 @@ export class Index extends Schema.Class<Index>("Inventory.Index")({
 export class Store extends Schema.Class<Store>("Inventory.Store")({
   patchId: Schema.String,
   name: Schema.String,
-  description: Schema.String
+  description: Schema.String,
+  resourceRevision: Schema.String
 }) {}
 
 export class Snapshot extends Schema.Class<Snapshot>("Inventory.Snapshot")({
@@ -81,11 +84,13 @@ export class Inventory extends Context.Service<
       patchId: string
     ) => Effect.Effect<Snapshot | null, SqlError, CompanyDatabases.CompanyConnection>;
     readonly putTable: (
-      row: Omit<Table, "createdAt">
+      row: Omit<Table, "createdAt" | "resourceRevision">
     ) => Effect.Effect<void, SqlError, CompanyDatabases.PatchLock>;
     readonly putColumn: (row: Column) => Effect.Effect<void, SqlError, CompanyDatabases.PatchLock>;
     readonly putIndex: (row: Index) => Effect.Effect<void, SqlError, CompanyDatabases.PatchLock>;
-    readonly putStore: (row: Store) => Effect.Effect<void, SqlError, CompanyDatabases.PatchLock>;
+    readonly putStore: (
+      row: Omit<Store, "resourceRevision">
+    ) => Effect.Effect<void, SqlError, CompanyDatabases.PatchLock>;
     readonly bumpRevision: (
       patchId: string
     ) => Effect.Effect<number, SqlError, CompanyDatabases.PatchLock>;
@@ -107,7 +112,8 @@ const findTables = SqlSchema.findAll({
   Result: Table,
   execute: Effect.fn("Inventory.findTables")(function* (patchId) {
     const sql = yield* SqlClient.SqlClient;
-    return yield* sql`SELECT "patch_id" AS "patchId", "name", "description", "shared", "created_at" AS "createdAt"
+    return yield* sql`SELECT "patch_id" AS "patchId", "name", "description", "shared",
+      "resource_revision"::text AS "resourceRevision", "created_at" AS "createdAt"
       FROM "patchy"."tables" WHERE "patch_id" = ${patchId} ORDER BY "name"`;
   })
 });
@@ -138,7 +144,8 @@ const findStores = SqlSchema.findAll({
   Result: Store,
   execute: Effect.fn("Inventory.findStores")(function* (patchId) {
     const sql = yield* SqlClient.SqlClient;
-    return yield* sql`SELECT "patch_id" AS "patchId", "name", "description" FROM "patchy"."stores"
+    return yield* sql`SELECT "patch_id" AS "patchId", "name", "description",
+      "resource_revision"::text AS "resourceRevision" FROM "patchy"."stores"
       WHERE "patch_id" = ${patchId} ORDER BY "name"`;
   })
 });
@@ -198,12 +205,17 @@ const read = Effect.fn("Inventory.read")(
   (effect, patchId) => CompanyDatabases.withPatchLock(patchId)(effect)
 );
 
-const putTable = Effect.fn("Inventory.putTable")(function* (row: Omit<Table, "createdAt">) {
+const putTable = Effect.fn("Inventory.putTable")(function* (
+  row: Omit<Table, "createdAt" | "resourceRevision">
+) {
   const sql = yield* lockedClient(row.patchId);
   yield* sql`INSERT INTO "patchy"."tables" ("patch_id", "name", "description", "shared")
       VALUES (${row.patchId}, ${row.name}, ${row.description}, ${row.shared})
       ON CONFLICT ("patch_id", "name") DO UPDATE SET
-        "description" = EXCLUDED."description", "shared" = EXCLUDED."shared"`;
+        "description" = EXCLUDED."description", "shared" = EXCLUDED."shared",
+        "resource_revision" = "tables"."resource_revision" + 1`;
+  const lock = yield* CompanyDatabases.PatchLock;
+  lock.resources.add(`table:${row.patchId}:${row.name}`);
 });
 
 const putColumn = Effect.fn("Inventory.putColumn")(function* (row: Column) {
@@ -213,6 +225,10 @@ const putColumn = Effect.fn("Inventory.putColumn")(function* (row: Column) {
       VALUES (${row.patchId}, ${row.table}, ${row.name}, ${row.kind}, ${row.refTable}, ${row.optional},
         ${row.defaultKind}, ${encodeDefault(row.defaultValue)}::jsonb)
       ON CONFLICT ("patch_id", "table", "name") DO NOTHING`;
+  yield* sql`UPDATE patchy.tables SET resource_revision = resource_revision + 1
+    WHERE patch_id = ${row.patchId} AND name = ${row.table}`;
+  const lock = yield* CompanyDatabases.PatchLock;
+  lock.resources.add(`table:${row.patchId}:${row.table}`);
 });
 
 const putIndex = Effect.fn("Inventory.putIndex")(function* (row: Index) {
@@ -220,13 +236,20 @@ const putIndex = Effect.fn("Inventory.putIndex")(function* (row: Index) {
   yield* sql`INSERT INTO "patchy"."indexes" ("patch_id", "table", "name", "columns", "unique")
       VALUES (${row.patchId}, ${row.table}, ${row.name}, ${encodeColumns(row.columns)}::jsonb, ${row.unique})
       ON CONFLICT ("patch_id", "table", "name") DO NOTHING`;
+  yield* sql`UPDATE patchy.tables SET resource_revision = resource_revision + 1
+    WHERE patch_id = ${row.patchId} AND name = ${row.table}`;
+  const lock = yield* CompanyDatabases.PatchLock;
+  lock.resources.add(`table:${row.patchId}:${row.table}`);
 });
 
-const putStore = Effect.fn("Inventory.putStore")(function* (row: Store) {
+const putStore = Effect.fn("Inventory.putStore")(function* (row: Omit<Store, "resourceRevision">) {
   const sql = yield* lockedClient(row.patchId);
   yield* sql`INSERT INTO "patchy"."stores" ("patch_id", "name", "description")
       VALUES (${row.patchId}, ${row.name}, ${row.description})
-      ON CONFLICT ("patch_id", "name") DO UPDATE SET "description" = EXCLUDED."description"`;
+      ON CONFLICT ("patch_id", "name") DO UPDATE SET "description" = EXCLUDED."description",
+        "resource_revision" = "stores"."resource_revision" + 1`;
+  const lock = yield* CompanyDatabases.PatchLock;
+  lock.resources.add(`store:${row.patchId}:${row.name}`);
 });
 
 const bumpRevision = Effect.fn("Inventory.bumpRevision")(function* (patchId: string) {
@@ -238,10 +261,22 @@ const bumpRevision = Effect.fn("Inventory.bumpRevision")(function* (patchId: str
   return row.schemaRevision;
 });
 
-export const layer = Layer.succeed(
-  Inventory,
-  Inventory.of({ ensurePatch, exists, read, putTable, putColumn, putIndex, putStore, bumpRevision })
-);
+export const make = Effect.gen(function* () {
+  const changes = yield* ResourceChanges.ResourceChanges;
+  return Inventory.of({
+    ensurePatch,
+    exists,
+    putTable,
+    putColumn,
+    putIndex,
+    putStore,
+    bumpRevision,
+    read: (patchId) =>
+      read(patchId).pipe(Effect.provideService(ResourceChanges.ResourceChanges, changes))
+  });
+});
+
+export const layer = Layer.effect(Inventory, make);
 
 /**
  * Idempotent upgrades for retained PostgreSQL and PGlite inventory. Add changes
@@ -254,6 +289,14 @@ export const upgrade = Effect.gen(function* () {
     WHERE table_schema = 'patchy' AND table_name = 'columns' AND column_name = 'ref_table'`;
   if (present.length === 0) {
     yield* sql.unsafe('ALTER TABLE "patchy"."columns" ADD COLUMN IF NOT EXISTS "ref_table" text');
+  }
+  for (const table of ["tables", "stores"]) {
+    const revision = yield* sql`SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'patchy' AND table_name = ${table} AND column_name = 'resource_revision'`;
+    if (revision.length === 0)
+      yield* sql.unsafe(
+        `ALTER TABLE "patchy".${quoteIdentifier(table)} ADD COLUMN IF NOT EXISTS "resource_revision" bigint NOT NULL DEFAULT 0`
+      );
   }
 });
 
@@ -271,6 +314,7 @@ export const initialize = Effect.gen(function* () {
     "name" text NOT NULL,
     "description" text NOT NULL,
     "shared" boolean NOT NULL,
+    "resource_revision" bigint NOT NULL DEFAULT 0,
     "created_at" timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY ("patch_id", "name")
   )`);
@@ -299,6 +343,7 @@ export const initialize = Effect.gen(function* () {
     "patch_id" text NOT NULL REFERENCES "patchy"."patches" ("patch_id") ON DELETE CASCADE,
     "name" text NOT NULL,
     "description" text NOT NULL,
+    "resource_revision" bigint NOT NULL DEFAULT 0,
     PRIMARY KEY ("patch_id", "name")
   )`);
   yield* sql.unsafe(`CREATE TABLE IF NOT EXISTS "patchy"."files" (

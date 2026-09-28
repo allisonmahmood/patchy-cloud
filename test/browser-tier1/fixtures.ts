@@ -4,8 +4,15 @@ import { startInstance } from "./instance.js";
 import type { Instance, Published } from "./instance.js";
 import type { FixtureWindow } from "./fixture-client.js";
 
-export const test = base.extend<{ instance: Instance }, { tls: boolean }>({
+export const test = base.extend<{ instance: Instance; preparedContext: void }, { tls: boolean }>({
   tls: [false, { option: true, scope: "worker" }],
+  preparedContext: [
+    async ({ context, instance }, use) => {
+      await prepare(context, instance);
+      await use();
+    },
+    { auto: true }
+  ],
   instance: [
     async ({ tls }, use) => {
       const instance = await startInstance({ tls });
@@ -47,7 +54,6 @@ export async function installSessionRefreshBoundary(
     };
   });
 }
-test.beforeEach(({ context, instance }) => prepare(context, instance));
 export async function open(page: Page, patch: Published, suffix = ""): Promise<Frame> {
   expect((await page.goto(patch.address + suffix))?.status()).toBe(200);
   await expect(page.frameLocator("#patch").locator("#identity")).not.toHaveText("waiting");

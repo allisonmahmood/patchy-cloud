@@ -21,6 +21,7 @@ import * as Sql from "@patchy/sql";
 import { registry } from "@patchy/limits/registry";
 import * as CompanyDatabases from "./CompanyDatabases.js";
 import * as Inventory from "./Inventory.js";
+import * as ResourceChanges from "./ResourceChanges.js";
 
 const COMPANY_CONNECTIONS = registry["company.connections"].default;
 
@@ -150,6 +151,7 @@ export const placementLayer = Layer.fresh(OperatingLimits.layer).pipe(
 );
 
 export const make = Effect.gen(function* () {
+  const changes = yield* ResourceChanges.ResourceChanges;
   const platform = yield* PlacementClient;
   const limits = yield* OperatingLimits.OperatingLimits;
   const admin = yield* AdminClient;
@@ -603,7 +605,10 @@ export const make = Effect.gen(function* () {
     claim,
     ensureReady,
     withCompany,
-    withPatchLock: CompanyDatabases.withPatchLock,
+    withPatchLock: (patchId) => (effect) =>
+      CompanyDatabases.withPatchLock(patchId)(effect).pipe(
+        Effect.provideService(ResourceChanges.ResourceChanges, changes)
+      ),
     withFileLock: CompanyDatabases.withFileLock,
     listReady: readyPlacements(undefined).pipe(
       Effect.catchTags(dieOnSchemaError),

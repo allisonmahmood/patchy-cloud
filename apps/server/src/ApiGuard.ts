@@ -83,7 +83,8 @@ export function classify(method: string, requestTarget: string): Target {
   if (method === "POST" && pathname === "/api/publish") return { kind: "publish" };
   // Browser runtime admission owns its session, audience and per-viewer limit.
   if (
-    (method === "POST" && pathname === "/api/runtime/call") ||
+    (method === "POST" &&
+      (pathname === "/api/runtime/call" || pathname === "/api/runtime/subscriptions")) ||
     (method === "GET" && pathname === "/api/runtime/stream") ||
     ((method === "PUT" || method === "GET") &&
       /^\/api\/runtime\/files\/[^/]+\/[^/]+\/[^/]+\/.+$/.test(pathname))

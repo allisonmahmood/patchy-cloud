@@ -3,9 +3,16 @@ import { createServer } from "node:http";
 import { randomBytes } from "node:crypto";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as WideEvents from "@patchy/analytics/wide-events";
-import { RuntimeGroup } from "@patchy/api";
+import { RuntimeGroup, RuntimeStreamGroup } from "@patchy/api";
 import type { ReleaseToolchain } from "@patchy/api";
-import { RuntimeDev, RuntimeApi } from "@patchy/runtime/dev";
+import {
+  RuntimeDev,
+  RuntimeApi,
+  RuntimeStream,
+  RuntimeStreamApi,
+  StreamAdmission,
+  StreamLimits
+} from "@patchy/runtime/dev";
 import { Limits } from "@patchy/limits";
 import {
   brokerScript,
@@ -30,7 +37,7 @@ import type { Prepared } from "./devPreparation.js";
 import { atomicJson, birth, io, readRecord, type Daemon } from "./devState.js";
 import { watch } from "./devWatch.js";
 
-const api = HttpApi.make("patchy").add(RuntimeGroup);
+const api = HttpApi.make("patchy").add(RuntimeGroup, RuntimeStreamGroup);
 const headers = {
   "cache-control": "private, no-store",
   "x-content-type-options": "nosniff",
@@ -161,19 +168,42 @@ export const serve = Effect.fn("Dev.serve")(function* (
       }),
     { global: true }
   );
-  const runtime = RuntimeDev.layer(resources.handlers, {
-    origin,
-    identity: {
-      user: prepared.identity.user,
-      company: prepared.identity.company,
-      admin: prepared.identity.role === "admin"
-    }
-  }).pipe(Layer.provide([Limits.layer, Layer.succeedContext(resources.context)]));
+  const identity = {
+    user: prepared.identity.user,
+    company: prepared.identity.company,
+    admin: prepared.identity.role === "admin"
+  };
+  const streamIdentity = {
+    companyId: identity.company.id,
+    viewerId: identity.user.id,
+    expiresAt: Number.POSITIVE_INFINITY,
+    identity
+  };
+  const runtime = Layer.mergeAll(
+    RuntimeDev.layer(resources.handlers, { origin, identity }),
+    RuntimeStream.layer.pipe(
+      Layer.provide([
+        StreamLimits.layerLocal,
+        Layer.succeed(StreamAdmission.StreamAdmission, {
+          admit: Effect.succeed({
+            ...streamIdentity,
+            recheck: Effect.succeed(streamIdentity)
+          })
+        })
+      ])
+    )
+  ).pipe(Layer.provide([Limits.layer, Layer.succeedContext(resources.context)]));
   yield* Layer.build(
     HttpRouter.serve(
-      Layer.mergeAll(HttpApiBuilder.layer(api).pipe(Layer.provide(RuntimeApi.layer)), pages, guard),
+      Layer.mergeAll(
+        HttpApiBuilder.layer(api).pipe(
+          Layer.provide([RuntimeApi.layer, RuntimeStreamApi.layerLocal])
+        ),
+        pages,
+        guard
+      ),
       { disableLogger: true, disableListenLog: true }
-    ).pipe(Layer.provide([runtime, WideEvents.layerDev()]))
+    ).pipe(Layer.provide(runtime), Layer.provide(WideEvents.layerDev()))
   );
   const ready = {
     ...record,

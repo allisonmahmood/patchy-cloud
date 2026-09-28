@@ -17,7 +17,7 @@ import {
 import { CompanyDatabases } from "@patchy/company-database";
 import { ContentStore } from "@patchy/content-store";
 import { newInternalId } from "@patchy/core";
-import { Binding, Runtime } from "@patchy/runtime/core";
+import { Binding, Runtime, Wakes } from "@patchy/runtime/core";
 import { boundedRows } from "./bounded-rows.js";
 
 export class InvalidCursor extends Schema.TaggedError<InvalidCursor>()("FileInvalidCursor", {
@@ -106,6 +106,7 @@ export const make = Effect.gen(function* () {
   const databases = yield* CompanyDatabases.CompanyDatabases;
   const content = yield* ContentStore.ContentStore;
   const settings = yield* config;
+  const wakes = yield* Wakes.Wakes;
   const withCompany = <A, R>(
     companyId: string,
     effect: Effect.Effect<A, Runtime.RuntimeError | SqlError, R>
@@ -164,6 +165,26 @@ export const make = Effect.gen(function* () {
         })
       )
     );
+  const withWriteIndex = <A>(
+    binding: Binding.Binding["Service"],
+    store: string,
+    name: string,
+    run: (
+      sql: SqlClient.SqlClient
+    ) => Effect.Effect<A, Runtime.RuntimeError | SqlError, SqlClient.SqlClient>
+  ) =>
+    Effect.gen(function* () {
+      const result = yield* withIndex(binding, store, name, (sql) =>
+        Effect.gen(function* () {
+          const result = yield* run(sql);
+          yield* sql`UPDATE patchy.stores SET resource_revision = resource_revision + 1
+            WHERE patch_id = ${binding.patchId} AND name = ${store}`;
+          return result;
+        })
+      );
+      yield* wakes.publish([`store:${binding.patchId}:${store}`]);
+      return result;
+    });
   const put = {
     kind: "mutation",
     transport: "bytes-put",
@@ -186,7 +207,7 @@ export const make = Effect.gen(function* () {
             yield* content
               .putBytes(objectKey(binding.patchId, args.store, objectId), bytes)
               .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
-            return yield* withIndex(binding, args.store, args.name, (sql) =>
+            return yield* withWriteIndex(binding, args.store, args.name, (sql) =>
               sql`INSERT INTO patchy.files (patch_id, store, name, object_id, size, content_type, sha256)
                 VALUES (${binding.patchId}, ${args.store}, ${args.name}, ${objectId}, ${bytes.byteLength}, ${args.contentType}, ${sha256})
                 ON CONFLICT (patch_id, store, name) DO UPDATE SET
@@ -305,7 +326,7 @@ export const make = Effect.gen(function* () {
     },
     (args) =>
       withStore(args.store, (binding) =>
-        withIndex(binding, args.store, args.name, (sql) =>
+        withWriteIndex(binding, args.store, args.name, (sql) =>
           sql`DELETE FROM patchy.files WHERE patch_id = ${binding.patchId} AND store = ${args.store} AND name = ${args.name}`.pipe(
             Effect.as(null)
           )

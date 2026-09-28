@@ -1,10 +1,12 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as HttpApi from "effect/unstable/httpapi/HttpApi";
 import * as HttpApiTest from "effect/unstable/httpapi/HttpApiTest";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
+import * as Cookies from "effect/unstable/http/Cookies";
 import { RuntimeStreamGroup } from "@patchy/api";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { Session } from "@patchy/auth";
@@ -13,9 +15,14 @@ import { DEV_SEED } from "@patchy/auth/seed";
 import * as RuntimeStream from "./RuntimeStream.js";
 import * as RuntimeStreamApi from "./RuntimeStreamApi.js";
 import * as Fixtures from "./test/fixtures.js";
+import * as StreamAdmission from "./StreamAdmission.js";
+import * as StreamLimits from "./StreamLimits.js";
 
 const layer = RuntimeStreamApi.layer.pipe(
   Layer.provideMerge(RuntimeStream.layer),
+  Layer.provide(StreamAdmission.layer),
+  Layer.provide(StreamLimits.layer),
+  Layer.provideMerge(Fixtures.streamPorts),
   Layer.provide(WideEvents.layerNoop),
   Layer.provideMerge(Fixtures.layer())
 );
@@ -59,6 +66,7 @@ it.layer(layer)("stream HTTP admission", (it) => {
         });
         assert.strictEqual(response.status, status);
         assert.include(yield* response.json, { ok: false, source: "patchy", code });
+        assert.isTrue(Option.isNone(Cookies.get(response.cookies, "patchy_stream_affinity")));
       }
     })
   );
@@ -66,7 +74,7 @@ it.layer(layer)("stream HTTP admission", (it) => {
   it.effect("asks the browser to refresh a handshake instead of ending its session", () =>
     Effect.gen(function* () {
       const session = yield* Session.Session;
-      const streams = yield* RuntimeStream.make.pipe(
+      const admission = yield* StreamAdmission.make.pipe(
         Effect.provideService(Session.Session, {
           ...session,
           authenticate: () =>
@@ -75,7 +83,11 @@ it.layer(layer)("stream HTTP admission", (it) => {
               response: new Response(null, { status: 307 }),
               completed: false
             })
-        }),
+        })
+      );
+      const streams = yield* RuntimeStream.make.pipe(
+        Effect.provideService(StreamAdmission.StreamAdmission, admission),
+        Effect.provide(StreamLimits.layer),
         Effect.provide(WideEvents.layerNoop)
       );
       const error = yield* streams
@@ -127,6 +139,33 @@ it.layer(layer)("stream HTTP admission", (it) => {
       assert.strictEqual(hello.type, "hello");
       assert.isString(hello.generation);
       assert.isNumber(hello.serverTime);
+    }).pipe(Effect.scoped)
+  );
+  it.effect("keeps document streams on one replica with a scoped affinity cookie", () =>
+    Effect.gen(function* () {
+      const client = yield* api;
+      let affinity: string | undefined;
+      for (const documentId of ["first_affinity_document", "second_affinity_document"]) {
+        const response = yield* client.stream({
+          query: { ...query, documentId },
+          headers,
+          responseMode: "response-only"
+        });
+        assert.strictEqual(response.status, 200);
+        const cookie = Option.getOrThrow(Cookies.get(response.cookies, "patchy_stream_affinity"));
+        assert.match(cookie.value, /^replica_[a-z0-9]+$/);
+        assert.strictEqual(cookie.options?.path, "/api/runtime");
+        assert.isTrue(cookie.options?.httpOnly);
+        assert.strictEqual(cookie.options?.sameSite, "strict");
+        assert.strictEqual(
+          cookie.options?.secure === true,
+          new URL(PUBLIC_BASE_URL).protocol === "https:"
+        );
+        if (affinity === undefined) affinity = cookie.value;
+        else assert.strictEqual(cookie.value, affinity);
+        const pull = yield* Stream.toPull(response.stream);
+        assert.include(new TextDecoder().decode((yield* pull)[0]), '"type":"hello"');
+      }
     }).pipe(Effect.scoped)
   );
 });

@@ -24,6 +24,9 @@ import * as LoadedVersions from "./LoadedVersions.js";
 import * as Fixtures from "./test/fixtures.js";
 import * as Runtime from "./Runtime.js";
 import * as RuntimeStream from "./RuntimeStream.js";
+import * as StreamAdmission from "./StreamAdmission.js";
+import * as StreamLimits from "./StreamLimits.js";
+import * as SubscriptionReads from "./SubscriptionReads.js";
 
 const decode = Schema.decodeUnknownSync(Schema.fromJsonString(RuntimeStreamFrame));
 const text = new TextDecoder();
@@ -63,8 +66,15 @@ const open = Effect.fnUntraced(function* (
 });
 const dependencies = Fixtures.layer();
 const layer = RuntimeStream.layer.pipe(
+  Layer.provide(StreamAdmission.layer),
+  Layer.provide(StreamLimits.layer),
+  Layer.provideMerge(Fixtures.streamPorts),
   Layer.provide(WideEvents.layerNoop),
   Layer.provideMerge(dependencies)
+);
+const makeStreams = RuntimeStream.make.pipe(
+  Effect.provide(StreamAdmission.layer),
+  Effect.provide(StreamLimits.layer)
 );
 
 // LoadedVersions is Runtime's external persistence port. Each test controls committed
@@ -150,11 +160,21 @@ it.layer(layer)("document streams", (it) => {
       };
       yield* limits.setOverride({ ...ref, value: 256 });
       yield* Effect.addFinalizer(() => limits.removeOverride(ref).pipe(Effect.orDie));
-      const streams = yield* RuntimeStream.RuntimeStream;
-      const document = yield* open("slow_consumer_document");
+      const authority = yield* versionAuthority;
+      const streams = yield* makeStreams.pipe(
+        Effect.provide(authority.layer),
+        Effect.provide(WideEvents.layerNoop)
+      );
+      const document = yield* open("slow_consumer_document").pipe(
+        Effect.provideService(RuntimeStream.RuntimeStream, streams)
+      );
       assert.strictEqual(frame(yield* document.pull).type, "hello");
       yield* document.pull;
-      for (let index = 0; index < 10; index++) yield* streams.notify(Fixtures.patchId);
+      for (let index = 0; index < 10; index++) {
+        authority.state.current =
+          index % 2 === 0 ? authority.latest.versionId : authority.initial.versionId;
+        yield* streams.notify(Fixtures.patchId);
+      }
       assert.deepStrictEqual(frame(yield* document.pull), {
         type: "closed",
         reason: "slow_consumer"
@@ -181,8 +201,10 @@ it.layer(layer)("document streams", (it) => {
             };
           })
       });
+      const admission = yield* StreamAdmission.make.pipe(Effect.provide(externalSession));
       const streams = yield* RuntimeStream.make.pipe(
-        Effect.provide(externalSession),
+        Effect.provideService(StreamAdmission.StreamAdmission, admission),
+        Effect.provide(StreamLimits.layer),
         Effect.provide(WideEvents.layerNoop)
       );
       const document = yield* open("idle_session_document").pipe(
@@ -207,7 +229,7 @@ it.layer(layer)("document streams", (it) => {
 
   it.effect("drains as EOF and refuses new documents", () =>
     Effect.gen(function* () {
-      const streams = yield* RuntimeStream.make.pipe(Effect.provide(WideEvents.layerNoop));
+      const streams = yield* makeStreams.pipe(Effect.provide(WideEvents.layerNoop));
       const document = yield* open("draining_document").pipe(
         Effect.provideService(RuntimeStream.RuntimeStream, streams)
       );
@@ -231,7 +253,7 @@ it.layer(layer)("document streams", (it) => {
           write: (event) => Queue.offer(recorded, event).pipe(Effect.asVoid)
         })
       );
-      const streams = yield* RuntimeStream.make.pipe(
+      const streams = yield* makeStreams.pipe(
         Effect.provide(authority.layer),
         Effect.provideService(WideEvents.WideEvents, events)
       );
@@ -277,7 +299,7 @@ it.layer(layer)("document streams", (it) => {
             return found;
           })
       });
-      const streams = yield* RuntimeStream.make.pipe(
+      const streams = yield* makeStreams.pipe(
         Effect.provide(delayed),
         Effect.provide(WideEvents.layerNoop)
       );
@@ -325,7 +347,7 @@ it.layer(layer)("document streams", (it) => {
             return found;
           })
       });
-      const streams = yield* RuntimeStream.make.pipe(
+      const streams = yield* makeStreams.pipe(
         Effect.provide(delayed),
         Effect.provide(WideEvents.layerNoop)
       );
@@ -357,7 +379,7 @@ it.layer(layer)("document streams", (it) => {
             unavailable ? Effect.fail(cause) : authority.find(patchId, versionId)
           )
       });
-      const streams = yield* RuntimeStream.make.pipe(
+      const streams = yield* makeStreams.pipe(
         Effect.provide(failing),
         Effect.provide(WideEvents.layerNoop)
       );
@@ -399,10 +421,14 @@ it.layer(layer)("document streams", (it) => {
       const source = yield* LoadedVersions.LoadedVersions;
       const reading = yield* Deferred.make<void>();
       const resume = yield* Deferred.make<void>();
+      let otherServed = Fixtures.versionId;
       const delayed = Layer.succeed(LoadedVersions.LoadedVersions, {
         find: (patchId, versionId) =>
           Effect.gen(function* () {
-            const found = yield* source.find(patchId, versionId);
+            const found = yield* source.find(
+              patchId,
+              patchId === "secondpatch1" && versionId === undefined ? otherServed : versionId
+            );
             if (patchId === Fixtures.patchId && versionId === undefined) {
               yield* Deferred.succeed(reading, undefined);
               yield* Deferred.await(resume);
@@ -410,7 +436,7 @@ it.layer(layer)("document streams", (it) => {
             return found;
           })
       });
-      const streams = yield* RuntimeStream.make.pipe(
+      const streams = yield* makeStreams.pipe(
         Effect.provide(delayed),
         Effect.provide(WideEvents.layerNoop)
       );
@@ -424,11 +450,12 @@ it.layer(layer)("document streams", (it) => {
       );
       assert.strictEqual(frame(yield* other.pull).type, "hello");
       yield* other.pull;
+      otherServed = Fixtures.tier1VersionId;
       yield* streams.notify("secondpatch1");
       assert.deepStrictEqual(frame(yield* other.pull), {
         type: "served",
-        versionId: Fixtures.versionId,
-        tier: 0
+        versionId: Fixtures.tier1VersionId,
+        tier: 1
       });
       yield* Deferred.succeed(resume, undefined);
       const original = yield* Fiber.join(opening);
@@ -440,7 +467,7 @@ it.layer(layer)("document streams", (it) => {
   it.effect("keeps an authenticated company document eligible after public sharing", () =>
     Effect.gen(function* () {
       const authority = yield* versionAuthority;
-      const streams = yield* RuntimeStream.make.pipe(
+      const streams = yield* makeStreams.pipe(
         Effect.provide(authority.layer),
         Effect.provide(WideEvents.layerNoop)
       );
@@ -454,10 +481,12 @@ it.layer(layer)("document streams", (it) => {
         scope: "public"
       });
       yield* streams.notify(Fixtures.patchId);
+      authority.state.current = authority.latest.versionId;
+      yield* streams.notify(Fixtures.patchId);
       assert.deepStrictEqual(frame(yield* document.pull), {
         type: "served",
-        versionId: Fixtures.versionId,
-        tier: 0
+        versionId: authority.latest.versionId,
+        tier: authority.latest.manifest.tier
       });
       assert.strictEqual(yield* streams.connected(DEV_SEED.companyId), 1);
       yield* Scope.close(document.scope, Exit.void);
@@ -468,4 +497,72 @@ it.layer(layer)("document streams", (it) => {
       assert.strictEqual(frame(yield* reconnected.pull).type, "served");
     }).pipe(Effect.scoped)
   );
+  for (const resume of [false, true]) {
+    it.effect(
+      `stops ${resume ? "an equal-vector resume" : "a snapshot"} when authority is lost before delivery`,
+      () =>
+        Effect.gen(function* () {
+          const authority = yield* versionAuthority;
+          authority.state.current = authority.latest.versionId;
+          const reading = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          const vector = { [`table:${Fixtures.patchId}:items`]: "1" };
+          const waiting = Deferred.succeed(reading, undefined).pipe(
+            Effect.andThen(Deferred.await(release))
+          );
+          let reads = 0;
+          const streams = yield* makeStreams.pipe(
+            Effect.provide(authority.layer),
+            Effect.provide(WideEvents.layerNoop),
+            Effect.provideService(SubscriptionReads.SubscriptionReads, {
+              admit: ({ onDependency }) =>
+                Effect.sync(() => {
+                  for (const key of Object.keys(vector)) onDependency?.(key);
+                  return Object.keys(vector);
+                }),
+              revisions: () => (resume ? waiting.pipe(Effect.as(vector)) : Effect.succeed(vector)),
+              read: () =>
+                Effect.gen(function* () {
+                  reads++;
+                  yield* waiting;
+                  return { result: { rows: [{ id: "private-row" }], cursor: null }, vector };
+                })
+            })
+          );
+          const document = {
+            ...input("delivery_fence_document"),
+            versionId: authority.latest.versionId
+          };
+          const body = yield* streams.open(document);
+          const pull = yield* Stream.toPull(body);
+          const hello = frame(yield* pull);
+          assert.strictEqual(hello.type, "hello");
+          if (hello.type !== "hello") return;
+          yield* pull;
+          yield* streams.update({
+            ...document,
+            generation: hello.generation,
+            sequence: 1,
+            type: "subscribe",
+            subscription: {
+              id: "items",
+              op: "tables.list",
+              args: { table: "items" },
+              ...(resume ? { vector, revision: "1" } : {})
+            }
+          });
+          assert.deepStrictEqual(frame(yield* pull), { type: "admitted", sequence: 1 });
+          yield* Deferred.await(reading);
+          authority.state.current = undefined;
+          yield* Deferred.succeed(release, undefined);
+          assert.deepStrictEqual(frame(yield* pull), { type: "access_denied" });
+          assert.isTrue(Exit.isFailure(yield* Effect.exit(pull)));
+          assert.strictEqual(reads, resume ? 0 : 1);
+          assert.strictEqual(yield* streams.connected(DEV_SEED.companyId), 0);
+        }).pipe(
+          Effect.provideService(HttpServerRequest.HttpServerRequest, request()),
+          Effect.scoped
+        )
+    );
+  }
 });

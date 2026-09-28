@@ -132,7 +132,7 @@ const sharedClient = (source: Patches.SharedTable): string => {
     if (column.kind === "ref" && !Object.hasOwn(indexes, name)) indexes[name] = { columns: [name] };
   }
   return `import { createSharedTable } from "patchy/client";
-import type { Call, ReadTable } from "patchy/client";
+import type { Call, QueryRegistry, ReadTable } from "patchy/client";
 import type { Id } from "patchy/config";
 export interface Row {
   readonly id: Id<${JSON.stringify(source.id)}>;
@@ -147,7 +147,7 @@ ${Object.entries(source.definition.columns)
 }
 type Indexes = ${JSON.stringify(indexes)};
 export type Client = ReadTable<Row, Indexes>;
-export function createClient(alias: string, call: Call): Client { return createSharedTable<Row, Indexes>(alias, call); }
+export function createClient(alias: string, call: Call, queries: QueryRegistry): Client { return createSharedTable<Row, Indexes>(alias, call, queries); }
 `;
 };
 const definitionContext = (title: string, definition: unknown) =>

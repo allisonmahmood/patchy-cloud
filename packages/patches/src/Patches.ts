@@ -14,7 +14,6 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import type * as Scope from "effect/Scope";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
@@ -34,6 +33,7 @@ import {
 } from "@patchy/api";
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
 import { Tables } from "@patchy/primitives";
+import { Wakes } from "@patchy/runtime/core";
 import { ConnectionStore } from "@patchy/integrations";
 
 const encodeManifest = Schema.encodeSync(Schema.fromJsonString(Manifest));
@@ -233,6 +233,7 @@ export interface Patch {
   readonly repoName: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
+  readonly lifecycleRevision: string;
   readonly state: PatchState;
   readonly retiredAt: string | null;
   readonly retiredBy: string | null;
@@ -491,6 +492,7 @@ class PatchRow extends Schema.Class<PatchRow>("PatchRow")({
   repoName: Schema.NullOr(Schema.String),
   createdAt: Stamp,
   updatedAt: Stamp,
+  lifecycleRevision: Schema.String,
   retiredAt: NullableStamp,
   retiredBy: Schema.NullOr(Schema.String),
   deletedAt: NullableStamp,
@@ -581,16 +583,7 @@ class UnnamedPatch extends Schema.Class<UnnamedPatch>("UnnamedPatch")({
   title: Schema.String
 }) {}
 
-export type LifecycleChange =
-  | {
-      readonly type: "served";
-      readonly patchId: string;
-      readonly versionId: string;
-      readonly tier: number;
-    }
-  | { readonly type: "unavailable"; readonly patchId: string };
-
-const pendingLifecycle = Context.Reference<Array<LifecycleChange> | undefined>(
+const pendingLifecycle = Context.Reference<Array<string> | undefined>(
   "@patchy/patches/pendingLifecycle",
   { defaultValue: () => undefined }
 );
@@ -598,10 +591,6 @@ const pendingLifecycle = Context.Reference<Array<LifecycleChange> | undefined>(
 export class Patches extends Context.Service<
   Patches,
   {
-    /** Same-host committed changes. The subscriber owns its lifetime. */
-    readonly listen: (
-      listener: (change: LifecycleChange) => Effect.Effect<void>
-    ) => Effect.Effect<void, never, Scope.Scope>;
     /** Non-deleted, enabled patches owned by this user, including retired patches. */
     readonly countQuotaPatches: (ownerUserId: string) => Effect.Effect<number, SqlError>;
     readonly authorizePublish: (
@@ -791,6 +780,7 @@ const toPatch = (row: PatchRow): Patch => ({
   repoName: row.repoName,
   createdAt: iso(row.createdAt),
   updatedAt: iso(row.updatedAt),
+  lifecycleRevision: row.lifecycleRevision,
   state: stateOf(row),
   retiredAt: isoOrNull(row.retiredAt),
   retiredBy: row.retiredBy,
@@ -844,6 +834,7 @@ const PATCH_COLUMNS = `
   patches.current_version_id AS "currentVersionId",
   patches.repo_org AS "repoOrg", patches.repo_name AS "repoName",
   patches.created_at AS "createdAt", patches.updated_at AS "updatedAt",
+  patches.lifecycle_revision::text AS "lifecycleRevision",
   patches.retired_at AS "retiredAt", patches.retired_by AS "retiredBy",
   patches.deleted_at AS "deletedAt", patches.deleted_by AS "deletedBy",
   patches.reassigned_at AS "reassignedAt", patches.reassigned_by AS "reassignedBy",
@@ -909,20 +900,10 @@ export const make = Effect.gen(function* () {
   const inventoryStore = yield* Inventory.Inventory;
   const tables = yield* Tables.Tables;
   const connections = yield* ConnectionStore.ConnectionStore;
-  const listeners = new Set<(change: LifecycleChange) => Effect.Effect<void>>();
-  const listen: Patches["Service"]["listen"] = (listener) =>
-    Effect.acquireRelease(
-      Effect.sync(() => {
-        listeners.add(listener);
-      }),
-      () =>
-        Effect.sync(() => {
-          listeners.delete(listener);
-        })
-    );
-  const announce = (change: LifecycleChange) =>
+  const wakes = yield* Wakes.Wakes;
+  const announce = (patchId: string) =>
     Effect.map(pendingLifecycle, (pending) => {
-      pending!.push(change);
+      pending!.push(`patch:${patchId}`);
     });
   // The company dependency lock is the outer transaction for portal bulk actions.
   // Keep their notices until its commit; a failed batch emits none.
@@ -940,13 +921,15 @@ export const make = Effect.gen(function* () {
         )
       );
     }
-    const pending: Array<LifecycleChange> = [];
+    // An unrelated SQL owner has no commit hook here. Its durable revision is
+    // reconciled rather than sending a hint before that transaction settles.
+    const outerTransaction = yield* Effect.serviceOption(sql.transactionService);
+    const pending: Array<string> = [];
     const result = yield* sql.withTransaction(
       work.pipe(Effect.provideService(pendingLifecycle, pending))
     );
-    for (const change of pending) {
-      for (const listener of listeners) yield* listener(change);
-    }
+    if (Option.isSome(outerTransaction)) return result;
+    if (pending.length > 0) yield* wakes.publish([...new Set(pending)]);
     return result;
   });
 
@@ -1854,15 +1837,11 @@ export const make = Effect.gen(function* () {
               description_updated_by = ${descriptionUpdatedBy},
               updated_at = ${stamp(millis)}, last_changed_at = ${stamp(millis)},
               last_changed_by = ${input.ownerUserId},
+              lifecycle_revision = lifecycle_revision + 1,
               last_changed_action = ${`published v${versionNumber}`}
           WHERE id = ${input.patchId}`;
 
-        yield* announce({
-          type: "served",
-          patchId: input.patchId,
-          versionId: input.versionId,
-          tier: input.manifest.tier
-        });
+        yield* announce(input.patchId);
         return { ...response, status, responseBody: inserted.responseBody } satisfies Recorded;
       }).pipe(Effect.catchTags({ ...dieOnSchemaError, NoSuchElementError: Effect.die }))
     ).pipe(Effect.timeout("60 seconds"), Effect.catchTags({ TimeoutError: Effect.die }))
@@ -1893,10 +1872,12 @@ export const make = Effect.gen(function* () {
       return yield* new StaleAction({ patchId });
     const at = yield* now;
     yield* sql`UPDATE patches SET scope = ${scope}, updated_at = ${at},
+        lifecycle_revision = lifecycle_revision + 1,
         last_changed_at = ${at}, last_changed_by = ${actor.userId},
         last_changed_action = 'sharing changed' WHERE id = ${patchId}`;
+    yield* announce(patchId);
     return { scope, name: row.name, companyHandle: row.companyHandle };
-  }, sql.withTransaction);
+  }, withLifecycleTransaction);
 
   const retire = Effect.fn("Patches.retire")(function* (
     patchId: string,
@@ -1912,10 +1893,11 @@ export const make = Effect.gen(function* () {
     yield* refuseDependants(patchId, row.companyId, force);
     const at = yield* now;
     yield* sql`UPDATE patches SET retired_at = ${at}, retired_by = ${actor.userId},
+        lifecycle_revision = lifecycle_revision + 1,
         updated_at = ${at}, last_changed_at = ${at}, last_changed_by = ${actor.userId},
         last_changed_action = 'retired'
         WHERE id = ${patchId}`;
-    yield* announce({ type: "unavailable", patchId });
+    yield* announce(patchId);
     return yield* afterChange(patchId);
   }, withLifecycleTransaction);
   const delete_ = Effect.fn("Patches.delete")(function* (
@@ -1930,10 +1912,11 @@ export const make = Effect.gen(function* () {
     if (state === "live") yield* refuseDependants(patchId, row.companyId, force);
     const at = yield* now;
     yield* sql`UPDATE patches SET deleted_at = ${at}, deleted_by = ${actor.userId},
+        lifecycle_revision = lifecycle_revision + 1,
         updated_at = ${at}, last_changed_at = ${at}, last_changed_by = ${actor.userId},
         last_changed_action = 'deleted'
         WHERE id = ${patchId}`;
-    yield* announce({ type: "unavailable", patchId });
+    yield* announce(patchId);
     return yield* afterChange(patchId);
   }, withLifecycleTransaction);
   const restore = Effect.fn("Patches.restore")(function* (
@@ -1968,11 +1951,13 @@ export const make = Effect.gen(function* () {
     }
     const at = stamp(millis);
     yield* sql`UPDATE patches SET retired_at = NULL, retired_by = NULL,
+        lifecycle_revision = lifecycle_revision + 1,
         deleted_at = NULL, deleted_by = NULL, updated_at = ${at},
         last_changed_at = ${at}, last_changed_by = ${actor.userId},
         last_changed_action = 'restored' WHERE id = ${patchId}`;
+    yield* announce(patchId);
     return yield* afterChange(patchId);
-  }, sql.withTransaction);
+  }, withLifecycleTransaction);
   const rollback = Effect.fn("Patches.rollback")(function* (
     patchId: string,
     actor: Actor,
@@ -1989,14 +1974,10 @@ export const make = Effect.gen(function* () {
     if (Option.isNone(version)) return yield* new VersionUnavailable({ versionNumber });
     const at = yield* now;
     yield* sql`UPDATE patches SET current_version_id = ${version.value.id}, updated_at = ${at},
+        lifecycle_revision = lifecycle_revision + 1,
         last_changed_at = ${at}, last_changed_by = ${actor.userId},
         last_changed_action = ${`rolled back to v${versionNumber}`} WHERE id = ${patchId}`;
-    yield* announce({
-      type: "served",
-      patchId,
-      versionId: version.value.id,
-      tier: version.value.tier
-    });
+    yield* announce(patchId);
     return { patch: yield* afterChange(patchId), currentVersion: versionNumber };
   }, withLifecycleTransaction);
   const reassign = Effect.fn("Patches.reassign")(function* (
@@ -2087,6 +2068,7 @@ export const make = Effect.gen(function* () {
         yield* sql`DELETE FROM patch_versions WHERE patch_id = ${patchId}`;
         yield* sql`DELETE FROM patch_names WHERE patch_id = ${patchId}`;
         yield* sql`DELETE FROM patches WHERE id = ${patchId}`;
+        yield* announce(patchId);
         return Option.some({ companyId, objectKeys: keys.map((row) => row.objectKey) });
       });
       // No platform row disappears while a publisher holds its company inventory.
@@ -2105,12 +2087,11 @@ export const make = Effect.gen(function* () {
           })
         );
     },
-    sql.withTransaction,
+    withLifecycleTransaction,
     Effect.catchTags(dieOnSchemaError)
   );
 
   return Patches.of({
-    listen,
     countQuotaPatches,
     authorizePublish,
     replay,

@@ -49,7 +49,10 @@ for (const [name, database] of [
   ["Postgres", Testing.layer()],
   ["PGlite", pglite]
 ] as const) {
-  const services = OrphanSweep.layer.pipe(Layer.provideMerge(Layer.merge(database, filesystem)));
+  const services = OrphanSweep.layer.pipe(
+    Layer.provideMerge(Layer.merge(database, filesystem)),
+    Layer.provideMerge(Testing.resourceChangesLayer)
+  );
 
   it.layer(services)(`OrphanSweep (${name})`, (it) => {
     it.effect(
@@ -346,109 +349,107 @@ for (const [name, database] of [
   });
 }
 
-it.layer(Layer.merge(Testing.layer({ maxBackends: 4 }), filesystem))(
-  "OrphanSweep retained pool pressure",
-  (it) => {
-    it.effect(
-      "waits past the idle TTL and finishes scans larger than the retained pool budget",
-      () =>
-        Effect.gen(function* () {
-          yield* TestClock.setTime(NOW);
-          const platform = yield* SqlClient.SqlClient;
-          const companies = yield* CompanyDatabases.CompanyDatabases;
-          const store = yield* ContentStore.ContentStore;
-          const fs = yield* FileSystem.FileSystem;
-          const root = yield* FilesystemContentStore.rootDir;
-          yield* platform`INSERT INTO companies (id, handle, name)
+it.layer(
+  Layer.merge(Testing.layer({ maxBackends: 4 }), filesystem).pipe(
+    Layer.provideMerge(Testing.resourceChangesLayer)
+  )
+)("OrphanSweep retained pool pressure", (it) => {
+  it.effect("waits past the idle TTL and finishes scans larger than the retained pool budget", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW);
+      const platform = yield* SqlClient.SqlClient;
+      const companies = yield* CompanyDatabases.CompanyDatabases;
+      const store = yield* ContentStore.ContentStore;
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* FilesystemContentStore.rootDir;
+      yield* platform`INSERT INTO companies (id, handle, name)
           VALUES ('sweep_pool_a', 'sweep-pool-a', 'Pool A'), ('sweep_pool_b', 'sweep-pool-b', 'Pool B')`;
-          for (const companyId of ["sweep_pool_a", "sweep_pool_b"]) {
-            yield* companies.ensureReady(companyId);
-          }
-          const key = "files/absent_pool_patch/docs/old";
-          yield* store.put(key, "reclaim after every index responds");
-          yield* fs.utimes(`${root}/${key}`, (NOW - 2 * DAY) / 1_000, (NOW - 2 * DAY) / 1_000);
-          const busy = yield* Queue.unbounded<void>();
-          let admitted = 0;
-          const observed = Layer.succeed(CompanyDatabases.CompanyDatabases, {
-            ...companies,
-            withCompany: (companyId) => (effect) =>
-              companies
-                .withCompany(companyId)(effect)
-                .pipe(
-                  Effect.tap(() =>
-                    Effect.sync(() => {
-                      admitted += 1;
-                    })
-                  ),
-                  Effect.tapError((error) =>
-                    error._tag === "Busy" ? Queue.offer(busy, undefined) : Effect.void
-                  )
-                )
-          });
-          const sweeper = yield* OrphanSweep.make.pipe(Effect.provide(observed));
-          const running = yield* sweeper.sweep.pipe(Effect.forkScoped);
-          // Two pools against one retained slot is the same pressure as 51 against
-          // the default 50 slots. Namespace and file-index scans each turn pools over.
-          for (let pause = 0; pause < 3; pause += 1) {
-            yield* Queue.take(busy);
-            const before = admitted;
-            yield* TestClock.adjust("60 seconds");
-            assert.strictEqual(admitted, before, "the background retry waits the full 61 seconds");
-            assert.strictEqual(yield* store.get(key), "reclaim after every index responds");
-            yield* TestClock.adjust("1 second");
-          }
-          assert.deepStrictEqual(yield* Fiber.join(running), {
-            namespacesDeleted: 0,
-            filesDeleted: 1,
-            failed: 0
-          });
-          assert.strictEqual((yield* store.get(key).pipe(Effect.flip))._tag, "ObjectNotFound");
-        }).pipe(Effect.scoped)
-    );
-  }
-);
+      for (const companyId of ["sweep_pool_a", "sweep_pool_b"]) {
+        yield* companies.ensureReady(companyId);
+      }
+      const key = "files/absent_pool_patch/docs/old";
+      yield* store.put(key, "reclaim after every index responds");
+      yield* fs.utimes(`${root}/${key}`, (NOW - 2 * DAY) / 1_000, (NOW - 2 * DAY) / 1_000);
+      const busy = yield* Queue.unbounded<void>();
+      let admitted = 0;
+      const observed = Layer.succeed(CompanyDatabases.CompanyDatabases, {
+        ...companies,
+        withCompany: (companyId) => (effect) =>
+          companies
+            .withCompany(companyId)(effect)
+            .pipe(
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  admitted += 1;
+                })
+              ),
+              Effect.tapError((error) =>
+                error._tag === "Busy" ? Queue.offer(busy, undefined) : Effect.void
+              )
+            )
+      });
+      const sweeper = yield* OrphanSweep.make.pipe(Effect.provide(observed));
+      const running = yield* sweeper.sweep.pipe(Effect.forkScoped);
+      // Two pools against one retained slot is the same pressure as 51 against
+      // the default 50 slots. Namespace and file-index scans each turn pools over.
+      for (let pause = 0; pause < 3; pause += 1) {
+        yield* Queue.take(busy);
+        const before = admitted;
+        yield* TestClock.adjust("60 seconds");
+        assert.strictEqual(admitted, before, "the background retry waits the full 61 seconds");
+        assert.strictEqual(yield* store.get(key), "reclaim after every index responds");
+        yield* TestClock.adjust("1 second");
+      }
+      assert.deepStrictEqual(yield* Fiber.join(running), {
+        namespacesDeleted: 0,
+        filesDeleted: 1,
+        failed: 0
+      });
+      assert.strictEqual((yield* store.get(key).pipe(Effect.flip))._tag, "ObjectNotFound");
+    }).pipe(Effect.scoped)
+  );
+});
 
-it.layer(Layer.merge(Testing.layer(), filesystem))(
-  "OrphanSweep persistent admission pressure",
-  (it) => {
-    it.effect(
-      "retries persistent admission pressure only once per company before deferring work",
-      () =>
-        Effect.gen(function* () {
-          const companies = yield* CompanyDatabases.CompanyDatabases;
-          yield* companies.ensureReady(COMPANY);
-          const placements = yield* companies.listReady;
-          const attempts = yield* Queue.unbounded<void>();
-          const unavailable = Layer.succeed(CompanyDatabases.CompanyDatabases, {
-            ...companies,
-            withCompany: () => () =>
-              Queue.offer(attempts, undefined).pipe(
-                Effect.andThen(
-                  Effect.fail(
-                    new CompanyDatabases.Busy({
-                      resource: "backend budget",
-                      scope: "host",
-                      limitId: "company.connections.hostBackends",
-                      value: 4,
-                      retryAfterSeconds: 1
-                    })
-                  )
+it.layer(
+  Layer.merge(Testing.layer(), filesystem).pipe(Layer.provideMerge(Testing.resourceChangesLayer))
+)("OrphanSweep persistent admission pressure", (it) => {
+  it.effect(
+    "retries persistent admission pressure only once per company before deferring work",
+    () =>
+      Effect.gen(function* () {
+        const companies = yield* CompanyDatabases.CompanyDatabases;
+        yield* companies.ensureReady(COMPANY);
+        const placements = yield* companies.listReady;
+        const attempts = yield* Queue.unbounded<void>();
+        const unavailable = Layer.succeed(CompanyDatabases.CompanyDatabases, {
+          ...companies,
+          withCompany: () => () =>
+            Queue.offer(attempts, undefined).pipe(
+              Effect.andThen(
+                Effect.fail(
+                  new CompanyDatabases.Busy({
+                    resource: "backend budget",
+                    scope: "host",
+                    limitId: "company.connections.hostBackends",
+                    value: 4,
+                    retryAfterSeconds: 1
+                  })
                 )
               )
-          });
-          const sweeper = yield* OrphanSweep.make.pipe(Effect.provide(unavailable));
-          const running = yield* sweeper.sweep.pipe(Effect.forkScoped);
-          for (let index = 0; index < placements.length; index++) {
-            yield* Queue.take(attempts);
-            yield* TestClock.adjust("61 seconds");
-            yield* Queue.take(attempts);
-          }
-          assert.deepStrictEqual(yield* Fiber.join(running), {
-            namespacesDeleted: 0,
-            filesDeleted: 0,
-            failed: placements.length
-          });
-        }).pipe(Effect.scoped)
-    );
-  }
-);
+            )
+        });
+        const sweeper = yield* OrphanSweep.make.pipe(Effect.provide(unavailable));
+        const running = yield* sweeper.sweep.pipe(Effect.forkScoped);
+        for (let index = 0; index < placements.length; index++) {
+          yield* Queue.take(attempts);
+          yield* TestClock.adjust("61 seconds");
+          yield* Queue.take(attempts);
+        }
+        assert.deepStrictEqual(yield* Fiber.join(running), {
+          namespacesDeleted: 0,
+          filesDeleted: 0,
+          failed: placements.length
+        });
+      }).pipe(Effect.scoped)
+  );
+});

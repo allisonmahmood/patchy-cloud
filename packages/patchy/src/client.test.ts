@@ -2,7 +2,13 @@ import { resolveObjectURL } from "node:buffer";
 import { expect, it } from "vitest";
 import { build } from "esbuild";
 import * as ts from "typescript";
-import { createClient, createSharedTable, decodeError, type Transport } from "./client.js";
+import {
+  createClient,
+  createSharedTable,
+  decodeError,
+  type QueryRegistry,
+  type Transport
+} from "./client.js";
 import { defineConfig, files, table, t } from "./config.js";
 import { generateClient } from "../../sdk/src/generateClient.js";
 import { RuntimeCode, runtimeOperations } from "../../api/src/runtime.js";
@@ -16,6 +22,11 @@ const unusedRoute: Transport["route"] = {
   },
   subscribe: () => {
     throw new Error("This test does not implement routes.");
+  }
+};
+const unusedQueries: Transport["queries"] = {
+  subscribe() {
+    throw new Error("This test does not implement subscriptions.");
   }
 };
 
@@ -49,6 +60,7 @@ it("caches blob URLs until replacement/deletion and revokes them on close", asyn
   const transport: Transport = {
     route: unusedRoute,
     serverTime: () => undefined,
+    queries: unusedQueries,
     call: async (op, _args, input) => {
       calls.push(op);
       if (op === "files.get") return { bytes, contentType: "image/png" };
@@ -89,6 +101,7 @@ it.each(["put", "delete", "close"] as const)(
     const transport: Transport = {
       route: unusedRoute,
       serverTime: () => undefined,
+      queries: unusedQueries,
       call: async (op) => {
         if (op !== "files.get") return null;
         if (first) {
@@ -131,8 +144,8 @@ it("shares the supplied transport with generated aliases and exposes shared read
     uses: { team: { kind: "sharedTable" }, sales: { kind: "postgres" } }
   };
   const shared = {
-    team: (alias: string, call: Transport["call"]) =>
-      createSharedTable<{ id: string; title: string }>(alias, call)
+    team: (alias: string, call: Transport["call"], queries: QueryRegistry) =>
+      createSharedTable<{ id: string; title: string }>(alias, call, queries)
   };
   const connections = {
     sales: (alias: string, call: Transport["call"]) => ({
@@ -141,7 +154,13 @@ it("shares the supplied transport with generated aliases and exposes shared read
     })
   };
   const client = createClient<typeof config, typeof shared, typeof connections>(manifest, {
-    transport: { call, route: unusedRoute, serverTime: () => undefined, close() {} },
+    transport: {
+      call,
+      route: unusedRoute,
+      queries: unusedQueries,
+      serverTime: () => undefined,
+      close() {}
+    },
     shared,
     connections
   });
@@ -157,10 +176,10 @@ it("shares the supplied transport with generated aliases and exposes shared read
 
 it("infers the owned facade and generated aliases without widening index, id, or write boundaries", () => {
   const root = new URL("../dist/", import.meta.url).pathname;
-  const source = `import { createClient, createSharedTable, type Call, type ErrorCode, type Operation, type Me, type FileMetadata } from "patchy/client";
+  const source = `import { createClient, createSharedTable, type Call, type QueryRegistry, type ErrorCode, type Operation, type Me, type FileMetadata } from "patchy/client";
 import { defineConfig, table, t, files, postgres, sharedTable, type Id } from "patchy/config";
 type Equal<A, B> = [A] extends [B] ? [B] extends [A] ? true : false : false;
-const operationsConform: Equal<Operation, "route.set" | "download" | ${Object.keys(
+const operationsConform: Equal<Operation, "route.set" | "download" | "subscriptions.subscribe" | "subscriptions.unsubscribe" | ${Object.keys(
     runtimeOperations
   )
     .map((name) => JSON.stringify(name))
@@ -170,7 +189,7 @@ const config = defineConfig({ name: "notes", tier: 1, tables: {
   people: table("People identified by id.", { name: t.text() }),
   data: table("JSON records identified by id.", { required: t.json(), defaulted: t.json().default({}), optional: t.json().optional() })
 }, files: { images: files("Images keyed by filename.") }, uses: { team: sharedTable("source", "notes"), sales: postgres("warehouse") } });
-const shared = { team: (alias: string, call: Call) => createSharedTable<{ id: Id<"source/notes">; title: string }>(alias, call) };
+const shared = { team: (alias: string, call: Call, queries: QueryRegistry) => createSharedTable<{ id: Id<"source/notes">; title: string }>(alias, call, queries) };
 const connections = { sales: (alias: string, call: Call) => ({ count: async () => 42 }) };
 const client = createClient<typeof config, typeof shared, typeof connections>(config, { shared, connections });
 async function use() {
@@ -182,6 +201,19 @@ async function use() {
   await client.tables.notes.update(id, { body: null });
   await client.tables.notes.list({ index: "byTitle", eq: { title: "ok" }, range: { column: "title", gte: "a" } });
   await client.tables.notes.list({ index: "parent", eq: { parent: id } });
+  client.tables.notes.list.subscribe({ index: "byTitle", eq: { title: "ok" } }, (snapshot) => {
+    const title: string | undefined = snapshot.data?.rows[0]?.title;
+  });
+  client.tables.notes.get.subscribe(id, (snapshot) => {
+    const title: string | undefined = snapshot.data?.title;
+  });
+  client.shared.team.get.subscribe("shared" as Id<"source/notes">, (snapshot) => {
+    const title: string | undefined = snapshot.data?.title;
+  });
+  // @ts-expect-error subscribing preserves branded row IDs
+  client.tables.people.get.subscribe(id, () => {});
+  // @ts-expect-error subscribing preserves index names
+  client.tables.notes.list.subscribe({ index: "missing" }, () => {});
   const count: number = await client.connections.sales.count();
   const path: string = await client.route.get();
   const routed: null = await client.route.set("/notes");

@@ -87,6 +87,7 @@ describe("renderShellNotice", () => {
 describe("patch pages", () => {
   const patch: Patches.Patch = {
     id: "patch12345ab",
+    lifecycleRevision: "1",
     companyId: DEV_SEED.companyId,
     companyHandle: DEV_SEED.companyHandle,
     name: "render-fixture",

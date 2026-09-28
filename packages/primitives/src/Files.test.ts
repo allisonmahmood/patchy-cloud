@@ -8,6 +8,7 @@ import { PgliteCompanyDatabases } from "@patchy/company-database/dev";
 import * as Testing from "@patchy/company-database/testing";
 import * as Tables from "./Tables.js";
 import { contracts, filesystem, independentNamesContract } from "./test/filesContract.js";
+import * as TestWakes from "./test/wakes.js";
 
 const postgres = Layer.merge(filesystem, Tables.layer.pipe(Layer.provideMerge(Testing.layer())));
 const local = Layer.merge(
@@ -32,16 +33,19 @@ for (const { name, layer, companyId } of [
   { name: "Postgres", layer: postgres, companyId: "cmp_dev" },
   { name: "PGlite", layer: local, companyId: "local-company" }
 ]) {
-  it.layer(layer, { timeout: "60 seconds" })(`Files / ${name} and filesystem`, (it) => {
-    for (const [description, contract] of Object.entries(contracts)) {
-      it.effect(description, () => contract(companyId), 60_000);
+  it.layer(layer.pipe(Layer.provideMerge(TestWakes.layer)), { timeout: "60 seconds" })(
+    `Files / ${name} and filesystem`,
+    (it) => {
+      for (const [description, contract] of Object.entries(contracts)) {
+        it.effect(description, () => contract(companyId), 60_000);
+      }
+      if (name === "Postgres") {
+        it.effect(
+          "keeps unrelated names and list progressing while a same-name writer waits on another session",
+          () => independentNamesContract(companyId),
+          60_000
+        );
+      }
     }
-    if (name === "Postgres") {
-      it.effect(
-        "keeps unrelated names and list progressing while a same-name writer waits on another session",
-        () => independentNamesContract(companyId),
-        60_000
-      );
-    }
-  });
+  );
 }

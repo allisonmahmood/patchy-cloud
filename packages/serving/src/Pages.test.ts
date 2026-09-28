@@ -34,6 +34,7 @@ import { ConnectionStoreDev } from "@patchy/integrations/dev";
 import { ddl } from "@patchy/sql";
 import * as Testing from "@patchy/company-database/testing";
 import { Tables } from "@patchy/primitives";
+import * as Wakes from "../../runtime/src/Wakes.js";
 import * as Pages from "./Pages.js";
 import { servingHeaders } from "./serving-headers.js";
 
@@ -103,6 +104,7 @@ const services = Layer.mergeAll(Content.layer, DeviceLogins.layer).pipe(
   Layer.provideMerge(ConnectionStoreDev.layer([])),
   Layer.provideMerge(Tables.layer),
   Layer.provideMerge(Testing.layer()),
+  Layer.provideMerge([Testing.resourceChangesLayer, Wakes.layer]),
   Layer.provideMerge(ConfigProvider.layer(ConfigProvider.fromUnknown(clerkEnv())))
 );
 /** The same routes and services in memory and on a real socket. */

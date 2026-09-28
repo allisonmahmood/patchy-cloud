@@ -11,6 +11,7 @@ import { FilesystemContentStore } from "@patchy/content-store";
 import { Binding } from "@patchy/runtime";
 import * as Files from "../Files.js";
 import * as Tables from "../Tables.js";
+import * as TestWakes from "./wakes.js";
 
 export const companyId = "cmp_dev";
 export const versionId = "ver_aaaaaaaaaaaaaaaaaaaaaaaa";
@@ -38,7 +39,7 @@ export const filesystem = Layer.unwrap(
 export const services = Layer.merge(
   filesystem,
   Tables.layer.pipe(Layer.provideMerge(Testing.layer()))
-);
+).pipe(Layer.provideMerge(TestWakes.layer));
 export const setup = Effect.fn("test.files.setup")(function* (patchId: string) {
   const platform = yield* SqlClient.SqlClient;
   const databases = yield* CompanyDatabases.CompanyDatabases;

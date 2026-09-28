@@ -20,6 +20,10 @@ _Avoid_: migration (destructive changes are not offered), replacement, synchroni
 The patch's cumulative schema revision, advanced when provisioning changes its owned schema or table-sharing state. It is independent of a published version and the runtime wire version. Description changes do not advance it.
 _Avoid_: version number, release
 
+**Resource revision**:
+The durable count of changes to one table or file store, including its writes and sharing changes. A subscription reads rows and their resource revision together; a shared read also depends on the source patch's lifecycle revision.
+_Avoid_: schema revision, published version
+
 **System column**:
 A row's Patchy-maintained identity or creation/update timestamp: `id`, `createdAt` and `updatedAt`. Patch code reads them but cannot supply or change them.
 _Avoid_: user column, metadata field
