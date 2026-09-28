@@ -33,11 +33,11 @@ without a login, and a saved login takes precedence over that seed.
 
 ## Config and browser client
 
-Public subpaths are explicit: `patchy/config` and `patchy/dev` for tooling,
-`patchy/client` for the generated browser client, `patchy/server` for handler
-contracts, and `patchy/preact`, `patchy/preact/jsx-runtime` and
-`patchy/preact/jsx-dev-runtime` for pages.
-Unlisted `patchy/*` paths are not exported.
+Public subpaths are explicit: `patchy/config`, `patchy/dev` and
+`patchy/sdk-capabilities` for tooling, `patchy/client` for the generated browser
+client, `patchy/server` for handler contracts, and `patchy/preact`,
+`patchy/preact/jsx-runtime` and `patchy/preact/jsx-dev-runtime` for pages.
+Package exports are not all page entry points.
 
 ### Bundled UI runtime
 
@@ -54,9 +54,26 @@ Import UI functions from `patchy/preact`, for example `render`, `useState`,
 `oxc.jsx.importSource: "patchy/preact"` when writing TSX. Compat transitions
 are synchronous; there is no React scheduler.
 
-The tier 1 starter remains vanilla in this release. `useQuery(handler, args)` is
-available over the framework-free subscription registry; the hosted stream and
-query subscriptions land with their runtime tickets.
+Tier 1 starts with `src/main.tsx` and `src/App.tsx`, an empty HTML root, and
+matching JSX settings. `pnpm lint` checks hooks, including `useQuery`, and refuses
+React or direct Preact imports. No router, CSS framework, state library or test
+runner is installed. Tier 0 is unchanged. Vanilla repos still use the
+framework-free generated client; refresh never replaces application source.
+`useQuery(handler, args)` is available over the framework-free subscription
+registry; the hosted stream and query subscriptions land with their runtime tickets.
+
+Dev and publish check the page graph, not `package.json`. Runtime imports may
+use `patchy/preact`, its two JSX runtimes, `patchy/csv` and the relative generated
+client. CSV is a reserved entry point until its helper ticket ships. The generated
+client uses `patchy/client` internally and re-exports `isPatchyError` for pages.
+Tooling and type-only imports do not enter the page graph. An off-SDK import,
+including one hidden by an alias or removed by tree shaking, is local exit 1,
+`import_refused`. Its message names the package, importer and allowed entries,
+then states: "anything else, write or copy into your patch as your company's own
+code". It points to "What the SDK gives you" in `patchy-loop`. The import check
+is a build contract, not a security boundary.
+CSS imports obey the same package rule. Relative or root-absolute paths cannot
+bypass it by naming an installed dependency. Imports from `server/` are type-only.
 
 Contributors can run `pnpm --filter patchy build` followed by
 `pnpm test:packed-preact-e2e`. It installs the real release with pnpm, checks
@@ -269,12 +286,12 @@ Use the instance-installed CLI outside a repo and the pinned `pnpm patchy` insid
 The private package is not available as `npx patchy@latest` yet; use the
 instance's release tarball as described above.
 
-| command                                                                                                     | behaviour                                                                                                                                                                                                                         | `--json` success                                                                         |
-| ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `patchy init [dir] [--tier 0\|1] [--purpose <text>]`                                                        | Authenticates first, prints instance and identity, asks purpose when interactive, installs the pinned release and generates a new repo. Tier 1 is the default; an initialized target is refused.                                  | `{ ok, dir, release, tier, generated, skills, installed }`                               |
-| `patchy refresh`                                                                                            | Refreshes the managed set as one release-bound transaction, installing and re-executing a new CLI if the pin changes.                                                                                                             | `{ ok, release: { from, to }, changed: { pin, generated, skills, fixtures }, warnings }` |
-| `patchy add postgres/<handle> [--as <alias>]` or `patchy add shared-table <patchId>/<table> [--as <alias>]` | Inserts one literal declaration into `uses` by TypeScript AST without changing imports, then generates client, context, missing fixture and skill. An uneditable block names its source line and the declaration to add manually. | `{ ok, alias, declaration, generated, skills, warnings }`                                |
-| `patchy remove <alias>`                                                                                     | Reverses the declaration and generated output; removes an unused declaration skill. Leaves the fixture and says so.                                                                                                               | `{ ok, alias, removed, warnings }`                                                       |
+| command                                                                                                     | behaviour                                                                                                                                                                                                                         | `--json` success                                                                                            |
+| ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `patchy init [dir] [--tier 0\|1] [--purpose <text>]`                                                        | Authenticates first, prints instance and identity, asks purpose when interactive, installs the pinned release and generates a new repo. Tier 1 is the default; an initialized target is refused.                                  | `{ ok, dir, release, tier, generated, skills, installed }`                                                  |
+| `patchy refresh`                                                                                            | Refreshes the managed set as one release-bound transaction, installing and re-executing a new CLI if the pin changes.                                                                                                             | `{ ok, release: { from, to }, changed: { pin, generated, skills, fixtures }, addedCapabilities, warnings }` |
+| `patchy add postgres/<handle> [--as <alias>]` or `patchy add shared-table <patchId>/<table> [--as <alias>]` | Inserts one literal declaration into `uses` by TypeScript AST without changing imports, then generates client, context, missing fixture and skill. An uneditable block names its source line and the declaration to add manually. | `{ ok, alias, declaration, generated, skills, addedCapabilities, warnings }`                                |
+| `patchy remove <alias>`                                                                                     | Reverses the declaration and generated output; removes an unused declaration skill. Leaves the fixture and says so.                                                                                                               | `{ ok, alias, removed, addedCapabilities, warnings }`                                                       |
 
 `patchy add postgres` selects the sole connected Postgres connection; with several
 it lists copy-ready choices from `list connections` and stops. With none, it names `/company/connections`.
@@ -311,8 +328,10 @@ The generated repo includes:
 patchy.config.ts              definitions and uses declarations
 patchy.json                   instance, patch description and sync stamp; optional patch id
 package.json, pnpm-lock.yaml   pinned package; install already ran
-index.html, src/main.ts        starter insert/list through the generated client
-vite.config.ts, tsconfig.json  single-file build, pinned server.host, typechecking
+index.html, src/main.tsx, src/App.tsx  tier 1 Preact insert/list through the generated client
+vite.config.ts, tsconfig.json  single-file build, JSX settings, typechecking
+eslint.config.js              tier 1 import and hooks lint
+helpers/                      company-owned helpers
 AGENTS.md, CLAUDE.md            purpose, layout, skills, index; @AGENTS.md
 patchy/_generated/             README, index, client, manifest, metadata, declaration context
 .agents/skills/patchy-*/       core and declaration-driven project skills
@@ -369,6 +388,14 @@ re-fetches every present skill and adds any the config implies, but never delete
 one on its own. A present skill no longer offered by the release fails refresh.
 Edit definitions, declarations and invented fixtures; never hand-edit generated
 clients, stamps or project skills.
+
+Refresh announces new SDK capabilities in text and `addedCapabilities` in JSON,
+including where each runs and its limits. Entries have
+`{ id, group, name, entrypoints, runs, limits }`. Generation stores the release
+catalogue in `patchy/_generated/index.json` and renders it into `patchy-loop`,
+grouped Core, Primitives, Integrations and Helpers. An older repo without this
+inventory receives the current catalogue once; repeating refresh returns `[]`.
+The `patchy-preact` project skill is included on tiers 1 and 2.
 
 ### Builder-owned toolchain
 
@@ -648,8 +675,8 @@ working for before forcing.
 Repo publish first recovers `.patchy/publish/<instance-hash>/attempt/<key-hash>.json`.
 Otherwise it checks the exact pin, executing CLI and installed runtime against
 the instance release; executes config; checks the generated release, manifest version
-and declaration stamps in `patchy/_generated/index.json`; runs `tsc --noEmit`; builds
-with Vite; and checks the evident tier. Stale generation fails locally with
+and declaration stamps in `patchy/_generated/index.json`; builds with Vite and
+checks page imports; runs `tsc --noEmit`; and checks the evident tier. Stale generation fails locally with
 `stale_generated` and “declarations changed; run `patchy refresh`”, before the build. Leftover
 files or external resource dependencies fail loudly. Bundle inspection checks
 resource completeness: embed resources, inline scripts and styles, and remove

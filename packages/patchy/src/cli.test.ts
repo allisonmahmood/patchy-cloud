@@ -47,6 +47,7 @@ import { generateServer } from "../../sdk/src/generateServer.js";
 import { generate as generatePostgres } from "../../integrations/src/postgres/Generate.js";
 import { starterFiles } from "./initProject.js";
 import toolchain from "./toolchain.json" with { type: "json" };
+import { sdkCapabilities } from "./sdkCapabilities.js";
 
 const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const cliPath = path.join(packageDir, "dist/index.js");
@@ -276,7 +277,7 @@ const decodePackageFixture = Schema.decodeUnknownSync(
     [Schema.Record(Schema.String, Schema.Unknown)]
   )
 );
-const coreProjectSkills = ["patchy-files", "patchy-loop", "patchy-tables"];
+const coreProjectSkills = ["patchy-files", "patchy-loop", "patchy-preact", "patchy-tables"];
 const projectConfig =
   'import { defineConfig, table, t } from "patchy/config";\n\n' +
   'export default defineConfig({ name: "cli-project", tier: 1,\n' +
@@ -370,6 +371,7 @@ const generateProjectResponse = (body: unknown): typeof Generated.Type => {
       contents: JSON.stringify({
         release: CURRENT_RELEASE,
         manifestVersion: MANIFEST_VERSION,
+        capabilities: sdkCapabilities,
         uses,
         skills: [...skills].sort()
       })
@@ -483,15 +485,10 @@ const localPackageRegistry = async () => {
     try {
       return resolver.resolve(`${name}/package.json`);
     } catch {
-      let current = path.dirname(resolver.resolve(name));
-      while (current !== path.dirname(current)) {
-        const candidate = path.join(current, "package.json");
-        if (existsSync(candidate)) {
-          const pkg = readJson(candidate);
-          if (pkg !== null && typeof pkg === "object" && "name" in pkg && pkg.name === name)
-            return candidate;
-        }
-        current = path.dirname(current);
+      // ESM-only tooling may export neither package.json nor a require entry.
+      for (const directory of resolver.resolve.paths(name) ?? []) {
+        const candidate = path.join(directory, name, "package.json");
+        if (existsSync(candidate)) return candidate;
       }
       throw new Error(`The offline CLI fixture needs the real installed package ${name}.`);
     }
@@ -528,9 +525,16 @@ const localPackageRegistry = async () => {
       await pack(optional);
     }
   };
-  for (const name of ["typescript", "vite-plugin-singlefile", "@types/node"])
+  for (const name of [
+    "typescript",
+    "vite-plugin-singlefile",
+    "@types/node",
+    "eslint",
+    "typescript-eslint"
+  ])
     await pack(resolvePackage(name, import.meta.url));
   await pack(resolvePackage("vite", require.resolve("vitest/package.json")));
+  await pack(resolvePackage("eslint-plugin-react-hooks", path.join(packageDir, "package.json")));
   const server = createServer((request, response) => {
     const name = decodeURIComponent((request.url ?? "/").slice(1));
     const archive = [...packages.values()].find(
@@ -3797,6 +3801,106 @@ describe("patch-repo commands", () => {
     expect(readFileSync(path.join(dir, "patchy.config.ts"), "utf8")).toBe(projectConfig);
   });
 
+  it("announces newly available capabilities once without rewriting company source", async () => {
+    const instance = await stubInstance(projectHandler);
+    const dir = publishTree(instance.url);
+    const options = { cwd: dir, env, stateDir: tempDir() };
+    const app = path.join(dir, "src/App.tsx");
+    const source = readFileSync(app, "utf8");
+    const first = await runCli(["refresh", "--json"], options);
+    expect(first, first.stderr).toMatchObject({ status: 0 });
+    expect(JSON.parse(first.stdout).addedCapabilities).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "core.preact",
+          runs: expect.any(String),
+          limits: expect.any(String)
+        })
+      ])
+    );
+    const repeated = await runCli(["refresh", "--json"], options);
+    expect(repeated, repeated.stderr).toMatchObject({ status: 0 });
+    expect(JSON.parse(repeated.stdout).addedCapabilities).toEqual([]);
+    const indexPath = path.join(dir, "patchy/_generated/index.json");
+    const index = JSON.parse(readFileSync(indexPath, "utf8"));
+    index.capabilities = index.capabilities.filter(
+      (entry: { id: string }) => entry.id !== "core.preact"
+    );
+    writeFileSync(indexPath, JSON.stringify(index));
+    const upgrade = await runCli(["refresh", "--json"], options);
+    expect(upgrade, upgrade.stderr).toMatchObject({ status: 0 });
+    expect(JSON.parse(upgrade.stdout).addedCapabilities).toEqual([
+      expect.objectContaining({ id: "core.preact", runs: "Page", limits: expect.any(String) })
+    ]);
+    expect(readFileSync(app, "utf8")).toBe(source);
+  }, 30_000);
+
+  it.each([
+    { command: "publish", source: 'import "lodash";', aliased: false },
+    { command: "dev", source: 'import "lodash";', aliased: false },
+    { command: "publish", source: 'import "lodash";', aliased: true },
+    { command: "publish", source: 'void import("lodash");', aliased: false },
+    { command: "publish", source: 'export { default } from "lodash";', aliased: false },
+    { command: "publish", source: 'import "lodash";', aliased: false, nested: true },
+    { command: "publish", source: 'import "./style.css";', fixture: "css" },
+    { command: "publish", source: 'import "../node_modules/lodash/index.js";', fixture: "package" },
+    { command: "publish", source: 'import "/node_modules/lodash/index.js";', fixture: "package" },
+    {
+      command: "publish",
+      source: 'import {value} from "../server/constants.js"; console.log(value);',
+      fixture: "server"
+    }
+  ])(
+    "$command refuses off-SDK page imports ($source, aliased=$aliased, nested=$nested)",
+    async ({ command, source, aliased, nested, fixture }) => {
+      const instance = await stubInstance(projectHandler);
+      const dir = publishTree(instance.url);
+      const entry = nested ? "src/node_modules/company/refused.ts" : "src/refused.ts";
+      mkdirSync(path.dirname(path.join(dir, entry)), { recursive: true });
+      writeFileSync(
+        path.join(dir, "index.html"),
+        `<!doctype html><html><body><script type="module" src="/${entry}"></script></body></html>`
+      );
+      writeFileSync(path.join(dir, entry), source);
+      if (fixture === "css" || fixture === "package") {
+        const dependency = path.join(dir, "node_modules/lodash");
+        mkdirSync(dependency);
+        writeFileSync(path.join(dependency, "package.json"), '{"name":"lodash","version":"1.0.0"}');
+        writeFileSync(path.join(dependency, "index.js"), 'document.body.textContent="Dependency";');
+        writeFileSync(path.join(dependency, "style.css"), "body { color: red; }");
+        if (fixture === "css")
+          writeFileSync(path.join(dir, "src/style.css"), '@import "lodash/style.css";');
+      }
+      if (fixture === "server") {
+        mkdirSync(path.join(dir, "server"));
+        writeFileSync(path.join(dir, "server/constants.ts"), "export const value = 1;");
+      }
+      if (aliased) {
+        writeFileSync(path.join(dir, "src/local.ts"), "export default 1;");
+        const configPath = path.join(dir, "vite.config.ts");
+        writeFileSync(
+          configPath,
+          readFileSync(configPath, "utf8").replace(
+            "plugins:",
+            `resolve: { alias: { lodash: ${JSON.stringify(path.join(dir, "src/local.ts"))} } }, plugins:`
+          )
+        );
+      }
+      const options = { cwd: dir, env, stateDir: tempDir() };
+      expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
+      const result = await runCli([command, "--json"], options);
+      expect(result).toMatchObject({ status: 1, stdout: "" });
+      const failure = JSON.parse(result.stderr);
+      expect(failure).toMatchObject({ kind: "local", code: "import_refused" });
+      expect(failure.error).toContain(fixture === "server" ? "server" : "lodash");
+      expect(failure.error).toContain(fixture === "css" ? "src/style.css" : entry);
+      expect(failure.error).toContain("patchy/preact");
+      expect(failure.error).toContain("What the SDK gives you");
+      expect(instance.requests.some((request) => request.url === "/api/publish")).toBe(false);
+    },
+    30_000
+  );
+
   it.each([
     {
       name: "an unset NODE_ENV",
@@ -3870,7 +3974,7 @@ export default defineConfig({
       if (envFile !== undefined)
         writeFileSync(path.join(dir, ".env.production"), `NODE_ENV=${envFile}\n`);
       writeFileSync(
-        path.join(dir, "src/main.ts"),
+        path.join(dir, "src/main.tsx"),
         `declare const __BUILDER_NODE_ENV__: string;
 document.body.textContent = JSON.stringify({
   configEnv: __BUILDER_NODE_ENV__,
@@ -4247,7 +4351,8 @@ document.body.textContent = JSON.stringify({
       "package.json",
       "tsconfig.json",
       "vite.config.ts",
-      "src/main.ts",
+      "src/main.tsx",
+      "src/App.tsx",
       "index.html",
       "AGENTS.md",
       "CLAUDE.md"

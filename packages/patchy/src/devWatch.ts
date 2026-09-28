@@ -22,7 +22,7 @@ export const watch = Effect.fn("Dev.watch")(function* (
   yield* Effect.acquireRelease(
     Effect.tryPromise({
       try: async () => {
-        const { result: watcher } = await runToolchain(root, toolchain, {
+        const loaded = await runToolchain(root, toolchain, {
           clearScreen: false,
           build: {
             watch: {},
@@ -46,16 +46,18 @@ export const watch = Effect.fn("Dev.watch")(function* (
             }
           ]
         });
+        const watcher = loaded.result;
         if (!watcher || !("on" in watcher)) throw new Error("Vite did not start a build watcher.");
         watcher.on("event", (event) => {
           if (event.code === "ERROR")
             Queue.offerUnsafe(
               builds,
-              new LocalError({
-                message:
-                  "Vite build failed. Fix the source or vite.config.ts; the last successful bundle stays served.",
-                cause: event.error
-              })
+              loaded.importRefusal?.() ??
+                new LocalError({
+                  message:
+                    "Vite build failed. Fix the source or vite.config.ts; the last successful bundle stays served.",
+                  cause: event.error
+                })
             );
         });
         return watcher;

@@ -77,7 +77,8 @@ patchy init ./team-tool --tier 1 --purpose "The user's purpose for this tool" --
 Use the user's actual purpose and chosen directory. Initialization authenticates
 first; without a key it exits 1 with `Run: patchy login`, not a half-created repo.
 It installs the pinned package and generates client, context, fixture stubs and
-project skills; it refuses a second initialization there. Do not reinstall.
+project skills; tier 1 starts with an empty HTML root and Preact components in
+`src/main.tsx` and `src/App.tsx`. It refuses a second initialization there. Do not reinstall.
 The purpose also initializes `description` in `patchy.json`, at most 500 Unicode
 code points after whitespace normalization. Front-load what the tool does.
 The purpose in `AGENTS.md` is independent; edit `patchy.json` for the published
@@ -85,14 +86,16 @@ description and `patchy.config.ts` for table/store descriptions.
 
 Inside that repo read `AGENTS.md`, `.agents/skills/patchy-loop/SKILL.md` and
 `patchy/_generated/index.json`, then use `pnpm patchy`, the pinned copy.
-The project skills teach tables, files and declarations in Patchy's own terms.
+The project skills teach Preact, tables, files and declarations in Patchy's own terms.
 Use the discovery chain above before adding a dependency.
 `pnpm patchy add postgres/<handle> --as <alias>`
 or `pnpm patchy add shared-table <patchId>/<table> --as <alias>` adds a declaration
 and generates its client, context, fixture stub and skill. `pnpm patchy remove <alias>`
 reverses it while leaving its fixture. `pnpm patchy refresh` updates the pin,
-generated files and present skills transactionally; never manually edit
-`patchy/_generated/` or managed project skills.
+generated files and present skills transactionally, preserving application source.
+Its `addedCapabilities` JSON list names new SDK capabilities, where they run and
+their limits. Read the generated loop skill's catalogue before choosing imports.
+Never manually edit `patchy/_generated/` or managed project skills.
 
 Publish from the repo root with `pnpm patchy publish [--share company|public]`.
 It checks release, declaration stamps, types, the single-file build and tier,
@@ -100,6 +103,8 @@ then publishes and records the patch id and description sync stamp in `patchy.js
 preserving its authoritative instance. On `instance_mismatch`, correct the effective URL
 override to match the stored instance; the refusal names both URLs before any
 HTTP request. Keep the instance binding and patch id intact.
+On local `import_refused`, use the SDK entrypoints in the generated loop skill
+or write or copy the dependency into the patch as your company's own code.
 On `stale_generated`, run `pnpm patchy refresh`; on `invalid_manifest`, fix the
 config and its imports, or the named `patchy.json.description` field. On a build failure, fix the repo rather than publishing
 `dist/index.html` as a static file.
@@ -350,9 +355,11 @@ browser sign-out is a separate control on **Your machines**.
 - Republishing the same local file updates the patch it already created on that instance
   and preserves its sharing scope unless `--share company` or `--share public` is supplied.
   Pass `--new` to force a fresh patch, or `--patch` to update a known patch only.
-- Use `--name quarterly-plan` to set or rename a patch: 3–32 lowercase letters,
-  digits or hyphens, no leading or trailing hyphen. Without it, a new patch derives
-  its name from the filename and adds a suffix on collision; republishing keeps it.
+- In file mode only, use `--name quarterly-plan` to set or rename a patch:
+  3–32 lowercase letters, digits or hyphens, no leading or trailing hyphen.
+  Repo publishing takes its name from `patchy.config.ts` and refuses `--name`.
+  Without the flag, a new file publish derives its name from the filename and
+  adds a suffix on collision; republishing keeps it.
   `name_taken` is a definitive refusal (exit 2): choose another name and retry.
   Renaming leaves a 308 redirect until another patch takes the old name.
   Retire and delete reserve every name until reclamation. Names never select an update target.
@@ -392,7 +399,7 @@ browser sign-out is a separate control on **Your machines**.
   the exit code. Branch on `kind`/exit first, then `code` when present.
   Relay `warnings` even when a later step fails. Repo checks emit local
   `instance_mismatch`, `release_mismatch`, `toolchain_unsupported`, `stale_generated`,
-  `invalid_manifest`, `too_large` and `tier_mismatch` (exit 1).
+  `invalid_manifest`, `import_refused`, `too_large` and `tier_mismatch` (exit 1).
   On `toolchain_unsupported`, run the upgrade command in the error to update the
   builder-owned Vite and single-file plugin, then retry. `refresh` only warns and
   never rewrites those dependencies.

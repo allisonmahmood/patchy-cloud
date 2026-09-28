@@ -92,6 +92,26 @@ _Avoid_: mock backend, emulator, dev env
 The release-bound parts of a patch repo maintained by Patchy's commands rather than its builder: the package pin, generated client and metadata, and project skills. Fixture stubs are managed only until created, and declaration commands own only their targeted config edit.
 _Avoid_: scaffold (these parts continue to be maintained), all project files
 
+**Patchy SDK**:
+The release-versioned code a patch imports from Patchy, grouped Core, Primitives,
+Integrations and Helpers. It is the code Patchy maintains and supports.
+_Avoid_: allowlist, standard library
+
+**Core**:
+The SDK's generated client, contract, UI foundation and shell capabilities.
+The client stays framework-free; the UI foundation is Preact with compat semantics.
+
+**Helper**:
+An optional SDK module for a common pattern, bundled into the patch that imports it.
+CSV is the next planned helper. A helper update reaches stored code after refresh,
+rebuild and publish.
+_Avoid_: utility, plugin, extension
+
+**Company code**:
+Code a builder writes or copies into a patch instead of importing from the SDK.
+The company maintains it; it still obeys the sandbox and bundle limits.
+_Avoid_: vendored package, third-party code
+
 **Managed pin**:
 The exact `patchy` tarball URL maintained by refresh, including its content digest.
 Tier 2 init adds an exact `workerd` pin. The builder owns Vite, the single-file

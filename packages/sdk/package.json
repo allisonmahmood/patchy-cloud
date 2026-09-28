@@ -28,12 +28,12 @@
     "@patchy/content-store": "workspace:*",
     "@patchy/integrations": "workspace:*",
     "@patchy/patches": "workspace:*",
-    "effect": "catalog:"
+    "effect": "catalog:",
+    "patchy": "workspace:*"
   },
   "devDependencies": {
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
-    "patchy": "workspace:*",
     "vitest": "^5.0.1"
   }
 }

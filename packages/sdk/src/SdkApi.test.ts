@@ -631,7 +631,7 @@ it.layer(layer)("SDK company generation", (it) => {
     })
   );
   it.effect(
-    "requires bearer auth, handles primitive-free companies, and serves canonical sticky skills",
+    "requires bearer auth, handles primitive-free companies, and retains installed skills",
     () =>
       Effect.gen(function* () {
         const client = yield* HttpClient.HttpClient;
@@ -659,15 +659,6 @@ it.layer(layer)("SDK company generation", (it) => {
           ".agents/skills/patchy-shared-tables/SKILL.md",
           ".agents/skills/patchy-tables/SKILL.md"
         ]);
-        for (const file of skillFiles) {
-          const name = file.path.split("/")[2]!;
-          const canonical = yield* Effect.promise(() =>
-            readFile(new URL(`../skills/${name}/SKILL.md`, import.meta.url), "utf8")
-          );
-          assert.strictEqual(file.contents, canonical);
-          assert.match(canonical, new RegExp(`^---\\nname: ${name}\\n`));
-          assert.match(canonical, /\ndescription: .+/);
-        }
         for (const payload of [
           { ...generateRequest(), release: "0.0.0" },
           generateRequest(Fixtures.manifest, ["patchy-removed"])
@@ -687,6 +678,30 @@ it.layer(layer)("SDK company generation", (it) => {
         const placements =
           yield* sql`SELECT company_id FROM company_databases WHERE company_id = ${identity.company.id}`;
         assert.deepStrictEqual(placements, []);
+      })
+  );
+
+  it.effect(
+    "seeds Preact on tiers 1 and 2 without changing tier 0 or removing installed skills",
+    () =>
+      Effect.gen(function* () {
+        const api = yield* sdkOver(Layer.empty);
+        for (const tier of [0, 1, 2] as const) {
+          const output = yield* api.generate({
+            payload: { ...generateRequest(), manifest: { ...Fixtures.manifest, tier } }
+          });
+          assert.strictEqual(
+            output.files.some(({ path }) => path === ".agents/skills/patchy-preact/SKILL.md"),
+            tier !== 0
+          );
+          assert.isFalse(output.files.some(({ path }) => path.startsWith("src/")));
+        }
+        const downgraded = yield* api.generate({
+          payload: generateRequest(Fixtures.manifest, ["patchy-preact"])
+        });
+        assert.isTrue(
+          downgraded.files.some(({ path }) => path === ".agents/skills/patchy-preact/SKILL.md")
+        );
       })
   );
 

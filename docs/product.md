@@ -22,6 +22,18 @@ A patch is a **file tree**. A **patch repo** is its local working copy, initiali
 
 Each version has exactly one tier. The CLI checks the tree and bundle; the server checks the manifest and bundle. Tier is about code, not data: a tier 0 repo may define tables and stores or declare dependencies even though its static page cannot call them. Tables and stores are provisioned with the patch; a declared connection must already be connected and a shared table must already be available (see [Primitives](#primitives) and [Integrations](#integrations)).
 
+The **Patchy SDK** is the release-versioned code a patch imports: Core supplies
+the generated client, contract, Preact with compat semantics and shell operations;
+Primitives supply tables and files; Integrations supply company Postgres;
+Helpers are optional reusable modules, with CSV planned next. Everything else
+written or copied into the patch is **company code**, maintained by the company.
+Dev and publish check page imports, not the dependency list in `package.json`.
+An off-SDK import is local `import_refused`, with its importer, allowed entry
+points and the company-code rule. This build contract is not containment.
+Generation lists the current release's capabilities, where they run and their
+limits in "What the SDK gives you" in `patchy-loop`; refresh announces additions
+without rewriting company code.
+
 ### Who makes one, and how it gets in
 
 A person, or an agent acting for them, publishes through the `patchy` CLI. The SDK and local build loop are what `init` puts in the repo today. A hosted AI builder remains a later route: an agent with the same skills and SDK, working on a sandboxed computer Patchy runs instead of the person's own machine, and producing the same unit.
@@ -76,6 +88,15 @@ package, so an agent starts with `pnpm patchy --help` and `pnpm typecheck`, not
 another setup or installation ritual. A second initialization refuses the same
 repo. A company without connections gets the core skills and empty declarations.
 
+Tier 1 starts with `index.html` containing an empty root, `src/main.tsx` and
+`src/App.tsx`. Preact and its compat behavior come through `patchy/preact` on
+the release's bundled instance. TypeScript and Vite use the same JSX import
+source; module preloading is off. The repo includes hooks/import lint and
+`helpers/` for company code, not a router, CSS framework, state library or test
+runner. Vanilla repos keep working through the framework-free generated client.
+Tier 0 is unchanged. Builders talk through edge cases and product behavior with
+the person before building, then typecheck and exercise the dev shell.
+
 `patchy.config.ts` defines what the patch owns and declares what it uses.
 `patchy.json` records the instance, description, optional patch id and description
 sync stamp, never credentials. `init --purpose` writes the initial description
@@ -107,8 +128,8 @@ keyring nor the production runtime log store is loaded.
 
 From the repo root, `patchy publish` recovers any saved attempt first. For a new
 attempt it checks the release, executes config, compares generated declaration
-identities and revision stamps, typechecks, builds one self-contained HTML bundle
-and checks the evident tier. Stale declarations require `patchy refresh` before
+identities and revision stamps, checks page imports while building one self-contained
+HTML bundle, typechecks and checks the evident tier. Stale declarations require `patchy refresh` before
 building; a bundle over 10 MiB names its largest contributors. `server/` is tier 2
 and refused; scripts require at least tier 1. File mode is never a build fallback.
 Tier 0 and tier 1 repos can define tables and stores and declare shared tables
@@ -170,7 +191,7 @@ arbitrary paths outside the managed roots.
 The **global skill** is the door for sign-in, static pages and `init`; inside a repo
 the **project skills** govern. Their sole source is `packages/sdk/skills/`:
 `patchy-loop`, `patchy-tables` and `patchy-files` are core;
-`patchy-postgres` and `patchy-shared-tables` follow declarations. Refresh re-fetches
+`patchy-preact` is added on tiers 1 and 2; `patchy-postgres` and `patchy-shared-tables` follow declarations. Refresh re-fetches
 every present skill and adds implied ones: presence is sticky, and a missing offer
 fails rather than preserving obsolete instructions. Explicit remove may retire a
 declaration skill when no declaration of its kind remains.

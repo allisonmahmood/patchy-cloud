@@ -16,6 +16,7 @@ import {
 import { ConnectionStore, Postgres } from "@patchy/integrations";
 import type { CompanyDatabases } from "@patchy/company-database";
 import { Patches } from "@patchy/patches";
+import { sdkCapabilities, sdkCapabilitiesMarkdown } from "patchy/sdk-capabilities";
 import { generateClient } from "./generateClient.js";
 import { generateServer } from "./generateServer.js";
 
@@ -104,7 +105,7 @@ export class GenerationUnavailable extends Schema.TaggedError<GenerationUnavaila
 }
 
 const coreSkills = ["patchy-loop", "patchy-tables", "patchy-files"];
-const knownSkills = [...coreSkills, "patchy-postgres", "patchy-shared-tables"];
+const knownSkills = [...coreSkills, "patchy-preact", "patchy-postgres", "patchy-shared-tables"];
 const root = "patchy/_generated";
 const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
 const quote = Schema.encodeSync(Schema.fromJsonString(Schema.String));
@@ -169,6 +170,7 @@ export const generate = Effect.fn("Generation.generate")(function* (
   if (request.manifest.manifestVersion !== MANIFEST_VERSION)
     return yield* new UnsupportedManifestVersion({ version: request.manifest.manifestVersion });
   const skills = new Set([...coreSkills, ...request.skills]);
+  if (request.manifest.tier === 1 || request.manifest.tier === 2) skills.add("patchy-preact");
   for (const skill of skills) {
     if (!knownSkills.includes(skill))
       return yield* new UnknownProjectSkill({ skill: skill.slice(0, 128) });
@@ -367,7 +369,12 @@ export const generate = Effect.fn("Generation.generate")(function* (
           (cause) => new GenerationUnavailable({ stage: "release-skill", resource: path, cause })
         )
       );
-    files.set(path, contents);
+    files.set(
+      path,
+      name === "patchy-loop"
+        ? contents.replace("<!-- sdk-capabilities -->", sdkCapabilitiesMarkdown)
+        : contents
+    );
     skillFiles.push({ name, path });
   }
   files.set(
@@ -390,7 +397,7 @@ export const generate = Effect.fn("Generation.generate")(function* (
   }
   files.set(
     `${root}/README.md`,
-    "# Generated Patchy files\n\nDo not edit this directory. Edit patchy.config.ts, then run patchy refresh. Import patchy from ./client.js; index.json lists definitions, declarations, revision stamps, skills and contexts. manifest.json is written locally by the CLI, never by the server.\n\nInstall already ran during patchy init. Test with patchy dev. Fixtures contain synthetic local data only. Deleting .patchy/ destroys local rows and files; it does not delete company data.\n"
+    "# Generated Patchy files\n\nDo not edit this directory. Edit patchy.config.ts, then run patchy refresh. Import patchy from ./client.js; index.json lists definitions, declarations, revision stamps, skills, contexts and release capabilities. manifest.json is written locally by the CLI, never by the server.\n\nInstall already ran during patchy init. Test with patchy dev. Fixtures contain synthetic local data only. Deleting .patchy/ destroys local rows and files; it does not delete company data.\n"
   );
   files.set(
     `${root}/index.json`,
@@ -400,7 +407,8 @@ export const generate = Effect.fn("Generation.generate")(function* (
       ...(request.patchId ? { patchId: request.patchId } : {}),
       declarations,
       uses,
-      skills: skillFiles
+      skills: skillFiles,
+      capabilities: sdkCapabilities
     })
   );
   for (const path of files.keys()) {

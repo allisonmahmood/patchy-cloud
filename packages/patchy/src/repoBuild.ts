@@ -250,16 +250,6 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
         })
     )
   );
-  const typecheck = yield* processResult(cwd, process.execPath, [
-    path.join(cwd, "node_modules/typescript/bin/tsc"),
-    "--noEmit"
-  ]);
-  if (typecheck.code !== 0)
-    return yield* new LocalError({
-      message:
-        "Typecheck failed. Run `pnpm exec tsc --noEmit` and fix the errors before publishing.",
-      cause: typecheck
-    });
   const html = yield* Effect.scoped(
     Effect.gen(function* () {
       const output = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-publish-" });
@@ -286,6 +276,16 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
           })
     )
   );
+  const typecheck = yield* processResult(cwd, process.execPath, [
+    path.join(cwd, "node_modules/typescript/bin/tsc"),
+    "--noEmit"
+  ]);
+  if (typecheck.code !== 0)
+    return yield* new LocalError({
+      message:
+        "Typecheck failed. Run `pnpm exec tsc --noEmit` and fix the errors before publishing.",
+      cause: typecheck
+    });
   yield* validateRepoBundle(cwd, manifest, html);
   return { manifest, html, warnings };
 });

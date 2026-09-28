@@ -74,6 +74,17 @@ const childSchema = Schema.Struct({
   removedSkills: Schema.Array(Schema.String),
   configEdit: Schema.optionalKey(ConfigEdit)
 });
+const capabilitySchema = Schema.Struct({
+  id: Schema.String,
+  group: Schema.String,
+  name: Schema.String,
+  entrypoints: Schema.Array(Schema.String),
+  runs: Schema.String,
+  limits: Schema.String
+});
+const capabilityIndexSchema = Schema.Struct({
+  capabilities: Schema.optionalKey(Schema.Array(capabilitySchema))
+});
 const failureSchema = Schema.Struct({
   ok: Schema.Literal(false),
   error: Schema.String,
@@ -94,6 +105,9 @@ const decodeChange = Schema.decodeUnknownSync(Schema.fromJsonString(changeSchema
 const decodeSkills = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Array(Schema.String)));
 const decodeChild = Schema.decodeUnknownSync(Schema.fromJsonString(childSchema));
 const decodeFailure = Schema.decodeUnknownOption(Schema.fromJsonString(failureSchema));
+const decodeCapabilityIndex = Schema.decodeUnknownSync(
+  Schema.fromJsonString(capabilityIndexSchema)
+);
 const decodeName = Schema.decodeUnknownSync(PatchName);
 const decodeDescription = Schema.decodeUnknownEffect(DescriptionText.check(Schema.isMinLength(1)));
 const isDefinitionName = Schema.is(DefinitionName);
@@ -512,69 +526,103 @@ export const refresh = Effect.fn("Project.refresh")(function* (
   const { warnings: syncWarnings } = yield* syncDescription(cwd, token);
   const tarball = new URL(release.package.tarball, `${instance.apiUrl}/`).href;
   const executable = path.join(cwd, "node_modules/patchy/dist/index.js");
-  const { changed, from, pinChanged, warnings } = yield* Effect.acquireUseRelease(
-    localIO("Begin project transaction", () => ManagedProject.begin(cwd)),
-    (transaction) =>
-      Effect.gen(function* () {
-        const packagePath = yield* localIO("Read package path", () =>
-          safePath(cwd, "package.json")
-        );
-        const source = yield* fs.readFileString(packagePath).pipe(
-          Effect.mapError(
-            (cause) =>
-              new LocalError({
-                message: "Run this command inside a patch repo created with patchy init.",
-                cause
-              })
-          )
-        );
-        const pkg = yield* parse("Read package.json", () => decodePackage(source));
-        const dependencies = yield* parse("Read package devDependencies", () =>
-          decodeDependencies(pkg.devDependencies)
-        );
-        const previousPin = dependencies.patchy;
-        if (!previousPin)
-          return yield* new LocalError({
-            message: "package.json must pin patchy as a devDependency."
-          });
-        const pinChanged = previousPin !== tarball;
-        const from = releaseFromPin(previousPin);
-        const skills = yield* localIO("Read project skills", () => presentSkills(cwd));
-        const needsInstall =
-          pinChanged || !(yield* fs.exists(executable).pipe(Effect.orElseSucceed(() => false)));
-        if (pinChanged) {
-          yield* localIO("Update package pin", () => transaction.setPin(previousPin, tarball)).pipe(
-            Effect.uninterruptible
+  const { changed, from, pinChanged, warnings, addedCapabilities } =
+    yield* Effect.acquireUseRelease(
+      localIO("Begin project transaction", () => ManagedProject.begin(cwd)),
+      (transaction) =>
+        Effect.gen(function* () {
+          const indexPath = yield* localIO("Read capability metadata path", () =>
+            safePath(cwd, "patchy/_generated/index.json")
           );
-        }
-        if (needsInstall) {
-          yield* localIO("Preserve previous installation", () => transaction.prepareInstall()).pipe(
-            Effect.uninterruptible
+          const previousIndex = yield* fs.exists(indexPath).pipe(
+            Effect.flatMap((exists) =>
+              exists ? fs.readFileString(indexPath) : Effect.succeed("{}")
+            ),
+            Effect.mapError(
+              (cause) =>
+                new LocalError({ message: "Could not read the previous SDK capabilities.", cause })
+            )
           );
-          yield* install(cwd);
-        }
-        const result = yield* runInstalledGenerate(cwd, token, release.release, skills, change);
-        const toolchainWarnings = yield* runToolchain(cwd, { inspect: release.toolchain });
-        yield* Output.rememberWarnings(toolchainWarnings);
-        const warnings = [
-          ...syncWarnings,
-          ...toolchainWarnings,
-          ...(yield* primitiveReminders(cwd, result.manifest))
-        ];
-        const changed = yield* localIO("Activate generated files", () =>
-          transaction.activate(
-            result.generated.files,
-            json(result.manifest),
-            result.removedSkills,
-            result.configEdit
-          )
-        ).pipe(Effect.uninterruptible);
-        return { changed, from, pinChanged, warnings };
-      }),
-    (transaction, exit) =>
-      localIO("Restore project transaction", () => transaction.finish(Exit.isSuccess(exit))).pipe(
-        Effect.orDie
-      )
+          const previousCapabilities = yield* parse(
+            "Read previous SDK capabilities",
+            () =>
+              new Set((decodeCapabilityIndex(previousIndex).capabilities ?? []).map(({ id }) => id))
+          );
+          const packagePath = yield* localIO("Read package path", () =>
+            safePath(cwd, "package.json")
+          );
+          const source = yield* fs.readFileString(packagePath).pipe(
+            Effect.mapError(
+              (cause) =>
+                new LocalError({
+                  message: "Run this command inside a patch repo created with patchy init.",
+                  cause
+                })
+            )
+          );
+          const pkg = yield* parse("Read package.json", () => decodePackage(source));
+          const dependencies = yield* parse("Read package devDependencies", () =>
+            decodeDependencies(pkg.devDependencies)
+          );
+          const previousPin = dependencies.patchy;
+          if (!previousPin)
+            return yield* new LocalError({
+              message: "package.json must pin patchy as a devDependency."
+            });
+          const pinChanged = previousPin !== tarball;
+          const from = releaseFromPin(previousPin);
+          const skills = yield* localIO("Read project skills", () => presentSkills(cwd));
+          const needsInstall =
+            pinChanged || !(yield* fs.exists(executable).pipe(Effect.orElseSucceed(() => false)));
+          if (pinChanged) {
+            yield* localIO("Update package pin", () =>
+              transaction.setPin(previousPin, tarball)
+            ).pipe(Effect.uninterruptible);
+          }
+          if (needsInstall) {
+            yield* localIO("Preserve previous installation", () =>
+              transaction.prepareInstall()
+            ).pipe(Effect.uninterruptible);
+            yield* install(cwd);
+          }
+          const result = yield* runInstalledGenerate(cwd, token, release.release, skills, change);
+          const generatedIndex = result.generated.files.find(
+            (file) => file.path === "patchy/_generated/index.json"
+          );
+          const capabilities = yield* parse(
+            "Read generated SDK capabilities",
+            () => decodeCapabilityIndex(generatedIndex?.contents ?? "{}").capabilities
+          );
+          if (capabilities === undefined)
+            return yield* new LocalError({
+              message: "Generation returned no SDK capability metadata."
+            });
+          const addedCapabilities = capabilities.filter(({ id }) => !previousCapabilities.has(id));
+          const toolchainWarnings = yield* runToolchain(cwd, { inspect: release.toolchain });
+          yield* Output.rememberWarnings(toolchainWarnings);
+          const warnings = [
+            ...syncWarnings,
+            ...toolchainWarnings,
+            ...(yield* primitiveReminders(cwd, result.manifest))
+          ];
+          const changed = yield* localIO("Activate generated files", () =>
+            transaction.activate(
+              result.generated.files,
+              json(result.manifest),
+              result.removedSkills,
+              result.configEdit
+            )
+          ).pipe(Effect.uninterruptible);
+          return { changed, from, pinChanged, warnings, addedCapabilities };
+        }),
+      (transaction, exit) =>
+        localIO("Restore project transaction", () => transaction.finish(Exit.isSuccess(exit))).pipe(
+          Effect.orDie
+        )
+    );
+  const capabilityNotices = addedCapabilities.map(
+    (capability) =>
+      `New SDK capability: ${capability.name} (${capability.group}). Entrypoints: ${capability.entrypoints.join(", ")}. Runs: ${capability.runs}. Limits: ${capability.limits}`
   );
   if (change?.kind === "add") {
     yield* Output.report(
@@ -584,27 +632,40 @@ export const refresh = Effect.fn("Project.refresh")(function* (
         declaration: change.declaration,
         generated: changed.generated,
         skills: changed.skills,
+        addedCapabilities,
         warnings
       },
-      [...warnings, `Added ${change.alias}.`, ...changed.generated, ...changed.fixtures]
+      [
+        ...warnings,
+        `Added ${change.alias}.`,
+        ...capabilityNotices,
+        ...changed.generated,
+        ...changed.fixtures
+      ]
     );
   } else if (change?.kind === "remove") {
-    yield* Output.report({ ok: true, alias: change.alias, removed: [change.alias], warnings }, [
-      ...warnings,
-      `Removed ${change.alias} and its generated declaration files. The fixture was left in fixtures/.`
-    ]);
+    yield* Output.report(
+      { ok: true, alias: change.alias, removed: [change.alias], addedCapabilities, warnings },
+      [
+        ...warnings,
+        `Removed ${change.alias} and its generated declaration files. The fixture was left in fixtures/.`,
+        ...capabilityNotices
+      ]
+    );
   } else
     yield* Output.report(
       {
         ok: true,
         release: { from, to: release.release },
         changed: { pin: pinChanged, ...changed },
+        addedCapabilities,
         warnings
       },
       [
         ...warnings,
         `Refreshed ${from} → ${release.release}.`,
         ...(pinChanged ? ["Updated the patchy pin and installed the new release."] : []),
+        ...capabilityNotices,
         ...changed.generated,
         ...changed.skills,
         ...changed.fixtures
