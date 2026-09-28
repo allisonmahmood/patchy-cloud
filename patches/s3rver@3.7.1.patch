@@ -1,7 +1,8 @@
 diff --git a/lib/controllers/bucket.js b/lib/controllers/bucket.js
+index 478486475c2afadc4a2819cd89a08bf554874972..596f1b2f7922a1f7e4528deabcdc16796106e31f 100644
 --- a/lib/controllers/bucket.js
 +++ b/lib/controllers/bucket.js
-@@ -11,13 +11,10 @@
+@@ -11,13 +11,10 @@ const {
  const { utf8BodyParser } = require('../utils');
  
  function generateContinuationToken(bucket, keyName, region) {
@@ -19,7 +20,7 @@ diff --git a/lib/controllers/bucket.js b/lib/controllers/bucket.js
    return Buffer.concat([
      iv,
      cipher.update(`${region}/${bucket}/${keyName}`, 'utf8'),
-@@ -27,11 +24,11 @@
+@@ -27,11 +24,11 @@ function generateContinuationToken(bucket, keyName, region) {
  
  function decipherContinuationToken(token) {
    const buf = Buffer.from(token, 'base64');
@@ -36,3 +37,182 @@ diff --git a/lib/controllers/bucket.js b/lib/controllers/bucket.js
    return Buffer.concat([
      decipher.update(ciphertext),
      decipher.final(),
+diff --git a/lib/controllers/object.js b/lib/controllers/object.js
+index e452c9d82c06c52edffdb36baeb4f08046eb8ef8..c8ec5d47196f43412fee32f2c7c6b00cdd3d9731 100644
+--- a/lib/controllers/object.js
++++ b/lib/controllers/object.js
+@@ -3,7 +3,6 @@
+ const Busboy = require('busboy');
+ const crypto = require('crypto');
+ const xmlParser = require('fast-xml-parser');
+-const he = require('he');
+ const { URL } = require('url');
+ 
+ const { DUMMY_ACCOUNT } = require('../models/account');
+@@ -21,16 +20,14 @@ async function xmlBodyParser(ctx) {
+     req.on('end', () => resolve(payload));
+     req.on('error', reject);
+   });
+-  if (xmlParser.validate(xmlString) !== true) {
++  if (xmlParser.XMLValidator.validate(xmlString) !== true) {
+     throw new S3Error(
+       'MalformedXML',
+       'The XML you provided was not well-formed or did not validate against ' +
+         'our published schema.',
+     );
+   }
+-  ctx.request.body = xmlParser.parse(xmlString, {
+-    tagValueProcessor: a => he.decode(a),
+-  });
++  ctx.request.body = new xmlParser.XMLParser().parse(xmlString);
+ }
+ 
+ function triggerS3Event(ctx, eventData) {
+diff --git a/lib/models/config.js b/lib/models/config.js
+index 5b2937b0af7ff076493174e5fcf690196328f09e..40311d5ac490381b3d386d056d21c89f67dc04c9 100644
+--- a/lib/models/config.js
++++ b/lib/models/config.js
+@@ -2,7 +2,6 @@
+ 
+ const xmlParser = require('fast-xml-parser');
+ const { escapeRegExp } = require('lodash');
+-const he = require('he');
+ 
+ const S3Error = require('./error');
+ const RoutingRule = require('./routing-rule');
+@@ -38,11 +37,10 @@ class S3ConfigBase {
+       throw new Error('Cannot create an instance of an abstract class');
+     }
+     this.type = type;
+-    this.rawConfig = xmlParser.parse(config, {
++    this.rawConfig = new xmlParser.XMLParser({
+       ignoreAttributes: false,
+-      parseNodeValue: true,
+-      tagValueProcessor: he.decode,
+-    });
++      parseTagValue: true,
++    }).parse(config);
+   }
+ 
+   toJSON() {
+@@ -50,18 +48,18 @@ class S3ConfigBase {
+   }
+ 
+   toXML(space) {
+-    const parser = new xmlParser.j2xParser({
++    const parser = new xmlParser.XMLBuilder({
+       ignoreAttributes: false,
+       format: typeof space === 'number',
+       indentBy: ' '.repeat(space),
+     });
+-    return parser.parse(this.rawConfig);
++    return parser.build(this.rawConfig);
+   }
+ }
+ 
+ class S3CorsConfiguration extends S3ConfigBase {
+   static validate(xml) {
+-    if (xmlParser.validate(xml) !== true) {
++    if (xmlParser.XMLValidator.validate(xml) !== true) {
+       throw new S3Error(
+         'MalformedXML',
+         'The XML you provided was not well-formed or did not validate ' +
+@@ -153,7 +151,7 @@ exports.S3CorsConfiguration = S3CorsConfiguration;
+ 
+ class S3WebsiteConfiguration extends S3ConfigBase {
+   static validate(xml) {
+-    if (xmlParser.validate(xml) !== true) {
++    if (xmlParser.XMLValidator.validate(xml) !== true) {
+       throw new S3Error(
+         'MalformedXML',
+         'The XML you provided was not well-formed or did not validate ' +
+@@ -347,7 +345,7 @@ exports.S3WebsiteConfiguration = S3WebsiteConfiguration;
+ 
+ class TaggingConfiguration extends S3ConfigBase {
+   static validate(xml) {
+-    if (xmlParser.validate(xml) !== true) {
++    if (xmlParser.XMLValidator.validate(xml) !== true) {
+       throw new S3Error(
+         'MalformedXML',
+         'The XML you provided was not well-formed or did not validate ' +
+diff --git a/lib/models/error.js b/lib/models/error.js
+index 872c3bf605eb365c3d4426abd0c5cc8cfe82592e..33a1ea8c3c3a00c9672df66ed9854b308c68b9cc 100644
+--- a/lib/models/error.js
++++ b/lib/models/error.js
+@@ -1,7 +1,7 @@
+ 'use strict';
+ 
+ const { mapKeys, omit } = require('lodash');
+-const { j2xParser } = require('fast-xml-parser');
++const { XMLBuilder } = require('fast-xml-parser');
+ const he = require('he');
+ 
+ class S3Error extends Error {
+@@ -32,13 +32,10 @@ class S3Error extends Error {
+   }
+ 
+   toXML() {
+-    const parser = new j2xParser({
+-      tagValueProcessor: a =>
+-        he.encode(a.toString(), { useNamedReferences: true }),
+-    });
++    const parser = new XMLBuilder();
+     return [
+       '<?xml version="1.0" encoding="UTF-8"?>',
+-      parser.parse({
++      parser.build({
+         Error: {
+           Code: this.code,
+           Message: this.message,
+diff --git a/lib/s3rver.js b/lib/s3rver.js
+index b98e84223b144cf65a0b3c92a241dfcae861f24a..8dd75aa5f15f172189f1f7f07034afe2d18bbebe 100644
+--- a/lib/s3rver.js
++++ b/lib/s3rver.js
+@@ -3,7 +3,6 @@
+ const xmlParser = require('fast-xml-parser');
+ const Koa = require('koa');
+ const { defaults, isPlainObject } = require('lodash');
+-const he = require('he');
+ const http = require('http');
+ const https = require('https');
+ const os = require('os');
+@@ -44,17 +43,16 @@ class S3rver extends Koa {
+ 
+     try {
+       // encode object responses as XML
+-      const parser = new xmlParser.j2xParser({
++      const parser = new xmlParser.XMLBuilder({
+         ignoreAttributes: false,
+-        attrNodeName: '@',
+-        tagValueProcessor: a => he.escape(a.toString()),
++        attributesGroupName: '@',
+       });
+       this.use(async (ctx, next) => {
+         await next();
+         if (isPlainObject(ctx.body)) {
+           ctx.type = 'application/xml';
+           ctx.body =
+-            '<?xml version="1.0" encoding="UTF-8"?>\n' + parser.parse(ctx.body);
++            '<?xml version="1.0" encoding="UTF-8"?>\n' + parser.build(ctx.body);
+         }
+       });
+ 
+diff --git a/lib/utils.js b/lib/utils.js
+index ebb29106c83d04f4ae464d99d4c06f26b32dac5f..8e9bedb11c7ea24ff5014f4e4dc843ce41d816c3 100644
+--- a/lib/utils.js
++++ b/lib/utils.js
+@@ -74,9 +74,11 @@ exports.encodeURIComponentRFC3986 = function(string) {
+ };
+ 
+ exports.getXmlRootTag = function(xml) {
+-  const traversal = xmlParser.getTraversalObj(xml.toString());
+-  const [[root]] = Object.values(traversal.child);
+-  return root && root.tagname;
++  const parsed = new xmlParser.XMLParser({
++    ignoreDeclaration: true,
++    ignorePiTags: true,
++  }).parse(xml.toString());
++  return Object.keys(parsed)[0];
+ };
+ 
+ exports.randomBase64String = function(length) {

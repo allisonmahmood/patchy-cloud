@@ -104,7 +104,7 @@ export const contentStoreContract = (
   it.effect("lists nested and partial prefixes with actual modification timestamps", () =>
     Effect.gen(function* () {
       const { store, key, prefix } = yield* testObjects;
-      const first = key("listing/nested/one");
+      const first = key("listing/nested/one & café");
       const second = key("listing/nested/two");
       const other = key("other/three");
       const before = Date.now();

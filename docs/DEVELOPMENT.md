@@ -668,8 +668,9 @@ Each run uses a unique object-key prefix and cleans up its own objects. It does
 not create or delete the bucket or touch objects outside that prefix. The suite
 is never part of `pnpm test` or `pnpm test:all`. Ordinary local development uses
 the filesystem; the offline storage contract runs against both the filesystem
-and an isolated loopback S3 fake. The fake uses a maintained multipart parser
-through a scoped dependency override to avoid the old `busboy`/`dicer` advisory.
+and an isolated loopback S3 fake. Scoped dependency overrides replace the fake's
+old multipart and XML parsers with maintained versions. The `s3rver` patch adapts
+its XML calls and uses AES continuation tokens supported by current Node/OpenSSL.
 
 #### Live Clerk: `pnpm test:clerk`
 
