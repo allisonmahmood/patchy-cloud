@@ -36,8 +36,9 @@ Done means the observed local result, not an ordinary Vite preview or a cloud re
 subcommands accept `--json`. Config and fixture edits require stop/start; code
 builds reload the whole shell at its current route. Reset wipes disposable local
 state and leaves the runtime stopped; the next start fetches the published inventory
-again. Missing fixtures name the file to author. Dev calls are not logged and load
-no keyring/log store.
+again. Missing fixtures name the file to author. Dev calls print compact events
+in the local dev log, without PostHog delivery or a production runtime log store.
+No connection keyring is loaded.
 
 For worktree runtime edits, DEVELOPMENT gives the source-CLI invocation from inside
 the patch repo. For a packed-release check, restart the cloud and follow DEVELOPMENT's

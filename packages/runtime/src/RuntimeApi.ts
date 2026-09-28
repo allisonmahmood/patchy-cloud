@@ -7,6 +7,7 @@ import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import { PatchyApi, RuntimeEnvelope, RuntimeFailure, RuntimeSuccess } from "@patchy/api";
+import * as WideEvents from "@patchy/analytics/wide-events";
 import * as Runtime from "./Runtime.js";
 
 const decodeCall = Schema.decodeUnknownEffect(Schema.fromJsonString(RuntimeEnvelope), {
@@ -49,6 +50,20 @@ export const failure = (error: Runtime.RuntimeError) => {
     }
   );
 };
+
+const recordFailure = Effect.fnUntraced(function* (error: Runtime.RuntimeError) {
+  yield* WideEvents.enrich({
+    outcome:
+      error.code === "unknown_outcome"
+        ? "unknown_outcome"
+        : error.status >= 500
+          ? "failure"
+          : "refused",
+    code: error.code,
+    ...("limitId" in error && error.limitId !== undefined ? { limitId: error.limitId } : {})
+  });
+  return failure(error);
+});
 
 /** Keep the stream finalizer in the request scope, after its refusal response.
  * A stream runner's inner scope would destroy Node's socket before sending 413.
@@ -125,8 +140,15 @@ const readFile = Effect.fn("RuntimeApi.readFile")(function* (maxBytes: number) {
 export const layer = HttpApiBuilder.group(PatchyApi, "runtime", (handlers) =>
   Effect.gen(function* () {
     const runtime = yield* Runtime.Runtime;
+    const events = yield* WideEvents.WideEvents;
     const file = Effect.fn("RuntimeApi.file")(function* (params: Readonly<Record<string, string>>) {
       const request = yield* HttpServerRequest.HttpServerRequest;
+      const operation = request.method === "PUT" ? "files.put" : "files.get";
+      yield* WideEvents.enrich({
+        handler: operation,
+        kind: request.method === "PUT" ? "mutation" : "read"
+      });
+      yield* WideEvents.operation(operation);
       const wire = yield* Runtime.decodeWire(request.headers["x-patchy-wire"]).pipe(
         Effect.mapError((cause) => new Runtime.InvalidRequest({ cause }))
       );
@@ -169,22 +191,25 @@ export const layer = HttpApiBuilder.group(PatchyApi, "runtime", (handlers) =>
     });
     return handlers
       .handleRaw("call", () =>
-        readCall(runtime).pipe(
-          Effect.flatMap(({ input, byteLength }) => runtime.call(input, byteLength)),
-          Effect.flatMap((value) =>
-            encodeSuccess({ ok: true, value }).pipe(
-              Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))
-            )
-          ),
-          Effect.map((body) => HttpServerResponse.jsonUnsafe(body, { headers: noStore })),
-          Effect.catch((error) => Effect.succeed(failure(error)))
+        events.withEvent(
+          { type: "request" },
+          readCall(runtime).pipe(
+            Effect.flatMap(({ input, byteLength }) => runtime.call(input, byteLength)),
+            Effect.flatMap((value) =>
+              encodeSuccess({ ok: true, value }).pipe(
+                Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))
+              )
+            ),
+            Effect.map((body) => HttpServerResponse.jsonUnsafe(body, { headers: noStore })),
+            Effect.catch(recordFailure)
+          )
         )
       )
       .handleRaw("putFile", ({ params }) =>
-        file(params).pipe(Effect.catch((error) => Effect.succeed(failure(error))))
+        events.withEvent({ type: "request" }, file(params).pipe(Effect.catch(recordFailure)))
       )
       .handleRaw("getFile", ({ params }) =>
-        file(params).pipe(Effect.catch((error) => Effect.succeed(failure(error))))
+        events.withEvent({ type: "request" }, file(params).pipe(Effect.catch(recordFailure)))
       );
   })
 );

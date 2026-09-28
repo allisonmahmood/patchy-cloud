@@ -14,6 +14,7 @@ import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { RuntimeGroup, RuntimeFileParams, WIRE_VERSION } from "@patchy/api";
+import * as WideEvents from "@patchy/analytics/wide-events";
 import { Session } from "@patchy/auth";
 import { clerkEnv, PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
 import { Companies, Users } from "@patchy/companies";
@@ -53,7 +54,10 @@ const runtime = Layer.unwrap(
   Effect.map(Files.make, (files) => RuntimeProduction.layer({ me, ...files }))
 ).pipe(Layer.provideMerge(dependencies));
 const apiDefinition = HttpApi.make("patchy").add(RuntimeGroup);
-const apiLayer = RuntimeApi.layer.pipe(Layer.provideMerge(runtime));
+const apiLayer = RuntimeApi.layer.pipe(
+  Layer.provideMerge(runtime),
+  Layer.provide(WideEvents.layerNoop)
+);
 const settings = Layer.mergeAll(
   ConfigProvider.layer(ConfigProvider.fromUnknown(clerkEnv())),
   Layer.succeed(ContractLimits.overrides, { "runtime.file.bytes": 1024 })

@@ -375,9 +375,11 @@ release and full `/api/me` identity, not the current login or a newer release.
 New starts resolve a key, check the pin/CLI/installed runtime release, then
 authenticate `/api/me` and bind the viewer to the machine token's user. They pull
 published inventory if `patchy.json` has an id and regenerate declarations. The production shell,
-CSP, sandbox, broker and runtime admission are reused without Clerk or runtime
-call logging. Tier 0 adds only the trusted local reload script and its polling
-endpoint to its shell CSP. No connection keyring or runtime log store is loaded.
+CSP, sandbox, broker and runtime admission are reused without Clerk or the
+production runtime log store. Each runtime request writes a compact wide event
+to local stdout, captured in the dev log, without PostHog delivery.
+Tier 0 adds only the trusted local reload script and its polling endpoint to its
+shell CSP. No connection keyring is loaded.
 
 Vite runs in build-watch mode, not as an unrestricted dev server. Each complete
 single-file bundle is validated like publish, swapped atomically and followed

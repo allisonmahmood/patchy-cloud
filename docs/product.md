@@ -94,8 +94,9 @@ Reset stops and wipes disposable local state without changing published resource
 the next start fetches the published inventory again.
 Before the first publish every schema change recreates local data. Afterwards,
 the published inventory determines additive changes and refusals, not the last
-local config; compatible additions preserve rows. Dev calls are not logged,
-and neither the connection keyring nor the runtime log store is loaded.
+local config; compatible additions preserve rows. Dev calls print compact wide
+events to the local dev log without PostHog delivery. Neither the connection
+keyring nor the production runtime log store is loaded.
 
 From the repo root, `patchy publish` recovers any saved attempt first. For a new
 attempt it checks the release, executes config, compares generated declaration
@@ -280,6 +281,13 @@ require the exact shell Origin, and file reads require same-origin fetch metadat
 The runtime records table and file mutations and integration calls before execution.
 Default limits include 300 calls per viewer per patch per minute, 32 outstanding
 requests and 64 MiB held per frame; the data-operation limits are below.
+
+Each runtime HTTP call, including file-byte requests and refusals, also emits one
+server-side [wide event](../packages/analytics/CONTEXT.md) with its outcome,
+duration and attributable company, patch, version and viewer ids. Events go to
+stdout and, when configured, PostHog. They are unsampled and best effort, separate
+from the attributed runtime log and billing records. A lost process can lose its
+last events; no request waits for delivery.
 
 The [limits registry](./limits.md) is the source for release contract bounds and
 operating defaults. Contract bounds cannot change through production deployment

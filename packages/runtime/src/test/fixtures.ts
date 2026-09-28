@@ -9,6 +9,7 @@ import * as HttpApiTest from "effect/unstable/httpapi/HttpApiTest";
 import * as HttpServer from "effect/unstable/http/HttpServer";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { CURRENT_RELEASE, RuntimeGroup, WIRE_VERSION } from "@patchy/api";
+import * as WideEvents from "@patchy/analytics/wide-events";
 import { Session } from "@patchy/auth";
 import { clerkEnv, PUBLIC_BASE_URL } from "@patchy/auth/testing";
 import { DEV_SEED } from "@patchy/auth/seed";
@@ -26,6 +27,7 @@ import { me } from "../me.js";
 export const patchId = "runtimepatch";
 export const versionId = "ver_aaaaaaaaaaaaaaaaaaaaaaaa";
 export const publicVersionId = "ver_bbbbbbbbbbbbbbbbbbbbbbbb";
+export const tier1VersionId = "ver_dddddddddddddddddddddddd";
 const manifest = {
   manifestVersion: 1,
   release: CURRENT_RELEASE,
@@ -39,13 +41,14 @@ const manifest = {
 const versions = Layer.succeed(LoadedVersions.LoadedVersions, {
   find: (patch, version = versionId) =>
     Effect.succeed(
-      ![patchId, "secondpatch1"].includes(patch) || ![versionId, publicVersionId].includes(version)
+      ![patchId, "secondpatch1"].includes(patch) ||
+        ![versionId, publicVersionId, tier1VersionId].includes(version)
         ? Option.none()
         : Option.some({
             patchId: patch,
             versionId: version,
             companyId: DEV_SEED.companyId,
-            manifest,
+            manifest: version === tier1VersionId ? { ...manifest, tier: 1 as const } : manifest,
             wireVersion: WIRE_VERSION,
             scope: version === publicVersionId ? ("public" as const) : ("company" as const)
           })
@@ -65,9 +68,11 @@ const seed = Layer.effectDiscard(
 /** Contract bounds are injected explicitly, independently of deployment configuration. */
 export const layer = (
   handlers: Readonly<Record<string, Runtime.Handler>> = { me },
-  limits: Readonly<Partial<Record<ContractLimitId, number>>> = {}
+  limits: Readonly<Partial<Record<ContractLimitId, number>>> = {},
+  events: Layer.Layer<WideEvents.WideEvents> = WideEvents.layerNoop
 ) =>
   Layer.mergeAll(RuntimeApi.layer, HttpServer.layerServices).pipe(
+    Layer.provide(events),
     Layer.provideMerge(RuntimeProduction.layer(handlers)),
     Layer.provideMerge(
       Layer.mergeAll(

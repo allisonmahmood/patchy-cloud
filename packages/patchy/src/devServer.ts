@@ -2,6 +2,7 @@
 import { createServer } from "node:http";
 import { randomBytes } from "node:crypto";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+import * as WideEvents from "@patchy/analytics/wide-events";
 import { RuntimeGroup } from "@patchy/api";
 import type { ReleaseToolchain } from "@patchy/api";
 import { RuntimeDev, RuntimeApi } from "@patchy/runtime/dev";
@@ -171,7 +172,7 @@ export const serve = Effect.fn("Dev.serve")(function* (
     HttpRouter.serve(
       Layer.mergeAll(HttpApiBuilder.layer(api).pipe(Layer.provide(RuntimeApi.layer)), pages, guard),
       { disableLogger: true, disableListenLog: true }
-    ).pipe(Layer.provide(runtime))
+    ).pipe(Layer.provide([runtime, WideEvents.layerDev()]))
   );
   const ready = {
     ...record,

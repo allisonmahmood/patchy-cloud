@@ -4,12 +4,17 @@
   "private": true,
   "license": "UNLICENSED",
   "type": "module",
-  "description": "The analytics event service the emitters report through: a PostHog layer whose finalizer flushes under 3 s, and a no-op layer for tests and unconfigured instances.",
+  "description": "Business analytics and unsampled, Effect-scoped wide events, with stdout and a shared optional PostHog client.",
   "exports": {
     ".": {
       "development": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./wide-events": {
+      "development": "./src/WideEvents.ts",
+      "types": "./dist/WideEvents.d.ts",
+      "import": "./dist/WideEvents.js"
     }
   },
   "files": [

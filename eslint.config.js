@@ -76,7 +76,7 @@ export default tseslint.config(
           patterns: [
             {
               regex:
-                "^@patchy/(?!(api|core|company-database/dev|content-store|integrations/dev|primitives|runtime/core|runtime/dev|limits|serving/shell)$)",
+                "^@patchy/(?!(api|core|analytics/wide-events|company-database/dev|content-store|integrations/dev|primitives|runtime/core|runtime/dev|limits|serving/shell)$)",
               message:
                 "The local runtime may compose only explicit local capability surfaces, never production auth or credential wiring."
             },

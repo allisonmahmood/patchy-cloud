@@ -68,6 +68,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
+    "@patchy/analytics": "workspace:*",
     "@effect/sql-pglite": "catalog:",
     "@patchy/company-database": "workspace:*",
     "@patchy/content-store": "workspace:*",

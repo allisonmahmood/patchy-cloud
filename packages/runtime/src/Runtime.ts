@@ -10,11 +10,13 @@ import {
   runtimeBodyLimit,
   runtimeBodyLimitId,
   WIRE_VERSION,
+  runtimeOperations,
   type RuntimeCode,
   type RuntimeBodyLimitId,
   type RuntimeEnvelope,
   type FileBody
 } from "@patchy/api";
+import * as WideEvents from "@patchy/analytics/wide-events";
 import { newInternalId } from "@patchy/core";
 import { ContractLimits, Limits } from "@patchy/limits";
 import { registry, type LimitScope } from "@patchy/limits/registry";
@@ -362,6 +364,15 @@ export const make = (
     ) =>
       Effect.gen(function* () {
         const operation = Object.hasOwn(handlers, input.op) ? handlers[input.op] : undefined;
+        const kind =
+          operation?.kind ??
+          (Object.hasOwn(runtimeOperations, input.op)
+            ? runtimeOperations[input.op as keyof typeof runtimeOperations].kind
+            : undefined);
+        if (kind !== undefined) {
+          yield* WideEvents.enrich({ handler: input.op, kind });
+          yield* WideEvents.operation(input.op);
+        }
         const integration = operation?.kind === "integration";
         const boundedOp = operation === undefined ? "" : input.op;
         const maxBytes = bodyLimit(boundedOp);
@@ -397,6 +408,12 @@ export const make = (
           .pipe(Effect.mapError((cause) => new SourceUnavailable({ cause })));
         if (Option.isNone(loaded)) return yield* new AccessDenied({});
         const version = loaded.value;
+        yield* WideEvents.enrich({
+          companyId: version.companyId,
+          patchId: version.patchId,
+          versionId: version.versionId,
+          tier: version.manifest.tier
+        });
         if (
           !integration &&
           Exit.isSuccess(requestAdmission) &&
@@ -409,6 +426,7 @@ export const make = (
           if (input.op !== "me") return yield* new PublicUnavailable({});
         } else {
           identity = yield* options.identity;
+          yield* WideEvents.enrich({ viewerId: identity.user.id });
           if (identity.company.id !== version.companyId) return yield* new AccessDenied({});
         }
         const binding = Binding.Binding.of({

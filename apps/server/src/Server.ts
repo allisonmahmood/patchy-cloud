@@ -18,7 +18,7 @@ import * as Schedule from "effect/Schedule";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
-import { Analytics } from "@patchy/analytics";
+import { Analytics, WideEventsPostHog } from "@patchy/analytics";
 import { PatchyApi } from "@patchy/api";
 import {
   AuthApi,
@@ -99,10 +99,7 @@ const migrated = Layer.effectDiscard(
   })
 );
 
-/**
- * The services, over the migrated database. Analytics reports nothing unless
- * a key is configured.
- */
+/** The services over a migrated database, with stdout events and optional PostHog delivery. */
 const services = Layer.mergeAll(
   Artifact.layer,
   Content.layer,
@@ -121,6 +118,7 @@ const services = Layer.mergeAll(
   Layer.provideMerge(
     Layer.mergeAll(
       Analytics.layer,
+      WideEventsPostHog.layer,
       Limits.layer,
       contentStore,
       MachineTokens.layer,

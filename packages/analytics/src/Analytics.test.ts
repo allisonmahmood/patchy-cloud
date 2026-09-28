@@ -91,7 +91,7 @@ it.effect("keeps a failing backend away from the caller", () =>
 it.effect("gives the shutdown flush three seconds and no more", () =>
   Effect.gen(function* () {
     const scope = yield* Scope.make();
-    yield* Layer.buildWithScope(Analytics.layerPostHog.pipe(Layer.provide(hanging)), scope);
+    yield* Layer.buildWithScope(PostHogClient.layerShutdown.pipe(Layer.provide(hanging)), scope);
 
     let closed = false;
     const closing = yield* Effect.forkChild(
@@ -115,18 +115,6 @@ const built = (
     Effect.scoped,
     Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env)))
   );
-
-it.effect("runs the no-op layer when no key is configured", () =>
-  Effect.gen(function* () {
-    const noop = yield* built(Analytics.layerNoop, {});
-    // The no-op layer is a constant, so an unconfigured instance gets that very one.
-    assert.strictEqual(yield* built(Analytics.layer, {}), noop);
-    assert.notStrictEqual(
-      yield* built(Analytics.layer, { PATCHY_POSTHOG_API_KEY: "phc_test" }),
-      noop
-    );
-  })
-);
 
 it.effect("refuses a host that is not an http(s) URL", () =>
   Effect.gen(function* () {
