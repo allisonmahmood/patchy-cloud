@@ -668,9 +668,11 @@ Each run uses a unique object-key prefix and cleans up its own objects. It does
 not create or delete the bucket or touch objects outside that prefix. The suite
 is never part of `pnpm test` or `pnpm test:all`. Ordinary local development uses
 the filesystem; the offline storage contract runs against both the filesystem
-and an isolated loopback S3 fake. Scoped dependency overrides replace the fake's
-old multipart and XML parsers with maintained versions. The `s3rver` patch adapts
-its XML calls and uses AES continuation tokens supported by current Node/OpenSSL.
+and an isolated loopback HTTP fixture backed by a Map. The fixture implements only
+PutObject, GetObject, DeleteObject, and paginated ListObjectsV2, including missing
+keys and XML escaping. Both the contract and fault-injection tests use the real
+S3 client over HTTP. The fixture does not verify signatures or emulate other S3
+features; the live Neon suite verifies provider compatibility.
 
 #### Live Clerk: `pnpm test:clerk`
 

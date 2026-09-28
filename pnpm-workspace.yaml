@@ -37,15 +37,9 @@ overrides:
   "@effect/sql-pglite": "catalog:"
   "@effect/vitest": "catalog:"
   "@effect/language-service": "catalog:"
-  # Keep the S3 fake's constructor/event API without busboy 0.x's vulnerable dicer.
-  "s3rver>busboy": "npm:@fastify/busboy@^3.2.2"
-  # The accompanying S3rver patch uses the maintained XML parser/builder API.
-  "s3rver>fast-xml-parser": "^5.11.1"
 # embedded-postgres's beforeExit hook must preserve Vitest failures, not exit 0.
 patchedDependencies:
   async-exit-hook@2.0.1: patches/async-exit-hook@2.0.1.patch
-  # S3rver needs current-OpenSSL tokens and the maintained XML parser/builder API.
-  s3rver@3.7.1: patches/s3rver@3.7.1.patch
 allowBuilds:
   esbuild: true
   "@embedded-postgres/darwin-arm64": true
