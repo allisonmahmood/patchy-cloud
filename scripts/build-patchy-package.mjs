@@ -29,7 +29,7 @@ const packageJson = JSON.parse(await readFile(path.join(packageDir, "package.jso
 const rootSkillsDir = path.join(repoRoot, "skills");
 const packageSkillsDir = path.join(packageDir, "skills");
 const uiEntries = ["preact", "preact/jsx-runtime", "preact/jsx-dev-runtime"];
-const publicEntries = ["config", "client", "server", "dev", "sdk-capabilities", ...uiEntries];
+const publicEntries = ["config", "client", "server", "dev", ...uiEntries];
 
 const literals = async (file) => {
   const source = ts.createSourceFile(
@@ -102,13 +102,6 @@ await esbuild.build({
   external: ["./executeConfig.js"]
 });
 await esbuild.build({
-  ...common,
-  entryPoints: { "sdk-capabilities": path.join(packageDir, "src/sdkCapabilities.ts") },
-  outdir: distDir,
-  platform: "neutral",
-  target: "es2022"
-});
-await esbuild.build({
   entryPoints: uiEntries.map((name) => path.join(packageDir, `src/${name}.ts`)),
   outdir: distDir,
   outbase: path.join(packageDir, "src"),
@@ -135,10 +128,7 @@ await esbuild.build({
 });
 const declarations = await rollup({
   input: Object.fromEntries(
-    publicEntries.map((name) => [
-      name,
-      path.join(packageDir, `src/${name === "sdk-capabilities" ? "sdkCapabilities" : name}.ts`)
-    ])
+    publicEntries.map((name) => [name, path.join(packageDir, `src/${name}.ts`)])
   ),
   plugins: [
     dts({

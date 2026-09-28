@@ -18,8 +18,8 @@ Keep `jsx: "react-jsx"` and `jsxImportSource: "patchy/preact"` in tsconfig and
 `oxc.jsx.importSource: "patchy/preact"` in Vite. `react-jsx` is the compiler
 setting, not a React dependency.
 
-`src/main.tsx` mounts `src/App.tsx` into the empty HTML root. Import the generated
-client by relative path, for example from `src/App.tsx`:
+In the tier 1 Preact scaffold, `src/main.tsx` mounts `src/App.tsx` into the empty
+HTML root. Import the generated client by relative path, for example from `src/App.tsx`:
 
 ```tsx
 import { useEffect, useState } from "patchy/preact";
@@ -80,6 +80,10 @@ true; page code does not import a debug package. That flag describes the Vite
 build mode. `patchy dev` uses production build-watch, so it is false there.
 It is not a test for local data and must not guard fixture inserts. Use the
 local fixtures and shell workflow in `patchy-loop`.
+
+Run `pnpm typecheck` and the scaffold's `pnpm lint` before exercising the page
+through `pnpm patchy dev`. Lint checks hook usage and supported imports; fix
+failures in source rather than disabling the rules.
 
 Put reusable company code in `helpers/`, outside `server/` handler discovery.
 Page-only helpers may live under `src/`. A helper imported at runtime by a page

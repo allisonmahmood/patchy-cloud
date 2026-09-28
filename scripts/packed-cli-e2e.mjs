@@ -3428,11 +3428,30 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
   throwIfSignalLatched();
   const browser = await checkedCall(() => chromium.connect(tier1BrowserServer.wsEndpoint()));
   const context = await checkedCall(() => browser.newContext());
+  const initialReadHeld = Promise.withResolvers();
+  const releaseInitialRead = Promise.withResolvers();
+  let holdInitialRead = true;
   // Match browser-tier1's offline boundary, without replacing any runtime response.
   await context.route("**/*", async (route) => {
     const hostname = new URL(route.request().url()).hostname;
-    if (hostname === "127.0.0.1" || hostname === "localhost") await route.continue();
-    else await route.abort("blockedbyclient");
+    if (hostname !== "127.0.0.1" && hostname !== "localhost") {
+      await route.abort("blockedbyclient");
+      return;
+    }
+    if (
+      holdInitialRead &&
+      new URL(route.request().url()).pathname === "/api/runtime/call" &&
+      route.request().method() === "POST" &&
+      route.request().postDataJSON().op === "tables.list"
+    ) {
+      holdInitialRead = false;
+      const response = await route.fetch();
+      initialReadHeld.resolve();
+      await releaseInitialRead.promise;
+      await route.fulfill({ response });
+      return;
+    }
+    await route.continue();
   });
   const page = await context.newPage();
   page.setDefaultTimeout(15_000);
@@ -3483,14 +3502,31 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
       return result.value;
     }
   };
+  let inspectInitialLoading = true;
   const openNotes = async (url, published) => {
+    const checkLoading = inspectInitialLoading
+      ? (async () => {
+          await initialReadHeld.promise;
+          try {
+            await expect(notes.getByRole("status")).toHaveText("Loading notes...");
+            await expect(notes.getByRole("textbox", { name: "Title", exact: true })).toBeDisabled();
+            await expect(
+              notes.getByRole("button", { name: "Add note", exact: true })
+            ).toBeDisabled();
+          } finally {
+            releaseInitialRead.resolve();
+          }
+        })()
+      : Promise.resolve();
+    inspectInitialLoading = false;
     const [content, listed, shell] = await checkedCall(() =>
       Promise.all([
         page.waitForResponse((response) =>
           new URL(response.url()).pathname.startsWith("/~content/")
         ),
         readRuntime("tables.list", published),
-        page.goto(url)
+        page.goto(url),
+        checkLoading
       ])
     );
     assert.equal(shell.status(), 200);
@@ -3510,6 +3546,8 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
     );
     await expect(notes.getByRole("heading", { name: "Notes", exact: true })).toBeVisible();
     await expect(notes.locator("#error")).toBeEmpty();
+    await expect(notes.getByRole("status")).toBeEmpty();
+    await expect(notes.getByRole("button", { name: "Add note", exact: true })).toBeEnabled();
     return listed;
   };
   const addNote = async (title, published, keyboard = false) => {

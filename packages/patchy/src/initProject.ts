@@ -65,23 +65,34 @@ import { patchy } from "../patchy/_generated/client.js";
 export function App() {
   const [notes, setNotes] = useState<readonly { id: string; title: string }[]>([]);
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
+    let active = true;
     void patchy.tables.notes.list({ limit: 100 })
-      .then((page) => setNotes(page.rows))
-      .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)));
+      .then((page) => { if (active) setNotes(page.rows); })
+      .catch((cause: unknown) => {
+        if (active) setError(cause instanceof Error ? cause.message : String(cause));
+      })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
   }, []);
 
   function save(form: HTMLFormElement) {
-    if (!form.reportValidity()) return;
+    if (loading || saving || !form.reportValidity()) return;
     const title = String(new FormData(form).get("title") ?? "").trim();
     if (!title) return;
+    setSaving(true);
+    setError("");
     void (async () => {
       await patchy.tables.notes.insert({ title });
       form.reset();
       const page = await patchy.tables.notes.list({ limit: 100 });
       setNotes(page.rows);
-    })().catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)));
+    })()
+      .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)))
+      .finally(() => setSaving(false));
   }
 
   // The sandbox blocks native form submission; save through the broker instead.
@@ -94,9 +105,10 @@ export function App() {
           save(event.currentTarget);
         }
       }}>
-        <label>Title <input name="title" required /></label>
-        <button type="button" onClick={(event) => save(event.currentTarget.form!)}>Add note</button>
+        <label>Title <input name="title" required disabled={loading || saving} /></label>
+        <button type="button" disabled={loading || saving} onClick={(event) => save(event.currentTarget.form!)}>Add note</button>
       </form>
+      <p role="status">{loading ? "Loading notes..." : saving ? "Saving note..." : ""}</p>
       <p id="error" role="alert">{error}</p>
       <ul id="list">{notes.map((note) => <li key={note.id}>{note.title}</li>)}</ul>
     </>
@@ -113,8 +125,8 @@ export default [
     languageOptions: { parser: tseslint.parser },
     plugins: { "react-hooks": reactHooks },
     rules: {
-      "react-hooks/rules-of-hooks": ["error", { additionalHooks: "^useQuery$" }],
-      // useQuery takes a handler and arguments, not an effect dependency array.
+      // useQuery is recognized by its use-prefix; it has no effect dependency array.
+      "react-hooks/rules-of-hooks": "error",
       "react-hooks/exhaustive-deps": "error",
       "no-restricted-imports": ["error", {
         patterns: [{
@@ -163,7 +175,7 @@ export default [
         "vite.config.ts"
       ]
     }),
-    "AGENTS.md": `# Purpose\n\n${purpose}\n\nThe purpose above is independent of the published description in \`patchy.json\`.\n\n# Working here\n\nInstallation already ran. Do not reinstall to start building. Run \`pnpm patchy --help\` for commands; test with \`patchy dev\` (\`pnpm patchy dev\` from this repo).\n\n- \`patchy.json\`: instance, optional patch id, published description and its sync stamp. Edit the description here; cloud edits pull down at refresh, dev start and publish.\n- \`patchy.config.ts\`: owned tables and file stores with their descriptions, and declared connections/shared tables.\n- \`src/\`, \`index.html\`: the page UI. Browser code runs only at tier 1 or above; \`vite.config.ts\` builds one HTML file.\n- \`server/\`: hosted handlers, only when tier 2 is supported and declared. Keep server implementation out of the page; page imports from here must be type-only.\n- \`helpers/\`: company-owned code shared by the page or server. Keep each helper's imports compatible with where it runs.\n- \`fixtures/\`: local rows only, never production data.\n- \`patchy/_generated/index.json\`: generated index linking every declaration, revision, context and skill. Never edit generated files.\n- \`.agents/skills/patchy-loop/SKILL.md\`: the local build loop.\n- \`.agents/skills/patchy-tables/SKILL.md\`: owned tables.\n- \`.agents/skills/patchy-files/SKILL.md\`: owned files.\n- Integration skills appear under \`.agents/skills/patchy-postgres/SKILL.md\` and \`.agents/skills/patchy-shared-tables/SKILL.md\` when declared.\n\nRun \`pnpm patchy refresh\` after editing declarations. Refresh never edits \`src/\` or \`helpers/\`. Deleting \`.patchy/\` destroys local rows and files.\n`,
+    "AGENTS.md": `# Purpose\n\n${purpose}\n\nThe purpose above is independent of the published description in \`patchy.json\`.\n\n# Working here\n\nInstallation already ran. Do not reinstall to start building. Run \`pnpm patchy --help\` for commands; test with \`patchy dev\` (\`pnpm patchy dev\` from this repo).\n\n- \`patchy.json\`: instance, optional patch id, published description and its sync stamp. Edit the description here; cloud edits pull down at refresh, dev start and publish.\n- \`patchy.config.ts\`: owned tables and file stores with their descriptions, and declared connections/shared tables.\n- \`src/\`, \`index.html\`: the page UI. Browser code runs only at tier 1 or above; \`vite.config.ts\` builds one HTML file.\n- \`server/\`: hosted handlers, only when tier 2 is supported and declared. Keep server implementation out of the page; page imports from here must be type-only.\n- \`helpers/\`: company-owned code shared by the page or server. Keep each helper's imports compatible with where it runs.\n- \`fixtures/\`: local rows only, never production data.\n- \`patchy/_generated/index.json\`: generated index linking every declaration, revision, context and skill. Never edit generated files.\n- \`.agents/skills/patchy-loop/SKILL.md\`: the local build loop.\n- On tiers 1 and 2, read \`.agents/skills/patchy-preact/SKILL.md\` before building a Preact page.\n- \`.agents/skills/patchy-tables/SKILL.md\`: owned tables.\n- \`.agents/skills/patchy-files/SKILL.md\`: owned files.\n- Integration skills appear under \`.agents/skills/patchy-postgres/SKILL.md\` and \`.agents/skills/patchy-shared-tables/SKILL.md\` when declared.\n\nRun \`pnpm typecheck\` and, when \`package.json\` declares it, \`pnpm lint\` before publishing. Run \`pnpm patchy refresh\` after editing declarations. Refresh never edits \`src/\` or \`helpers/\`. Deleting \`.patchy/\` destroys local rows and files.\n`,
     "CLAUDE.md": "@AGENTS.md\n",
     ".gitignore": ".patchy/\nnode_modules/\ndist/\n"
   };

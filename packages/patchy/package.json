@@ -31,11 +31,6 @@
     "patchy": "./dist/index.js"
   },
   "exports": {
-    "./sdk-capabilities": {
-      "development": "./src/sdkCapabilities.ts",
-      "types": "./dist/sdk-capabilities.d.ts",
-      "import": "./dist/sdk-capabilities.js"
-    },
     "./config": {
       "types": "./dist/config.d.ts",
       "import": "./dist/config.js"

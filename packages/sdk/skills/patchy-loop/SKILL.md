@@ -10,16 +10,21 @@ description: Build in a Patchy repo, discover company tools and data sources, re
 Talk through edge cases and product behaviour with the person before building.
 
 1. Read `AGENTS.md` for the purpose and layout, then `patchy/_generated/README.md` and `patchy/_generated/index.json` for available skills, declarations, context paths and revision stamps. Initialization already installed dependencies: use the pinned `pnpm patchy` command, not a global copy, and do not reinstall as a setup ritual. `pnpm patchy --help` lists commands in this release.
-2. Read `patchy.config.ts`. It defines owned tables and file stores and declares connections and shared tables in `uses`. Read `../patchy-preact/SKILL.md` for components and hooks, `../patchy-tables/SKILL.md` for rows, `../patchy-files/SKILL.md` for bytes, and the declaration's skill and generated context before using it. Import the generated client by relative path; in `src/App.tsx`, use `import { patchy } from "../patchy/_generated/client.js"`.
-3. Edit source, config and invented fixtures. Run `pnpm patchy refresh` after changing definitions or declarations. The generated index must name every declaration and its context before you use it. Run `pnpm typecheck`; repair source or config, never generated output.
-4. Run `pnpm patchy dev --json`. Open its `url` and exercise an insert and a list through the actual local shell; inspect file and declaration behavior when used. The command returns only when healthy and is idempotent. Code rebuilds reload the whole shell at its current route. After config or fixture changes, stop and start dev again. A standalone Vite preview cannot exercise declared capabilities.
+2. Read `patchy.config.ts` for the tier, owned tables and file stores, and connections and shared tables in `uses`. Choose the page workflow from the tier and existing source:
+   - Tier 0 is static HTML. Edit `index.html`; the page cannot run scripts or call resources. It does not need Preact or `src/App.tsx`.
+   - A tier 1 Preact scaffold starts in `src/App.tsx`, mounted by `src/main.tsx`. Read `../patchy-preact/SKILL.md` before changing components or hooks.
+   - A vanilla tier 1 repo keeps its existing entrypoint and framework-free generated client. Refresh does not convert it to Preact.
+     Read `../patchy-tables/SKILL.md` for rows, `../patchy-files/SKILL.md` for bytes, and each declaration's skill and generated context before using it. In a scripted page, import the generated client by relative path; from `src/App.tsx` or `src/main.ts`, use `import { patchy } from "../patchy/_generated/client.js"`.
+3. Edit source, config and invented fixtures. Run `pnpm patchy refresh` after changing definitions or declarations. The generated index must name every declaration and its context before you use it. Run `pnpm typecheck` and, when `package.json` supplies a lint script, `pnpm lint`; the tier 1 Preact scaffold supplies both. Repair source or config, never generated output.
+4. Run `pnpm patchy dev --json` and open its `url`. For tier 0, inspect the static page. For tier 1, exercise the page's interactions through the actual local shell, including an insert and a list when it uses owned tables; inspect file and declaration behavior when used. The command returns only when healthy and is idempotent. Code rebuilds reload the whole shell at its current route. After config or fixture changes, stop and start dev again. A standalone Vite preview cannot exercise declared capabilities.
 5. When asked to publish, run `pnpm patchy publish` from the repo root. It recovers any saved attempt first; otherwise checks the release, executes config, verifies declaration stamps, typechecks and builds a single HTML bundle. Fix `stale_generated` with `pnpm patchy refresh`, build errors in source, and `not_additive` using the reported object/change/fix. Report the address, scope, tier, version, provisioned and unused resources.
 
 <!-- sdk-capabilities -->
 
 ## Source and import boundaries
 
-`src/` owns the page. Put reusable company code in `helpers/`; page-only helpers
+For scripted pages, `src/` owns the page; tier 0 keeps static HTML in `index.html`.
+Put reusable company code in `helpers/`; page-only helpers
 may stay under `src/`. `server/` is reserved for handler modules when server
 execution is available. Importing a helper at runtime also imports its dependency
 graph: a server import inside a helper leaks into the page. Keep shared helpers
@@ -29,7 +34,7 @@ Dev and publish check the page graph, not `package.json`. An unsupported runtime
 import is local `import_refused`, exit 1; the message names the package, importer
 and allowed entrypoints. Use the catalogue above, or write or copy the code into
 the patch as your company's own code. `patchy/config` is for config execution,
-not page runtime imports. Framework-free pages still use the generated client.
+not page runtime imports. Framework-free tier 1 pages still use the generated client.
 
 ## Description notices
 

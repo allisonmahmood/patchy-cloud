@@ -47,7 +47,7 @@ import { generateServer } from "../../sdk/src/generateServer.js";
 import { generate as generatePostgres } from "../../integrations/src/postgres/Generate.js";
 import { starterFiles } from "./initProject.js";
 import toolchain from "./toolchain.json" with { type: "json" };
-import { sdkCapabilities } from "./sdkCapabilities.js";
+import { sdkCapabilities } from "../../sdk/src/sdkCapabilities.js";
 
 const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const cliPath = path.join(packageDir, "dist/index.js");
@@ -3839,10 +3839,30 @@ describe("patch-repo commands", () => {
     { command: "publish", source: 'import "lodash";', aliased: false },
     { command: "dev", source: 'import "lodash";', aliased: false },
     { command: "publish", source: 'import "lodash";', aliased: true },
+    { command: "publish", source: 'require("lodash");', aliased: true },
+    { command: "publish", source: 'void import.defer("lodash");', aliased: true },
+    {
+      command: "publish",
+      source: 'import value = require("lodash"); console.log(value);',
+      aliased: true
+    },
+    {
+      command: "publish",
+      source: 'import "vite/modulepreload-polyfill";',
+      packageName: "vite"
+    },
+    {
+      command: "publish",
+      source: "vite/modulepreload-polyfill",
+      packageName: "vite",
+      fixture: "html-src"
+    },
     { command: "publish", source: 'void import("lodash");', aliased: false },
     { command: "publish", source: 'export { default } from "lodash";', aliased: false },
     { command: "publish", source: 'import "lodash";', aliased: false, nested: true },
     { command: "publish", source: 'import "./style.css";', fixture: "css" },
+    { command: "publish", source: 'import "./style.css";', fixture: "nested-css" },
+    { command: "dev", source: 'import "./style.css";', fixture: "nested-css" },
     { command: "publish", source: 'import "../node_modules/lodash/index.js";', fixture: "package" },
     { command: "publish", source: 'import "/node_modules/lodash/index.js";', fixture: "package" },
     {
@@ -3852,17 +3872,17 @@ describe("patch-repo commands", () => {
     }
   ])(
     "$command refuses off-SDK page imports ($source, aliased=$aliased, nested=$nested)",
-    async ({ command, source, aliased, nested, fixture }) => {
+    async ({ command, source, aliased, nested, fixture, packageName }) => {
       const instance = await stubInstance(projectHandler);
       const dir = publishTree(instance.url);
       const entry = nested ? "src/node_modules/company/refused.ts" : "src/refused.ts";
       mkdirSync(path.dirname(path.join(dir, entry)), { recursive: true });
       writeFileSync(
         path.join(dir, "index.html"),
-        `<!doctype html><html><body><script type="module" src="/${entry}"></script></body></html>`
+        `<!doctype html><html><body><script type="module" src="${fixture === "html-src" ? source : `/${entry}`}"></script></body></html>`
       );
       writeFileSync(path.join(dir, entry), source);
-      if (fixture === "css" || fixture === "package") {
+      if (fixture === "css" || fixture === "nested-css" || fixture === "package") {
         const dependency = path.join(dir, "node_modules/lodash");
         mkdirSync(dependency);
         writeFileSync(path.join(dependency, "package.json"), '{"name":"lodash","version":"1.0.0"}');
@@ -3870,6 +3890,10 @@ describe("patch-repo commands", () => {
         writeFileSync(path.join(dependency, "style.css"), "body { color: red; }");
         if (fixture === "css")
           writeFileSync(path.join(dir, "src/style.css"), '@import "lodash/style.css";');
+        if (fixture === "nested-css") {
+          writeFileSync(path.join(dir, "src/style.css"), '@import "./nested.css";');
+          writeFileSync(path.join(dir, "src/nested.css"), '@import "lodash/style.css";');
+        }
       }
       if (fixture === "server") {
         mkdirSync(path.join(dir, "server"));
@@ -3892,14 +3916,48 @@ describe("patch-repo commands", () => {
       expect(result).toMatchObject({ status: 1, stdout: "" });
       const failure = JSON.parse(result.stderr);
       expect(failure).toMatchObject({ kind: "local", code: "import_refused" });
-      expect(failure.error).toContain(fixture === "server" ? "server" : "lodash");
-      expect(failure.error).toContain(fixture === "css" ? "src/style.css" : entry);
+      expect(failure.error).toContain(fixture === "server" ? "server" : (packageName ?? "lodash"));
+      const importer =
+        fixture === "css"
+          ? "src/style.css"
+          : fixture === "nested-css"
+            ? "src/nested.css"
+            : fixture === "html-src"
+              ? "index.html"
+              : entry;
+      expect(failure.error).toContain(importer);
       expect(failure.error).toContain("patchy/preact");
       expect(failure.error).toContain("What the SDK gives you");
       expect(instance.requests.some((request) => request.url === "/api/publish")).toBe(false);
     },
     30_000
   );
+
+  it("publishes a vanilla page with default Vite module preloading", async () => {
+    const response = { ...publish(201, "abcdefghijkl", 1), tier: 1 };
+    const instance = await stubInstance((request, respond, disconnect) => {
+      if (request.url === "/api/publish") return respond(201, response);
+      projectHandler(request, respond, disconnect);
+    });
+    const dir = publishTree(instance.url);
+    writeFileSync(
+      path.join(dir, "vite.config.ts"),
+      starterFiles({
+        instance: instance.url,
+        name: "cli-project",
+        tier: 0,
+        purpose: "Synthetic notes",
+        tarball: `${instance.url}${tarballPath}`
+      })["vite.config.ts"]!
+    );
+    writeFileSync(path.join(dir, "src/main.tsx"), 'document.body.textContent = "Vanilla page";');
+    const options = { cwd: dir, env, stateDir: tempDir() };
+    expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
+    const result = await runCli(["publish", "--json"], options);
+    expect(result, result.stderr).toMatchObject({ status: 0, stderr: "" });
+    const request = instance.requests.find((request) => request.url === "/api/publish");
+    expect(decodePublishRequest(request?.body).html).toContain("Vanilla page");
+  }, 30_000);
 
   it.each([
     {

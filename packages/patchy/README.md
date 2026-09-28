@@ -33,10 +33,10 @@ without a login, and a saved login takes precedence over that seed.
 
 ## Config and browser client
 
-Public subpaths are explicit: `patchy/config`, `patchy/dev` and
-`patchy/sdk-capabilities` for tooling, `patchy/client` for the generated browser
-client, `patchy/server` for handler contracts, and `patchy/preact`,
-`patchy/preact/jsx-runtime` and `patchy/preact/jsx-dev-runtime` for pages.
+Public subpaths are explicit: `patchy/config` and `patchy/dev` for tooling,
+`patchy/client` for the generated browser client, `patchy/server` for handler
+contracts, and `patchy/preact`, `patchy/preact/jsx-runtime` and
+`patchy/preact/jsx-dev-runtime` for pages.
 Package exports are not all page entry points.
 
 ### Bundled UI runtime
@@ -59,6 +59,8 @@ matching JSX settings. `pnpm lint` checks hooks, including `useQuery`, and refus
 React or direct Preact imports. No router, CSS framework, state library or test
 runner is installed. Tier 0 is unchanged. Vanilla repos still use the
 framework-free generated client; refresh never replaces application source.
+The starter shows pending reads and saves, ignores an initial read after unmount,
+and prevents writes while the initial read or a save is pending.
 `useQuery(handler, args)` is available over the framework-free subscription
 registry; the hosted stream and query subscriptions land with their runtime tickets.
 
@@ -72,8 +74,10 @@ including one hidden by an alias or removed by tree shaking, is local exit 1,
 then states: "anything else, write or copy into your patch as your company's own
 code". It points to "What the SDK gives you" in `patchy-loop`. The import check
 is a build contract, not a security boundary.
-CSS imports obey the same package rule. Relative or root-absolute paths cannot
-bypass it by naming an installed dependency. Imports from `server/` are type-only.
+CSS imports, including nested stylesheets, obey the same package rule. Relative
+or root-absolute paths cannot bypass it by naming an installed dependency.
+Imports from `server/` are type-only. Vite's injected module-preload helper is
+tooling; importing it directly from page source is still refused.
 
 Contributors can run `pnpm --filter patchy build` followed by
 `pnpm test:packed-preact-e2e`. It installs the real release with pnpm, checks
@@ -948,9 +952,9 @@ A token saved for one instance is never sent to another, and a patch ID cached f
 The package bundles the global skill at `skills/patchy/SKILL.md`: what Patchy is,
 sign-in, safe static-file publishing and the `patchy init` door for building a
 tool. Inside a patch repo, its project skills govern. The instance generates
-those from `packages/sdk`: core loop/tables/files skills at init, with Postgres
-and shared-table skills added by declarations. Refresh them through the CLI,
-not by editing the generated copies.
+those from `packages/sdk`: core loop/tables/files skills at init, Preact guidance
+on tiers 1 and 2, and Postgres and shared-table skills added by declarations.
+Refresh them through the CLI, not by editing the generated copies.
 
 ## Security
 

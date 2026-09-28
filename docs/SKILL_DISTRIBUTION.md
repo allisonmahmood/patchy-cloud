@@ -60,10 +60,11 @@ The CLI writes them under `.agents/skills/patchy-*/` in the patch repo and lists
 their paths in `patchy/_generated/index.json`. `AGENTS.md` points agents at those
 skills and the index; `CLAUDE.md` imports `AGENTS.md`.
 
-`packages/patchy/src/sdkCapabilities.ts`, exported as `patchy/sdk-capabilities`,
-owns the release capability catalogue. Generation renders its Core, Primitives,
-Integrations and Helpers groups into `patchy-loop` at the `sdk-capabilities`
-marker and writes the same available entries to `index.json.capabilities`.
+`packages/sdk/src/sdkCapabilities.ts` owns the release capability catalogue.
+Generation renders its Core, Primitives, Integrations and Helpers groups into
+`patchy-loop` at the `sdk-capabilities` marker and writes the same available
+entries to `index.json.capabilities`. A missing marker fails generation instead
+of serving a loop skill without its catalogue.
 Unavailable features are stated separately and do not produce announcements.
 The catalogue records shipped APIs and their actual runtime boundaries; a
 reserved import or a typed contract does not imply hosted execution.

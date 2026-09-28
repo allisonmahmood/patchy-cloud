@@ -35,6 +35,8 @@ import { ContentStore, FilesystemContentStore } from "@patchy/content-store";
 import { ConnectionStoreDev } from "@patchy/integrations/dev";
 import * as Tables from "../../primitives/src/Tables.js";
 import * as Fixtures from "../../patches/src/test/fixtures.js";
+import { registry } from "../../limits/src/registry.js";
+import type { SdkCapability } from "./sdkCapabilities.js";
 import * as Generation from "./Generation.js";
 import * as CompanyDatabases from "../../company-database/src/CompanyDatabases.js";
 import * as Artifact from "./Artifact.js";
@@ -703,6 +705,86 @@ it.layer(layer)("SDK company generation", (it) => {
           downgraded.files.some(({ path }) => path === ".agents/skills/patchy-preact/SKILL.md")
         );
       })
+  );
+
+  it.effect("renders capability runtime limits consistently with the generated catalogue", () =>
+    Effect.gen(function* () {
+      const api = yield* sdkOver(Layer.empty);
+      const output = yield* api.generate({
+        payload: generateRequest({ ...Fixtures.manifest, tier: 1 })
+      });
+      const loop = output.files.find(
+        ({ path }) => path === ".agents/skills/patchy-loop/SKILL.md"
+      )!.contents;
+      const index = JSON.parse(
+        output.files.find(({ path }) => path === "patchy/_generated/index.json")!.contents
+      ) as { capabilities: SdkCapability[] };
+      for (const capability of index.capabilities) {
+        const rendered = loop.split("\n").find((line) => line.startsWith(`- ${capability.name}.`));
+        assert.isDefined(rendered, capability.id);
+        for (const entrypoint of capability.entrypoints) assert.include(rendered!, entrypoint);
+        assert.include(rendered!, capability.runs);
+        assert.include(rendered!, capability.limits);
+      }
+      for (const [id, expectedBytes] of [
+        [
+          "primitives.tables",
+          [registry["runtime.row.bytes"].default, registry["runtime.batch.bytes"].default]
+        ],
+        ["primitives.files", [registry["runtime.file.bytes"].default]],
+        ["integrations.postgres", [registry["runtime.result.bytes"].default]]
+      ] as const) {
+        const capability = index.capabilities.find((entry) => entry.id === id)!;
+        assert.deepStrictEqual(
+          [...capability.limits.matchAll(/(\d+) MiB/g)].map(
+            (match) => Number(match[1]) * 1024 * 1024
+          ),
+          expectedBytes,
+          id
+        );
+      }
+      assert.isFalse(
+        index.capabilities.some(({ entrypoints }) => entrypoints.includes("patchy/csv"))
+      );
+      const subscriptions = index.capabilities.find(({ id }) => id === "core.query-adapter")!;
+      assert.include(subscriptions.limits, "server_required");
+    })
+  );
+
+  it.effect("fails generation when the loop template loses its capability marker", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const dependencies = Layer.succeed(FileSystem.FileSystem, {
+        ...fs,
+        readFileString: (path, encoding) =>
+          fs
+            .readFileString(path, encoding)
+            .pipe(
+              Effect.map((contents) =>
+                path.endsWith("/patchy-loop/SKILL.md")
+                  ? contents.replace("<!-- sdk-capabilities -->", "")
+                  : contents
+              )
+            )
+      });
+      const error = yield* Generation.generate(identity.company.id, generateRequest()).pipe(
+        Effect.provide(dependencies),
+        Effect.flip
+      );
+      assert.instanceOf(error, Generation.GenerationUnavailable);
+      if (error._tag === "GenerationUnavailable") {
+        assert.strictEqual(error.stage, "release-skill-template");
+        assert.strictEqual(error.resource, ".agents/skills/patchy-loop/SKILL.md");
+      }
+      const api = yield* sdkOver(dependencies);
+      const response = yield* api.generate({
+        payload: generateRequest(),
+        responseMode: "response-only"
+      });
+      assert.strictEqual(response.status, 503);
+      assert.include(yield* response.json, { ok: false, code: "source_unavailable" });
+      assert.include(yield* response.text, ".agents/skills/patchy-loop/SKILL.md");
+    })
   );
 
   it.effect(

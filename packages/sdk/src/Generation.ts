@@ -16,7 +16,7 @@ import {
 import { ConnectionStore, Postgres } from "@patchy/integrations";
 import type { CompanyDatabases } from "@patchy/company-database";
 import { Patches } from "@patchy/patches";
-import { sdkCapabilities, sdkCapabilitiesMarkdown } from "patchy/sdk-capabilities";
+import { sdkCapabilities, sdkCapabilitiesMarkdown } from "./sdkCapabilities.js";
 import { generateClient } from "./generateClient.js";
 import { generateServer } from "./generateServer.js";
 
@@ -93,10 +93,11 @@ export class GenerationUnavailable extends Schema.TaggedError<GenerationUnavaila
       "connection-list",
       "connection-snapshot",
       "shared-table",
-      "release-skill"
+      "release-skill",
+      "release-skill-template"
     ]),
     resource: Schema.String.check(Schema.isMaxLength(256)),
-    cause: Schema.Defect()
+    cause: Schema.optional(Schema.Defect())
   }
 ) {
   override get message() {
@@ -369,6 +370,8 @@ export const generate = Effect.fn("Generation.generate")(function* (
           (cause) => new GenerationUnavailable({ stage: "release-skill", resource: path, cause })
         )
       );
+    if (name === "patchy-loop" && !contents.includes("<!-- sdk-capabilities -->"))
+      return yield* new GenerationUnavailable({ stage: "release-skill-template", resource: path });
     files.set(
       path,
       name === "patchy-loop"
