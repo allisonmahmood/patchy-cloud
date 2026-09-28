@@ -13,6 +13,7 @@ import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import { Analytics } from "@patchy/analytics";
 import { randomToken, sha256 } from "@patchy/core";
 import { Limits } from "@patchy/limits";
+import { registry } from "@patchy/limits/registry";
 import * as MachineTokens from "./MachineTokens.js";
 
 const CODE_ALPHABET = "BCDFGHJKLMNPQRSTVWXZ";
@@ -221,7 +222,7 @@ export const make = Effect.gen(function* () {
   const consumeLookup = Effect.fn("DeviceLogins.consumeLookup")(function* (userId: string) {
     const limit = yield* limits.consume({
       key: `device-login-lookup:${userId}`,
-      limit: 10,
+      limit: registry["rate.deviceLookup.perMinute"].default,
       window: "1 minute"
     });
     if (!limit.allowed) {
@@ -299,8 +300,8 @@ export const make = Effect.gen(function* () {
         }
         const limit = yield* limits.consume({
           key: `device-login-poll:${hash}`,
-          limit: 1,
-          window: "5 seconds"
+          limit: registry["rate.devicePoll.attempts"].default,
+          window: registry["rate.devicePoll.window"].default
         });
         if (!limit.allowed) return { reply: { status: "slow_down" } };
         if (row.state === "pending") return { reply: { status: "pending" } };

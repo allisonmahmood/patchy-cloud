@@ -11,6 +11,7 @@ import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import { registry } from "./registry.js";
 
 export interface ConsumeOptions {
   /**
@@ -40,7 +41,7 @@ export interface ConsumeResult {
  * slot, so a flood of fresh addresses can exhaust memory no faster than it
  * can wait out a window.
  */
-export const MAX_TRACKED_KEYS = 10_000;
+export const MAX_TRACKED_KEYS = registry["rate.trackedKeys"].default;
 
 export class Limits extends Context.Service<
   Limits,

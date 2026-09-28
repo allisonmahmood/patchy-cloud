@@ -1,4 +1,5 @@
 import type { PostgresDeclaration, PostgresParameter } from "@patchy/api";
+import { registry } from "@patchy/limits/registry";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -36,7 +37,7 @@ export class Timeout extends Schema.TaggedError<Timeout>()("PostgresTimeout", {
   readonly code = "timeout";
   readonly status = 504;
   override get message() {
-    return `The database call exceeded its ${this.milliseconds ?? 15_000} ms deadline.`;
+    return `The database call exceeded its ${this.milliseconds ?? registry["integration.deadline"].default} ms deadline.`;
   }
 }
 export class TooLarge extends Schema.TaggedError<TooLarge>()("PostgresTooLarge", {
@@ -109,9 +110,9 @@ export const specLimits: Limits = {
   maxBackends: 64,
   idleMs: 60_000,
   statementMs: 10_000,
-  deadlineMs: 15_000,
+  deadlineMs: registry["integration.deadline"].default,
   maxRows: 1_000,
-  maxBytes: 8 * 1024 * 1024
+  maxBytes: registry["runtime.result.bytes"].default
 };
 
 /** One leased backend. A refused row stops execution without retaining the remaining rows. */

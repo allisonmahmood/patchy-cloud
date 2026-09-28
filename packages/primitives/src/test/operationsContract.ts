@@ -18,6 +18,7 @@ import {
   WIRE_VERSION
 } from "@patchy/api";
 import { CompanyDatabases } from "@patchy/company-database";
+import { ContractLimits } from "@patchy/limits";
 import { Binding, LoadedVersions } from "@patchy/runtime";
 import * as Tables from "../Tables.js";
 import * as TableOperations from "../TableOperations.js";
@@ -444,12 +445,12 @@ export const sharedOperationsContract = Effect.fn("test.sharedOperationsContract
   }
   const bounded = yield* TableOperations.make.pipe(
     Effect.provideService(LoadedVersions.LoadedVersions, versions),
+    Effect.provideService(ContractLimits.overrides, { "runtime.result.bytes": 32 }),
     Effect.provide(
       ConfigProvider.layer(
         ConfigProvider.fromUnknown({
           PATCHY_TABLE_MAX_ITEMS: "2",
-          PATCHY_TABLE_MAX_PAGE: "2",
-          PATCHY_RUNTIME_RESULT_BYTES: "32"
+          PATCHY_TABLE_MAX_PAGE: "2"
         })
       )
     )
@@ -646,12 +647,14 @@ export const sharedOperationsContract = Effect.fn("test.sharedOperationsContract
 export const boundsContract = Effect.fn("test.boundsContract")(function* (companyId: string) {
   const { binding } = yield* setup(companyId, "bounds000001");
   const handlers = yield* TableOperations.make.pipe(
+    Effect.provideService(ContractLimits.overrides, {
+      "runtime.row.bytes": 512,
+      "runtime.batch.bytes": 1100,
+      "runtime.result.bytes": 600
+    }),
     Effect.provide(
       ConfigProvider.layer(
         ConfigProvider.fromUnknown({
-          PATCHY_RUNTIME_ROW_BYTES: "512",
-          PATCHY_RUNTIME_BATCH_BYTES: "1100",
-          PATCHY_RUNTIME_RESULT_BYTES: "600",
           PATCHY_TABLE_MAX_ITEMS: "2",
           PATCHY_TABLE_MAX_PAGE: "2",
           PATCHY_TABLE_DEFAULT_PAGE: "1"
@@ -783,15 +786,11 @@ export const expandedResultsContract = Effect.fn("test.expandedResultsContract")
   };
   const { binding } = yield* setup(companyId, "expanded0001", definition);
   const handlers = yield* TableOperations.make.pipe(
-    Effect.provide(
-      ConfigProvider.layer(
-        ConfigProvider.fromUnknown({
-          PATCHY_RUNTIME_ROW_BYTES: "2048",
-          PATCHY_RUNTIME_BATCH_BYTES: "1024",
-          PATCHY_RUNTIME_RESULT_BYTES: "1800"
-        })
-      )
-    )
+    Effect.provideService(ContractLimits.overrides, {
+      "runtime.row.bytes": 2048,
+      "runtime.batch.bytes": 1024,
+      "runtime.result.bytes": 1800
+    })
   );
   const call = (op: keyof typeof handlers, args: unknown) =>
     handlers[op].run(args).pipe(Effect.provideService(Binding.Binding, binding));

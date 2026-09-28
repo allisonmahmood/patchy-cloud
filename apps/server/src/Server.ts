@@ -49,6 +49,7 @@ import {
   migrations as integrationsMigrations
 } from "@patchy/integrations";
 import { Limits } from "@patchy/limits";
+import { migrations as limitsMigrations } from "@patchy/limits/migrations";
 import {
   Content,
   LoadedVersions,
@@ -93,7 +94,8 @@ const migrated = Layer.effectDiscard(
     ...companyDatabaseMigrations,
     ...runtimeMigrations,
     ...integrationsMigrations,
-    ...patchesMigrations
+    ...patchesMigrations,
+    ...limitsMigrations
   })
 );
 

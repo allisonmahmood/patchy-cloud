@@ -109,7 +109,7 @@ export class Busy extends Schema.TaggedError<Busy>()("TableBusy", {
   }
 }
 
-export const config = Config.all({
+export const config = Effect.all({
   rowBytes: Runtime.byteLimits.rowBytes,
   batchBytes: Runtime.byteLimits.batchBytes,
   resultBytes: Runtime.byteLimits.resultBytes,

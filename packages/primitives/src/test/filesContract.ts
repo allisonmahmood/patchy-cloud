@@ -14,6 +14,7 @@ import * as Stream from "effect/Stream";
 import { CURRENT_RELEASE, FilePage, Manifest, WIRE_VERSION } from "@patchy/api";
 import { CompanyDatabases } from "@patchy/company-database";
 import { ContentStore, FilesystemContentStore } from "@patchy/content-store";
+import { ContractLimits } from "@patchy/limits";
 import { Binding } from "@patchy/runtime";
 import * as Files from "../Files.js";
 import * as Tables from "../Tables.js";
@@ -130,9 +131,7 @@ const metadataCapContract = Effect.fn("test.filesContract.metadataCap")(function
   const { put, binding } = yield* setup(companyId, "filelistcaps");
   yield* put("one", new Uint8Array([1]), "text/plain; note=" + "x".repeat(256));
   const handlers = yield* Files.make.pipe(
-    Effect.provide(
-      ConfigProvider.layer(ConfigProvider.fromUnknown({ PATCHY_RUNTIME_RESULT_BYTES: "128" }))
-    )
+    Effect.provideService(ContractLimits.overrides, { "runtime.result.bytes": 128 })
   );
   const failure = yield* handlers["files.list"]
     .run({ store: "docs" })
@@ -266,10 +265,10 @@ const namesAndDeletionContract = Effect.fn("test.filesContract.namesAndDeletion"
   }
   yield* put("é".repeat(256), new Uint8Array([0]));
   const bounded = yield* Files.make.pipe(
+    Effect.provideService(ContractLimits.overrides, { "runtime.file.bytes": 2 }),
     Effect.provide(
       ConfigProvider.layer(
         ConfigProvider.fromUnknown({
-          PATCHY_RUNTIME_FILE_BYTES: "2",
           PATCHY_FILE_DEFAULT_PAGE: "1",
           PATCHY_FILE_MAX_PAGE: "2"
         })

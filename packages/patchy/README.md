@@ -125,6 +125,9 @@ document-bound port; patch frames must not fetch the runtime directly. HTTP and
 port transport constructors remain internal, not public client exports. All
 runtime failures use `PatchyError` and `isPatchyError(error, code)`; a lost reply
 is `unknown_outcome`, never an automatic replay.
+Limit refusals may also carry `scope`, `limitId`, `value` and `retryAfter`.
+`value` is the enforced bound from the [limits registry](../../docs/limits.md);
+`retryAfter` is a delay in seconds and appears only when retrying is safe.
 
 On a company patch, every viewer who can open it can read and write all its own
 tables and files; there are no row rules or separate write scopes. Shared tables

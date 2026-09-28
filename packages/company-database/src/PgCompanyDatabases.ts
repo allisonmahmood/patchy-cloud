@@ -14,6 +14,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import { newInternalId } from "@patchy/core";
 import * as Sql from "@patchy/sql";
+import { registry } from "@patchy/limits/registry";
 import * as CompanyDatabases from "./CompanyDatabases.js";
 import * as Inventory from "./Inventory.js";
 
@@ -61,7 +62,7 @@ export const config = Config.all({
   maxBackends: Config.schema(
     Schema.Int.check(Schema.isGreaterThanOrEqualTo(4)),
     "PATCHY_COMPANY_DB_MAX_BACKENDS"
-  ).pipe(Config.withDefault(200)),
+  ).pipe(Config.withDefault(registry["company.connections.hostBackends"].default)),
   capacity: Config.succeed(100)
 });
 

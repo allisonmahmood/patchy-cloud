@@ -50,7 +50,7 @@ export class Busy extends Schema.TaggedError<Busy>()("FileBusy", {
   }
 }
 
-export const config = Config.all({
+export const config = Effect.all({
   fileBytes: Runtime.byteLimits.fileBytes,
   resultBytes: Runtime.byteLimits.resultBytes,
   defaultPage: Config.Int("PATCHY_FILE_DEFAULT_PAGE").pipe(Config.withDefault(100)),

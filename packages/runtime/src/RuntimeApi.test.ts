@@ -291,7 +291,13 @@ it.layer(Fixtures.layer())("runtime HTTP admission", (it) => {
           responseMode: "response-only"
         });
         assert.strictEqual(response.status, 429);
-        assert.include(yield* response.json, { code: "rate_limited" });
+        assert.include(yield* response.json, {
+          code: "rate_limited",
+          scope: "viewer",
+          limitId: "runtime.calls.perMinute",
+          value: 3,
+          retryAfter: Number(response.headers["retry-after"])
+        });
         assert.notProperty(yield* response.json, "correlationId");
         assert.isAbove(Number(response.headers["retry-after"]), 0);
       })

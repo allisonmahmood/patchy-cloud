@@ -281,6 +281,13 @@ The runtime records table and file mutations and integration calls before execut
 Default limits include 300 calls per viewer per patch per minute, 32 outstanding
 requests and 64 MiB held per frame; the data-operation limits are below.
 
+The [limits registry](./limits.md) is the source for release contract bounds and
+operating defaults. Contract bounds cannot change through production deployment
+configuration. Controller code can set and remove company operating overrides,
+with the actor, effective values and configuration revision kept in history.
+The registry includes the decided tier 2 bounds; their enforcers land with the
+features below.
+
 Tier 1 runs only while the viewer has the patch open. It cannot run background work or server-side patch code, but its writes persist: a saved photo or table row remains available to other admitted viewers after the browser closes.
 
 ### Tier 2 — hosted

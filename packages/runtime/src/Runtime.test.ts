@@ -443,7 +443,7 @@ it.effect("times out a mutation at its configured deadline and logs the deadline
                 }).pipe(Effect.ensuring(Deferred.succeed(released, undefined)))
             }
           },
-          { PATCHY_RUNTIME_MUTATION_DEADLINE_MS: "5000" }
+          { "runtime.mutation.deadline": 5000 }
         )
       )
     );
@@ -539,10 +539,10 @@ it.effect("a single-row cap above the batch and postgres caps still admits the r
       Fixtures.layer(
         { me, "tables.insert": { kind: "mutation", run: () => Effect.succeed(null) } },
         {
-          PATCHY_RUNTIME_ROW_BYTES: "2048",
-          PATCHY_RUNTIME_BATCH_BYTES: "512",
-          PATCHY_RUNTIME_CALL_BYTES: "512",
-          PATCHY_RUNTIME_POSTGRES_BYTES: "512"
+          "runtime.row.bytes": 2048,
+          "runtime.batch.bytes": 512,
+          "runtime.call.bytes": 512,
+          "runtime.postgres.bytes": 512
         }
       )
     )
@@ -595,7 +595,7 @@ it.effect("a logged integration refusal preserves Retry-After with its correlati
         me,
         "postgres.query": {
           kind: "integration",
-          run: () => new Runtime.RateLimited({ retryAfterSeconds: 12 })
+          run: () => new Runtime.RateLimited({ retryAfterSeconds: 12, value: 3 })
         }
       })
     )

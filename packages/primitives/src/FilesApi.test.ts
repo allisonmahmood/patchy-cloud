@@ -18,7 +18,7 @@ import { Session } from "@patchy/auth";
 import { clerkEnv, PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
 import { Companies, Users } from "@patchy/companies";
 import { ContentStore } from "@patchy/content-store";
-import { Limits } from "@patchy/limits";
+import { ContractLimits, Limits } from "@patchy/limits";
 import { LoadedVersions, RuntimeProduction, RuntimeApi, RuntimeLog, me } from "@patchy/runtime";
 import * as Files from "./Files.js";
 import { companyId, manifest, services, setup, versionId } from "./test/files.js";
@@ -54,11 +54,9 @@ const runtime = Layer.unwrap(
 ).pipe(Layer.provideMerge(dependencies));
 const apiDefinition = HttpApi.make("patchy").add(RuntimeGroup);
 const apiLayer = RuntimeApi.layer.pipe(Layer.provideMerge(runtime));
-const settings = ConfigProvider.layer(
-  ConfigProvider.fromUnknown({
-    ...clerkEnv(),
-    PATCHY_RUNTIME_FILE_BYTES: "1024"
-  })
+const settings = Layer.mergeAll(
+  ConfigProvider.layer(ConfigProvider.fromUnknown(clerkEnv())),
+  Layer.succeed(ContractLimits.overrides, { "runtime.file.bytes": 1024 })
 );
 const socket = HttpRouter.serve(HttpApiBuilder.layer(apiDefinition).pipe(Layer.provide(apiLayer)), {
   disableLogger: true,

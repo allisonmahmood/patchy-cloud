@@ -527,7 +527,11 @@ const runtimeAdmission =
   "(`session_expired`), a viewer who can open the patch (`access_denied`), and a principal " +
   "matching that session's user (`principal_changed`); only `me` may bootstrap with null. " +
   "Wire compatibility is checked before dispatch (`shell_outdated`). Per-viewer per-patch calls " +
-  "are limited to 300 per minute by default; `rate_limited` is 429 with `Retry-After` seconds. " +
+  "are limited to 300 per minute by the release contract; `rate_limited` is 429 with `Retry-After` seconds. " +
+  "Registered limit refusals add `scope`, `limitId` and `value` (the enforced bound). " +
+  "`retryAfter` is in seconds and is included only when retrying is safe, never for timeouts " +
+  "or unknown outcomes. The runtime rate and frame refusals carry these fields; other existing " +
+  "refusals may omit them. Contract bounds are fixed per release, as listed in `docs/limits.md`. " +
   "Responses, including failures, are `Cache-Control: no-store`. ";
 const runtimeFileContract =
   "The trailing `*` is the file name, not an object URL. Encode the full name with " +
@@ -537,7 +541,7 @@ const runtimeFileContract =
   "`store` is a camelCase manifest-defined file store. Patch ids are twelve lowercase letters " +
   "or digits; version ids are `ver_` followed by 24 lowercase letters or digits. The loaded " +
   "manifest, never a client-supplied name, is the authority. Raw byte bodies are not JSON or " +
-  "base64; the byte limit is 20 MiB (`PATCHY_RUNTIME_FILE_BYTES`), enforced against actual streamed " +
+  "base64; the byte limit is 20 MiB (`runtime.file.bytes`), enforced against actual streamed " +
   "bytes. Invalid names, undeclared stores and missing files answer `invalid_request`. Each PUT " +
   "writes a fresh immutable object and changes the index only after the byte write succeeds. " +
   "Files belong to the patch and store, never a version; rollback and version cleanup preserve them. ";
@@ -613,15 +617,15 @@ export class RuntimeGroup extends HttpApiGroup.make("runtime", { topLevel: true 
           "including parameters, and other calls 64 KiB. Overflow is `too_large` (413). Undeclared tables answer `table_not_declared`; " +
           "invalid fields/defaults answer `invalid_row`, uniqueness conflicts `unique_violation`, " +
           "and invalid pagination `invalid_cursor`. Unknown operations answer `invalid_request`. " +
-          "Failures are `{ ok: false, error, code, details?, correlationId? }`; every table mutation is " +
+          "Failures are `{ ok: false, error, code, details?, correlationId?, scope?, limitId?, value?, retryAfter? }`; every table mutation is " +
           "logged before execution and logged failures carry their runtime-log correlation id. " +
-          "Table and file mutations have a 30-second deadline (`PATCHY_RUNTIME_MUTATION_DEADLINE_MS`), " +
+          "Table and file mutations have a 30-second deadline (`runtime.mutation.deadline`), " +
           "the same one their log records; past it the call fails `timeout` (504). " +
           "Table and file reads are not logged. `files.list { store, prefix?, limit?, cursor? }` " +
           "returns `{ files: [{ name, size, contentType, updatedAt }], cursor }`, ordered by name " +
           "with a literal prefix and a keyset cursor bound to patch, store and prefix. Pages default " +
           "to 100, capped at 1,000 (`PATCHY_FILE_DEFAULT_PAGE`, `PATCHY_FILE_MAX_PAGE`), with an " +
-          "8 MiB result cap (`PATCHY_RUNTIME_RESULT_BYTES`), including the cursor. " +
+          "8 MiB result cap (`runtime.result.bytes`), including the cursor. " +
           "`files.delete { store, name }` removes only the index row and returns null idempotently. " +
           "File mutations log store/name as their resource. `files.put` and `files.get` require the " +
           "raw bytes routes; they are refused on this JSON route, never serialized as JSON/base64."

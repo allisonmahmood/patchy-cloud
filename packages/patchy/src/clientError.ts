@@ -47,13 +47,19 @@ export type ErrorDetails<C extends ErrorCode> = C extends "invalid_query"
 
 export class PatchyError<C extends ErrorCode = ErrorCode> extends Error {
   override readonly name = "PatchyError";
+  readonly scope?: "viewer" | "patch" | "company" | "host";
+  readonly limitId?: string;
+  readonly value?: number;
+  readonly retryAfter?: number;
   constructor(
     readonly code: C,
     message: string,
     readonly details: ErrorDetails<C>,
-    readonly correlationId?: string
+    readonly correlationId?: string,
+    limit?: Pick<PatchyError, "scope" | "limitId" | "value" | "retryAfter">
   ) {
     super(message);
+    Object.assign(this, limit);
   }
 }
 export type Errors<C extends ErrorCode> = { [K in C]: PatchyError<K> }[C];
@@ -79,7 +85,24 @@ export function decodeError(value: unknown): PatchyError | undefined {
     record.code as ErrorCode,
     message,
     details,
-    typeof record.correlationId === "string" ? record.correlationId : undefined
+    typeof record.correlationId === "string" ? record.correlationId : undefined,
+    {
+      ...(record.scope === "viewer" ||
+      record.scope === "patch" ||
+      record.scope === "company" ||
+      record.scope === "host"
+        ? { scope: record.scope }
+        : {}),
+      ...(typeof record.limitId === "string" ? { limitId: record.limitId } : {}),
+      ...(typeof record.value === "number" && Number.isFinite(record.value)
+        ? { value: record.value }
+        : {}),
+      ...(typeof record.retryAfter === "number" &&
+      Number.isFinite(record.retryAfter) &&
+      record.retryAfter >= 0
+        ? { retryAfter: record.retryAfter }
+        : {})
+    }
   );
 }
 

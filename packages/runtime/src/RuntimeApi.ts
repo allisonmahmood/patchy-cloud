@@ -6,7 +6,13 @@ import * as Stream from "effect/Stream";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
-import { PatchyApi, RuntimeEnvelope, RuntimeFailure, RuntimeSuccess } from "@patchy/api";
+import {
+  PatchyApi,
+  RuntimeEnvelope,
+  RuntimeFailure,
+  RuntimeSuccess,
+  limitRefusal
+} from "@patchy/api";
 import * as Runtime from "./Runtime.js";
 
 const decodeCall = Schema.decodeUnknownEffect(Schema.fromJsonString(RuntimeEnvelope), {
@@ -14,6 +20,7 @@ const decodeCall = Schema.decodeUnknownEffect(Schema.fromJsonString(RuntimeEnvel
 });
 const encodeSuccess = Schema.encodeUnknownEffect(RuntimeSuccess);
 const encodeFailure = Schema.encodeSync(RuntimeFailure);
+const isRateLimited = Schema.is(Runtime.RateLimited);
 const noStore = { "cache-control": "no-store" };
 
 export const failure = (error: Runtime.RuntimeError) =>
@@ -22,6 +29,9 @@ export const failure = (error: Runtime.RuntimeError) =>
       ok: false,
       code: error.code,
       error: error.message,
+      ...(isRateLimited(error)
+        ? limitRefusal("runtime.calls.perMinute", error.value, error.retryAfterSeconds)
+        : {}),
       ...("details" in error && error.details !== undefined ? { details: error.details } : {}),
       ...(error.correlationId === undefined ? {} : { correlationId: error.correlationId })
     }),

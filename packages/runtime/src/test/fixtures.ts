@@ -13,7 +13,8 @@ import { Session } from "@patchy/auth";
 import { clerkEnv, PUBLIC_BASE_URL } from "@patchy/auth/testing";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { Companies, Users } from "@patchy/companies";
-import { Limits } from "@patchy/limits";
+import { ContractLimits, Limits } from "@patchy/limits";
+import type { ContractLimitId } from "@patchy/limits/registry";
 import * as Testing from "@patchy/sql/testing";
 import * as LoadedVersions from "../LoadedVersions.js";
 import * as Runtime from "../Runtime.js";
@@ -61,10 +62,10 @@ const seed = Layer.effectDiscard(
   })
 );
 
-/** `config` overrides runtime settings, such as byte limits, on top of the test defaults. */
+/** Contract bounds are injected explicitly, independently of deployment configuration. */
 export const layer = (
   handlers: Readonly<Record<string, Runtime.Handler>> = { me },
-  config: Readonly<Record<string, string>> = {}
+  limits: Readonly<Partial<Record<ContractLimitId, number>>> = {}
 ) =>
   Layer.mergeAll(RuntimeApi.layer, HttpServer.layerServices).pipe(
     Layer.provideMerge(RuntimeProduction.layer(handlers)),
@@ -80,14 +81,9 @@ export const layer = (
     ),
     Layer.provideMerge(seed.pipe(Layer.provideMerge(Testing.layer()))),
     Layer.provide(
-      ConfigProvider.layer(
-        ConfigProvider.fromUnknown({
-          ...clerkEnv(),
-          PATCHY_RUNTIME_CALLS_PER_MINUTE: "3",
-          ...config
-        })
-      )
-    )
+      Layer.succeed(ContractLimits.overrides, { "runtime.calls.perMinute": 3, ...limits })
+    ),
+    Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(clerkEnv())))
   );
 
 // Only the outgoing encoder is permissive, so tests can send hostile bodies.

@@ -7,16 +7,16 @@ import {
   runtimeOperations,
   runtimeBodyLimit,
   runtimeByteLimits,
+  limitRefusal,
   WIRE_VERSION
 } from "@patchy/api";
 import type { RuntimeCode, RuntimeMe, RuntimePrincipal } from "@patchy/api";
 import * as Schema from "effect/Schema";
+import { registry } from "@patchy/limits/registry";
 
-const KiB = 1024;
-const MiB = 1024 * KiB;
-const MAX_HELD = 64 * MiB;
+const MAX_HELD = registry["frame.heldBytes"].default;
 const MAX_FILE = runtimeByteLimits.fileBytes;
-const MAX_PENDING = 32;
+const MAX_PENDING = registry["frame.outstanding"].default;
 // The broker refuses unknown fields on its own inputs; the parser option is the only place that holds.
 const decodeRequest = Schema.decodeUnknownSync(RuntimeRequest, { onExcessProperty: "error" });
 const decodeFailure = Schema.decodeUnknownSync(RuntimeFailure);
@@ -26,19 +26,27 @@ const decodeRoute = Schema.decodeUnknownSync(routeArguments, { onExcessProperty:
 const decoder = new TextDecoder();
 type Operation = keyof typeof runtimeOperations;
 type Reply = { value: unknown; bytes?: ArrayBuffer; heldBytes: number };
+type LimitMetadata = Pick<RuntimeFailure, "scope" | "limitId" | "value" | "retryAfter">;
 class Refusal extends Error {
   constructor(
     readonly code: RuntimeCode,
     message: string,
     readonly details?: Readonly<Record<string, unknown>>,
-    readonly correlationId?: string
+    readonly correlationId?: string,
+    readonly limit?: LimitMetadata
   ) {
     super(message);
   }
 }
 const invalid = () => new Refusal("invalid_request", "The broker request is malformed.");
-const tooLarge = (maxBytes: number) =>
-  new Refusal("too_large", `The operation exceeds ${maxBytes} bytes.`, { maxBytes });
+const tooLarge = (maxBytes: number, limit?: LimitMetadata) =>
+  new Refusal(
+    "too_large",
+    `The operation exceeds ${maxBytes} bytes.`,
+    { maxBytes },
+    undefined,
+    limit
+  );
 const lost = () =>
   new Refusal(
     "unknown_outcome",
@@ -150,7 +158,7 @@ function mount(frame: HTMLIFrameElement): void {
   let identity: Promise<RuntimeMe> | undefined;
   let principal: RuntimePrincipal = null;
   const reserve = (size: number) => {
-    if (size > MAX_HELD - held) throw tooLarge(MAX_HELD);
+    if (size > MAX_HELD - held) throw tooLarge(MAX_HELD, limitRefusal("frame.heldBytes"));
     held += size;
   };
   const release = (size: number) => {
@@ -204,6 +212,7 @@ function mount(frame: HTMLIFrameElement): void {
       error: {
         code: error.code,
         message: error.message,
+        ...error.limit,
         ...(error.details === undefined ? {} : { details: error.details }),
         ...(error.correlationId === undefined ? {} : { correlationId: error.correlationId })
       }
@@ -332,7 +341,13 @@ function mount(frame: HTMLIFrameElement): void {
       }
       if (result && typeof result === "object" && "ok" in result && result.ok === false) {
         const error = decodeFailure(result);
-        throw new Refusal(error.code, error.error, error.details, error.correlationId);
+        const { scope, limitId, value, retryAfter } = error;
+        throw new Refusal(error.code, error.error, error.details, error.correlationId, {
+          ...(scope === undefined ? {} : { scope }),
+          ...(limitId === undefined ? {} : { limitId }),
+          ...(value === undefined ? {} : { value }),
+          ...(retryAfter === undefined ? {} : { retryAfter })
+        });
       }
       if (
         !response.ok ||
@@ -417,7 +432,10 @@ function mount(frame: HTMLIFrameElement): void {
       if (pending.size >= MAX_PENDING)
         throw new Refusal(
           "too_many_requests",
-          `At most ${MAX_PENDING} requests may be outstanding.`
+          `At most ${MAX_PENDING} requests may be outstanding.`,
+          undefined,
+          undefined,
+          limitRefusal("frame.outstanding")
         );
       const payload = message.bytes;
       if (op === "files.put" ? !(payload instanceof ArrayBuffer) : payload !== undefined)

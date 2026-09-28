@@ -1,5 +1,4 @@
 import * as Cause from "effect/Cause";
-import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -9,14 +8,13 @@ import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import {
   RuntimePrincipal,
   runtimeBodyLimit,
-  runtimeByteLimits,
   WIRE_VERSION,
   type RuntimeCode,
   type RuntimeEnvelope,
   type FileBody
 } from "@patchy/api";
 import { newInternalId } from "@patchy/core";
-import { Limits } from "@patchy/limits";
+import { ContractLimits, Limits } from "@patchy/limits";
 import * as Binding from "./Binding.js";
 import * as LoadedVersions from "./LoadedVersions.js";
 
@@ -104,7 +102,8 @@ export class Timeout extends Schema.TaggedError<Timeout>()("Timeout", {
 }
 export class RateLimited extends Schema.TaggedError<RateLimited>()("RateLimited", {
   ...diagnostics,
-  retryAfterSeconds: Schema.Int
+  retryAfterSeconds: Schema.Int,
+  value: Schema.Int
 }) {
   readonly code = "rate_limited" as const;
   readonly status = 429;
@@ -226,37 +225,21 @@ export const handler = <
 };
 
 export const byteLimits = {
-  rowBytes: Config.Int("PATCHY_RUNTIME_ROW_BYTES").pipe(
-    Config.withDefault(runtimeByteLimits.rowBytes)
-  ),
-  batchBytes: Config.Int("PATCHY_RUNTIME_BATCH_BYTES").pipe(
-    Config.withDefault(runtimeByteLimits.batchBytes)
-  ),
-  resultBytes: Config.Int("PATCHY_RUNTIME_RESULT_BYTES").pipe(
-    Config.withDefault(runtimeByteLimits.resultBytes)
-  ),
-  fileBytes: Config.Int("PATCHY_RUNTIME_FILE_BYTES").pipe(
-    Config.withDefault(runtimeByteLimits.fileBytes)
-  )
+  rowBytes: ContractLimits.get("runtime.row.bytes"),
+  batchBytes: ContractLimits.get("runtime.batch.bytes"),
+  resultBytes: ContractLimits.get("runtime.result.bytes"),
+  fileBytes: ContractLimits.get("runtime.file.bytes")
 };
 
-export const config = Config.all({
-  callsPerMinute: Config.Int("PATCHY_RUNTIME_CALLS_PER_MINUTE").pipe(Config.withDefault(300)),
-  callBytes: Config.Int("PATCHY_RUNTIME_CALL_BYTES").pipe(
-    Config.withDefault(runtimeByteLimits.callBytes)
-  ),
+export const config = Effect.all({
+  callsPerMinute: ContractLimits.get("runtime.calls.perMinute"),
+  callBytes: ContractLimits.get("runtime.call.bytes"),
   rowBytes: byteLimits.rowBytes,
   batchBytes: byteLimits.batchBytes,
-  postgresBytes: Config.Int("PATCHY_RUNTIME_POSTGRES_BYTES").pipe(
-    Config.withDefault(runtimeByteLimits.postgresBytes)
-  ),
+  postgresBytes: ContractLimits.get("runtime.postgres.bytes"),
   fileBytes: byteLimits.fileBytes,
-  mutationDeadlineMs: Config.Int("PATCHY_RUNTIME_MUTATION_DEADLINE_MS").pipe(
-    Config.withDefault(30_000)
-  ),
-  integrationDeadlineMs: Config.Int("PATCHY_RUNTIME_INTEGRATION_DEADLINE_MS").pipe(
-    Config.withDefault(15_000)
-  )
+  mutationDeadlineMs: ContractLimits.get("runtime.mutation.deadline"),
+  integrationDeadlineMs: ContractLimits.get("integration.deadline")
 });
 
 const decodePrincipal = Schema.decodeUnknownEffect(Schema.fromJsonString(RuntimePrincipal), {
@@ -319,7 +302,7 @@ type Dependencies = LoadedVersions.LoadedVersions | Limits.Limits;
 export const make = (
   handlers: Readonly<Record<string, Handler>>,
   options: Options
-): Effect.Effect<Runtime["Service"], Config.ConfigError, Dependencies> =>
+): Effect.Effect<Runtime["Service"], never, Dependencies> =>
   Effect.gen(function* () {
     const versions = yield* LoadedVersions.LoadedVersions;
     const limits = yield* Limits.Limits;
@@ -418,7 +401,10 @@ export const make = (
             window: "1 minute"
           });
           if (!attempt.allowed)
-            return yield* new RateLimited({ retryAfterSeconds: attempt.retryAfterSeconds });
+            return yield* new RateLimited({
+              retryAfterSeconds: attempt.retryAfterSeconds,
+              value: settings.callsPerMinute
+            });
         });
         // For integrations, log the attempt before admission or input decoding can
         // refuse it. Attribution comes only from the live viewer and loaded version.
@@ -485,7 +471,7 @@ export const make = (
             : Effect.fail(new InvalidRequest({}))
         ),
       bodyLimit,
-      // Must cover every runtimeBodyLimit branch: the limits are configured independently.
+      // Cover every runtimeBodyLimit branch, including explicitly injected test bounds.
       maxCallBytes: Math.max(
         settings.rowBytes + settings.callBytes,
         settings.batchBytes + settings.callBytes,

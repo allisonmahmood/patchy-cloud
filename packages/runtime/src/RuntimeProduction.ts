@@ -1,6 +1,5 @@
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
-import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -20,7 +19,7 @@ type Dependencies =
 
 export const make = (
   handlers: Readonly<Record<string, Runtime.Handler>>
-): Effect.Effect<Runtime.Runtime["Service"], Config.ConfigError, Dependencies> =>
+): Effect.Effect<Runtime.Runtime["Service"], never, Dependencies> =>
   Effect.gen(function* () {
     const log = yield* RuntimeLog.RuntimeLog;
     const session = yield* Session.Session;
@@ -97,5 +96,5 @@ export const make = (
 
 export const layer = (
   handlers: Readonly<Record<string, Runtime.Handler>>
-): Layer.Layer<Runtime.Runtime, Config.ConfigError, Dependencies> =>
+): Layer.Layer<Runtime.Runtime, never, Dependencies> =>
   Layer.effect(Runtime.Runtime, make(handlers));

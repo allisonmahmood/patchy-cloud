@@ -4,12 +4,27 @@
   "private": true,
   "license": "UNLICENSED",
   "type": "module",
-  "description": "The fixed-window rate limiter as an Effect service: per-minute limits keyed by address or token, in memory, failing closed at 10k tracked keys.",
+  "description": "The limits registry, fixed-window rate limiter, operating deployment configuration and company overrides with history.",
   "exports": {
     ".": {
       "development": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./registry": {
+      "development": "./src/registry.ts",
+      "types": "./dist/registry.d.ts",
+      "import": "./dist/registry.js"
+    },
+    "./migrations": {
+      "development": "./src/migrations.ts",
+      "types": "./dist/migrations.d.ts",
+      "import": "./dist/migrations.js"
+    },
+    "./render": {
+      "development": "./src/render.ts",
+      "types": "./dist/render.d.ts",
+      "import": "./dist/render.js"
     }
   },
   "files": [
@@ -17,10 +32,12 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "render-docs": "node --import tsx --conditions=development scripts/render-limits-md.ts",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@patchy/sql": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {

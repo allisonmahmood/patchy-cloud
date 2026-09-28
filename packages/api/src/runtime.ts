@@ -1,17 +1,19 @@
 /** The browser runtime wire; operation schemas are shared by the shell and server. */
 import * as Schema from "effect/Schema";
 import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
+import { registry } from "@patchy/limits/registry";
 import { DefinitionName, Identity, IsoTimestamp, PatchId, PostgresText } from "./schemas.js";
 import { postgresOperations } from "./postgres.js";
+import { limitRefusalFields } from "./limits.js";
 
-/** Byte defaults shared by the browser broker and configurable server runtime. */
+/** Release contract shared by the browser broker and server runtime. */
 export const runtimeByteLimits = {
-  callBytes: 64 * 1024,
-  rowBytes: 1024 * 1024,
-  batchBytes: 8 * 1024 * 1024,
-  postgresBytes: 256 * 1024,
-  resultBytes: 8 * 1024 * 1024,
-  fileBytes: 20 * 1024 * 1024
+  callBytes: registry["runtime.call.bytes"].default,
+  rowBytes: registry["runtime.row.bytes"].default,
+  batchBytes: registry["runtime.batch.bytes"].default,
+  postgresBytes: registry["runtime.postgres.bytes"].default,
+  resultBytes: registry["runtime.result.bytes"].default,
+  fileBytes: registry["runtime.file.bytes"].default
 } as const;
 
 export function runtimeBodyLimit(
@@ -312,6 +314,7 @@ export const RuntimeFailure = Schema.Struct({
   ok: Schema.Literal(false),
   error: Schema.String,
   code: RuntimeCode,
+  ...limitRefusalFields,
   details: Schema.optionalKey(Schema.Record(Schema.String, Schema.Json)),
   correlationId: Schema.optionalKey(NonEmptyText)
 }).annotate({ identifier: "RuntimeFailure" });

@@ -77,7 +77,7 @@ A Turborepo monorepo managed with pnpm. [AGENTS.md](AGENTS.md) is the guide to w
 - `packages/primitives` — additive table/store provisioning, schema revisions, bounded owned-table operations, read-only shared-table operations and immutable file operations over Postgres and PGlite (`@patchy/primitives`).
 - `packages/integrations`: company connection pages, encrypted credentials, Postgres discovery and immutable snapshots, the member-readable `connections` API group, constrained reads, generated relation clients, fixtures and publish declaration resolution (`@patchy/integrations`).
 - `packages/content-store` — the object store for a patch's bytes, with filesystem and Azure Blob layers (`@patchy/content-store`).
-- `packages/sql`, `packages/analytics`, `packages/limits` — the Postgres client and Migrator, the event service, the rate limiter.
+- `packages/sql`, `packages/analytics`, `packages/limits` — the Postgres client and Migrator, the event service, and the limits registry, company overrides and rate limiter.
 - `packages/company-database` — company placements, lazy Postgres databases, bounded pools, transactional patch locks, cumulative inventory and the PGlite development layer.
 - `skills/patchy` — the global agent skill for sign-in, safe static publishing, reading patches and starting a patch repo; project skills come from `packages/sdk`.
 - `examples/plan.html` — a Patchy-styled starter patch.

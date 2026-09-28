@@ -6,6 +6,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { inject } from "vitest";
 import { layerFromUrl } from "@patchy/sql";
 import * as Testing from "@patchy/sql/testing";
+import { registry } from "@patchy/limits/registry";
 import * as CompanyDatabases from "./CompanyDatabases.js";
 import * as Inventory from "./Inventory.js";
 import * as PgCompanyDatabases from "./PgCompanyDatabases.js";
@@ -39,7 +40,7 @@ export const layer = (options?: {
       const settings = Layer.succeed(PgCompanyDatabases.CompanyDatabaseConfig, {
         adminUrl: url,
         dataUrl: url,
-        maxBackends: options?.maxBackends ?? 200,
+        maxBackends: options?.maxBackends ?? registry["company.connections.hostBackends"].default,
         capacity: options?.capacity ?? 100
       });
       return Layer.mergeAll(
