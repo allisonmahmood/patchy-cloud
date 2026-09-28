@@ -27,6 +27,7 @@ const noStore = { "cache-control": "no-store" };
 export const failure = (error: Runtime.RuntimeError) => {
   const retryAfter =
     (error.code === "rate_limited" ||
+      error.code === "limit_exceeded" ||
       error.code === "too_many_requests" ||
       error.code === "busy") &&
     "retryAfterSeconds" in error

@@ -8,9 +8,17 @@ The platform `company_databases` row is the authority: company id, server id, da
 
 Provisioning is explicit: callers use `claim`/`ensureReady` only when introducing resources. `withCompany` leases an already-ready placement; an absent or claimed placement returns `CompanyDatabaseNotReady` without inserting a claim or creating a database.
 
-Creation runs outside any transaction through `PATCHY_COMPANY_DB_ADMIN_URL`, a maintenance-database login with `CREATEDB` and permission to `SET ROLE` to the data role. `CREATE DATABASE ... OWNER` establishes ownership immediately from `template1`; the data owner then applies settings, permissions and inventory initialization. The provisioning login needs no inherited data access. `PATCHY_COMPANY_DB_URL` supplies the data role and server connection options; the placement replaces its database name. Both URLs are validated as redacted PostgreSQL URLs at startup, with an explicit login; the last `user` query value overrides the authority when nonempty, matching the client. Do not give the ordinary data login cluster administration privileges; the embedded development superuser is a disposable-local exception.
+Creation runs outside any transaction through `PATCHY_COMPANY_DB_ADMIN_URL`, a maintenance-database login with `CREATEDB` and permission to `SET ROLE` to the data role. `CREATE DATABASE ... OWNER ... TEMPLATE template0` establishes ownership of a pristine database; the data owner then applies settings, permissions and inventory initialization. `template1` is not used: the Neon spike project's TimescaleDB scheduler held a source session while waiting on the placement transaction, causing creation to fail with `55006`. Company inventory needs none of that template's extensions. The provisioning login needs no inherited data access. `PATCHY_COMPANY_DB_URL` supplies the data role and server connection options; the placement replaces its database name. Both URLs are validated as redacted PostgreSQL URLs at startup, with an explicit login; the last `user` query value overrides the authority when nonempty, matching the client. Do not give the ordinary data login cluster administration privileges; the embedded development superuser is a disposable-local exception.
 
 The `CREATE DATABASE` statement is autocommit on the provisioning connection, never inside a PostgreSQL transaction block. A separate placement transaction holds the claim-row lock through creation and initialization to serialize replicas and make interrupted creation resumable; this does not make the admin statement transactional.
+
+Roles are operator-provisioned, not created per placement. On Neon, after creating
+the data role, grant `GRANT company_x TO patchy_admin WITH SET TRUE, INHERIT FALSE`.
+Alternatively configure the creating admin's `createrole_self_grant = 'set'`.
+Whole-database reclamation must reserve one maintenance connection, `SET ROLE
+company_x`, issue `DROP DATABASE` outside a transaction, then `RESET ROLE` before
+returning the connection. A `CREATEDB` admin without inherited ownership cannot
+drop the data role's database merely because it created it.
 
 The platform migration is `0005_company_database_baseline`; Companies retains
 `0004_invites_expiry`. Runtime follows at 0006, Integrations at 0007, and the
@@ -19,11 +27,27 @@ eight-entry platform ledger.
 
 ## Pools and locks
 
-Use direct connections and a scoped `RcMap` registry: at most 100 retained company pools, idle TTL 60 seconds, pool maximum 4 and minimum 0. Leases last one operation. Admission exhaustion returns `busy` rather than waiting. `PATCHY_COMPANY_DB_MAX_BACKENDS` defaults to 200 and budgets retained pool maxima, not only currently executing queries. Operators must sum budgets across replicas and leave separate platform/provisioning/administration headroom below the server's available user connections.
+Use direct connections and a scoped `RcMap` registry: at most 100 retained company pools, idle TTL 60 seconds, and minimum 0 connections. `company.connections` defaults to 4 per company per host replica, with per-company operating overrides. Leases last one operation. When those slots are occupied, both tiers wait behind at most 32 queued acquisitions (`company.connections.waiters`) for at most 1 second (`company.connections.wait`), still inside the caller's deadline. Queue overflow or expiry returns `busy` with `retryAfter`, scope, limit id and value. Request events record the queue wait. Interrupted waiters release their queue slot.
+
+Pool overrides change only the named company. Existing leases drain before a
+replacement pool opens, so old and new maxima do not overlap.
+`PATCHY_COMPANY_DB_MAX_BACKENDS` defaults to 200 and budgets retained pool maxima,
+not only currently executing queries. Operators must sum budgets across replicas
+and leave separate platform/provisioning/administration headroom below the server's
+available user connections. Admission counts are per host replica in v1.
+
+The company's token bucket belongs to Runtime, not Company database. It admits
+100 calls per second with a burst of 200, including operations that never lease a
+connection. It counts each tier 1 operation or tier 2 call once, not callbacks or
+subscription re-runs, and refuses with `limit_exceeded`.
 
 Placement queries use a separate pool of at most two connections with the platform credentials. They never borrow from the ordinary platform pool: callers may already hold every platform connection in patch-row transactions. This both avoids circular pool acquisition and keeps claims committed independently of caller rollback. Budget these two connections, the one admin connection, and temporary provisioning data connections separately from retained company pools.
 
-PgBouncer is deferred: the pinned Effect PostgreSQL adapter cancels via `pg_cancel_backend(client.processID)`, which is not a valid backend identity through its transaction pooler. Transaction advisory locks should remain on the same reserved transaction connection under transaction pooling, but that source-level inference is not a tested pooler guarantee. Schemas are qualified explicitly; no session `SET search_path`.
+The pinned native Effect PostgreSQL driver sends protocol `CancelRequest`s, including through Neon's TLS proxy. Do not use `pg_cancel_backend` with the proxy's synthetic BackendKeyData pid. Retained connections are disposable: fatal socket or idle-client errors invalidate the pool entry and later work acquires a new connection. This does not replay interrupted work or establish an uncertain commit's outcome. Production Neon compute must have suspend disabled.
+
+PgBouncer remains deferred. Named prepared statements and session behavior need
+separate pooler validation; protocol cancellation support alone is not that proof.
+Schemas are qualified explicitly; no session `SET search_path`.
 
 Provisioning and reclamation callers take the platform patch-row lock first. Only existing inventory or an operation introducing resources opens a company transaction under `withPatchLock`. The lock uses a stable patch key with `pg_advisory_xact_lock`, and covers re-reading the inventory, DDL, definition-inventory writes and the revision. Company commit precedes platform commit; no distributed transaction is promised. Ordinary `CREATE INDEX` blocks writers for its duration; `CONCURRENTLY` cannot join this transaction and is not used.
 
@@ -49,6 +73,14 @@ Inventory reads acquire the same patch lock as provisioning, so their revision
 and component queries cannot straddle a writer's commit. These metadata reads
 may wait for provisioning; they do not return a partly old, partly new inventory.
 
+`Inventory.initialize` runs the shared idempotent `Inventory.upgrade` steps after
+creating missing tables. `ensureReady` also upgrades already-ready placements.
+Changes to existing structures belong in those upgrades, such as `ADD COLUMN IF
+NOT EXISTS`, not only in fresh-database DDL. The portable inventory contract runs
+initialization twice against an already-initialized database with a missing column,
+on PostgreSQL and PGlite, and checks that existing rows and definitions survive.
+A versioned per-company migration ledger remains deferred.
+
 The deletion sweep reclaims deleted patches after their 30-day recovery window.
 It locks the platform row, rechecks the delete deadline and takes the company
 patch lock when inventory exists. It durably queues version object keys and
@@ -66,7 +98,7 @@ Deletion and orphan passes run in independent scoped fibers. Each contains non-i
 The background orphan sweep scans file references in batches. On `busy`, it
 releases its lease and waits past the idle TTL before one retry; persistent
 exhaustion leaves that work for a later run. Large sweeps can therefore span
-several TTL pauses without changing fail-fast foreground admission.
+several TTL pauses without changing the bounded foreground connection wait.
 
 ## Local execution and moving companies
 

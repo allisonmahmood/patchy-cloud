@@ -40,13 +40,13 @@ export class PageLimit extends Schema.TaggedError<PageLimit>()("FilePageLimit", 
   }
 }
 export class Busy extends Schema.TaggedError<Busy>()("FileBusy", {
-  limit: Schema.Int,
+  ...CompanyDatabases.Busy.fields,
   cause: Schema.Defect()
 }) {
   readonly code = "busy" as const;
   readonly status = 503;
   override get message() {
-    return `Company database capacity (${this.limit}) is exhausted. Try again shortly.`;
+    return `Company database capacity (${this.value}) is exhausted. Try again shortly.`;
   }
 }
 
@@ -115,7 +115,17 @@ export const make = Effect.gen(function* () {
       .pipe(
         Effect.catchTags({
           SqlError: (cause) => Effect.fail(new Runtime.SourceUnavailable({ cause })),
-          Busy: (cause) => Effect.fail(new Busy({ limit: cause.limit, cause })),
+          Busy: (cause) =>
+            Effect.fail(
+              new Busy({
+                resource: cause.resource,
+                scope: cause.scope,
+                limitId: cause.limitId,
+                value: cause.value,
+                retryAfterSeconds: cause.retryAfterSeconds,
+                cause
+              })
+            ),
           CompanyDatabaseError: (cause) => Effect.fail(new Runtime.SourceUnavailable({ cause })),
           CompanyDatabaseNotReady: (cause) => Effect.fail(new Runtime.SourceUnavailable({ cause })),
           CompanyIdentityMismatch: (cause) => Effect.fail(new Runtime.SourceUnavailable({ cause }))

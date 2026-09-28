@@ -174,11 +174,35 @@ it.layer(services)("operating limits", (it) => {
           DeploymentConfig.InvalidLimit
         );
       }
-      for (const value of [0, -1, NaN, Infinity, -Infinity]) {
+      for (const value of [
+        0,
+        -1,
+        0.5,
+        4.5,
+        Number.MAX_SAFE_INTEGER + 1,
+        NaN,
+        Infinity,
+        -Infinity
+      ]) {
         assert.instanceOf(
           yield* limits.setOverride({ ...company, value, actor: "operator" }).pipe(Effect.flip),
           OperatingLimits.InvalidOverride
         );
+      }
+      for (const limitId of ["company.connections.waiters", "company.admission.burst"]) {
+        for (const value of [0.5, Number.MAX_SAFE_INTEGER + 1]) {
+          assert.instanceOf(
+            yield* limits
+              .setOverride({
+                ...company,
+                limitId,
+                value,
+                actor: "operator"
+              })
+              .pipe(Effect.flip),
+            OperatingLimits.InvalidOverride
+          );
+        }
       }
       assert.instanceOf(
         yield* limits.setOverride({ ...company, value: 8, actor: " " }).pipe(Effect.flip),

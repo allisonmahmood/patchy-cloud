@@ -45,6 +45,7 @@ export const layer = (options?: {
       });
       return Layer.mergeAll(
         Layer.effect(CompanyDatabases.CompanyDatabases, PgCompanyDatabases.make).pipe(
+          Layer.provide(PgCompanyDatabases.placementLayer),
           Layer.provide(options?.adminLayer ?? PgCompanyDatabases.adminLayer),
           Layer.provide(Reactivity.layer),
           Layer.provide(settings)

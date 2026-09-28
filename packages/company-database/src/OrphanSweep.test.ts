@@ -424,7 +424,15 @@ it.layer(Layer.merge(Testing.layer(), filesystem))(
             withCompany: () => () =>
               Queue.offer(attempts, undefined).pipe(
                 Effect.andThen(
-                  Effect.fail(new CompanyDatabases.Busy({ resource: "backend budget", limit: 4 }))
+                  Effect.fail(
+                    new CompanyDatabases.Busy({
+                      resource: "backend budget",
+                      scope: "host",
+                      limitId: "company.connections.hostBackends",
+                      value: 4,
+                      retryAfterSeconds: 1
+                    })
+                  )
                 )
               )
           });

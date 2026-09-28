@@ -31,3 +31,11 @@ _Avoid_: patch lock, company lock
 **Provisioning login**:
 The operator credential allowed to create company databases and establish their ownership and permissions. It is distinct from the data login used for ordinary company operations.
 _Avoid_: data role, company credential
+
+**Connection wait**:
+The bounded queue for a company's occupied connection slots, shared by both tiers on one host replica. It waits within the caller's deadline and returns `busy` on queue overflow or expiry. It is separate from Runtime's company call-rate admission, which also counts operations needing no connection.
+_Avoid_: retry, invocation queue
+
+**Inventory upgrade**:
+An idempotent change to an existing company's inventory structures that preserves its resource definitions and data.
+_Avoid_: platform migration

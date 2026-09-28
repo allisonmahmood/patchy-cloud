@@ -243,7 +243,11 @@ export const layer = Layer.succeed(
   Inventory.of({ ensurePatch, exists, read, putTable, putColumn, putIndex, putStore, bumpRevision })
 );
 
-/** Explicit readiness upgrades existing inventory without taking a DDL lock on current schemas. */
+/**
+ * Idempotent upgrades for retained PostgreSQL and PGlite inventory. Add changes
+ * here, not only to CREATE TABLE below; test reinitialization in inventoryContract.
+ * Check the catalog first to avoid DDL locks when the current schema needs no work.
+ */
 export const upgrade = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const present = yield* sql`SELECT 1 FROM information_schema.columns
@@ -282,7 +286,6 @@ export const initialize = Effect.gen(function* () {
     PRIMARY KEY ("patch_id", "table", "name"),
     FOREIGN KEY ("patch_id", "table") REFERENCES "patchy"."tables" ("patch_id", "name") ON DELETE CASCADE
   )`);
-  yield* upgrade;
   yield* sql.unsafe(`CREATE TABLE IF NOT EXISTS "patchy"."indexes" (
     "patch_id" text NOT NULL,
     "table" text NOT NULL,
@@ -314,4 +317,5 @@ export const initialize = Effect.gen(function* () {
     "namespace" text PRIMARY KEY,
     "first_seen_at" timestamptz NOT NULL DEFAULT now()
   )`);
+  yield* upgrade;
 });

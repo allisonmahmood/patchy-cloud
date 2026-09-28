@@ -1,18 +1,22 @@
 import * as PgClient from "@effect/sql-pg/PgClient";
+import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
-import * as Data from "effect/Data";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as RcMap from "effect/RcMap";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import * as Semaphore from "effect/Semaphore";
+import * as Scope from "effect/Scope";
 import * as Reactivity from "effect/unstable/reactivity/Reactivity";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import { newInternalId } from "@patchy/core";
+import * as WideEvents from "@patchy/analytics/wide-events";
+import { OperatingLimits } from "@patchy/limits";
 import * as Sql from "@patchy/sql";
 import { registry } from "@patchy/limits/registry";
 import * as CompanyDatabases from "./CompanyDatabases.js";
@@ -33,6 +37,11 @@ export class CompanyDatabaseConfig extends Context.Service<
 /** Separate from the platform and company clients; never inherits their transaction. */
 export class AdminClient extends Context.Service<AdminClient, SqlClient.SqlClient>()(
   "@patchy/company-database/PgCompanyDatabases/AdminClient"
+) {}
+
+/** Placement and operating-limit reads never borrow a caller's platform connection. */
+export class PlacementClient extends Context.Service<PlacementClient, SqlClient.SqlClient>()(
+  "@patchy/company-database/PgCompanyDatabases/PlacementClient"
 ) {}
 
 // The client uses the last `user` query value when nonempty, otherwise the authority.
@@ -65,17 +74,26 @@ export const config = Config.all({
     Schema.Int.check(Schema.isGreaterThanOrEqualTo(COMPANY_CONNECTIONS)),
     "PATCHY_COMPANY_DB_MAX_BACKENDS"
   ).pipe(Config.withDefault(registry["company.connections.hostBackends"].default)),
-  capacity: Config.succeed(100)
+  capacity: Config.succeed(registry["company.connections.pools"].default)
 });
 
 const duplicateDatabase = Schema.is(Schema.Struct({ code: Schema.Literal("42P04") }));
 
-class PoolKey extends Data.Class<{
-  readonly companyId: string;
-  readonly serverId: string;
-  readonly placementVersion: number;
-  readonly databaseName: string;
-}> {}
+interface PoolTarget {
+  readonly placement: CompanyDatabases.Placement;
+  readonly connections: OperatingLimits.EffectiveLimit;
+}
+
+interface CompanyPool extends PoolTarget {
+  readonly scope: Scope.Closeable;
+  readonly context: Context.Context<SqlClient.SqlClient | CompanyDatabases.CompanyConnection>;
+}
+
+const samePool = (left: PoolTarget, right: PoolTarget) =>
+  left.placement.serverId === right.placement.serverId &&
+  left.placement.databaseName === right.placement.databaseName &&
+  left.placement.placementVersion === right.placement.placementVersion &&
+  left.connections.value === right.connections.value;
 
 /**
  * A scoped pool on the shared row codecs: `int8` as a string, timestamps as
@@ -105,18 +123,35 @@ export const adminLayer = Layer.effect(
   })
 ).pipe(Layer.provide(Reactivity.layer));
 
+const placementClientLayer = Layer.effect(
+  PlacementClient,
+  Effect.gen(function* () {
+    const platformPool = yield* PgClient.PgClient;
+    // Callers hold platform patch-row transactions. Placement work must never
+    // borrow from that pool: saturated callers would each wait for a second slot.
+    // Clone credentials/options, not connections, and keep claims independently committed.
+    return yield* Sql.pool({
+      ...platformPool.config,
+      maxConnections: 2,
+      minConnections: 0,
+      idleTimeout: "60 seconds",
+      connectTimeout: "5 seconds"
+    });
+  })
+).pipe(Layer.provide(Reactivity.layer));
+
+/**
+ * Placement queries and operating limits share one dedicated pool. The limits
+ * instance is separate from the application's platform-backed layer.
+ */
+export const placementLayer = Layer.fresh(OperatingLimits.layer).pipe(
+  Layer.provide(Layer.effect(SqlClient.SqlClient, PlacementClient)),
+  Layer.provideMerge(placementClientLayer)
+);
+
 export const make = Effect.gen(function* () {
-  const platformPool = yield* PgClient.PgClient;
-  // Callers hold platform patch-row transactions. Placement work must never
-  // borrow from that pool: saturated callers would each wait for a second slot.
-  // Clone credentials/options, not connections, and keep claims independently committed.
-  const platform = yield* Sql.pool({
-    ...platformPool.config,
-    maxConnections: 2,
-    minConnections: 0,
-    idleTimeout: "60 seconds",
-    connectTimeout: "5 seconds"
-  });
+  const platform = yield* PlacementClient;
+  const limits = yield* OperatingLimits.OperatingLimits;
   const admin = yield* AdminClient;
   const settings = yield* CompanyDatabaseConfig;
   const reactivity = yield* Reactivity.Reactivity;
@@ -195,7 +230,8 @@ export const make = Effect.gen(function* () {
           const dataRole = Inventory.quoteIdentifier(username(roleUrl));
           // The committed claim is the authority. Only this exact claimed name can resume a duplicate CREATE.
           // Keep the row lock until CREATE settles; cancellation must not race a still-running CREATE.
-          yield* admin.unsafe(`CREATE DATABASE ${name} OWNER ${dataRole} TEMPLATE template1`).pipe(
+          // Neon can run extension workers in template1; template0 needs no source sessions drained.
+          yield* admin.unsafe(`CREATE DATABASE ${name} OWNER ${dataRole} TEMPLATE template0`).pipe(
             Effect.catchIf(
               (error) => duplicateDatabase(error.reason.cause),
               () => Effect.void
@@ -272,42 +308,213 @@ export const make = Effect.gen(function* () {
       );
   });
 
-  // Reserve retained maxima, not only live operations. The reservation outlives pool.end().
+  // One registry entry per company. A changed maximum drains and closes its
+  // previous pool before opening another, never retaining overlapping generations.
   let reservedBackends = 0;
-  const registry = yield* RcMap.make({
+  const pools = yield* RcMap.make({
     capacity: settings.capacity,
     idleTimeToLive: "60 seconds",
-    lookup: Effect.fn("CompanyDatabases.openPool")(function* (key: PoolKey) {
-      yield* Effect.acquireRelease(
-        Effect.suspend(() => {
-          if (reservedBackends + COMPANY_CONNECTIONS > settings.maxBackends) {
-            return Effect.fail(
-              new CompanyDatabases.Busy({ resource: "backend budget", limit: settings.maxBackends })
-            );
-          }
-          reservedBackends += COMPANY_CONNECTIONS;
-          return Effect.void;
-        }),
-        () =>
-          Effect.sync(() => {
-            reservedBackends -= COMPANY_CONNECTIONS;
-          })
-      );
-      const sql = yield* pool(settings.dataUrl, COMPANY_CONNECTIONS, key.databaseName).pipe(
-        Effect.mapError(
-          (cause) =>
-            new CompanyDatabases.CompanyDatabaseError({
-              companyId: key.companyId,
-              operation: "connect",
-              cause
+    lookup: Effect.fn("CompanyDatabases.companyPool")(function* (companyId: string) {
+      const owner = yield* Effect.scope;
+      let current: CompanyPool | undefined;
+      let target: PoolTarget | undefined;
+      let opening = false;
+      let failed: CompanyDatabases.Busy | CompanyDatabases.CompanyDatabaseError | undefined;
+      let invalidated = false;
+      let active = 0;
+      let waiters = 0;
+      let changed = yield* Deferred.make<void>();
+      const notify = Effect.sync(() => {
+        const previous = changed;
+        changed = Deferred.makeUnsafe<void>();
+        Deferred.doneUnsafe(previous, Effect.void);
+      });
+      const release = Effect.sync(() => {
+        active--;
+      }).pipe(Effect.andThen(notify));
+
+      const open = Effect.fn("CompanyDatabases.openPool")(function* (next: PoolTarget) {
+        if (current) {
+          const previous = current;
+          current = undefined;
+          yield* Scope.close(previous.scope, Exit.void);
+        }
+        const scope = yield* Scope.fork(owner);
+        return yield* Effect.gen(function* () {
+          const maximum = next.connections.value;
+          yield* Effect.acquireRelease(
+            Effect.suspend(() => {
+              if (reservedBackends + maximum > settings.maxBackends) {
+                return Effect.fail(
+                  new CompanyDatabases.Busy({
+                    resource: "backend budget",
+                    scope: "host",
+                    limitId: "company.connections.hostBackends",
+                    value: settings.maxBackends,
+                    retryAfterSeconds: 1
+                  })
+                );
+              }
+              reservedBackends += maximum;
+              return Effect.void;
+            }),
+            () =>
+              Effect.sync(() => {
+                reservedBackends -= maximum;
+              })
+          );
+          const sql = yield* pool(settings.dataUrl, maximum, next.placement.databaseName).pipe(
+            Effect.mapError(
+              (cause) =>
+                new CompanyDatabases.CompanyDatabaseError({
+                  companyId,
+                  operation: "connect",
+                  cause
+                })
+            )
+          );
+          current = {
+            ...next,
+            scope,
+            context: Context.make(SqlClient.SqlClient, sql).pipe(
+              Context.add(CompanyDatabases.CompanyConnection, sql)
+            )
+          };
+        }).pipe(
+          Effect.provideService(Reactivity.Reactivity, reactivity),
+          Scope.provide(scope),
+          Effect.onError(() => Scope.close(scope, Exit.void)),
+          Effect.tapError((error) =>
+            Effect.sync(() => {
+              failed = error;
             })
-        )
-      );
+          ),
+          Effect.ensuring(
+            Effect.sync(() => {
+              opening = false;
+            }).pipe(Effect.andThen(notify))
+          )
+        );
+      });
+
+      const tryAcquire = Effect.gen(function* () {
+        if (failed) return yield* failed;
+        if (opening) return Option.none();
+        if (active + 1 > target!.connections.value) return Option.none();
+        if (!current || !samePool(current, target!)) {
+          if (active > 0) return Option.none();
+          opening = true;
+          yield* open(target!);
+        }
+        if (!samePool(current!, target!)) return Option.none();
+        active++;
+        yield* Effect.addFinalizer(() => release);
+        yield* WideEvents.enrich({
+          limits: [
+            {
+              limitId: "company.connections",
+              value: target!.connections.value,
+              peak: active,
+              configRevision: target!.connections.configRevision
+            }
+          ]
+        });
+        return Option.some(current!.context);
+      }).pipe(Effect.uninterruptible);
+
+      const acquire = Effect.fn("CompanyDatabases.acquire")(function* (
+        next: PoolTarget,
+        waiterLimit: OperatingLimits.EffectiveLimit,
+        waitLimit: OperatingLimits.EffectiveLimit
+      ) {
+        // An already-queued request must not restore an older override snapshot.
+        if (
+          !target ||
+          next.placement.placementVersion > target.placement.placementVersion ||
+          (next.placement.placementVersion === target.placement.placementVersion &&
+            BigInt(next.connections.configRevision.overrideRevision) >=
+              BigInt(target.connections.configRevision.overrideRevision))
+        ) {
+          target = next;
+        }
+        const immediate = yield* tryAcquire;
+        if (Option.isSome(immediate)) return immediate.value;
+        const startedAt = yield* Clock.currentTimeMillis;
+        return yield* Effect.acquireUseRelease(
+          Effect.suspend(() => {
+            if (waiters + 1 > waiterLimit.value) {
+              return Effect.fail(
+                new CompanyDatabases.Busy({
+                  resource: "connection queue",
+                  scope: "company",
+                  limitId: waiterLimit.limitId,
+                  value: waiterLimit.value,
+                  retryAfterSeconds: Math.max(1, Math.ceil(waitLimit.value / 1_000))
+                })
+              );
+            }
+            waiters++;
+            return WideEvents.enrich({
+              limits: [
+                {
+                  limitId: waiterLimit.limitId,
+                  value: waiterLimit.value,
+                  peak: waiters,
+                  configRevision: waiterLimit.configRevision
+                }
+              ]
+            });
+          }),
+          () =>
+            Effect.gen(function* () {
+              while (true) {
+                const signal = changed;
+                const acquired = yield* tryAcquire;
+                if (Option.isSome(acquired)) return acquired.value;
+                yield* Deferred.await(signal);
+              }
+            }).pipe(
+              Effect.timeoutOrElse({
+                duration: waitLimit.value,
+                orElse: () =>
+                  Effect.fail(
+                    new CompanyDatabases.Busy({
+                      resource: "connection wait",
+                      scope: "company",
+                      limitId: waitLimit.limitId,
+                      value: waitLimit.value,
+                      retryAfterSeconds: Math.max(1, Math.ceil(waitLimit.value / 1_000))
+                    })
+                  )
+              })
+            ),
+          () =>
+            Effect.gen(function* () {
+              waiters--;
+              const elapsed = (yield* Clock.currentTimeMillis) - startedAt;
+              yield* WideEvents.enrich({
+                queueWaitMs: elapsed,
+                connectionWaitMs: elapsed,
+                limits: [
+                  {
+                    limitId: waitLimit.limitId,
+                    value: waitLimit.value,
+                    peak: elapsed,
+                    configRevision: waitLimit.configRevision
+                  }
+                ]
+              });
+            })
+        );
+      });
       return {
-        context: Context.make(SqlClient.SqlClient, sql).pipe(
-          Context.add(CompanyDatabases.CompanyConnection, sql)
-        ),
-        permits: yield* Semaphore.make(COMPANY_CONNECTIONS)
+        acquire,
+        // Old borrowers must fail, not reopen a second pool after this entry is removed.
+        retireFailed: Effect.sync(() => {
+          if (!failed || invalidated) return false;
+          invalidated = true;
+          return true;
+        })
       };
     })
   });
@@ -329,38 +536,44 @@ export const make = Effect.gen(function* () {
             status: placement?.status ?? null
           });
         }
-        const key = new PoolKey({
-          companyId,
-          serverId: placement.serverId,
-          placementVersion: placement.placementVersion,
-          databaseName: placement.databaseName
-        });
+        const [connections, waiters, wait] = yield* Effect.all(
+          ["company.connections", "company.connections.waiters", "company.connections.wait"].map(
+            (limitId) => limits.get({ companyId, limitId })
+          )
+        ).pipe(
+          Effect.mapError(
+            (cause) =>
+              new CompanyDatabases.CompanyDatabaseError({ companyId, operation: "connect", cause })
+          )
+        );
         return yield* Effect.scoped(
           Effect.gen(function* () {
-            const entry = yield* RcMap.get(registry, key).pipe(
+            const entry = yield* RcMap.get(pools, companyId).pipe(
               Effect.catchTags({
                 ExceededCapacityError: () =>
                   Effect.fail(
                     new CompanyDatabases.Busy({
                       resource: "pool registry",
-                      limit: settings.capacity
+                      scope: "host",
+                      limitId: "company.connections.pools",
+                      value: settings.capacity,
+                      retryAfterSeconds: 1
                     })
-                  ),
-                Busy: (error) =>
-                  RcMap.invalidate(registry, key).pipe(Effect.andThen(Effect.fail(error)))
+                  )
               })
             );
-            const result = yield* effect.pipe(
-              Effect.provideContext(entry.context),
-              entry.permits.withPermitsIfAvailable(1)
-            );
-            if (Option.isNone(result)) {
-              return yield* new CompanyDatabases.Busy({
-                resource: "company operations",
-                limit: COMPANY_CONNECTIONS
-              });
-            }
-            return result.value;
+            const context = yield* entry
+              .acquire({ placement, connections: connections! }, waiters!, wait!)
+              .pipe(
+                Effect.tapError(() =>
+                  entry.retireFailed.pipe(
+                    Effect.flatMap((retire) =>
+                      retire ? RcMap.invalidate(pools, companyId) : Effect.void
+                    )
+                  )
+                )
+              );
+            return yield* effect.pipe(Effect.provideContext(context));
           })
         );
       });
@@ -381,6 +594,7 @@ export const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(CompanyDatabases.CompanyDatabases, make).pipe(
+  Layer.provide(placementLayer),
   Layer.provide(adminLayer),
   Layer.provide(Reactivity.layer),
   Layer.provide(Layer.effect(CompanyDatabaseConfig, config))

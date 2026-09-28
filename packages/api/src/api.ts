@@ -535,10 +535,16 @@ const runtimeAdmission =
   "matching that session's user (`principal_changed`); only `me` may bootstrap with null. " +
   "Wire compatibility is checked before dispatch (`shell_outdated`). Per-viewer per-patch calls " +
   "are limited to 300 per minute by the release contract; `rate_limited` is 429 with `Retry-After` seconds. " +
+  "Company admission also uses a per-host-replica token bucket, 100 calls/second with burst 200 by default, " +
+  "overridable per company. It counts operations even without a database connection and refuses with " +
+  "`limit_exceeded` (429), `company.admission.rate`, scope `company`, the enforced rate and `retryAfter`. " +
+  "Callbacks and subscription re-runs do not consume another company admission. Company connections " +
+  "default to four slots with at most 32 waiters and a one-second wait inside the caller's deadline; " +
+  "queue overflow or expiry is `busy` (503) with its limit metadata and `retryAfter`. " +
   "Registered limit refusals add `scope`, `limitId` and `value` (the enforced bound). " +
   "`retryAfter` is in seconds and is included only when retrying is safe, never for timeouts " +
-  "or unknown outcomes. Runtime rate refusals identify either the viewer's call rate or the host's " +
-  "tracked-key capacity. Registry-backed request, row, batch, result and file size refusals, " +
+  "or unknown outcomes. Runtime rate refusals identify the viewer's call rate, company admission rate, " +
+  "or host tracked-key capacity. Registry-backed request, row, batch, result and file size refusals, " +
   "mutation and integration deadlines, and broker frame limits carry these fields. Wire request " +
   "size bounds include any envelope allowance. Other bounds, such as row counts and database " +
   "statement timeouts, may omit them. Contract bounds are fixed per release, as listed in `docs/limits.md`. " +

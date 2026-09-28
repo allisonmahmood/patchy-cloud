@@ -6,7 +6,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import { RequireSession, Session } from "@patchy/auth";
-import { Limits } from "@patchy/limits";
+import * as WideEvents from "@patchy/analytics/wide-events";
+import { Limits, OperatingLimits, TokenBucket } from "@patchy/limits";
 import * as LoadedVersions from "./LoadedVersions.js";
 import * as Runtime from "./Runtime.js";
 import * as RuntimeLog from "./RuntimeLog.js";
@@ -14,6 +15,7 @@ import * as RuntimeLog from "./RuntimeLog.js";
 type Dependencies =
   | LoadedVersions.LoadedVersions
   | Limits.Limits
+  | OperatingLimits.OperatingLimits
   | RuntimeLog.RuntimeLog
   | Exclude<Effect.Services<typeof RequireSession.resolveViewer>, RequireSession.SignedIn>;
 
@@ -23,6 +25,8 @@ export const make = (
   Effect.gen(function* () {
     const log = yield* RuntimeLog.RuntimeLog;
     const session = yield* Session.Session;
+    const operatingLimits = yield* OperatingLimits.OperatingLimits;
+    const companyTokens = yield* TokenBucket.make;
     // Capture Auth's viewer resolver requirements, without importing its Companies dependencies.
     const viewerContext =
       yield* Effect.context<
@@ -47,6 +51,42 @@ export const make = (
     return yield* Runtime.make(handlers, {
       origin: new URL(session.publicBaseUrl).origin,
       identity,
+      admitCompany: Effect.fn("Runtime.admitCompany")(function* (companyId: string) {
+        const rate = yield* operatingLimits
+          .get({ companyId, limitId: "company.admission.rate" })
+          .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
+        const burst = yield* operatingLimits
+          .get({ companyId, limitId: "company.admission.burst" })
+          .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
+        const attempt = yield* companyTokens.consume({
+          key: `company.admission:${companyId}`,
+          rate: rate.value,
+          burst: burst.value
+        });
+        yield* WideEvents.enrich({
+          limits: [
+            {
+              limitId: burst.limitId,
+              value: burst.value,
+              peak: burst.value - attempt.remaining + (attempt.allowed ? 0 : 1),
+              configRevision: burst.configRevision
+            }
+          ]
+        });
+        if (!attempt.allowed) {
+          if (attempt.reason === "capacity")
+            return yield* new Runtime.RateLimited({
+              retryAfterSeconds: attempt.retryAfterSeconds,
+              limitId: "rate.trackedKeys",
+              value: Limits.MAX_TRACKED_KEYS
+            });
+          return yield* new Runtime.LimitExceeded({
+            retryAfterSeconds: attempt.retryAfterSeconds,
+            limitId: "company.admission.rate",
+            value: rate.value
+          });
+        }
+      }),
       record: ({ input, operation, binding, deadlineMs }, run) =>
         Effect.gen(function* () {
           const started = yield* Clock.currentTimeMillis;

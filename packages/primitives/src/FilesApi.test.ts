@@ -19,7 +19,7 @@ import { Session } from "@patchy/auth";
 import { clerkEnv, PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
 import { Companies, Users } from "@patchy/companies";
 import { ContentStore } from "@patchy/content-store";
-import { ContractLimits, Limits } from "@patchy/limits";
+import { ContractLimits, Limits, OperatingLimits } from "@patchy/limits";
 import { LoadedVersions, RuntimeProduction, RuntimeApi, RuntimeLog, me } from "@patchy/runtime";
 import * as Files from "./Files.js";
 import { companyId, manifest, services, setup, versionId } from "./test/files.js";
@@ -45,6 +45,7 @@ const versions = Layer.succeed(LoadedVersions.LoadedVersions, {
 const dependencies = Layer.mergeAll(
   versions,
   Limits.layer,
+  OperatingLimits.layer,
   RuntimeLog.layer,
   Session.layer,
   Users.layer,

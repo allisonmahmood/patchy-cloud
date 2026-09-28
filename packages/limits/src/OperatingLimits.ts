@@ -1,4 +1,6 @@
 import * as Clock from "effect/Clock";
+import * as Config from "effect/Config";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -65,6 +67,7 @@ const decodeChange = Schema.decodeUnknownEffect(Change);
 const decodeSet = Schema.decodeUnknownEffect(
   Schema.Struct({ ...Change.fields, value: DeploymentConfig.LimitValue })
 );
+const decodeSetting = Schema.decodeUnknownEffect(DeploymentConfig.LimitSetting);
 class State extends Schema.Class<State>("Limits.State")({
   overrideValue: Schema.NullOr(DeploymentConfig.LimitValue),
   overrideRevision: Schema.String
@@ -92,7 +95,19 @@ export class OperatingLimits extends Context.Service<
 
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  const deployment = yield* DeploymentConfig.load;
+  const deployment = yield* DeploymentConfig.load.pipe(
+    Effect.catchTags({
+      InvalidLimit: (cause) =>
+        Effect.fail(
+          new Config.ConfigError(
+            new ConfigProvider.SourceError({
+              message: "Invalid operating limits configuration.",
+              cause
+            })
+          )
+        )
+    })
+  );
   const readState = SqlSchema.findOneOption({
     Request: Ref,
     Result: State,
@@ -157,6 +172,10 @@ export const make = Effect.gen(function* () {
     const validated = yield* (remove ? decodeChange(input) : decodeSet(input)).pipe(
       Effect.mapError((cause) => new InvalidOverride({ limitId, cause }))
     );
+    if (validated.value !== null)
+      yield* decodeSetting({ limitId, value: validated.value }).pipe(
+        Effect.mapError((cause) => new InvalidOverride({ limitId, cause }))
+      );
     // The company lock serializes the first override, updates and removals.
     yield* sql`SELECT id FROM companies WHERE id = ${input.companyId} FOR UPDATE`;
     const previous = yield* get(input);

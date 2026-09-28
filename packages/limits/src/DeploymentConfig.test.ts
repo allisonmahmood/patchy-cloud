@@ -130,12 +130,24 @@ it.effect("rejects contract, legacy and unknown IDs at the public config boundar
 
 it.effect("rejects malformed JSON and invalid operating values", () =>
   Effect.gen(function* () {
-    for (const value of [0, -1, Infinity, NaN, "8", null]) {
+    for (const value of [0, -1, 0.5, 4.5, Number.MAX_SAFE_INTEGER + 1, Infinity, NaN, "8", null]) {
       assert.strictEqual(
         (yield* load({ "company.connections": value }).pipe(Effect.flip))._tag,
         "ConfigError"
       );
     }
+    for (const limitId of ["company.connections.waiters", "company.admission.burst"]) {
+      for (const value of [0.5, Number.MAX_SAFE_INTEGER + 1]) {
+        assert.strictEqual(
+          (yield* load({ [limitId]: value }).pipe(Effect.flip))._tag,
+          "ConfigError"
+        );
+      }
+    }
+    assert.strictEqual(
+      (yield* load({ "company.admission.rate": 0.5 })).get("company.admission.rate"),
+      0.5
+    );
     const failure = yield* DeploymentConfig.load.pipe(
       Effect.provide(
         ConfigProvider.layer(ConfigProvider.fromUnknown({ PATCHY_LIMITS_JSON: "{broken" }))

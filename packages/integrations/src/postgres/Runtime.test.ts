@@ -16,7 +16,7 @@ import { Session } from "@patchy/auth";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { clerkEnv, PUBLIC_BASE_URL, signedInCookies } from "@patchy/auth/testing";
 import { Companies, Users } from "@patchy/companies";
-import { Limits } from "@patchy/limits";
+import { Limits, OperatingLimits } from "@patchy/limits";
 import { LoadedVersions, RuntimeProduction, RuntimeApi, RuntimeLog } from "@patchy/runtime";
 import * as Testing from "@patchy/sql/testing";
 import * as ConnectionStore from "../ConnectionStore.js";
@@ -115,6 +115,7 @@ const services = Layer.mergeAll(
   Companies.layer,
   Users.layer,
   Limits.layer,
+  OperatingLimits.layer,
   RuntimeLog.layer,
   NodeServices.layer,
   versions

@@ -977,7 +977,13 @@ it.layer(layer)("SDK company generation", (it) => {
     Effect.gen(function* () {
       const payload = yield* failureSource("sdkfailure01");
       const companies = yield* CompanyDatabases.CompanyDatabases;
-      const busy = new CompanyDatabases.Busy({ resource: "company operations", limit: 4 });
+      const busy = new CompanyDatabases.Busy({
+        resource: "company operations",
+        limitId: "company.connections",
+        scope: "company",
+        value: 4,
+        retryAfterSeconds: 1
+      });
       const failed = new CompanyDatabases.CompanyDatabaseError({
         companyId: identity.company.id,
         operation: "connect",

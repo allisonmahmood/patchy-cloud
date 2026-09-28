@@ -4,7 +4,7 @@
   "private": true,
   "license": "UNLICENSED",
   "type": "module",
-  "description": "The limits registry, fixed-window rate limiter, operating deployment configuration and company overrides with history.",
+  "description": "The limits registry, fixed-window and token-bucket admission, operating deployment configuration and company overrides with history.",
   "exports": {
     ".": {
       "development": "./src/index.ts",
