@@ -17,6 +17,65 @@ type WriteValue<K extends ColumnKind, Target extends string> = K extends "json"
   ? Exclude<Json, null>
   : Value<K, Target>;
 
+export type ScalarKind = Exclude<ColumnKind, "ref">;
+export type ValueDescriptor = (
+  | { readonly kind: ScalarKind }
+  | { readonly kind: "object"; readonly fields: Readonly<Record<string, ValueDescriptor>> }
+  | { readonly kind: "array"; readonly element: ValueDescriptor }
+  | { readonly kind: "enum"; readonly values: readonly string[] }
+  | { readonly kind: "nullable"; readonly value: ValueDescriptor }
+  | { readonly kind: "row"; readonly table: string }
+  | { readonly kind: "fileHandle" | "upload" }
+) & { readonly optional?: true };
+type ColumnDescriptor<
+  K extends ColumnKind,
+  Optional extends boolean,
+  Defaulted extends boolean,
+  Target extends string
+> = { readonly kind: K } & (K extends "ref" ? { readonly table: Target } : unknown) &
+  (Optional extends true ? { readonly optional: true } : unknown) &
+  (Defaulted extends true ? { readonly default: WriteValue<K, Target> } : unknown);
+export type Descriptor = (
+  | { readonly kind: ScalarKind }
+  | { readonly kind: "ref" | "row"; readonly table: string }
+  | { readonly kind: "object"; readonly fields: Readonly<Record<string, Descriptor>> }
+  | { readonly kind: "array"; readonly element: Descriptor }
+  | { readonly kind: "enum"; readonly values: readonly string[] }
+  | { readonly kind: "nullable"; readonly value: Descriptor }
+  | { readonly kind: "fileHandle" | "upload" }
+) & { readonly optional?: true; readonly default?: unknown };
+export interface SchemaInput {
+  readonly isOptional: boolean;
+  toJSON(): Descriptor;
+}
+export type Fields = Readonly<Record<string, SchemaInput>>;
+export type DescriptorOf<S extends SchemaInput> = ReturnType<S["toJSON"]>;
+type FieldDescriptors<F extends Fields> = { readonly [K in keyof F]: DescriptorOf<F[K]> };
+
+/** Composite schemas have field optionality, but no table default or reference modifier. */
+export class ValueSchema<D extends object, Optional extends boolean = false> {
+  constructor(
+    readonly descriptor: D,
+    readonly isOptional: Optional
+  ) {}
+
+  optional(this: ValueSchema<D, false>): ValueSchema<D, true> {
+    return new ValueSchema(this.descriptor, true);
+  }
+
+  toJSON(): D & (Optional extends true ? { readonly optional: true } : unknown) {
+    return {
+      ...this.descriptor,
+      ...(this.isOptional ? { optional: true } : {})
+    } as D & (Optional extends true ? { readonly optional: true } : unknown);
+  }
+}
+
+declare const fileHandleBrand: unique symbol;
+declare const uploadBrand: unique symbol;
+export type FileHandle = string & { readonly [fileHandleBrand]: true };
+export type Upload = string & { readonly [uploadBrand]: true };
+
 export class Column<
   K extends ColumnKind = ColumnKind,
   Optional extends boolean = boolean,
@@ -46,14 +105,14 @@ export class Column<
     return new Column(this.kind, false, true, this.table, value);
   }
 
-  /** Only the existing manifest descriptor crosses the process/wire boundary. */
-  toJSON() {
+  /** Only JSON descriptors cross the process and wire boundary. */
+  toJSON(): ColumnDescriptor<K, Optional, Defaulted, Target> {
     return {
       kind: this.kind,
       ...(this.kind === "ref" ? { table: this.table } : {}),
       ...(this.isOptional ? { optional: true } : {}),
       ...(this.hasDefault ? { default: this.defaultValue } : {})
-    };
+    } as ColumnDescriptor<K, Optional, Defaulted, Target>;
   }
 }
 
@@ -64,7 +123,33 @@ export const t = {
   boolean: () => new Column("boolean", false, false),
   timestamp: () => new Column("timestamp", false, false),
   json: () => new Column("json", false, false),
-  ref: <const Target extends string>(table: Target) => new Column("ref", false, false, table)
+  ref: <const Target extends string>(table: Target) => new Column("ref", false, false, table),
+  object: <const F extends Fields>(fields: F) =>
+    new ValueSchema(
+      {
+        kind: "object" as const,
+        fields: Object.fromEntries(
+          Object.entries(fields).map(([name, field]) => [name, field.toJSON()])
+        ) as FieldDescriptors<F>
+      },
+      false
+    ),
+  array: <const S extends SchemaInput>(element: S) =>
+    new ValueSchema(
+      { kind: "array" as const, element: element.toJSON() as DescriptorOf<S> },
+      false
+    ),
+  enum: <const Values extends readonly [string, ...string[]]>(values: Values) => {
+    if (values.length === 0 || new Set(values).size !== values.length)
+      throw new Error("An enum needs at least one value and cannot contain duplicates.");
+    return new ValueSchema({ kind: "enum" as const, values }, false);
+  },
+  nullable: <const S extends SchemaInput>(value: S) =>
+    new ValueSchema({ kind: "nullable" as const, value: value.toJSON() as DescriptorOf<S> }, false),
+  row: <const Name extends string>(table: Name) =>
+    new ValueSchema({ kind: "row" as const, table }, false),
+  fileHandle: () => new ValueSchema({ kind: "fileHandle" as const }, false),
+  upload: () => new ValueSchema({ kind: "upload" as const }, false)
 };
 
 export type Columns = Readonly<Record<string, Column>>;

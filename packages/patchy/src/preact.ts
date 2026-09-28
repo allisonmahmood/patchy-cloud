@@ -37,3 +37,5 @@ export {
 export { h } from "preact";
 export * from "@preact/signals";
 export type { ComponentChildren, ComponentType, FunctionComponent, JSX, VNode } from "preact";
+export { useQuery } from "./useQuery.js";
+export type { QuerySnapshot } from "./queryRegistry.js";

@@ -596,3 +596,47 @@ it.effect("the API client decodes a row shaped like a Postgres result with every
     }
   }).pipe(Effect.provide(Fixtures.layer({ me, ...rowHandlers })))
 );
+
+it.effect(
+  "preserves handler refusals and successful values with the same shape through HTTP",
+  () => {
+    const business = {
+      ok: false as const,
+      source: "handler" as const,
+      code: "access_denied",
+      details: { reason: "approval" }
+    };
+    const serverCall = Runtime.handler(
+      {
+        kind: runtimeOperations["server.call"].kind,
+        input: runtimeOperations["server.call"].request.fields.args,
+        output: runtimeOperations["server.call"].response
+      },
+      (request) =>
+        Effect.succeed(request.args.asValue ? { ok: true as const, value: business } : business)
+    );
+    return Effect.gen(function* () {
+      const api = yield* HttpApiTest.groups(RuntimeClientApi, ["runtime"], {
+        baseUrl: PUBLIC_BASE_URL
+      });
+      for (const asValue of [false, true]) {
+        const result = yield* api.call({
+          payload: {
+            patchId,
+            versionId,
+            principal: { userId: DEV_SEED.userId },
+            wire: WIRE_VERSION,
+            op: "server.call",
+            args: { handler: "leads.renamed", args: { asValue } }
+          },
+          headers: {
+            ...headers({ userId: DEV_SEED.userId }),
+            cookie: signedInCookies(),
+            origin: PUBLIC_BASE_URL
+          }
+        });
+        assert.deepStrictEqual(result, asValue ? { ok: true, value: business } : business);
+      }
+    }).pipe(Effect.provide(Fixtures.layer({ me, "server.call": serverCall })));
+  }
+);

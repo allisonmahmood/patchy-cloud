@@ -54,8 +54,9 @@ export default tseslint.config(
         {
           patterns: [
             {
-              regex: "^@patchy/(?!(api|core)$)",
-              message: "The CLI may depend only on @patchy/api and @patchy/core."
+              regex: "^@patchy/(?!(api|api/canonical-args|core)$)",
+              message:
+                "The CLI may depend only on @patchy/api, its canonical-args module and @patchy/core."
             },
             {
               regex: "(?!^\\.\\./package\\.json$)(^|/)\\.\\.(/|$)",

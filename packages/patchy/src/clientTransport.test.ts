@@ -4,9 +4,10 @@ import {
   createPortTransport,
   createPostMessageTransport
 } from "./clientTransport.js";
-import { createClient, PatchyError } from "./client.js";
+import { createClient, createServerClient, PatchyError, isHandlerError } from "./client.js";
 import { defineConfig, files } from "./config.js";
 import type { Port } from "./clientTransport.js";
+import type { Handler } from "./server.js";
 
 class FakePort extends EventTarget implements Port {
   readonly sent: Array<{ v: number; id: string; op: string; args: unknown; bytes?: ArrayBuffer }> =
@@ -52,6 +53,30 @@ it("correlates out-of-order replies and decodes the one error class with details
   await expect(second).rejects.toBeInstanceOf(PatchyError);
   await expect(first).resolves.toEqual({ id: "a", title: "First" });
   transport.close();
+});
+
+it("keeps lazy handler names and business errors distinct from similarly shaped values", async () => {
+  const port = new FakePort();
+  const transport = createPortTransport(port);
+  type Modules = { leads: { renamed: Handler<"query", Record<string, never>, unknown> } };
+  const client = createServerClient<Modules>({ transport });
+  const business = {
+    ok: false,
+    source: "handler",
+    code: "access_denied",
+    details: { reason: "approval" }
+  };
+  const call = client.server.leads.renamed({});
+  port.reply({ v: 1, id: port.sent[0]!.id, kind: "result", value: business });
+  await expect(call).resolves.toEqual(business);
+  const refused = client.server.leads.renamed({});
+  const failure = refused.catch((error: unknown) => error);
+  port.reply({ v: 1, id: port.sent[1]!.id, kind: "error", error: business });
+  const error = await failure;
+  expect(isHandlerError(error, "access_denied")).toBe(true);
+  expect(error).not.toBeInstanceOf(PatchyError);
+  expect(error).toMatchObject({ details: { reason: "approval" } });
+  client.close();
 });
 
 it("closed ports and lost insert replies are unknown outcomes, never replayed", async () => {

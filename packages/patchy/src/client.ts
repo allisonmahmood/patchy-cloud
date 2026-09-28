@@ -8,6 +8,11 @@ import {
 import { PatchyError } from "./clientError.js";
 export * from "./clientError.js";
 export type { Call, Me, Operation, Route, Transport } from "./clientTransport.js";
+export { createServerClient, type ServerOnlyClient } from "./serverClient.js";
+export { isHandlerError } from "./handlerError.js";
+export type { HandlerErrorGuard, MutationUnknownOutcome } from "./server.js";
+export { createQueryRegistry } from "./queryRegistry.js";
+export type { QueryDriver, QueryFrame, QuerySnapshot, QueryCallable } from "./queryRegistry.js";
 
 export interface Page<R> {
   readonly rows: readonly R[];

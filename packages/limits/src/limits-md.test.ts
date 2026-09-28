@@ -17,4 +17,11 @@ it("keeps the server-skill limits snapshot current (run pnpm --filter @patchy/li
     "utf8"
   );
   expect(committed).toBe(renderServerSkillLimits());
+  const skill = readFileSync(
+    fileURLToPath(new URL("../../sdk/skills/patchy-server/SKILL.md", import.meta.url)),
+    "utf8"
+  );
+  expect(
+    skill.split("<!-- generated-limits:start -->\n")[1]?.split("<!-- generated-limits:end -->")[0]
+  ).toBe(`\n${renderServerSkillLimits()}\n`);
 });

@@ -4,6 +4,7 @@
 import {
   RuntimeRequest,
   RuntimeFailure,
+  HandlerFailure,
   runtimeOperations,
   runtimeBodyLimit,
   runtimeBodyLimitId,
@@ -21,6 +22,7 @@ const MAX_PENDING = registry["frame.outstanding"].default;
 // The broker refuses unknown fields on its own inputs; the parser option is the only place that holds.
 const decodeRequest = Schema.decodeUnknownSync(RuntimeRequest, { onExcessProperty: "error" });
 const decodeFailure = Schema.decodeUnknownSync(RuntimeFailure);
+const decodeHandlerFailure = Schema.decodeUnknownSync(HandlerFailure);
 const isMe = Schema.is(runtimeOperations.me.response);
 const routeArguments = Schema.Struct({ path: Schema.String });
 const decodeRoute = Schema.decodeUnknownSync(routeArguments, { onExcessProperty: "error" });
@@ -37,6 +39,11 @@ class Refusal extends Error {
     readonly limit?: LimitMetadata
   ) {
     super(message);
+  }
+}
+class HandlerRefusal extends Error {
+  constructor(readonly failure: HandlerFailure) {
+    super(failure.code);
   }
 }
 const invalid = () => new Refusal("invalid_request", "The broker request is malformed.");
@@ -347,6 +354,13 @@ function mount(frame: HTMLIFrameElement): void {
         throw lost();
       }
       if (result && typeof result === "object" && "ok" in result && result.ok === false) {
+        if (
+          op === "server.call" &&
+          response.ok &&
+          "source" in result &&
+          result.source === "handler"
+        )
+          throw new HandlerRefusal(decodeHandlerFailure(result));
         const error = decodeFailure(result);
         const { scope, limitId, value, retryAfter } = error;
         throw new Refusal(error.code, error.error, error.details, error.correlationId, {
@@ -374,7 +388,7 @@ function mount(frame: HTMLIFrameElement): void {
       responseBytes = 0;
       return { value: result.value, heldBytes };
     } catch (error) {
-      if (error instanceof Refusal) throw error;
+      if (error instanceof Refusal || error instanceof HandlerRefusal) throw error;
       throw lost();
     } finally {
       release(responseBytes);
@@ -531,7 +545,9 @@ function mount(frame: HTMLIFrameElement): void {
       // Wire 1 acknowledges a set with null; this event then corrects the client's cached request.
       if (op === "route.set") announceRoute();
     } catch (error) {
-      failure(id, error instanceof Refusal ? error : lost());
+      if (error instanceof HandlerRefusal)
+        send({ v: wire, id, kind: "error", error: error.failure });
+      else failure(id, error instanceof Refusal ? error : lost());
     } finally {
       release(replyBytes);
       if (admitted) pending.delete(id);

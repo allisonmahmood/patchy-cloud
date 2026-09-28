@@ -14,8 +14,8 @@ recoverable publish add commands, not alternative output or identity conventions
 
 ## Decision
 
-One npm package, `patchy`, owns the binary and its explicit config, client, dev
-and Preact entry points at one exact release. It remains private and is distributed by
+One npm package, `patchy`, owns the binary and its explicit config, client, server,
+dev and Preact entry points at one exact release. It remains private and is distributed by
 the instance until launch. Inside a patch repo, `pnpm patchy` runs the pinned
 copy. [ADR-0011](./ADR-0011-one-package-one-release.md) owns release distribution
 and the stable runtime wire; this ADR owns the CLI's observable contract.
@@ -83,6 +83,12 @@ Description preflight in `init --purpose`, `describe` and file publishing with
 `--description` can also emit `invalid_description` locally (exit 1), before any
 description request is sent. Repair the text using the reported constraint.
 An instance's HTTP 422 `invalid_description` is still `rejected` (exit 2).
+
+The tier 2 contract's descriptor extraction refuses a non-handler export from a
+one-level server module with `invalid_manifest`, local exit 1. A handler must
+declare a query, mutation or action with valid argument and result descriptors.
+This contract does not admit tier 2 publishing: the current publish path still
+refuses unsupported tiers and `server/` with `tier_mismatch`.
 
 ### Instance, credentials and local state
 

@@ -71,7 +71,13 @@ import {
   GenerateRequest,
   Generated
 } from "./schemas.js";
-import { RuntimeBytes, RuntimeCall, RuntimeFailure, RuntimeSuccess } from "./runtime.js";
+import {
+  RuntimeBytes,
+  RuntimeCall,
+  RuntimeFailure,
+  RuntimeSuccess,
+  ServerCallReply
+} from "./runtime.js";
 
 /** The identity a valid bearer token resolves to, provided to every protected handler. */
 export class CurrentIdentity extends Context.Service<CurrentIdentity, Identity>()(
@@ -554,7 +560,7 @@ export class RuntimeGroup extends HttpApiGroup.make("runtime", { topLevel: true 
     HttpApiEndpoint.post("call", "/runtime/call", {
       headers: { ...runtimeHeaders, origin: Schema.optionalKey(Schema.String) },
       payload: RuntimeCall,
-      success: RuntimeSuccess,
+      success: ServerCallReply,
       error: runtimeErrors
     }).annotateMerge(
       describe(

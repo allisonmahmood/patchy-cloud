@@ -2,10 +2,12 @@
 // @effect-diagnostics globalTimers:off globalFetch:off
 // Browser adapters deliberately use platform APIs, with no Effect runtime in the bundle.
 import { PatchyError, decodeError } from "./clientError.js";
+import { HandlerError, decodeHandlerError } from "./handlerError.js";
 import { WIRE_VERSION } from "./release.js";
 
 export type Operation =
   | "me"
+  | "server.call"
   | "route.set"
   | "download"
   | `tables.${"get" | "getMany" | "list" | "insert" | "insertMany" | "update" | "delete"}`
@@ -99,7 +101,8 @@ export function createPortTransport(
     pending.delete(value.id);
     if (value.kind === "error") {
       request.reject(
-        decodeError(value.error) ??
+        decodeHandlerError(value.error) ??
+          decodeError(value.error) ??
           new PatchyError("invalid_request", "The broker returned an invalid error.", {})
       );
     } else if (value.bytes instanceof ArrayBuffer || value.bytes instanceof Uint8Array) {
@@ -356,7 +359,7 @@ export function createHttpTransport(options: HttpTransportOptions): Transport {
         };
       if (op === "files.put" && response.ok) return null;
       const result: unknown = await response.json();
-      const error = decodeError(result);
+      const error = decodeHandlerError(result) ?? decodeError(result);
       if (error) throw error;
       if (
         !response.ok ||
@@ -369,7 +372,7 @@ export function createHttpTransport(options: HttpTransportOptions): Transport {
         throw new PatchyError("invalid_request", "The runtime returned an invalid response.", {});
       return result.value;
     } catch (error) {
-      if (error instanceof PatchyError) throw error;
+      if (error instanceof PatchyError || error instanceof HandlerError) throw error;
       throw lost();
     }
   };

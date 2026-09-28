@@ -11,6 +11,11 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./canonical-args": {
+      "development": "./src/canonicalArgs.ts",
+      "types": "./dist/canonicalArgs.d.ts",
+      "import": "./dist/canonicalArgs.js"
+    },
     "./postgres-snapshot": {
       "development": "./src/postgresSnapshot.ts",
       "types": "./dist/postgresSnapshot.d.ts",

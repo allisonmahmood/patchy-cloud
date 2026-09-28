@@ -17,6 +17,7 @@ import { ConnectionStore, Postgres } from "@patchy/integrations";
 import type { CompanyDatabases } from "@patchy/company-database";
 import { Patches } from "@patchy/patches";
 import { generateClient } from "./generateClient.js";
+import { generateServer } from "./generateServer.js";
 
 export class ReleaseMismatch extends Schema.TaggedError<ReleaseMismatch>()("SdkReleaseMismatch", {
   release: Schema.String
@@ -129,7 +130,7 @@ const sharedClient = (source: Patches.SharedTable): string => {
     if (column.kind === "ref" && !Object.hasOwn(indexes, name)) indexes[name] = { columns: [name] };
   }
   return `import { createSharedTable } from "patchy/client";
-import type { Call } from "patchy/client";
+import type { Call, ReadTable } from "patchy/client";
 import type { Id } from "patchy/config";
 export interface Row {
   readonly id: Id<${JSON.stringify(source.id)}>;
@@ -143,7 +144,8 @@ ${Object.entries(source.definition.columns)
   .join("\n")}
 }
 type Indexes = ${JSON.stringify(indexes)};
-export function createClient(alias: string, call: Call) { return createSharedTable<Row, Indexes>(alias, call); }
+export type Client = ReadTable<Row, Indexes>;
+export function createClient(alias: string, call: Call): Client { return createSharedTable<Row, Indexes>(alias, call); }
 `;
 };
 const definitionContext = (title: string, definition: unknown) =>
@@ -368,7 +370,25 @@ export const generate = Effect.fn("Generation.generate")(function* (
     files.set(path, contents);
     skillFiles.push({ name, path });
   }
-  files.set(`${root}/client.ts`, generateClient({ shared, connections: factories }));
+  const handlers = request.manifest.tier === 2 ? (request.manifest.handlers ?? {}) : undefined;
+  files.set(
+    `${root}/client.ts`,
+    generateClient({
+      shared,
+      connections: factories,
+      tier: request.manifest.tier
+    })
+  );
+  if (handlers !== undefined) {
+    files.set(
+      `${root}/server.ts`,
+      generateServer({
+        modules: Object.keys(handlers).map((name) => name.split(".")[0]!),
+        shared,
+        connections: factories
+      })
+    );
+  }
   files.set(
     `${root}/README.md`,
     "# Generated Patchy files\n\nDo not edit this directory. Edit patchy.config.ts, then run patchy refresh. Import patchy from ./client.js; index.json lists definitions, declarations, revision stamps, skills and contexts. manifest.json is written locally by the CLI, never by the server.\n\nInstall already ran during patchy init. Test with patchy dev. Fixtures contain synthetic local data only. Deleting .patchy/ destroys local rows and files; it does not delete company data.\n"

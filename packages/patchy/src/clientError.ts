@@ -23,6 +23,13 @@ export const errorCodes = {
   rate_limited: true,
   too_many_requests: true,
   busy: true,
+  handler_failed: true,
+  handler_timeout: true,
+  write_conflict: true,
+  patch_paused: true,
+  server_required: true,
+  tier2_not_public: true,
+  limit_exceeded: true,
   offset_exhausted: true
 } as const;
 export type ErrorCode = keyof typeof errorCodes;
