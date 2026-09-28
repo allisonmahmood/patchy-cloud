@@ -24,10 +24,10 @@ export const LimitPeak = Schema.Struct({
   limitId: Schema.String,
   value: Schema.Number,
   peak: Schema.Number,
-  configRevision: Schema.Union([
-    Schema.String,
-    Schema.Struct({ deploymentRevision: Schema.String, overrideRevision: Schema.String })
-  ])
+  configRevision: Schema.Struct({
+    deploymentRevision: Schema.String,
+    overrideRevision: Schema.String
+  })
 });
 export type LimitPeak = typeof LimitPeak.Type;
 
@@ -37,7 +37,7 @@ const attribution = {
   versionId: Schema.optionalKey(Schema.String),
   viewerId: Schema.optionalKey(Schema.String),
   handler: Schema.optionalKey(Schema.String),
-  kind: Schema.optionalKey(Schema.Literals(["read", "mutation", "integration", "query", "action"])),
+  kind: Schema.optionalKey(Schema.Literals(["query", "mutation", "action"])),
   tier: Schema.optionalKey(Schema.Literals([0, 1, 2, 3])),
   taskId: Schema.optionalKey(Schema.String),
   processGeneration: Schema.optionalKey(Schema.Number)
@@ -52,9 +52,7 @@ const invocationMetrics = {
   queueWaitMs: Schema.optionalKey(Schema.Number),
   connectionWaitMs: Schema.optionalKey(Schema.Number),
   guestMs: Schema.optionalKey(Schema.Number),
-  dbMs: Schema.optionalKey(Schema.Number),
   callbacks: Schema.optionalKey(Schema.Number),
-  callbackBytes: Schema.optionalKey(Schema.Number),
   attempts: Schema.optionalKey(Schema.Number),
   argsBytes: Schema.optionalKey(Schema.Number),
   resultBytes: Schema.optionalKey(Schema.Number),
@@ -72,7 +70,6 @@ const streamMetrics = {
   peakSubscriptions: Schema.optionalKey(Schema.Number),
   reruns: Schema.optionalKey(Schema.Number),
   bytes: Schema.optionalKey(Schema.Number),
-  peakBufferedBytes: Schema.optionalKey(Schema.Number),
   closeReason: Schema.optionalKey(Schema.String)
 };
 const processMetrics = {
@@ -84,7 +81,6 @@ const processMetrics = {
 const bindingMetrics = {
   spareWaitMs: Schema.optionalKey(Schema.Number),
   peakProcesses: Schema.optionalKey(Schema.Number),
-  boundSeconds: Schema.optionalKey(Schema.Number),
   releaseCause: Schema.optionalKey(Schema.String)
 };
 
@@ -177,20 +173,11 @@ type Seed<E extends WideEvent> = E extends WideEvent
   : never;
 export type EventSeed = Seed<WideEvent>;
 
-export class SinkError extends Schema.TaggedError<SinkError>()("WideEventSinkError", {
-  sink: Schema.String,
-  cause: Schema.Defect()
-}) {
-  override get message() {
-    return `Wide event delivery to ${this.sink} failed.`;
-  }
-}
-
 /** An injectable delivery attempt. Caller finalizers never wait for it. */
 export class Sink extends Context.Service<
   Sink,
   {
-    readonly write: (event: WideEvent) => Effect.Effect<void, SinkError>;
+    readonly write: (event: WideEvent) => Effect.Effect<void>;
   }
 >()("@patchy/analytics/WideEvents/Sink") {}
 
@@ -267,7 +254,7 @@ const schemas = {
   process: ProcessEvent,
   binding: BindingEvent
 };
-const bestEffort = <E>(work: Effect.Effect<void, E>) =>
+const bestEffort = (work: Effect.Effect<void>) =>
   work.pipe(
     Effect.interruptible,
     Effect.timeout("3 seconds"),

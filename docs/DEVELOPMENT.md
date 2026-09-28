@@ -863,10 +863,15 @@ Business events and wide events share one client and one shutdown flush, bounded
 to three seconds. The worktree runner does not forward these optional settings.
 
 Set `PATCHY_REPLICA` and `PATCHY_DEPLOYMENT_REVISION` in a deployment to identify
-its host and revision. Without them, the server generates a replica id at startup
-and uses revision `development`. Request records include the known operation,
-outcome, refusal code and limit id when present, duration, trace linkage and
-trusted attribution. They omit request bodies, filenames, SQL and credentials.
+its host and running build. Without them, the server generates a replica id at
+startup and uses revision `development`. The event's top-level `deploymentRevision`
+identifies that build; `limits[].configRevision.deploymentRevision` is instead the
+automatically computed operating-limit fingerprint described in [Limits](limits.md).
+Each limit measurement also carries the company's `overrideRevision`.
+Request records include known operation names, outcome, refusal code and limit id
+when present, duration, trace linkage and trusted attribution. Tier 1 operations
+have no patch-authored handler, so `handler` and `kind` are omitted.
+Records omit request bodies, filenames, SQL and credentials.
 Every event has `sampleProbability: 1`; delivery is best effort, not metering.
 
 The patch repo's local runtime uses the same record with compact stdout output.

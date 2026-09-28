@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -26,11 +27,25 @@ const recordEvents = Effect.gen(function* () {
             yield* Queue.offer(queue, event);
           })
       })
+    ),
+    Layer.provide(
+      WideEvents.layerMetadata.pipe(
+        Layer.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromUnknown({
+              PATCHY_REPLICA: "runtime-test-replica",
+              PATCHY_DEPLOYMENT_REVISION: "runtime-test-deployment"
+            })
+          )
+        )
+      )
     )
   );
   const next = Queue.take(queue).pipe(
     Effect.map((event) => {
       if (event.type !== "request") assert.fail(`Unexpected event type: ${event.type}`);
+      assert.notProperty(event, "handler");
+      assert.notProperty(event, "kind");
       return event;
     })
   );
@@ -94,12 +109,15 @@ it.effect(
         assert.include(event, {
           ...attribution,
           type: "request",
-          handler: "me",
-          kind: "read",
+          replica: "runtime-test-replica",
+          deploymentRevision: "runtime-test-deployment",
           outcome: "success",
           sampleProbability: 1
         });
         assert.deepStrictEqual(event.operations, ["me"]);
+        assert.match(event.eventId, /^[0-9a-f]{32}$/);
+        assert.strictEqual(event.traceId, event.eventId);
+        assert.notProperty(event, "parentId");
         assert.notInclude(JSON.stringify(event), "untrusted-trace");
         assert.notInclude(JSON.stringify(event), "dev@patchy.local");
         assert.notProperty(event, "code");
@@ -238,8 +256,6 @@ it.effect(
         const event = yield* events.next;
         assert.include(event, {
           ...attribution,
-          handler: "tables.get",
-          kind: "read",
           outcome: "failure",
           code: "source_unavailable",
           durationMs: 25
@@ -250,6 +266,84 @@ it.effect(
         yield* events.count(1);
       }).pipe(Effect.provide(Fixtures.layer(handlers, {}, events.layer)));
     })
+);
+
+it.effect("distinguishes capacity refusals, timeouts, and unknown outcomes by runtime code", () =>
+  Effect.gen(function* () {
+    const events = yield* recordEvents;
+    const busy: Runtime.OperationError = {
+      code: "busy",
+      status: 503,
+      message: "Company database capacity (4) is exhausted. Try again shortly.",
+      limitId: "company.connections",
+      scope: "company",
+      value: 4,
+      retryAfterSeconds: 1
+    };
+    const cases = [
+      {
+        error: busy,
+        outcome: "refused",
+        responseFields: {
+          limitId: "company.connections",
+          scope: "company",
+          value: 4,
+          retryAfter: 1
+        },
+        eventFields: { limitId: "company.connections" }
+      },
+      {
+        error: new Runtime.Timeout({ deadlineMs: 25, limitId: "integration.deadline" }),
+        outcome: "failure",
+        responseFields: { limitId: "integration.deadline", scope: "viewer", value: 25 },
+        eventFields: { limitId: "integration.deadline" }
+      },
+      {
+        error: new Runtime.UnknownOutcome({
+          cause: new Error("private-unknown-outcome"),
+          correlationId: "call_unknown"
+        }),
+        outcome: "unknown_outcome",
+        responseFields: { correlationId: "call_unknown" },
+        eventFields: {}
+      }
+    ] as const;
+    for (const { error, outcome, responseFields, eventFields } of cases) {
+      const handlers = {
+        "tables.get": Runtime.handler(
+          {
+            kind: "read",
+            input: runtimeOperations["tables.get"].request.fields.args,
+            output: runtimeOperations["tables.get"].response
+          },
+          () => Effect.fail(error)
+        )
+      };
+      yield* Effect.gen(function* () {
+        const api = yield* Fixtures.client;
+        const response = yield* api.call({
+          payload: payload("tables.get", { table: "notes", id: "private-row" }),
+          headers: authenticated(),
+          responseMode: "response-only"
+        });
+        assert.strictEqual(response.status, error.status);
+        assert.deepStrictEqual(yield* response.json, {
+          ok: false,
+          code: error.code,
+          error: error.message,
+          ...responseFields
+        });
+        if (error.code === "busy") assert.strictEqual(response.headers["retry-after"], "1");
+        else assert.notProperty(response.headers, "retry-after");
+        const event = yield* events.next;
+        assert.include(event, { ...attribution, outcome, code: error.code, ...eventFields });
+        assert.deepStrictEqual(event.operations, ["tables.get"]);
+        assert.notInclude(JSON.stringify(event), "private-unknown-outcome");
+        assert.notInclude(JSON.stringify(event), "private-row");
+      }).pipe(Effect.provide(Fixtures.layer(handlers, {}, events.layer)));
+    }
+    yield* events.count(cases.length);
+  })
 );
 
 it.effect(
@@ -294,8 +388,6 @@ it.effect(
         const putEvent = yield* events.next;
         assert.include(putEvent, {
           ...attribution,
-          handler: "files.put",
-          kind: "mutation",
           outcome: "success"
         });
         assert.deepStrictEqual(putEvent.operations, ["files.put"]);
@@ -311,11 +403,11 @@ it.effect(
         const oversizedEvent = yield* events.next;
         assert.include(oversizedEvent, {
           ...attribution,
-          handler: "files.put",
           outcome: "refused",
           code: "too_large",
           limitId: "runtime.file.bytes"
         });
+        assert.deepStrictEqual(oversizedEvent.operations, ["files.put"]);
 
         const get = yield* api.getFile({
           params,
@@ -329,8 +421,6 @@ it.effect(
         const getEvent = yield* events.next;
         assert.include(getEvent, {
           ...attribution,
-          handler: "files.get",
-          kind: "read",
           outcome: "success"
         });
         assert.deepStrictEqual(getEvent.operations, ["files.get"]);
@@ -353,7 +443,6 @@ it.effect(
           const event = yield* events.next;
           const operation = method === "putFile" ? "files.put" : "files.get";
           assert.include(event, {
-            handler: operation,
             outcome: "refused",
             code: "invalid_request"
           });

@@ -203,13 +203,33 @@ it.effect("keeps peak usage per limit configuration and unique operations", () =
           yield* WideEvents.operation("tables.get");
           yield* WideEvents.operation("tables.get");
           yield* WideEvents.operation("members.get");
-          for (const peak of [3, 1, 4]) {
+          for (const peak of [3, 1, 4, 2]) {
             yield* WideEvents.enrich({
-              limits: [{ limitId: "company.connections", value: 4, peak, configRevision: "one" }]
+              limits: [
+                {
+                  limitId: "company.connections",
+                  value: 4,
+                  peak,
+                  configRevision: { deploymentRevision: "deployment-a", overrideRevision: "one" }
+                }
+              ]
             });
           }
           yield* WideEvents.enrich({
-            limits: [{ limitId: "company.connections", value: 8, peak: 5, configRevision: "two" }]
+            limits: [
+              {
+                limitId: "company.connections",
+                value: 8,
+                peak: 5,
+                configRevision: { deploymentRevision: "deployment-a", overrideRevision: "two" }
+              },
+              {
+                limitId: "company.connections",
+                value: 6,
+                peak: 2,
+                configRevision: { deploymentRevision: "deployment-b", overrideRevision: "one" }
+              }
+            ]
           });
           yield* WideEvents.enrich({
             outcome: "refused",
@@ -232,12 +252,41 @@ it.effect("keeps peak usage per limit configuration and unique operations", () =
         "members.get"
       ]);
       assert.deepStrictEqual(record.limits, [
-        { limitId: "company.connections", value: 4, peak: 4, configRevision: "one" },
-        { limitId: "company.connections", value: 8, peak: 5, configRevision: "two" }
+        {
+          limitId: "company.connections",
+          value: 4,
+          peak: 4,
+          configRevision: { deploymentRevision: "deployment-a", overrideRevision: "one" }
+        },
+        {
+          limitId: "company.connections",
+          value: 8,
+          peak: 5,
+          configRevision: { deploymentRevision: "deployment-a", overrideRevision: "two" }
+        },
+        {
+          limitId: "company.connections",
+          value: 6,
+          peak: 2,
+          configRevision: { deploymentRevision: "deployment-b", overrideRevision: "one" }
+        }
       ]);
     }).pipe(Effect.provide(sink.layer));
   })
 );
+
+it("rejects a limit measurement without a complete configuration revision", () => {
+  const decode = Schema.decodeUnknownSync(WideEvents.LimitPeak);
+  for (const configRevision of [
+    "one",
+    { deploymentRevision: "deployment-a" },
+    { overrideRevision: "one" }
+  ]) {
+    assert.throws(() =>
+      decode({ limitId: "company.connections", value: 4, peak: 3, configRevision })
+    );
+  }
+});
 
 it.effect("does not close the request Scope when the event is finalized", () =>
   Effect.gen(function* () {
@@ -389,6 +438,48 @@ it.effect("attempts PostHog despite broken stdout and stdout despite hanging Pos
     assert.include(decodeBinding(line), { taskId: "task" });
     yield* TestClock.adjust("3 seconds");
     yield* Deferred.await(stopped);
+  })
+);
+
+it.effect("attributes wide events to viewers or the instance, never the company", () =>
+  Effect.gen(function* () {
+    const messages = yield* Queue.unbounded<PostHogClient.CaptureMessage>();
+    const stdout = yield* Console.Console;
+    const postHog = Layer.succeed(PostHogClient.PostHogClient, {
+      capture: (message: PostHogClient.CaptureMessage) =>
+        Queue.offer(messages, message).pipe(Effect.asVoid),
+      shutdown: Effect.void
+    });
+    yield* Effect.gen(function* () {
+      const events = yield* WideEvents.WideEvents;
+      for (const viewerId of [undefined, "viewer"]) {
+        yield* events.withEvent(
+          {
+            type: "request",
+            companyId: "company",
+            outcome: "refused",
+            ...(viewerId === undefined ? {} : { viewerId })
+          },
+          Effect.void
+        );
+        const message = yield* Queue.take(messages);
+        assert.strictEqual(message.distinctId, viewerId ?? Analytics.INSTANCE_DISTINCT_ID);
+        assert.include(message.properties, {
+          companyId: "company",
+          outcome: "refused",
+          $process_person_profile: false
+        });
+        if (viewerId === undefined) assert.notProperty(message.properties, "viewerId");
+        else assert.strictEqual(message.properties.viewerId, viewerId);
+      }
+    }).pipe(
+      Effect.provide(
+        WideEvents.layerWithSink.pipe(
+          Layer.provide(WideEventsPostHog.layerSink.pipe(Layer.provide(postHog)))
+        )
+      ),
+      Effect.provideService(Console.Console, { ...stdout, log: () => {} })
+    );
   })
 );
 

@@ -192,9 +192,11 @@ For company-management changes, read
 Invitations send real mail: use a `+clerk_test` address and revoke test
 invitations afterward.
 
-The server has no per-request access log. Read `pnpm dev logs` for startup
-failures and Clerk handshake diagnostics, without exposing credentials;
-request-level status, headers and body come from the response itself.
+Read `pnpm dev logs` for runtime request events, startup failures and Clerk
+handshake diagnostics, without exposing credentials. Runtime call and file-byte
+routes emit one JSON event per request, including refusals; other routes have no
+per-request access log. Request-level status, headers and body come from the
+response itself.
 One benign `relation "schema_migrations" does not exist` line is expected on
 the first migration run.
 

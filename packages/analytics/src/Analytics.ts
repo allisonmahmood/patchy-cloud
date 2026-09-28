@@ -1,5 +1,6 @@
 /**
- * Server-side business moments. Wide events report runtime work, including
+ * Server-side business moments. Serving a page is not a business analytics event;
+ * visits remain database counts today. Wide events report runtime work, including
  * viewer ids and handler names, through the same PostHog client.
  * Neither event family carries page content, filenames, source addresses or URLs.
  * A reporting failure never fails the caller's request.

@@ -9,12 +9,16 @@ A server-side business moment: a patch created, updated, deleted or purged, or a
 _Avoid_: telemetry, tracking, pageview, metric (an analytics event names what happened in the domain, not what the process measured)
 
 **Principal of an event**:
-Who an event belongs to: the user who acted, or the instance itself for a deletion sweep. Wide events may attribute runtime work to a viewer; reporting creates no person profile.
+Who an event belongs to: the user who acted, or the instance itself when no user is attributable. A wide event's viewer is its principal when known; the company is attribution, not a principal, and reporting creates no person profile.
 _Avoid_: machine (the credential is provenance, not the actor), distinct id (PostHog's word for the same slot)
 
 **Wide event**:
 One structured record of a single hop of work, emitted once at its end. It sits beside the analytics event, shares its reporting client, and carries attribution, outcome, timing and peak limit usage without sampling; it is not the billing record.
 _Avoid_: log line, metric, trace (the linkage, not the record)
+
+**Deployment revision**:
+The host build or deployment that emitted a wide event. It is distinct from the [Limits](../limits/CONTEXT.md) deployment configuration revision, which fingerprints the effective operating-limit values rather than the running code.
+_Avoid_: configuration revision (the limits setting, not the host build)
 
 **Shutdown flush**:
 The bounded final opportunity for queued analytics events to be sent when the instance stops. An unavailable analytics backend must not hold shutdown open.

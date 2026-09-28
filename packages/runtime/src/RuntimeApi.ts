@@ -56,7 +56,7 @@ const recordFailure = Effect.fnUntraced(function* (error: Runtime.RuntimeError) 
     outcome:
       error.code === "unknown_outcome"
         ? "unknown_outcome"
-        : error.status >= 500
+        : error.code === "source_unavailable" || error.code === "timeout"
           ? "failure"
           : "refused",
     code: error.code,
@@ -144,10 +144,6 @@ export const layer = HttpApiBuilder.group(PatchyApi, "runtime", (handlers) =>
     const file = Effect.fn("RuntimeApi.file")(function* (params: Readonly<Record<string, string>>) {
       const request = yield* HttpServerRequest.HttpServerRequest;
       const operation = request.method === "PUT" ? "files.put" : "files.get";
-      yield* WideEvents.enrich({
-        handler: operation,
-        kind: request.method === "PUT" ? "mutation" : "read"
-      });
       yield* WideEvents.operation(operation);
       const wire = yield* Runtime.decodeWire(request.headers["x-patchy-wire"]).pipe(
         Effect.mapError((cause) => new Runtime.InvalidRequest({ cause }))

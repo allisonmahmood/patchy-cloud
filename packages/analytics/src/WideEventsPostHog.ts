@@ -19,9 +19,7 @@ export const make = Effect.gen(function* () {
           Effect.suspend(() =>
             client.capture({
               distinctId:
-                ("viewerId" in event ? event.viewerId : undefined) ??
-                event.companyId ??
-                INSTANCE_DISTINCT_ID,
+                ("viewerId" in event ? event.viewerId : undefined) ?? INSTANCE_DISTINCT_ID,
               event: `wide.${event.type}`,
               properties: { ...event, $process_person_profile: false }
             })

@@ -364,15 +364,8 @@ export const make = (
     ) =>
       Effect.gen(function* () {
         const operation = Object.hasOwn(handlers, input.op) ? handlers[input.op] : undefined;
-        const kind =
-          operation?.kind ??
-          (Object.hasOwn(runtimeOperations, input.op)
-            ? runtimeOperations[input.op as keyof typeof runtimeOperations].kind
-            : undefined);
-        if (kind !== undefined) {
-          yield* WideEvents.enrich({ handler: input.op, kind });
+        if (operation !== undefined || Object.hasOwn(runtimeOperations, input.op))
           yield* WideEvents.operation(input.op);
-        }
         const integration = operation?.kind === "integration";
         const boundedOp = operation === undefined ? "" : input.op;
         const maxBytes = bodyLimit(boundedOp);
