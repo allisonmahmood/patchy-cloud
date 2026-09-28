@@ -25,12 +25,13 @@ export function toolchainUpgrade(versions: typeof ReleaseToolchain.Type) {
   return `pnpm add --save-dev ${checkedPackages.map((name) => `'${name}@${versions[name].accepted}'`).join(" ")}`;
 }
 
-/** Inspect resolved module files, including plugins imported by shared or nested configs. */
-export async function loadToolchain(
+/** Keep version checks active through Vite's own config and deferred-plugin lifecycle. */
+export async function runToolchain(
   root: string,
   versions: typeof ReleaseToolchain.Type = toolchain,
-  warnOnly = false
+  buildConfig?: Vite.InlineConfig
 ) {
+  const warnOnly = buildConfig === undefined;
   const warnings = new Set<string>();
   const directories = new Map<string, { name?: string; version?: string } | undefined>();
   const seen = new Set<string>();
@@ -95,35 +96,28 @@ export async function loadToolchain(
     // The builder's Vite installation is selected at runtime, not bundled into Patchy.
     const vite: typeof Vite = await import(pathToFileURL(viteEntry).href);
     check("vite", vite.version);
-    const loaded = await vite.loadConfigFromFile(
-      { command: "build", mode: "production", isSsrBuild: false, isPreview: false },
-      undefined,
+    const config: Vite.InlineConfig = {
+      ...buildConfig,
       root,
-      "silent"
-    );
-    for (const file of loaded?.dependencies ?? []) inspect(file);
-    // Vite accepts nested promised plugins. Resolve them while version hooks are active.
-    const plugins: Vite.Plugin[] = [];
-    const appendPlugins = async (option: Vite.PluginOption): Promise<void> => {
-      const resolved = await option;
-      if (Array.isArray(resolved)) {
-        for (const child of resolved) await appendPlugins(child);
-      } else if (resolved) {
-        plugins.push(resolved);
-      }
+      plugins: [
+        buildConfig?.plugins,
+        {
+          name: "patchy-toolchain-versions",
+          enforce: "pre",
+          configResolved(resolved) {
+            for (const file of resolved.configFileDependencies) inspect(file);
+          }
+        }
+      ]
     };
-    await appendPlugins(loaded?.config.plugins);
-    return {
-      vite,
-      config: {
-        ...loaded?.config,
-        plugins,
-        configFile: false,
-        root,
-        logLevel: "silent"
-      } satisfies Vite.InlineConfig,
-      warnings: [...warnings]
-    };
+    // Vite initializes NODE_ENV before loading config and applies .env overrides
+    // afterward. Preloading config here would bypass that ordering.
+    if (!buildConfig) {
+      await vite.resolveConfig(config, "build", "production", "production");
+      return { warnings: [...warnings] };
+    }
+    const result = await vite.build(config);
+    return { result, warnings: [...warnings] };
   } catch (cause) {
     // Refresh owns no builder config and must work while that config is incomplete.
     if (warnOnly) return { warnings: [...warnings] };

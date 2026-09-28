@@ -25,6 +25,7 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { runInNewContext } from "node:vm";
 import { promisify } from "node:util";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 import * as Schema from "effect/Schema";
@@ -262,6 +263,7 @@ const require = createRequire(import.meta.url);
 const decodeGenerateRequest = Schema.decodeUnknownSync(GenerateRequest);
 const decodeForceRequest = Schema.decodeUnknownSync(ForceRequest);
 const decodeDescriptionRequest = Schema.decodeUnknownSync(DescriptionRequest);
+const decodePublishRequest = Schema.decodeUnknownSync(PublishRequest);
 const decodePackageFixture = Schema.decodeUnknownSync(
   Schema.StructWithRest(
     Schema.Struct({
@@ -3763,6 +3765,113 @@ describe("patch-repo commands", () => {
   });
 
   it.each([
+    {
+      name: "an unset NODE_ENV",
+      nodeEnv: undefined,
+      envFile: undefined,
+      configEnv: "production",
+      production: true
+    },
+    {
+      name: "an empty NODE_ENV",
+      nodeEnv: "",
+      envFile: undefined,
+      configEnv: "production",
+      production: true
+    },
+    {
+      name: "explicit development",
+      nodeEnv: "development",
+      envFile: undefined,
+      configEnv: "development",
+      production: false
+    },
+    {
+      name: "an env-file development override",
+      nodeEnv: undefined,
+      envFile: "development",
+      configEnv: "production",
+      production: false
+    },
+    {
+      name: "explicit production over an env file",
+      nodeEnv: "production",
+      envFile: "development",
+      configEnv: "production",
+      production: true
+    },
+    {
+      name: "an explicit custom environment over an env file",
+      nodeEnv: "staging",
+      envFile: "development",
+      configEnv: "staging",
+      production: false
+    }
+  ])(
+    "publishes Vite's normal build environment with $name",
+    async ({ nodeEnv, envFile, configEnv, production }) => {
+      const response = { ...publish(201, "abcdefghijkl", 1), tier: 1 };
+      const instance = await stubInstance((request, respond, disconnect) => {
+        if (request.url === "/api/publish") return respond(201, response);
+        projectHandler(request, respond, disconnect);
+      });
+      const dir = publishTree(instance.url);
+      writeFileSync(
+        path.join(dir, "vite.config.ts"),
+        `import { defineConfig } from "vite";
+import { viteSingleFile } from "vite-plugin-singlefile";
+console.log("Builder config progress");
+export default defineConfig({
+  define: { __BUILDER_NODE_ENV__: JSON.stringify(process.env.NODE_ENV ?? "unset") },
+  build: { modulePreload: false },
+  plugins: [
+    viteSingleFile(),
+    {
+      name: "builder-diagnostics",
+      configResolved(config) { config.logger.info("Builder plugin progress"); }
+    }
+  ]
+});
+`
+      );
+      if (envFile !== undefined)
+        writeFileSync(path.join(dir, ".env.production"), `NODE_ENV=${envFile}\n`);
+      writeFileSync(
+        path.join(dir, "src/main.ts"),
+        `declare const __BUILDER_NODE_ENV__: string;
+document.body.textContent = JSON.stringify({
+  configEnv: __BUILDER_NODE_ENV__,
+  production: import.meta.env.PROD,
+  mode: import.meta.env.MODE
+});
+`
+      );
+      const options = {
+        cwd: dir,
+        stateDir: tempDir(),
+        env: { ...env, ...(nodeEnv === undefined ? {} : { NODE_ENV: nodeEnv }) }
+      };
+      const refreshed = await runCli(["refresh", "--json"], options);
+      expect(refreshed, refreshed.stderr).toMatchObject({ status: 0, stderr: "" });
+      expect(JSON.parse(refreshed.stdout)).toMatchObject({ ok: true, warnings: [] });
+      const published = await runCli(["publish", "--json"], options);
+      expect(published, published.stderr).toMatchObject({ status: 0, stderr: "" });
+      expect(JSON.parse(published.stdout)).toEqual(response);
+      const request = instance.requests.find((request) => request.url === "/api/publish");
+      const { html } = decodePublishRequest(request?.body);
+      const document = { body: { textContent: "" } };
+      for (const script of html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g))
+        runInNewContext(script[1]!, { document }, { timeout: 1_000 });
+      expect(JSON.parse(document.body.textContent)).toEqual({
+        configEnv,
+        production,
+        mode: "production"
+      });
+    },
+    30_000 // Refresh and publish execute real config, compiler and Vite child processes.
+  );
+
+  it.each([
     { name: "vite", delayed: false },
     { name: "vite-plugin-singlefile", delayed: false },
     { name: "vite-plugin-singlefile", delayed: true }
@@ -4590,7 +4699,7 @@ describe("repo publish recovery", () => {
         .filter((request) => request.url === "/api/publish")
         .map((request) => request.body)
     ).toEqual(Array(3).fill(JSON.parse(original).request));
-  });
+  }, 30_000); // Refresh, a lost update, conflict refusal and receipt recovery use four CLI processes.
 
   it.each([true, false])(
     "clears only a proven payload-too-large response (decoded: %s)",

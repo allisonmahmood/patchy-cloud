@@ -18,6 +18,7 @@ import { processResult } from "./processResult.js";
 import * as Project from "./Project.js";
 import { primitiveReminders } from "./primitiveReminders.js";
 import { runToolchain } from "./toolchainProcess.js";
+import { releaseFromPin } from "./packagePin.js";
 
 const decodePackage = Schema.decodeUnknownSync(
   Schema.fromJsonString(
@@ -179,7 +180,7 @@ export const checkRepoRelease = Effect.fn("checkRepoRelease")(function* (
   if (pin !== tarball)
     return yield* new ReleaseMismatch({
       component: "pin",
-      loaded: /patchy-(.+?)(?:-[a-f0-9]{64})?\.tgz(?:[?#].*)?$/.exec(pin)?.[1] ?? pin,
+      loaded: releaseFromPin(pin),
       current: release.release
     });
   yield* checkRelease(release.release, { cli: RELEASE });

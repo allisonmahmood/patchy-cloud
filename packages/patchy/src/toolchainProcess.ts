@@ -40,7 +40,13 @@ export const runToolchain = Effect.fn("runToolchain")(function* (
   const decoded = yield* Effect.try({
     try: () => decodeResult(result.stdout),
     catch: (cause) =>
-      new LocalError({ message: "Could not inspect the repo's installed toolchain.", cause })
+      new LocalError({
+        message:
+          "inspect" in operation
+            ? "Could not inspect the repo's installed toolchain."
+            : "Could not build the repo with its installed toolchain.",
+        cause
+      })
   });
   if (!decoded.ok)
     return yield* new LocalError({

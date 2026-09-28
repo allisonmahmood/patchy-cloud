@@ -2,7 +2,7 @@
 import * as Schema from "effect/Schema";
 import { ReleaseToolchain } from "@patchy/api";
 import { LocalError } from "./CliError.js";
-import { loadToolchain } from "./toolchain.js";
+import { runToolchain } from "./toolchain.js";
 
 const decodeToolchain = Schema.decodeUnknownSync(Schema.fromJsonString(ReleaseToolchain));
 const isLocalError = Schema.is(LocalError);
@@ -11,18 +11,17 @@ const output = process.stdout.write.bind(process.stdout);
 process.stdout.write = process.stderr.write.bind(process.stderr);
 try {
   const inspect = process.argv[2] === "inspect";
-  const loaded = await loadToolchain(
+  const loaded = await runToolchain(
     process.cwd(),
     decodeToolchain(process.argv[inspect ? 3 : 4]!),
     inspect
+      ? undefined
+      : {
+          // Native Vite progress bypasses stdout.write; retain only warnings/errors here.
+          logLevel: "warn",
+          build: { outDir: process.argv[3], emptyOutDir: true }
+        }
   );
-  if (!inspect) {
-    if (!loaded.vite || !loaded.config) throw new Error("No Vite installation.");
-    await loaded.vite.build({
-      ...loaded.config,
-      build: { ...loaded.config.build, outDir: process.argv[3], emptyOutDir: true }
-    });
-  }
   output(JSON.stringify({ ok: true, warnings: loaded.warnings }));
 } catch (cause) {
   output(

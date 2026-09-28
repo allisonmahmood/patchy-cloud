@@ -42,6 +42,7 @@ import { RELEASE } from "./release.js";
 import { processResult } from "./processResult.js";
 import { primitiveReminders } from "./primitiveReminders.js";
 import { runToolchain } from "./toolchainProcess.js";
+import { releaseFromPin } from "./packagePin.js";
 
 const repoSchema = Schema.Struct({
   instance: Schema.String,
@@ -534,8 +535,7 @@ export const refresh = Effect.fn("Project.refresh")(function* (
             message: "package.json must pin patchy as a devDependency."
           });
         const pinChanged = previousPin !== tarball;
-        const from =
-          /patchy-(.+?)(?:-[a-f0-9]{64})?\.tgz(?:[?#].*)?$/.exec(previousPin)?.[1] ?? previousPin;
+        const from = releaseFromPin(previousPin);
         const skills = yield* localIO("Read project skills", () => presentSkills(cwd));
         const needsInstall =
           pinChanged || !(yield* fs.exists(executable).pipe(Effect.orElseSucceed(() => false)));

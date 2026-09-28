@@ -17,12 +17,16 @@ at unauthenticated, immutable `GET /sdk/patchy-<release>-<digest>.tgz` and repor
 their SHA-512 integrity at `GET /api/release`. The digest is the tarball's full
 lowercase SHA-256. A rebuild with the same version and different bytes gets a
 different URL, so pnpm installs the new bytes when refresh rewrites the pin.
-Before advertising a release the instance saves its archive in the durable
-content store; previously advertised URLs remain retrievable across deployments.
-Build and copy steps preserve historical digest archives too. Manifest and wire
-versions are separate constants, checked at build time against the API contract.
-Release metadata must describe the actual artifact, never a configured version
-with unrelated bytes or a placeholder integrity.
+Before advertising a release the instance validates its local archive and saves
+those bytes in the durable content store, replacing any damaged stored copy.
+Previously advertised URLs remain retrievable across deployments. Build and copy
+steps keep only the current digest archive and `release.json`; local build outputs
+are not a retention store. Startup does not read historical archives. Downloads
+verify their digest, so a corrupt historical archive fails its own request without
+blocking the current release. Manifest and wire versions are separate constants,
+checked at build time against the API contract. Release metadata must describe
+the actual artifact, never a configured version with unrelated bytes or a
+placeholder integrity.
 
 Four versions have separate meanings: the release is the tooling package;
 `manifestVersion` describes persisted definitions; `wireVersion` selects the

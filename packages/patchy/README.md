@@ -355,6 +355,11 @@ Refresh reports required upgrades in text and JSON `warnings`, but leaves
 the upgrade to the builder. `release_mismatch` still checks the Patchy pin,
 CLI and runtime; toolchain support is a separate check.
 
+Version checks run inside Vite's normal build lifecycle, preserving its
+`NODE_ENV` initialization and `.env` precedence. Dev retains the builder's
+logging configuration. Publish suppresses native progress output and keeps
+warnings and errors off the CLI's JSON stdout.
+
 ### `patchy dev [--foreground]`
 
 Start this repo's local runtime, detached and idempotent. Exit 0 means the

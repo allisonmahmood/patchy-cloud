@@ -8,6 +8,11 @@ const decode = Schema.decodeUnknownOption(
   )
 );
 
+/** Read the release from a managed archive pin, retaining unknown pins for diagnostics. */
+export function releaseFromPin(pin: string) {
+  return /(?:^|\/)patchy-([^/?#]+?)(?:-[a-f0-9]{64})?\.tgz(?:[?#].*)?$/.exec(pin)?.[1] ?? pin;
+}
+
 /** Replace only the effective pin literal; refuse a changed pin or unfinished author edit. */
 export function patchPackagePin(source: string, expected: string, replacementLiteral: string) {
   const decoded = decode(source);

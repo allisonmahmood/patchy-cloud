@@ -135,39 +135,12 @@ export const make = Effect.gen(function* () {
     });
   }
 
-  // Persist before discovery. Deployments may carry only the newest archive;
-  // the shared content store retains every URL advertised by earlier servers.
-  const filenames = yield* fs
-    .readDirectory(directory)
-    .pipe(
-      Effect.mapError((cause) => new ArtifactUnavailable({ path: directory, stage: "read", cause }))
-    );
-  for (const retained of filenames) {
-    if (!isArchiveFilename(retained)) continue;
-    const retainedPath = path.join(directory, retained);
-    const readRetained =
-      retained === filename
-        ? Effect.succeed(bytes)
-        : fs.readFile(retainedPath).pipe(
-            Effect.mapError(
-              (cause) => new ArtifactUnavailable({ path: retainedPath, stage: "read", cause })
-            ),
-            Effect.flatMap((bytes) => verifyDigest(retained, bytes))
-          );
-    const key = `sdk/${retained}`;
-    yield* store.getBytes(key).pipe(
-      Effect.flatMap((bytes) => verifyDigest(retained, bytes)),
-      Effect.asVoid,
-      Effect.catchTags({
-        ObjectNotFound: () =>
-          readRetained.pipe(Effect.flatMap((bytes) => store.putBytes(key, bytes)))
-      }),
-      Effect.catchTags({
-        InvalidObjectKey: (cause) => new ArtifactRetentionFailed({ key, cause }),
-        StoreUnavailable: (cause) => new ArtifactRetentionFailed({ key, cause })
-      })
-    );
-  }
+  // Persist verified current bytes before discovery, repairing any damaged stored copy.
+  // The shared content store keeps historical URLs independently of local build outputs.
+  const key = `sdk/${filename}`;
+  yield* store
+    .putBytes(key, bytes)
+    .pipe(Effect.mapError((cause) => new ArtifactRetentionFailed({ key, cause })));
 
   const get = Effect.fn("Artifact.get")(function* (filename: string) {
     const key = `sdk/${filename}`;

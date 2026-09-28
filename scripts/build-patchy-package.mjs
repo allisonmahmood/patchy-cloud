@@ -8,6 +8,7 @@ import {
   cp,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   realpath,
   rename,
@@ -184,10 +185,8 @@ if (!process.argv.includes("--bundle-only")) {
   const tarball = await readFile(path.join(artifactsDir, name));
   const integrity = `sha512-${createHash("sha512").update(tarball).digest("base64")}`;
   const digest = createHash("sha256").update(tarball).digest("hex");
-  await rename(
-    path.join(artifactsDir, name),
-    path.join(artifactsDir, `patchy-${packageJson.version}-${digest}.tgz`)
-  );
+  const filename = `patchy-${packageJson.version}-${digest}.tgz`;
+  await rename(path.join(artifactsDir, name), path.join(artifactsDir, filename));
   const toolchain = JSON.parse(await readFile(path.join(packageDir, "src/toolchain.json"), "utf8"));
   await writeFile(
     path.join(artifactsDir, "release.json"),
@@ -204,6 +203,15 @@ if (!process.argv.includes("--bundle-only")) {
       2
     ) + "\n"
   );
+  for (const entry of await readdir(artifactsDir, { withFileTypes: true })) {
+    if (
+      entry.isFile() &&
+      entry.name !== filename &&
+      /^patchy-[A-Za-z0-9][A-Za-z0-9.+-]*-[a-f0-9]{64}\.tgz$/.test(entry.name)
+    ) {
+      await rm(path.join(artifactsDir, entry.name));
+    }
+  }
 }
 if (process.argv.includes("--stage-for-server")) {
   await import("./copy-sdk-artifact.mjs");
