@@ -123,6 +123,11 @@ jobs:
           PATCHY_API_URL: http://127.0.0.1:9/ambient-poison
           PATCHY_MAX_HTML_BYTES: "1"
           PATCHY_UNKNOWN_AMBIENT_POISON: must-not-leak
+          PATCHY_S3_BUCKET: ambient-poison
+          PATCHY_S3_ENDPOINT: http://127.0.0.1:9/must-not-reach-storage
+          PATCHY_S3_REGION: us-east-1
+          PATCHY_S3_ACCESS_KEY_ID: ambient-invalid-key
+          PATCHY_S3_SECRET_ACCESS_KEY: ambient-invalid-secret
         run: pnpm test:packed-cli-e2e
       - name: Exercise the packed Preact runtime and same-version upgrades
         run: pnpm test:packed-preact-e2e

@@ -2703,13 +2703,7 @@ async function startServerAttempt({ publicBaseUrl, objectDir, serverEntryPath })
       PATCHY_PROTECTED_API_RATE_LIMIT_PER_MINUTE: "10000",
       PATCHY_AUTHENTICATED_PUBLISH_RATE_LIMIT_PER_MINUTE: "10000"
     },
-    [
-      "CLERK_AUTHORIZED_PARTIES",
-      "PATCHY_TRUST_PROXY",
-      "AZURE_STORAGE_ACCOUNT",
-      "AZURE_STORAGE_CONTAINER",
-      "AZURE_STORAGE_CONNECTION_STRING"
-    ]
+    ["CLERK_AUTHORIZED_PARTIES", "PATCHY_TRUST_PROXY"]
   );
 
   throwIfSignalLatched();

@@ -29,8 +29,8 @@ export class ObjectNotFound extends Schema.TaggedError<ObjectNotFound>()("Object
 }
 
 /**
- * The store could not carry an operation out — the disk or the blob service
- * refused. The driver's own error rides as `cause`.
+ * The filesystem or object store could not carry out an operation.
+ * The driver's underlying error is preserved as `cause`.
  */
 export class StoreUnavailable extends Schema.TaggedError<StoreUnavailable>()("StoreUnavailable", {
   operation: Schema.Literals(["put", "get", "delete", "list"]),

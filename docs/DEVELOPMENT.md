@@ -641,18 +641,35 @@ Postgres shuts down; without it, a failed Vitest suite can exit successfully.
 
 #### Live content store
 
-The opt-in contract suite uses an existing private Neon Object Storage bucket
-and the [dedicated S3 settings](#neon-object-storage). Keep the credentials in a
-private file outside the checkout, then run from the repository root:
+The opt-in contract suite uses the existing private `patchy-content` bucket on
+the Neon spike project. Unlike the server, this test tier reads the spike file's
+settings and maps them to the [server's dedicated S3 settings](#neon-object-storage):
+
+| Live-suite setting      | Server setting                |
+| ----------------------- | ----------------------------- |
+| `NEON_BUCKET`           | `PATCHY_S3_BUCKET`            |
+| `AWS_ENDPOINT_URL_S3`   | `PATCHY_S3_ENDPOINT`          |
+| `AWS_REGION`            | `PATCHY_S3_REGION`            |
+| `AWS_ACCESS_KEY_ID`     | `PATCHY_S3_ACCESS_KEY_ID`     |
+| `AWS_SECRET_ACCESS_KEY` | `PATCHY_S3_SECRET_ACCESS_KEY` |
+
+Keep the credentials in a private file outside the checkout, then run from the
+repository root:
 
 ```sh
 node --env-file=$HOME/.config/patchy-cloud/neon-spike.env node_modules/vitest/vitest.mjs run --config vitest.content-store-live.config.ts
 ```
 
+With those five live-suite settings already exported, `pnpm test:content-store:live`
+runs the same suite. That script does not load an env file. A file containing
+only `PATCHY_S3_*` settings configures the server, not this live test tier.
+
 Each run uses a unique object-key prefix and cleans up its own objects. It does
 not create or delete the bucket or touch objects outside that prefix. The suite
-is never part of `pnpm test` or `pnpm test:all`; local development and offline
-tests stay on the filesystem.
+is never part of `pnpm test` or `pnpm test:all`. Ordinary local development uses
+the filesystem; the offline storage contract runs against both the filesystem
+and an isolated loopback S3 fake. The fake uses a maintained multipart parser
+through a scoped dependency override to avoid the old `busboy`/`dicer` advisory.
 
 #### Live Clerk: `pnpm test:clerk`
 
@@ -950,8 +967,8 @@ S3-compatible API. Otherwise it stores bytes under `PATCHY_STORAGE_DIR` on the
 local filesystem. Local development and offline tests keep the filesystem
 layer; the worktree runner does not forward ambient storage settings.
 
-Configure all five dedicated settings for a deployment or the live contract
-suite:
+Configure all five dedicated settings for a server deployment. The
+[live contract suite](#live-content-store) uses the spike names listed above.
 
 | Setting                       | Value                                                     |
 | ----------------------------- | --------------------------------------------------------- |
