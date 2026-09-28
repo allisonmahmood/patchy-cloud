@@ -73,7 +73,6 @@ export const setup = Effect.fn("test.tableOperations.setup")(function* (
     manifest: definition,
     wireVersion: WIRE_VERSION,
     scope: "company",
-    revoked: false,
     identity: null,
     principal: null,
     correlationId: "operation-contract"

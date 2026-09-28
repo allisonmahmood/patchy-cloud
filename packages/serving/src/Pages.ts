@@ -86,12 +86,8 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (kind: "address" | "c
             kind === "content" ? params.versionId : undefined
           )
           .pipe(Effect.catchTags({ SqlError: Effect.die }));
-  // Gone, operator-disabled and revoked versions are absent even before sign-in.
-  if (
-    Option.isNone(served) ||
-    served.value.patch.disabledAt !== null ||
-    served.value.version.revokedAt !== null
-  ) {
+  // Gone and operator-disabled patches are absent even before sign-in.
+  if (Option.isNone(served) || served.value.patch.disabledAt !== null) {
     return withCookies(HttpServerResponse.setHeaders(notFound, patchUrlHeaders), cookies);
   }
   const isPublic =

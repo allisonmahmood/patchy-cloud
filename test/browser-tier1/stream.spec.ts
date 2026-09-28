@@ -1,6 +1,6 @@
 import type { Frame } from "@playwright/test";
 import type { FixtureWindow } from "./fixture-client.js";
-import { test, expect, open, notice } from "./fixtures.js";
+import { test, expect, open, notice, installSessionRefreshBoundary } from "./fixtures.js";
 
 test.use({ tls: true, ignoreHTTPSErrors: true });
 test.skip(
@@ -190,15 +190,15 @@ test("a lost replacement hello retries conflicts without discarding the known-ge
   }
 });
 
-test("an idle session expiry stops the document without a runtime operation", async ({
+test("a definitive sign-out stops at the token deadline without a runtime operation", async ({
   page,
   context,
   instance
 }) => {
-  // Clerk allows five seconds of clock skew; the stream checks at five-second intervals.
-  await instance.session(context, "owner", 2);
+  await instance.session(context, "owner", 5);
   const frame = await open(page, await instance.publish());
   await expect.poll(() => generations(frame)).toHaveLength(1);
+  await instance.session(context, "none");
   const calls = instance.runtimeRequests.filter(
     (request) => request.path === "/api/runtime/call"
   ).length;
@@ -221,6 +221,157 @@ test("a refreshed browser token re-admits the idle stream without stopping its d
   await expect.poll(async () => (await generations(frame)).length).toBeGreaterThan(1);
   await expect(frame.locator("#pasted-copy")).toHaveValue("Editing through token refresh");
   await expect(page.locator("[data-notice]")).toHaveCount(0);
+});
+
+test("hidden resume refreshes a stale cookie through the session script without losing the draft", async ({
+  page,
+  context,
+  instance
+}) => {
+  await page.clock.install();
+  let attempts = 0;
+  const release = Promise.withResolvers<void>();
+  await installSessionRefreshBoundary(context, async (options) => {
+    expect(options).toEqual({ skipCache: true });
+    attempts++;
+    if (attempts === 1) throw new Error("Offline Clerk refresh");
+    await release.promise;
+    return instance.session(context);
+  });
+  const frame = await open(page, await instance.publish());
+  await expect.poll(() => generations(frame)).toHaveLength(1);
+  expect(attempts).toBe(0);
+  await frame.locator("#pasted-copy").fill("Draft through delayed session refresh");
+  const pill = page.locator('[data-stream-status="reconnecting"]');
+  instance.pauseStreams(true);
+  await expect(pill).toBeVisible();
+  await page.evaluate(() => {
+    Object.defineProperty(document, "hidden", { configurable: true, value: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await page.clock.fastForward(30_000);
+  await expect.poll(() => instance.streamConnections.size).toBe(0);
+  // Suspension must not masquerade as hello/reconciliation.
+  await expect(pill).toBeVisible();
+  await instance.session(context, "expired");
+  instance.pauseStreams(false);
+  const refused = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/runtime/stream" && response.status() === 401
+  );
+  await page.evaluate(() => {
+    Object.defineProperty(document, "hidden", { configurable: true, value: false });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  expect(await (await refused).json()).toMatchObject({ code: "session_refresh_required" });
+  await expect.poll(() => attempts).toBe(2);
+  await expect(frame.locator("#pasted-copy")).toHaveValue("Draft through delayed session refresh");
+  await expect(page.locator("[data-notice]")).toHaveCount(0);
+  expect(await generations(frame)).toHaveLength(1);
+  await expect(pill).toBeVisible();
+  release.resolve();
+  await expect.poll(() => generations(frame)).toHaveLength(2);
+  await expect(pill).toBeHidden();
+  await expect(frame.locator("#pasted-copy")).toHaveValue("Draft through delayed session refresh");
+});
+
+test("failed token refresh is bounded and an online retry keeps the same document", async ({
+  page,
+  context,
+  instance
+}) => {
+  await page.clock.install();
+  let attempts = 0;
+  let available = false;
+  await installSessionRefreshBoundary(context, async () => {
+    attempts++;
+    if (!available) throw new Error("Offline Clerk refresh");
+    return instance.session(context);
+  });
+  const frame = await open(page, await instance.publish());
+  await expect.poll(() => generations(frame)).toHaveLength(1);
+  await frame.locator("#pasted-copy").fill("Draft during a longer outage");
+  instance.pauseStreams(true);
+  await expect.poll(() => instance.streamConnections.size).toBe(0);
+  await instance.session(context, "expired");
+  instance.pauseStreams(false);
+  await expect.poll(() => attempts).toBe(3);
+  const requests = instance.runtimeRequests.filter((request) =>
+    request.path.startsWith("/api/runtime/stream")
+  ).length;
+  await page.clock.fastForward(30_000);
+  await expect
+    .poll(
+      () =>
+        instance.runtimeRequests.filter((request) => request.path.startsWith("/api/runtime/stream"))
+          .length
+    )
+    .toBeGreaterThan(requests);
+  expect(attempts).toBe(3);
+  await expect(frame.locator("#pasted-copy")).toHaveValue("Draft during a longer outage");
+  await expect(page.locator("[data-notice]")).toHaveCount(0);
+  available = true;
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  await page.clock.fastForward(30_000);
+  await expect.poll(() => generations(frame)).toHaveLength(2);
+  expect(attempts).toBe(4);
+  await expect(frame.locator("#pasted-copy")).toHaveValue("Draft during a longer outage");
+});
+
+test("the session script stops a stale-token document only when Clerk confirms sign-out", async ({
+  page,
+  context,
+  instance
+}) => {
+  await installSessionRefreshBoundary(context, () => instance.session(context, "none"));
+  const frame = await open(page, await instance.publish());
+  await expect.poll(() => generations(frame)).toHaveLength(1);
+  instance.pauseStreams(true);
+  await expect.poll(() => instance.streamConnections.size).toBe(0);
+  await instance.session(context, "expired");
+  instance.pauseStreams(false);
+  await notice(page, "session_expired");
+});
+
+test("sharing publicly preserves an admitted company document across reconnect", async ({
+  page,
+  context,
+  instance
+}) => {
+  const patch = await instance.publish();
+  const frame = await open(page, patch);
+  await expect.poll(() => generations(frame)).toHaveLength(1);
+  await frame.locator("#pasted-copy").fill("Company draft after sharing");
+  await instance.share(patch.patchId, "public");
+  instance.pauseStreams(true);
+  await expect.poll(() => instance.streamConnections.size).toBe(0);
+  instance.pauseStreams(false);
+  await expect.poll(() => generations(frame)).toHaveLength(2);
+  await expect(page.locator("#patch")).toHaveAttribute("data-version-id", patch.versionId);
+  await expect(frame.locator("#pasted-copy")).toHaveValue("Company draft after sharing");
+  await expect(page.locator("[data-notice]")).toHaveCount(0);
+  expect(
+    await frame.evaluate(async () => {
+      try {
+        await (window as unknown as FixtureWindow).harness.client.tables.rows!.list();
+      } catch (error) {
+        if (error instanceof Error && "code" in error) return error.code;
+        throw error;
+      }
+      return "unexpectedly allowed";
+    })
+  ).toBe("not_available_on_public");
+  await expect(frame.locator("#pasted-copy")).toHaveValue("Company draft after sharing");
+  const publicPage = await context.newPage();
+  const requests = instance.runtimeRequests.filter((request) =>
+    request.path.startsWith("/api/runtime/stream")
+  ).length;
+  const publicFrame = await open(publicPage, patch);
+  await expect(publicFrame.locator("#identity")).toHaveText("anonymous");
+  expect(
+    instance.runtimeRequests.filter((request) => request.path.startsWith("/api/runtime/stream"))
+  ).toHaveLength(requests);
+  expect(await generations(publicFrame)).toEqual([]);
 });
 
 test("a missed retirement frame is enforced when the document reconnects", async ({
@@ -295,22 +446,6 @@ test("host restart reconnects the loaded document without discarding input", asy
   await expect.poll(async () => (await generations(frame)).at(-1)).not.toBe(first);
   await expect(frame.locator("#pasted-copy")).toHaveValue("Keep this through a restart");
   await expect(page.getByText("Reconnecting", { exact: false })).toBeHidden();
-});
-
-test("re-admission stops a document whose loaded version was revoked while disconnected", async ({
-  page,
-  instance
-}) => {
-  const patch = await instance.publish();
-  const frame = await open(page, patch);
-  await expect.poll(() => generations(frame)).toHaveLength(1);
-  await instance.publish("company", instance.html, patch.patchId);
-  // Seed durable revocation while restarting. The service suite covers the same-host notification.
-  await instance.platform.query("UPDATE patch_versions SET revoked_at = now() WHERE id = $1", [
-    patch.versionId
-  ]);
-  await instance.restart();
-  await notice(page, "revoked");
 });
 
 test("a ninth document stops at the stream limit and can reopen when a slot is free", async ({

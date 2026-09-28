@@ -1,3 +1,4 @@
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
@@ -11,13 +12,13 @@ type Admission = Effect.Effect<
   {
     readonly companyId: string;
     readonly viewerId: string;
-    readonly check: Effect.Effect<"live" | "reauthenticate", Runtime.RuntimeError>;
+    readonly expiresAt: number;
   },
   Runtime.RuntimeError,
   HttpServerRequest.HttpServerRequest
 >;
 
-/** Cookie admission is repeated on every open; the check never retains a database connection. */
+/** Every open verifies the cookie and current viewer, then retains only the token deadline. */
 export const make: Effect.Effect<{ readonly admit: Admission }, never, Dependencies> = Effect.gen(
   function* () {
     const session = yield* Session.Session;
@@ -35,7 +36,18 @@ export const make: Effect.Effect<{ readonly admit: Admission }, never, Dependenc
         .authenticate(browserRequest)
         .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
       const signedIn = yield* authenticate;
-      if (signedIn.status !== "signed-in") return yield* new Runtime.SessionExpired({});
+      if (signedIn.status !== "signed-in") {
+        if (
+          signedIn.status === "handshake" ||
+          signedIn.reason === "token-expired" ||
+          signedIn.reason === "session-token-expired" ||
+          signedIn.reason?.startsWith("session-token-expired-refresh-")
+        )
+          return yield* new Runtime.SessionRefreshRequired({});
+        return yield* new Runtime.SessionExpired({});
+      }
+      if (signedIn.claims.exp * 1_000 <= (yield* Clock.currentTimeMillis))
+        return yield* new Runtime.SessionRefreshRequired({});
       const resolve = RequireSession.resolveViewer.pipe(
         Effect.provideContext(viewerContext),
         Effect.provideService(RequireSession.SignedIn, signedIn.claims),
@@ -44,33 +56,11 @@ export const make: Effect.Effect<{ readonly admit: Admission }, never, Dependenc
       const viewer = yield* resolve;
       if (viewer === null || HttpServerResponse.isHttpServerResponse(viewer))
         return yield* new Runtime.AccessDenied({});
-      const check = Effect.gen(function* () {
-        const current = yield* authenticate;
-        // A stream has an immutable cookie snapshot. An expired short-lived JWT must
-        // reconnect with the browser's refreshed cookie, not stop a healthy session.
-        if (current.status === "handshake") return "reauthenticate" as const;
-        if (current.status === "signed-out") {
-          if (
-            current.reason === "token-expired" ||
-            current.reason === "session-token-expired" ||
-            current.reason?.startsWith("session-token-expired-refresh-")
-          )
-            return "reauthenticate" as const;
-          return yield* new Runtime.SessionExpired({});
-        }
-        if (
-          current.claims.sub !== signedIn.claims.sub ||
-          current.claims.sid !== signedIn.claims.sid
-        )
-          return yield* new Runtime.PrincipalChanged({});
-        const liveViewer = yield* resolve;
-        if (liveViewer === null || HttpServerResponse.isHttpServerResponse(liveViewer))
-          return yield* new Runtime.AccessDenied({});
-        if (liveViewer.user.id !== viewer.user.id || liveViewer.company.id !== viewer.company.id)
-          return yield* new Runtime.PrincipalChanged({});
-        return "live" as const;
-      });
-      return { companyId: viewer.company.id, viewerId: viewer.user.id, check };
+      return {
+        companyId: viewer.company.id,
+        viewerId: viewer.user.id,
+        expiresAt: signedIn.claims.exp * 1_000
+      };
     });
     return { admit };
   }

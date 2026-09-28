@@ -292,10 +292,11 @@ clears the notice. Public documents have no company stream.
 The shell reconnects after a network cut or host restart, keeping its loaded
 version. A reconnecting pill appears after two seconds and clears on reopening.
 Hidden documents suspend after 30 seconds and reconnect on return. Presence is
-the open connection, never a heartbeat or stored lease. Revocation and idle
-session expiry stop the document; every reconnect rechecks eligibility and
-authority. An expired stream cookie re-admits with the browser's current cookie
-before deciding that the session ended.
+the open connection, never a heartbeat or stored lease. Retirement, deletion and
+session loss stop the document; every reconnect rechecks eligibility and authority.
+A stale session token asks the browser to refresh rather than discarding the draft.
+Version revocation is undecided in [#425](https://github.com/allisonmahmood/patchy-cloud/issues/425);
+the wire reserves its frame, but there is no version-revocation operation or state.
 
 Lifecycle delivery is host-local today. Subscriptions, revision-fenced
 reconciliation and cross-host delivery are the next sync step.

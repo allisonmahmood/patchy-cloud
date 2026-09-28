@@ -4,8 +4,10 @@
  * request body, and every response with its shape spelled out inline. Named
  * shapes get one section each at the end.
  */
+import * as Schema from "effect/Schema";
 import * as OpenApi from "effect/unstable/httpapi/OpenApi";
 import { PatchyApi } from "./api.js";
+import { RuntimeStreamFrame } from "./runtime.js";
 
 /** The subset of JSON Schema `fromApi` emits, as far as this renderer reads it. */
 interface JsonSchema {
@@ -30,12 +32,16 @@ interface Operation {
 }
 
 const METHOD_ORDER = ["get", "post", "delete", "put", "patch"] as const;
+const streamFrameDocument = Schema.toJsonSchemaDocument(RuntimeStreamFrame);
 
 export function renderApiMarkdown(): string {
   const spec = OpenApi.fromApi(PatchyApi);
-  const components = spec.components.schemas as Record<string, JsonSchema>;
+  const components = {
+    ...spec.components.schemas,
+    ...streamFrameDocument.definitions
+  } as Record<string, JsonSchema>;
   const shapeName = (ref: string) =>
-    ref.replace("#/components/schemas/", "").replace(/Encoded$/, "");
+    ref.replace(/^#\/(?:components\/schemas|\$defs)\//, "").replace(/Encoded$/, "");
 
   const lines: string[] = [
     `# ${spec.info.title}`,
@@ -68,7 +74,9 @@ export function renderApiMarkdown(): string {
             ? renderType(schema)
             : response.content?.["application/octet-stream"]
               ? "raw bytes (`application/octet-stream`)"
-              : "no body";
+              : response.content?.["text/event-stream"]
+                ? `SSE (\`text/event-stream\`), JSON data: ${renderType(streamFrameDocument.schema as JsonSchema)}`
+                : "no body";
           lines.push(`- \`${status}\` ${body}`);
         }
         lines.push("");

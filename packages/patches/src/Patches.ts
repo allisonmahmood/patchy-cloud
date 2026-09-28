@@ -326,7 +326,6 @@ export interface PatchVersion {
   readonly gitCommitSha: string | null;
   readonly originalFilename: string | null;
   readonly createdAt: string;
-  readonly revokedAt: string | null;
   readonly tier: number;
   readonly release: string;
   readonly manifestVersion: number;
@@ -529,7 +528,6 @@ class VersionRow extends Schema.Class<VersionRow>("VersionRow")({
   manifest: Manifest,
   publishKey: Schema.String,
   payloadDigest: Schema.String,
-  revokedAt: NullableStamp,
   createdAt: Stamp
 }) {}
 
@@ -590,7 +588,6 @@ export type LifecycleChange =
       readonly versionId: string;
       readonly tier: number;
     }
-  | { readonly type: "revoked"; readonly patchId: string; readonly versionId: string }
   | { readonly type: "unavailable"; readonly patchId: string };
 
 const pendingLifecycle = Context.Reference<Array<LifecycleChange> | undefined>(
@@ -605,13 +602,6 @@ export class Patches extends Context.Service<
     readonly listen: (
       listener: (change: LifecycleChange) => Effect.Effect<void>
     ) => Effect.Effect<void, never, Scope.Scope>;
-    /** Internal operator action; retained bytes and publish receipts remain intact. */
-    readonly setVersionRevoked: (
-      patchId: string,
-      actor: Actor,
-      versionNumber: number,
-      revoked: boolean
-    ) => Effect.Effect<void, LifecycleError | SqlError>;
     /** Non-deleted, enabled patches owned by this user, including retired patches. */
     readonly countQuotaPatches: (ownerUserId: string) => Effect.Effect<number, SqlError>;
     readonly authorizePublish: (
@@ -840,7 +830,6 @@ const toVersion = (row: VersionRow): PatchVersion => ({
   manifest: row.manifest,
   publishKey: row.publishKey,
   payloadDigest: row.payloadDigest,
-  revokedAt: isoOrNull(row.revokedAt),
   createdAt: iso(row.createdAt)
 });
 
@@ -872,7 +861,7 @@ const VERSION_COLUMNS = `
   git_commit_sha AS "gitCommitSha", original_filename AS "originalFilename",
   tier, release, manifest_version AS "manifestVersion", wire_version AS "wireVersion",
   schema_revision AS "schemaRevision", manifest, publish_key AS "publishKey", payload_digest AS "payloadDigest",
-  revoked_at AS "revokedAt", created_at AS "createdAt"`;
+  created_at AS "createdAt"`;
 
 /** Seeds legacy patches' names from titles in creation order, without changing existing claims. */
 export const backfillNames = Effect.fn("Patches.backfillNames")(function* () {
@@ -1231,10 +1220,7 @@ export const make = Effect.gen(function* () {
     versionId?: string
   ) {
     return (yield* findRetained(patchId, versionNumber, versionId)).pipe(
-      Option.filter(
-        ({ patch, version }) =>
-          patch.state === "live" && patch.disabledAt === null && version.revokedAt === null
-      )
+      Option.filter(({ patch }) => patch.state === "live" && patch.disabledAt === null)
     );
   });
 
@@ -2000,8 +1986,7 @@ export const make = Effect.gen(function* () {
     const version = yield* findVersionByNumber({ patchId, versionNumber }).pipe(
       Effect.catchTags(dieOnSchemaError)
     );
-    if (Option.isNone(version) || version.value.revokedAt !== null)
-      return yield* new VersionUnavailable({ versionNumber });
+    if (Option.isNone(version)) return yield* new VersionUnavailable({ versionNumber });
     const at = yield* now;
     yield* sql`UPDATE patches SET current_version_id = ${version.value.id}, updated_at = ${at},
         last_changed_at = ${at}, last_changed_by = ${actor.userId},
@@ -2013,29 +1998,6 @@ export const make = Effect.gen(function* () {
       tier: version.value.tier
     });
     return { patch: yield* afterChange(patchId), currentVersion: versionNumber };
-  }, withLifecycleTransaction);
-  const setVersionRevoked = Effect.fn("Patches.setVersionRevoked")(function* (
-    patchId: string,
-    actor: Actor,
-    versionNumber: number,
-    revoked: boolean
-  ) {
-    const patch = yield* manageable(patchId, actor);
-    const version = yield* findVersionByNumber({ patchId, versionNumber }).pipe(
-      Effect.catchTags(dieOnSchemaError)
-    );
-    if (Option.isNone(version)) return yield* new VersionUnavailable({ versionNumber });
-    if ((version.value.revokedAt !== null) === revoked) return;
-    const at = revoked ? yield* now : null;
-    yield* sql`UPDATE patch_versions SET revoked_at = ${at} WHERE id = ${version.value.id}`;
-    if (revoked) yield* announce({ type: "revoked", patchId, versionId: version.value.id });
-    else if (patch.currentVersionId === version.value.id)
-      yield* announce({
-        type: "served",
-        patchId,
-        versionId: version.value.id,
-        tier: version.value.tier
-      });
   }, withLifecycleTransaction);
   const reassign = Effect.fn("Patches.reassign")(function* (
     patchId: string,
@@ -2149,7 +2111,6 @@ export const make = Effect.gen(function* () {
 
   return Patches.of({
     listen,
-    setVersionRevoked,
     countQuotaPatches,
     authorizePublish,
     replay,

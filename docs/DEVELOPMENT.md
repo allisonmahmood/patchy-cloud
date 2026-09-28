@@ -651,8 +651,8 @@ It requires `openssl` for a temporary self-signed certificate, not production
 credentials or a live ingress. Chromium's network protocol report must show
 `h2` for all seven simultaneous document streams; a publish must reach all
 seven before they close. The suite also checks editing through publish,
-rollback, dismissal, missed revocation and retirement, token refresh versus
-idle expiry, an ingress cut and host restart. Browser TLS trust is relaxed
+rollback, dismissal, missed retirement, token refresh versus a signed-out session,
+an ingress cut and host restart. Browser TLS trust is relaxed
 only for this disposable certificate. The local patch dev runtime keeps its
 existing build-reload loop; the hosted document stream is not mounted there yet.
 The `async-exit-hook` dependency patch preserves failure exit codes when embedded

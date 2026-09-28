@@ -30,21 +30,20 @@ S3-compatible API; development and offline tests use the filesystem. A bucket
 belongs to the Neon branch selected by its endpoint, not to a global S3 namespace.
 
 1. **Migrations belong to capabilities, with one platform ledger.** The original
-   baselines were rewritten before deployment. The current ledger has ten
+   baselines were rewritten before deployment. The current ledger has nine
    records across seven owners:
 
-   | id   | owner            | record                       |
-   | ---- | ---------------- | ---------------------------- |
-   | 0001 | Companies        | `companies_baseline`         |
-   | 0002 | Auth             | `auth_baseline`              |
-   | 0003 | Patches          | `patches_baseline`           |
-   | 0004 | Companies        | `invites_expiry`             |
-   | 0005 | Company database | `company_database_baseline`  |
-   | 0006 | Runtime          | `runtime_baseline`           |
-   | 0007 | Integrations     | `integrations_baseline`      |
-   | 0008 | Patches          | `patches_lifecycle`          |
-   | 0009 | Limits           | `limits_overrides`           |
-   | 0010 | Patches          | `patches_version_revocation` |
+   | id   | owner            | record                      |
+   | ---- | ---------------- | --------------------------- |
+   | 0001 | Companies        | `companies_baseline`        |
+   | 0002 | Auth             | `auth_baseline`             |
+   | 0003 | Patches          | `patches_baseline`          |
+   | 0004 | Companies        | `invites_expiry`            |
+   | 0005 | Company database | `company_database_baseline` |
+   | 0006 | Runtime          | `runtime_baseline`          |
+   | 0007 | Integrations     | `integrations_baseline`     |
+   | 0008 | Patches          | `patches_lifecycle`         |
+   | 0009 | Limits           | `limits_overrides`          |
 
    The patches baseline includes names, manifests, version stamps and publish
    recovery; `connection_snapshots` belongs to the integrations baseline.

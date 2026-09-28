@@ -140,7 +140,6 @@ const binding = Binding.Binding.of({
   },
   wireVersion: WIRE_VERSION,
   scope: "company",
-  revoked: false,
   correlationId: "operation-test",
   principal: { userId: "usr_operations" },
   identity: {

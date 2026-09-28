@@ -152,7 +152,7 @@ export const RuntimeStreamFrame = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("closed"),
-    reason: Schema.Literals(["slow_consumer", "draining", "replaced"])
+    reason: Schema.Literals(["slow_consumer", "replaced"])
   })
 ]).annotate({ identifier: "RuntimeStreamFrame" });
 export type RuntimeStreamFrame = typeof RuntimeStreamFrame.Type;
@@ -379,6 +379,7 @@ export const RuntimeCode = Schema.Literals([
   "invalid_query",
   "shape_mismatch",
   "session_expired",
+  "session_refresh_required",
   "principal_changed",
   "not_available_on_public",
   "shell_outdated",

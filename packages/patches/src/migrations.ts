@@ -102,8 +102,5 @@ export const migrations: Migrations = {
     ADD COLUMN visit_count BIGINT NOT NULL DEFAULT 0`,
     `CREATE INDEX patches_deleted_at_idx ON patches(deleted_at)
     WHERE deleted_at IS NOT NULL`
-  ),
-  "0010_patches_version_revocation": ddl(
-    `ALTER TABLE patch_versions ADD COLUMN revoked_at TIMESTAMPTZ`
   )
 };

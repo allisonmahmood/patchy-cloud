@@ -118,7 +118,6 @@ describe("patch pages", () => {
     id: "ver_1",
     patchId: patch.id,
     versionNumber: 2,
-    revokedAt: null,
     tier: 0,
     release: CURRENT_RELEASE,
     manifestVersion: MANIFEST_VERSION,

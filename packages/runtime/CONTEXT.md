@@ -89,7 +89,7 @@ A loaded version that is no longer served but remains eligible. The document kee
 _Avoid_: revoked, stale, outdated
 
 **Eligible version**:
-A retained version that has not been revoked. Superseding a version does not revoke it.
+A retained version of a live, enabled patch that the viewer may open. Superseding a version does not make it ineligible. Version revocation policy is undecided in [#425](https://github.com/allisonmahmood/patchy-cloud/issues/425); the `revoked` frame is reserved, with no revocation state or operation today.
 _Avoid_: current (the served version), live (the patch's state)
 
 **Stream generation**:

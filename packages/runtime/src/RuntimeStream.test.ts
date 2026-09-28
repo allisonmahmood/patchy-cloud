@@ -1,9 +1,11 @@
 import { assert, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
@@ -42,12 +44,16 @@ const input = (documentId: string) => ({
   versionId: Fixtures.versionId,
   documentId
 });
-const open = Effect.fnUntraced(function* (documentId: string, generation?: string) {
+const open = Effect.fnUntraced(function* (
+  documentId: string,
+  generation?: string,
+  patchId = Fixtures.patchId
+) {
   const streams = yield* RuntimeStream.RuntimeStream;
   const scope = yield* Scope.make();
   yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
   const body = yield* streams
-    .open(input(documentId))
+    .open({ ...input(documentId), patchId })
     .pipe(
       Effect.provideService(HttpServerRequest.HttpServerRequest, request(generation)),
       Effect.provideService(Scope.Scope, scope)
@@ -148,12 +154,7 @@ it.layer(layer)("document streams", (it) => {
       const document = yield* open("slow_consumer_document");
       assert.strictEqual(frame(yield* document.pull).type, "hello");
       yield* document.pull;
-      for (let index = 0; index < 10; index++)
-        yield* streams.notify(Fixtures.patchId, {
-          type: "served",
-          versionId: Fixtures.versionId,
-          tier: 1
-        });
+      for (let index = 0; index < 10; index++) yield* streams.notify(Fixtures.patchId);
       assert.deepStrictEqual(frame(yield* document.pull), {
         type: "closed",
         reason: "slow_consumer"
@@ -162,23 +163,23 @@ it.layer(layer)("document streams", (it) => {
     }).pipe(Effect.scoped)
   );
 
-  it.effect("checks an idle session and sends a stopping frame without another call", () =>
+  it.effect("reconnects at the verified token deadline without idle authentication work", () =>
     Effect.gen(function* () {
       const session = yield* Session.Session;
-      let ended = false;
+      let authentications = 0;
       const externalSession = Layer.succeed(Session.Session, {
         ...session,
         authenticate: (request) =>
-          Effect.suspend(() =>
-            ended
-              ? Effect.succeed<Session.SessionResult>({
-                  status: "signed-out",
-                  reason: "session-ended",
-                  handshakeFailed: false,
-                  cookies: []
-                })
-              : session.authenticate(request)
-          )
+          Effect.gen(function* () {
+            authentications++;
+            const signedIn = yield* session.authenticate(request);
+            if (signedIn.status !== "signed-in") return signedIn;
+            const now = yield* Clock.currentTimeMillis;
+            return {
+              ...signedIn,
+              claims: { ...signedIn.claims, exp: Math.floor(now / 1000) + 12 }
+            };
+          })
       });
       const streams = yield* RuntimeStream.make.pipe(
         Effect.provide(externalSession),
@@ -189,10 +190,18 @@ it.layer(layer)("document streams", (it) => {
       );
       yield* document.pull;
       yield* document.pull;
-      ended = true;
-      yield* TestClock.adjust("5 seconds");
-      assert.deepStrictEqual(frame(yield* document.pull), { type: "session_expired" });
+      yield* TestClock.adjust("11999 millis");
+      assert.strictEqual(authentications, 1);
+      assert.strictEqual(yield* streams.connected(DEV_SEED.companyId), 1);
+      yield* TestClock.adjust("1 millis");
       assert.strictEqual(yield* streams.connected(DEV_SEED.companyId), 0);
+      assert.isTrue(Exit.isFailure(yield* Effect.exit(document.pull)));
+      assert.strictEqual(authentications, 1);
+      const reconnected = yield* open("idle_session_document").pipe(
+        Effect.provideService(RuntimeStream.RuntimeStream, streams)
+      );
+      assert.strictEqual(frame(yield* reconnected.pull).type, "hello");
+      assert.strictEqual(authentications, 2);
     }).pipe(Effect.scoped)
   );
 
@@ -231,9 +240,9 @@ it.layer(layer)("document streams", (it) => {
       );
       const hello = yield* document.pull;
       const served = yield* document.pull;
-      authority.state.retained.set(Fixtures.versionId, { ...authority.initial, revoked: true });
-      yield* streams.notify(Fixtures.patchId, { type: "revoked" }, Fixtures.versionId);
-      const revoked = yield* document.pull;
+      authority.state.current = undefined;
+      yield* streams.notify(Fixtures.patchId);
+      const denied = yield* document.pull;
       yield* Effect.exit(document.pull);
       const event = yield* Queue.take(recorded);
       assert.strictEqual(event.type, "stream");
@@ -241,9 +250,9 @@ it.layer(layer)("document streams", (it) => {
       assert.strictEqual(event.peakSubscriptions, 0);
       assert.strictEqual(
         event.bytes,
-        hello[0].byteLength + served[0].byteLength + revoked[0].byteLength
+        hello[0].byteLength + served[0].byteLength + denied[0].byteLength
       );
-      assert.strictEqual(event.closeReason, "revoked");
+      assert.strictEqual(event.closeReason, "access_denied");
       assert.strictEqual(event.companyId, DEV_SEED.companyId);
       assert.strictEqual(event.patchId, Fixtures.patchId);
       assert.strictEqual(yield* Queue.size(recorded), 0);
@@ -279,11 +288,7 @@ it.layer(layer)("document streams", (it) => {
       yield* Deferred.await(reading);
       authority.state.current = authority.latest.versionId;
       const publishing = yield* streams
-        .notify(Fixtures.patchId, {
-          type: "served",
-          versionId: authority.latest.versionId,
-          tier: authority.latest.manifest.tier
-        })
+        .notify(Fixtures.patchId)
         .pipe(Effect.forkScoped({ startImmediately: true }));
       yield* Deferred.succeed(resume, undefined);
       const document = yield* Fiber.join(opening);
@@ -302,10 +307,9 @@ it.layer(layer)("document streams", (it) => {
     }).pipe(Effect.scoped)
   );
 
-  it.effect("rechecks revocation after an in-flight admission lookup", () =>
+  it.effect("rechecks patch retirement after an in-flight admission lookup", () =>
     Effect.gen(function* () {
       const authority = yield* versionAuthority;
-      authority.state.retained.set(Fixtures.versionId, { ...authority.initial, revoked: true });
       const reading = yield* Deferred.make<void>();
       const resume = yield* Deferred.make<void>();
       let holdAdmission = true;
@@ -325,21 +329,17 @@ it.layer(layer)("document streams", (it) => {
         Effect.provide(delayed),
         Effect.provide(WideEvents.layerNoop)
       );
-      const opening = yield* open("initial_unrevoked_document").pipe(
+      const opening = yield* open("initial_retired_document").pipe(
         Effect.provideService(RuntimeStream.RuntimeStream, streams),
         Effect.forkScoped
       );
       yield* Deferred.await(reading);
-      authority.state.retained.set(Fixtures.versionId, authority.initial);
+      authority.state.current = undefined;
       yield* Deferred.succeed(resume, undefined);
       const document = yield* Fiber.join(opening);
       assert.strictEqual(frame(yield* document.pull).type, "hello");
-      assert.deepStrictEqual(frame(yield* document.pull), {
-        type: "served",
-        versionId: Fixtures.versionId,
-        tier: 0
-      });
-      assert.strictEqual(yield* streams.connected(DEV_SEED.companyId), 1);
+      assert.deepStrictEqual(frame(yield* document.pull), { type: "access_denied" });
+      assert.strictEqual(yield* streams.connected(DEV_SEED.companyId), 0);
     }).pipe(Effect.scoped)
   );
 
@@ -347,16 +347,14 @@ it.layer(layer)("document streams", (it) => {
     Effect.gen(function* () {
       const authority = yield* versionAuthority;
       let unavailable = false;
+      const cause = new SqlError.SqlError({
+        reason: new SqlError.ConnectionError({ cause: new Error("database offline") })
+      });
+      const logs: unknown[] = [];
       const failing = Layer.succeed(LoadedVersions.LoadedVersions, {
         find: (patchId, versionId) =>
           Effect.suspend(() =>
-            unavailable
-              ? Effect.fail(
-                  new SqlError.SqlError({
-                    reason: new SqlError.ConnectionError({ cause: new Error("database offline") })
-                  })
-                )
-              : authority.find(patchId, versionId)
+            unavailable ? Effect.fail(cause) : authority.find(patchId, versionId)
           )
       });
       const streams = yield* RuntimeStream.make.pipe(
@@ -370,11 +368,18 @@ it.layer(layer)("document streams", (it) => {
       yield* document.pull;
       authority.state.current = authority.latest.versionId;
       unavailable = true;
-      yield* streams.notify(Fixtures.patchId, {
-        type: "served",
-        versionId: authority.latest.versionId,
-        tier: authority.latest.manifest.tier
-      });
+      yield* streams.notify(Fixtures.patchId).pipe(
+        Effect.provide(
+          Logger.layer([
+            Logger.make((event) => {
+              logs.push(event.message);
+            })
+          ])
+        )
+      );
+      const logged = logs.flat()[0];
+      assert.instanceOf(logged, Runtime.SourceUnavailable);
+      assert.strictEqual((logged as Runtime.SourceUnavailable).cause, cause);
       assert.strictEqual(yield* streams.connected(DEV_SEED.companyId), 0);
       assert.isTrue(Exit.isFailure(yield* Effect.exit(document.pull)));
       unavailable = false;
@@ -387,6 +392,80 @@ it.layer(layer)("document streams", (it) => {
         versionId: authority.latest.versionId,
         tier: authority.latest.manifest.tier
       });
+    }).pipe(Effect.scoped)
+  );
+  it.effect("opens and refreshes another patch while one patch's snapshot is blocked", () =>
+    Effect.gen(function* () {
+      const source = yield* LoadedVersions.LoadedVersions;
+      const reading = yield* Deferred.make<void>();
+      const resume = yield* Deferred.make<void>();
+      const delayed = Layer.succeed(LoadedVersions.LoadedVersions, {
+        find: (patchId, versionId) =>
+          Effect.gen(function* () {
+            const found = yield* source.find(patchId, versionId);
+            if (patchId === Fixtures.patchId && versionId === undefined) {
+              yield* Deferred.succeed(reading, undefined);
+              yield* Deferred.await(resume);
+            }
+            return found;
+          })
+      });
+      const streams = yield* RuntimeStream.make.pipe(
+        Effect.provide(delayed),
+        Effect.provide(WideEvents.layerNoop)
+      );
+      const opening = yield* open("blocked_patch_document").pipe(
+        Effect.provideService(RuntimeStream.RuntimeStream, streams),
+        Effect.forkScoped
+      );
+      yield* Deferred.await(reading);
+      const other = yield* open("independent_patch_document", undefined, "secondpatch1").pipe(
+        Effect.provideService(RuntimeStream.RuntimeStream, streams)
+      );
+      assert.strictEqual(frame(yield* other.pull).type, "hello");
+      yield* other.pull;
+      yield* streams.notify("secondpatch1");
+      assert.deepStrictEqual(frame(yield* other.pull), {
+        type: "served",
+        versionId: Fixtures.versionId,
+        tier: 0
+      });
+      yield* Deferred.succeed(resume, undefined);
+      const original = yield* Fiber.join(opening);
+      assert.strictEqual(frame(yield* original.pull).type, "hello");
+      assert.strictEqual(yield* streams.connected(DEV_SEED.companyId), 2);
+    }).pipe(Effect.scoped)
+  );
+
+  it.effect("keeps an authenticated company document eligible after public sharing", () =>
+    Effect.gen(function* () {
+      const authority = yield* versionAuthority;
+      const streams = yield* RuntimeStream.make.pipe(
+        Effect.provide(authority.layer),
+        Effect.provide(WideEvents.layerNoop)
+      );
+      const document = yield* open("shared_company_document").pipe(
+        Effect.provideService(RuntimeStream.RuntimeStream, streams)
+      );
+      yield* document.pull;
+      yield* document.pull;
+      authority.state.retained.set(Fixtures.versionId, {
+        ...authority.initial,
+        scope: "public"
+      });
+      yield* streams.notify(Fixtures.patchId);
+      assert.deepStrictEqual(frame(yield* document.pull), {
+        type: "served",
+        versionId: Fixtures.versionId,
+        tier: 0
+      });
+      assert.strictEqual(yield* streams.connected(DEV_SEED.companyId), 1);
+      yield* Scope.close(document.scope, Exit.void);
+      const reconnected = yield* open("shared_company_document").pipe(
+        Effect.provideService(RuntimeStream.RuntimeStream, streams)
+      );
+      assert.strictEqual(frame(yield* reconnected.pull).type, "hello");
+      assert.strictEqual(frame(yield* reconnected.pull).type, "served");
     }).pipe(Effect.scoped)
   );
 });

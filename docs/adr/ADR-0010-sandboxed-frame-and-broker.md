@@ -63,21 +63,31 @@ to 16 MiB. Overflow discards pending frames and closes with
 `closed { reason: "slow_consumer" }`; the shell reconnects. Each close emits one
 stream wide event with delivered bytes, peak subscriptions and its close reason.
 
-Publish and rollback send `served { versionId, tier }` after commit on the changing
-host. Initial snapshots and lifecycle dispatch share a serialization gate and
-reread durable authority: a delayed callback cannot overwrite a newer version
-or stop a restored or unrevoked document. Revocation sends `revoked` only to
-documents on that version. Retire and delete stop the affected documents.
-Revocation is retained metadata, reversible through the internal Patches service,
-and enforced by serving and runtime admission. Reopening a disconnected revoked
-version sends `hello` then `revoked`. No elapsed time discards a loaded version.
+Publish, rollback, retire and delete enqueue a patch-local wake after commit.
+A scoped worker coalesces repeated wakes and rereads durable authority without
+holding the publishing request open. Initial snapshots and lifecycle dispatch
+share a gate per patch, not per host: a delayed callback cannot overwrite a newer
+version or stop a restored document, and unrelated patches proceed independently.
+Retire and delete stop affected documents. Re-admission checks the existing patch
+states and retained versions. No elapsed time discards a loaded version.
 
-The stream checks the session every five seconds without holding a database
-connection. Expiry of its captured JWT closes the connection so re-admission can
-use the browser's refreshed cookie. A genuinely expired session then stops the
-document. An account change or lost company access also stops it.
+The `revoked` frame remains reserved. Who can revoke a version, where it is seen
+and how it is undone are undecided in [#425](https://github.com/allisonmahmood/patchy-cloud/issues/425).
+There is no revocation column or operation in this implementation.
 
-EOF, a network cut and deployment drain use the same capped-backoff reconnect.
+The stream captures the verified token's expiry and closes for re-admission when
+that deadline arrives. The expiry timer does no database or authentication I/O.
+Re-admission checks the cookie and current company membership. At stream open,
+a refreshable stale token asks the browser's existing session script to refresh;
+only definitive session loss returns `session_expired`. Account changes and lost
+company access remain stopping conditions. A company document keeps its stream
+if its patch becomes public; public data-operation refusals remain errors for
+patch code, not access-loss notices.
+The shell forces at most three token refreshes per reconnect streak. A new
+`hello`, returning from suspension or coming online resets that budget.
+Refresh/network failures keep the document and its backoff; no operation is replayed.
+
+EOF, a network cut and deployment drain use the same capped, jittered-backoff reconnect.
 `pagehide` closes early; a hidden document suspends after 30 seconds and reopens
 on return. Shutdown signals fence new runtime operations and streams before the
 HTTP listener closes. Already-admitted work is not replayed.

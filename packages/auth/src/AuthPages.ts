@@ -143,7 +143,31 @@ export const layer: Layer.Layer<
         "GET",
         "/auth/session.js",
         HttpServerResponse.text(
-          "void window.Clerk.load({ standardBrowser: true, telemetry: { disabled: true } });\n",
+          `(() => {
+  let loading;
+  const load = () => {
+    if (!window.Clerk) return Promise.reject(new Error("Clerk is unavailable."));
+    if (!loading) loading = window.Clerk.load({
+      standardBrowser: true,
+      telemetry: { disabled: true }
+    }).catch((error) => { loading = undefined; throw error; });
+    return loading;
+  };
+  window.patchySession = {
+    async refresh() {
+      try {
+        await load();
+        const session = window.Clerk.session;
+        if (!session) return "signed-out";
+        const token = await session.getToken({ skipCache: true });
+        return token === null ? "signed-out" : "refreshed";
+      } catch {
+        return "unavailable";
+      }
+    }
+  };
+  void load().catch(() => {});
+})();\n`,
           {
             contentType: "text/javascript",
             headers: { "cache-control": "no-store", "x-content-type-options": "nosniff" }

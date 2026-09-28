@@ -720,19 +720,23 @@ export class RuntimeStreamGroup extends HttpApiGroup.make("runtimeStream", { top
           "GET opens one fetch-streamed SSE connection per company document on tiers 1 and 2. " +
           "`patchId` and `versionId` identify the retained loaded version; `documentId` is the " +
           "shell's 16–128 character base64url nonce. `Sec-Fetch-Site: same-origin` is required. " +
-          "Every reconnect checks the session, company and loaded version again. Public documents " +
-          "are refused. Frames are `data: <JSON>\\n\\n`, without an event field. The first frame " +
-          "is `{type:'hello',generation,serverTime}`, with an opaque generation and Unix milliseconds; " +
-          "the current `{type:'served',versionId,tier}` follows, or `revoked` for a revoked loaded version. " +
+          "Every reconnect checks the session, company and loaded version again. Only company " +
+          "shells bootstrap this stream; an authenticated company document keeps its stream if " +
+          "the patch becomes public. Frames are `data: <JSON>\\n\\n`, without an event field. " +
+          "The first frame is `{type:'hello',generation,serverTime}`, with an opaque generation " +
+          "and Unix milliseconds; the current `{type:'served',versionId,tier}` follows. " +
           "Replacing an open document requires its latest generation in " +
           "`X-Patchy-Generation`; a stale replacement is `invalid_request` (409). " +
-          "Publish and rollback send `served`; revocation sends `revoked`; lost authority sends " +
-          "`access_denied`, `principal_changed` or `session_expired`. `starting`, `ready` and " +
-          "`start_failed` (`code:'busy'`, `retryAfter` seconds) are reserved for fleet admission. " +
-          "`closed` names `slow_consumer`, `draining` or `replaced`. Network drops and host drain " +
+          "Publish and rollback send `served`; lost authority sends " +
+          "`access_denied`, `principal_changed` or `session_expired`. `revoked` is reserved pending " +
+          "the version-revocation decision in #425; no version-revocation state or action exists yet. " +
+          "`starting`, `ready` and `start_failed` (`code:'busy'`, `retryAfter` seconds) are reserved " +
+          "for fleet admission. `closed` names `slow_consumer` or `replaced`. Network drops and host drain " +
           "reconnect with backoff; hidden documents suspend after 30 seconds, then re-admit on " +
-          "return without changing loaded version. Cookie refresh may end a stream normally so " +
-          "the next request carries fresh cookies. There are no subscription endpoints yet. " +
+          "return without changing loaded version. Expiry of the authenticated token ends the " +
+          "stream normally. A refreshable stale token answers `session_refresh_required` (401), " +
+          "so the browser refreshes its cookie without discarding the document. Only definitive " +
+          "session loss is `session_expired`. There are no subscription endpoints yet. " +
           "The registry bounds `stream.documents` at 8 per viewer per patch and " +
           "`stream.buffer.bytes` at 16 MiB; overflow closes with `slow_consumer`."
       )

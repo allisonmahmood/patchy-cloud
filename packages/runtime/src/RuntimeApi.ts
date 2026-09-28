@@ -48,7 +48,9 @@ export const failure = (error: Runtime.RuntimeError) => {
         : {}),
       ...(retryAfter === undefined ? {} : { retryAfter }),
       ...("details" in error && error.details !== undefined ? { details: error.details } : {}),
-      ...(error.correlationId === undefined ? {} : { correlationId: error.correlationId })
+      ...("correlationId" in error && error.correlationId !== undefined
+        ? { correlationId: error.correlationId }
+        : {})
     }),
     {
       status: error.status,

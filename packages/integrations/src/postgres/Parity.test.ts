@@ -46,7 +46,6 @@ const binding = Binding.Binding.of({
   },
   wireVersion: WIRE_VERSION,
   scope: "company",
-  revoked: false,
   correlationId: "parity-test",
   principal: { userId: "usr_parity" },
   identity: {

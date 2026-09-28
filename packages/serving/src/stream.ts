@@ -1,6 +1,6 @@
 /// <reference lib="dom" />
-// @effect-diagnostics globalTimers:off globalFetch:off
-// This browser adapter owns fetch, visibility and timers without an Effect runtime.
+// @effect-diagnostics globalTimers:off globalFetch:off globalRandom:off
+// This browser adapter owns fetch, visibility, timers and retry jitter without an Effect runtime.
 import { RuntimeFailure, RuntimeStreamFrame, type RuntimePrincipal } from "@patchy/api";
 import { registry } from "@patchy/limits/registry";
 import * as Schema from "effect/Schema";
@@ -12,6 +12,14 @@ const decodeFailure = Schema.decodeUnknownSync(RuntimeFailure);
 export interface DocumentStream {
   replay(): void;
   close(): void;
+}
+
+declare global {
+  interface Window {
+    patchySession?: {
+      refresh(): Promise<"refreshed" | "signed-out" | "unavailable">;
+    };
+  }
 }
 
 export function openDocumentStream(options: {
@@ -38,6 +46,7 @@ export function openDocumentStream(options: {
   let retryTimer: number | undefined;
   let hiddenTimer: number | undefined;
   let failures = 0;
+  let refreshAttempts = 0;
   let hello: Extract<RuntimeStreamFrame, { readonly type: "hello" }> | undefined;
   let helloAt = 0;
   let served: Extract<RuntimeStreamFrame, { readonly type: "served" }> | undefined;
@@ -66,13 +75,17 @@ export function openDocumentStream(options: {
       });
       if (!response.ok) {
         const failure = decodeFailure(await response.json());
-        if (
+        if (failure.code === "session_refresh_required" && refreshAttempts < 3) {
+          refreshAttempts++;
+          const result = await window.patchySession?.refresh();
+          if (!closed && !current.signal.aborted && result === "signed-out")
+            options.notice("session_expired");
+        } else if (
           failure.code === "session_expired" ||
           failure.code === "principal_changed" ||
           failure.code === "access_denied"
         )
           options.notice(failure.code);
-        else if (failure.code === "not_available_on_public") options.notice("access_denied");
         else if (failure.code === "shell_outdated") options.stale();
         else if (failure.code === "limit_exceeded" && failure.limitId === "stream.documents")
           options.notice("stream_limit");
@@ -107,6 +120,7 @@ export function openDocumentStream(options: {
             hello = frame;
             helloAt = performance.now();
             failures = 0;
+            refreshAttempts = 0;
             // Until revision fences land, hello is the reopen/reconciliation boundary.
             status.connected();
           } else if (frame.type === "served") {
@@ -141,7 +155,8 @@ export function openDocumentStream(options: {
         controller = undefined;
         if (!closed && !suspended) {
           status.connecting();
-          const delay = Math.min(30_000, 500 * 2 ** Math.min(failures++, 6));
+          const ceiling = Math.min(30_000, 500 * 2 ** Math.min(failures++, 6));
+          const delay = ceiling * (0.5 + Math.random() * 0.5);
           retryTimer = window.setTimeout(() => {
             retryTimer = undefined;
             void connect();
@@ -160,15 +175,19 @@ export function openDocumentStream(options: {
         clearTimeout(retryTimer);
         retryTimer = undefined;
         controller?.abort();
-        status.connected();
       }, registry["stream.hidden.suspend"].default);
     } else if (suspended) {
       suspended = false;
+      refreshAttempts = 0;
       // Detach the aborted read before reconnecting; its finalizer cannot retry this generation.
       controller = undefined;
       void connect();
     }
   };
+  const online = () => {
+    refreshAttempts = 0;
+  };
+  window.addEventListener("online", online);
   document.addEventListener("visibilitychange", visibility);
   visibility();
   void connect();
@@ -186,6 +205,7 @@ export function openDocumentStream(options: {
       clearTimeout(retryTimer);
       clearTimeout(hiddenTimer);
       document.removeEventListener("visibilitychange", visibility);
+      window.removeEventListener("online", online);
       controller?.abort();
       status.close();
     }

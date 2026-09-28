@@ -34,7 +34,8 @@ export const SessionClaims = Schema.Struct({
       encode: SchemaGetter.passthrough()
     })
   ),
-  sid: Schema.NonEmptyString
+  sid: Schema.NonEmptyString,
+  exp: Schema.Int
 });
 
 export type SessionResult =

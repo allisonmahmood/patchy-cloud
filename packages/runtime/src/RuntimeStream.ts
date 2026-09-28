@@ -71,14 +71,10 @@ export class RuntimeStream extends Context.Service<
       input: unknown
     ) => Effect.Effect<
       Stream.Stream<Uint8Array>,
-      Runtime.RuntimeError,
+      Runtime.RuntimeError | StreamReplaced | StreamLimit,
       HttpServerRequest.HttpServerRequest | Scope.Scope
     >;
-    readonly notify: (
-      patchId: string,
-      frame: RuntimeStreamFrame,
-      versionId?: string
-    ) => Effect.Effect<void>;
+    readonly notify: (patchId: string) => Effect.Effect<void>;
     readonly connected: (companyId: string, patchId?: string) => Effect.Effect<number>;
     readonly drain: Effect.Effect<void>;
   }
@@ -102,7 +98,24 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
     const patches = new Map<string, number>();
     const viewers = new Map<string, number>();
     let draining = false;
-    const lifecycle = yield* Semaphore.make(1);
+    const lifecycle = new Map<string, { semaphore: Semaphore.Semaphore; users: number }>();
+    const withPatch = (patchId: string, effect: Effect.Effect<void>) =>
+      Effect.acquireUseRelease(
+        Effect.sync(() => {
+          let gate = lifecycle.get(patchId);
+          if (gate === undefined) {
+            gate = { semaphore: Semaphore.makeUnsafe(1), users: 0 };
+            lifecycle.set(patchId, gate);
+          }
+          gate.users++;
+          return gate;
+        }),
+        (gate) => gate.semaphore.withPermits(1)(effect),
+        (gate) =>
+          Effect.sync(() => {
+            if (--gate.users === 0) lifecycle.delete(patchId);
+          })
+      );
     const adjust = (map: Map<string, number>, key: string, delta: number) => {
       const count = (map.get(key) ?? 0) + delta;
       if (count === 0) map.delete(key);
@@ -116,7 +129,7 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
 
     // Commit callbacks can arrive out of order. Read authority while holding the same
     // gate as the initial snapshot, so an older read cannot follow a newer frame.
-    const refresh = (patchId: string, targets: readonly Entry[], announceServed: boolean) =>
+    const refresh = (patchId: string, targets: readonly Entry[]) =>
       Effect.gen(function* () {
         if (targets.length === 0) return;
         const served = yield* versions.find(patchId);
@@ -132,15 +145,9 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
             eligible = yield* versions.find(patchId, entry.versionId);
             retained.set(entry.versionId, eligible);
           }
-          if (
-            Option.isNone(eligible) ||
-            eligible.value.companyId !== entry.companyId ||
-            eligible.value.scope !== "company"
-          ) {
+          if (Option.isNone(eligible) || eligible.value.companyId !== entry.companyId) {
             entry.close("access_denied", { type: "access_denied" });
-          } else if (eligible.value.revoked) {
-            entry.close("revoked", { type: "revoked" });
-          } else if (announceServed) {
+          } else {
             entry.send({
               type: "served",
               versionId: served.value.versionId,
@@ -151,8 +158,9 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
       }).pipe(
         // A failed lookup must not fail the publish that already committed. EOF
         // releases presence and lets the browser retry admission against authority.
-        Effect.catch(() =>
-          Effect.sync(() => {
+        Effect.catch((cause) =>
+          Effect.gen(function* () {
+            yield* Effect.logError(new Runtime.SourceUnavailable({ cause }));
             for (const entry of targets) entry.close("source_unavailable");
           })
         )
@@ -193,7 +201,6 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
         })
         .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
       const bufferLimit = buffer.value;
-      if (loaded.scope === "public") return yield* new Runtime.PublicUnavailable({});
       if (wire !== WIRE_VERSION || wire !== loaded.wireVersion)
         return yield* new Runtime.ShellOutdated({});
       const queue = yield* Queue.make<Uint8Array, Cause.Done>();
@@ -249,31 +256,33 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
           if (!put(frame)) close("slow_consumer", { type: "closed", reason: "slow_consumer" });
         }
       };
+      const disconnect = Effect.sync(() => {
+        close("disconnected");
+        Deferred.doneUnsafe(done, Effect.void);
+      });
       yield* Effect.acquireRelease(
-        Effect.suspend((): Effect.Effect<void, Runtime.RuntimeError> => {
-          const previous = entries.get(key);
-          if (draining) return Effect.fail(new Runtime.Draining());
-          if (
-            previous !== undefined &&
-            (previous.viewerId !== identity.viewerId ||
-              previous.versionId !== input.versionId ||
-              previous.generation !== request.headers["x-patchy-generation"])
-          )
-            return Effect.fail(new StreamReplaced());
-          if (previous === undefined && (viewers.get(viewerKey) ?? 0) >= documentLimit)
-            return Effect.fail(new StreamLimit({ value: documentLimit }));
-          previous?.close("replaced", { type: "closed", reason: "replaced" });
-          entries.set(key, entry);
-          adjust(companies, identity.companyId, 1);
-          adjust(patches, patchKey, 1);
-          adjust(viewers, viewerKey, 1);
-          return Effect.void;
-        }),
-        () =>
-          Effect.sync(() => {
-            close("disconnected");
-            Deferred.doneUnsafe(done, Effect.void);
-          })
+        Effect.suspend(
+          (): Effect.Effect<void, Runtime.RuntimeError | StreamReplaced | StreamLimit> => {
+            const previous = entries.get(key);
+            if (draining) return Effect.fail(new Runtime.Draining());
+            if (
+              previous !== undefined &&
+              (previous.viewerId !== identity.viewerId ||
+                previous.versionId !== input.versionId ||
+                previous.generation !== request.headers["x-patchy-generation"])
+            )
+              return Effect.fail(new StreamReplaced());
+            if (previous === undefined && (viewers.get(viewerKey) ?? 0) >= documentLimit)
+              return Effect.fail(new StreamLimit({ value: documentLimit }));
+            previous?.close("replaced", { type: "closed", reason: "replaced" });
+            entries.set(key, entry);
+            adjust(companies, identity.companyId, 1);
+            adjust(patches, patchKey, 1);
+            adjust(viewers, viewerKey, 1);
+            return Effect.void;
+          }
+        ),
+        () => disconnect
       );
       const admittedDocuments = viewers.get(viewerKey)!;
       yield* events
@@ -314,31 +323,17 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
           )
         )
         .pipe(Effect.forkIn(scope, { startImmediately: true }));
-      yield* lifecycle.withPermits(1)(
+      yield* withPatch(
+        input.patchId,
         Effect.suspend(() =>
-          closeReason === undefined ? refresh(input.patchId, [entry], true) : Effect.void
+          closeReason === undefined ? refresh(input.patchId, [entry]) : Effect.void
         )
       );
-      const check = Effect.gen(function* () {
-        while (closeReason === undefined) {
-          yield* Effect.sleep("5 seconds");
-          if (closeReason !== undefined) return;
-          const result = yield* Effect.result(identity.check);
-          if (result._tag === "Success") {
-            if (result.success === "reauthenticate") close("reauthenticate");
-          } else {
-            const code = result.failure.code;
-            if (
-              code === "session_expired" ||
-              code === "access_denied" ||
-              code === "principal_changed"
-            )
-              close(code, { type: code });
-            else close("source_unavailable");
-          }
-        }
-      });
-      yield* check.pipe(Effect.forkIn(scope, { startImmediately: true }));
+      yield* Effect.gen(function* () {
+        const now = yield* Clock.currentTimeMillis;
+        yield* Effect.sleep(Math.max(0, identity.expiresAt - now));
+        close("reauthenticate");
+      }).pipe(Effect.forkIn(scope, { startImmediately: true }));
       return Stream.fromPull(
         Effect.succeed(
           Effect.suspend(() => {
@@ -355,41 +350,19 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
             });
           })
         )
-      ).pipe(
-        Stream.ensuring(
-          Effect.sync(() => {
-            close("disconnected");
-            Deferred.doneUnsafe(done, Effect.void);
-          })
-        )
-      );
+      ).pipe(Stream.ensuring(disconnect));
     });
     return RuntimeStream.of({
       open,
-      notify: (patchId, frame, versionId) =>
-        lifecycle.withPermits(1)(
+      notify: (patchId) =>
+        withPatch(
+          patchId,
           Effect.gen(function* () {
             const targets: Entry[] = [];
             for (const entry of entries.values()) {
-              if (
-                entry.patchId === patchId &&
-                (versionId === undefined || entry.versionId === versionId)
-              )
-                targets.push(entry);
+              if (entry.patchId === patchId) targets.push(entry);
             }
-            if (
-              frame.type === "served" ||
-              frame.type === "revoked" ||
-              frame.type === "access_denied"
-            ) {
-              yield* refresh(patchId, targets, frame.type === "served");
-              return;
-            }
-            for (const entry of targets) {
-              if (frame.type === "session_expired" || frame.type === "principal_changed")
-                entry.close(frame.type, frame);
-              else entry.send(frame);
-            }
+            yield* refresh(patchId, targets);
           })
         ),
       connected: (companyId, patchId) =>

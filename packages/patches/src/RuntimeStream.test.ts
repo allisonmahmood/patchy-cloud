@@ -81,94 +81,78 @@ const publish = (patchId: string, intent: "create" | "update") =>
   });
 
 it.layer(layer)("committed patch lifecycle streams", (it) => {
-  it.effect(
-    "publishes, rolls back, revokes an open version and rechecks revocation on reconnect",
-    () =>
-      Effect.gen(function* () {
-        const patches = yield* Patches.Patches;
-        const streams = yield* RuntimeStream.RuntimeStream;
-        yield* patches.listen((change) =>
-          change.type === "served"
-            ? streams.notify(change.patchId, {
-                type: "served",
-                versionId: change.versionId,
-                tier: change.tier
-              })
-            : change.type === "revoked"
-              ? streams.notify(change.patchId, { type: "revoked" }, change.versionId)
-              : streams.notify(change.patchId, { type: "access_denied" })
-        );
-        const patchId = newPatchId();
-        const original = yield* publish(patchId, "create");
-        const input = {
+  it.effect("publishes, rolls back and rechecks lifecycle eligibility on reconnect", () =>
+    Effect.gen(function* () {
+      const patches = yield* Patches.Patches;
+      const streams = yield* RuntimeStream.RuntimeStream;
+      yield* patches.listen((change) => streams.notify(change.patchId));
+      const patchId = newPatchId();
+      const original = yield* publish(patchId, "create");
+      const input = {
+        patchId,
+        versionId: original.versionId,
+        documentId: "committed_lifecycle_document"
+      };
+      const body = yield* streams.open(input);
+      const pull = yield* Stream.toPull(body);
+      assert.strictEqual(decode(yield* pull).type, "hello");
+      assert.deepStrictEqual(decode(yield* pull), {
+        type: "served",
+        versionId: original.versionId,
+        tier: 0
+      });
+      const next = yield* publish(patchId, "update");
+      assert.deepStrictEqual(decode(yield* pull), {
+        type: "served",
+        versionId: next.versionId,
+        tier: 0
+      });
+      yield* patches.rollback(patchId, actor, 1);
+      assert.deepStrictEqual(decode(yield* pull), {
+        type: "served",
+        versionId: original.versionId,
+        tier: 0
+      });
+      yield* patches.retire(patchId, actor);
+      assert.deepStrictEqual(decode(yield* pull), { type: "access_denied" });
+      assert.strictEqual(yield* streams.connected(identity.company.id, patchId), 0);
+      assert.isTrue(Option.isNone(yield* patches.find(patchId, 1)));
+      assert.instanceOf(yield* streams.open(input).pipe(Effect.flip), Runtime.AccessDenied);
+      const runtime = yield* Runtime.make(
+        { me },
+        {
+          origin: PUBLIC_BASE_URL,
+          identity: Effect.succeed({
+            user: identity.user,
+            company: identity.company,
+            admin: false
+          })
+        }
+      );
+      const refused = yield* runtime
+        .call({
           patchId,
           versionId: original.versionId,
-          documentId: "committed_lifecycle_document"
-        };
-        const body = yield* streams.open(input);
-        const pull = yield* Stream.toPull(body);
-        assert.strictEqual(decode(yield* pull).type, "hello");
-        assert.deepStrictEqual(decode(yield* pull), {
-          type: "served",
-          versionId: original.versionId,
-          tier: 0
-        });
-        const next = yield* publish(patchId, "update");
-        assert.deepStrictEqual(decode(yield* pull), {
-          type: "served",
-          versionId: next.versionId,
-          tier: 0
-        });
-        yield* patches.rollback(patchId, actor, 1);
-        assert.deepStrictEqual(decode(yield* pull), {
-          type: "served",
-          versionId: original.versionId,
-          tier: 0
-        });
-        yield* patches.setVersionRevoked(patchId, actor, 1, true);
-        assert.deepStrictEqual(decode(yield* pull), { type: "revoked" });
-        assert.strictEqual(yield* streams.connected(identity.company.id, patchId), 0);
-        assert.isTrue(Option.isNone(yield* patches.find(patchId, 1)));
-        assert.isNotNull(
-          Option.getOrThrow(yield* patches.findRetained(patchId, 1)).version.revokedAt
-        );
-        const reconnect = yield* Stream.toPull(yield* streams.open(input));
-        assert.strictEqual(decode(yield* reconnect).type, "hello");
-        assert.deepStrictEqual(decode(yield* reconnect), { type: "revoked" });
-        const runtime = yield* Runtime.make(
-          { me },
-          {
-            origin: PUBLIC_BASE_URL,
-            identity: Effect.succeed({
-              user: identity.user,
-              company: identity.company,
-              admin: false
-            })
-          }
-        );
-        const refused = yield* runtime
-          .call({
-            patchId,
-            versionId: original.versionId,
-            wire: WIRE_VERSION,
-            principal: { userId: identity.user.id },
-            op: "me",
-            args: {}
-          })
-          .pipe(Effect.flip);
-        assert.instanceOf(refused, Runtime.AccessDenied);
-        yield* patches.setVersionRevoked(patchId, actor, 1, false);
-        assert.isTrue(Option.isSome(yield* patches.find(patchId, 1)));
-        const restored = yield* Stream.toPull(yield* streams.open(input));
-        assert.strictEqual(decode(yield* restored).type, "hello");
-        assert.deepStrictEqual(decode(yield* restored), {
-          type: "served",
-          versionId: original.versionId,
-          tier: 0
-        });
-        yield* patches.retire(patchId, actor);
-        assert.deepStrictEqual(decode(yield* restored), { type: "access_denied" });
-      }).pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, request), Effect.scoped)
+          wire: WIRE_VERSION,
+          principal: { userId: identity.user.id },
+          op: "me",
+          args: {}
+        })
+        .pipe(Effect.flip);
+      assert.instanceOf(refused, Runtime.AccessDenied);
+      yield* patches.restore(patchId, actor);
+      assert.isTrue(Option.isSome(yield* patches.find(patchId, 1)));
+      const restored = yield* Stream.toPull(yield* streams.open(input));
+      assert.strictEqual(decode(yield* restored).type, "hello");
+      assert.deepStrictEqual(decode(yield* restored), {
+        type: "served",
+        versionId: original.versionId,
+        tier: 0
+      });
+      yield* patches.delete(patchId, actor);
+      assert.deepStrictEqual(decode(yield* restored), { type: "access_denied" });
+      assert.instanceOf(yield* streams.open(input).pipe(Effect.flip), Runtime.AccessDenied);
+    }).pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, request), Effect.scoped)
   );
 
   it.effect(
@@ -199,11 +183,7 @@ it.layer(layer)("committed patch lifecycle streams", (it) => {
               yield* Deferred.succeed(committed, undefined);
               yield* Deferred.await(resume);
             }
-            yield* streams.notify(change.patchId, {
-              type: "served",
-              versionId: change.versionId,
-              tier: change.tier
-            });
+            yield* streams.notify(change.patchId);
           })
         );
         const older = yield* publish(patchId, "update").pipe(Effect.forkScoped);
@@ -216,53 +196,6 @@ it.layer(layer)("committed patch lifecycle streams", (it) => {
         assert.deepStrictEqual(decode(yield* pull), current);
         assert.strictEqual(yield* streams.connected(identity.company.id, patchId), 1);
       }).pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, request), Effect.scoped)
-  );
-
-  it.effect("keeps an unrevoked document connected after a stale revoked callback", () =>
-    Effect.gen(function* () {
-      const patches = yield* Patches.Patches;
-      const streams = yield* RuntimeStream.RuntimeStream;
-      const patchId = newPatchId();
-      const initial = yield* publish(patchId, "create");
-      const pull = yield* Stream.toPull(
-        yield* streams.open({
-          patchId,
-          versionId: initial.versionId,
-          documentId: "unrevoked_document"
-        })
-      );
-      yield* pull;
-      yield* pull;
-      const committed = yield* Deferred.make<void>();
-      const resume = yield* Deferred.make<void>();
-      yield* patches.listen((change) =>
-        Effect.gen(function* () {
-          if (change.type === "revoked") {
-            yield* Deferred.succeed(committed, undefined);
-            yield* Deferred.await(resume);
-            yield* streams.notify(change.patchId, { type: "revoked" }, change.versionId);
-          } else if (change.type === "served") {
-            yield* streams.notify(change.patchId, {
-              type: "served",
-              versionId: change.versionId,
-              tier: change.tier
-            });
-          }
-        })
-      );
-      const revoking = yield* patches
-        .setVersionRevoked(patchId, actor, 1, true)
-        .pipe(Effect.forkScoped);
-      yield* Deferred.await(committed);
-      yield* patches.setVersionRevoked(patchId, actor, 1, false);
-      const current = { type: "served", versionId: initial.versionId, tier: 0 };
-      assert.deepStrictEqual(decode(yield* pull), current);
-      yield* Deferred.succeed(resume, undefined);
-      yield* Fiber.join(revoking);
-      yield* streams.notify(patchId, { type: "ready" });
-      assert.deepStrictEqual(decode(yield* pull), { type: "ready" });
-      assert.strictEqual(yield* streams.connected(identity.company.id, patchId), 1);
-    }).pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, request), Effect.scoped)
   );
 
   it.effect("keeps a restored document connected after a stale access-denied callback", () =>
@@ -287,7 +220,7 @@ it.layer(layer)("committed patch lifecycle streams", (it) => {
           if (change.type !== "unavailable") return;
           yield* Deferred.succeed(committed, undefined);
           yield* Deferred.await(resume);
-          yield* streams.notify(change.patchId, { type: "access_denied" });
+          yield* streams.notify(change.patchId);
         })
       );
       const retiring = yield* patches.retire(patchId, actor).pipe(Effect.forkScoped);
@@ -295,8 +228,11 @@ it.layer(layer)("committed patch lifecycle streams", (it) => {
       yield* patches.restore(patchId, actor);
       yield* Deferred.succeed(resume, undefined);
       yield* Fiber.join(retiring);
-      yield* streams.notify(patchId, { type: "ready" });
-      assert.deepStrictEqual(decode(yield* pull), { type: "ready" });
+      assert.deepStrictEqual(decode(yield* pull), {
+        type: "served",
+        versionId: initial.versionId,
+        tier: 0
+      });
       assert.strictEqual(yield* streams.connected(identity.company.id, patchId), 1);
       yield* patches.retire(patchId, actor);
       assert.deepStrictEqual(decode(yield* pull), { type: "access_denied" });

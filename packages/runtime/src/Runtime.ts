@@ -57,6 +57,16 @@ export class SessionExpired extends Schema.TaggedError<SessionExpired>()(
     return "Runtime request refused: session_expired.";
   }
 }
+export class SessionRefreshRequired extends Schema.TaggedError<SessionRefreshRequired>()(
+  "SessionRefreshRequired",
+  diagnostics
+) {
+  readonly code = "session_refresh_required" as const;
+  readonly status = 401;
+  override get message() {
+    return "Refresh your session and reconnect.";
+  }
+}
 export class PrincipalChanged extends Schema.TaggedError<PrincipalChanged>()(
   "PrincipalChanged",
   diagnostics
@@ -208,9 +218,11 @@ export type RuntimeError =
   | InvalidRequest
   | AccessDenied
   | SessionExpired
+  | SessionRefreshRequired
   | PrincipalChanged
   | PublicUnavailable
   | ShellOutdated
+  | Draining
   | TooLarge
   | Timeout
   | RateLimited
@@ -453,7 +465,7 @@ export const make = (
         const loaded = yield* versions
           .find(input.patchId, input.versionId)
           .pipe(Effect.mapError((cause) => new SourceUnavailable({ cause })));
-        if (Option.isNone(loaded) || loaded.value.revoked) return yield* new AccessDenied({});
+        if (Option.isNone(loaded)) return yield* new AccessDenied({});
         const version = loaded.value;
         yield* WideEvents.enrich({
           companyId: version.companyId,

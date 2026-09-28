@@ -50,7 +50,6 @@ const versions = Layer.succeed(LoadedVersions.LoadedVersions, {
             companyId: patch === "otherpatch11" ? "cmp_other" : DEV_SEED.companyId,
             manifest: version === tier1VersionId ? { ...manifest, tier: 1 as const } : manifest,
             wireVersion: WIRE_VERSION,
-            revoked: false,
             scope: version === publicVersionId ? ("public" as const) : ("company" as const)
           })
     )

@@ -49,9 +49,10 @@ export interface Instance {
     context: BrowserContext,
     user?: "owner" | "colleague" | "expired" | "none",
     expiresInSeconds?: number
-  ): Promise<void>;
+  ): Promise<string | null>;
   publish(scope?: "company" | "public", html?: string, patchId?: string): Promise<Published>;
   lifecycle(patchId: string, action: "rollback" | "retire", versionNumber?: number): Promise<void>;
+  share(patchId: string, scope: "company" | "public"): Promise<void>;
   restart(): Promise<void>;
   pauseStreams(paused: boolean): void;
   /** Drop the next stream's first bytes but retain its upstream socket until released. */
@@ -399,6 +400,14 @@ export async function startInstance(options: { tls?: boolean } = {}): Promise<In
         });
         if (!response.ok) throw new Error(`${action}: ${response.status} ${await response.text()}`);
       },
+      async share(patchId, scope) {
+        const response = await fetch(`${backendOrigin}/api/patches/${patchId}/share`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${seed.token}`, "content-type": "application/json" },
+          body: JSON.stringify({ scope })
+        });
+        if (!response.ok) throw new Error(`share: ${response.status} ${await response.text()}`);
+      },
       async session(context, user = "owner", expiresInSeconds = 3600) {
         await context.clearCookies();
         if (user === "none") {
@@ -407,7 +416,7 @@ export async function startInstance(options: { tls?: boolean } = {}): Promise<In
             { name: "__clerk_db_jwt", value: "offline-browser", url: origin },
             { name: "__client_uat", value: "0", url: origin }
           ]);
-          return;
+          return null;
         }
         const now = Math.floor(Date.now() / 1000);
         const token = signSession({
@@ -431,6 +440,7 @@ export async function startInstance(options: { tls?: boolean } = {}): Promise<In
               };
             })
         );
+        return token;
       },
       async publish(scope = "company", content = html, patchId) {
         const response = await fetch(`${backendOrigin}/api/publish`, {

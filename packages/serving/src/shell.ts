@@ -66,7 +66,7 @@ const notices = {
     kicker: "Version revoked",
     title: "This version has been stopped",
     message:
-      "The patch's owner revoked this version, so Patchy stopped it. Open the patch's current address to use an available version. Anything still in progress was not retried.",
+      "This version is no longer available, so Patchy stopped it. Open the patch's current address to use an available version. Anything still in progress was not retried.",
     signIn: false
   },
   stream_replaced: {
