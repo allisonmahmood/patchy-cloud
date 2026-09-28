@@ -11,6 +11,11 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./guest": {
+      "development": "./src/guest.ts",
+      "types": "./dist/guest.d.ts",
+      "import": "./dist/guest.js"
+    },
     "./handlers": {
       "development": "./src/handlers.ts",
       "types": "./dist/handlers.d.ts",
@@ -42,7 +47,6 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@patchy/core": "workspace:*",
     "@patchy/limits": "workspace:*",
     "effect": "catalog:"
   }

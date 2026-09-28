@@ -112,14 +112,23 @@ handles and action-argument uploads. Optional argument keys may be absent;
 optional columns remain nullable. Defaults and refs are table-only. Queries
 cannot write, mutations cannot reach shared data, connections, file bytes or
 `ctx.run`, and actions can call only sibling queries and mutations.
+Server-side shared reads return promises, without browser subscription methods
+or query stores.
 
 The subscription registry is framework-free; `useQuery` is its Preact adapter.
 It ignores stale frames and preserves the last value on an error. Retryable
 source refusals recover on restore or reshare; permanent refusals end that
 subscription.
 
-Tier 2 handlers remain contracts and generation, not hosted execution. The server
-still refuses tier 2 publish. Mutation-key execution and
+`patchy/server` also exports `createGuest`, the wire-1 entry used by generated
+server artifacts. It derives descriptors from the actual handler exports, builds
+kind-specific contexts and sends runtime operations through an invocation-bound
+RPC stub. It receives no callback credential. File bytes stay binary, and host
+refusals and declared business errors retain their structured replies.
+
+The pinned engine and isolated inspection run these guests directly. They are
+not yet connected to hosted or local tier 2 admission: the server still refuses
+tier 2 publish. Mutation-key execution and
 `unknown_outcome.retry()` behavior land with the mutations ticket. The
 `patchy-server` skill source documents the contract and embeds registry-generated
 limits; tier 2 init will install it.

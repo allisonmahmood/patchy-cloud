@@ -8,7 +8,6 @@
 import * as Schema from "effect/Schema";
 import * as SchemaGetter from "effect/SchemaGetter";
 import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
-import { isPatchId } from "@patchy/core";
 import { registry } from "@patchy/limits/registry";
 import { Snapshot } from "./postgresSnapshot.js";
 import {
@@ -24,7 +23,7 @@ export const WIRE_VERSION = 1;
 
 /** A patch's public id: twelve lowercase letters or digits. */
 export const PatchId = Schema.String.check(
-  Schema.makeFilter((value: string) => isPatchId(value) || "Invalid patch ID.", {
+  Schema.makeFilter((value: string) => /^[a-z0-9]{12}$/.test(value) || "Invalid patch ID.", {
     title: "PatchId"
   })
 );

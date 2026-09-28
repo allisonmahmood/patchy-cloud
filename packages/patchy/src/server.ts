@@ -20,6 +20,7 @@ import { InvalidManifestError } from "./invalidManifestError.js";
 export { t } from "./config.js";
 export type { FileHandle, Upload } from "./config.js";
 export { HandlerError, isHandlerError } from "./handlerError.js";
+export { createGuest } from "./guest.js";
 export type HandlerKindName = "query" | "mutation" | "action";
 export type DeepReadonly<T> = T extends
   string | number | boolean | bigint | symbol | null | undefined
@@ -195,7 +196,7 @@ export interface ActionContext<
   Shared = Empty,
   Connections = Empty
 > extends MutationContext<C> {
-  readonly shared: Shared;
+  readonly shared: QueryShared<Shared>;
   readonly files: { readonly [N in keyof C["files"]]: ActionFileStore };
   readonly connections: Connections;
   readonly run: RunClient<Modules>;

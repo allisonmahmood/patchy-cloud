@@ -1,5 +1,6 @@
 export * as Binding from "./Binding.js";
 export * as LoadedVersions from "./LoadedVersions.js";
+export * as Executor from "./Executor.js";
 export * as Runtime from "./Runtime.js";
 export * as RuntimeProduction from "./RuntimeProduction.js";
 export * as RuntimeApi from "./RuntimeApi.js";

@@ -1,0 +1,42 @@
+{
+  "name": "@patchy/execution",
+  "version": "0.0.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "description": "The workerd execution engine and isolated handler inspection.",
+  "exports": {
+    "./engine": {
+      "development": "./src/engine.ts",
+      "types": "./dist/engine.d.ts",
+      "import": "./dist/engine.js"
+    },
+    "./inspection": {
+      "development": "./src/inspection.ts",
+      "types": "./dist/inspection.d.ts",
+      "import": "./dist/inspection.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@patchy/api": "workspace:*",
+    "@patchy/runtime": "workspace:*",
+    "acorn": "8.15.0",
+    "acorn-walk": "8.3.4",
+    "effect": "catalog:",
+    "esbuild": "0.28.2",
+    "workerd": "1.20260924.1"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "patchy": "workspace:*",
+    "vitest": "^5.0.1"
+  }
+}

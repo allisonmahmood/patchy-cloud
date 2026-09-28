@@ -36,6 +36,13 @@ claim. Readers for persisted manifest versions remain available. Retiring a wire
 is a separate breaking-change decision with a needs-rebuild door, not a package
 upgrade silently taking old patches down.
 
+For tier 2, wire 1 also fixes the private guest protocol and workerd compatibility
+date, `2026-09-24`, with Node compatibility explicitly disabled. This release pins
+`workerd` to `1.20260924.1`. Stored versions keep their guest wire and compatibility
+date rather than inheriting the next tooling release's settings. The engine and
+inspection share these constants and release checks; see
+[ADR-0012](./ADR-0012-credential-free-execution-service.md).
+
 `patchy/config` is a pure builder surface. The CLI executes a config in a child
 process and validates its serializable manifest; the server never executes
 uploaded config. Owned row types are inferred from the config, while declarations
@@ -64,9 +71,9 @@ signals resolve one shared instance, including its types and licenses.
 
 Exports name individual entries, never a `patchy/*` wildcard. Config and local
 dev remain tooling entries; the generated client and Preact entries are for the
-page. `patchy/server` belongs to the handler-contract ticket, and `patchy/csv`
-to the CSV ticket. Neither has a placeholder export. The graph import checks
-arrive with the Preact scaffold and tier 2 publishing.
+page. `patchy/server` ships the handler builders and guest entry for hosted code;
+`patchy/csv` belongs to the CSV ticket and has no placeholder export. The graph
+import checks arrive with the Preact scaffold and tier 2 publishing.
 
 The only managed package pin today is `patchy`; tier 2 init adds `workerd`.
 Vite, `vite-plugin-singlefile`, TypeScript and `@types/*` belong to the builder.

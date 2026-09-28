@@ -92,6 +92,8 @@ export const sync = action({
     saved.name = "changed";
     await totalSales(ctx);
     await ctx.shared.directory.list();
+    // @ts-expect-error server shared reads cannot start browser subscriptions
+    void ctx.shared.directory.get.subscribe;
     await ctx.files.documents.put(args.name, args.upload);
     await ctx.files.documents.get(args.name);
     await ctx.files.documents.delete("obsolete.pdf");

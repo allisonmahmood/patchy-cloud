@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 import * as OpenApi from "effect/unstable/httpapi/OpenApi";
 import { PatchyApi } from "./api.js";
 import { RuntimeStreamFrame } from "./runtime.js";
+import * as GuestProtocol from "./guest.js";
 
 /** The subset of JSON Schema `fromApi` emits, as far as this renderer reads it. */
 interface JsonSchema {
@@ -83,6 +84,26 @@ export function renderApiMarkdown(): string {
       }
     }
   }
+
+  lines.push(
+    "## Private guest protocol",
+    "",
+    `Wire ${GuestProtocol.wireVersion} is pinned to workerd \`${GuestProtocol.workerdVersion}\`, compatibility date \`${GuestProtocol.compatibilityDate}\`.`,
+    "The authoritative schemas are in [`packages/api/src/guest.ts`](../packages/api/src/guest.ts).",
+    "These are engine/inspection contracts, not public `HttpApi` routes or CLI operations.",
+    "",
+    "- `BundleBinding`: company, patch and version ids plus lowercase SHA-256. `Bundle` adds the closed ESM source.",
+    "- `BindRequest`: wire and bundle. `BindReply` acknowledges the binding with `ok: true` or returns a typed binding refusal.",
+    "- `Invoke`: wire, binding, invocation id, attempt id, process generation, absolute deadline, handler, JSON arguments, initiating viewer and issuing-host callback address/capability.",
+    "- `InvokeReply`: the ordinary runtime or declared-handler reply plus guest elapsed milliseconds. The capability stays in the loader; the guest receives only an invocation-named RPC stub.",
+    "- `GuestRequest`: describe or invoke. Description yields handler descriptors; invocation yields the existing `RuntimeReply` envelope without wrapping successful business data.",
+    "- `Callback`: runtime operation, arguments and optional raw file body. `CallbackReply` preserves runtime refusals or returns JSON/file bytes. File bodies carry `Uint8Array` bytes and a content type over RPC, not JSON byte arrays.",
+    "- Host callback transport uses JSON except binary requests (`application/octet-stream`, URI-encoded operation metadata in `X-Patchy-Callback`) and binary replies (`X-Patchy-File-Body: 1`). Authorization is the private per-attempt bearer, never a guest field.",
+    "- `InspectRequest`: wire and source only. `InspectionReply` contains descriptors or a runtime refusal. Inspection has no company binding, capability or callback path and runs in a reaped, deadline-bounded process.",
+    "",
+    "See [ADR-0012](./adr/ADR-0012-credential-free-execution-service.md) for authority, lifetime and hosting contracts. Tier 2 publishing remains refused.",
+    ""
+  );
 
   lines.push("## Shapes", "");
   for (const [ref, schema] of Object.entries(components)) {

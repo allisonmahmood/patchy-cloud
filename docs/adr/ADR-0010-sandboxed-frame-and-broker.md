@@ -141,3 +141,12 @@ controller, which owns their emission and waiting UI.
 ## Tier-scoped promise
 
 Tier 0 keeps **the patch cannot watch you**. A public shell runs only Patchy's own shell script, never analytics (tier 0 needs no script). At tier 1: **a patch acts as you, only through Patchy, and never holds your login. What you do inside it can be saved in its own tables, which your colleagues can read, and every write is logged for your company's admins. It reaches outside systems only through your company's integrations.** This scopes, rather than removes, ADR-0006's session and no-script guarantees.
+
+The decided tier 2 promise is separate: **a patch's server code runs on Patchy's
+machines, never on yours. It holds no login and no credential and has no path to
+the internet: everything it does goes through Patchy, as you, while you have the
+patch open. It reaches outside systems only through your company's integrations,
+and every write is logged for your company's admins.** ADR-0012 defines the
+credential-free execution boundary and its resource-principal rules. The engine
+and isolated inspection are built; this promise does not enable tier 2 admission
+or publishing before the host, supervisor and fleet enforcers land.

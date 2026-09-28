@@ -1,6 +1,6 @@
 # Runtime
 
-Runtime is the path by which a loaded patch asks Patchy to act as its viewer. It binds each operation to the loaded version and the viewer, without handing the patch a credential.
+Runtime is the path by which a loaded patch asks Patchy to act as its viewer. It binds each operation to the loaded version and the viewer, without handing the patch a credential. The execution package shares this glossary.
 
 ## Language
 
@@ -23,6 +23,18 @@ _Avoid_: action, individual row write
 **Action**:
 A handler for work outside one transaction, including file bytes, company integrations and sibling queries or mutations.
 _Avoid_: background job, transaction
+
+**Execution service**:
+The credential-free side of the deployment that runs handler code and reaches Patchy only through callbacks.
+_Avoid_: sandbox (the browser's), worker (an engine term), lambda
+
+**Invocation capability**:
+The opaque per-attempt reference the execution service presents on callbacks, never seen by handler code.
+_Avoid_: API key, session token
+
+**Inspection**:
+Loading a server bundle without invocation authority to derive its handler descriptors before admission.
+_Avoid_: handler execution, independent proof, build
 
 **Context object**:
 The viewer and capabilities supplied to a handler, narrowed to its kind and declared resources.
