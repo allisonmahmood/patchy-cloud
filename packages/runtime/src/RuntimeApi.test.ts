@@ -7,6 +7,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { RuntimeGroup, runtimeOperations, WIRE_VERSION } from "@patchy/api";
 import { PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
 import { DEV_SEED } from "@patchy/auth/seed";
+import { Limits } from "@patchy/limits";
 import { client, headers, patchId, versionId, publicVersionId } from "./test/fixtures.js";
 import * as Fixtures from "./test/fixtures.js";
 import { me } from "./me.js";
@@ -259,7 +260,12 @@ it.layer(Fixtures.layer())("runtime HTTP admission", (it) => {
           headers: { ...headers(), "content-length": String(9 * 1024 * 1024) },
           responseMode: "response-only"
         });
-        assert.include(yield* large.json, { code: "too_large" });
+        assert.include(yield* large.json, {
+          code: "too_large",
+          scope: "viewer",
+          limitId: "runtime.batch.bytes",
+          value: 8256 * 1024
+        });
         assert.strictEqual(large.status, 413);
       })
   );
@@ -303,6 +309,106 @@ it.layer(Fixtures.layer())("runtime HTTP admission", (it) => {
       })
   );
 });
+
+it.effect("host tracked-key saturation does not masquerade as a viewer call-rate refusal", () =>
+  Effect.gen(function* () {
+    const api = yield* client;
+    const send = (patch: string) =>
+      api.call({
+        payload: {
+          patchId: patch,
+          versionId,
+          principal: null,
+          wire: WIRE_VERSION,
+          op: "me",
+          args: {}
+        },
+        headers: { ...headers(), cookie: signedInCookies() },
+        responseMode: "response-only"
+      });
+    assert.strictEqual((yield* send(patchId)).status, 200);
+    const limits = yield* Limits.Limits;
+    for (let i = 1; i < Limits.MAX_TRACKED_KEYS; i++) {
+      yield* limits.consume({ key: `capacity-${i}`, limit: 1, window: "1 minute" });
+    }
+    const response = yield* send("secondpatch1");
+    assert.strictEqual(response.status, 429);
+    assert.include(yield* response.json, {
+      code: "rate_limited",
+      scope: "host",
+      limitId: "rate.trackedKeys",
+      value: 10_000,
+      retryAfter: Number(response.headers["retry-after"])
+    });
+    assert.isAbove(Number(response.headers["retry-after"]), 0);
+    assert.strictEqual((yield* send(patchId)).status, 200);
+    yield* TestClock.adjust("1 minute");
+    assert.strictEqual((yield* send("secondpatch1")).status, 200);
+  }).pipe(Effect.provide(Fixtures.layer(undefined, { "runtime.calls.perMinute": 300 })))
+);
+
+it.effect("unsafe capability timeouts and unknown outcomes never advertise retry timing", () =>
+  Effect.gen(function* () {
+    const api = yield* client;
+    for (const [op, code] of [
+      ["tables.insert", "timeout"],
+      ["postgres.query", "unknown_outcome"]
+    ] as const) {
+      const response = yield* api.call({
+        payload: {
+          patchId,
+          versionId,
+          principal: { userId: DEV_SEED.userId },
+          wire: WIRE_VERSION,
+          op,
+          args: {}
+        },
+        headers: {
+          ...headers({ userId: DEV_SEED.userId }),
+          cookie: signedInCookies(),
+          origin: PUBLIC_BASE_URL
+        },
+        responseMode: "response-only"
+      });
+      assert.strictEqual(response.status, code === "timeout" ? 504 : 503);
+      const body = yield* response.json;
+      assert.include(body, { code });
+      assert.notProperty(body, "retryAfter");
+      assert.isUndefined(response.headers["retry-after"]);
+      if (code === "timeout")
+        assert.include(body, {
+          scope: "viewer",
+          limitId: "runtime.mutation.deadline",
+          value: 30_000
+        });
+    }
+  }).pipe(
+    Effect.provide(
+      Fixtures.layer({
+        "tables.insert": {
+          kind: "mutation",
+          run: () =>
+            Effect.fail(
+              Object.assign(
+                new Runtime.Timeout({ deadlineMs: 30_000, limitId: "runtime.mutation.deadline" }),
+                { retryAfterSeconds: 12 }
+              )
+            )
+        },
+        "postgres.query": {
+          kind: "integration",
+          run: () =>
+            Effect.fail({
+              code: "unknown_outcome",
+              status: 503,
+              message: "The source outcome is unknown.",
+              retryAfterSeconds: 12
+            } satisfies Runtime.OperationError)
+        }
+      })
+    )
+  )
+);
 
 it.effect(
   "company admission refuses foreign and deactivated viewers but admits an active member",

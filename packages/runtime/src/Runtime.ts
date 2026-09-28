@@ -8,13 +8,16 @@ import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import {
   RuntimePrincipal,
   runtimeBodyLimit,
+  runtimeBodyLimitId,
   WIRE_VERSION,
   type RuntimeCode,
+  type RuntimeBodyLimitId,
   type RuntimeEnvelope,
   type FileBody
 } from "@patchy/api";
 import { newInternalId } from "@patchy/core";
 import { ContractLimits, Limits } from "@patchy/limits";
+import { registry, type LimitScope } from "@patchy/limits/registry";
 import * as Binding from "./Binding.js";
 import * as LoadedVersions from "./LoadedVersions.js";
 
@@ -82,20 +85,41 @@ export class ShellOutdated extends Schema.TaggedError<ShellOutdated>()(
 }
 export class TooLarge extends Schema.TaggedError<TooLarge>()("TooLarge", {
   ...diagnostics,
-  maxBytes: Schema.Int
+  maxBytes: Schema.Int,
+  limitId: Schema.Literals([
+    "runtime.call.bytes",
+    "runtime.row.bytes",
+    "runtime.batch.bytes",
+    "runtime.postgres.bytes",
+    "runtime.result.bytes",
+    "runtime.file.bytes"
+  ])
 }) {
   readonly code = "too_large" as const;
   readonly status = 413;
+  get scope() {
+    return registry[this.limitId].scope;
+  }
+  get value() {
+    return this.maxBytes;
+  }
   override get message() {
     return `Runtime request exceeds ${this.maxBytes} bytes.`;
   }
 }
 export class Timeout extends Schema.TaggedError<Timeout>()("Timeout", {
   ...diagnostics,
-  deadlineMs: Schema.Int
+  deadlineMs: Schema.Int,
+  limitId: Schema.Literals(["runtime.mutation.deadline", "integration.deadline"])
 }) {
   readonly code = "timeout" as const;
   readonly status = 504;
+  get scope() {
+    return registry[this.limitId].scope;
+  }
+  get value() {
+    return this.deadlineMs;
+  }
   override get message() {
     return `The call exceeded its ${this.deadlineMs} ms service deadline.`;
   }
@@ -103,10 +127,14 @@ export class Timeout extends Schema.TaggedError<Timeout>()("Timeout", {
 export class RateLimited extends Schema.TaggedError<RateLimited>()("RateLimited", {
   ...diagnostics,
   retryAfterSeconds: Schema.Int,
-  value: Schema.Int
+  value: Schema.Int,
+  limitId: Schema.Literals(["runtime.calls.perMinute", "rate.trackedKeys"])
 }) {
   readonly code = "rate_limited" as const;
   readonly status = 429;
+  get scope() {
+    return registry[this.limitId].scope;
+  }
   override get message() {
     return "Runtime request refused: rate_limited.";
   }
@@ -142,6 +170,9 @@ export interface OperationError {
   readonly message: string;
   readonly correlationId?: string;
   readonly retryAfterSeconds?: number;
+  readonly limitId?: string;
+  readonly scope?: LimitScope;
+  readonly value?: number;
   readonly details?: Readonly<Record<string, typeof Schema.Json.Type>>;
 }
 
@@ -261,6 +292,7 @@ export class Runtime extends Context.Service<
   {
     readonly bodyLimit: (op: string) => number;
     readonly maxCallBytes: number;
+    readonly maxCallLimitId: RuntimeBodyLimitId;
     readonly fileBytes: number;
     readonly call: (
       input: typeof RuntimeEnvelope.Type,
@@ -309,6 +341,17 @@ export const make = (
     const settings = yield* config;
     const origin = options.origin;
     const bodyLimit = (op: string) => runtimeBodyLimit(op, settings);
+    const maxCallBytes = Math.max(
+      settings.rowBytes + settings.callBytes,
+      settings.batchBytes + settings.callBytes,
+      settings.postgresBytes
+    );
+    const maxCallLimitId =
+      maxCallBytes === settings.batchBytes + settings.callBytes
+        ? "runtime.batch.bytes"
+        : maxCallBytes === settings.rowBytes + settings.callBytes
+          ? "runtime.row.bytes"
+          : "runtime.postgres.bytes";
 
     const dispatch = <A>(
       input: typeof RuntimeEnvelope.Type,
@@ -320,11 +363,13 @@ export const make = (
       Effect.gen(function* () {
         const operation = Object.hasOwn(handlers, input.op) ? handlers[input.op] : undefined;
         const integration = operation?.kind === "integration";
-        const maxBytes = bodyLimit(operation === undefined ? "" : input.op);
+        const boundedOp = operation === undefined ? "" : input.op;
+        const maxBytes = bodyLimit(boundedOp);
+        const limitId = runtimeBodyLimitId(boundedOp);
         // Only integration refusals need trusted attribution before their size check.
         // Other operations, including unknown names, reject before loading a session or version.
         if (!integration && byteLength !== undefined && byteLength > maxBytes)
-          return yield* new TooLarge({ maxBytes });
+          return yield* new TooLarge({ maxBytes, limitId });
         const request = yield* HttpServerRequest.HttpServerRequest;
         if (request.headers.authorization !== undefined) return yield* new AccessDenied({});
         const requestAdmission = yield* Effect.exit(
@@ -374,7 +419,7 @@ export const make = (
         });
         const admit = Effect.gen(function* () {
           if (integration && byteLength !== undefined && byteLength > maxBytes)
-            return yield* new TooLarge({ maxBytes });
+            return yield* new TooLarge({ maxBytes, limitId });
           if (Exit.isFailure(requestAdmission))
             return yield* Effect.failCause(requestAdmission.cause);
           if (
@@ -403,7 +448,10 @@ export const make = (
           if (!attempt.allowed)
             return yield* new RateLimited({
               retryAfterSeconds: attempt.retryAfterSeconds,
-              value: settings.callsPerMinute
+              limitId:
+                attempt.reason === "capacity" ? "rate.trackedKeys" : "runtime.calls.perMinute",
+              value:
+                attempt.reason === "capacity" ? Limits.MAX_TRACKED_KEYS : settings.callsPerMinute
             });
         });
         // For integrations, log the attempt before admission or input decoding can
@@ -423,7 +471,16 @@ export const make = (
         const runWithDeadline = execute.pipe(
           Effect.timeoutOrElse({
             duration: deadlineMs,
-            orElse: () => Effect.fail(new Timeout({ deadlineMs }))
+            orElse: () =>
+              Effect.fail(
+                new Timeout({
+                  deadlineMs,
+                  limitId:
+                    operation.kind === "mutation"
+                      ? "runtime.mutation.deadline"
+                      : "integration.deadline"
+                })
+              )
           })
         );
         const result = yield* options.record === undefined
@@ -472,11 +529,8 @@ export const make = (
         ),
       bodyLimit,
       // Cover every runtimeBodyLimit branch, including explicitly injected test bounds.
-      maxCallBytes: Math.max(
-        settings.rowBytes + settings.callBytes,
-        settings.batchBytes + settings.callBytes,
-        settings.postgresBytes
-      ),
+      maxCallBytes,
+      maxCallLimitId,
       fileBytes: settings.fileBytes
     });
   });

@@ -11,6 +11,7 @@ import {
   PrimitiveDetail,
   NotAdditive,
   RateLimited,
+  RuntimeFailure,
   Shared,
   ShareRequest,
   Unauthorized,
@@ -36,6 +37,22 @@ const manifest = {
 };
 const attempt = { manifest, publishKey: "test-key", metadata: {} };
 describe("wire schemas", () => {
+  it("preserves refusals from a newer registry without treating them as unknown outcomes", () => {
+    const refusal = {
+      ok: false as const,
+      error: "Company admission is busy.",
+      code: "busy" as const,
+      scope: "company" as const,
+      limitId: "future.admission.capacity",
+      value: 12,
+      retryAfter: 1
+    };
+    expect(roundTrip(RuntimeFailure, refusal)).toEqual(refusal);
+    expect(Schema.decodeUnknownExit(RuntimeFailure)({ ...refusal, limitId: "" })._tag).toBe(
+      "Failure"
+    );
+  });
+
   it("includes retry timing only for safely retryable limit refusals", () => {
     expect(limitRefusal("company.connections", 8, 2)).toEqual({
       code: "busy",

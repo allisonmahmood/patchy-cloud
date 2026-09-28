@@ -22,6 +22,8 @@ export interface LimitDefinition {
   readonly measure: string;
   readonly refusal: LimitRefusalCode | null;
   readonly overridable: boolean;
+  /** Legacy enforcers read their own configuration; the override controller must refuse these IDs. */
+  readonly configuration?: "legacy";
 }
 
 export const registry = {
@@ -334,6 +336,7 @@ export const registry = {
   },
   "company.connections.hostBackends": {
     kind: "operating",
+    configuration: "legacy",
     default: 200,
     unit: "connections",
     scope: "host",
@@ -653,7 +656,7 @@ export const registry = {
     default: 256,
     unit: "subscriptions",
     scope: "patch",
-    measure: "Subscriptions per patch per host replica",
+    measure: "Subscriptions per patch",
     refusal: "limit_exceeded",
     overridable: true
   },
@@ -662,7 +665,7 @@ export const registry = {
     default: 1024,
     unit: "subscriptions",
     scope: "company",
-    measure: "Subscriptions per company per host replica",
+    measure: "Subscriptions per company",
     refusal: "limit_exceeded",
     overridable: true
   },
@@ -740,6 +743,7 @@ export const registry = {
   },
   "rate.protectedApi.perMinute": {
     kind: "operating",
+    configuration: "legacy",
     default: 60,
     unit: "attempts/minute",
     scope: "host",
@@ -749,6 +753,7 @@ export const registry = {
   },
   "rate.deviceLogin.perMinute": {
     kind: "operating",
+    configuration: "legacy",
     default: 5,
     unit: "attempts/minute",
     scope: "host",
@@ -758,6 +763,7 @@ export const registry = {
   },
   "rate.patchCreate.perMinute": {
     kind: "operating",
+    configuration: "legacy",
     default: 10,
     unit: "attempts/minute",
     scope: "viewer",
@@ -767,6 +773,7 @@ export const registry = {
   },
   "rate.publish.perMinute": {
     kind: "operating",
+    configuration: "legacy",
     default: 20,
     unit: "attempts/minute",
     scope: "viewer",
@@ -777,6 +784,7 @@ export const registry = {
   },
   "rate.deviceLookup.perMinute": {
     kind: "operating",
+    configuration: "legacy",
     default: 10,
     unit: "attempts/minute",
     scope: "viewer",
@@ -786,6 +794,7 @@ export const registry = {
   },
   "rate.devicePoll.attempts": {
     kind: "operating",
+    configuration: "legacy",
     default: 1,
     unit: "attempts/window",
     scope: "viewer",
@@ -795,6 +804,7 @@ export const registry = {
   },
   "rate.devicePoll.window": {
     kind: "operating",
+    configuration: "legacy",
     default: 5000,
     unit: "milliseconds",
     scope: "viewer",
@@ -804,6 +814,7 @@ export const registry = {
   },
   "rate.trackedKeys": {
     kind: "operating",
+    configuration: "legacy",
     default: 10000,
     unit: "keys",
     scope: "host",

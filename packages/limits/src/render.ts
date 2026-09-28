@@ -5,11 +5,11 @@ const entries = Object.entries(registry) as [LimitId, LimitDefinition][];
 function table(rows: readonly [LimitId, LimitDefinition][]): string {
   return [
     "<!-- prettier-ignore -->",
-    "| Limit id | Kind | Default | Unit | Scope | Measures | Refusal | Company override |",
-    "| --- | --- | ---: | --- | --- | --- | --- | --- |",
+    "| Limit id | Kind | Default | Unit | Scope | Measures | Refusal | Company override | Configuration |",
+    "| --- | --- | ---: | --- | --- | --- | --- | --- | --- |",
     ...rows.map(
       ([id, limit]) =>
-        `| \`${id}\` | ${limit.kind} | ${limit.default} | ${limit.unit} | ${limit.scope} | ${limit.measure} | ${limit.refusal === null ? "None" : `\`${limit.refusal}\``} | ${limit.overridable ? "Yes" : "No"} |`
+        `| \`${id}\` | ${limit.kind} | ${limit.default} | ${limit.unit} | ${limit.scope} | ${limit.measure} | ${limit.refusal === null ? "None" : `\`${limit.refusal}\``} | ${limit.overridable ? "Yes" : "No"} | ${limit.configuration ?? (limit.kind === "contract" ? "release" : "deployment")} |`
     )
   ].join("\n");
 }
@@ -40,9 +40,9 @@ export function renderLimitsMarkdown(): string {
     "",
     "## Configuration and overrides",
     "",
-    "`DeploymentConfig.layer` reads `PATCHY_LIMITS_JSON`, a JSON object mapping operating limit ids to positive finite numbers, and `PATCHY_LIMITS_DEPLOYMENT_REVISION`, the deployment's configuration revision. Unknown ids, contract ids and legacy-configured ids are refused. An omitted operating id uses its registry default. Give the deployment a new immutable revision whenever configured values or release defaults change.",
+    "`OperatingLimits` loads `PATCHY_LIMITS_JSON`, a JSON object mapping managed operating limit ids to positive finite numbers. Unknown ids, contract ids and rows marked `legacy` are refused. An omitted id uses its registry default. The deployment revision is a SHA-256 digest of the sorted, resolved managed operating values, including release defaults. It changes automatically when an effective value changes; there is no operator-maintained revision variable.",
     "",
-    "Tier 2 enforcers read `OperatingLimits.get` as they are implemented. Existing control-plane rate consumers retain their named environment variables and registry defaults, not `PATCHY_LIMITS_JSON`; their `rate.*` entries do not accept company overrides. The host backend budget, `company.connections.hostBackends`, retains `PATCHY_COMPANY_DB_MAX_BACKENDS`. These legacy-configured ids are refused in the JSON config rather than accepted without affecting enforcement. Existing runtime and frame contract bounds read the registry and are no longer deployment-configurable.",
+    "Tier 2 enforcers read `OperatingLimits.get` as they are implemented. Existing control-plane rates and the host backend budget retain their named environment variables or fixed defaults. Their rows are marked `legacy` in the registry and are refused by both the JSON configuration and the override controller, including reads, rather than reported with a value that might not be enforced. Existing runtime and frame contract bounds read the registry and are not deployment-configurable.",
     "",
     "Controller code uses `OperatingLimits.setOverride` and `removeOverride`, never row edits. Each write records the company, limit id, actor, timestamp, old and new effective values, old and new override values, and configuration revision. Removing an override restores the current deployment value. `get` returns the effective value with `{ deploymentRevision, overrideRevision }`; `history` returns the changes. The durable company revision advances atomically with each change and survives removal. The deployment revision distinguishes changes to the deployment defaults, so a measurement identifies both settings in force.",
     "",
@@ -54,11 +54,11 @@ export function renderLimitsMarkdown(): string {
     "",
     "## Generation for the server skill",
     "",
-    "`renderServerSkillLimits()` from `@patchy/limits/render` generates the limits section for the `patchy-server` skill. `pnpm --filter @patchy/limits render-docs --skill` prints that section for the skill generator. Both outputs read the same registry.",
+    "`renderServerSkillLimits()` from `@patchy/limits/render` generates the limits section for the `patchy-server` skill. `pnpm --filter @patchy/limits render-docs --skill` prints that section. The normal `render-docs` command updates this document and the checked-in skill-table snapshot at `packages/limits/generated/server-skill-limits.md`; tests fail if either output is stale.",
     "",
     "## Units and settlement",
     "",
-    "Byte values use binary multiples where the decision names KiB, MiB or GiB. Process and Fargate memory values use MiB. Deadlines, idle windows and retention periods are milliseconds; retry delays on the wire are seconds. A scope of viewer may be further bound to a patch or document as the measure column states.",
+    "All byte limits, including process RSS and Fargate memory, are recorded in bytes. Defaults use binary multiples where the decision names KiB, MiB or GiB; Fargate memory defaults are converted from MiB. Deadlines, idle windows and retention periods are milliseconds; retry delays on the wire are seconds. A scope of viewer may be further bound to a patch or document as the measure column states.",
     "",
     "At a caller deadline, effects are fenced and cancellation begins. It does not promise rollback by that instant. An unresolved mutation commit is `unknown_outcome`, not `handler_timeout`; settlement destroys an unresolved connection after its cleanup bound. Query and mutation cancellation use their caller deadlines. No per-invocation CPU or memory guarantee is claimed.",
     ""

@@ -8,7 +8,7 @@ type RefusingLimitId = {
 /** Optional on older refusal bodies; values describe the enforced bound, not observed usage. */
 export const limitRefusalFields = {
   scope: Schema.optionalKey(Schema.Literals(["viewer", "patch", "company", "host"])),
-  limitId: Schema.optionalKey(Schema.Literals(Object.keys(registry) as LimitId[])),
+  limitId: Schema.optionalKey(Schema.NonEmptyString),
   value: Schema.optionalKey(Schema.Finite),
   retryAfter: Schema.optionalKey(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)))
 };

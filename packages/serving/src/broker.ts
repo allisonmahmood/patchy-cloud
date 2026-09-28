@@ -6,11 +6,12 @@ import {
   RuntimeFailure,
   runtimeOperations,
   runtimeBodyLimit,
+  runtimeBodyLimitId,
   runtimeByteLimits,
   limitRefusal,
   WIRE_VERSION
 } from "@patchy/api";
-import type { RuntimeCode, RuntimeMe, RuntimePrincipal } from "@patchy/api";
+import type { RuntimeBodyLimitId, RuntimeCode, RuntimeMe, RuntimePrincipal } from "@patchy/api";
 import * as Schema from "effect/Schema";
 import { registry } from "@patchy/limits/registry";
 
@@ -54,13 +55,13 @@ const lost = () =>
   );
 
 /** Bound work before JSON.stringify or recursive Schema decoding touches hostile structured clones. */
-function jsonBytes(value: unknown, limit: number): number {
+function jsonBytes(value: unknown, limit: number, limitId: RuntimeBodyLimitId): number {
   let size = 0;
   let nodes = 0;
   const ancestors = new Set<object>();
   const add = (bytes: number) => {
     size += bytes;
-    if (size > limit) throw tooLarge(limit);
+    if (size > limit) throw tooLarge(limit, limitRefusal(limitId, limit));
   };
   const string = (text: string) => {
     add(2);
@@ -101,7 +102,7 @@ function jsonBytes(value: unknown, limit: number): number {
     add(2);
     let count = 0;
     if (array) {
-      if (item.length > limit) throw tooLarge(limit);
+      if (item.length > limit) throw tooLarge(limit, limitRefusal(limitId, limit));
       for (const entry of item) {
         if (count++) add(1);
         visit(entry, depth + 1);
@@ -239,7 +240,11 @@ function mount(frame: HTMLIFrameElement): void {
   if (wire !== WIRE_VERSION) return stale();
 
   /** Stream into a bounded buffer; reservations include both chunks and the final contiguous copy. */
-  const readBody = async (response: Response, limit: number): Promise<Uint8Array<ArrayBuffer>> => {
+  const readBody = async (
+    response: Response,
+    limit: number,
+    limitId: "runtime.file.bytes" | "runtime.result.bytes"
+  ): Promise<Uint8Array<ArrayBuffer>> => {
     if (!response.body) return new Uint8Array(0);
     const reader = response.body.getReader();
     const chunks: Uint8Array[] = [];
@@ -247,12 +252,13 @@ function mount(frame: HTMLIFrameElement): void {
     let copyReservation = 0;
     try {
       const declared = Number(response.headers.get("Content-Length"));
-      if (declared > limit) throw tooLarge(limit);
+      if (declared > limit) throw tooLarge(limit, limitRefusal(limitId, limit));
       while (true) {
         const chunk = await reader.read();
         if (chunk.done) break;
         if (closed) throw lost();
-        if (chunk.value.byteLength > limit - length) throw tooLarge(limit);
+        if (chunk.value.byteLength > limit - length)
+          throw tooLarge(limit, limitRefusal(limitId, limit));
         reserve(chunk.value.byteLength);
         length += chunk.value.byteLength;
         chunks.push(chunk.value);
@@ -308,14 +314,15 @@ function mount(frame: HTMLIFrameElement): void {
         init.method = "POST";
         headers.set("Content-Type", "application/json");
         const body = { patchId, versionId, principal, wire, op, args };
-        jsonBytes(body, runtimeBodyLimit(op));
+        jsonBytes(body, runtimeBodyLimit(op), runtimeBodyLimitId(op));
         init.body = JSON.stringify(body);
       }
       const response = await fetch(url, init);
       if (closed) throw lost();
       const data = await readBody(
         response,
-        op === "files.get" && response.ok ? MAX_FILE : runtimeByteLimits.resultBytes
+        op === "files.get" && response.ok ? MAX_FILE : runtimeByteLimits.resultBytes,
+        op === "files.get" && response.ok ? "runtime.file.bytes" : "runtime.result.bytes"
       );
       responseBytes = data.byteLength;
       if (op === "files.get" && response.ok) {
@@ -346,7 +353,12 @@ function mount(frame: HTMLIFrameElement): void {
           ...(scope === undefined ? {} : { scope }),
           ...(limitId === undefined ? {} : { limitId }),
           ...(value === undefined ? {} : { value }),
-          ...(retryAfter === undefined ? {} : { retryAfter })
+          ...(retryAfter !== undefined &&
+          (error.code === "rate_limited" ||
+            error.code === "too_many_requests" ||
+            error.code === "busy")
+            ? { retryAfter }
+            : {})
         });
       }
       if (
@@ -441,8 +453,13 @@ function mount(frame: HTMLIFrameElement): void {
       if (op === "files.put" ? !(payload instanceof ArrayBuffer) : payload !== undefined)
         throw invalid();
       const bytes = payload as ArrayBuffer | undefined;
-      if (bytes && bytes.byteLength > MAX_FILE) throw tooLarge(MAX_FILE);
-      const size = jsonBytes({ v: message.v, id, op, args: message.args }, runtimeBodyLimit(op));
+      if (bytes && bytes.byteLength > MAX_FILE)
+        throw tooLarge(MAX_FILE, limitRefusal("runtime.file.bytes", MAX_FILE));
+      const size = jsonBytes(
+        { v: message.v, id, op, args: message.args },
+        runtimeBodyLimit(op),
+        runtimeBodyLimitId(op)
+      );
       const requestBytes = size * 3 + (bytes?.byteLength ?? 0);
       reserve(requestBytes);
       reserved = requestBytes;

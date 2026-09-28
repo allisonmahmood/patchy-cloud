@@ -339,6 +339,12 @@ it.layer(socket)("Files HTTP / streamed bytes", (it) => {
         assert.strictEqual(response.status, 413);
         assert.strictEqual(response.cache, "no-store");
         assert.strictEqual(response.body.code, "too_large");
+        assert.include(response.body, {
+          scope: "viewer",
+          limitId: "runtime.file.bytes",
+          value: 1024
+        });
+        assert.notProperty(response.body, "retryAfter");
         assert.isString(response.body.correlationId);
         const sql = yield* SqlClient.SqlClient;
         assert.deepStrictEqual(

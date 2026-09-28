@@ -664,20 +664,23 @@ export const boundsContract = Effect.fn("test.boundsContract")(function* (compan
   );
   const call = (op: keyof typeof handlers, args: unknown) =>
     handlers[op].run(args).pipe(Effect.provideService(Binding.Binding, binding));
-  for (const [op, args, limit] of [
-    ["tables.getMany", { table: "notes", ids: ["a", "b", "c"] }, 2],
-    ["tables.insertMany", { table: "notes", rows: [{}, {}, {}] }, 2],
-    ["tables.list", { table: "notes", limit: 3 }, 2],
+  for (const [op, args, limit, limitId] of [
+    ["tables.getMany", { table: "notes", ids: ["a", "b", "c"] }, 2, undefined],
+    ["tables.insertMany", { table: "notes", rows: [{}, {}, {}] }, 2, undefined],
+    ["tables.list", { table: "notes", limit: 3 }, 2, undefined],
     [
       "tables.insert",
       { table: "notes", row: { title: "large", slug: "large", body: "x".repeat(513) } },
-      512
+      512,
+      "runtime.row.bytes"
     ],
-    ["tables.getMany", { table: "notes", ids: ["x".repeat(1101)] }, 1100]
+    ["tables.getMany", { table: "notes", ids: ["x".repeat(1101)] }, 1100, "runtime.batch.bytes"]
   ] as const) {
     const failure = yield* call(op, args).pipe(Effect.flip);
     assert.strictEqual(failure.code, "too_large");
     assert.include(failure.message, String(limit));
+    if (limitId === undefined) assert.notProperty(failure, "limitId");
+    else assert.include(failure, { limitId, scope: "viewer", value: limit });
   }
   const row = yield* call("tables.insert", {
     table: "notes",
@@ -804,8 +807,15 @@ export const expandedResultsContract = Effect.fn("test.expandedResultsContract")
     ["tables.list", { table: "notes", index: "bySlug", limit: 2 }],
     ["tables.getMany", { table: "notes", ids: rows.map((row) => row.id) }],
     ["tables.getMany", { table: "notes", ids: [rows[0]!.id, rows[0]!.id] }]
-  ] as const)
-    assert.strictEqual((yield* call(op, args).pipe(Effect.flip)).code, "too_large");
+  ] as const) {
+    const failure = yield* call(op, args).pipe(Effect.flip);
+    assert.include(failure, {
+      code: "too_large",
+      scope: "viewer",
+      limitId: "runtime.result.bytes",
+      value: 1800
+    });
+  }
 
   // The lookahead row does not consume the page budget or lose timestamp precision.
   const first = yield* call("tables.list", { table: "notes", index: "bySlug", limit: 1 }).pipe(

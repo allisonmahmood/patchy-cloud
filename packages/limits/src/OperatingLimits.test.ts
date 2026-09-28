@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { TestClock } from "effect/testing";
@@ -7,13 +8,17 @@ import { ddl } from "@patchy/sql";
 import * as Testing from "@patchy/sql/testing";
 import * as DeploymentConfig from "./DeploymentConfig.js";
 import * as OperatingLimits from "./OperatingLimits.js";
+import { registry } from "./registry.js";
 
 const services = OperatingLimits.layer.pipe(
   Layer.provide(
-    DeploymentConfig.layerWith({
-      revision: "deploy-a",
-      values: { "company.connections": 6 }
-    })
+    ConfigProvider.layer(
+      ConfigProvider.fromUnknown({
+        PATCHY_LIMITS_JSON: JSON.stringify({ "company.connections": 6 }),
+        PATCHY_AUTHENTICATED_PUBLISH_RATE_LIMIT_PER_MINUTE: "999",
+        PATCHY_COMPANY_DB_MAX_BACKENDS: "999"
+      })
+    )
   ),
   Layer.provideMerge(Testing.layer())
 );
@@ -30,13 +35,15 @@ it.layer(services)("operating limits", (it) => {
       const limits = yield* OperatingLimits.OperatingLimits;
       const company = yield* createCompany("limits-history");
       const other = yield* createCompany("limits-other");
-      assert.strictEqual((yield* limits.get(company)).value, 6);
+      const original = yield* limits.get(company);
+      const deploymentRevision = original.configRevision.deploymentRevision;
+      assert.strictEqual(original.value, 6);
       yield* TestClock.setTime(1_000);
       const first = yield* limits.setOverride({ ...company, value: 8, actor: "operator-a" });
       assert.deepStrictEqual(
         { ...first.configRevision },
         {
-          deploymentRevision: "deploy-a",
+          deploymentRevision,
           overrideRevision: "1"
         }
       );
@@ -60,8 +67,7 @@ it.layer(services)("operating limits", (it) => {
           {
             ...company,
             revision: "1",
-            previousRevision: "0",
-            deploymentRevision: "deploy-a",
+            deploymentRevision,
             oldValue: 6,
             newValue: 8,
             oldOverride: null,
@@ -72,8 +78,7 @@ it.layer(services)("operating limits", (it) => {
           {
             ...company,
             revision: "2",
-            previousRevision: "1",
-            deploymentRevision: "deploy-a",
+            deploymentRevision,
             oldValue: 8,
             newValue: 10,
             oldOverride: 8,
@@ -84,8 +89,7 @@ it.layer(services)("operating limits", (it) => {
           {
             ...company,
             revision: "3",
-            previousRevision: "2",
-            deploymentRevision: "deploy-a",
+            deploymentRevision,
             oldValue: 10,
             newValue: 6,
             oldOverride: 10,
@@ -111,27 +115,29 @@ it.layer(services)("operating limits", (it) => {
       const first = yield* limits.setOverride({ ...company, value: 8, actor: "operator" });
       const nextDeployment = yield* OperatingLimits.make.pipe(
         Effect.provide(
-          DeploymentConfig.layerWith({
-            revision: "deploy-b",
-            values: { "company.connections": 12 }
-          })
+          ConfigProvider.layer(
+            ConfigProvider.fromUnknown({
+              PATCHY_LIMITS_JSON: JSON.stringify({ "company.connections": 12 })
+            })
+          )
         )
       );
       const afterDeploy = yield* nextDeployment.get(company);
       assert.strictEqual(afterDeploy.value, 8);
-      assert.deepStrictEqual(
-        { ...afterDeploy.configRevision },
-        {
-          deploymentRevision: "deploy-b",
-          overrideRevision: first.configRevision.overrideRevision
-        }
+      assert.notStrictEqual(
+        afterDeploy.configRevision.deploymentRevision,
+        first.configRevision.deploymentRevision
+      );
+      assert.strictEqual(
+        afterDeploy.configRevision.overrideRevision,
+        first.configRevision.overrideRevision
       );
       const removed = yield* nextDeployment.removeOverride({ ...company, actor: "operator" });
       assert.strictEqual(removed.value, 12);
       assert.deepStrictEqual(
         { ...removed.configRevision },
         {
-          deploymentRevision: "deploy-b",
+          deploymentRevision: afterDeploy.configRevision.deploymentRevision,
           overrideRevision: "2"
         }
       );
@@ -143,8 +149,8 @@ it.layer(services)("operating limits", (it) => {
           row.newValue
         ]),
         [
-          ["deploy-a", "1", 6, 8],
-          ["deploy-b", "2", 8, 12]
+          [first.configRevision.deploymentRevision, "1", 6, 8],
+          [afterDeploy.configRevision.deploymentRevision, "2", 8, 12]
         ]
       );
     })
@@ -161,11 +167,11 @@ it.layer(services)("operating limits", (it) => {
       ] as const) {
         const input = { ...company, limitId, value: 8, actor: "operator" };
         const failure = yield* limits.setOverride(input).pipe(Effect.flip);
-        assert.instanceOf(failure, OperatingLimits.InvalidLimit);
-        assert.strictEqual((failure as OperatingLimits.InvalidLimit).reason, reason);
+        assert.instanceOf(failure, DeploymentConfig.InvalidLimit);
+        assert.strictEqual((failure as DeploymentConfig.InvalidLimit).reason, reason);
         assert.instanceOf(
           yield* limits.removeOverride(input).pipe(Effect.flip),
-          OperatingLimits.InvalidLimit
+          DeploymentConfig.InvalidLimit
         );
       }
       for (const value of [0, -1, NaN, Infinity, -Infinity]) {
@@ -184,7 +190,7 @@ it.layer(services)("operating limits", (it) => {
       assert.strictEqual(unchanged.configRevision.overrideRevision, "0");
       assert.instanceOf(
         yield* limits.get({ ...company, limitId: "runtime.calls.perMinute" }).pipe(Effect.flip),
-        OperatingLimits.InvalidLimit
+        DeploymentConfig.InvalidLimit
       );
       const missing = { companyId: "cmp_limits_missing", limitId: company.limitId };
       for (const operation of [
@@ -196,6 +202,35 @@ it.layer(services)("operating limits", (it) => {
         assert.instanceOf(yield* operation.pipe(Effect.flip), OperatingLimits.CompanyNotFound);
       }
     })
+  );
+
+  it.effect(
+    "refuses every legacy-configured limit at every boundary even with named settings",
+    () =>
+      Effect.gen(function* () {
+        const limits = yield* OperatingLimits.OperatingLimits;
+        const company = yield* createCompany("limits-legacy");
+        for (const [limitId, definition] of Object.entries(registry)) {
+          if (!("configuration" in definition)) continue;
+          const input = { ...company, limitId, value: 8, actor: "operator" };
+          for (const operation of [
+            limits.get(input),
+            limits.history(input),
+            limits.setOverride(input),
+            limits.removeOverride(input)
+          ]) {
+            const failure = yield* operation.pipe(Effect.flip);
+            assert.instanceOf(failure, DeploymentConfig.InvalidLimit);
+            assert.strictEqual((failure as DeploymentConfig.InvalidLimit).limitId, limitId);
+            assert.strictEqual(
+              (failure as DeploymentConfig.InvalidLimit).reason,
+              "legacy_configuration"
+            );
+          }
+        }
+        assert.deepStrictEqual(yield* limits.history(company), []);
+        assert.strictEqual((yield* limits.get(company)).configRevision.overrideRevision, "0");
+      })
   );
 
   it.effect("serializes simultaneous updates into one old/new chain", () =>

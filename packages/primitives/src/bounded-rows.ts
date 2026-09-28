@@ -44,6 +44,7 @@ export const boundedRows = Effect.fn("Primitives.boundedRows")(function* (
     )
     .pipe(Effect.map(decodeEnvelope));
   const envelope = envelopes[0]!;
-  if (envelope.exceeded) return yield* new Runtime.TooLarge({ maxBytes });
+  if (envelope.exceeded)
+    return yield* new Runtime.TooLarge({ maxBytes, limitId: "runtime.result.bytes" });
   return envelope;
 });

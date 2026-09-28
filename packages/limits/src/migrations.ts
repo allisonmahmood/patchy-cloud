@@ -16,7 +16,6 @@ export const migrations: Migrations = {
       company_id TEXT NOT NULL REFERENCES companies(id),
       limit_id TEXT NOT NULL,
       revision BIGINT NOT NULL CHECK (revision > 0),
-      previous_revision BIGINT NOT NULL CHECK (previous_revision >= 0),
       deployment_revision TEXT NOT NULL CHECK (length(deployment_revision) > 0),
       old_value DOUBLE PRECISION NOT NULL CHECK (old_value > 0 AND old_value < 'Infinity'::float8),
       new_value DOUBLE PRECISION NOT NULL CHECK (new_value > 0 AND new_value < 'Infinity'::float8),

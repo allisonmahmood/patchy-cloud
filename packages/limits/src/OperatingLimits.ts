@@ -8,16 +8,8 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import * as DeploymentConfig from "./DeploymentConfig.js";
+import { InvalidLimit } from "./DeploymentConfig.js";
 import { registry } from "./registry.js";
-
-export class InvalidLimit extends Schema.TaggedError<InvalidLimit>()("InvalidLimit", {
-  limitId: Schema.String,
-  reason: Schema.Literals(["unknown", "contract", "not_overridable"])
-}) {
-  override get message() {
-    return `Limit ${this.limitId} cannot be configured: ${this.reason}.`;
-  }
-}
 
 export class InvalidOverride extends Schema.TaggedError<InvalidOverride>()("InvalidOverride", {
   limitId: Schema.String,
@@ -53,7 +45,6 @@ export class OverrideHistory extends Schema.Class<OverrideHistory>("Limits.Overr
   companyId: Schema.String,
   limitId: Schema.String,
   revision: Schema.String,
-  previousRevision: Schema.String,
   deploymentRevision: Schema.String,
   oldValue: DeploymentConfig.LimitValue,
   newValue: DeploymentConfig.LimitValue,
@@ -101,7 +92,7 @@ export class OperatingLimits extends Context.Service<
 
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  const deployment = yield* DeploymentConfig.DeploymentConfig;
+  const deployment = yield* DeploymentConfig.load;
   const readState = SqlSchema.findOneOption({
     Request: Ref,
     Result: State,
@@ -125,7 +116,7 @@ export const make = Effect.gen(function* () {
     Result: OverrideHistory,
     execute: ({ companyId, limitId }) => sql`
       SELECT company_id AS "companyId", limit_id AS "limitId", revision::text AS revision,
-        previous_revision::text AS "previousRevision", deployment_revision AS "deploymentRevision",
+        deployment_revision AS "deploymentRevision",
         old_value AS "oldValue", new_value AS "newValue", old_override AS "oldOverride",
         new_override AS "newOverride", actor, changed_at AS "changedAt"
       FROM limits_override_history
@@ -136,16 +127,11 @@ export const make = Effect.gen(function* () {
     limitId: string,
     override: boolean
   ) {
-    if (!DeploymentConfig.isOperatingLimitId(limitId)) {
-      return yield* new InvalidLimit({
-        limitId,
-        reason: Object.hasOwn(registry, limitId) ? "contract" : "unknown"
-      });
-    }
-    if (override && !registry[limitId].overridable) {
+    const managedId = yield* DeploymentConfig.validateLimitId(limitId);
+    if (override && !registry[managedId].overridable) {
       return yield* new InvalidLimit({ limitId, reason: "not_overridable" });
     }
-    return limitId;
+    return managedId;
   });
   const get = Effect.fn("OperatingLimits.get")(function* (input: LimitRef) {
     const limitId = yield* validateLimit(input.limitId, false);
@@ -189,10 +175,10 @@ export const make = Effect.gen(function* () {
     }
     const now = yield* Clock.currentTimeMillis;
     yield* sql`INSERT INTO limits_override_history (
-        company_id, limit_id, revision, previous_revision, deployment_revision,
+        company_id, limit_id, revision, deployment_revision,
         old_value, new_value, old_override, new_override, actor, changed_at
       ) VALUES (
-        ${input.companyId}, ${limitId}, ${revision}, ${previous.configRevision.overrideRevision},
+        ${input.companyId}, ${limitId}, ${revision},
         ${deployment.revision}, ${previous.value}, ${value}, ${previous.overrideValue},
         ${validated.value}, ${validated.actor}, to_timestamp(${now / 1_000})
       )`;

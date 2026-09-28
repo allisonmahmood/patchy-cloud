@@ -16,6 +16,19 @@ export const runtimeByteLimits = {
   fileBytes: registry["runtime.file.bytes"].default
 } as const;
 
+export type RuntimeBodyLimitId =
+  "runtime.call.bytes" | "runtime.row.bytes" | "runtime.batch.bytes" | "runtime.postgres.bytes";
+
+export function runtimeBodyLimitId(op: string): RuntimeBodyLimitId {
+  return op === "tables.insert" || op === "tables.update"
+    ? "runtime.row.bytes"
+    : op === "tables.insertMany"
+      ? "runtime.batch.bytes"
+      : op.startsWith("postgres.")
+        ? "runtime.postgres.bytes"
+        : "runtime.call.bytes";
+}
+
 export function runtimeBodyLimit(
   op: string,
   limits: {
@@ -25,13 +38,16 @@ export function runtimeBodyLimit(
     readonly postgresBytes: number;
   } = runtimeByteLimits
 ): number {
-  return op === "tables.insert" || op === "tables.update"
-    ? limits.rowBytes + limits.callBytes
-    : op === "tables.insertMany"
-      ? limits.batchBytes + limits.callBytes
-      : op.startsWith("postgres.")
-        ? limits.postgresBytes
-        : limits.callBytes;
+  switch (runtimeBodyLimitId(op)) {
+    case "runtime.row.bytes":
+      return limits.rowBytes + limits.callBytes;
+    case "runtime.batch.bytes":
+      return limits.batchBytes + limits.callBytes;
+    case "runtime.postgres.bytes":
+      return limits.postgresBytes;
+    case "runtime.call.bytes":
+      return limits.callBytes;
+  }
 }
 
 const NonEmptyText = Schema.String.check(Schema.isMinLength(1));

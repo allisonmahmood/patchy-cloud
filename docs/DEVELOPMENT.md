@@ -746,9 +746,10 @@ owns `0004_invites_expiry`, which adds and backfills invitation expiry.
 Company database owns `0005_company_database_baseline`; Runtime owns
 `0006_runtime_baseline`; Integrations owns `0007_integrations_baseline`.
 Patches adds `0008_patches_lifecycle`, with lifecycle and actor stamps, descriptions
-and visit counts. Published seed patches stay live until retired or deleted;
-only deletion starts their 30-day recovery window. Token and invitation expiry
-remain separate.
+and visit counts. Limits adds `0009_limits_overrides`, with company overrides,
+configuration revisions and attributed change history. Published seed patches stay
+live until retired or deleted; only deletion starts their 30-day recovery window.
+Token and invitation expiry remain separate.
 Allocate migration ids monotonically in landing order:
 Effect's Migrator applies only ids above the ledger's highest applied id, so a
 later migration cannot fill a lower-numbered gap. The three migrator spreads are `apps/server/src/Server.ts`,

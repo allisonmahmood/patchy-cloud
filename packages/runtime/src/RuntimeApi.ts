@@ -6,13 +6,7 @@ import * as Stream from "effect/Stream";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
-import {
-  PatchyApi,
-  RuntimeEnvelope,
-  RuntimeFailure,
-  RuntimeSuccess,
-  limitRefusal
-} from "@patchy/api";
+import { PatchyApi, RuntimeEnvelope, RuntimeFailure, RuntimeSuccess } from "@patchy/api";
 import * as Runtime from "./Runtime.js";
 
 const decodeCall = Schema.decodeUnknownEffect(Schema.fromJsonString(RuntimeEnvelope), {
@@ -20,18 +14,29 @@ const decodeCall = Schema.decodeUnknownEffect(Schema.fromJsonString(RuntimeEnvel
 });
 const encodeSuccess = Schema.encodeUnknownEffect(RuntimeSuccess);
 const encodeFailure = Schema.encodeSync(RuntimeFailure);
-const isRateLimited = Schema.is(Runtime.RateLimited);
 const noStore = { "cache-control": "no-store" };
 
-export const failure = (error: Runtime.RuntimeError) =>
-  HttpServerResponse.jsonUnsafe(
+export const failure = (error: Runtime.RuntimeError) => {
+  const retryAfter =
+    (error.code === "rate_limited" ||
+      error.code === "too_many_requests" ||
+      error.code === "busy") &&
+    "retryAfterSeconds" in error
+      ? error.retryAfterSeconds
+      : undefined;
+  return HttpServerResponse.jsonUnsafe(
     encodeFailure({
       ok: false,
       code: error.code,
       error: error.message,
-      ...(isRateLimited(error)
-        ? limitRefusal("runtime.calls.perMinute", error.value, error.retryAfterSeconds)
+      ...("limitId" in error && error.limitId !== undefined ? { limitId: error.limitId } : {}),
+      ...("limitId" in error && error.limitId !== undefined && error.scope !== undefined
+        ? { scope: error.scope }
         : {}),
+      ...("limitId" in error && error.limitId !== undefined && error.value !== undefined
+        ? { value: error.value }
+        : {}),
+      ...(retryAfter === undefined ? {} : { retryAfter }),
       ...("details" in error && error.details !== undefined ? { details: error.details } : {}),
       ...(error.correlationId === undefined ? {} : { correlationId: error.correlationId })
     }),
@@ -39,12 +44,11 @@ export const failure = (error: Runtime.RuntimeError) =>
       status: error.status,
       headers: {
         ...noStore,
-        ...(!("retryAfterSeconds" in error) || error.retryAfterSeconds === undefined
-          ? {}
-          : { "retry-after": String(error.retryAfterSeconds) })
+        ...(retryAfter === undefined ? {} : { "retry-after": String(retryAfter) })
       }
     }
   );
+};
 
 /** Keep the stream finalizer in the request scope, after its refusal response.
  * A stream runner's inner scope would destroy Node's socket before sending 413.
@@ -69,7 +73,10 @@ const forEachBodyChunk = Effect.fn("RuntimeApi.forEachBodyChunk")(function* (
 const readCall = Effect.fn("RuntimeApi.readCall")(function* (runtime: Runtime.Runtime["Service"]) {
   const request = yield* HttpServerRequest.HttpServerRequest;
   if (Number(request.headers["content-length"]) > runtime.maxCallBytes)
-    return yield* new Runtime.TooLarge({ maxBytes: runtime.maxCallBytes });
+    return yield* new Runtime.TooLarge({
+      maxBytes: runtime.maxCallBytes,
+      limitId: runtime.maxCallLimitId
+    });
   let size = 0;
   let text = "";
   const decoder = new TextDecoder();
@@ -77,7 +84,10 @@ const readCall = Effect.fn("RuntimeApi.readCall")(function* (runtime: Runtime.Ru
     Effect.gen(function* () {
       size += chunk.byteLength;
       if (size > runtime.maxCallBytes)
-        return yield* new Runtime.TooLarge({ maxBytes: runtime.maxCallBytes });
+        return yield* new Runtime.TooLarge({
+          maxBytes: runtime.maxCallBytes,
+          limitId: runtime.maxCallLimitId
+        });
       text += decoder.decode(chunk, { stream: true });
     })
   );
@@ -92,13 +102,14 @@ const readCall = Effect.fn("RuntimeApi.readCall")(function* (runtime: Runtime.Ru
 const readFile = Effect.fn("RuntimeApi.readFile")(function* (maxBytes: number) {
   const request = yield* HttpServerRequest.HttpServerRequest;
   if (Number(request.headers["content-length"]) > maxBytes)
-    return yield* new Runtime.TooLarge({ maxBytes });
+    return yield* new Runtime.TooLarge({ maxBytes, limitId: "runtime.file.bytes" });
   const chunks: Uint8Array[] = [];
   let size = 0;
   yield* forEachBodyChunk(request, (chunk) =>
     Effect.gen(function* () {
       size += chunk.byteLength;
-      if (size > maxBytes) return yield* new Runtime.TooLarge({ maxBytes });
+      if (size > maxBytes)
+        return yield* new Runtime.TooLarge({ maxBytes, limitId: "runtime.file.bytes" });
       chunks.push(chunk);
     })
   );

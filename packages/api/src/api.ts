@@ -530,8 +530,11 @@ const runtimeAdmission =
   "are limited to 300 per minute by the release contract; `rate_limited` is 429 with `Retry-After` seconds. " +
   "Registered limit refusals add `scope`, `limitId` and `value` (the enforced bound). " +
   "`retryAfter` is in seconds and is included only when retrying is safe, never for timeouts " +
-  "or unknown outcomes. The runtime rate and frame refusals carry these fields; other existing " +
-  "refusals may omit them. Contract bounds are fixed per release, as listed in `docs/limits.md`. " +
+  "or unknown outcomes. Runtime rate refusals identify either the viewer's call rate or the host's " +
+  "tracked-key capacity. Registry-backed request, row, batch, result and file size refusals, " +
+  "mutation and integration deadlines, and broker frame limits carry these fields. Wire request " +
+  "size bounds include any envelope allowance. Other bounds, such as row counts and database " +
+  "statement timeouts, may omit them. Contract bounds are fixed per release, as listed in `docs/limits.md`. " +
   "Responses, including failures, are `Cache-Control: no-store`. ";
 const runtimeFileContract =
   "The trailing `*` is the file name, not an object URL. Encode the full name with " +

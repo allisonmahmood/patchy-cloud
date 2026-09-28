@@ -1,77 +1,61 @@
+import { createHash } from "node:crypto";
 import * as Config from "effect/Config";
-import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { registry, type OperatingLimitId } from "./registry.js";
 
-export const isOperatingLimitId = (id: string): id is OperatingLimitId =>
-  Object.hasOwn(registry, id) && registry[id as keyof typeof registry].kind === "operating";
-
-export const LimitValue = Schema.Number.check(Schema.isFinite(), Schema.isGreaterThan(0));
-const Values = Schema.Record(Schema.String, LimitValue).check(
-  Schema.makeFilter(
-    (values) =>
-      Object.keys(values).every(
-        (id) =>
-          isOperatingLimitId(id) &&
-          !id.startsWith("rate.") &&
-          id !== "company.connections.hostBackends"
-      ),
-    {
-      message:
-        "Use operating limit IDs; legacy rates and the host backend budget keep their named configuration."
-    }
-  )
-);
-const Settings = Schema.Struct({ revision: Schema.NonEmptyString, values: Values });
-const decodeSettings = Schema.decodeUnknownEffect(Settings);
-
-export class InvalidDeploymentConfig extends Schema.TaggedError<InvalidDeploymentConfig>()(
-  "InvalidDeploymentConfig",
-  { cause: Schema.Defect() }
-) {
+export class InvalidLimit extends Schema.TaggedError<InvalidLimit>()("InvalidLimit", {
+  limitId: Schema.String,
+  reason: Schema.Literals(["unknown", "contract", "legacy_configuration", "not_overridable"])
+}) {
   override get message() {
-    return "Limits deployment configuration requires a revision and positive finite operating values.";
+    return `Limit ${this.limitId} cannot be configured: ${this.reason}.`;
   }
 }
 
-/**
- * PATCHY_LIMITS_JSON is an operating-ID-to-number JSON object, defaulting to {}.
- * PATCHY_LIMITS_DEPLOYMENT_REVISION is required when this layer is used. Give it
- * a new immutable revision whenever the deployment values or release defaults
- * change. Contract limits are never accepted, including in development.
- * Legacy rate settings and the host backend budget keep their existing
- * configuration sources; accepting them here would not change enforcement.
- */
-export const config = Config.all({
-  revision: Config.schema(Schema.NonEmptyString, "PATCHY_LIMITS_DEPLOYMENT_REVISION"),
-  values: Config.schema(Schema.fromJsonString(Values), "PATCHY_LIMITS_JSON").pipe(
-    Config.withDefault({})
-  )
-});
+export const LimitValue = Schema.Number.check(Schema.isFinite(), Schema.isGreaterThan(0));
+export type ManagedOperatingLimitId = {
+  [Id in OperatingLimitId]: (typeof registry)[Id] extends { readonly configuration: "legacy" }
+    ? never
+    : Id;
+}[OperatingLimitId];
 
-export class DeploymentConfig extends Context.Service<
-  DeploymentConfig,
-  {
-    readonly revision: string;
-    readonly values: Readonly<Partial<Record<OperatingLimitId, number>>>;
-    readonly get: (limitId: OperatingLimitId) => number;
+const managedIds = Object.keys(registry)
+  .filter((id): id is ManagedOperatingLimitId => {
+    const definition = registry[id as keyof typeof registry];
+    return definition.kind === "operating" && !("configuration" in definition);
+  })
+  .sort();
+
+export const validateLimitId = Effect.fnUntraced(function* (limitId: string) {
+  if (!Object.hasOwn(registry, limitId)) {
+    return yield* new InvalidLimit({ limitId, reason: "unknown" });
   }
->()("@patchy/limits/DeploymentConfig") {}
-
-/** Explicit settings use the same validation as environment configuration. */
-export const make = Effect.fn("DeploymentConfig.make")(function* (input: unknown) {
-  const settings = yield* decodeSettings(input).pipe(
-    Effect.mapError((cause) => new InvalidDeploymentConfig({ cause }))
-  );
-  const values = Object.freeze({ ...settings.values });
-  return DeploymentConfig.of({
-    revision: settings.revision,
-    values,
-    get: (limitId) => values[limitId] ?? registry[limitId].default
-  });
+  const definition = registry[limitId as keyof typeof registry];
+  if (definition.kind !== "operating") {
+    return yield* new InvalidLimit({ limitId, reason: "contract" });
+  }
+  if ("configuration" in definition) {
+    return yield* new InvalidLimit({ limitId, reason: "legacy_configuration" });
+  }
+  return limitId as ManagedOperatingLimitId;
 });
 
-export const layer = Layer.effect(DeploymentConfig, Effect.flatMap(config, make));
-export const layerWith = (settings: unknown) => Layer.effect(DeploymentConfig, make(settings));
+const valuesJson = Schema.fromJsonString(Schema.Record(Schema.String, LimitValue));
+const encodeValues = Schema.encodeSync(valuesJson);
+const config = Config.schema(valuesJson, "PATCHY_LIMITS_JSON").pipe(
+  Config.withDefault<Readonly<Record<string, number>>>({})
+);
+
+/** Load managed operating values once, with a revision derived from resolved defaults and overrides. */
+export const load = Effect.gen(function* () {
+  const overrides = yield* config;
+  for (const limitId of Object.keys(overrides)) yield* validateLimitId(limitId);
+  const values = Object.fromEntries(
+    managedIds.map((limitId) => [limitId, overrides[limitId] ?? registry[limitId].default])
+  ) as Record<ManagedOperatingLimitId, number>;
+  return {
+    revision: createHash("sha256").update(encodeValues(values)).digest("hex"),
+    get: (limitId: ManagedOperatingLimitId): number => values[limitId]
+  };
+});
