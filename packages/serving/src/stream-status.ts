@@ -8,6 +8,7 @@ export function createStreamStatus(
   tier: number,
   base: string
 ) {
+  const name = frame.title;
   const root = document.createElement("div");
   root.className = "shell-bottom";
   root.setAttribute("aria-label", "Patchy page status");
@@ -39,7 +40,7 @@ export function createStreamStatus(
   reconnecting.append(
     glyph(),
     text("Reconnecting"),
-    text("Data may be stale", "status-chip-detail")
+    text("What you see may be out of date.", "status-chip-detail")
   );
   const version = document.createElement("div");
   version.hidden = true;
@@ -61,6 +62,7 @@ export function createStreamStatus(
     location.assign(url.href);
   };
   const focusFrame = () => frame.focus();
+  // S-C from #385: the bar folds into a chip that keeps Reload; only the new-version bar can be dismissed.
   const renderVersion = () => {
     const visible = served !== undefined && served.versionId !== versionId && !dismissed;
     const focused = version.contains(document.activeElement);
@@ -71,30 +73,29 @@ export function createStreamStatus(
       return;
     }
     const required = served!.tier === 2 && tier < 2;
-    const title = required ? "Reload to keep saving" : "A new version is available";
+    const copy = required
+      ? {
+          chip: "Reload to keep saving",
+          title: `${name} was updated. Reload to keep saving.`,
+          detail: "This page can no longer save. Copy anything unsaved before you reload."
+        }
+      : {
+          chip: "New version available",
+          title: `A new version of ${name} is available.`,
+          detail: "Reload when you're ready. Saved changes stay; unsaved edits may be lost."
+        };
     version.dataset.streamStatus = required ? "reload-required" : "new-version";
     if (collapsed) {
       version.className = `status-chip status-chip-${required ? "warn" : "info"}`;
-      version.append(glyph(), text(title), button("Reload", "btn-primary", reload));
+      version.append(glyph(), text(copy.chip), button("Reload", "btn-primary", reload));
     } else {
       version.className = `note note-${required ? "warn" : "info"} note-float note-inline`;
       const content = document.createElement("div");
       content.className = "note-inline-text";
-      const heading = document.createElement("strong");
-      heading.className = "note-title";
-      heading.append(
-        glyph(),
-        text(title),
-        button("Hide", "btn-quiet note-collapse", () => {
-          collapsed = true;
-          renderVersion();
-          focusFrame();
-        })
-      );
+      const heading = text(copy.title, "note-title");
+      heading.prepend(glyph());
       const detail = document.createElement("p");
-      detail.textContent = required
-        ? "This version can no longer save. Reload to use the current version. Unsaved edits may be lost."
-        : "Reload when you're ready. Unsaved edits may be lost.";
+      detail.textContent = copy.detail;
       content.append(heading, detail);
       const actions = document.createElement("div");
       actions.className = "actions";
@@ -107,7 +108,12 @@ export function createStreamStatus(
             focusFrame();
           })
         );
-      version.append(content, actions);
+      const hide = button("Hide", "btn-quiet note-collapse", () => {
+        collapsed = true;
+        renderVersion();
+        focusFrame();
+      });
+      version.append(content, actions, hide);
     }
     if (focused) focusFrame();
   };

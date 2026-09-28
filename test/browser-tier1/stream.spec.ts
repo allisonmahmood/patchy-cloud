@@ -26,11 +26,11 @@ test("publish preserves editing, dismissal lasts until the next publish, and rol
   await input.fill("Unsaved notes");
   await input.focus();
   await instance.publish("company", instance.html, patch.patchId);
-  await expect(page.getByText("A new version is available", { exact: true })).toBeVisible();
+  await expect(page.getByText(/^A new version of .+ is available\.$/)).toBeVisible();
   await expect(input).toHaveValue("Unsaved notes");
   await expect(input).toBeFocused();
   await page.getByRole("button", { name: "Not now", exact: true }).click();
-  await expect(page.getByText("A new version is available", { exact: true })).toBeHidden();
+  await expect(page.getByText(/^A new version of .+ is available\.$/)).toBeHidden();
   // Re-announcing the same served version is not a new publish.
   await instance.lifecycle(patch.patchId, "rollback", 2);
   await expect
@@ -43,9 +43,9 @@ test("publish preserves editing, dismissal lasts until the next publish, and rol
       )
     )
     .toBe(3);
-  await expect(page.getByText("A new version is available", { exact: true })).toBeHidden();
+  await expect(page.getByText(/^A new version of .+ is available\.$/)).toBeHidden();
   await instance.publish("company", instance.html, patch.patchId);
-  await expect(page.getByText("A new version is available", { exact: true })).toBeVisible();
+  await expect(page.getByText(/^A new version of .+ is available\.$/)).toBeVisible();
   await page.getByRole("button", { name: "Hide", exact: true }).click();
   await expect(page.getByRole("button", { name: "Reload", exact: true })).toBeVisible();
   await expect(page.locator("#patch")).toBeFocused();
@@ -69,7 +69,7 @@ test("a served tier upgrade cannot be dismissed and rollback clears its saving n
     [next.versionId]
   );
   await instance.lifecycle(patch.patchId, "rollback", 2);
-  await expect(page.getByText("Reload to keep saving", { exact: true })).toBeVisible();
+  await expect(page.getByText(/^.+ was updated\. Reload to keep saving\.$/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Not now", exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Hide", exact: true }).click();
   await expect(page.getByText("Reload to keep saving", { exact: true })).toBeVisible();
@@ -110,9 +110,9 @@ for (const scenario of [
         [next.versionId]
       );
       await instance.lifecycle(patch.patchId, "rollback", 3);
-      await expect(page.getByText("Reload to keep saving", { exact: true })).toBeVisible();
+      await expect(page.getByText(/^.+ was updated\. Reload to keep saving\.$/)).toBeVisible();
     } else {
-      await expect(page.getByText("A new version is available", { exact: true })).toBeVisible();
+      await expect(page.getByText(/^A new version of .+ is available\.$/)).toBeVisible();
     }
     await page.getByRole("button", { name: "Reload", exact: true }).click();
     await expect(page).toHaveURL(`${patch.address}/reports/weekly/caf%C3%A9${queryAndHash}`);
@@ -278,7 +278,7 @@ test("a hidden document suspends after thirty seconds and resumes its loaded ver
     document.dispatchEvent(new Event("visibilitychange"));
   });
   await expect.poll(async () => (await generations(frame)).length).toBe(2);
-  await expect(page.getByText("A new version is available", { exact: true })).toBeVisible();
+  await expect(page.getByText(/^A new version of .+ is available\.$/)).toBeVisible();
   await expect(frame.locator("#pasted-copy")).toHaveValue("Hidden draft");
 });
 
@@ -361,7 +361,7 @@ test("seven company documents stay connected simultaneously over HTTP/2 TLS ingr
   // A new committed version must reach all seven still-open streams, not seven sequential opens.
   await instance.publish("company", instance.html, patch.patchId);
   for (const page of pages)
-    await expect(page.getByText("A new version is available", { exact: true })).toBeVisible();
+    await expect(page.getByText(/^A new version of .+ is available\.$/)).toBeVisible();
   expect(instance.streamConnections.size).toBe(7);
   await Promise.all(pages.map((page) => page.close()));
   await expect.poll(() => instance.streamConnections.size).toBe(0);

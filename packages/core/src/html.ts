@@ -98,8 +98,10 @@ export const shellStyles = `
     .btn-danger { background: var(--paper-amber); color: var(--danger); }
     .btn:hover:not(:disabled) { box-shadow: 2px 2px 0 var(--ink); }
     .btn:disabled { opacity: .55; cursor: not-allowed; }
+    /* glyph-sm: the Patchy glyph at a floating element's title size, so the viewer knows Patchy is speaking. Use with glyph. */
     .glyph-sm { width: 18px; height: 18px; border-radius: 5px; box-shadow: 2px 2px 0 var(--ink); }
     .glyph-sm::after { top: 3px; right: 3px; width: 5px; height: 5px; }
+    /* note-float: a note floating over the served frame; the ink border and hard shadow mark it first-party. */
     .note-float {
       margin: 0;
       padding: 12px 14px;
@@ -115,7 +117,9 @@ export const shellStyles = `
     .note-float .note-title { display: flex; align-items: center; gap: 8px; }
     .note-float p { margin: 0; }
     .note-float p + p { margin-top: 6px; }
+    /* note-info: Patchy offers something, such as a new version. */
     .note-info { border-left-color: var(--blue); background: var(--paper-blue); }
+    /* status-chip: one line over the frame. Passive (reconnecting) it has no action; a folded note keeps one action and its paper. */
     .status-chip {
       display: inline-flex;
       flex-wrap: wrap;
@@ -138,7 +142,11 @@ export const shellStyles = `
     .status-chip .btn { margin-left: 6px; }
     .status-chip-warn { background: var(--paper-amber); }
     .status-chip-info { background: var(--paper-blue); }
+    /* note-collapse: the quiet Hide that folds a note-float into a status-chip without dismissing it. Negative margins keep the
+       44px target without growing the row; in a note-inline bar it takes the top-right cell, level with the title. */
     .note-float .note-collapse { flex: none; margin: -12px -10px -12px auto; padding-inline: 10px; white-space: nowrap; }
+    .note-inline > .note-collapse { grid-area: 1 / -2; align-self: start; }
+    /* shell-bottom: bottom-centre stack for the served page's state. It grows upward, so the bar at the edge stays put. */
     .shell-bottom {
       position: fixed;
       right: 16px;
@@ -156,12 +164,19 @@ export const shellStyles = `
     .shell-bottom, .shell-bottom * { box-sizing: border-box; }
     .shell-bottom > * { pointer-events: auto; }
     .shell-bottom [hidden] { display: none; }
-    .note-inline { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; max-width: 620px; }
-    .note-inline-text { flex: 1 1 240px; min-width: 0; }
+    /* note-inline: a note-float laid out as one row (text, actions, then any Hide) for the bottom-centre bar. */
+    .note-inline { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px 16px; max-width: 620px; }
+    .note-inline:has(> .note-collapse) { grid-template-columns: minmax(0, 1fr) auto auto; }
     .note-inline .actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; }
+    /* Under 480px the bar becomes a full-width bottom sheet with its actions on a second row; chips stay centred pills above it. */
     @media (max-width: 480px) {
-      .shell-bottom { right: 0; bottom: 0; left: 0; align-items: stretch; }
-      .shell-bottom > .note-float, .shell-bottom > .status-chip {
+      .note-inline { grid-template-columns: minmax(0, 1fr); }
+      .note-inline:has(> .note-collapse) { grid-template-columns: minmax(0, 1fr) auto; }
+      .note-inline .actions { grid-column: 1 / -1; }
+      .shell-bottom > .note-float {
+        align-self: stretch;
+        max-width: none;
+        margin: 0 -16px -16px;
         border-radius: var(--radius) var(--radius) 0 0;
         box-shadow: none;
       }
