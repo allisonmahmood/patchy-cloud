@@ -87,6 +87,14 @@ export class ShellOutdated extends Schema.TaggedError<ShellOutdated>()(
     return "Runtime request refused: shell_outdated.";
   }
 }
+export class Draining extends Schema.TaggedError<Draining>()("Draining", {}) {
+  readonly code = "busy" as const;
+  readonly status = 503;
+  readonly retryAfterSeconds = 1;
+  override get message() {
+    return "The host is draining.";
+  }
+}
 export class TooLarge extends Schema.TaggedError<TooLarge>()("TooLarge", {
   ...diagnostics,
   maxBytes: Schema.Int,
@@ -316,6 +324,7 @@ export class Runtime extends Context.Service<
   Runtime,
   {
     readonly bodyLimit: (op: string) => number;
+    readonly drain: Effect.Effect<void>;
     readonly maxCallBytes: number;
     readonly maxCallLimitId: RuntimeBodyLimitId;
     readonly fileBytes: number;
@@ -367,6 +376,7 @@ export const make = (
     const limits = yield* Limits.Limits;
     const settings = yield* config;
     const origin = options.origin;
+    let draining = false;
     const bodyLimit = (op: string) => runtimeBodyLimit(op, settings);
     const maxCallBytes = Math.max(
       settings.rowBytes + settings.callBytes,
@@ -391,6 +401,7 @@ export const make = (
       byteLength?: number
     ) =>
       Effect.gen(function* () {
+        if (draining) return yield* new Draining();
         const operation = Object.hasOwn(handlers, input.op) ? handlers[input.op] : undefined;
         if (operation !== undefined || Object.hasOwn(runtimeOperations, input.op))
           yield* WideEvents.operation(input.op);
@@ -442,7 +453,7 @@ export const make = (
         const loaded = yield* versions
           .find(input.patchId, input.versionId)
           .pipe(Effect.mapError((cause) => new SourceUnavailable({ cause })));
-        if (Option.isNone(loaded)) return yield* new AccessDenied({});
+        if (Option.isNone(loaded) || loaded.value.revoked) return yield* new AccessDenied({});
         const version = loaded.value;
         yield* WideEvents.enrich({
           companyId: version.companyId,
@@ -509,6 +520,7 @@ export const make = (
             });
           if (version.scope !== "public" && options.admitCompany !== undefined)
             yield* options.admitCompany(version.companyId);
+          if (draining) return yield* new Draining();
         });
         // For integrations, log the attempt before admission or input decoding can
         // refuse it. Attribution comes only from the live viewer and loaded version.
@@ -562,6 +574,9 @@ export const make = (
         return result.value;
       });
     return Runtime.of({
+      drain: Effect.sync(() => {
+        draining = true;
+      }),
       call: (input, byteLength) =>
         dispatch(
           input,

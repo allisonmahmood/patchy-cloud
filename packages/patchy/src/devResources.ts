@@ -223,6 +223,7 @@ export const prepare = Effect.fn("DevResources.prepare")(function* (
     companyId: prepared.identity.company.id,
     manifest: prepared.manifest,
     scope: "company",
+    revoked: false,
     wireVersion: WIRE_VERSION
   };
   const versions = new Map<string, LoadedVersions.LoadedVersion>([[prepared.patchId, version]]);

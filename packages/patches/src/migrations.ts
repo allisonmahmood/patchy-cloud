@@ -1,6 +1,6 @@
 /**
- * The patches capability's schema: baseline 3 and lifecycle migration 8 of
- * the global migration sequence (`packages/sql/CONTEXT.md`).
+ * The patches capability's schema: baseline 3, lifecycle 8 and version revocation 10
+ * in the global migration sequence (`packages/sql/CONTEXT.md`).
  */
 import { ddl, type Migrations } from "@patchy/sql";
 
@@ -102,5 +102,8 @@ export const migrations: Migrations = {
     ADD COLUMN visit_count BIGINT NOT NULL DEFAULT 0`,
     `CREATE INDEX patches_deleted_at_idx ON patches(deleted_at)
     WHERE deleted_at IS NOT NULL`
+  ),
+  "0010_patches_version_revocation": ddl(
+    `ALTER TABLE patch_versions ADD COLUMN revoked_at TIMESTAMPTZ`
   )
 };

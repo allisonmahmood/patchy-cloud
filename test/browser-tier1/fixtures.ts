@@ -4,19 +4,18 @@ import { startInstance } from "./instance.js";
 import type { Instance, Published } from "./instance.js";
 import type { FixtureWindow } from "./fixture-client.js";
 
-export const test = base.extend<object, { instance: Instance }>({
+export const test = base.extend<{ instance: Instance }, { tls: boolean }>({
+  tls: [false, { option: true, scope: "worker" }],
   instance: [
-    // Playwright requires destructuring even when a fixture has no dependencies.
-    // eslint-disable-next-line no-empty-pattern
-    async ({}, use) => {
-      const instance = await startInstance();
+    async ({ tls }, use) => {
+      const instance = await startInstance({ tls });
       try {
         await use(instance);
       } finally {
         await instance.close();
       }
     },
-    { scope: "worker", timeout: 120_000 }
+    { timeout: 120_000 }
   ]
 });
 /** Every context a test drives: offline even with real developer credentials in the invoking shell. Clerk JS is not faked. */

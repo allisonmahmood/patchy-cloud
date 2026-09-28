@@ -62,9 +62,12 @@ import { PortalPages } from "@patchy/portal";
 import { Tables, TableOperations, Files } from "@patchy/primitives";
 import { Pages, renderHome, servingHeaders, TrustedProxies } from "@patchy/serving";
 import {
+  Runtime,
   RuntimeProduction,
   RuntimeApi,
   RuntimeLog,
+  RuntimeStream,
+  RuntimeStreamApi,
   me,
   migrations as runtimeMigrations
 } from "@patchy/runtime";
@@ -106,6 +109,7 @@ const services = Layer.mergeAll(
   DeletionSweep.layer,
   DeviceLogins.layer,
   OrphanSweep.layer,
+  RuntimeStream.layer.pipe(Layer.provide(LoadedVersions.layer)),
   Layer.unwrap(
     Effect.gen(function* () {
       const tables = yield* TableOperations.make;
@@ -176,7 +180,8 @@ const api = Layer.mergeAll(HttpApiBuilder.layer(PatchyApi), ApiGuard.notFound).p
     PatchesApi.layer,
     ConnectionsApi.layer,
     SdkApi.layer,
-    RuntimeApi.layer
+    RuntimeApi.layer,
+    RuntimeStreamApi.layer
   ]),
   Layer.provide(Authorization.layer)
 );
@@ -234,8 +239,28 @@ const app = Layer.mergeAll(
   middleware
 );
 
+const streamLifecycle = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const patches = yield* Patches.Patches;
+    const streams = yield* RuntimeStream.RuntimeStream;
+    yield* patches.listen((change) =>
+      change.type === "served"
+        ? streams.notify(change.patchId, {
+            type: "served",
+            versionId: change.versionId,
+            tier: change.tier
+          })
+        : change.type === "revoked"
+          ? streams.notify(change.patchId, { type: "revoked" }, change.versionId)
+          : streams.notify(change.patchId, { type: "access_denied" })
+    );
+  })
+);
+
 /** The server: serving the app, sweeping, and closing both with the scope. */
 export const layer = Layer.mergeAll(
   HttpRouter.serve(app, { disableLogger: true, disableListenLog: true }),
-  sweeper
+  sweeper,
+  streamLifecycle,
+  Layer.effectContext(Effect.context<Runtime.Runtime | RuntimeStream.RuntimeStream>())
 ).pipe(Layer.provide(services));

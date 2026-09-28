@@ -21,7 +21,10 @@ const withIntegrations: Migrations = {
   ...withRuntime,
   ...integrationsMigrations
 };
-const withLifecycle: Migrations = { ...withIntegrations, ...patchesMigrations };
+const withLifecycle: Migrations = {
+  ...withIntegrations,
+  "0008_patches_lifecycle": patchesMigrations["0008_patches_lifecycle"]!
+};
 
 const company = Effect.flatMap(
   SqlClient.SqlClient,

@@ -639,6 +639,22 @@ and definitive-refusal list.
 The dev runner imports only the separate seed entry, so it never
 installs the loopback-only fetch guard. The production-domain Clerk handshake is a separate live
 verification, not part of these offline checks.
+
+The stream acceptance suite runs against a disposable Postgres, offline-signed
+browser sessions, the built server and a local TLS HTTP/2 ingress:
+
+```sh
+pnpm exec playwright test test/browser-tier1/stream.spec.ts --config=playwright.tier1.config.ts --project=chromium
+```
+
+It requires `openssl` for a temporary self-signed certificate, not production
+credentials or a live ingress. Chromium's network protocol report must show
+`h2` for all seven simultaneous document streams; a publish must reach all
+seven before they close. The suite also checks editing through publish,
+rollback, dismissal, missed revocation and retirement, token refresh versus
+idle expiry, an ingress cut and host restart. Browser TLS trust is relaxed
+only for this disposable certificate. The local patch dev runtime keeps its
+existing build-reload loop; the hosted document stream is not mounted there yet.
 The `async-exit-hook` dependency patch preserves failure exit codes when embedded
 Postgres shuts down; without it, a failed Vitest suite can exit successfully.
 

@@ -12,6 +12,7 @@ export interface LoadedVersion {
   /** Effective audience: historical versions of public patches remain company-only. */
   readonly scope: typeof SharingScope.Type;
   readonly wireVersion: number;
+  readonly revoked: boolean;
 }
 
 /** Patches supplies this port; Runtime never imports the patch repository. */

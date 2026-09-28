@@ -15,6 +15,7 @@ import {
 import type { RuntimeBodyLimitId, RuntimeCode, RuntimeMe, RuntimePrincipal } from "@patchy/api";
 import * as Schema from "effect/Schema";
 import { registry } from "@patchy/limits/registry";
+import { openDocumentStream, type DocumentStream } from "./stream.js";
 
 const MAX_HELD = registry["frame.heldBytes"].default;
 const MAX_FILE = runtimeByteLimits.fileBytes;
@@ -165,6 +166,7 @@ function mount(frame: HTMLIFrameElement): void {
   const downloads = new Map<string, { size: number; timer: number }>();
   let identity: Promise<RuntimeMe> | undefined;
   let principal: RuntimePrincipal = null;
+  let stream: DocumentStream | undefined;
   const reserve = (size: number) => {
     if (size > MAX_HELD - held) throw tooLarge(MAX_HELD, limitRefusal("frame.heldBytes"));
     held += size;
@@ -176,6 +178,7 @@ function mount(frame: HTMLIFrameElement): void {
     if (closed) return;
     closed = true;
     clearTimeout(bootstrapTimer);
+    stream?.close();
     port?.close();
     port = undefined;
     // Work already admitted by Runtime keeps its original principal and is not replayed.
@@ -192,6 +195,7 @@ function mount(frame: HTMLIFrameElement): void {
   const notice = (code: string) => {
     if (closed) return;
     stop();
+    frame.remove();
     location.replace(
       `/~shell/notice/${code}?return=${encodeURIComponent(location.pathname + location.search + location.hash)}`
     );
@@ -409,6 +413,17 @@ function mount(frame: HTMLIFrameElement): void {
     });
     return identity;
   };
+  const identifyFailure = (error: unknown) => {
+    if (
+      error instanceof Refusal &&
+      (error.code === "session_expired" ||
+        error.code === "principal_changed" ||
+        error.code === "access_denied")
+    )
+      notice(error.code);
+    else if (error instanceof Refusal && error.code === "shell_outdated") stale();
+    else notice("bootstrap_failed");
+  };
   const handle = async (data: unknown) => {
     if (closed) return;
     if (!data || typeof data !== "object" || Array.isArray(data)) return;
@@ -418,18 +433,9 @@ function mount(frame: HTMLIFrameElement): void {
       if (message.wire !== wire) return stale();
       ready = true;
       clearTimeout(bootstrapTimer);
-      // This is always the first runtime call, including for anonymous public shells.
-      void identify().catch((error: unknown) => {
-        if (
-          error instanceof Refusal &&
-          (error.code === "session_expired" ||
-            error.code === "principal_changed" ||
-            error.code === "access_denied")
-        )
-          notice(error.code);
-        else if (error instanceof Refusal && error.code === "shell_outdated") stale();
-        else notice("bootstrap_failed");
-      });
+      stream?.replay();
+      // Company streams already check identity independently of the frame's first operation.
+      if (frame.dataset.scope !== "company") void identify().catch(identifyFailure);
       return;
     }
     const id = message.id;
@@ -581,6 +587,26 @@ function mount(frame: HTMLIFrameElement): void {
   });
   window.addEventListener("popstate", announceRoute);
   window.addEventListener("pagehide", stop, { once: true });
+  if (frame.dataset.scope === "company") {
+    const viewerId = frame.dataset.viewerId;
+    if (!viewerId) return notice("bootstrap_failed");
+    principal = { userId: viewerId };
+    stream = openDocumentStream({
+      frame,
+      patchId,
+      versionId,
+      base,
+      documentId: nonce,
+      tier: Number(frame.dataset.tier),
+      wire,
+      principal,
+      send: (data) => {
+        if (ready) send({ v: wire, kind: "event", event: "stream", data });
+      },
+      notice,
+      stale
+    });
+  }
   // Install the one-shot load handoff before permitting the initial document to load.
   frame.src = contentSrc;
 }

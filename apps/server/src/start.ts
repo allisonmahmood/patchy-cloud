@@ -20,6 +20,7 @@ import { Session } from "@patchy/auth";
 import { PgCompanyDatabases } from "@patchy/company-database";
 import { CredentialKeys } from "@patchy/integrations";
 import * as Sql from "@patchy/sql";
+import { Runtime, RuntimeStream } from "@patchy/runtime";
 import * as Server from "./Server.js";
 
 /** The line the packed-CLI e2e and the dev runner wait for, exactly as written. */
@@ -31,11 +32,30 @@ const httpServer = Layer.unwrap(
   Effect.map(Server.port, (port) => NodeHttpServer.layer(createServer, { port, host: "0.0.0.0" }))
 );
 
-const server = Layer.effectDiscard(announce).pipe(
-  Layer.provideMerge(Server.layer),
-  Layer.provide(Sql.layer),
-  Layer.provide(httpServer)
-);
+const server = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const streams = yield* RuntimeStream.RuntimeStream;
+    const runtime = yield* Runtime.Runtime;
+    const context = yield* Effect.context<never>();
+    // NodeRuntime also handles these signals. Fence streams before its interruption
+    // closes the HTTP listener; EOF remains an ordinary reconnect for the browser.
+    const onSignal = () => {
+      Effect.runSyncWith(context)(Effect.andThen(runtime.drain, streams.drain));
+    };
+    yield* Effect.acquireRelease(
+      Effect.sync(() => {
+        process.prependListener("SIGTERM", onSignal);
+        process.prependListener("SIGINT", onSignal);
+      }),
+      () =>
+        Effect.sync(() => {
+          process.removeListener("SIGTERM", onSignal);
+          process.removeListener("SIGINT", onSignal);
+        })
+    );
+    yield* announce;
+  })
+).pipe(Layer.provideMerge(Server.layer), Layer.provide(Sql.layer), Layer.provide(httpServer));
 
 // Check required settings before acquiring Postgres, so an unreachable database
 // cannot hide a missing Clerk key or public origin behind a connection error.

@@ -62,6 +62,7 @@ export const setup = Effect.fn("test.files.setup")(function* (patchId: string) {
     manifest,
     wireVersion: WIRE_VERSION,
     scope: "company",
+    revoked: false,
     identity: null,
     principal: null,
     correlationId: "files-contract"

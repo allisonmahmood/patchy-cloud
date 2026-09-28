@@ -38,6 +38,43 @@ const authenticatedHeaders = () => ({
   origin: PUBLIC_BASE_URL
 });
 
+it.effect("draining refuses new operations without cancelling already admitted work", () =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const finish = yield* Deferred.make<void>();
+    yield* Effect.gen(function* () {
+      const runtime = yield* Runtime.Runtime;
+      const api = yield* Fixtures.client;
+      const call = api.call({
+        payload: envelope("tables.list", { table: "rows" }),
+        headers: authenticatedHeaders(),
+        responseMode: "response-only"
+      });
+      const running = yield* call.pipe(Effect.forkChild);
+      yield* Deferred.await(started);
+      yield* runtime.drain;
+      const refused = yield* call;
+      assert.strictEqual(refused.status, 503);
+      assert.strictEqual(decodeFailure(yield* refused.json).code, "busy");
+      yield* Deferred.succeed(finish, undefined);
+      assert.strictEqual((yield* Fiber.join(running)).status, 200);
+    }).pipe(
+      Effect.provide(
+        Fixtures.layer({
+          "tables.list": {
+            kind: "read",
+            run: () =>
+              Deferred.succeed(started, undefined).pipe(
+                Effect.andThen(Deferred.await(finish)),
+                Effect.as({ rows: [], cursor: null })
+              )
+          }
+        })
+      )
+    );
+  })
+);
+
 const connectionId = (_args: unknown, binding: Binding.Binding["Service"]) => {
   const declaration = binding.manifest.uses.sales;
   return declaration?.kind === "postgres" ? declaration.id : null;

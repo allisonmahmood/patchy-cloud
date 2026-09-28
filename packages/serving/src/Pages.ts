@@ -86,8 +86,12 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (kind: "address" | "c
             kind === "content" ? params.versionId : undefined
           )
           .pipe(Effect.catchTags({ SqlError: Effect.die }));
-  // Gone and operator-disabled patches are absent even before sign-in.
-  if (Option.isNone(served) || served.value.patch.disabledAt !== null) {
+  // Gone, operator-disabled and revoked versions are absent even before sign-in.
+  if (
+    Option.isNone(served) ||
+    served.value.patch.disabledAt !== null ||
+    served.value.version.revokedAt !== null
+  ) {
     return withCookies(HttpServerResponse.setHeaders(notFound, patchUrlHeaders), cookies);
   }
   const isPublic =
@@ -177,6 +181,11 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (kind: "address" | "c
       : renderPatchWrapper({
           ...served.value,
           html,
+          scope: isPublic ? "public" : "company",
+          viewerId:
+            !isPublic && !HttpServerResponse.isHttpServerResponse(admission)
+              ? admission.user.id
+              : undefined,
           head: isPublic ? undefined : sessionScripts(session),
           ...(selection !== undefined && served.value.version.tier >= 1
             ? {

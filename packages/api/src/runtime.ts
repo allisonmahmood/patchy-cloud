@@ -120,6 +120,48 @@ export const RuntimePrincipal = Schema.NullOr(Schema.Struct({ userId: NonEmptyTe
 });
 export type RuntimePrincipal = typeof RuntimePrincipal.Type;
 
+/** One shell-owned SSE connection, bound to the document nonce rather than its URL. */
+export const RuntimeStreamRequest = Schema.Struct({
+  patchId: PatchId,
+  versionId: RuntimeVersionId,
+  documentId: Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_-]{16,128}$/))
+});
+export type RuntimeStreamRequest = typeof RuntimeStreamRequest.Type;
+
+export const RuntimeStreamFrame = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("hello"),
+    generation: Schema.NonEmptyString,
+    serverTime: Schema.Number
+  }),
+  Schema.Struct({
+    type: Schema.Literal("served"),
+    versionId: RuntimeVersionId,
+    tier: Schema.Int
+  }),
+  Schema.Struct({ type: Schema.Literal("revoked") }),
+  Schema.Struct({ type: Schema.Literal("session_expired") }),
+  Schema.Struct({ type: Schema.Literal("access_denied") }),
+  Schema.Struct({ type: Schema.Literal("principal_changed") }),
+  Schema.Struct({ type: Schema.Literal("starting") }),
+  Schema.Struct({ type: Schema.Literal("ready") }),
+  Schema.Struct({
+    type: Schema.Literal("start_failed"),
+    code: Schema.Literal("busy"),
+    retryAfter: Schema.Number
+  }),
+  Schema.Struct({
+    type: Schema.Literal("closed"),
+    reason: Schema.Literals(["slow_consumer", "draining", "replaced"])
+  })
+]).annotate({ identifier: "RuntimeStreamFrame" });
+export type RuntimeStreamFrame = typeof RuntimeStreamFrame.Type;
+
+/** SSE data fields contain RuntimeStreamFrame JSON, followed by a blank line. */
+export const RuntimeEventStream = Schema.String.pipe(
+  HttpApiSchema.asText({ contentType: "text/event-stream" })
+);
+
 /** Public versions return null, including when their viewer has a session. */
 export const RuntimeMe = Schema.NullOr(
   Schema.Struct({

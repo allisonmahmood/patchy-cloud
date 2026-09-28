@@ -9,13 +9,18 @@ export const make = Effect.gen(function* () {
   const patches = yield* Patches.Patches;
   return LoadedVersions.LoadedVersions.of({
     find: Effect.fn("LoadedVersions.find")(function* (patchId, versionId) {
-      const found = yield* patches.find(patchId, undefined, versionId);
+      const retained = yield* patches.findRetained(patchId, undefined, versionId);
+      const found = Option.filter(
+        retained,
+        ({ patch }) => patch.state === "live" && patch.disabledAt === null
+      );
       return Option.map(found, ({ patch, version }) => ({
         patchId: patch.id,
         versionId: version.id,
         companyId: patch.companyId,
         manifest: version.manifest,
         wireVersion: version.wireVersion,
+        revoked: version.revokedAt !== null,
         scope:
           patch.scope === "public" && patch.currentVersionId === version.id
             ? ("public" as const)

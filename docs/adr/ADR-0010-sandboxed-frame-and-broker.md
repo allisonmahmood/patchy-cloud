@@ -22,10 +22,10 @@ Owned upload buffers transfer through the shipped `patchy/client` transport and
 detach; subviews copy only their selected bytes. Request byte defaults and
 operation classification are shared API definitions, also used by Runtime.
 
-The first runtime call is `me` with a null principal; its user id is pinned for later calls. Public `me` is null and public company-data operations fail even for signed-in readers. A changed or expired session stops the patch and asks for sign-in followed by a whole-page reload. Access loss is a first-party notice without a reload offer; validation errors belong to patch code. Already-admitted work retains its original attribution; a missing reply remains an unknown outcome. Leaving the page closes the broker; a page restored from the back/forward cache reloads whole rather than reopening it.
-Only `access_denied`, `session_expired` and `principal_changed` are access-class
-stopping notices. `not_available_on_public` is an ordinary patch-visible refusal,
-and public patches retain their browser-owned route bridge.
+Company shells pin the admitted viewer when rendered; the local shell obtains its principal through `me`. Public `me` is null and public company-data operations fail even for signed-in readers. A changed or expired session stops the patch and asks for sign-in followed by a whole-page reload. Access loss is a first-party notice without a reload offer; validation errors belong to patch code. Already-admitted work retains its original attribution; a missing reply remains an unknown outcome. Leaving the page closes the broker; a page restored from the back/forward cache reloads whole rather than reopening it.
+`access_denied`, `session_expired`, `principal_changed` and `revoked` stop the
+document. `not_available_on_public` remains a patch-visible refusal, and public
+patches retain their browser-owned route bridge.
 
 ## Browser-owned behavior and compatibility
 
@@ -40,6 +40,65 @@ by copying and pasting the actual text, not just observing a resolved promise.
 An old shell with a supported bundle gets one cache-bypassing refresh. A repeated mismatch stops visibly rather than looping. A stored version whose wire has retired gets the first-party needs-rebuild door; a tooling release change alone never retires a deployed bundle.
 
 `@patchy/serving/shell` exports rendering, the prebuilt broker script and CSP constants without Auth or platform infrastructure, so the local runtime can serve the same boundary. Session markup is injected by the host. The broker is bundled from the shared API schemas at build time, not compiled per request.
+
+## Company document streams
+
+Each company shell on tiers 1 and 2 opens one fetch-streamed SSE connection at
+bootstrap, independently of patch code. Public shells and tier 0 do not open one.
+The shell pins its admitted viewer, patch, loaded version and document nonce.
+`GET /api/runtime/stream` rechecks the cookie session and version eligibility on
+every open. `hello` supplies a new generation and the server clock; replacement
+requires the previous generation while its stream is still connected. A lost
+`hello`, including on a replacement connection, leaves conflicts retriable until
+the abandoned connection closes; the generation fence is never bypassed. Frames
+cross the existing bound port as `{ v, kind: "event", event: "stream", data }`.
+The core transport maintains the clock estimate without handing patch code a credential.
+
+A document is connected only while its stream is open. The host derives company,
+patch and viewer counts in memory, without a presence row or heartbeat.
+The registry limits a viewer to eight connected documents per patch. A further
+document stops with a first-party notice rather than running without its stream;
+the viewer can reopen it after closing another copy. The stream buffer defaults
+to 16 MiB. Overflow discards pending frames and closes with
+`closed { reason: "slow_consumer" }`; the shell reconnects. Each close emits one
+stream wide event with delivered bytes, peak subscriptions and its close reason.
+
+Publish and rollback send `served { versionId, tier }` after commit on the changing
+host. Initial snapshots and lifecycle dispatch share a serialization gate and
+reread durable authority: a delayed callback cannot overwrite a newer version
+or stop a restored or unrevoked document. Revocation sends `revoked` only to
+documents on that version. Retire and delete stop the affected documents.
+Revocation is retained metadata, reversible through the internal Patches service,
+and enforced by serving and runtime admission. Reopening a disconnected revoked
+version sends `hello` then `revoked`. No elapsed time discards a loaded version.
+
+The stream checks the session every five seconds without holding a database
+connection. Expiry of its captured JWT closes the connection so re-admission can
+use the browser's refreshed cookie. A genuinely expired session then stops the
+document. An account change or lost company access also stops it.
+
+EOF, a network cut and deployment drain use the same capped-backoff reconnect.
+`pagehide` closes early; a hidden document suspends after 30 seconds and reopens
+on return. Shutdown signals fence new runtime operations and streams before the
+HTTP listener closes. Already-admitted work is not replayed.
+
+The selected [S-C treatment](https://github.com/allisonmahmood/patchy-cloud/issues/385#issuecomment-5862481797)
+is the served frame's named visual exception: a bottom-centre page-state pill,
+widening for actions, built from core's shell component subset. Reconnecting
+appears after two seconds and currently clears on `hello`. The revisions ticket
+replaces that boundary with reconciliation to subscription fences. A new-version
+offer has **Not now**, retained across reconnect until the next publish, and
+**Hide**, which collapses without dismissing. A tier 2 served version over a
+lower-tier document shows **Reload to keep saving**, without dismissal. A rollback
+to the loaded version clears the offer. Notices do not steal focus; Hide and
+dismissal return focus to the frame. Reload warns that unsaved edits may be lost
+and opens the currently served address, even from a numbered-version document,
+preserving the client route, query and fragment.
+
+This stream carries lifecycle frames only. Subscriptions, revision fences,
+cross-host delivery and periodic document reconciliation land with the revisions
+ticket. `starting`, `ready` and `start_failed` are wire contracts for the fleet
+controller, which owns their emission and waiting UI.
 
 ## Tier-scoped promise
 

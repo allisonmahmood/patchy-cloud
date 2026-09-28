@@ -28,6 +28,26 @@ _Avoid_: patch (the untrusted content it contains), viewer (the person opening i
 The shell's gate between one patch document and Patchy. It binds requests to the loaded version and the initially admitted principal, never gives patch code a credential, and never lends a replacement document the old document's authority.
 _Avoid_: proxy URL (patches request operations, not arbitrary destinations), SDK (the client speaks to the broker)
 
+**Stream**:
+The company document's connection to Patchy, owned by the shell and relayed through its document-bound port.
+_Avoid_: session, subscription
+
+**Document**:
+One shell bound to a loaded version. Reconnecting or returning from a hidden period does not select a new version.
+_Avoid_: viewer, tab, connection
+
+**Connected**:
+A document whose stream is open, as defined by [Runtime](../runtime/CONTEXT.md).
+_Avoid_: heartbeat, lease, online
+
+**Lifecycle frame**:
+A message about the document's version or authority. The shell renders its state or stops the document; patch code cannot suppress it.
+_Avoid_: wake (a resource changed), data snapshot
+
+**Superseded**:
+A loaded version that remains eligible after another version becomes served. Its reload offer does not interrupt editing.
+_Avoid_: revoked, stale, outdated
+
 **Envelope**:
 One correlated request or reply between a patch document and its broker, carrying the bundle's wire version and operation data. It is a message contract, not permission to choose a patch, version or principal.
 _Avoid_: transport version (there is only the runtime wire), binding (the host's trusted context)

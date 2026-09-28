@@ -57,6 +57,42 @@ it("correlates out-of-order replies and decodes the one error class with details
   transport.close();
 });
 
+it("keeps the hello clock advancing across a stream drop without replaying operations", async () => {
+  vi.useFakeTimers({ toFake: ["performance", "setTimeout", "clearTimeout"] });
+  const port = new FakePort();
+  const transport = createPortTransport(port);
+  expect(transport.serverTime()).toBeUndefined();
+  const pending = transport.call("tables.insert", { table: "notes", row: { title: "one" } });
+  port.reply({
+    v: 1,
+    kind: "event",
+    event: "stream",
+    data: { type: "hello", generation: "first", serverTime: 50_000 }
+  });
+  await vi.advanceTimersByTimeAsync(250);
+  port.reply({
+    v: 1,
+    kind: "event",
+    event: "stream",
+    data: { type: "closed", reason: "draining" }
+  });
+  expect(transport.serverTime()).toBe(50_250);
+  await vi.advanceTimersByTimeAsync(250);
+  expect(transport.serverTime()).toBe(50_500);
+  port.reply({
+    v: 1,
+    kind: "event",
+    event: "stream",
+    data: { type: "hello", generation: "replacement", serverTime: 60_000 }
+  });
+  expect(transport.serverTime()).toBe(60_000);
+  expect(port.sent).toHaveLength(1);
+  port.reply({ v: 1, kind: "result", id: port.sent[0]!.id, value: { id: "row-1" } });
+  await expect(pending).resolves.toEqual({ id: "row-1" });
+  transport.close();
+  expect(transport.serverTime()).toBeUndefined();
+});
+
 it("keeps lazy handler names and business errors distinct from similarly shaped values", async () => {
   const port = new FakePort();
   const transport = createPortTransport(port);

@@ -67,3 +67,31 @@ _Avoid_: Audit record, runtime-log entry
 **Correlation id**:
 The identifier joining an operation's failure to its runtime-log record. It is created by Patchy, never supplied by patch code.
 _Avoid_: Publish key, patch id
+
+**Stream**:
+The connection carrying a company's document lifecycle frames from Patchy. A document has at most one connected stream; reconnecting replaces its generation without changing its loaded version.
+_Avoid_: session, subscription (a query's desired live result)
+
+**Document**:
+One shell document bound to a loaded patch version. It outlives its connection, including a hidden period.
+_Avoid_: tab, session, viewer (one person may hold several documents)
+
+**Connected**:
+A document whose stream is open. Presence is derived from that connection, not a lease or stored row.
+_Avoid_: online, alive, heartbeat
+
+**Lifecycle frame**:
+A stream message about a document's version or authority, not its data.
+_Avoid_: wake (a resource changed), notification
+
+**Superseded**:
+A loaded version that is no longer served but remains eligible. The document keeps it until reload or close.
+_Avoid_: revoked, stale, outdated
+
+**Eligible version**:
+A retained version that has not been revoked. Superseding a version does not revoke it.
+_Avoid_: current (the served version), live (the patch's state)
+
+**Stream generation**:
+The identity of one admitted connection. A replacement fences requests naming the previous generation.
+_Avoid_: document id, wire version
