@@ -32,7 +32,6 @@ export const make = Effect.fn("LocalExecutor.make")(
     const bindingEpoch = 1;
     yield* supervisor.bind({ companyId: options.companyId, bindingEpoch });
     return Executor.Executor.of({
-      implementation: "local",
       bind: Effect.fn("LocalExecutor.bind")(function* (bundle) {
         const reply = yield* supervisor
           .bind({ companyId: options.companyId, bindingEpoch, bundle })

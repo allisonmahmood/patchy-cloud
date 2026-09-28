@@ -109,7 +109,8 @@ export const ProcessReport = Schema.Struct({
     "memory",
     "stopped",
     "exited",
-    "load_failed"
+    "load_failed",
+    "metering_failed"
   ]),
   cpuSeconds: nonnegative,
   peakRssBytes: nonnegative,

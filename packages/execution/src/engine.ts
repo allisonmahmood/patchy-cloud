@@ -50,7 +50,6 @@ export const make = Effect.fn("ExecutionEngine.make")(function* (options: {
     return value;
   });
   return Executor.Executor.of({
-    implementation: "engine",
     bind: Effect.fn("ExecutionEngine.bind")(function* (input) {
       const bundle = yield* decodeBundle(input).pipe(
         Effect.mapError(

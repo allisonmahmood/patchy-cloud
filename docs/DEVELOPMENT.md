@@ -40,8 +40,9 @@ The engine, inspection, supervisor and local executor are available independentl
 pool. A killed generation requires a fresh host bind, never an invocation replay.
 It refuses construction when `NODE_ENV` or its explicit environment is production.
 The tier 2 `patchy dev` integration is a separate ticket; the cloud dev runner and
-migrated test template do not start workerd. Tier 2 publish is still refused.
-These tests prove execution compatibility and local recovery, not Fargate containment.
+migrated test template do not start workerd. Hosted admission still needs the host
+and fleet tickets, and tier 2 publish remains refused. These tests prove execution
+compatibility and local recovery, not Fargate containment.
 
 To run only the execution task from this checkout:
 
@@ -63,12 +64,26 @@ security group. Wildcard and public addresses are refused. No database, storage,
 Clerk configuration or running dev instance is needed.
 
 The supervisor reads execution operating limits from `PATCHY_LIMITS_JSON`.
+It enforces `execution.probe.interval`, `execution.process.rss`,
+`execution.process.idle`, `execution.residency.processes` and
+`execution.residency.bytes`; its report configuration hash covers these values.
+The probe interval must be less than the six-second stall contract.
 Defaults are 12 resident processes, 1.5 GiB aggregate RSS, a 512 MiB per-process
-kill, 60 seconds idle and a 250 ms probe. The six-second stall and one-second
+kill, 60 seconds idle and a 250 ms probe. The units are binary: one GiB is
+2^30 bytes and one MiB is 2^20 bytes. An unfinished initializer also expires at
+`execution.process.idle`, even when health probes succeed. Its bind refusal and
+process-report end cause are `load_failed`. The six-second stall and one-second
 post-deadline termination grace are release contracts. Linux uses `/proc` and
 macOS uses `ps` for metering; other platforms refuse supervised execution.
-Distinct child uids require a privileged supervisor. Scope shutdown kills and
-reaps children and removes their temporary configuration.
+Unexpected sampling failures kill only the affected resident with report end
+cause `metering_failed`; other residents remain supervised. Distinct child uids
+require a privileged supervisor. Scope shutdown kills and reaps children and
+removes their temporary configuration.
+
+The local adapter runs its supervisor in the host process. Aggregate RSS counts
+the real `process.memoryUsage.rss()` plus sampled child RSS, including unrelated
+host allocations. This is intentionally conservative compared with a dedicated
+execution task; there is no fabricated fixed allowance for the host.
 
 The private management wire is documented in `docs/API.md`. The host must persist
 process reports before acknowledging them through `stats`. The supervisor has

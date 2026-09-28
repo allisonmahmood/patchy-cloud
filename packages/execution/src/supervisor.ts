@@ -5,7 +5,7 @@ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { limitRefusal, limitRefusalFields } from "@patchy/api";
 import * as GuestProtocol from "@patchy/api/guest";
 import * as Management from "@patchy/api/management";
-import { registry, type OperatingLimitId } from "@patchy/limits/registry";
+import { registry } from "@patchy/limits/registry";
 import * as Executor from "@patchy/runtime/executor";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
@@ -40,13 +40,16 @@ const decodeBind = Schema.decodeUnknownEffect(Management.BindRequest, strict);
 const decodeInvoke = Schema.decodeUnknownEffect(Management.InvokeRequest, strict);
 const decodeStop = Schema.decodeUnknownEffect(Management.StopRequest, strict);
 const decodeStats = Schema.decodeUnknownEffect(Management.StatsRequest, strict);
-const killGrace = registry["tier2.query.kill"].default - registry["tier2.query.deadline"].default;
-const isSupervisorError = Schema.is(SupervisorError);
+const killGrace = 1_000;
 
 class CallbackBodyTooLarge extends Schema.TaggedError<CallbackBodyTooLarge>()(
   "CallbackBodyTooLarge",
-  {}
-) {}
+  { actual: Schema.Number, max: Schema.Number }
+) {
+  override get message() {
+    return `The callback body has ${this.actual} bytes; the maximum is ${this.max}.`;
+  }
+}
 const readCallbackBody = Effect.fnUntraced(function* <E, R>(
   stream: Stream.Stream<Uint8Array, E, R>
 ) {
@@ -55,19 +58,29 @@ const readCallbackBody = Effect.fnUntraced(function* <E, R>(
   yield* Stream.runForEach(stream, (chunk) => {
     length += chunk.byteLength;
     if (length > GuestProtocol.callbackFileLimit.value)
-      return Effect.fail(new CallbackBodyTooLarge({}));
+      return Effect.fail(
+        new CallbackBodyTooLarge({ actual: length, max: GuestProtocol.callbackFileLimit.value })
+      );
     chunks.push(chunk);
     return Effect.void;
   });
   return Buffer.concat(chunks, length);
 });
 
+const operatingLimitIds = [
+  "execution.probe.interval",
+  "execution.process.rss",
+  "execution.residency.processes",
+  "execution.residency.bytes",
+  "execution.process.idle"
+] as const;
+type SupervisorLimitId = (typeof operatingLimitIds)[number];
+
 export interface Options {
   readonly callbackUrls: readonly string[];
-  readonly operatingLimits?: Partial<Readonly<Record<OperatingLimitId, number>>>;
+  readonly operatingLimits?: Partial<Readonly<Record<SupervisorLimitId, number>>>;
   readonly deploymentRevision?: string;
   readonly taskId?: string;
-  readonly replicaId?: string;
   readonly configRevision?: {
     readonly deploymentRevision: string;
     readonly overrideRevision: string;
@@ -88,7 +101,7 @@ interface Resident {
   readonly ready: Deferred.Deferred<Management.BindReply, SupervisorError>;
   readonly dead: Deferred.Deferred<never, SupervisorError>;
   readonly reaped: Deferred.Deferred<void>;
-  readonly callbacks: ReadonlyMap<string, string>;
+  readonly proxyUrls: ReadonlyMap<string, string>;
   readonly invocations: Map<string, Invocation>;
   readonly startedAt: number;
   readonly eventId: string;
@@ -107,7 +120,7 @@ interface Resident {
   cpuSeconds: number;
   callsServed: number;
 }
-const identity = (binding: GuestProtocol.BundleBinding) =>
+const versionKey = (binding: GuestProtocol.BundleBinding) =>
   JSON.stringify([binding.patchId, binding.versionId]);
 const attemptKey = (attempt: Pick<GuestProtocol.Attempt, "invocationId" | "attemptId">) =>
   JSON.stringify([attempt.invocationId, attempt.attemptId]);
@@ -133,14 +146,12 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
   const scope = yield* Effect.scope;
   const operatingLimits = { ...options.operatingLimits };
   for (const [id, value] of Object.entries(operatingLimits)) {
-    const definition = Object.hasOwn(registry, id)
-      ? registry[id as keyof typeof registry]
-      : undefined;
     if (
-      definition?.kind !== "operating" ||
+      !operatingLimitIds.some((key) => key === id) ||
       !Number.isFinite(value) ||
       value <= 0 ||
-      (id === "execution.residency.processes" && !Number.isSafeInteger(value))
+      (id === "execution.residency.processes" && !Number.isSafeInteger(value)) ||
+      (id === "execution.probe.interval" && value >= registry["execution.stall"].default)
     )
       return yield* new SupervisorError({ operation: "bind", reason: "protocol" });
   }
@@ -151,17 +162,12 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
       (cause) => new SupervisorError({ operation: "bind", reason: "load_failed", cause })
     )
   );
-  const limit = (id: OperatingLimitId): number => operatingLimits[id] ?? registry[id].default;
+  const limit = (id: SupervisorLimitId): number => operatingLimits[id] ?? registry[id].default;
   const interval = limit("execution.probe.interval");
   const deploymentRevision = options.deploymentRevision ?? "local";
   const configRevision = options.configRevision ?? {
     deploymentRevision: createHash("sha256")
-      .update(
-        Object.entries(registry)
-          .filter(([, definition]) => definition.kind === "operating")
-          .map(([id]) => `${id}=${limit(id as OperatingLimitId)}`)
-          .join("\n")
-      )
+      .update(operatingLimitIds.map((id) => `${id}=${limit(id)}`).join("\n"))
       .digest("hex"),
     overrideRevision: "0"
   };
@@ -177,11 +183,14 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
   const aggregateRss = () => {
     let bytes = process.memoryUsage.rss();
     for (const resident of residents.values()) bytes += resident.rssBytes;
+    return bytes;
+  };
+  const stampPeaks = () => {
+    const bytes = aggregateRss();
     for (const resident of residents.values()) {
       resident.peakProcesses = Math.max(resident.peakProcesses, residents.size);
       resident.peakAggregateRssBytes = Math.max(resident.peakAggregateRssBytes, bytes);
     }
-    return bytes;
   };
   const checkEpoch = (epoch: number, operation: SupervisorError["operation"]) =>
     epoch === bindingEpoch
@@ -207,28 +216,31 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
     if (!resident.alive) return yield* Deferred.await(resident.reaped);
     // Fence before any asynchronous cleanup, including callbacks already reading a body.
     resident.alive = false;
-    for (const url of resident.callbacks.values()) callbacks.delete(new URL(url).pathname);
+    for (const url of resident.proxyUrls.values()) callbacks.delete(new URL(url).pathname);
     const invocations = [...resident.invocations.values()].map(({ attempt }) => attempt);
     const error = new SupervisorError({ operation: "invoke", reason: "process_killed" });
-    yield* Deferred.fail(resident.dead, error);
     yield* Deferred.fail(
       resident.ready,
-      new SupervisorError({ operation: "bind", reason: "process_killed" })
+      new SupervisorError({
+        operation: "bind",
+        reason: cause === "load_failed" ? "load_failed" : "process_killed"
+      })
     );
+    yield* Deferred.fail(resident.dead, error);
     for (const invocation of resident.invocations.values())
       yield* Deferred.fail(invocation.result, error);
     yield* sample(resident).pipe(
       Effect.catchTags({
-        WorkerdError: () =>
+        WorkerdError: (error) =>
           Effect.logError(
             "Final process sample unavailable; retaining the previous watchdog sample.",
-            { processGeneration: resident.generation }
+            { processGeneration: resident.generation, stage: error.stage, reason: error.reason }
           )
       })
     );
-    aggregateRss();
+    stampPeaks();
     yield* Scope.close(resident.scope, Exit.void);
-    residents.delete(identity(resident.binding));
+    residents.delete(versionKey(resident.binding));
     const endedAt = Date.now();
     const report: Management.ProcessReport = {
       reportId: resident.eventId,
@@ -246,7 +258,7 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
         type: "process",
         eventId: resident.eventId,
         traceId: resident.eventId,
-        replica: options.replicaId ?? `supervisor-${process.pid}`,
+        replica: `supervisor-${process.pid}`,
         deploymentRevision,
         startedAt: resident.startedAt,
         durationMs: endedAt - resident.startedAt,
@@ -288,7 +300,7 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
     yield* Deferred.succeed(resident.reaped, undefined);
   }, Effect.uninterruptible);
 
-  const evict = Effect.fnUntraced(function* (reserve: number) {
+  const evict = Effect.fnUntraced(function* (reserve: number, protectedResident?: Resident) {
     while (
       residents.size + reserve > limit("execution.residency.processes") ||
       aggregateRss() >= limit("execution.residency.bytes")
@@ -296,7 +308,13 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
       const memoryPressure = aggregateRss() >= limit("execution.residency.bytes");
       let victim: Resident | undefined;
       for (const resident of residents.values()) {
-        if (!resident.alive || resident.loading || resident.invocations.size !== 0) continue;
+        if (
+          resident === protectedResident ||
+          !resident.alive ||
+          resident.loading ||
+          resident.invocations.size !== 0
+        )
+          continue;
         if (
           victim === undefined ||
           (memoryPressure
@@ -458,7 +476,20 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
     const now = Date.now();
     for (const resident of residents.values()) {
       if (!resident.alive) continue;
-      yield* sample(resident);
+      yield* sample(resident).pipe(
+        Effect.catchTags({
+          WorkerdError: (cause) =>
+            Effect.gen(function* () {
+              yield* Effect.logError("Process resource sampling failed; reaping its resident.", {
+                processGeneration: resident.generation,
+                stage: cause.stage,
+                reason: cause.reason
+              });
+              yield* terminate(resident, "metering_failed");
+            })
+        })
+      );
+      if (!resident.alive) continue;
       const child = resident.process?.child;
       if (child !== undefined && (child.exitCode !== null || child.signalCode !== null))
         yield* terminate(resident, "exited");
@@ -473,28 +504,17 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
       else if (now - resident.lastHealthy >= registry["execution.stall"].default)
         yield* terminate(resident, "stall");
       else if (
-        !resident.loading &&
         resident.invocations.size === 0 &&
-        now - resident.idleSince >= limit("execution.process.idle")
+        now - (resident.loading ? resident.startedAt : resident.idleSince) >=
+          limit("execution.process.idle")
       )
-        yield* terminate(resident, "idle");
+        yield* terminate(resident, resident.loading ? "load_failed" : "idle");
       else yield* probe(resident);
     }
-    yield* evict(0);
+    stampPeaks();
+    yield* admission.withPermit(evict(0));
   });
-  yield* tick.pipe(
-    Effect.andThen(Effect.sleep(interval)),
-    Effect.forever,
-    Effect.catchTags({
-      WorkerdError: () =>
-        Effect.gen(function* () {
-          stopped = true;
-          yield* Effect.logError("Supervisor resource sampling failed; stopping its processes.");
-          for (const resident of residents.values()) yield* terminate(resident, "stopped");
-        })
-    }),
-    Effect.forkIn(scope)
-  );
+  yield* tick.pipe(Effect.andThen(Effect.sleep(interval)), Effect.forever, Effect.forkIn(scope));
   yield* Effect.addFinalizer(() =>
     Effect.gen(function* () {
       stopped = true;
@@ -502,28 +522,35 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
     })
   );
 
+  const failLoad = Effect.fnUntraced(function* (
+    resident: Resident,
+    error: SupervisorError,
+    cause: Management.ProcessReport["cause"]
+  ) {
+    yield* Deferred.fail(resident.ready, error);
+    yield* terminate(resident, cause);
+  });
+
   const bind = Effect.fn("Supervisor.bind")(function* (input: Management.BindRequest) {
     const request = yield* decodeBind(input).pipe(
       Effect.mapError(
         (cause) => new SupervisorError({ operation: "bind", reason: "protocol", cause })
       )
     );
-    if (stopped) return yield* new SupervisorError({ operation: "bind", reason: "stopped" });
-    if (companyId !== null && companyId !== request.companyId)
-      return yield* new SupervisorError({ operation: "bind", reason: "binding_conflict" });
-    if (companyId !== null && request.bindingEpoch < bindingEpoch)
-      return yield* new SupervisorError({ operation: "bind", reason: "stale_epoch" });
-    if (request.bundle !== undefined && request.bundle.companyId !== request.companyId)
-      return yield* new SupervisorError({ operation: "bind", reason: "binding_conflict" });
-    companyId = request.companyId;
-    bindingEpoch = request.bindingEpoch;
-    if (request.bundle === undefined) return { bindingEpoch };
-    const bundle = request.bundle;
-    const key = identity(bundle);
     const resident = yield* admission.withPermit(
       Effect.gen(function* () {
-        yield* checkEpoch(request.bindingEpoch, "bind");
         if (stopped) return yield* new SupervisorError({ operation: "bind", reason: "stopped" });
+        if (companyId !== null && companyId !== request.companyId)
+          return yield* new SupervisorError({ operation: "bind", reason: "binding_conflict" });
+        if (companyId !== null && request.bindingEpoch < bindingEpoch)
+          return yield* new SupervisorError({ operation: "bind", reason: "stale_epoch" });
+        if (request.bundle !== undefined && request.bundle.companyId !== request.companyId)
+          return yield* new SupervisorError({ operation: "bind", reason: "binding_conflict" });
+        companyId = request.companyId;
+        bindingEpoch = request.bindingEpoch;
+        if (request.bundle === undefined) return undefined;
+        const bundle = request.bundle;
+        const key = versionKey(bundle);
         const existing = residents.get(key);
         if (existing !== undefined && !existing.alive) {
           yield* Deferred.await(existing.reaped);
@@ -546,7 +573,7 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
         yield* checkEpoch(request.bindingEpoch, "bind");
         if (stopped) return yield* new SupervisorError({ operation: "bind", reason: "stopped" });
         const now = Date.now();
-        const callbackUrls = new Map<string, string>();
+        const proxyUrls = new Map<string, string>();
         const resident: Resident = {
           binding: {
             companyId: bundle.companyId,
@@ -559,7 +586,7 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
           ready: yield* Deferred.make<Management.BindReply, SupervisorError>(),
           dead: yield* Deferred.make<never, SupervisorError>(),
           reaped: yield* Deferred.make<void>(),
-          callbacks: callbackUrls,
+          proxyUrls,
           invocations: new Map(),
           startedAt: now,
           eventId: randomUUID(),
@@ -578,52 +605,61 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
         };
         for (const target of options.callbackUrls) {
           const path = `/callback/${resident.generation}/${randomUUID()}`;
-          callbackUrls.set(target, `${proxyBase}${path}`);
+          proxyUrls.set(target, `${proxyBase}${path}`);
           callbacks.set(path, { resident, target });
         }
         residents.set(key, resident);
-        aggregateRss();
+        stampPeaks();
         yield* Effect.gen(function* () {
           const child = yield* startWorkerd({
-            callbackUrls: [...callbackUrls.values()],
+            callbackUrls: [...proxyUrls.values()],
             separateUid: true
           }).pipe(Effect.provideService(Scope.Scope, resident.scope));
           resident.process = child;
           resident.lastHealthy = Date.now();
           resident.engine = yield* Engine.make({ url: child.url });
-          yield* resident.engine.bind(bundle).pipe(
-            Effect.mapError(
-              (cause) => new SupervisorError({ operation: "bind", reason: cause.reason, cause })
-            ),
-            Effect.raceFirst(Deferred.await(resident.dead))
-          );
+          yield* resident.engine.bind(bundle).pipe(Effect.raceFirst(Deferred.await(resident.dead)));
+          yield* sample(resident);
           if (!resident.alive) return;
           resident.loading = false;
           resident.idleSince = Date.now();
-          yield* sample(resident);
+          stampPeaks();
           yield* Deferred.succeed(resident.ready, {
             bindingEpoch: request.bindingEpoch,
             binding: resident.binding,
             processGeneration: resident.generation
           });
         }).pipe(
-          Effect.catch((cause) =>
-            Effect.gen(function* () {
-              yield* Deferred.fail(
-                resident.ready,
-                isSupervisorError(cause)
-                  ? cause
-                  : new SupervisorError({ operation: "bind", reason: "transport", cause })
-              );
-              yield* terminate(resident, "load_failed");
-            })
-          ),
+          Effect.catchTags({
+            WorkerdError: (cause) =>
+              Effect.gen(function* () {
+                if (cause.stage === "sample")
+                  yield* Effect.logError("Process resource sampling failed during loading.", {
+                    processGeneration: resident.generation,
+                    stage: cause.stage,
+                    reason: cause.reason
+                  });
+                yield* failLoad(
+                  resident,
+                  new SupervisorError({ operation: "bind", reason: "load_failed", cause }),
+                  cause.stage === "sample" ? "metering_failed" : "load_failed"
+                );
+              }),
+            ExecutionError: (cause) =>
+              failLoad(
+                resident,
+                new SupervisorError({ operation: "bind", reason: cause.reason, cause }),
+                "load_failed"
+              ),
+            SupervisorError: (cause) => failLoad(resident, cause, "load_failed")
+          }),
           Effect.provideService(HttpClient.HttpClient, http),
           Effect.forkIn(scope)
         );
         return resident;
       })
     );
+    if (resident === undefined) return { bindingEpoch: request.bindingEpoch };
     yield* Deferred.await(resident.ready);
     yield* checkEpoch(request.bindingEpoch, "bind");
     return { bindingEpoch, binding: resident.binding, processGeneration: resident.generation };
@@ -637,82 +673,99 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
           (cause) => new SupervisorError({ operation: "invoke", reason: "protocol", cause })
         )
       );
-      yield* checkEpoch(epoch, "invoke");
-      if (stopped) return yield* new SupervisorError({ operation: "invoke", reason: "stopped" });
-      if (request.binding.companyId !== companyId)
-        return yield* new SupervisorError({
-          operation: "invoke",
-          reason: "binding_conflict"
-        });
-      const resident = residents.get(identity(request.binding));
-      if (
-        resident === undefined ||
-        !resident.alive ||
-        resident.loading ||
-        resident.engine === undefined
-      )
-        return yield* new SupervisorError({
-          operation: "invoke",
-          reason: "bundle_required"
-        });
-      if (request.processGeneration !== resident.generation)
-        return yield* new SupervisorError({
-          operation: "invoke",
-          reason: "stale_generation"
-        });
-      if (request.binding.sha256 !== resident.binding.sha256)
-        return yield* new SupervisorError({
-          operation: "invoke",
-          reason: "binding_conflict"
-        });
-      if (aggregateRss() >= limit("execution.residency.bytes"))
-        return yield* new SupervisorError({
-          operation: "invoke",
-          reason: "busy",
-          limit: limitRefusal("execution.residency.bytes", limit("execution.residency.bytes"))
-        });
-      const target = resident.callbacks.get(request.callback.url);
-      const key = attemptKey(request);
-      if (target === undefined || resident.invocations.has(key))
-        return yield* new SupervisorError({ operation: "invoke", reason: "protocol" });
-      const result = yield* Deferred.make<GuestProtocol.InvokeReply, SupervisorError>();
-      const attempt: GuestProtocol.Attempt = {
-        invocationId: request.invocationId,
-        attemptId: request.attemptId,
-        processGeneration: resident.generation,
-        deadline: request.deadline
-      };
-      resident.invocations.set(key, {
-        attempt,
-        epoch,
-        capability: request.callback.capability,
-        target: request.callback.url,
-        result
-      });
-      resident.callsServed++;
-      // The supervisor owns dispatch. Losing the HTTP caller must not erase a running deadline.
-      yield* resident.engine
-        .invoke({ ...request, callback: { ...request.callback, url: target } })
-        .pipe(
-          Effect.mapError(
-            (cause) => new SupervisorError({ operation: "invoke", reason: cause.reason, cause })
-          ),
-          Effect.raceFirst(Deferred.await(resident.dead)),
-          Effect.exit,
-          Effect.flatMap((exit) =>
-            Effect.gen(function* () {
-              if (resident.alive && Exit.isFailure(exit)) {
-                // Transport loss cannot prove execution ended. Keep its deadline and identity until reap.
-                yield* Deferred.done(result, exit);
-                return;
+      const result = yield* admission.withPermit(
+        Effect.gen(function* () {
+          const key = attemptKey(request);
+          const select = Effect.gen(function* () {
+            yield* checkEpoch(epoch, "invoke");
+            if (stopped)
+              return yield* new SupervisorError({ operation: "invoke", reason: "stopped" });
+            if (request.binding.companyId !== companyId)
+              return yield* new SupervisorError({
+                operation: "invoke",
+                reason: "binding_conflict"
+              });
+            const resident = residents.get(versionKey(request.binding));
+            if (
+              resident === undefined ||
+              !resident.alive ||
+              resident.loading ||
+              resident.engine === undefined
+            )
+              return yield* new SupervisorError({
+                operation: "invoke",
+                reason: "bundle_required"
+              });
+            if (request.processGeneration !== resident.generation)
+              return yield* new SupervisorError({
+                operation: "invoke",
+                reason: "stale_generation"
+              });
+            if (request.binding.sha256 !== resident.binding.sha256)
+              return yield* new SupervisorError({
+                operation: "invoke",
+                reason: "binding_conflict"
+              });
+            const target = resident.proxyUrls.get(request.callback.url);
+            if (target === undefined || resident.invocations.has(key))
+              return yield* new SupervisorError({ operation: "invoke", reason: "protocol" });
+            return { resident, engine: resident.engine, target };
+          });
+          const selected = yield* select;
+          const blockedBy = yield* evict(0, selected.resident);
+          // Reaping an idle sibling yields. Recheck the target and its authority before dispatch.
+          const { resident, engine, target } = yield* select;
+          if (blockedBy !== undefined)
+            return yield* new SupervisorError({
+              operation: "invoke",
+              reason: "busy",
+              limit: limitRefusal(blockedBy, limit(blockedBy))
+            });
+          const result = yield* Deferred.make<GuestProtocol.InvokeReply, SupervisorError>();
+          const attempt: GuestProtocol.Attempt = {
+            invocationId: request.invocationId,
+            attemptId: request.attemptId,
+            processGeneration: resident.generation,
+            deadline: request.deadline
+          };
+          resident.invocations.set(key, {
+            attempt,
+            epoch,
+            capability: request.callback.capability,
+            target: request.callback.url,
+            result
+          });
+          resident.callsServed++;
+          let uncertain = false;
+          // The supervisor owns dispatch. Losing the HTTP caller must not erase a running deadline.
+          yield* engine.invoke({ ...request, callback: { ...request.callback, url: target } }).pipe(
+            Effect.catchTags({
+              ExecutionError: (cause) => {
+                uncertain = cause.reason === "transport";
+                return Effect.fail(
+                  new SupervisorError({ operation: "invoke", reason: cause.reason, cause })
+                );
               }
-              resident.invocations.delete(key);
-              resident.idleSince = Date.now();
-              yield* Deferred.done(result, exit);
-            })
-          ),
-          Effect.forkIn(scope)
-        );
+            }),
+            Effect.raceFirst(Deferred.await(resident.dead)),
+            Effect.exit,
+            Effect.flatMap((exit) =>
+              Effect.gen(function* () {
+                if (resident.alive && Exit.isFailure(exit) && uncertain) {
+                  // Only transport loss leaves execution uncertain until its deadline or reap.
+                  yield* Deferred.done(result, exit);
+                  return;
+                }
+                resident.invocations.delete(key);
+                resident.idleSince = Date.now();
+                yield* Deferred.done(result, exit);
+              })
+            ),
+            Effect.forkIn(scope)
+          );
+          return result;
+        })
+      );
       return yield* Deferred.await(result);
     }),
     stop: Effect.fn("Supervisor.stop")(function* (input) {

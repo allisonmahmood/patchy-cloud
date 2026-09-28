@@ -34,17 +34,9 @@ export interface BoundVersion {
 export class Executor extends Context.Service<
   Executor,
   {
-    readonly implementation: "engine" | "local" | "fleet";
     readonly bind: (bundle: GuestProtocol.Bundle) => Effect.Effect<BoundVersion, ExecutionError>;
     readonly invoke: (
       request: GuestProtocol.Invoke
     ) => Effect.Effect<GuestProtocol.InvokeReply, ExecutionError>;
   }
 >()("@patchy/runtime/Executor") {}
-
-/** Admission must call this before installing an executor in a production host. */
-export const requireProduction = Effect.flatMap(Executor, (executor) =>
-  executor.implementation === "fleet"
-    ? Effect.void
-    : Effect.fail(new ExecutionError({ operation: "bind", reason: "production_refused" }))
-);

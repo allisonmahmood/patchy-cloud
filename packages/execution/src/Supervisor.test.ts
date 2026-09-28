@@ -7,8 +7,12 @@ import * as GuestProtocol from "@patchy/api/guest";
 import * as Management from "@patchy/api/management";
 import { registry } from "@patchy/limits/registry";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Scope from "effect/Scope";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as Supervisor from "./supervisor.js";
 
 const source = `
@@ -95,6 +99,18 @@ const bind = (supervisor: Supervisor.Supervisor["Service"], versionId: string, c
     bindingEpoch: 1,
     bundle: bundle(versionId, code)
   });
+const statsWhen = Effect.fnUntraced(function* (
+  supervisor: Supervisor.Supervisor["Service"],
+  ready: (stats: Management.StatsReply) => boolean
+) {
+  for (let i = 0; i < 800; i++) {
+    const stats = yield* supervisor.stats({ bindingEpoch: 1 });
+    if (ready(stats)) return stats;
+    yield* Effect.sleep(25);
+  }
+  throw new Error("Supervisor did not reach the expected resident state");
+});
+
 const reportFor = Effect.fnUntraced(function* (
   supervisor: Supervisor.Supervisor["Service"],
   generation: number
@@ -113,6 +129,22 @@ const idleHost = (_request: IncomingMessage, response: ServerResponse) => {
   response.end(JSON.stringify({ ok: true, value: null }));
 };
 const largeAggregate = { "execution.residency.bytes": 8 * 1024 ** 3 } as const;
+
+it.live("rejects a probe interval that cannot enforce the six-second stall bound", () =>
+  Supervisor.make({
+    callbackUrls: [],
+    operatingLimits: { "execution.probe.interval": 6_000 }
+  }).pipe(
+    Effect.result,
+    Effect.tap((result) =>
+      Effect.sync(() => {
+        expect(result).toMatchObject({ _tag: "Failure", failure: { reason: "protocol" } });
+      })
+    ),
+    Effect.scoped,
+    Effect.provide(FetchHttpClient.layer)
+  )
+);
 
 it.live(
   "keeps tuple identities distinct and makes concurrent same-epoch binds idempotent",
@@ -177,6 +209,52 @@ it.live(
       ).toMatchObject({
         outcome: "returned",
         reply: { ok: false, source: "patchy", code: "timeout" }
+      });
+    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+  20_000
+);
+
+it.live(
+  "clears a completed loader refusal so the resident idles instead of dying at its old deadline",
+  () =>
+    Effect.gen(function* () {
+      const host = yield* listener(idleHost);
+      let refuse = false;
+      const http = (yield* HttpClient.HttpClient).pipe(
+        HttpClient.mapRequest((request) =>
+          refuse && request.url.endsWith("/invoke")
+            ? HttpClientRequest.setUrl(request, request.url.replace(/\/invoke$/, "/unknown"))
+            : request
+        )
+      );
+      const supervisor = yield* Supervisor.make({
+        callbackUrls: [host.url],
+        operatingLimits: {
+          ...largeAggregate,
+          "execution.process.idle": 2_000,
+          "execution.probe.interval": 25
+        }
+      }).pipe(Effect.provideService(HttpClient.HttpClient, http));
+      const loaded = yield* bind(supervisor, "ver_refused");
+      refuse = true;
+      const rejected = invocation(loaded, host.url, "reply", { deadline: Date.now() + 200 });
+      expect(yield* supervisor.invoke(rejected).pipe(Effect.result)).toMatchObject({
+        _tag: "Failure",
+        failure: { reason: "protocol" }
+      });
+      expect((yield* supervisor.stats({ bindingEpoch: 1 })).processes).toEqual([
+        expect.objectContaining({ activeInvocations: 0 })
+      ]);
+      refuse = false;
+      yield* Effect.sleep(1_500);
+      expect(yield* supervisor.invoke(invocation(loaded, host.url))).toMatchObject({
+        outcome: "returned",
+        reply: { ok: true, value: "alive" }
+      });
+      expect(yield* reportFor(supervisor, loaded.processGeneration!)).toMatchObject({
+        cause: "idle",
+        callsServed: 2,
+        invocations: []
       });
     }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
   20_000
@@ -326,12 +404,13 @@ it.live(
     Effect.gen(function* () {
       const reached = Promise.withResolvers<void>();
       const host = yield* listener(() => reached.resolve());
-      const ceiling = process.memoryUsage.rss() + 512 * 1024 ** 2;
+      const ceiling = process.memoryUsage.rss() + 768 * 1024 ** 2;
+      const pressureMargin = 256 * 1024 ** 2;
       const supervisor = yield* Supervisor.make({
         callbackUrls: [host.url],
         operatingLimits: {
           "execution.residency.bytes": ceiling,
-          "execution.process.rss": 2 * 1024 ** 3,
+          "execution.process.rss": ceiling + 2 * pressureMargin,
           "execution.probe.interval": 25
         }
       });
@@ -339,10 +418,14 @@ it.live(
       const large = yield* bind(supervisor, "ver_large_idle");
       const busy = yield* bind(supervisor, "ver_memory_busy");
       yield* supervisor.invoke(
-        invocation(large, host.url, "grow", { args: { bytes: 96 * 1024 ** 2 } })
+        invocation(large, host.url, "grow", { args: { bytes: 192 * 1024 ** 2 } })
       );
-      yield* Effect.sleep(100);
-      const before = yield* supervisor.stats({ bindingEpoch: 1 });
+      const before = yield* statsWhen(supervisor, (stats) =>
+        stats.processes.some(
+          (entry) =>
+            entry.processGeneration === large.processGeneration && entry.rssBytes >= 192 * 1024 ** 2
+        )
+      );
       expect(
         before.processes.find((entry) => entry.processGeneration === large.processGeneration)!
           .rssBytes
@@ -351,12 +434,22 @@ it.live(
           .rssBytes
       );
       yield* supervisor
-        .invoke(invocation(busy, host.url, "growAndHold", { args: { bytes: 480 * 1024 ** 2 } }))
+        .invoke(
+          invocation(busy, host.url, "growAndHold", {
+            args: { bytes: ceiling + pressureMargin }
+          })
+        )
         .pipe(Effect.result, Effect.forkChild);
       yield* Effect.promise(() => reached.promise);
       const report = yield* reportFor(supervisor, large.processGeneration!);
       expect(report.cause).toBe("evicted");
-      const after = yield* supervisor.stats({ bindingEpoch: 1 });
+      const after = yield* statsWhen(supervisor, (stats) =>
+        stats.processes.some(
+          (entry) =>
+            entry.processGeneration === busy.processGeneration &&
+            entry.rssBytes >= ceiling + pressureMargin
+        )
+      );
       expect(after.reports[0]!.processGeneration).toBe(large.processGeneration);
       expect(after.processes).toContainEqual(
         expect.objectContaining({ processGeneration: busy.processGeneration, activeInvocations: 1 })
@@ -403,6 +496,64 @@ it.live(
 );
 
 it.live(
+  "evicts an idle sibling during invocation admission without evicting the larger target",
+  () =>
+    Effect.gen(function* () {
+      const host = yield* listener(idleHost);
+      const ceiling = process.memoryUsage.rss() + 768 * 1024 ** 2;
+      const supervisor = yield* Supervisor.make({
+        callbackUrls: [host.url],
+        operatingLimits: {
+          "execution.residency.bytes": ceiling,
+          "execution.process.rss": ceiling,
+          "execution.probe.interval": 5_000
+        }
+      });
+      const target = yield* bind(supervisor, "ver_protected");
+      const sibling = yield* bind(supervisor, "ver_evict_on_invoke");
+      yield* supervisor.invoke(
+        invocation(target, host.url, "grow", { args: { bytes: 192 * 1024 ** 2 } })
+      );
+      const sampled = yield* statsWhen(supervisor, (stats) =>
+        stats.processes.some(
+          (entry) =>
+            entry.processGeneration === target.processGeneration &&
+            entry.rssBytes >= 192 * 1024 ** 2
+        )
+      );
+      const targetStats = sampled.processes.find(
+        (entry) => entry.processGeneration === target.processGeneration
+      )!;
+      const siblingStats = sampled.processes.find(
+        (entry) => entry.processGeneration === sibling.processGeneration
+      )!;
+      expect(targetStats.rssBytes).toBeGreaterThan(siblingStats.rssBytes);
+      // Real host allocations cross the budget between child samples. No accounting is stubbed.
+      const pressure: Buffer[] = [];
+      const childRss = targetStats.rssBytes + siblingStats.rssBytes;
+      const pressuredRss = ceiling + Math.floor(siblingStats.rssBytes / 4);
+      let missing = pressuredRss - process.memoryUsage.rss() - childRss;
+      while (missing > 0) {
+        pressure.push(Buffer.alloc(missing, 165));
+        missing = pressuredRss - process.memoryUsage.rss() - childRss;
+      }
+      expect(yield* supervisor.invoke(invocation(target, host.url))).toMatchObject({
+        outcome: "returned",
+        reply: { ok: true, value: "alive" }
+      });
+      expect(yield* reportFor(supervisor, sibling.processGeneration!)).toMatchObject({
+        cause: "evicted",
+        callsServed: 0
+      });
+      expect((yield* supervisor.stats({ bindingEpoch: 1 })).processes).toEqual([
+        expect.objectContaining({ processGeneration: target.processGeneration })
+      ]);
+      pressure.length = 0;
+    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+  20_000
+);
+
+it.live(
   "does not reap active calls as idle and returns busy instead of killing them for residency",
   () =>
     Effect.gen(function* () {
@@ -417,7 +568,7 @@ it.live(
         operatingLimits: {
           ...largeAggregate,
           "execution.residency.processes": 1,
-          "execution.process.idle": 200,
+          "execution.process.idle": 1_500,
           "execution.probe.interval": 25
         }
       });
@@ -426,7 +577,7 @@ it.live(
         .invoke(invocation(loaded, host.url, "callback"))
         .pipe(Effect.forkChild);
       yield* Effect.promise(() => reached.promise);
-      yield* Effect.sleep(350);
+      yield* Effect.sleep(1_750);
       expect((yield* supervisor.stats({ bindingEpoch: 1 })).processes).toEqual([
         expect.objectContaining({
           processGeneration: loaded.processGeneration,
@@ -448,6 +599,93 @@ it.live(
       });
       const report = yield* reportFor(supervisor, loaded.processGeneration!);
       expect(report).toMatchObject({ cause: "idle", callsServed: 1, invocations: [] });
+    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+  20_000
+);
+
+it.live(
+  "reports an in-flight attempt when its supervisor scope shuts down",
+  () =>
+    Effect.gen(function* () {
+      const reached = Promise.withResolvers<void>();
+      const host = yield* listener(() => reached.resolve());
+      const scope = yield* Scope.make();
+      yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+      const supervisor = yield* Supervisor.make({
+        callbackUrls: [host.url],
+        operatingLimits: largeAggregate
+      }).pipe(Effect.provideService(Scope.Scope, scope));
+      const loaded = yield* bind(supervisor, "ver_shutdown");
+      const request = invocation(loaded, host.url, "callback");
+      const pending = yield* supervisor.invoke(request).pipe(Effect.result, Effect.forkChild);
+      yield* Effect.promise(() => reached.promise);
+      yield* Scope.close(scope, Exit.void);
+      expect(yield* Fiber.join(pending)).toMatchObject({
+        _tag: "Failure",
+        failure: { reason: "process_killed" }
+      });
+      const report = yield* reportFor(supervisor, loaded.processGeneration!);
+      expect(report).toMatchObject({
+        cause: "stopped",
+        invocations: [
+          {
+            invocationId: request.request.invocationId,
+            attemptId: request.request.attemptId,
+            processGeneration: loaded.processGeneration,
+            deadline: request.request.deadline
+          }
+        ]
+      });
+    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+  15_000
+);
+
+it.live(
+  "expires a responsive unfinished describe load and admits a replacement",
+  () =>
+    Effect.gen(function* () {
+      const host = yield* listener(idleHost);
+      const supervisor = yield* Supervisor.make({
+        callbackUrls: [host.url],
+        operatingLimits: {
+          ...largeAggregate,
+          "execution.residency.processes": 1,
+          "execution.process.idle": 2_000,
+          "execution.probe.interval": 25
+        }
+      });
+      yield* supervisor.bind({ companyId: "com_supervisor", bindingEpoch: 1 });
+      const started = Date.now();
+      // Guest timers use workerd's clock, which the host test clock cannot advance.
+      const loading = yield* bind(
+        supervisor,
+        "ver_async_describe",
+        `export default { async fetch() {
+          while (true) {
+            const tick = Promise.withResolvers();
+            setTimeout(tick.resolve, 10);
+            await tick.promise;
+          }
+        }};`
+      ).pipe(Effect.result, Effect.forkChild);
+      const pending = yield* statsWhen(supervisor, (stats) => stats.processes.length === 1);
+      expect(yield* bind(supervisor, "ver_full").pipe(Effect.result)).toMatchObject({
+        _tag: "Failure",
+        failure: { reason: "busy" }
+      });
+      expect(yield* Fiber.join(loading)).toMatchObject({
+        _tag: "Failure",
+        failure: { reason: "load_failed" }
+      });
+      const report = yield* reportFor(supervisor, pending.processes[0]!.processGeneration);
+      expect(report).toMatchObject({ cause: "load_failed", callsServed: 0, invocations: [] });
+      expect(report.endedAt - started).toBeGreaterThanOrEqual(2_000);
+      expect(report.endedAt - started).toBeLessThan(5_000);
+      const replacement = yield* bind(supervisor, "ver_replacement");
+      expect(yield* supervisor.invoke(invocation(replacement, host.url))).toMatchObject({
+        outcome: "returned",
+        reply: { ok: true, value: "alive" }
+      });
     }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
   20_000
 );
@@ -611,6 +849,15 @@ it.live(
         expect(report.cpuSeconds).toBeGreaterThanOrEqual(before.cpuSeconds);
         expect(report.peakRssBytes).toBeGreaterThanOrEqual(before.peakRssBytes);
         expect(report.peakRssBytes).toBeGreaterThan(0);
+        expect(yield* supervisor.invoke(invocation(survivor, host.url))).toMatchObject({
+          outcome: "returned",
+          reply: { ok: true, value: "alive" }
+        });
+        const replacement = yield* bind(supervisor, "ver_after_external_exit");
+        expect(yield* supervisor.invoke(invocation(replacement, host.url))).toMatchObject({
+          outcome: "returned",
+          reply: { ok: true, value: "alive" }
+        });
       }).pipe(Effect.scoped);
       expect(() => process.kill(survivingPid, 0)).toThrow();
     }).pipe(Effect.provide(FetchHttpClient.layer)),

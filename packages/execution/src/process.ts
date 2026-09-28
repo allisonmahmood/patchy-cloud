@@ -39,6 +39,15 @@ export class WorkerdError extends Schema.TaggedError<WorkerdError>()("WorkerdErr
 }
 const isWorkerdError = Schema.is(WorkerdError);
 
+class WorkerdCleanupError extends Schema.TaggedError<WorkerdCleanupError>()("WorkerdCleanupError", {
+  directory: Schema.String,
+  cause: Schema.Defect()
+}) {
+  override get message() {
+    return `The reaped execution process's temporary directory ${this.directory} could not be removed.`;
+  }
+}
+
 const packages: Readonly<Record<string, string>> = {
   "linux x64": "@cloudflare/workerd-linux-64",
   "linux arm64": "@cloudflare/workerd-linux-arm64",
@@ -169,7 +178,6 @@ function reservePort(): Promise<number> {
 
 export interface WorkerdProcess {
   readonly url: string;
-  readonly closed: Promise<void>;
   readonly child: ChildProcess;
   readonly directory: string;
 }
@@ -233,7 +241,7 @@ export const sampleProcess = (
           typeof cause === "object" &&
           cause !== null &&
           "code" in cause &&
-          cause.code === "ENOENT"
+          (cause.code === "ENOENT" || cause.code === "ESRCH")
         )
           return undefined;
         throw cause;
@@ -318,13 +326,11 @@ export const startWorkerd = Effect.fn("Execution.startWorkerd")(function* (
             (disposal ??= (async () => {
               if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
               await closed;
-              await rm(directory, { recursive: true, force: true });
             })());
           return {
             url: `http://127.0.0.1:${port}`,
             child,
             directory,
-            closed,
             dispose,
             failure: (reason: "exited" | "timeout") =>
               new WorkerdError({
@@ -346,7 +352,19 @@ export const startWorkerd = Effect.fn("Execution.startWorkerd")(function* (
           ? cause
           : new WorkerdError({ stage: "spawn", reason: "acquisition_failed", cause })
     }),
-    (resource) => Effect.promise(resource.dispose)
+    (resource) =>
+      Effect.gen(function* () {
+        yield* Effect.promise(resource.dispose);
+        yield* Effect.tryPromise({
+          try: () => rm(resource.directory, { recursive: true, force: true }),
+          catch: (cause) => new WorkerdCleanupError({ directory: resource.directory, cause })
+        }).pipe(
+          Effect.catchTags({
+            WorkerdCleanupError: (error) =>
+              Effect.logError(error.message, { directory: error.directory })
+          })
+        );
+      })
   );
   yield* Effect.tryPromise({
     try: async (signal) => {
@@ -381,7 +399,6 @@ export const startWorkerd = Effect.fn("Execution.startWorkerd")(function* (
   return {
     url: resource.url,
     child: resource.child,
-    directory: resource.directory,
-    closed: resource.closed
+    directory: resource.directory
   } satisfies WorkerdProcess;
 });

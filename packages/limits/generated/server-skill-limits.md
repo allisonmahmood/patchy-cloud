@@ -62,7 +62,7 @@ PGlite dev has one connection. It does not reproduce production connection conte
 | `execution.task.memory` | operating | 2147483648 | bytes | company | Fargate memory allocation, 2048 MiB | None | Yes | deployment |
 | `execution.residency.processes` | operating | 12 | processes | company | Loaded version processes; idle processes evicted first | `busy` | Yes | deployment |
 | `execution.residency.bytes` | operating | 1610612736 | bytes | company | Aggregate RSS including supervisor, bundles and overlapping versions | `busy` | Yes | deployment |
-| `execution.process.idle` | operating | 60000 | milliseconds | company | Process idle window before reap | None | Yes | deployment |
+| `execution.process.idle` | operating | 60000 | milliseconds | company | Process idle window before reap and maximum unfinished initialization lifetime | None | Yes | deployment |
 | `execution.pool.spares` | operating | 2 | tasks | host | Global spare floor; target is max(floor, wake rate times measured cold start) within fleet budget | None | No | deployment |
 | `execution.pool.wakeWindow` | operating | 900000 | milliseconds | host | Observation window for company wake rate | None | No | deployment |
 | `execution.pool.wait` | operating | 40000 | milliseconds | company | Empty-pool wait before start_failed; held calls are never replayed | `busy` | Yes | deployment |

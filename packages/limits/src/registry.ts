@@ -513,7 +513,7 @@ export const registry = {
     default: 60000,
     unit: "milliseconds",
     scope: "company",
-    measure: "Process idle window before reap",
+    measure: "Process idle window before reap and maximum unfinished initialization lifetime",
     refusal: null,
     overridable: true
   },

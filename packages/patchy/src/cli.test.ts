@@ -2607,7 +2607,7 @@ describe("patch lifecycle commands", () => {
       expect(result.status).toBe(1);
     }
     expect(instance.requests).toEqual([]);
-  });
+  }, 30_000); // Six real CLI processes cover the local description-validation boundaries.
 
   it("clears descriptions explicitly and normalizes nonempty text", async () => {
     const instance = await stubInstance((request, respond) =>

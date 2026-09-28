@@ -121,13 +121,6 @@ it.live(
           Effect.result
         )
       ).toMatchObject({ _tag: "Failure", failure: { reason: "production_refused" } });
-      const local = yield* Local.make(options).pipe(Effect.provide(development));
-      expect(
-        yield* Executor.requireProduction.pipe(
-          Effect.provideService(Executor.Executor, local),
-          Effect.result
-        )
-      ).toMatchObject({ _tag: "Failure", failure: { reason: "production_refused" } });
     }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
   10_000
 );
