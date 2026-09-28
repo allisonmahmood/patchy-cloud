@@ -2,12 +2,16 @@ import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { Identity } from "@patchy/api";
+import { Identity, RuntimeStreamFrame } from "@patchy/api";
 import { shellContentSecurityPolicy } from "@patchy/serving/shell";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import * as Sse from "effect/unstable/encoding/Sse";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpServer from "effect/unstable/http/HttpServer";
@@ -15,6 +19,7 @@ import * as DevServer from "./devServer.js";
 import { readRecord } from "./devState.js";
 import type { Prepared } from "./devPreparation.js";
 import { RELEASE, MANIFEST_VERSION, WIRE_VERSION } from "./release.js";
+import toolchain from "./toolchain.json" with { type: "json" };
 
 const identity = new Identity({
   user: { id: "local-user", email: "local@example.test", name: "Local" },
@@ -23,8 +28,10 @@ const identity = new Identity({
   machine: { id: "local-machine", name: "Local machine" }
 });
 
+const decodeStreamFrame = Schema.decodeUnknownEffect(Schema.fromJsonString(RuntimeStreamFrame));
+
 it.live(
-  "serves the real shell and local rows, refuses foreign admission, and swaps completed builds",
+  "serves and synchronizes local documents, refuses foreign admission, and swaps completed builds",
   () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -64,15 +71,20 @@ it.live(
         identity,
         metadata: { postgres: {}, shared: {} }
       };
-      const server = yield* DevServer.serve(prepared, stateDir, {
-        root,
-        instance: "https://metadata.example.test",
-        nonce: "local-test",
-        release: RELEASE,
-        identity: prepared.identity,
-        pid: process.pid,
-        birth: "starting"
-      }).pipe(Effect.forkScoped);
+      const server = yield* DevServer.serve(
+        prepared,
+        stateDir,
+        {
+          root,
+          instance: "https://metadata.example.test",
+          nonce: "local-test",
+          release: RELEASE,
+          identity: prepared.identity,
+          pid: process.pid,
+          birth: "starting"
+        },
+        toolchain
+      ).pipe(Effect.forkScoped);
       yield* Effect.gen(function* () {
         while (!(yield* Effect.promise(() => readRecord(stateDir)))?.url)
           yield* Effect.sleep("25 millis");
@@ -119,12 +131,77 @@ it.live(
       const failure = yield* invalid.json;
       assert.propertyVal(failure, "code", "invalid_row");
       assert.notProperty(failure, "correlationId");
+      const subscribe = Effect.fn(function* (documentId: string) {
+        const frames = yield* Queue.make<RuntimeStreamFrame>();
+        const query = new URLSearchParams({
+          patchId: prepared.patchId,
+          versionId: "ver_000000000000000000000000",
+          documentId
+        });
+        const stream = yield* http.execute(
+          HttpClientRequest.get(`/api/runtime/stream?${query}`).pipe(
+            HttpClientRequest.setHeaders({
+              origin,
+              "sec-fetch-site": "same-origin",
+              "x-patchy-wire": String(WIRE_VERSION),
+              "x-patchy-principal": JSON.stringify({ userId: prepared.identity.user.id })
+            })
+          )
+        );
+        assert.strictEqual(stream.status, 200);
+        yield* stream.stream.pipe(
+          Stream.decodeText,
+          Stream.pipeThroughChannel(Sse.decode()),
+          Stream.mapEffect((event) => decodeStreamFrame(event.data)),
+          Stream.runForEach((frame) => Queue.offer(frames, frame)),
+          Effect.forkScoped
+        );
+        const hello = yield* Queue.take(frames).pipe(Effect.timeout("5 seconds"));
+        if (hello.type !== "hello") return yield* Effect.die("The local stream needs a hello.");
+        const response = yield* http.execute(
+          HttpClientRequest.post("/api/runtime/subscriptions").pipe(
+            HttpClientRequest.setHeaders({
+              origin,
+              "sec-fetch-site": "same-origin",
+              "x-patchy-wire": String(WIRE_VERSION),
+              "x-patchy-principal": JSON.stringify({ userId: prepared.identity.user.id })
+            }),
+            HttpClientRequest.bodyJsonUnsafe({
+              patchId: prepared.patchId,
+              versionId: "ver_000000000000000000000000",
+              documentId,
+              generation: hello.generation,
+              sequence: 0,
+              type: "replace",
+              subscriptions: [{ id: "notes", op: "tables.list", args: { table: "notes" } }]
+            })
+          )
+        );
+        assert.strictEqual(response.status, 200);
+        yield* response.text;
+        return Effect.gen(function* () {
+          while (true) {
+            const frame = yield* Queue.take(frames);
+            if (frame.type === "snapshot") return frame.result;
+            assert.notStrictEqual(frame.type, "error");
+          }
+        }).pipe(Effect.timeout("5 seconds"));
+      });
+      const firstDocument = yield* subscribe("local-document-first");
+      const secondDocument = yield* subscribe("local-document-second");
+      assert.deepStrictEqual(yield* firstDocument, { rows: [], cursor: null });
+      assert.deepStrictEqual(yield* secondDocument, { rows: [], cursor: null });
       const inserted = yield* call("tables.insert", {
         table: "notes",
         row: { title: "Local persisted note" }
       });
       assert.strictEqual(inserted.status, 200);
       assert.nestedPropertyVal(yield* inserted.json, "value.title", "Local persisted note");
+      for (const next of [firstDocument, secondDocument]) {
+        const snapshot = yield* next;
+        assert.nestedPropertyVal(snapshot, "rows[0].title", "Local persisted note");
+        assert.nestedPropertyVal(snapshot, "rows.length", 1);
+      }
       const listed = yield* call("tables.list", { table: "notes", limit: 10 });
       const result = yield* listed.json;
       assert.nestedPropertyVal(result, "value.rows[0].title", "Local persisted note");
@@ -180,15 +257,20 @@ it.live(
         identity,
         metadata: { postgres: {}, shared: {} }
       };
-      const server = yield* DevServer.serve(prepared, stateDir, {
-        root,
-        instance: "https://metadata.example.test",
-        nonce: "static-test",
-        release: RELEASE,
-        identity,
-        pid: process.pid,
-        birth: "starting"
-      }).pipe(Effect.forkScoped);
+      const server = yield* DevServer.serve(
+        prepared,
+        stateDir,
+        {
+          root,
+          instance: "https://metadata.example.test",
+          nonce: "static-test",
+          release: RELEASE,
+          identity,
+          pid: process.pid,
+          birth: "starting"
+        },
+        toolchain
+      ).pipe(Effect.forkScoped);
       yield* Effect.gen(function* () {
         while (!(yield* Effect.promise(() => readRecord(stateDir)))?.url)
           yield* Effect.sleep("25 millis");

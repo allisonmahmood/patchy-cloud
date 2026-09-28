@@ -44,6 +44,8 @@ const fixture = Effect.gen(function* () {
   const scope = yield* Scope.Scope;
   const frames = yield* Queue.make<RuntimeStreamFrame>();
   const started = yield* Queue.make<number>();
+  const admitting = yield* Queue.make<number>();
+  const recorded = yield* Queue.make<WideEvents.WideEvent>();
   const state = {
     revision: 0,
     lifecycle: 0,
@@ -51,8 +53,8 @@ const fixture = Effect.gen(function* () {
     admissions: 0,
     value: { rows: [{ id: "one", value: "initial" }], cursor: null },
     failure: undefined as Runtime.RuntimeError | undefined,
-    gate: undefined as Deferred.Deferred<void> | undefined,
-    duringReadKey: undefined as string | undefined
+    admissionGate: undefined as Deferred.Deferred<void> | undefined,
+    gate: undefined as Deferred.Deferred<void> | undefined
   };
   const vector = () => ({ [key]: String(state.revision), [lifecycle]: String(state.lifecycle) });
   const reader: SubscriptionReads.SubscriptionReads["Service"] = {
@@ -61,14 +63,15 @@ const fixture = Effect.gen(function* () {
         state.admissions++;
         input.onDependency?.(key);
         input.onDependency?.(lifecycle);
+        yield* Queue.offer(admitting, state.admissions);
+        if (state.admissionGate !== undefined) yield* Deferred.await(state.admissionGate);
         if (state.failure !== undefined) return yield* Effect.fail(state.failure);
         return [key, lifecycle];
       }),
-    read: (input) =>
+    read: () =>
       Effect.gen(function* () {
         state.reads++;
         const snapshot = { result: state.value, vector: vector() };
-        if (state.duringReadKey !== undefined) input.onDependency?.(state.duringReadKey);
         yield* Queue.offer(started, state.reads);
         if (state.gate !== undefined) yield* Deferred.await(state.gate);
         if (state.failure !== undefined) return yield* Effect.fail(state.failure);
@@ -76,10 +79,15 @@ const fixture = Effect.gen(function* () {
       }),
     revisions: () => Effect.sync(vector)
   };
+  const events = yield* WideEvents.make.pipe(
+    Effect.provideService(WideEvents.Sink, {
+      write: (event) => Queue.offer(recorded, event).pipe(Effect.asVoid)
+    })
+  );
   const registry = yield* Subscriptions.make.pipe(
     Effect.provideService(SubscriptionReads.SubscriptionReads, reader),
     Effect.provide(StreamLimits.layerLocal),
-    Effect.provide(WideEvents.layerNoop)
+    Effect.provideService(WideEvents.WideEvents, events)
   );
   const document = registry.attach({
     generation: "generation",
@@ -117,6 +125,8 @@ const fixture = Effect.gen(function* () {
     state,
     frames,
     started,
+    admitting,
+    recorded,
     document,
     update,
     next: Queue.take(frames),
@@ -184,9 +194,17 @@ it.effect(
       });
       assert.strictEqual(f.state.admissions, 1);
       assert.strictEqual(f.state.reads, 0);
+      yield* Effect.yieldNow;
+      assert.strictEqual(yield* Queue.size(f.recorded), 0);
       f.state.revision++;
-      yield* f.document.reconcile([key]);
+      yield* f.document.reconcile([key], "write-changed");
       assert.strictEqual((yield* f.next).type, "snapshot");
+      const changed = yield* Queue.take(f.recorded);
+      assert.strictEqual(changed.type, "re-run");
+      if (changed.type === "re-run") {
+        assert.strictEqual(changed.causedByEventId, "write-changed");
+        assert.strictEqual(changed.streamId, "generation");
+      }
       f.state.revision++;
       yield* f.document.reconcile([key]);
       assert.deepStrictEqual(yield* f.next, {
@@ -194,6 +212,75 @@ it.effect(
         id: query.id,
         revision: "8",
         vector: f.vector()
+      });
+    }).pipe(Effect.scoped)
+);
+
+it.effect("repairs a dropped snapshot using the client's received vector and revision", () =>
+  Effect.gen(function* () {
+    const f = yield* fixture;
+    yield* f.update({ type: "subscribe", sequence: 1, subscription: query });
+    yield* f.next;
+    const received = yield* f.next;
+    assert.strictEqual(received.type, "snapshot");
+    if (received.type !== "snapshot") return;
+    f.state.revision++;
+    f.state.value = { rows: [{ id: "one", value: "newest" }], cursor: null };
+    yield* f.document.reconcile([key]);
+    const dropped = yield* f.next;
+    assert.strictEqual(dropped.type, "snapshot");
+    yield* f.update({
+      type: "replace",
+      sequence: 1,
+      subscriptions: [{ ...query, vector: received.vector, revision: received.revision }]
+    });
+    yield* f.next;
+    const repaired = yield* f.next;
+    assert.strictEqual(repaired.type, "snapshot");
+    if (repaired.type !== "snapshot") return;
+    assert.deepStrictEqual(repaired.result, f.state.value);
+    assert.deepStrictEqual(repaired.vector, f.vector());
+    const reads = f.state.reads;
+    yield* f.update({
+      type: "replace",
+      sequence: 1,
+      subscriptions: [{ ...query, vector: repaired.vector, revision: repaired.revision }]
+    });
+    yield* f.next;
+    assert.deepStrictEqual(yield* f.next, {
+      type: "up-to-date",
+      id: query.id,
+      vector: repaired.vector,
+      revision: repaired.revision
+    });
+    assert.strictEqual(f.state.reads, reads);
+  }).pipe(Effect.scoped)
+);
+
+it.effect(
+  "keeps unchanged-result suppression when the client missed only an up-to-date frame",
+  () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      yield* f.update({ type: "subscribe", sequence: 1, subscription: query });
+      yield* f.next;
+      const received = yield* f.next;
+      assert.strictEqual(received.type, "snapshot");
+      if (received.type !== "snapshot") return;
+      f.state.revision++;
+      yield* f.document.reconcile([key]);
+      assert.strictEqual((yield* f.next).type, "up-to-date");
+      yield* f.update({
+        type: "replace",
+        sequence: 1,
+        subscriptions: [{ ...query, vector: received.vector, revision: received.revision }]
+      });
+      yield* f.next;
+      assert.deepStrictEqual(yield* f.next, {
+        type: "up-to-date",
+        id: query.id,
+        vector: f.vector(),
+        revision: received.revision
       });
     }).pipe(Effect.scoped)
 );
@@ -210,6 +297,12 @@ it.effect("keeps failed access dependencies and recovers on a source reshare", (
       assert.isFalse(denied.permanent);
       assert.strictEqual(denied.error.code, "access_denied");
     }
+    const event = yield* Queue.take(f.recorded);
+    assert.strictEqual(event.type, "re-run");
+    assert.strictEqual(event.outcome, "failure");
+    assert.strictEqual(event.code, "access_denied");
+    if (event.type === "re-run") assert.strictEqual(event.patchId, binding.patchId);
+    assert.strictEqual(f.state.reads, 0);
     f.state.failure = undefined;
     f.state.lifecycle++;
     yield* f.document.reconcile([lifecycle]);
@@ -245,6 +338,63 @@ it.effect(
       assert.strictEqual(f.state.reads, 2);
     }).pipe(Effect.scoped)
 );
+
+for (const sameDocument of [true, false]) {
+  it.effect(
+    `serves a pending subscription ${sameDocument ? "in the same document" : "in another document"} before a dirty subscription runs again`,
+    () =>
+      Effect.gen(function* () {
+        const f = yield* fixture;
+        f.state.gate = yield* Deferred.make<void>();
+        yield* f.update({ type: "subscribe", sequence: 1, subscription: query });
+        yield* f.next;
+        yield* Queue.take(f.started);
+        const second = sameDocument
+          ? f.document
+          : f.registry.attach({
+              generation: "second",
+              binding: () => binding,
+              check: Effect.void,
+              scope: f.scope,
+              send: (frame) => {
+                Queue.offerUnsafe(f.frames, frame);
+              }
+            });
+        if (!sameDocument) yield* Effect.addFinalizer(() => Effect.sync(second.close));
+        yield* second.update({
+          type: "subscribe",
+          sequence: sameDocument ? 2 : 1,
+          subscription: { ...query, id: "second" },
+          patchId: binding.patchId,
+          versionId: binding.versionId,
+          documentId: "second_document",
+          generation: sameDocument ? "generation" : "second"
+        });
+        yield* f.next;
+        f.state.revision++;
+        f.state.value = { rows: [{ id: "one", value: "newest" }], cursor: null };
+        yield* f.document.reconcile([key]);
+        const gate = f.state.gate;
+        f.state.gate = undefined;
+        yield* Deferred.succeed(gate, undefined);
+        const initial = yield* f.next;
+        assert.strictEqual(initial.type, "snapshot");
+        if (initial.type === "snapshot") assert.strictEqual(initial.id, query.id);
+        const pending = yield* f.next;
+        assert.strictEqual(pending.type, "snapshot");
+        if (pending.type === "snapshot") {
+          assert.strictEqual(pending.id, "second");
+          assert.deepStrictEqual(pending.result, f.state.value);
+        }
+        const refreshed = yield* f.next;
+        assert.strictEqual(refreshed.type, "snapshot");
+        if (refreshed.type === "snapshot") {
+          assert.strictEqual(refreshed.id, query.id);
+          assert.deepStrictEqual(refreshed.result, f.state.value);
+        }
+      }).pipe(Effect.scoped)
+  );
+}
 
 it.effect("permanent failures end only their subscription and a fresh subscribe can retry", () =>
   Effect.gen(function* () {
@@ -293,9 +443,10 @@ it.effect("refuses the newest query at the document limit without evicting its p
   )
 );
 
-it.effect("runs at most two company reads and one read per patch", () =>
+it.effect("bounds admission and reads to two company runs and one run per patch", () =>
   Effect.gen(function* () {
     const f = yield* fixture;
+    f.state.admissionGate = yield* Deferred.make<void>();
     f.state.gate = yield* Deferred.make<void>();
     const second = f.registry.attach({
       generation: "second",
@@ -344,6 +495,14 @@ it.effect("runs at most two company reads and one read per patch", () =>
     yield* second.update(request);
     yield* third.update({ ...request, generation: "third" });
     yield* fourth.update({ ...request, generation: "fourth" });
+    yield* Queue.take(f.admitting);
+    yield* Queue.take(f.admitting);
+    yield* Effect.yieldNow;
+    assert.strictEqual(f.state.admissions, 2);
+    assert.strictEqual(f.state.reads, 0);
+    const admissionGate = f.state.admissionGate;
+    f.state.admissionGate = undefined;
+    yield* Deferred.succeed(admissionGate, undefined);
     yield* Queue.take(f.started);
     yield* Queue.take(f.started);
     yield* Effect.yieldNow;

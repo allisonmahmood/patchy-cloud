@@ -136,6 +136,7 @@ export const serve = Effect.fn("Dev.serve")(function* (
         return HttpServerResponse.text(
           renderPatchWrapper({
             scope: "local",
+            viewerId: prepared.identity.user.id,
             patch: { id: version.patchId, title: prepared.manifest.name ?? "Local patch" },
             version: {
               id: version.versionId,

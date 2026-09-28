@@ -28,8 +28,8 @@ export function renderPatchWrapper(options: PatchPage): string {
   const scripted = options.version.tier >= 1;
   if (scripted && (!options.nonce || !options.base))
     throw new Error("A scripted shell needs its document nonce and address base.");
-  if (scripted && options.scope === "company" && !options.viewerId)
-    throw new Error("A company shell needs its admitted viewer.");
+  if (scripted && options.scope !== "public" && !options.viewerId)
+    throw new Error("A company or local shell needs its admitted viewer.");
   const content = `/~content/${encodeURIComponent(options.patch.id)}/${encodeURIComponent(options.version.id)}?n=${encodeURIComponent(options.nonce ?? "")}`;
   return `<!doctype html>
 <html lang="en">
@@ -40,7 +40,7 @@ export function renderPatchWrapper(options: PatchPage): string {
   ${options.head ?? ""}
   ${scripted ? '<script defer src="/~shell/broker.js"></script>' : ""}
   <style>
-    ${scripted && options.scope === "company" ? shellStyles : ""}
+    ${scripted && options.scope !== "public" ? shellStyles : ""}
     html, body { height: 100%; margin: 0; background: #ffffff; }
     body { overflow: hidden; }
     .patch-frame { display: block; width: 100%; height: 100%; border: 0; background: #ffffff; }
@@ -52,7 +52,7 @@ export function renderPatchWrapper(options: PatchPage): string {
     ${scripted ? 'allow="clipboard-write *"' : ""}
     ${
       scripted
-        ? `data-patch-id="${escapeAttribute(options.patch.id)}" data-version-id="${escapeAttribute(options.version.id)}" data-tier="${options.version.tier}" data-scope="${options.scope}"${options.scope === "company" ? ` data-viewer-id="${escapeAttribute(options.viewerId)}"` : ""} data-wire="${options.version.wireVersion}" data-nonce="${escapeAttribute(options.nonce)}" data-base="${escapeAttribute(options.base)}" data-route="${escapeAttribute(options.route ?? "/")}" data-content-src="${escapeAttribute(content)}"`
+        ? `data-patch-id="${escapeAttribute(options.patch.id)}" data-version-id="${escapeAttribute(options.version.id)}" data-tier="${options.version.tier}" data-scope="${options.scope}"${options.scope !== "public" ? ` data-viewer-id="${escapeAttribute(options.viewerId)}"` : ""} data-wire="${options.version.wireVersion}" data-nonce="${escapeAttribute(options.nonce)}" data-base="${escapeAttribute(options.base)}" data-route="${escapeAttribute(options.route ?? "/")}" data-content-src="${escapeAttribute(content)}"`
         : `srcdoc="${escapeAttribute(options.html)}"`
     }></iframe>
   <!-- patch:${escapeHtml(options.patch.id)} version:${Number(options.version.versionNumber)} -->

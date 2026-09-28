@@ -24,8 +24,8 @@ drop the data role's database merely because it created it.
 
 The platform migration is `0005_company_database_baseline`; Companies retains
 `0004_invites_expiry`. Runtime follows at 0006, Integrations at 0007, and the
-Patches lifecycle at 0008. [ADR-0003](./ADR-0003-postgres-only.md) records the
-eight-entry platform ledger.
+Patches lifecycle at 0008, Limits overrides at 0009, and Patches lifecycle revisions
+at 0010. [ADR-0003](./ADR-0003-postgres-only.md) records the ten-entry platform ledger.
 
 ## Pools and locks
 

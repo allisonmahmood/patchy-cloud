@@ -171,40 +171,78 @@ export const make = Effect.gen(function* () {
       attempted.add(key);
       sub.dependencies.add(key);
     };
-    yield* events.withEvent(
-      {
-        type: "re-run",
-        streamId: doc.generation,
-        parentId: doc.generation,
-        ...(sub.cause === undefined ? {} : { causedByEventId: sub.cause }),
-        companyId: binding.companyId,
-        patchId: binding.patchId,
-        versionId: binding.versionId,
-        ...(binding.principal === null ? {} : { viewerId: binding.principal.userId }),
-        tier: binding.manifest.tier,
-        handler: sub.input.op,
-        kind: "query"
-      },
-      Effect.gen(function* () {
+    const event: WideEvents.EventSeed = {
+      type: "re-run",
+      streamId: doc.generation,
+      parentId: doc.generation,
+      ...(sub.cause === undefined ? {} : { causedByEventId: sub.cause }),
+      companyId: binding.companyId,
+      patchId: binding.patchId,
+      versionId: binding.versionId,
+      ...(binding.principal === null ? {} : { viewerId: binding.principal.userId }),
+      tier: binding.manifest.tier,
+      handler: sub.input.op,
+      kind: "query"
+    };
+    const failed = Effect.fnUntraced(function* (error: Runtime.RuntimeError) {
+      if (!present(doc, sub) || sub.epoch !== epoch) return;
+      for (const key of attempted) sub.dependencies.add(key);
+      const permanent = recoverable[error.code] !== true;
+      doc.send({
+        type: "error",
+        id: sub.input.id,
+        permanent,
+        error: Runtime.toFailure(error)
+      });
+      yield* WideEvents.enrich({ outcome: "failure", code: error.code });
+      if (permanent) {
+        doc.subscriptions.delete(sub.input.id);
+      } else {
+        sub.failures++;
+        const delay = Math.max(
+          Math.min(30_000, 250 * 2 ** Math.min(sub.failures - 1, 7)),
+          "retryAfterSeconds" in error ? (error.retryAfterSeconds ?? 0) * 1000 : 0
+        );
+        sub.retryAt = (yield* Clock.currentTimeMillis) + delay;
+        yield* Effect.sleep(delay).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              if (present(doc, sub)) sub.dirty = true;
+            })
+          ),
+          Effect.andThen(Effect.suspend(() => schedule)),
+          Effect.forkIn(doc.scope)
+        );
+      }
+    });
+    const input = { op: sub.input.op, args: sub.input.args, binding, onDependency: observe };
+    const fence = yield* Effect.gen(function* () {
+      yield* doc.check;
+      const keys = yield* reads.admit(input);
+      const fence = yield* reads.revisions(binding.companyId, keys);
+      if (!present(doc, sub) || sub.epoch !== epoch) return;
+      if (equalVector(sub.vector, fence)) {
         yield* doc.check;
-        const input = { op: sub.input.op, args: sub.input.args, binding, onDependency: observe };
-        const keys = yield* reads.admit(input);
-        const fence = yield* reads.revisions(binding.companyId, keys);
         if (!present(doc, sub) || sub.epoch !== epoch) return;
-        if (equalVector(sub.vector, fence)) {
-          yield* doc.check;
-          if (!present(doc, sub) || sub.epoch !== epoch) return;
-          sub.dependencies.clear();
-          for (const key of keys) sub.dependencies.add(key);
-          sub.failures = 0;
-          doc.send({
-            type: "up-to-date",
-            id: sub.input.id,
-            revision: String(sub.revision),
-            vector: fence
-          });
-          return;
-        }
+        sub.dependencies.clear();
+        for (const key of keys) sub.dependencies.add(key);
+        sub.failures = 0;
+        doc.send({
+          type: "up-to-date",
+          id: sub.input.id,
+          revision: String(sub.revision),
+          vector: fence
+        });
+        return;
+      }
+      return fence;
+    }).pipe(
+      Effect.catch((error) => events.withEvent(event, failed(error)).pipe(Effect.as(undefined)))
+    );
+    if (fence === undefined) return;
+    yield* events.withEvent(
+      event,
+      Effect.gen(function* () {
         doc.reruns++;
         const snapshot = yield* reads.read(input).pipe(
           Effect.timeout(deadline),
@@ -270,49 +308,19 @@ export const make = Effect.gen(function* () {
             vector: snapshot.vector
           });
         }
-      }).pipe(
-        Effect.catch((error) =>
-          Effect.gen(function* () {
-            if (!present(doc, sub) || sub.epoch !== epoch) return;
-            for (const key of attempted) sub.dependencies.add(key);
-            const permanent = recoverable[error.code] !== true;
-            doc.send({
-              type: "error",
-              id: sub.input.id,
-              permanent,
-              error: Runtime.toFailure(error)
-            });
-            yield* WideEvents.enrich({ outcome: "failure", code: error.code });
-            if (permanent) {
-              doc.subscriptions.delete(sub.input.id);
-            } else {
-              sub.failures++;
-              const delay = Math.max(
-                Math.min(30_000, 250 * 2 ** Math.min(sub.failures - 1, 7)),
-                "retryAfterSeconds" in error ? (error.retryAfterSeconds ?? 0) * 1000 : 0
-              );
-              sub.retryAt = (yield* Clock.currentTimeMillis) + delay;
-              yield* Effect.sleep(delay).pipe(
-                Effect.andThen(
-                  Effect.sync(() => {
-                    if (present(doc, sub)) sub.dirty = true;
-                  })
-                ),
-                Effect.andThen(Effect.suspend(() => schedule)),
-                Effect.forkIn(doc.scope)
-              );
-            }
-          })
-        )
-      )
+      }).pipe(Effect.catch(failed))
     );
   });
   const pump: Effect.Effect<void> = Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
+    let documentsLeft = documents.size;
     for (const doc of documents) {
+      if (documentsLeft-- === 0) break;
       const binding = doc.binding();
       const patchKey = `${binding.companyId}:${binding.patchId}`;
+      let subscriptionsLeft = doc.subscriptions.size;
       for (const sub of doc.subscriptions.values()) {
+        if (subscriptionsLeft-- === 0) break;
         if (!sub.dirty || sub.running || sub.retryAt > now) continue;
         if (
           (companyRunning.get(binding.companyId) ?? 0) >= doc.companyRuns ||
@@ -332,6 +340,13 @@ export const make = Effect.gen(function* () {
               adjust(patchRunning, patchKey, -1);
               if (present(doc, sub) && [...sub.duringRun].some((key) => sub.dependencies.has(key)))
                 sub.dirty = true;
+              if (present(doc, sub)) {
+                // Rotate after completion so subscriptions added during the run get a turn.
+                doc.subscriptions.delete(sub.input.id);
+                doc.subscriptions.set(sub.input.id, sub);
+                documents.delete(doc);
+                documents.add(doc);
+              }
               yield* Effect.suspend(() => schedule);
             })
           ),
@@ -435,6 +450,10 @@ export const make = Effect.gen(function* () {
             const signature = `${input.op}:${canonicalArgs(input.args)}`;
             const previous = doc.subscriptions.get(input.id);
             if (previous?.signature === signature) {
+              // Replacements acknowledge received data, not the last frame we sent.
+              previous.vector = input.vector;
+              if (input.revision === undefined || BigInt(input.revision) !== previous.revision)
+                previous.result = undefined;
               previous.epoch++;
               previous.dirty = true;
               previous.retryAt = 0;

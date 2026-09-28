@@ -12,6 +12,7 @@ import { build } from "esbuild";
 import { Client } from "pg";
 import type EmbeddedPostgres from "embedded-postgres";
 import type { BrowserContext } from "@playwright/test";
+import type { Manifest } from "../../packages/api/src/index.js";
 import { clerkEnv, signedInCookies, signSession } from "../../packages/auth/src/testing.js";
 import { WIRE_VERSION } from "../../packages/patchy/src/release.js";
 import { PG_FLAGS, PG_PASSWORD, PG_USER } from "../../scripts/dev/src/postgres.js";
@@ -52,10 +53,22 @@ export interface Instance {
     user?: "owner" | "colleague" | "expired" | "none",
     expiresInSeconds?: number
   ): Promise<string | null>;
-  publish(scope?: "company" | "public", html?: string, patchId?: string): Promise<Published>;
-  lifecycle(patchId: string, action: "rollback" | "retire", versionNumber?: number): Promise<void>;
+  publish(
+    scope?: "company" | "public",
+    html?: string,
+    patchId?: string,
+    declarations?: Partial<Pick<Manifest, "tables" | "uses">>
+  ): Promise<Published>;
+  lifecycle(
+    patchId: string,
+    action: "rollback" | "retire" | "restore",
+    versionNumber?: number,
+    force?: boolean
+  ): Promise<void>;
   share(patchId: string, scope: "company" | "public"): Promise<void>;
   restart(): Promise<void>;
+  /** A second real host sharing this instance's databases, storage and session verifier. */
+  startReplica(): Promise<{ origin: string; stop(signal?: "SIGTERM" | "SIGKILL"): Promise<void> }>;
   pauseStreams(paused: boolean): void;
   /** Drop the next stream's first bytes but retain its upstream socket until released. */
   loseNextStreamHello(): () => void;
@@ -83,11 +96,11 @@ async function stopServer(server: Server) {
   server.closeAllConnections();
   await closed.promise;
 }
-async function stopChild(child: ChildProcess) {
+async function stopChild(child: ChildProcess, signal: "SIGTERM" | "SIGKILL" = "SIGTERM") {
   if (child.exitCode !== null || child.signalCode !== null) return;
   const done = Promise.withResolvers<void>();
   child.once("exit", () => done.resolve());
-  child.kill("SIGTERM");
+  child.kill(signal);
   const timer = setTimeout(() => child.kill("SIGKILL"), 5000);
   try {
     await done.promise;
@@ -102,6 +115,7 @@ export async function startInstance(options: { tls?: boolean } = {}): Promise<In
   const directory = await mkdtemp(path.join(os.tmpdir(), "patchy-tier1-"));
   let postgres: EmbeddedPostgres | undefined;
   let child: ChildProcess | undefined;
+  const children = new Set<ChildProcess>();
   let platform: Client | undefined;
   let proxy: Server | Http2SecureServer | undefined;
   const sessions = new Set<ServerHttp2Session>();
@@ -118,7 +132,7 @@ export async function startInstance(options: { tls?: boolean } = {}): Promise<In
       else await new Promise<void>((resolve) => proxy!.close(() => resolve()));
     }
     if (foreign) await stopServer(foreign);
-    if (child) await stopChild(child);
+    for (const server of children) await stopChild(server);
     if (platform) await platform.end();
     if (postgres) await postgres.stop();
     await rm(directory, { recursive: true, force: true });
@@ -350,10 +364,9 @@ export async function startInstance(options: { tls?: boolean } = {}): Promise<In
     const origin = `${options.tls ? "https" : "http"}://127.0.0.1:${await listen(proxy)}`;
     const backendOrigin = `http://127.0.0.1:${port}`;
     await stopServer(serverReservation);
-    let log = "";
-    const launch = async () => {
-      log = "";
-      child = spawn(process.execPath, [path.join(root, "apps/server/dist/start.js")], {
+    const launch = async (serverPort: number) => {
+      let log = "";
+      const server = spawn(process.execPath, [path.join(root, "apps/server/dist/start.js")], {
         cwd: root,
         env: {
           PATH: process.env.PATH,
@@ -361,7 +374,7 @@ export async function startInstance(options: { tls?: boolean } = {}): Promise<In
           NODE_ENV: "test",
           ...clerkEnv(),
           CLERK_AUTHORIZED_PARTIES: origin,
-          PORT: String(port),
+          PORT: String(serverPort),
           DATABASE_URL: databaseUrl,
           PATCHY_COMPANY_DB_ADMIN_URL: databaseUrl,
           PATCHY_COMPANY_DB_URL: databaseUrl,
@@ -371,20 +384,22 @@ export async function startInstance(options: { tls?: boolean } = {}): Promise<In
         },
         stdio: ["ignore", "pipe", "pipe"]
       });
-      child.stdout!.on("data", (chunk: Buffer) => {
+      children.add(server);
+      server.stdout!.on("data", (chunk: Buffer) => {
         log += chunk.toString();
       });
-      child.stderr!.on("data", (chunk: Buffer) => {
+      server.stderr!.on("data", (chunk: Buffer) => {
         log += chunk.toString();
       });
       const deadline = Date.now() + 30_000;
       while (!log.includes("Patchy Cloud server listening on")) {
-        if (child.exitCode !== null || Date.now() > deadline)
+        if (server.exitCode !== null || Date.now() > deadline)
           throw new Error(`Tier 1 server failed to start: ${log}`);
         await delay(50);
       }
+      return server;
     };
-    await launch();
+    child = await launch(port);
     const health = await fetch(`${backendOrigin}/healthz`);
     if (!health.ok) throw new Error(`Tier 1 health returned ${health.status}`);
     const { applyDevSeed } = await import(
@@ -444,13 +459,27 @@ export async function startInstance(options: { tls?: boolean } = {}): Promise<In
       },
       async restart() {
         await stopChild(child!);
-        await launch();
+        children.delete(child!);
+        child = await launch(port);
       },
-      async lifecycle(patchId, action, versionNumber) {
+      async startReplica() {
+        const reservation = createServer();
+        const replicaPort = await listen(reservation);
+        await stopServer(reservation);
+        const replica = await launch(replicaPort);
+        return {
+          origin: `http://127.0.0.1:${replicaPort}`,
+          async stop(signal) {
+            await stopChild(replica, signal);
+            children.delete(replica);
+          }
+        };
+      },
+      async lifecycle(patchId, action, versionNumber, force) {
         const response = await fetch(`${backendOrigin}/api/patches/${patchId}/${action}`, {
           method: "POST",
           headers: { authorization: `Bearer ${seed.token}`, "content-type": "application/json" },
-          body: JSON.stringify(action === "rollback" ? { versionNumber } : {})
+          body: JSON.stringify(action === "rollback" ? { versionNumber } : { force })
         });
         if (!response.ok) throw new Error(`${action}: ${response.status} ${await response.text()}`);
       },
@@ -496,7 +525,7 @@ export async function startInstance(options: { tls?: boolean } = {}): Promise<In
         );
         return token;
       },
-      async publish(scope = "company", content = html, patchId) {
+      async publish(scope = "company", content = html, patchId, declarations) {
         const response = await fetch(`${backendOrigin}/api/publish`, {
           method: "POST",
           headers: { authorization: `Bearer ${seed.token}`, "content-type": "application/json" },
@@ -505,6 +534,7 @@ export async function startInstance(options: { tls?: boolean } = {}): Promise<In
             ...(patchId ? { patchId } : {}),
             manifest: {
               ...manifest,
+              ...declarations,
               release: release.release,
               manifestVersion: release.manifestVersion
             },

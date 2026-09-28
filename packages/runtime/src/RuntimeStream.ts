@@ -20,7 +20,7 @@ import {
 } from "@patchy/api";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { newInternalId } from "@patchy/core";
-import { ContractLimits } from "@patchy/limits";
+import { ContractLimits, Limits } from "@patchy/limits";
 import { registry } from "@patchy/limits/registry";
 import * as LoadedVersions from "./LoadedVersions.js";
 import * as Runtime from "./Runtime.js";
@@ -112,6 +112,7 @@ export class RuntimeStream extends Context.Service<
 type Dependencies =
   | StreamAdmission.StreamAdmission
   | LoadedVersions.LoadedVersions
+  | Limits.Limits
   | WideEvents.WideEvents
   | StreamLimits.StreamLimits
   | Wakes.Wakes
@@ -122,6 +123,8 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
     const admission = yield* StreamAdmission.StreamAdmission;
     const versions = yield* LoadedVersions.LoadedVersions;
     const events = yield* WideEvents.WideEvents;
+    const limits = yield* Limits.Limits;
+    const callsPerMinute = yield* ContractLimits.get("runtime.calls.perMinute");
     const documentLimit = yield* ContractLimits.get("stream.documents");
     const operatingLimits = yield* StreamLimits.StreamLimits;
     const subscriptions = yield* Subscriptions.make;
@@ -330,6 +333,7 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
             eligible.value.companyId !== identity.companyId
           )
             return yield* new Runtime.AccessDenied({});
+          if (eligible.value.scope === "public") return yield* new Runtime.PublicUnavailable({});
           if (loaded.manifest.tier !== 1 || current.value.manifest.tier !== 1)
             return yield* new DirectSubscriptionRequired({
               loadedTier: loaded.manifest.tier,
@@ -551,6 +555,18 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
         entry.versionId !== input.versionId
       )
         return yield* new StreamReplaced();
+      // Share the call budget across documents and generations for this viewer and patch.
+      const attempt = yield* limits.consume({
+        key: `runtime:${identity.viewerId}:${input.patchId}`,
+        limit: callsPerMinute,
+        window: "1 minute"
+      });
+      if (!attempt.allowed)
+        return yield* new Runtime.RateLimited({
+          retryAfterSeconds: attempt.retryAfterSeconds,
+          limitId: attempt.reason === "capacity" ? "rate.trackedKeys" : "runtime.calls.perMinute",
+          value: attempt.reason === "capacity" ? Limits.MAX_TRACKED_KEYS : callsPerMinute
+        });
       yield* entry.subscriptions.update(input);
     });
     return RuntimeStream.of({

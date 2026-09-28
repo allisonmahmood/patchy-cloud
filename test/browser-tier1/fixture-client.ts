@@ -1,4 +1,10 @@
-import { createClient } from "patchy/client";
+import {
+  createClient,
+  createSharedTable,
+  isPatchyError,
+  type Call,
+  type QueryRegistry
+} from "patchy/client";
 import { createElement, render, useQuery } from "patchy/preact";
 import type { RuntimeStreamFrame } from "../../packages/api/src/index.js";
 
@@ -17,7 +23,8 @@ export interface FixtureWindow extends Window {
     raw(value: unknown, transfer?: Transferable[]): void;
     image(): Promise<void>;
     printRows(): void;
-    subscribeRows(): void;
+    queryStatuses: string[];
+    subscribeRows(source?: "own" | "shared"): void;
   };
 }
 
@@ -61,18 +68,35 @@ const harness: FixtureWindow["harness"] = {
       body.append(row);
     }
   },
-  subscribeRows() {
+  queryStatuses: [],
+  subscribeRows(source = "own") {
     const root = document.createElement("section");
     root.id = "subscribed-screen";
     document.body.append(root);
     function Rows() {
-      const snapshot = useQuery(client.tables.rows!.list, {});
+      const snapshot = useQuery<
+        Record<string, never>,
+        { readonly rows: readonly { readonly id: string; readonly label?: unknown }[] }
+      >(source === "shared" ? client.shared.source!.list : client.tables.rows!.list, {});
+      harness.queryStatuses.push(snapshot.status);
       return createElement(
-        "pre",
-        { id: "subscription-rows" },
-        snapshot.data === undefined
-          ? (snapshot.error?.message ?? "loading")
-          : JSON.stringify(snapshot.data.rows.map((row) => row.label))
+        "div",
+        {},
+        createElement("p", { id: "subscription-status" }, snapshot.status),
+        createElement(
+          "pre",
+          { id: "subscription-rows" },
+          snapshot.data === undefined
+            ? "loading"
+            : JSON.stringify(snapshot.data.rows.map((row) => row.label))
+        ),
+        snapshot.error
+          ? createElement(
+              "p",
+              { role: "alert" },
+              isPatchyError(snapshot.error) ? snapshot.error.code : snapshot.error.message
+            )
+          : null
       );
     }
     render(createElement(Rows, {}), root);
@@ -89,8 +113,14 @@ window.addEventListener("message", (event) => {
   port.start();
 });
 const client = createClient(
-  { tables: { rows: {} }, files: { assets: {} }, uses: {} },
-  { shared: {}, connections: {} }
+  { tables: { rows: {} }, files: { assets: {} }, uses: { source: { kind: "sharedTable" } } },
+  {
+    shared: {
+      source: (alias: string, call: Call, queries: QueryRegistry) =>
+        createSharedTable<{ readonly id: string; readonly label: string }>(alias, call, queries)
+    },
+    connections: {}
+  }
 );
 client.route.subscribe((path) => {
   document.querySelector("#route")!.textContent = path;

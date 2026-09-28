@@ -549,7 +549,7 @@ it("HTTP distinguishes declared handler errors, platform refusals and business-s
   }
 });
 
-it("shares table subscriptions with hook stores and retains data through transient and permanent stream errors", async () => {
+it("shares table subscriptions with hook stores and retains data and query errors across session refresh", async () => {
   const port = new FakePort();
   const transport = createPortTransport(port);
   const config = defineConfig({
@@ -630,6 +630,17 @@ it("shares table subscriptions with hook stores and retains data through transie
     status: "error",
     data: page,
     error: { code: "access_denied", details: { alias: "team" } }
+  });
+  const refused = sharedRows.at(-1);
+  const ready = hook.getSnapshot();
+  stream({ type: "closed", reason: "reauthenticate" });
+  stream({ type: "hello", generation: "refreshed", serverTime: 100 });
+  expect(sharedRows.at(-1)).toBe(refused);
+  expect(hook.getSnapshot()).toBe(ready);
+  expect(ready).toMatchObject({
+    status: "ready",
+    data: { id: "new-row", title: "Appeared" },
+    error: undefined
   });
   stream({
     type: "up-to-date",

@@ -14,19 +14,22 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as SqlError from "effect/unstable/sql/SqlError";
-import { RuntimeStreamFrame } from "@patchy/api";
+import { RuntimeStreamFrame, WIRE_VERSION } from "@patchy/api";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { Session } from "@patchy/auth";
 import { PUBLIC_BASE_URL, signedInCookies } from "@patchy/auth/testing";
 import { DEV_SEED } from "@patchy/auth/seed";
-import { OperatingLimits } from "@patchy/limits";
+import { ContractLimits, Limits, OperatingLimits } from "@patchy/limits";
 import * as LoadedVersions from "./LoadedVersions.js";
 import * as Fixtures from "./test/fixtures.js";
 import * as Runtime from "./Runtime.js";
+import * as RuntimeApi from "./RuntimeApi.js";
+import * as RuntimeProduction from "./RuntimeProduction.js";
 import * as RuntimeStream from "./RuntimeStream.js";
 import * as StreamAdmission from "./StreamAdmission.js";
 import * as StreamLimits from "./StreamLimits.js";
 import * as SubscriptionReads from "./SubscriptionReads.js";
+import { me } from "./me.js";
 
 const decode = Schema.decodeUnknownSync(Schema.fromJsonString(RuntimeStreamFrame));
 const text = new TextDecoder();
@@ -497,6 +500,158 @@ it.layer(layer)("document streams", (it) => {
       assert.strictEqual(frame(yield* reconnected.pull).type, "served");
     }).pipe(Effect.scoped)
   );
+  it.effect(
+    "shares the viewer call budget with subscription controls without extending the window",
+    () =>
+      Effect.gen(function* () {
+        const limits = yield* Limits.make;
+        const runtime = yield* RuntimeProduction.make({ me }).pipe(
+          Effect.provideService(Limits.Limits, limits),
+          Effect.provideService(ContractLimits.overrides, { "runtime.calls.perMinute": 3 })
+        );
+        const streams = yield* makeStreams.pipe(
+          Effect.provideService(Limits.Limits, limits),
+          Effect.provideService(ContractLimits.overrides, { "runtime.calls.perMinute": 3 }),
+          Effect.provide(WideEvents.layerNoop)
+        );
+        const document = input("rate_limited_document");
+        const pull = yield* Stream.toPull(yield* streams.open(document));
+        const hello = frame(yield* pull);
+        assert.strictEqual(hello.type, "hello");
+        if (hello.type !== "hello") return;
+        yield* pull;
+        const call = runtime.call({
+          wire: WIRE_VERSION,
+          patchId: Fixtures.patchId,
+          versionId: Fixtures.versionId,
+          principal: { userId: DEV_SEED.userId },
+          op: "me",
+          args: {}
+        });
+        const update = (sequence: number) =>
+          streams.update({
+            ...document,
+            generation: hello.generation,
+            sequence,
+            type: "replace",
+            subscriptions: []
+          });
+        yield* call;
+        for (const sequence of [1, 2]) {
+          yield* update(sequence);
+          assert.deepStrictEqual(frame(yield* pull), { type: "admitted", sequence });
+        }
+        for (let attempt = 0; attempt < 4; attempt++) {
+          const error = yield* update(3).pipe(Effect.flip);
+          assert.instanceOf(error, Runtime.RateLimited);
+          const response = RuntimeApi.failure(error);
+          assert.strictEqual(response.status, 429);
+          assert.strictEqual(response.headers["retry-after"], "60");
+          assert.deepStrictEqual(Runtime.toFailure(error), {
+            ok: false,
+            source: "patchy",
+            code: "rate_limited",
+            error: "Runtime request refused: rate_limited.",
+            retryAfter: 60,
+            limitId: "runtime.calls.perMinute",
+            scope: "viewer",
+            value: 3
+          });
+        }
+        assert.instanceOf(yield* call.pipe(Effect.flip), Runtime.RateLimited);
+        yield* TestClock.adjust("59 seconds");
+        const refused = yield* update(3).pipe(Effect.flip);
+        assert.strictEqual(RuntimeApi.failure(refused).headers["retry-after"], "1");
+        yield* TestClock.adjust("1 second");
+        yield* update(3);
+        assert.deepStrictEqual(frame(yield* pull), { type: "admitted", sequence: 3 });
+        yield* call;
+        assert.strictEqual(yield* streams.connected(DEV_SEED.companyId), 1);
+      }).pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, request()), Effect.scoped)
+  );
+
+  for (const resume of [false, true]) {
+    it.effect(
+      `refuses ${resume ? "an equal-vector resume" : "a snapshot"} when the loaded version becomes public before delivery`,
+      () =>
+        Effect.gen(function* () {
+          const authority = yield* versionAuthority;
+          authority.state.current = authority.latest.versionId;
+          const reading = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          const vector = { [`table:${Fixtures.patchId}:items`]: "1" };
+          const waiting = Deferred.succeed(reading, undefined).pipe(
+            Effect.andThen(Deferred.await(release))
+          );
+          let reads = 0;
+          const streams = yield* makeStreams.pipe(
+            Effect.provide(authority.layer),
+            Effect.provide(WideEvents.layerNoop),
+            Effect.provideService(SubscriptionReads.SubscriptionReads, {
+              admit: ({ onDependency }) =>
+                Effect.sync(() => {
+                  for (const key of Object.keys(vector)) onDependency?.(key);
+                  return Object.keys(vector);
+                }),
+              revisions: () => (resume ? waiting.pipe(Effect.as(vector)) : Effect.succeed(vector)),
+              read: () =>
+                Effect.gen(function* () {
+                  reads++;
+                  yield* waiting;
+                  return { result: { rows: [{ id: "private-row" }], cursor: null }, vector };
+                })
+            })
+          );
+          const document = {
+            ...input("public_delivery_document"),
+            versionId: authority.latest.versionId
+          };
+          const pull = yield* Stream.toPull(yield* streams.open(document));
+          const hello = frame(yield* pull);
+          assert.strictEqual(hello.type, "hello");
+          if (hello.type !== "hello") return;
+          yield* pull;
+          yield* streams.update({
+            ...document,
+            generation: hello.generation,
+            sequence: 1,
+            type: "subscribe",
+            subscription: {
+              id: "items",
+              op: "tables.list",
+              args: { table: "items" },
+              ...(resume ? { vector, revision: "1" } : {})
+            }
+          });
+          assert.deepStrictEqual(frame(yield* pull), { type: "admitted", sequence: 1 });
+          yield* Deferred.await(reading);
+          authority.state.retained.set(authority.latest.versionId, {
+            ...authority.latest,
+            scope: "public"
+          });
+          yield* Deferred.succeed(release, undefined);
+          assert.deepStrictEqual(frame(yield* pull), {
+            type: "error",
+            id: "items",
+            permanent: true,
+            error: Runtime.toFailure(new Runtime.PublicUnavailable({}))
+          });
+          assert.strictEqual(reads, resume ? 0 : 1);
+          assert.strictEqual(yield* streams.connected(DEV_SEED.companyId), 1);
+          authority.state.current = authority.initial.versionId;
+          yield* streams.notify(Fixtures.patchId);
+          assert.deepStrictEqual(frame(yield* pull), {
+            type: "served",
+            versionId: authority.initial.versionId,
+            tier: authority.initial.manifest.tier
+          });
+        }).pipe(
+          Effect.provideService(HttpServerRequest.HttpServerRequest, request()),
+          Effect.scoped
+        )
+    );
+  }
+
   for (const resume of [false, true]) {
     it.effect(
       `stops ${resume ? "an equal-vector resume" : "a snapshot"} when authority is lost before delivery`,

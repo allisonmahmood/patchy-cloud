@@ -293,4 +293,36 @@ describe("patch pages", () => {
     expect(html).not.toContain("srcdoc=");
     expect(html).not.toContain("window.secret");
   });
+
+  it.each(["company", "local"] as const)(
+    "requires an admitted viewer for a scripted %s shell",
+    (scope) => {
+      const options = {
+        patch,
+        version: { ...version, tier: 1 },
+        scope,
+        html: "<p>Private data</p>",
+        nonce: "document-nonce",
+        base: "/acme/report"
+      };
+      expect(() => renderPatchWrapper(options)).toThrow();
+      const html = renderPatchWrapper({ ...options, viewerId: 'viewer"><img src=x>' });
+      expect(html).toContain('data-viewer-id="viewer&quot;&gt;&lt;img src=x&gt;"');
+      expect(html).not.toContain("<img");
+    }
+  );
+
+  it("keeps a scripted public shell anonymous even when the host knows the viewer", () => {
+    const html = renderPatchWrapper({
+      patch,
+      version: { ...version, tier: 1 },
+      scope: "public",
+      viewerId: "private-viewer",
+      html: "<p>Public data</p>",
+      nonce: "document-nonce",
+      base: "/acme/report"
+    });
+    expect(html).not.toContain("data-viewer-id");
+    expect(html).not.toContain("private-viewer");
+  });
 });

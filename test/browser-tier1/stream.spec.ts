@@ -202,18 +202,29 @@ test("a definitive sign-out stops at the token deadline without a runtime operat
   ).toHaveLength(calls);
 });
 
-test("a refreshed browser token re-admits the idle stream without stopping its document", async ({
+test("a refreshed browser token preserves query status and never flashes a data error", async ({
   page,
   context,
   instance
 }) => {
-  await instance.session(context, "owner", 2);
+  await instance.session(context, "owner", 5);
   const frame = await open(page, await instance.publish());
   await expect.poll(() => generations(frame)).toHaveLength(1);
+  await frame.evaluate(() => (window as unknown as FixtureWindow).harness.subscribeRows());
+  await expect(frame.locator("#subscription-status")).toHaveText("ready");
+  await frame.evaluate(() => {
+    (window as unknown as FixtureWindow).harness.queryStatuses.length = 0;
+  });
   await frame.locator("#pasted-copy").fill("Editing through token refresh");
   await instance.session(context);
   await expect.poll(async () => (await generations(frame)).length).toBeGreaterThan(1);
   await expect(frame.locator("#pasted-copy")).toHaveValue("Editing through token refresh");
+  await expect(frame.locator("#subscription-status")).toHaveText("ready");
+  await expect(frame.locator("#subscription-rows")).toHaveText("[]");
+  await expect(frame.getByRole("alert")).toHaveCount(0);
+  expect(
+    await frame.evaluate(() => (window as unknown as FixtureWindow).harness.queryStatuses)
+  ).not.toContain("error");
   await expect(page.locator("[data-notice]")).toHaveCount(0);
 });
 

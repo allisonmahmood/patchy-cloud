@@ -135,7 +135,7 @@ const setup = Effect.gen(function* () {
   };
   yield* (yield* CompanyDatabases.CompanyDatabases).ensureReady(uploader.company.id);
   const source = yield* publish(uploader, sourceManifest);
-  const consumer = yield* publish(reader, {
+  const consumerManifest: typeof Manifest.Type = {
     ...Fixtures.manifest,
     name: `subscription-consumer-${ordinal}`,
     tier: 1,
@@ -148,7 +148,8 @@ const setup = Effect.gen(function* () {
         revision: source.schemaRevision
       }
     }
-  });
+  };
+  const consumer = yield* publish(reader, consumerManifest);
   const binding = Binding.Binding.of({
     companyId: uploader.company.id,
     patchId: source.patchId,
@@ -173,7 +174,15 @@ const setup = Effect.gen(function* () {
       },
       source.patchId
     );
-  return { source, consumer, binding, handlers, row, publishSource };
+  return {
+    source,
+    consumer,
+    binding,
+    handlers,
+    row,
+    publishSource,
+    publishConsumer: () => publish(reader, consumerManifest, consumer.patchId)
+  };
 });
 
 const connect = Effect.fn("SubscriptionsTest.connect")(function* (
@@ -226,7 +235,7 @@ const connect = Effect.fn("SubscriptionsTest.connect")(function* (
       if (current.type === "error") return current;
     }
   });
-  return { next, fresh, refused, frames };
+  return { next, fresh, refused, frames, frame };
 });
 const refusal = {
   type: "error",
@@ -236,6 +245,58 @@ const refusal = {
 };
 
 it.layer(layer)("shared source subscription lifecycle", (it) => {
+  it.effect(
+    "refuses public current data while retaining lifecycle and historical company reads",
+    () =>
+      Effect.gen(function* () {
+        const fixture = yield* setup;
+        const patches = yield* Patches.Patches;
+        const streams = yield* RuntimeStream.RuntimeStream;
+        const subscription = yield* connect(fixture.consumer, fixture.source.patchId);
+        expect(yield* subscription.next).toMatchObject({
+          type: "snapshot",
+          result: { rows: [fixture.row], cursor: null }
+        });
+        yield* patches.setScope(
+          fixture.consumer.patchId,
+          { userId: reader.user.id, admin: false },
+          "public"
+        );
+        yield* TestClock.adjust("30 seconds");
+        const publicRefusal = {
+          type: "error",
+          id: "notes",
+          permanent: true,
+          error: { code: "not_available_on_public" }
+        };
+        expect(yield* subscription.next).toMatchObject(publicRefusal);
+        const publicDocument = yield* connect(fixture.consumer, fixture.source.patchId);
+        expect(yield* publicDocument.next).toMatchObject(publicRefusal);
+        assert.strictEqual(
+          yield* streams.connected(reader.company.id, fixture.consumer.patchId),
+          2
+        );
+
+        const newer = yield* fixture.publishConsumer();
+        assert.deepStrictEqual(yield* subscription.frame, {
+          type: "served",
+          versionId: newer.versionId,
+          tier: 1
+        });
+        const historical = yield* connect(fixture.consumer, fixture.source.patchId);
+        expect(yield* historical.next).toMatchObject({
+          type: "snapshot",
+          result: { rows: [fixture.row], cursor: null }
+        });
+        const current = yield* connect(newer, fixture.source.patchId);
+        expect(yield* current.next).toMatchObject(publicRefusal);
+        assert.strictEqual(
+          yield* streams.connected(reader.company.id, fixture.consumer.patchId),
+          4
+        );
+      }).pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, request), Effect.scoped)
+  );
+
   it.effect(
     "keeps an admitted consumer through source publishes, sharing and CLI lifecycle acts",
     () =>

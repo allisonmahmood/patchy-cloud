@@ -40,7 +40,7 @@ export function openDocumentStream(options: {
   readonly tier: number;
   readonly wire: number;
   readonly principal: RuntimePrincipal;
-  readonly send: (frame: RuntimeStreamFrame | { readonly type: "disconnected" }) => void;
+  readonly send: (frame: RuntimeStreamFrame) => void;
   readonly notice: (code: string) => void;
   readonly stale: () => void;
   readonly reserve: (bytes: number) => void;
@@ -69,7 +69,7 @@ export function openDocumentStream(options: {
   let generation: string | undefined;
   const desired = new Map<
     string,
-    { subscription: RuntimeSubscription; fresh: boolean; fenceSequence: number; bytes: number }
+    { subscription: RuntimeSubscription; answered: boolean; fenceSequence: number; bytes: number }
   >();
   const reconciled = () => {
     if (generation === undefined || admitted !== sequence) {
@@ -77,7 +77,7 @@ export function openDocumentStream(options: {
       return;
     }
     for (const entry of desired.values()) {
-      if (!entry.fresh) {
+      if (!entry.answered) {
         scheduleReconciliation();
         return;
       }
@@ -140,7 +140,7 @@ export function openDocumentStream(options: {
     if (generation === undefined) return;
     admitted = -1;
     for (const entry of desired.values()) {
-      entry.fresh = false;
+      entry.answered = false;
       entry.fenceSequence = sequence;
     }
     status.connecting();
@@ -263,18 +263,17 @@ export function openDocumentStream(options: {
               revision: frame.revision,
               vector: frame.vector
             };
-            entry.fresh = admitted >= entry.fenceSequence;
+            entry.answered = admitted >= entry.fenceSequence;
             reconciled();
           } else if (frame.type === "error") {
-            if (!desired.has(frame.id)) continue;
-            if (frame.permanent) {
-              forget(frame.id);
-              reconciled();
-            } else {
-              desired.get(frame.id)!.fresh = false;
-              status.connecting();
-              scheduleReconciliation();
+            const entry = desired.get(frame.id);
+            if (!entry) continue;
+            if (frame.permanent) forget(frame.id);
+            else {
+              // A refusal answers this fence. Keep its last data and let the server retry.
+              entry.answered = admitted >= entry.fenceSequence;
             }
+            reconciled();
           }
           options.send(frame);
           if (
@@ -306,8 +305,7 @@ export function openDocumentStream(options: {
         admitted = -1;
         clearTimeout(reconciliationTimer);
         reconciliationTimer = undefined;
-        for (const entry of desired.values()) entry.fresh = false;
-        if (!closed) options.send({ type: "disconnected" });
+        for (const entry of desired.values()) entry.answered = false;
         if (!closed && !suspended) {
           status.connecting();
           const ceiling = Math.min(30_000, 500 * 2 ** Math.min(failures++, 6));
@@ -368,7 +366,7 @@ export function openDocumentStream(options: {
       options.reserve(bytes);
       desired.set(subscription.id, {
         subscription,
-        fresh: false,
+        answered: false,
         fenceSequence: generation === undefined ? 0 : sequence + 1,
         bytes
       });

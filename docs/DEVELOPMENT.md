@@ -644,7 +644,7 @@ The stream acceptance suite runs against a disposable Postgres, offline-signed
 browser sessions, the built server and a local TLS HTTP/2 ingress:
 
 ```sh
-pnpm exec playwright test test/browser-tier1/stream.spec.ts test/browser-tier1/subscriptions.spec.ts --config=playwright.tier1.config.ts --project=chromium
+pnpm exec playwright test test/browser-tier1/stream.spec.ts test/browser-tier1/subscriptions*.spec.ts --config=playwright.tier1.config.ts --project=chromium
 ```
 
 It requires `openssl` for a temporary self-signed certificate, not production
@@ -655,7 +655,14 @@ rollback, dismissal, missed retirement, token refresh versus a signed-out sessio
 an ingress cut and host restart. The subscription scenario uses two viewers:
 one writes while the other's `useQuery` screen updates without reload, then
 checks retained data and the reconnecting pill through an interrupted stream.
-Browser TLS trust is relaxed only for this disposable certificate.
+Recoverable source refusals retain data and their query error without a reconnect
+pill or document-wide replacement loop; routine session refresh does not invent a
+query error. A second real host exercises cross-host writes and terminated LISTEN
+connections. A notification barrier in the disposable platform database blocks
+`pg_notify` after a real API write commits its row and revision. The test kills
+that publishing host with SIGKILL and keeps NOTIFY blocked until the surviving
+host's subscriber recovers through durable reconciliation. Browser TLS trust is
+relaxed only for this disposable certificate.
 The local patch runtime mounts the same subscription stream over its real owned
 tables and declared fixtures, with a fixed local viewer. Config and fixture edits
 still require restart; code builds retain the existing whole-shell reload loop.
@@ -812,9 +819,11 @@ Company database owns `0005_company_database_baseline`; Runtime owns
 `0006_runtime_baseline`; Integrations owns `0007_integrations_baseline`.
 Patches adds `0008_patches_lifecycle`, with lifecycle and actor stamps, descriptions
 and visit counts. Limits adds `0009_limits_overrides`, with company overrides,
-configuration revisions and attributed change history. Published seed patches stay
-live until retired or deleted; only deletion starts their 30-day recovery window.
-Token and invitation expiry remain separate.
+configuration revisions and attributed change history. Patches adds
+`0010_patches_lifecycle_revision`, the durable counter for source publishes,
+sharing and lifecycle changes. Published seed patches stay live until retired or
+deleted; only deletion starts their 30-day recovery window. Token and invitation
+expiry remain separate.
 Allocate migration ids monotonically in landing order:
 Effect's Migrator applies only ids above the ledger's highest applied id, so a
 later migration cannot fill a lower-numbered gap. The three migrator spreads are `apps/server/src/Server.ts`,

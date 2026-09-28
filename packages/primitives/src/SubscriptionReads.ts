@@ -11,6 +11,17 @@ import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import * as TableOperations from "./TableOperations.js";
 import * as ReadSnapshot from "./ReadSnapshot.js";
 
+class LifecycleChanged extends Schema.TaggedError<LifecycleChanged>()(
+  "SubscriptionLifecycleChanged",
+  { patchId: Schema.String }
+) {
+  readonly code = "source_unavailable" as const;
+  readonly status = 503;
+  override get message() {
+    return "Runtime request refused: source_unavailable.";
+  }
+}
+
 const decoders = {
   "tables.list": Schema.decodeUnknownEffect(runtimeOperations["tables.list"].request.fields.args, {
     onExcessProperty: "error"
@@ -162,8 +173,9 @@ const makeReader = Effect.fn("SubscriptionReads.makeReader")(function* (lifecycl
       )
     );
     const after = yield* lifecycle(input.binding.companyId, patchKeys);
-    if (patchKeys.some((key) => before[key] !== after[key]))
-      return yield* new Runtime.SourceUnavailable({ cause: { reason: "lifecycle_changed" } });
+    const changed = patchKeys.find((key) => before[key] !== after[key]);
+    if (changed !== undefined)
+      return yield* new LifecycleChanged({ patchId: changed.slice("patch:".length) });
     return { result: snapshot.result, vector: { ...snapshot.vector, ...before } };
   });
   return SubscriptionReads.SubscriptionReads.of({ admit, read, revisions });

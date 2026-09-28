@@ -116,13 +116,7 @@ export function createPortTransport(
         clock = { serverTime: data.serverTime, receivedAt: performance.now() };
       if (value.event === "stream" && data !== null && typeof data === "object" && "type" in data) {
         const frame = data as Record<string, unknown>;
-        if (frame.type === "disconnected") {
-          for (const listener of queries.values())
-            listener({
-              status: "error",
-              error: new PatchyError("source_unavailable", "The stream is reconnecting.", {})
-            });
-        } else if (typeof frame.id === "string") {
+        if (typeof frame.id === "string") {
           const listener = queries.get(frame.id);
           if (!listener) return;
           if (frame.type === "error") {

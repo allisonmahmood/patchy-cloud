@@ -759,18 +759,30 @@ export class RuntimeStreamGroup extends HttpApiGroup.make("runtimeStream", { top
       error: runtimeErrors
     }).annotateMerge(
       describe(
-        "Reconcile a document's subscriptions using its cookie, principal, loaded version, " +
-          "document nonce and current stream generation. Deltas `{type:'subscribe',sequence,subscription}` " +
-          "and `{type:'unsubscribe',sequence,id}` apply in order, starting at sequence 1. " +
+        "Browser-cookie authentication only; bearer tokens are refused. `X-Patchy-Wire` " +
+          "must be the current decimal runtime wire, `X-Patchy-Principal` must be JSON " +
+          '`{"userId":"..."}` matching the admitted viewer and never null, and ' +
+          "`Sec-Fetch-Site: same-origin` is required. Reconcile a document's subscriptions " +
+          "using its loaded version, document nonce and current stream generation. Control " +
+          "requests share `runtime.calls.perMinute` with ordinary calls for the same viewer " +
+          "and patch; exhaustion is `rate_limited` (429) with `Retry-After`. Public loaded " +
+          "versions refuse data subscriptions with `not_available_on_public` without closing " +
+          "the lifecycle stream; retained company versions remain eligible. Deltas " +
+          "`{type:'subscribe',sequence,subscription}` and `{type:'unsubscribe',sequence,id}` " +
+          "apply in order, starting at sequence 1. " +
           "A subscription is `{id,op,args,vector?,revision?}`; tier 1 supports `tables.list`, " +
           "`tables.get`, `shared.list` and `shared.get`. `get` watches the whole table. " +
+          "Optional `vector` and `revision` describe the snapshot the client actually received, " +
+          "not the last frame the server sent. " +
           "`{type:'replace',sequence,subscriptions}` installs the full desired set and supersedes " +
           "buffered deltas through that sequence; older replacements are refused. All requests " +
           "also carry `patchId`, `versionId`, `documentId` and `generation`. A gap after 5 seconds " +
           "or more than 64 buffered deltas sends `resync_required`. `admitted` names the last " +
           "applied sequence. `snapshot` carries `id`, decimal query `revision`, `result` and " +
-          "a resource revision `vector`; `up-to-date` carries `id`, `revision` and `vector` when " +
+          "a revision `vector` with resource keys and source lifecycle `patch:<id>` keys; " +
+          "`up-to-date` carries `id`, `revision` and `vector` when " +
           "the result is unchanged or resume reaches an equal vector without running the query. " +
+          "Successful equal-vector checks emit no `re-run` event. " +
           "`error` carries `id`, `permanent` and the structured runtime or handler `error`. " +
           "Permanent failures remove the subscription, preserving its last browser value. " +
           "Access refusals on a shared source retain dependencies so a reshare recovers. " +
