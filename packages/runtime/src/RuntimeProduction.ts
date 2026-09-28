@@ -52,34 +52,35 @@ export const make = (
       origin: new URL(session.publicBaseUrl).origin,
       identity,
       admitCompany: Effect.fn("Runtime.admitCompany")(function* (companyId: string) {
-        const rate = yield* operatingLimits
-          .get({ companyId, limitId: "company.admission.rate" })
-          .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
-        const burst = yield* operatingLimits
-          .get({ companyId, limitId: "company.admission.burst" })
+        const { rate, burst } = yield* operatingLimits
+          .getMany({
+            companyId,
+            limits: { rate: "company.admission.rate", burst: "company.admission.burst" }
+          })
           .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
         const attempt = yield* companyTokens.consume({
           key: `company.admission:${companyId}`,
           rate: rate.value,
           burst: burst.value
         });
+        if (!attempt.allowed && attempt.reason === "capacity")
+          return yield* new Runtime.RateLimited({
+            retryAfterSeconds: attempt.retryAfterSeconds,
+            limitId: "rate.trackedKeys",
+            value: Limits.MAX_TRACKED_KEYS
+          });
         yield* WideEvents.enrich({
           limits: [
             {
               limitId: burst.limitId,
               value: burst.value,
-              peak: burst.value - attempt.remaining + (attempt.allowed ? 0 : 1),
+              // Whole-token capacity depleted at admission; refused calls spend no token.
+              peak: burst.value - attempt.remaining,
               configRevision: burst.configRevision
             }
           ]
         });
         if (!attempt.allowed) {
-          if (attempt.reason === "capacity")
-            return yield* new Runtime.RateLimited({
-              retryAfterSeconds: attempt.retryAfterSeconds,
-              limitId: "rate.trackedKeys",
-              value: Limits.MAX_TRACKED_KEYS
-            });
           return yield* new Runtime.LimitExceeded({
             retryAfterSeconds: attempt.retryAfterSeconds,
             limitId: "company.admission.rate",

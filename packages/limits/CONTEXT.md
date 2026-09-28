@@ -13,7 +13,7 @@ A bound on how Patchy runs its services and execution fleet, supplied by deploym
 _Avoid_: quota (a lasting count), tuning
 
 **Limit override**:
-A company's own value for an operating limit, set by a controller operation and kept with its history.
+A company's own value for an operating limit, set by a controller operation and kept with its history. Runtime reads related effective limits and their revision from one database statement snapshot.
 _Avoid_: exception, plan
 
 **Rate limit**:
@@ -25,7 +25,7 @@ The fixed span over which a key's attempts are counted, starting with its first 
 _Avoid_: bucket (the token-bucket algorithm, which this is not)
 
 **Token bucket**:
-A call allowance that refills continuously at a rate and holds at most one burst's capacity. Company admission spends one token per top-level call, including calls that do not use a database connection.
+A call allowance that refills continuously at a rate and holds at most one burst's capacity. Company admission spends one token per company-scoped top-level call, including calls that do not use a database connection. Public `me` calls use only their per-caller allowance.
 _Avoid_: fixed window
 
 **Fails closed**:

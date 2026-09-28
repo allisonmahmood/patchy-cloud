@@ -8,6 +8,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Redacted from "effect/Redacted";
+import * as Scheduler from "effect/Scheduler";
 import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
 import * as Reactivity from "effect/unstable/reactivity/Reactivity";
@@ -552,6 +553,74 @@ it.layer(Testing.layer())("CompanyDatabases", (it) => {
     }).pipe(Effect.scoped)
   );
 
+  it.effect("counts the cold opener before lending the remaining connection slots", () =>
+    Effect.gen(function* () {
+      const companyId = "cold-pool-capacity";
+      yield* createCompany(companyId);
+      yield* (yield* CompanyDatabases.CompanyDatabases).ensureReady(companyId);
+      const platform = yield* SqlClient.SqlClient;
+      const limits = yield* OperatingLimits.make;
+      const ready = yield* Deferred.make<void>();
+      let reads = 0;
+      const url = Redacted.make(inject("postgres").adminUrl);
+      const service = yield* PgCompanyDatabases.make.pipe(
+        Effect.provideService(PgCompanyDatabases.PlacementClient, platform),
+        Effect.provideService(PgCompanyDatabases.AdminClient, platform),
+        Effect.provideService(PgCompanyDatabases.CompanyDatabaseConfig, {
+          adminUrl: url,
+          dataUrl: url,
+          maxBackends: 4,
+          capacity: 1
+        }),
+        Effect.provideService(OperatingLimits.OperatingLimits, {
+          ...limits,
+          getMany: (input) =>
+            limits.getMany(input).pipe(
+              Effect.tap(() =>
+                Effect.gen(function* () {
+                  reads++;
+                  if (reads === 8) yield* Deferred.succeed(ready, undefined);
+                  yield* Deferred.await(ready);
+                })
+              )
+            )
+        }),
+        Effect.provide(Reactivity.layer)
+      );
+      const scheduler = new Scheduler.MixedScheduler();
+      const dispatcher = scheduler.makeDispatcher();
+      scheduler.makeDispatcher = () => dispatcher;
+      const outcomes = yield* Queue.unbounded<"admitted" | CompanyDatabases.Busy>();
+      yield* Effect.forEach(Array.from({ length: 8 }), () =>
+        service
+          .withCompany(companyId)(
+            Queue.offer(outcomes, "admitted").pipe(Effect.andThen(Effect.never))
+          )
+          .pipe(
+            Effect.catchTags({
+              Busy: (error) => Queue.offer(outcomes, error)
+            }),
+            // Force contenders to run during lazy pool construction, not only after it.
+            Effect.provideService(Scheduler.Scheduler, scheduler),
+            Effect.provideService(Scheduler.MaxOpsBeforeYield, 16),
+            Effect.forkScoped
+          )
+      );
+      yield* Deferred.await(ready);
+      // Drain cooperative yields so every lease or queue timer exists before time advances.
+      yield* Effect.yieldNow;
+      yield* Effect.sync(() => dispatcher.flush());
+      yield* TestClock.adjust("1 second");
+      const results = yield* Effect.forEach(Array.from({ length: 8 }), () => Queue.take(outcomes));
+      assert.strictEqual(results.filter((result) => result === "admitted").length, 4);
+      for (const result of results) {
+        if (result === "admitted") continue;
+        assert.strictEqual(result.limitId, "company.connections.wait");
+        assert.strictEqual(result.value, 1_000);
+      }
+    }).pipe(Effect.scoped)
+  );
+
   it.effect("bounds the queue at 32 and records the one-second connection wait", () =>
     Effect.gen(function* () {
       const companyId = "operation-capacity";
@@ -926,6 +995,46 @@ it.layer(Testing.layer({ maxBackends: 8, capacity: 2 }))("Failed pool opens", (i
         yield* service.withCompany("fits-budget")(currentDatabase),
         (yield* service.claim("fits-budget")).databaseName
       );
+    })
+  );
+});
+
+it.layer(Testing.layer({ maxBackends: 8 }))("Refused pool resize", (it) => {
+  it.effect("retains the working pool and its budget until a replacement fits", () =>
+    Effect.gen(function* () {
+      const service = yield* CompanyDatabases.CompanyDatabases;
+      const limits = yield* OperatingLimits.make;
+      const companyId = "cmp_dev";
+      const otherId = "resize-budget-holder";
+      yield* createCompany(otherId);
+      yield* service.ensureReady(companyId);
+      yield* service.ensureReady(otherId);
+      const pid = Effect.flatMap(SqlClient.SqlClient, (sql) =>
+        sql<{ pid: number }>`SELECT pg_backend_pid() AS pid`.pipe(
+          Effect.map((rows) => rows[0]!.pid)
+        )
+      );
+      const before = yield* service.withCompany(companyId)(pid);
+      yield* service.withCompany(otherId)(currentDatabase);
+      yield* limits.setOverride({
+        companyId,
+        limitId: "company.connections",
+        value: 6,
+        actor: "test"
+      });
+      const refused = yield* service.withCompany(companyId)(currentDatabase).pipe(Effect.flip);
+      assert.strictEqual(refused._tag, "Busy");
+      if (refused._tag === "Busy") {
+        assert.strictEqual(refused.limitId, "company.connections.hostBackends");
+        assert.strictEqual(refused.value, 8);
+      }
+      const platform = yield* SqlClient.SqlClient;
+      assert.deepStrictEqual(
+        yield* platform<{ pid: number }>`SELECT pid FROM pg_stat_activity WHERE pid = ${before}`,
+        [{ pid: before }]
+      );
+      yield* limits.removeOverride({ companyId, limitId: "company.connections", actor: "test" });
+      assert.strictEqual(yield* service.withCompany(companyId)(pid), before);
     })
   );
 });

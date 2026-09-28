@@ -62,6 +62,13 @@ describe("wire schemas", () => {
       value: 8,
       retryAfter: 2
     });
+    expect(limitRefusal("company.admission.rate", 100, 2)).toEqual({
+      code: "limit_exceeded",
+      scope: "company",
+      limitId: "company.admission.rate",
+      value: 100,
+      retryAfter: 2
+    });
     expect(limitRefusal("runtime.mutation.deadline", 30000, 2)).toEqual({
       code: "timeout",
       scope: "viewer",

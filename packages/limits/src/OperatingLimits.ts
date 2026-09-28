@@ -18,7 +18,13 @@ export class InvalidOverride extends Schema.TaggedError<InvalidOverride>()("Inva
   cause: Schema.Defect()
 }) {
   override get message() {
-    return `Override for ${this.limitId} requires a positive finite value and an actor.`;
+    const value =
+      this.limitId === "company.connections" ||
+      this.limitId === "company.connections.waiters" ||
+      this.limitId === "company.admission.burst"
+        ? "positive safe integer"
+        : "positive finite value";
+    return `Override for ${this.limitId} requires a ${value} and an actor.`;
   }
 }
 
@@ -68,8 +74,12 @@ const decodeSet = Schema.decodeUnknownEffect(
   Schema.Struct({ ...Change.fields, value: DeploymentConfig.LimitValue })
 );
 const decodeSetting = Schema.decodeUnknownEffect(DeploymentConfig.LimitSetting);
+const ReadRequest = Schema.Struct({
+  companyId: Schema.String,
+  limitIds: Schema.Array(Schema.String)
+});
 class State extends Schema.Class<State>("Limits.State")({
-  overrideValue: Schema.NullOr(DeploymentConfig.LimitValue),
+  overrides: Schema.Record(Schema.String, DeploymentConfig.LimitValue),
   overrideRevision: Schema.String
 }) {}
 class Revision extends Schema.Class<Revision>("Limits.Revision")({ revision: Schema.String }) {}
@@ -81,6 +91,13 @@ export class OperatingLimits extends Context.Service<
     readonly get: (
       input: LimitRef
     ) => Effect.Effect<EffectiveLimit, InvalidLimit | CompanyNotFound | SqlError>;
+    readonly getMany: <const Limits extends Readonly<Record<string, string>>>(input: {
+      readonly companyId: string;
+      readonly limits: Limits;
+    }) => Effect.Effect<
+      { readonly [Key in keyof Limits]: EffectiveLimit },
+      InvalidLimit | CompanyNotFound | SqlError
+    >;
     readonly setOverride: (
       input: LimitRef & { readonly value: number; readonly actor: string }
     ) => Effect.Effect<EffectiveLimit, InvalidLimit | InvalidOverride | CompanyNotFound | SqlError>;
@@ -109,14 +126,19 @@ export const make = Effect.gen(function* () {
     })
   );
   const readState = SqlSchema.findOneOption({
-    Request: Ref,
+    Request: ReadRequest,
     Result: State,
-    execute: ({ companyId, limitId }) => sql`
-      SELECT o.value AS "overrideValue", COALESCE(r.revision, 0)::text AS "overrideRevision"
+    execute: ({ companyId, limitIds }) => sql`
+      SELECT COALESCE(
+        jsonb_object_agg(o.limit_id, o.value) FILTER (WHERE o.limit_id IS NOT NULL),
+        '{}'::jsonb
+      ) AS overrides, COALESCE(r.revision, 0)::text AS "overrideRevision"
       FROM companies c
       LEFT JOIN limits_revisions r ON r.company_id = c.id
-      LEFT JOIN limits_overrides o ON o.company_id = c.id AND o.limit_id = ${limitId}
-      WHERE c.id = ${companyId}`
+      LEFT JOIN limits_overrides o ON o.company_id = c.id
+        AND ${limitIds.length === 0 ? sql`false` : sql`o.limit_id IN ${sql.in(limitIds)}`}
+      WHERE c.id = ${companyId}
+      GROUP BY c.id, r.revision`
   });
   const nextRevision = SqlSchema.findOne({
     Request: Schema.String,
@@ -148,21 +170,46 @@ export const make = Effect.gen(function* () {
     }
     return managedId;
   });
-  const get = Effect.fn("OperatingLimits.get")(function* (input: LimitRef) {
-    const limitId = yield* validateLimit(input.limitId, false);
-    // Value and revision come from one statement snapshot, never separate reads.
-    const state = yield* readState(input).pipe(Effect.catchTags({ SchemaError: Effect.die }));
-    if (Option.isNone(state)) return yield* new CompanyNotFound({ companyId: input.companyId });
-    return new EffectiveLimit({
+  const getMany = Effect.fn("OperatingLimits.getMany")(function* <
+    const Limits extends Readonly<Record<string, string>>
+  >(input: { readonly companyId: string; readonly limits: Limits }) {
+    const entries: Array<[string, DeploymentConfig.ManagedOperatingLimitId]> = [];
+    for (const [key, limitId] of Object.entries(input.limits)) {
+      entries.push([key, yield* validateLimit(limitId, false)]);
+    }
+    // Every requested value and the company revision share one statement snapshot.
+    const state = yield* readState({
       companyId: input.companyId,
-      limitId,
-      value: state.value.overrideValue ?? deployment.get(limitId),
-      overrideValue: state.value.overrideValue,
-      configRevision: new ConfigRevision({
-        deploymentRevision: deployment.revision,
-        overrideRevision: state.value.overrideRevision
-      })
+      limitIds: entries.map(([, limitId]) => limitId)
+    }).pipe(Effect.catchTags({ SchemaError: Effect.die }));
+    if (Option.isNone(state)) return yield* new CompanyNotFound({ companyId: input.companyId });
+    const configRevision = new ConfigRevision({
+      deploymentRevision: deployment.revision,
+      overrideRevision: state.value.overrideRevision
     });
+    const { overrides } = state.value;
+    return Object.fromEntries(
+      entries.map(([key, limitId]) => {
+        const overrideValue = overrides[limitId] ?? null;
+        return [
+          key,
+          new EffectiveLimit({
+            companyId: input.companyId,
+            limitId,
+            value: overrideValue ?? deployment.get(limitId),
+            overrideValue,
+            configRevision
+          })
+        ];
+      })
+    ) as { readonly [Key in keyof Limits]: EffectiveLimit };
+  });
+  const get = Effect.fn("OperatingLimits.get")(function* (input: LimitRef) {
+    const result = yield* getMany({
+      companyId: input.companyId,
+      limits: { limit: input.limitId }
+    });
+    return result.limit;
   });
   const change = Effect.fn("OperatingLimits.change")(function* (
     input: typeof Change.Type,
@@ -219,6 +266,7 @@ export const make = Effect.gen(function* () {
 
   return OperatingLimits.of({
     get,
+    getMany,
     setOverride: (input) => change(input, false),
     removeOverride: (input) => change({ ...input, value: null }, true),
     history

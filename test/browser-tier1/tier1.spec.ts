@@ -69,6 +69,75 @@ test("broker admits server arguments up to 1 MiB and stamps local and runtime re
   ).toEqual([64 * 1024 + 1, 1024 * 1024]);
 });
 
+test("broker keeps admission retry timing but strips it from unsafe outcomes", async ({
+  page,
+  instance
+}) => {
+  const patch = await instance.publish();
+  const frame = await open(page, patch);
+  const refusals = [
+    {
+      code: "limit_exceeded",
+      scope: "company",
+      limitId: "company.admission.rate",
+      value: 100,
+      status: 429
+    },
+    {
+      code: "timeout",
+      scope: "viewer",
+      limitId: "runtime.mutation.deadline",
+      value: 30000,
+      status: 504
+    },
+    { code: "unknown_outcome", status: 503 }
+  ];
+  const requests: string[] = [];
+  await page.route("**/api/runtime/call", async (route) => {
+    const code = route.request().postDataJSON().args.row.label;
+    const refusal = refusals.find((refusal) => refusal.code === code)!;
+    requests.push(code);
+    const { status, ...failure } = refusal;
+    await route.fulfill({
+      status,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: false,
+        source: "patchy",
+        error: "Runtime refusal.",
+        ...failure,
+        retryAfter: 2
+      })
+    });
+  });
+  for (const { code } of refusals) {
+    await frame.evaluate(
+      ({ wire, code }) =>
+        (window as unknown as FixtureWindow).harness.raw({
+          v: wire,
+          id: code,
+          op: "tables.insert",
+          args: { table: "rows", row: { label: code } }
+        }),
+      { wire: instance.wire, code }
+    );
+    const error = () =>
+      frame.evaluate(
+        (code) =>
+          (window as unknown as FixtureWindow).harness.replies.find((reply) => reply.id === code)
+            ?.error,
+        code
+      );
+    await expect.poll(error).toMatchObject({ source: "patchy", code });
+    if (code === "limit_exceeded") {
+      expect(await error()).toHaveProperty("retryAfter", 2);
+    } else {
+      expect(await error()).not.toHaveProperty("retryAfter");
+    }
+  }
+  expect(requests).toEqual(refusals.map(({ code }) => code));
+});
+
 test("route bridge, real client file URL, shell download, isolation and 2,000-row print", async ({
   page,
   instance,

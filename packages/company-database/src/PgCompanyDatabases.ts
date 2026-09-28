@@ -334,17 +334,15 @@ export const make = Effect.gen(function* () {
       }).pipe(Effect.andThen(notify));
 
       const open = Effect.fn("CompanyDatabases.openPool")(function* (next: PoolTarget) {
-        if (current) {
-          const previous = current;
-          current = undefined;
-          yield* Scope.close(previous.scope, Exit.void);
-        }
         const scope = yield* Scope.fork(owner);
         return yield* Effect.gen(function* () {
           const maximum = next.connections.value;
           yield* Effect.acquireRelease(
             Effect.suspend(() => {
-              if (reservedBackends + maximum > settings.maxBackends) {
+              if (
+                reservedBackends - (current?.connections.value ?? 0) + maximum >
+                settings.maxBackends
+              ) {
                 return Effect.fail(
                   new CompanyDatabases.Busy({
                     resource: "backend budget",
@@ -363,6 +361,12 @@ export const make = Effect.gen(function* () {
                 reservedBackends -= maximum;
               })
           );
+          // Reserve the replacement before teardown can let another company take its budget.
+          if (current) {
+            const previous = current;
+            current = undefined;
+            yield* Scope.close(previous.scope, Exit.void);
+          }
           const sql = yield* pool(settings.dataUrl, maximum, next.placement.databaseName).pipe(
             Effect.mapError(
               (cause) =>
@@ -386,40 +390,48 @@ export const make = Effect.gen(function* () {
           Effect.onError(() => Scope.close(scope, Exit.void)),
           Effect.tapError((error) =>
             Effect.sync(() => {
-              failed = error;
+              if (!current) failed = error;
             })
-          ),
-          Effect.ensuring(
-            Effect.sync(() => {
-              opening = false;
-            }).pipe(Effect.andThen(notify))
           )
         );
       });
 
-      const tryAcquire = Effect.gen(function* () {
-        if (failed) return yield* failed;
-        if (opening) return Option.none();
-        if (active + 1 > target!.connections.value) return Option.none();
-        if (!current || !samePool(current, target!)) {
-          if (active > 0) return Option.none();
-          opening = true;
-          yield* open(target!);
-        }
-        if (!samePool(current!, target!)) return Option.none();
-        active++;
-        yield* Effect.addFinalizer(() => release);
-        yield* WideEvents.enrich({
-          limits: [
-            {
-              limitId: "company.connections",
-              value: target!.connections.value,
-              peak: active,
-              configRevision: target!.connections.configRevision
-            }
-          ]
-        });
-        return Option.some(current!.context);
+      const tryAcquire = Effect.suspend(() => {
+        let opened = false;
+        return Effect.gen(function* () {
+          if (failed) return yield* failed;
+          if (opening) return Option.none();
+          if (active + 1 > target!.connections.value) return Option.none();
+          if (!current || !samePool(current, target!)) {
+            if (active > 0) return Option.none();
+            opening = true;
+            opened = true;
+            yield* open(target!);
+          }
+          if (!samePool(current!, target!)) return Option.none();
+          active++;
+          yield* Effect.addFinalizer(() => release);
+          yield* WideEvents.enrich({
+            limits: [
+              {
+                limitId: "company.connections",
+                value: target!.connections.value,
+                peak: active,
+                configRevision: target!.connections.configRevision
+              }
+            ]
+          });
+          return Option.some(current!.context);
+        }).pipe(
+          Effect.ensuring(
+            Effect.suspend(() => {
+              if (!opened) return Effect.void;
+              // Claim the opener's lease before waking waiters, which resume synchronously.
+              opening = false;
+              return notify;
+            })
+          )
+        );
       }).pipe(Effect.uninterruptible);
 
       const acquire = Effect.fn("CompanyDatabases.acquire")(function* (
@@ -536,16 +548,25 @@ export const make = Effect.gen(function* () {
             status: placement?.status ?? null
           });
         }
-        const [connections, waiters, wait] = yield* Effect.all(
-          ["company.connections", "company.connections.waiters", "company.connections.wait"].map(
-            (limitId) => limits.get({ companyId, limitId })
-          )
-        ).pipe(
-          Effect.mapError(
-            (cause) =>
-              new CompanyDatabases.CompanyDatabaseError({ companyId, operation: "connect", cause })
-          )
-        );
+        const { connections, waiters, wait } = yield* limits
+          .getMany({
+            companyId,
+            limits: {
+              connections: "company.connections",
+              waiters: "company.connections.waiters",
+              wait: "company.connections.wait"
+            }
+          })
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new CompanyDatabases.CompanyDatabaseError({
+                  companyId,
+                  operation: "connect",
+                  cause
+                })
+            )
+          );
         return yield* Effect.scoped(
           Effect.gen(function* () {
             const entry = yield* RcMap.get(pools, companyId).pipe(
@@ -563,7 +584,7 @@ export const make = Effect.gen(function* () {
               })
             );
             const context = yield* entry
-              .acquire({ placement, connections: connections! }, waiters!, wait!)
+              .acquire({ placement, connections }, waiters, wait)
               .pipe(
                 Effect.tapError(() =>
                   entry.retireFailed.pipe(

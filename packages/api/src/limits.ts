@@ -28,6 +28,7 @@ export function limitRefusal<Id extends RefusingLimitId>(
   const { refusal: code, scope } = registry[limitId];
   const safe =
     code === "rate_limited" ||
+    code === "limit_exceeded" ||
     code === "too_many_requests" ||
     code === "busy" ||
     code === "write_conflict" ||

@@ -30,6 +30,139 @@ const createCompany = Effect.fn("createCompany")(function* (name: string) {
 });
 
 it.layer(services)("operating limits", (it) => {
+  it.effect("reads named defaults and live overrides with one company revision", () =>
+    Effect.gen(function* () {
+      const limits = yield* OperatingLimits.OperatingLimits;
+      const company = yield* createCompany("limits-batch");
+      const other = yield* createCompany("limits-batch-other");
+      const settings = {
+        connections: company.limitId,
+        sameConnections: company.limitId,
+        rate: "company.admission.rate",
+        spares: "execution.pool.spares"
+      } as const;
+      const input = { companyId: company.companyId, limits: settings };
+      const original = yield* limits.getMany(input);
+      assert.deepStrictEqual(original.connections, yield* limits.get(company));
+      assert.deepStrictEqual(original.sameConnections, original.connections);
+      assert.strictEqual(original.connections.value, 6);
+      assert.strictEqual(original.rate.value, registry["company.admission.rate"].default);
+      assert.strictEqual(original.spares.value, registry["execution.pool.spares"].default);
+      for (const setting of Object.values(original)) {
+        assert.strictEqual(setting.companyId, company.companyId);
+        assert.isNull(setting.overrideValue);
+        assert.deepStrictEqual(setting.configRevision, original.connections.configRevision);
+        assert.strictEqual(setting.configRevision.overrideRevision, "0");
+      }
+      yield* limits.setOverride({ ...company, value: 9, actor: "operator" });
+      yield* limits.setOverride({
+        ...company,
+        limitId: settings.rate,
+        value: 2.5,
+        actor: "operator"
+      });
+      const updated = yield* limits.getMany(input);
+      assert.strictEqual(updated.connections.overrideValue, 9);
+      assert.strictEqual(updated.connections.value, 9);
+      assert.strictEqual(updated.rate.overrideValue, 2.5);
+      assert.strictEqual(updated.rate.value, 2.5);
+      assert.strictEqual(updated.spares.value, original.spares.value);
+      for (const setting of Object.values(updated)) {
+        assert.strictEqual(setting.configRevision.overrideRevision, "2");
+        assert.deepStrictEqual(setting.configRevision, updated.connections.configRevision);
+        assert.strictEqual(
+          setting.configRevision.deploymentRevision,
+          original.connections.configRevision.deploymentRevision
+        );
+      }
+      const isolated = yield* limits.getMany({ companyId: other.companyId, limits: settings });
+      assert.strictEqual(isolated.connections.value, 6);
+      assert.strictEqual(isolated.rate.value, original.rate.value);
+      assert.strictEqual(isolated.rate.configRevision.overrideRevision, "0");
+      yield* limits.removeOverride({ ...company, actor: "operator" });
+      const removed = yield* limits.getMany(input);
+      assert.strictEqual(removed.connections.value, 6);
+      assert.isNull(removed.connections.overrideValue);
+      assert.strictEqual(removed.rate.value, 2.5);
+      assert.strictEqual(removed.rate.configRevision.overrideRevision, "3");
+      assert.deepStrictEqual(removed.connections.configRevision, removed.rate.configRevision);
+      assert.deepStrictEqual(yield* limits.getMany({ ...input, limits: {} }), {});
+    })
+  );
+
+  it.effect("rejects invalid batch IDs before resolving the company", () =>
+    Effect.gen(function* () {
+      const limits = yield* OperatingLimits.OperatingLimits;
+      const company = yield* createCompany("limits-batch-invalid");
+      for (const [limitId, reason] of [
+        ["not-a-limit", "unknown"],
+        ["runtime.calls.perMinute", "contract"],
+        ["company.connections.pools", "legacy_configuration"]
+      ] as const) {
+        for (const companyId of [company.companyId, "cmp_limits_missing"]) {
+          const failure = yield* limits
+            .getMany({ companyId, limits: { valid: company.limitId, invalid: limitId } })
+            .pipe(Effect.flip);
+          assert.instanceOf(failure, DeploymentConfig.InvalidLimit);
+          assert.strictEqual((failure as DeploymentConfig.InvalidLimit).limitId, limitId);
+          assert.strictEqual((failure as DeploymentConfig.InvalidLimit).reason, reason);
+        }
+      }
+    })
+  );
+
+  it.effect("keeps batched values coherent while related overrides commit together", () =>
+    Effect.gen(function* () {
+      const limits = yield* OperatingLimits.OperatingLimits;
+      const sql = yield* SqlClient.SqlClient;
+      const company = yield* createCompany("limits-batch-snapshot");
+      const settings = { rate: "company.admission.rate", burst: "company.admission.burst" };
+      const update = Effect.fn("updateRelatedLimits")(function* (value: number) {
+        yield* limits.setOverride({
+          ...company,
+          limitId: settings.rate,
+          value,
+          actor: "operator"
+        });
+        yield* limits.setOverride({
+          ...company,
+          limitId: settings.burst,
+          value,
+          actor: "operator"
+        });
+      }, sql.withTransaction);
+      yield* update(10);
+      yield* Effect.all(
+        [
+          Effect.gen(function* () {
+            for (let value = 11; value <= 20; value++) yield* update(value);
+          }),
+          Effect.gen(function* () {
+            for (let read = 0; read < 20; read++) {
+              const { rate, burst } = yield* limits.getMany({
+                companyId: company.companyId,
+                limits: settings
+              });
+              assert.strictEqual(rate.value, burst.value);
+              assert.strictEqual(rate.overrideValue, rate.value);
+              assert.strictEqual(burst.overrideValue, burst.value);
+              assert.deepStrictEqual(rate.configRevision, burst.configRevision);
+              assert.strictEqual(
+                rate.configRevision.overrideRevision,
+                String((rate.value - 9) * 2)
+              );
+            }
+          })
+        ],
+        { concurrency: "unbounded" }
+      );
+      const final = yield* limits.getMany({ companyId: company.companyId, limits: settings });
+      assert.strictEqual(final.rate.value, 20);
+      assert.strictEqual(final.burst.value, 20);
+      assert.strictEqual(final.rate.configRevision.overrideRevision, "22");
+    })
+  );
+
   it.effect("sets, replaces and removes one company's override with attributed history", () =>
     Effect.gen(function* () {
       const limits = yield* OperatingLimits.OperatingLimits;
@@ -219,6 +352,8 @@ it.layer(services)("operating limits", (it) => {
       const missing = { companyId: "cmp_limits_missing", limitId: company.limitId };
       for (const operation of [
         limits.get(missing),
+        limits.getMany({ companyId: missing.companyId, limits: { connections: company.limitId } }),
+        limits.getMany({ companyId: missing.companyId, limits: {} }),
         limits.history(missing),
         limits.setOverride({ ...missing, value: 8, actor: "operator" }),
         limits.removeOverride({ ...missing, actor: "operator" })
@@ -239,6 +374,7 @@ it.layer(services)("operating limits", (it) => {
           const input = { ...company, limitId, value: 8, actor: "operator" };
           for (const operation of [
             limits.get(input),
+            limits.getMany({ companyId: company.companyId, limits: { legacy: limitId } }),
             limits.history(input),
             limits.setOverride(input),
             limits.removeOverride(input)

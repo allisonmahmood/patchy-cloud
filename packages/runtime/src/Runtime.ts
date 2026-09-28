@@ -507,7 +507,8 @@ export const make = (
               value:
                 attempt.reason === "capacity" ? Limits.MAX_TRACKED_KEYS : settings.callsPerMinute
             });
-          if (options.admitCompany !== undefined) yield* options.admitCompany(version.companyId);
+          if (version.scope !== "public" && options.admitCompany !== undefined)
+            yield* options.admitCompany(version.companyId);
         });
         // For integrations, log the attempt before admission or input decoding can
         // refuse it. Attribution comes only from the live viewer and loaded version.

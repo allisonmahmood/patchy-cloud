@@ -413,7 +413,8 @@ export const registry = {
     default: 100,
     unit: "calls/second",
     scope: "company",
-    measure: "Tier 1 operations and tier 2 calls per host replica; excludes callbacks and re-runs",
+    measure:
+      "Company tier 1 operations and tier 2 calls per host replica; excludes public me, callbacks and re-runs",
     refusal: "limit_exceeded",
     overridable: true
   },

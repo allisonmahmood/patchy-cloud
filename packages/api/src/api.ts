@@ -536,7 +536,8 @@ const runtimeAdmission =
   "Wire compatibility is checked before dispatch (`shell_outdated`). Per-viewer per-patch calls " +
   "are limited to 300 per minute by the release contract; `rate_limited` is 429 with `Retry-After` seconds. " +
   "Company admission also uses a per-host-replica token bucket, 100 calls/second with burst 200 by default, " +
-  "overridable per company. It counts operations even without a database connection and refuses with " +
+  "overridable per company. It counts company-scoped operations even without a database connection; " +
+  "public `me` calls spend only their per-caller allowance. Company admission refuses with " +
   "`limit_exceeded` (429), `company.admission.rate`, scope `company`, the enforced rate and `retryAfter`. " +
   "Callbacks and subscription re-runs do not consume another company admission. Company connections " +
   "default to four slots with at most 32 waiters and a one-second wait inside the caller's deadline; " +

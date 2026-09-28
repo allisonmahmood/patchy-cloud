@@ -12,11 +12,13 @@ Creation runs outside any transaction through `PATCHY_COMPANY_DB_ADMIN_URL`, a m
 
 The `CREATE DATABASE` statement is autocommit on the provisioning connection, never inside a PostgreSQL transaction block. A separate placement transaction holds the claim-row lock through creation and initialization to serialize replicas and make interrupted creation resumable; this does not make the admin statement transactional.
 
-Roles are operator-provisioned, not created per placement. On Neon, after creating
-the data role, grant `GRANT company_x TO patchy_admin WITH SET TRUE, INHERIT FALSE`.
+Roles are operator-provisioned and shared across placements, not created per company.
+On Neon, after creating the data role, grant
+`GRANT patchy_data TO patchy_admin WITH SET TRUE, INHERIT FALSE`, substituting the
+`PATCHY_COMPANY_DB_URL` data login and `PATCHY_COMPANY_DB_ADMIN_URL` provisioning login.
 Alternatively configure the creating admin's `createrole_self_grant = 'set'`.
 Whole-database reclamation must reserve one maintenance connection, `SET ROLE
-company_x`, issue `DROP DATABASE` outside a transaction, then `RESET ROLE` before
+patchy_data`, issue `DROP DATABASE` outside a transaction, then `RESET ROLE` before
 returning the connection. A `CREATEDB` admin without inherited ownership cannot
 drop the data role's database merely because it created it.
 
@@ -29,17 +31,23 @@ eight-entry platform ledger.
 
 Use direct connections and a scoped `RcMap` registry: at most 100 retained company pools, idle TTL 60 seconds, and minimum 0 connections. `company.connections` defaults to 4 per company per host replica, with per-company operating overrides. Leases last one operation. When those slots are occupied, both tiers wait behind at most 32 queued acquisitions (`company.connections.waiters`) for at most 1 second (`company.connections.wait`), still inside the caller's deadline. Queue overflow or expiry returns `busy` with `retryAfter`, scope, limit id and value. Request events record the queue wait. Interrupted waiters release their queue slot.
 
+The connection wait bounds contention for company slots, not placement reads,
+socket establishment, or SQL execution. A caller's earlier deadline or cancellation
+ends the wait and retains that caller's timeout or interruption outcome.
+
 Pool overrides change only the named company. Existing leases drain before a
-replacement pool opens, so old and new maxima do not overlap.
+replacement pool opens, so old and new maxima do not overlap. New leases can
+return `busy` during this drain; an increase does not bypass existing leases.
 `PATCHY_COMPANY_DB_MAX_BACKENDS` defaults to 200 and budgets retained pool maxima,
 not only currently executing queries. Operators must sum budgets across replicas
 and leave separate platform/provisioning/administration headroom below the server's
 available user connections. Admission counts are per host replica in v1.
 
 The company's token bucket belongs to Runtime, not Company database. It admits
-100 calls per second with a burst of 200, including operations that never lease a
-connection. It counts each tier 1 operation or tier 2 call once, not callbacks or
-subscription re-runs, and refuses with `limit_exceeded`.
+100 calls per second with a burst of 200, including company-scoped operations that
+never lease a connection. Public `me` calls spend only the per-caller allowance,
+not company tokens. It counts each company tier 1 operation or tier 2 call once,
+not callbacks or subscription re-runs, and refuses with `limit_exceeded`.
 
 Placement queries use a separate pool of at most two connections with the platform credentials. They never borrow from the ordinary platform pool: callers may already hold every platform connection in patch-row transactions. This both avoids circular pool acquisition and keeps claims committed independently of caller rollback. Budget these two connections, the one admin connection, and temporary provisioning data connections separately from retained company pools.
 

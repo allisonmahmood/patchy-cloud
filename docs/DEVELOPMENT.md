@@ -841,8 +841,9 @@ connections, with per-company overrides through `OperatingLimits.setOverride`.
 At saturation, up to 32 acquisitions wait at most one second within their caller's
 deadline; overflow or expiry returns `busy` with retry and limit metadata.
 The Runtime company token bucket separately defaults to 100 calls/second with a
-burst of 200, including calls that use no company connection. Both counts are
-per host replica. Patch-local dev does not simulate these operating limits. The
+burst of 200, including company-scoped calls that use no company connection.
+Public `me` calls do not spend company tokens. Both counts are per host replica.
+Patch-local dev does not simulate these operating limits. The
 [company database ADR](adr/ADR-0009-one-postgres-database-per-company.md) owns the
 pool and lock contract; ordinary index creation can block writers.
 
@@ -854,15 +855,17 @@ is rejected at startup. Configure a supported verified-TLS URL explicitly rather
 than relying on the application to silently discard connection settings.
 
 Provision roles as an operator. After each data-role `CREATE ROLE`, run
-`GRANT company_x TO patchy_admin WITH SET TRUE, INHERIT FALSE`, substituting the
-configured data and provisioning logins. `createrole_self_grant = 'set'` on the
+`GRANT patchy_data TO patchy_admin WITH SET TRUE, INHERIT FALSE`, substituting
+the `PATCHY_COMPANY_DB_URL` data login and `PATCHY_COMPANY_DB_ADMIN_URL` provisioning
+login. These roles are shared across placements, not created per company.
+`createrole_self_grant = 'set'` on the
 creating admin is an alternative. The data login must remain unprivileged.
-Company creation uses `template0`, not `template1`: the spike project's
-TimescaleDB scheduler in `template1` blocked creation while the placement
-transaction was open. Patchy initializes its own inventory in the pristine database.
+Company creation uses `template0`, not `template1`: background workers connected
+to `template1` can block copying that database while the placement transaction is
+open. Patchy initializes its own inventory in the pristine database.
 
 To reclaim a disposable company database after its pools close, use one reserved
-maintenance connection: `SET ROLE company_x`, `DROP DATABASE <company_database>`,
+maintenance connection: `SET ROLE patchy_data`, `DROP DATABASE <company_database>`,
 then `RESET ROLE`, outside a transaction. Never infer the database name from a
 company handle; use its placement. Normal patch reclamation drops namespaces,
 not whole company databases.
@@ -872,12 +875,6 @@ a server backend id. Idle disconnects remove pooled connections; the next work
 acquires a fresh one without replaying an interrupted mutation. Disable suspend
 on production compute; do not change the spike or production settings as part of
 local tests.
-
-Issue #390 acceptance ran against the designated Neon spike project using isolated
-roles and databases. It exercised production `ensureReady`, the SET-only grant,
-owner-role reclamation, repeated inventory initialization, protocol cancellation,
-and replacement of a terminated idle connection. Offline provisioning tests keep
-another session open in `template1` to cover the source-template contention case.
 
 ### Initial credentials
 

@@ -61,7 +61,7 @@ Host-wide limits cannot have company overrides. Per-company admission counters r
 | `subscriptions.reruns.patch` | operating | 1 | runs | patch | Simultaneous subscription re-runs per patch per host replica | None | Yes | deployment |
 | `tier2.actions.company` | operating | 8 | actions | company | Actions in flight per company per host replica | `busy` | Yes | deployment |
 | `tier2.actions.viewer` | operating | 2 | actions | viewer | Actions in flight per viewer per patch per host replica | `busy` | Yes | deployment |
-| `company.admission.rate` | operating | 100 | calls/second | company | Tier 1 operations and tier 2 calls per host replica; excludes callbacks and re-runs | `limit_exceeded` | Yes | deployment |
+| `company.admission.rate` | operating | 100 | calls/second | company | Company tier 1 operations and tier 2 calls per host replica; excludes public me, callbacks and re-runs | `limit_exceeded` | Yes | deployment |
 | `company.admission.burst` | operating | 200 | calls | company | Company admission burst per host replica | `limit_exceeded` | Yes | deployment |
 | `execution.process.rss` | operating | 536870912 | bytes | patch | Process RSS at termination; memory configured in MiB | None | Yes | deployment |
 | `execution.breaker.kills` | operating | 3 | kills | patch | Kills across all versions of one patch within the breaker window | `patch_paused` | Yes | deployment |
