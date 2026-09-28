@@ -4662,7 +4662,7 @@ describe("repo publish recovery", () => {
     expect(requests[0]!.body).toMatchObject({
       html: expect.stringContaining("@import url(foo)")
     });
-  });
+  }, 30_000); // Refresh and publish run real config, compiler and Vite child processes.
 
   it.each([
     String.raw`<style>@\69mport "https://example.test/external.css";</style>`,

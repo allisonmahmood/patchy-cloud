@@ -268,6 +268,7 @@ it.layer(services)("declared Postgres over the runtime wire", (it) => {
             )
           )
         );
-      })
+      }),
+    30_000 // Cold-start PGlite, then exercise real runtime operations and log queries.
   );
 });
