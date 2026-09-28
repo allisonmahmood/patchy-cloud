@@ -263,6 +263,7 @@ it("bundles the actual browser entry and generated template without Node, Effect
     },
     bundle: true,
     platform: "browser",
+    conditions: ["development"],
     format: "esm",
     write: false,
     metafile: true,
