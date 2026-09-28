@@ -37,7 +37,7 @@ import {
   OrphanSweep,
   migrations as companyDatabaseMigrations
 } from "@patchy/company-database";
-import { AzureContentStore, BlobContainer, FilesystemContentStore } from "@patchy/content-store";
+import { FilesystemContentStore, S3ContentStore } from "@patchy/content-store";
 import {
   ConnectionPages,
   ConnectionsApi,
@@ -76,13 +76,13 @@ import * as ApiGuard from "./ApiGuard.js";
 export const port = Config.Int("PORT").pipe(Config.withDefault(3000));
 
 /**
- * Where a patch's bytes go is wiring, not a setting: Azure Blob when its
- * container is configured, the local filesystem otherwise. An incomplete
- * Azure configuration fails startup here rather than the first publish.
+ * Where a patch's bytes go is wiring, not a setting: Neon Object Storage when
+ * its S3 bucket is configured, the local filesystem otherwise. An incomplete
+ * S3 configuration fails startup here rather than the first publish.
  */
 const contentStore = Layer.unwrap(
-  Effect.map(Config.option(BlobContainer.container), (container) =>
-    Option.isSome(container) ? AzureContentStore.layer : FilesystemContentStore.layer
+  Effect.map(Config.option(S3ContentStore.bucket), (bucket) =>
+    Option.isSome(bucket) ? S3ContentStore.layer : FilesystemContentStore.layer
   )
 );
 

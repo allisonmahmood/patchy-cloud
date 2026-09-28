@@ -566,7 +566,7 @@ result and retained rows and resources, not SQL text. The existing package suite
 retain their focused primitive concurrency cases.
 
 `pnpm test:all` runs package tests through Turbo, the real-Postgres concurrency
-block and the packed e2e, but not the live Clerk tiers. It attempts all three even
+block and the packed e2e, but not the live Clerk or content-store tiers. It attempts all three even
 if an earlier suite fails and exits nonzero if any suite fails. CI runs offline
 Vitest on Node 22.22.0 and 24. `cli-smoke` and `postgres-concurrency` are unconditional
 Node 22.22.0 checks on pull requests and pushes to `main`, including forks and Dependabot;
@@ -638,6 +638,21 @@ installs the loopback-only fetch guard. The production-domain Clerk handshake is
 verification, not part of these offline checks.
 The `async-exit-hook` dependency patch preserves failure exit codes when embedded
 Postgres shuts down; without it, a failed Vitest suite can exit successfully.
+
+#### Live content store
+
+The opt-in contract suite uses an existing private Neon Object Storage bucket
+and the [dedicated S3 settings](#neon-object-storage). Keep the credentials in a
+private file outside the checkout, then run from the repository root:
+
+```sh
+node --env-file=$HOME/.config/patchy-cloud/neon-spike.env node_modules/vitest/vitest.mjs run --config vitest.content-store-live.config.ts
+```
+
+Each run uses a unique object-key prefix and cleans up its own objects. It does
+not create or delete the bucket or touch objects outside that prefix. The suite
+is never part of `pnpm test` or `pnpm test:all`; local development and offline
+tests stay on the filesystem.
 
 #### Live Clerk: `pnpm test:clerk`
 
@@ -921,23 +936,39 @@ to the tier 2 dev-loop ticket; the existing CLI log response is unchanged.
 
 ## Postgres
 
-`DATABASE_URL` is required: Postgres is the only store. The server migrates
+`DATABASE_URL` is required: Postgres is the relational store. The server migrates
 the database on startup, before it listens; the packed-CLI e2e starts an
-embedded Postgres of its own under its temp root.
+embedded Postgres of its own under its temp root. Object bytes use the separate
+content store below.
 
 Do not commit real database URLs or generated tokens.
 
-## Azure Blob Storage
+## Neon Object Storage
 
-The server writes a patch's bytes to Azure Blob whenever `AZURE_STORAGE_CONTAINER`
-is set, and to `PATCHY_STORAGE_DIR` on local disk otherwise:
+When `PATCHY_S3_BUCKET` is set, the server uses Neon Object Storage through its
+S3-compatible API. Otherwise it stores bytes under `PATCHY_STORAGE_DIR` on the
+local filesystem. Local development and offline tests keep the filesystem
+layer; the worktree runner does not forward ambient storage settings.
 
-```env
-AZURE_STORAGE_ACCOUNT=
-AZURE_STORAGE_CONTAINER=
-```
+Configure all five dedicated settings for a deployment or the live contract
+suite:
 
-Without `AZURE_STORAGE_CONNECTION_STRING`, the server requires
-`AZURE_STORAGE_ACCOUNT` and uses Azure's `DefaultAzureCredential` chain,
-including managed identity in a configured deployment. Connection-string auth
-remains available for local Azure testing and deployments without managed identity.
+| Setting                       | Value                                                     |
+| ----------------------------- | --------------------------------------------------------- |
+| `PATCHY_S3_BUCKET`            | The name of an existing private bucket.                   |
+| `PATCHY_S3_ENDPOINT`          | The S3 endpoint for the Neon branch that owns the bucket. |
+| `PATCHY_S3_REGION`            | The signing region supplied by Neon.                      |
+| `PATCHY_S3_ACCESS_KEY_ID`     | The Neon Object Storage access key id.                    |
+| `PATCHY_S3_SECRET_ACCESS_KEY` | The corresponding Neon Object Storage secret access key.  |
+
+The layer reads these settings through Effect Config and uses path-style S3
+requests. The endpoint scopes the bucket to its Neon branch: the same bucket
+name at a different branch endpoint is a different store. Supply the branch
+endpoint itself, not an object URL. Provision the private bucket separately;
+startup neither creates it nor changes its access policy.
+
+These are Neon Object Storage credentials, separate from AWS host credentials.
+The layer does not use the AWS default credential chain, instance roles or
+ambient `AWS_*` settings. Keep credentials outside git and out of logs.
+With `PATCHY_S3_BUCKET` set, incomplete S3 configuration fails startup instead of
+falling back to disk or waiting for the first publish.

@@ -40,6 +40,8 @@ overrides:
 # embedded-postgres's beforeExit hook must preserve Vitest failures, not exit 0.
 patchedDependencies:
   async-exit-hook@2.0.1: patches/async-exit-hook@2.0.1.patch
+  # S3rver's continuation-token DES cipher is unavailable in current Node/OpenSSL.
+  s3rver@3.7.1: patches/s3rver@3.7.1.patch
 allowBuilds:
   esbuild: true
   "@embedded-postgres/darwin-arm64": true

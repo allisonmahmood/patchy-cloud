@@ -1,0 +1,38 @@
+diff --git a/lib/controllers/bucket.js b/lib/controllers/bucket.js
+--- a/lib/controllers/bucket.js
++++ b/lib/controllers/bucket.js
+@@ -11,13 +11,10 @@
+ const { utf8BodyParser } = require('../utils');
+ 
+ function generateContinuationToken(bucket, keyName, region) {
+-  const key = Buffer.alloc(8, 'S3RVER', 'utf8');
+-  const iv = crypto.randomBytes(8);
+-  // ensure the first byte of IV lies between [212, 216)
+-  iv[0] = (iv[0] & 0b00000011) | 0b11010100;
+-  // use DES for its 8-byte block size
+-  // (real S3 has blocks of lengths [9,8,7] repeating)
+-  const cipher = crypto.createCipheriv('des', key, iv);
++  // Tokens are opaque; use a cipher available without OpenSSL's legacy provider.
++  const key = Buffer.alloc(32, 'S3RVER', 'utf8');
++  const iv = crypto.randomBytes(16);
++  const cipher = crypto.createCipheriv('aes-256-cbc', key, iv);
+   return Buffer.concat([
+     iv,
+     cipher.update(`${region}/${bucket}/${keyName}`, 'utf8'),
+@@ -27,11 +24,11 @@
+ 
+ function decipherContinuationToken(token) {
+   const buf = Buffer.from(token, 'base64');
+-  if (buf.length < 8) return '';
+-  const key = Buffer.alloc(8, 'S3RVER', 'utf8');
+-  const iv = buf.slice(0, 8);
+-  const decipher = crypto.createDecipheriv('des', key, iv);
+-  const ciphertext = buf.slice(8);
++  if (buf.length < 16) return '';
++  const key = Buffer.alloc(32, 'S3RVER', 'utf8');
++  const iv = buf.slice(0, 16);
++  const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
++  const ciphertext = buf.slice(16);
+   return Buffer.concat([
+     decipher.update(ciphertext),
+     decipher.final(),

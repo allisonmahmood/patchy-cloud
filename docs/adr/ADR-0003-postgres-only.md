@@ -24,6 +24,11 @@ not a second storage model. [ADR-0009](./ADR-0009-one-postgres-database-per-comp
 owns placement, pooling and the inventory; patch development runs the same
 capability services over PGlite.
 
+Published patch bytes, immutable file objects and SDK archives remain outside
+Postgres in the content store. Deployments use Neon Object Storage through its
+S3-compatible API; development and offline tests use the filesystem. A bucket
+belongs to the Neon branch selected by its endpoint, not to a global S3 namespace.
+
 1. **Migrations belong to capabilities, with one platform ledger.** The original
    baselines were rewritten before deployment. The current ledger has nine
    records across seven owners:

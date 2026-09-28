@@ -4,7 +4,7 @@
  * SIGINT and SIGTERM into interruption. Interruption closes the scope, and
  * the scope closes everything in it: the listener, the sweep, the analytics
  * flush (bounded, so a slow backend never holds the exit), the database pool.
- * A missing `DATABASE_URL`, an incomplete Azure configuration or a migration
+ * A missing `DATABASE_URL`, an incomplete S3 configuration or a migration
  * that fails all fail here, before the server listens.
  */
 // @effect-diagnostics nodeBuiltinImport:off -- the Node server is Node's to create.

@@ -6,8 +6,8 @@ export default defineConfig({
     conditions: ["development"]
   },
   test: {
-    // Multi-session SDK invariants have their own mandatory real-Postgres job.
-    exclude: [...configDefaults.exclude, "**/*.postgres.test.ts"],
+    // Real-Postgres concurrency and live service contracts have separate opt-in jobs.
+    exclude: [...configDefaults.exclude, "**/*.postgres.test.ts", "**/*.live.ts"],
     setupFiles: [fileURLToPath(new URL("./setup.ts", import.meta.url))],
     globalSetup: fileURLToPath(new URL("./postgres.ts", import.meta.url))
   }
