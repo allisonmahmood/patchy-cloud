@@ -4607,28 +4607,32 @@ describe("repo publish recovery", () => {
     ["-webkit-image-set", '-webkit-image-set("blob:https://example.test/pixel" 1x)'],
     ["escaped image-set", String.raw`image\2d set("\68 ttps://example.test/pixel.png" 1x)`],
     ["escaped url", String.raw`\75rl("\62 lob:https://example.test/pixel")`]
-  ])("refuses external %s resources in inline CSS", async (_, value) => {
-    const instance = await stubInstance(projectHandler);
-    const dir = publishTree(instance.url);
-    const options = {
-      cwd: dir,
-      stateDir: tempDir(),
-      env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" }
-    };
-    expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
-    const entry = path.join(dir, "index.html");
-    writeFileSync(
-      entry,
-      readFileSync(entry, "utf8").replace(
-        "</body>",
-        `<div style='background-image: ${value}'></div></body>`
-      )
-    );
-    const result = await runCli(["publish", "--json"], options);
-    expect(result).toMatchObject({ status: 1, stdout: "" });
-    expect(JSON.parse(result.stderr)).toMatchObject({ ok: false, kind: "local" });
-    expect(instance.requests.some((request) => request.url === "/api/publish")).toBe(false);
-  });
+  ])(
+    "refuses external %s resources in inline CSS",
+    async (_, value) => {
+      const instance = await stubInstance(projectHandler);
+      const dir = publishTree(instance.url);
+      const options = {
+        cwd: dir,
+        stateDir: tempDir(),
+        env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" }
+      };
+      expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
+      const entry = path.join(dir, "index.html");
+      writeFileSync(
+        entry,
+        readFileSync(entry, "utf8").replace(
+          "</body>",
+          `<div style='background-image: ${value}'></div></body>`
+        )
+      );
+      const result = await runCli(["publish", "--json"], options);
+      expect(result).toMatchObject({ status: 1, stdout: "" });
+      expect(JSON.parse(result.stderr)).toMatchObject({ ok: false, kind: "local" });
+      expect(instance.requests.some((request) => request.url === "/api/publish")).toBe(false);
+    },
+    30_000
+  ); // Refresh and publish run real config, compiler and Vite child processes.
 
   it("publishes harmless CSS strings and embedded image candidates", async () => {
     const instance = await stubInstance((request, respond, disconnect) => {
