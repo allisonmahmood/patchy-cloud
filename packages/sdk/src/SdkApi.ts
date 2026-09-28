@@ -128,20 +128,38 @@ export const layer: Layer.Layer<
   )
 );
 
-/** Only the exact tarball path is reserved; `sdk` remains a valid company handle. */
+/** Tarball-shaped paths cannot be patch names; `sdk` remains a valid company handle. */
 export const tarballLayer = HttpRouter.use((router) =>
   Effect.gen(function* () {
     const artifact = yield* Artifact.Artifact;
     yield* router.add(
       "GET",
-      `/sdk/${artifact.filename}`,
-      HttpServerResponse.uint8Array(artifact.bytes, {
-        contentType: "application/octet-stream",
-        headers: {
-          "cache-control": "public, max-age=31536000, immutable",
-          "content-disposition": `attachment; filename="${artifact.filename}"`,
-          "x-content-type-options": "nosniff"
-        }
+      "/sdk/patchy-:archive.tgz",
+      Effect.gen(function* () {
+        const { params } = yield* HttpRouter.RouteContext;
+        const filename = `patchy-${params.archive}.tgz`;
+        return yield* artifact.get(filename).pipe(
+          Effect.map((bytes) =>
+            HttpServerResponse.uint8Array(bytes, {
+              contentType: "application/octet-stream",
+              headers: {
+                "cache-control": "public, max-age=31536000, immutable",
+                "content-disposition": `attachment; filename="${filename}"`,
+                "x-content-type-options": "nosniff"
+              }
+            })
+          ),
+          Effect.catchTags({
+            ObjectNotFound: () =>
+              Effect.succeed(HttpServerResponse.empty({ status: 404, ...noStore })),
+            InvalidObjectKey: () =>
+              Effect.succeed(HttpServerResponse.empty({ status: 404, ...noStore })),
+            StoreUnavailable: () =>
+              Effect.succeed(HttpServerResponse.empty({ status: 503, ...noStore })),
+            ArtifactMismatch: () =>
+              Effect.succeed(HttpServerResponse.empty({ status: 503, ...noStore }))
+          })
+        );
       })
     );
   })

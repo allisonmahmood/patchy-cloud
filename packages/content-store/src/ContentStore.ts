@@ -1,7 +1,7 @@
 /**
- * The content store: the platform's object store for patch bytes. HTML lives
- * under version keys; immutable file objects live under files/. Two layers
- * implement it — FilesystemContentStore for dev and tests and AzureContentStore
+ * The content store: the platform's object store. HTML lives under version
+ * keys, immutable file objects under files/, and retained SDK archives under
+ * sdk/. FilesystemContentStore implements it for dev and tests; AzureContentStore
  * for production. Object listing is infrastructure for orphan reclamation,
  * not the file primitive's indexed, authorised list operation.
  */

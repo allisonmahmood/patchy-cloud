@@ -5,6 +5,8 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { isManagedOutputPath } from "@patchy/api";
 import { safePath } from "./ManagedProject.js";
+import type { ReleaseToolchain } from "@patchy/api";
+import toolchain from "./toolchain.json" with { type: "json" };
 
 /** Starter sources contain company configuration, never the authenticated person's identity. */
 export function starterFiles(options: {
@@ -13,8 +15,9 @@ export function starterFiles(options: {
   tier: 0 | 1;
   purpose: string;
   tarball: string;
+  toolchain?: typeof ReleaseToolchain.Type;
 }): Record<string, string> {
-  const { instance, name, tier, purpose, tarball } = options;
+  const { instance, name, tier, purpose, tarball, toolchain: versions = toolchain } = options;
   const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
   return {
     "patchy.json": json({ instance, description: purpose }),
@@ -26,10 +29,10 @@ export function starterFiles(options: {
       scripts: { typecheck: "tsc --noEmit", build: "vite build" },
       devDependencies: {
         patchy: tarball,
-        typescript: "^6.0.3",
-        vite: "^8.3.0",
-        "vite-plugin-singlefile": "^2.3.3",
-        "@types/node": "^22.19.0"
+        typescript: versions.typescript.accepted,
+        vite: versions.vite.accepted,
+        "vite-plugin-singlefile": versions["vite-plugin-singlefile"].accepted,
+        "@types/node": versions["@types/node"].accepted
       }
     }),
     "patchy.config.ts": `import { defineConfig, table, t } from "patchy/config";\n\nexport default defineConfig({\n  name: ${JSON.stringify(name)},\n  tier: ${tier},\n  tables: { notes: table("One note per id, with a title.", { title: t.text() }) },\n  files: {},\n  uses: {}\n});\n`,

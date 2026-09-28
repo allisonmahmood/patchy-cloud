@@ -14,8 +14,8 @@ recoverable publish add commands, not alternative output or identity conventions
 
 ## Decision
 
-One npm package, `patchy`, owns the binary and `patchy/config`, `patchy/client`
-and `patchy/dev` at one exact release. It remains private and is distributed by
+One npm package, `patchy`, owns the binary and its explicit config, client, dev
+and Preact entry points at one exact release. It remains private and is distributed by
 the instance until launch. Inside a patch repo, `pnpm patchy` runs the pinned
 copy. [ADR-0011](./ADR-0011-one-package-one-release.md) owns release distribution
 and the stable runtime wire; this ADR owns the CLI's observable contract.
@@ -69,14 +69,15 @@ local repo checks use exit 1 and `kind: "local"`; the same code received from th
 instance is `rejected` (exit 2). Not every local failure has a structured code
 (for example, compiler, bundle-completeness and local I/O errors).
 
-| `code`              | Meaning and remedy                                                                                                                                                                                                                                                                                                                                   |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `instance_mismatch` | The effective target differs from the repo's stored instance, or the stored instance changed before result application. The diagnostic names both URLs. Remove or correct the effective override to match the repo; restore an unintended late target edit before recovery. Never remove the patch id or rebind the instance to bypass this refusal. |
-| `release_mismatch`  | The repo pin, executing CLI or installed runtime differs from the instance release. Run `pnpm patchy refresh` in the repo; file mode installs the exact package from `GET /api/release`.                                                                                                                                                             |
-| `stale_generated`   | Generated release metadata or declaration stamps no longer match the config. Run `pnpm patchy refresh`.                                                                                                                                                                                                                                              |
-| `invalid_manifest`  | Config execution or manifest decoding failed. Fix `patchy.config.ts` and its imports/declarations before publishing.                                                                                                                                                                                                                                 |
-| `too_large`         | The HTML bundle exceeds its tier's local cap: 512 KiB at tier 0, 10 MiB at tier 1. Reduce the resources named in the largest-contributor report; size alone is not a tier mismatch.                                                                                                                                                                  |
-| `tier_mismatch`     | The evident capabilities do not fit the declared or supported tier. Remove unsupported server code/tier 2+, or use tier 1 for browser code; at tier 0 correct the reported core static-HTML policy violations.                                                                                                                                       |
+| `code`                  | Meaning and remedy                                                                                                                                                                                                                                                                                                                                   |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `instance_mismatch`     | The effective target differs from the repo's stored instance, or the stored instance changed before result application. The diagnostic names both URLs. Remove or correct the effective override to match the repo; restore an unintended late target edit before recovery. Never remove the patch id or rebind the instance to bypass this refusal. |
+| `release_mismatch`      | The repo pin, executing CLI or installed runtime differs from the instance release. Run `pnpm patchy refresh` in the repo; file mode installs the exact package from `GET /api/release`.                                                                                                                                                             |
+| `toolchain_unsupported` | Dev or publish loaded Vite or `vite-plugin-singlefile` outside the release's accepted range. The diagnostic names the loaded version, accepted range and tested version, with the exact `pnpm add --save-dev` command. Change the builder-owned dependencies and any shared config's dependency resolution; refresh never writes those keys.         |
+| `stale_generated`       | Generated release metadata or declaration stamps no longer match the config. Run `pnpm patchy refresh`.                                                                                                                                                                                                                                              |
+| `invalid_manifest`      | Config execution or manifest decoding failed. Fix `patchy.config.ts` and its imports/declarations before publishing.                                                                                                                                                                                                                                 |
+| `too_large`             | The HTML bundle exceeds its tier's local cap: 512 KiB at tier 0, 10 MiB at tier 1. Reduce the resources named in the largest-contributor report; size alone is not a tier mismatch.                                                                                                                                                                  |
+| `tier_mismatch`         | The evident capabilities do not fit the declared or supported tier. Remove unsupported server code/tier 2+, or use tier 1 for browser code; at tier 0 correct the reported core static-HTML policy violations.                                                                                                                                       |
 
 Description preflight in `init --purpose`, `describe` and file publishing with
 `--description` can also emit `invalid_description` locally (exit 1), before any
@@ -296,9 +297,17 @@ Connection setup, reconnection and credential forms are browser-only for admins;
 no CLI command accepts connection secrets. A shared-source refusal names the
 source-access repair path.
 
-Managed writes are the pin, lockfile through install, `patchy/_generated/`,
+Managed package pins are only `devDependencies.patchy` today. The tier 2 init
+ticket adds `workerd` on that tier. A pin includes the release's content-digest
+tarball URL, so refresh replaces it and installs again when bytes change even if
+the release version string does not. `release_mismatch` keeps the same contract.
+There is no scaffold `pnpm.overrides`.
+
+Other managed writes are the lockfile through install, `patchy/_generated/`,
 `.agents/skills/patchy-*/`, fixture stubs only when absent, and one `uses` edit
 for add/remove. Existing fixtures, app code and agent instructions are preserved.
+Refresh replaces only the managed package literal, preserving every builder-owned
+dependency key and the surrounding `package.json` bytes.
 The CLI executes config locally and writes `manifest.json`; server generation
 returns finished files, resolved declaration ids/revisions and typed declaration
 metadata, never that manifest or production rows/credentials. Both sides constrain
@@ -306,6 +315,22 @@ paths to the managed roots; declaration snapshots are not generated repo files.
 Skills are sticky: refresh re-fetches every present skill and adds config-implied
 ones, never deleting on its own. A present skill no longer offered by the release
 fails refresh. Their canonical source is `packages/sdk`.
+
+Vite, `vite-plugin-singlefile`, TypeScript and `@types/node` belong to the builder.
+Init writes caret ranges from `GET /api/release`'s `toolchain` metadata. Each entry
+has `testedAgainst` and `accepted`; `packages/patchy/src/toolchain.json` supplies
+the package build, scaffold and local checks from one set of version facts.
+Dev and publish check the Vite module they load and the plugin modules resolved
+while loading the builder's config, including imports through shared or nested
+configs. A declared dependency range is not evidence of the installed version.
+Versions outside the accepted ranges fail locally with `toolchain_unsupported`.
+The current repair command is
+`pnpm add --save-dev 'vite@^8.3.0' 'vite-plugin-singlefile@^2.3.3'`.
+If a shared config resolves a separate installation, update it there too.
+Refresh reports required upgrades as text notices and JSON `warnings`, but
+never changes these builder-owned keys. It remains usable while the Vite config
+is incomplete. TypeScript and declaration packages are scaffold metadata, not
+additional dev/publish version gates.
 
 ### Local patch runtime
 

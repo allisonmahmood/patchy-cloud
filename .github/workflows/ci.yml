@@ -124,6 +124,8 @@ jobs:
           PATCHY_MAX_HTML_BYTES: "1"
           PATCHY_UNKNOWN_AMBIENT_POISON: must-not-leak
         run: pnpm test:packed-cli-e2e
+      - name: Exercise the packed Preact runtime and same-version upgrades
+        run: pnpm test:packed-preact-e2e
 
   dependency-review:
     if: github.event_name == 'pull_request'

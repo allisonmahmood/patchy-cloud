@@ -6,12 +6,15 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import { ReleaseToolchain } from "@patchy/api";
 import { Prepared } from "./devPreparation.js";
 import { Daemon, atomicJson, readRecord } from "./devState.js";
 import * as DevServer from "./devServer.js";
 import { LocalError } from "./CliError.js";
 
-const decodePrepared = Schema.decodeUnknownSync(Schema.fromJsonString(Prepared));
+const decodePrepared = Schema.decodeUnknownSync(
+  Schema.fromJsonString(Schema.Struct({ ...Prepared.fields, toolchain: ReleaseToolchain }))
+);
 const decodeDaemon = Schema.decodeUnknownSync(Daemon);
 
 /** Private daemon invocation is nonce-bound to its repo's startup record. */
@@ -35,7 +38,9 @@ export function run(): void {
       try: () => decodePrepared(text),
       catch: (cause) => new LocalError({ message: "Could not read local runtime metadata.", cause })
     });
-    return yield* DevServer.serve(prepared, stateDir, record).pipe(Effect.provide(DevServer.layer));
+    return yield* DevServer.serve(prepared, stateDir, record, prepared.toolchain).pipe(
+      Effect.provide(DevServer.layer)
+    );
   }).pipe(
     Effect.scoped,
     Effect.catch((error) =>

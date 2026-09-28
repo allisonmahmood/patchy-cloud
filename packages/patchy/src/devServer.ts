@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import { randomBytes } from "node:crypto";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { RuntimeGroup } from "@patchy/api";
+import type { ReleaseToolchain } from "@patchy/api";
 import { RuntimeDev, RuntimeApi } from "@patchy/runtime/dev";
 import { Limits } from "@patchy/limits";
 import {
@@ -53,10 +54,11 @@ const reloadScript = `(() => {
 export const serve = Effect.fn("Dev.serve")(function* (
   prepared: Prepared,
   stateDir: string,
-  record: Daemon
+  record: Daemon,
+  toolchain: typeof ReleaseToolchain.Type
 ) {
   const resources = yield* DevResources.prepare(prepared, record.root, stateDir);
-  const nextBuild = yield* watch(record.root, stateDir);
+  const nextBuild = yield* watch(record.root, stateDir, toolchain);
   let html = yield* nextBuild(prepared.manifest);
   let revision = 1;
   const origin = yield* HttpServer.addressFormattedWith(Effect.succeed);

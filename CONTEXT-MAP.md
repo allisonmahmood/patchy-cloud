@@ -35,7 +35,7 @@ Supporting packages rather than product contexts; their glossaries define only t
 ## Relationships
 
 - **Publishing → `api`**: publishes through the shared wire contract using a user-owned machine token
-- **Publishing (`sdk`) → Primitives, Integrations, Patches, `api`**: distributes the packed release and composes generated clients and context from primitive definitions and integration snapshots the caller may use
+- **Publishing (`sdk`) → Primitives, Integrations, Patches, Content store, `api`**: retains advertised release archives in the content store and composes generated clients and context from primitive definitions and integration snapshots the caller may use
 - **Publishing (`patchy/dev`) → Runtime, Primitives, Integrations, Company database, Content store, Limits**: supplies local loaded versions and the handler map, composing the real capabilities over PGlite and a filesystem store with the machine's user identity and synthetic fixtures
 - **`patchy/dev` → `serving/shell`**: serves the production renderer, broker and sandbox policies through the infrastructure-free shell export
 - **Serving → Patches, Auth**: relies on Patches for content, sharing, visits and lifecycle notices with restore-source checks, and on Auth for viewer identity and session admission. Serving links to the card and restore routes without importing Portal.

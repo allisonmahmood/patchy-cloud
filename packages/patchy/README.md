@@ -19,6 +19,11 @@ Contributors working in this checkout can instead run `pnpm --filter patchy buil
 
 The package bundles its runtime dependencies and installs offline without running install scripts. Inside a patch repo it is pinned as one exact devDependency; `pnpm patchy` runs that copy. `GET /api/release` reports the tarball URL and SHA-512 integrity. See [ADR-0011](../../docs/adr/ADR-0011-one-package-one-release.md) for the release and stable-wire boundary.
 
+The URL is `/sdk/patchy-<release>-<digest>.tgz`, with the full SHA-256 of the
+tarball as its digest. Old advertised URLs remain available. If the same
+version is rebuilt with different bytes, refresh changes the URL and installs
+those bytes rather than reusing the previous package.
+
 First run is `patchy login`, then `patchy publish ./plan.html`. A person at a real
 terminal confirms in their browser while login waits. An agent receives a URL,
 code and next command, relays them to the person, and runs that next command
@@ -28,7 +33,36 @@ without a login, and a saved login takes precedence over that seed.
 
 ## Config and browser client
 
-The only public library subpaths are `patchy/config`, `patchy/client` and `patchy/dev`.
+Public subpaths are explicit: `patchy/config` and `patchy/dev` for tooling,
+`patchy/client` for the generated browser client, and `patchy/preact`,
+`patchy/preact/jsx-runtime` and `patchy/preact/jsx-dev-runtime` for pages.
+Unlisted `patchy/*` paths are not exported.
+
+### Bundled UI runtime
+
+`patchy/preact` supplies Preact with compat semantics, hooks and signals. It
+bundles exact Preact 10.29.8, `@preact/signals` 2.11.2 and
+`@preact/signals-core` 1.14.4. Do not add direct Preact dependencies or
+`pnpm.overrides`. Compat initializes before rendering through any of the three
+entries. In DEV the SDK initializes debugging against that same instance;
+patch code never imports `preact/debug`.
+
+Import UI functions from `patchy/preact`, for example `render`, `useState`,
+`useSignal`, `signal`, `computed`, `memo` and `forwardRef`. Set TypeScript's
+`jsx: "react-jsx"` and `jsxImportSource: "patchy/preact"` and Vite's
+`oxc.jsx.importSource: "patchy/preact"` when writing TSX. Compat transitions
+are synchronous; there is no React scheduler.
+
+The tier 1 starter remains vanilla in this release. The Preact scaffold and
+`useQuery` land in their own tickets; this release ships the UI runtime.
+
+Contributors can run `pnpm --filter patchy build` followed by
+`pnpm test:packed-preact-e2e`. It installs the real release with pnpm, checks
+the installed UI tree and JSX types, exercises optimized dev and the single-file
+production bundle in Chromium, and installs a same-version repack through a new
+digest URL.
+
+### Config
 
 ```ts
 import { defineConfig, table, t, files, postgres, sharedTable } from "patchy/config";
@@ -281,7 +315,7 @@ as `false` does not change the definition. Notices do not block the command;
 JSON includes them in `warnings`, including in the failure document if a later
 step fails. Text mode prints those notices before the error.
 
-Managed generation writes are exactly the package pin, `patchy/_generated/`,
+Managed generation writes are exactly the `patchy` package pin, `patchy/_generated/`,
 `.agents/skills/patchy-*/`, missing fixture stubs, the lockfile through install,
 and one `uses` edit for add/remove. The CLI writes `manifest.json` from local
 config execution; the server never returns that file. Server paths are checked
@@ -299,6 +333,27 @@ re-fetches every present skill and adds any the config implies, but never delete
 one on its own. A present skill no longer offered by the release fails refresh.
 Edit definitions, declarations and invented fixtures; never hand-edit generated
 clients, stamps or project skills.
+
+### Builder-owned toolchain
+
+Vite, `vite-plugin-singlefile`, TypeScript and `@types/*` belong to the builder.
+Init writes caret ranges; refresh never edits those keys or adds overrides.
+Tier 2 init will add `workerd` as the only other managed pin.
+`GET /api/release` reports `toolchain`, with a `testedAgainst` version and
+`accepted` range for each scaffold dependency.
+
+Dev and publish inspect the Vite and single-file plugin they actually load,
+including a plugin resolved from a shared config. An unsupported version exits
+1 with `kind: "local"` and `code: "toolchain_unsupported"`, naming the loaded
+version, accepted range and upgrade command. For this release:
+
+```sh
+pnpm add --save-dev 'vite@^8.3.0' 'vite-plugin-singlefile@^2.3.3'
+```
+
+Refresh reports required upgrades in text and JSON `warnings`, but leaves
+the upgrade to the builder. `release_mismatch` still checks the Patchy pin,
+CLI and runtime; toolchain support is a separate check.
 
 ### `patchy dev [--foreground]`
 

@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { assert, it } from "@effect/vitest";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
+import * as NodePath from "@effect/platform-node/NodePath";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -29,6 +31,7 @@ import * as SqlError from "effect/unstable/sql/SqlError";
 import { Generated, Manifest, isManagedOutputPath } from "@patchy/api";
 import { Patches } from "@patchy/patches";
 import { ConnectionStore } from "@patchy/integrations";
+import { ContentStore, FilesystemContentStore } from "@patchy/content-store";
 import { ConnectionStoreDev } from "@patchy/integrations/dev";
 import * as Tables from "../../primitives/src/Tables.js";
 import * as Fixtures from "../../patches/src/test/fixtures.js";
@@ -40,6 +43,39 @@ import * as SdkApi from "./SdkApi.js";
 const exec = promisify(execFile);
 const repo = fileURLToPath(new URL("../../../", import.meta.url));
 const decodeRelease = Schema.decodeUnknownEffect(Release);
+const artifactDirectory = fileURLToPath(new URL("../artifacts/", import.meta.url));
+const artifactStore = Layer.unwrap(
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-sdk-store-" });
+    return FilesystemContentStore.layer.pipe(
+      Layer.provide(
+        ConfigProvider.layer(ConfigProvider.fromUnknown({ PATCHY_STORAGE_DIR: directory }))
+      )
+    );
+  })
+).pipe(Layer.provideMerge([NodeFileSystem.layer, NodePath.layer]));
+
+// Keep the production artifact location fixed while exercising real isolated files.
+const loadArtifact = Effect.fn(function* (directory: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const relocate = (file: string) =>
+    file.startsWith(artifactDirectory)
+      ? path.join(directory, path.relative(artifactDirectory, file))
+      : file;
+  return yield* Artifact.make.pipe(
+    Effect.provideService(FileSystem.FileSystem, {
+      ...fs,
+      readFile: (file, ...options) => fs.readFile(relocate(file), ...options),
+      readFileString: (file, ...options) => fs.readFileString(relocate(file), ...options),
+      readDirectory: (file, ...options) => fs.readDirectory(relocate(file), ...options)
+    }),
+    Effect.provideService(
+      ConfigProvider.ConfigProvider,
+      ConfigProvider.fromUnknown({ PATCHY_PUBLIC_BASE_URL: "https://patchy.example" })
+    )
+  );
+});
 const routes = Layer.mergeAll(
   HttpApiBuilder.layer(HttpApi.make("patchy").add(SdkGroup)).pipe(
     Layer.provide(SdkApi.layer),
@@ -58,6 +94,7 @@ const routes = Layer.mergeAll(
 );
 const layer = HttpRouter.serve(routes, { disableLogger: true, disableListenLog: true }).pipe(
   Layer.provideMerge(Artifact.layer),
+  Layer.provideMerge(artifactStore),
   Layer.provideMerge(Patches.layer.pipe(Layer.provideMerge(Fixtures.database))),
   Layer.provideMerge(NodeHttpServer.layerTest),
   Layer.provide(
@@ -85,10 +122,6 @@ it.layer(layer)("the packed SDK release", (it) => {
         assert.strictEqual(release.release, CURRENT_RELEASE);
         assert.strictEqual(release.manifestVersion, MANIFEST_VERSION);
         assert.strictEqual(release.wireVersion, WIRE_VERSION);
-        assert.strictEqual(
-          release.package.tarball,
-          `https://patchy.example/sdk/patchy-${release.release}.tgz`
-        );
 
         const download = yield* client.get(new URL(release.package.tarball).pathname);
         assert.strictEqual(download.status, 200);
@@ -99,6 +132,10 @@ it.layer(layer)("the packed SDK release", (it) => {
         assert.strictEqual(download.headers["content-type"], "application/octet-stream");
         assert.isUndefined(download.headers["set-cookie"]);
         const bytes = Buffer.from(yield* download.arrayBuffer);
+        assert.strictEqual(
+          release.package.tarball,
+          `https://patchy.example/sdk/patchy-${release.release}-${createHash("sha256").update(bytes).digest("hex")}.tgz`
+        );
         assert.strictEqual(
           release.package.integrity,
           `sha512-${createHash("sha512").update(bytes).digest("base64")}`
@@ -132,11 +169,6 @@ it.layer(layer)("the packed SDK release", (it) => {
         const manifest = JSON.parse(installed);
         assert.strictEqual(manifest.name, "patchy");
         assert.strictEqual(manifest.version, release.release);
-        assert.deepStrictEqual(Object.keys(manifest.exports).sort(), [
-          "./client",
-          "./config",
-          "./dev"
-        ]);
         const cli = yield* Effect.tryPromise(() =>
           exec(
             process.execPath,
@@ -181,6 +213,14 @@ import { executeConfig } from "patchy/config";
 import { createClient, PatchyError } from "patchy/client";
 import * as client from "patchy/client";
 import * as dev from "patchy/dev";
+for (const entry of ["patchy/preact/debug", "patchy/preact/runtime", "patchy/dist/index.js"]) {
+  try {
+    import.meta.resolve(entry);
+    throw new Error("Internal entry is importable: " + entry);
+  } catch (error) {
+    if (error.code !== "ERR_PACKAGE_PATH_NOT_EXPORTED") throw error;
+  }
+}
 const manifest = await executeConfig(${JSON.stringify(path.join(dir, "patchy.config.ts"))});
 if (typeof createClient !== "function" || typeof PatchyError !== "function") throw new Error("Missing client exports");
 for (const name of ["createHttpTransport", "createPortTransport", "createPostMessageTransport"]) {
@@ -251,9 +291,156 @@ void [inserted, changed, at, createClient, PatchyError, executeConfig, dev];
         assert.strictEqual(response.status, 200, url);
         assert.strictEqual(yield* response.text, `patch:${url}`);
       }
-      const wrongMethod = yield* client.post(`/sdk/patchy-${CURRENT_RELEASE}.tgz`);
+      const artifact = yield* Artifact.Artifact;
+      const wrongMethod = yield* client.post(new URL(artifact.release.package.tarball).pathname);
       assert.strictEqual(wrongMethod.status, 405);
       assert.strictEqual(yield* wrongMethod.text, "other route");
+    })
+  );
+
+  it.effect("refuses unknown and malformed archives without returning the current bytes", () =>
+    Effect.gen(function* () {
+      const client = yield* HttpClient.HttpClient;
+      for (const name of [
+        `patchy-${CURRENT_RELEASE}-${"0".repeat(64)}.tgz`,
+        `patchy-${CURRENT_RELEASE}.tgz`,
+        `patchy-${CURRENT_RELEASE}-${"A".repeat(64)}.tgz`,
+        `patchy-${CURRENT_RELEASE}-not-a-digest.tgz`
+      ]) {
+        const response = yield* client.get(`/sdk/${name}`);
+        assert.strictEqual(response.status, 404, name);
+        assert.strictEqual(response.headers["cache-control"], "private, no-store");
+        assert.strictEqual((yield* response.arrayBuffer).byteLength, 0);
+      }
+    })
+  );
+
+  it.effect("retains advertised archives across a same-version repack and restart", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const store = yield* ContentStore.ContentStore;
+      const current = yield* Artifact.Artifact;
+      const filename = path.basename(new URL(current.release.package.tarball).pathname);
+      const original = Buffer.from(yield* current.get(filename));
+      const repacked = Buffer.from(original);
+      // A different gzip timestamp preserves the package while changing the packed bytes.
+      repacked[4] = repacked[4]! ^ 1;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-sdk-repack-" });
+      const metadata = JSON.parse(
+        yield* fs.readFileString(path.join(artifactDirectory, "release.json"))
+      );
+      const pack = Effect.fn(function* (bytes: Uint8Array) {
+        const digest = createHash("sha256").update(bytes).digest("hex");
+        const filename = `patchy-${CURRENT_RELEASE}-${digest}.tgz`;
+        yield* fs.writeFile(path.join(directory, filename), bytes);
+        yield* fs.writeFileString(
+          path.join(directory, "release.json"),
+          JSON.stringify({
+            ...metadata,
+            digest,
+            integrity: `sha512-${createHash("sha512").update(bytes).digest("base64")}`
+          })
+        );
+        return filename;
+      });
+      const restarted = <A, E, R>(action: Effect.Effect<A, E, R>) =>
+        action.pipe(
+          Effect.provide(
+            Layer.fresh(
+              HttpRouter.serve(routes, { disableLogger: true, disableListenLog: true }).pipe(
+                Layer.provideMerge(Layer.effect(Artifact.Artifact, loadArtifact(directory))),
+                Layer.provideMerge(NodeHttpServer.layerTest)
+              )
+            ),
+            { local: true }
+          )
+        );
+      const discover = Effect.gen(function* () {
+        const client = yield* HttpClient.HttpClient;
+        const response = yield* client.get("/api/release");
+        assert.strictEqual(response.status, 200);
+        return yield* decodeRelease(yield* response.json);
+      });
+      yield* pack(original);
+      const historical = `patchy-0.0.0-previous-${createHash("sha256").update(original).digest("hex")}.tgz`;
+      yield* fs.writeFile(path.join(directory, historical), original);
+      const first = yield* restarted(discover);
+      yield* fs.remove(path.join(directory, filename));
+      yield* fs.remove(path.join(directory, historical));
+      const nextFilename = yield* pack(repacked);
+      const second = yield* restarted(
+        Effect.gen(function* () {
+          const second = yield* discover;
+          const client = yield* HttpClient.HttpClient;
+          const historicalDownload = yield* client.get(`/sdk/${historical}`);
+          assert.strictEqual(historicalDownload.status, 200);
+          assert.deepStrictEqual(Buffer.from(yield* historicalDownload.arrayBuffer), original);
+          assert.strictEqual(second.release, first.release);
+          assert.notStrictEqual(second.package.tarball, first.package.tarball);
+          for (const [release, expected] of [
+            [first, original],
+            [second, repacked]
+          ] as const) {
+            const response = yield* client.get(new URL(release.package.tarball).pathname);
+            assert.strictEqual(response.status, 200);
+            assert.strictEqual(
+              response.headers["cache-control"],
+              "public, max-age=31536000, immutable"
+            );
+            const bytes = Buffer.from(yield* response.arrayBuffer);
+            assert.deepStrictEqual(bytes, expected);
+            assert.strictEqual(
+              release.package.integrity,
+              `sha512-${createHash("sha512").update(bytes).digest("base64")}`
+            );
+          }
+          return second;
+        })
+      );
+      // A replica that started before the repack must also see the newly advertised URL.
+      const client = yield* HttpClient.HttpClient;
+      const newDownload = yield* client.get(new URL(second.package.tarball).pathname);
+      assert.strictEqual(newDownload.status, 200);
+      assert.deepStrictEqual(Buffer.from(yield* newDownload.arrayBuffer), repacked);
+      yield* store.putBytes(`sdk/${nextFilename}`, original);
+      const corrupt = yield* client.get(new URL(second.package.tarball).pathname);
+      assert.strictEqual(corrupt.status, 503);
+      assert.strictEqual(corrupt.headers["cache-control"], "private, no-store");
+      assert.strictEqual((yield* corrupt.arrayBuffer).byteLength, 0);
+    })
+  );
+
+  it.effect("rejects current metadata that disagrees with the archive's digest or integrity", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const current = yield* Artifact.Artifact;
+      const filename = path.basename(new URL(current.release.package.tarball).pathname);
+      const bytes = yield* current.get(filename);
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-sdk-invalid-" });
+      const metadata = JSON.parse(
+        yield* fs.readFileString(path.join(artifactDirectory, "release.json"))
+      );
+      const wrongDigest = "0".repeat(64);
+      yield* fs.writeFile(
+        path.join(directory, `patchy-${CURRENT_RELEASE}-${wrongDigest}.tgz`),
+        bytes
+      );
+      yield* fs.writeFileString(
+        path.join(directory, "release.json"),
+        JSON.stringify({ ...metadata, digest: wrongDigest })
+      );
+      const digestError = yield* loadArtifact(directory).pipe(Effect.flip);
+      assert.strictEqual(digestError._tag, "ArtifactMismatch");
+      if (digestError._tag === "ArtifactMismatch") assert.strictEqual(digestError.field, "digest");
+      yield* fs.writeFile(path.join(directory, filename), bytes);
+      yield* fs.writeFileString(
+        path.join(directory, "release.json"),
+        JSON.stringify({ ...metadata, integrity: `sha512-${Buffer.alloc(64).toString("base64")}` })
+      );
+      const integrityError = yield* loadArtifact(directory).pipe(Effect.flip);
+      assert.strictEqual(integrityError._tag, "ArtifactMismatch");
+      if (integrityError._tag === "ArtifactMismatch")
+        assert.strictEqual(integrityError.field, "integrity");
     })
   );
 });

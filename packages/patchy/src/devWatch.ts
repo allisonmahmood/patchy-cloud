@@ -1,38 +1,47 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Resolve the builder's installed Vite, never a second bundled toolchain.
-import { createRequire } from "node:module";
-import { pathToFileURL } from "node:url";
+// @effect-diagnostics nodeBuiltinImport:off -- Vite build-watch consumes Node filesystem paths.
 import * as path from "node:path";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
-import type { Manifest } from "@patchy/api";
-import type * as Vite from "vite";
+import type { Manifest, ReleaseToolchain } from "@patchy/api";
 import { LocalError } from "./CliError.js";
 import { validateRepoBundle } from "./repoBuild.js";
 import { io } from "./devState.js";
+import { loadToolchain } from "./toolchain.js";
 
 type Build = { readonly files: readonly string[]; readonly html: string } | LocalError;
 const isLocalError = Schema.is(LocalError);
 
 /** A completed Rollup generation, not a partially written index.html, is the swap boundary. */
-export const watch = Effect.fn("Dev.watch")(function* (root: string, stateDir: string) {
+export const watch = Effect.fn("Dev.watch")(function* (
+  root: string,
+  stateDir: string,
+  toolchain: typeof ReleaseToolchain.Type
+) {
   const builds = yield* Queue.sliding<Build>(1);
-  const vite = yield* io(
-    "Could not load the repo's installed Vite. Run `pnpm install`.",
-    async () => {
-      const require = createRequire(path.join(root, "package.json"));
-      const module: typeof Vite = await import(pathToFileURL(require.resolve("vite")).href);
-      return module;
-    }
-  );
+  const { vite, config } = yield* Effect.tryPromise({
+    try: () => loadToolchain(root, toolchain),
+    catch: (cause) =>
+      isLocalError(cause)
+        ? cause
+        : new LocalError({ message: "Could not load Vite or vite.config.ts.", cause })
+  });
+  if (!vite || !config)
+    return yield* new LocalError({ message: "Could not load the repo's installed Vite." });
   yield* Effect.acquireRelease(
     io("Could not start Vite build-watch. Check vite.config.ts.", async () => {
       const watcher = await vite.build({
-        root,
+        ...config,
         clearScreen: false,
-        build: { watch: {}, outDir: path.join(stateDir, "build"), emptyOutDir: true },
+        build: {
+          ...config.build,
+          watch: {},
+          outDir: path.join(stateDir, "build"),
+          emptyOutDir: true
+        },
         plugins: [
+          ...(config.plugins ?? []),
           {
             name: "patchy-dev-completed-bundle",
             enforce: "post",

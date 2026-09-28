@@ -145,7 +145,7 @@ export const start = Effect.fn("Dev.start")(function* <R>(
             "This repo's dev runtime is alive but not healthy. Read `patchy dev logs`, then `patchy dev stop`."
         });
       const credential = yield* token;
-      yield* checkRepoRelease(root, credential);
+      const toolchain = yield* checkRepoRelease(root, credential);
       const prepared = yield* Preparation.prepare(root, credential).pipe(
         Effect.catchTags({
           DevFixtureMissing: (cause) => new LocalError({ message: cause.message, cause }),
@@ -157,7 +157,7 @@ export const start = Effect.fn("Dev.start")(function* <R>(
         })
       );
       yield* io("Could not save local dev metadata.", async () => {
-        await atomicJson(stateDir, "prepared.json", prepared);
+        await atomicJson(stateDir, "prepared.json", { ...prepared, toolchain });
         await fs.rm(await safePath(stateDir, "failure.json"), { force: true });
       });
       const nonce = randomUUID();

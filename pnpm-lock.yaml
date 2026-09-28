@@ -427,6 +427,15 @@ importers:
       '@electric-sql/pglite':
         specifier: 0.5.8
         version: 0.5.8
+      '@preact/signals':
+        specifier: 2.11.2
+        version: 2.11.2(preact@10.29.8)
+      '@preact/signals-core':
+        specifier: 1.14.4
+        version: 1.14.4
+      preact:
+        specifier: 10.29.8
+        version: 10.29.8
     devDependencies:
       '@effect/platform-node':
         specifier: 4.0.0-rc.117
@@ -470,6 +479,9 @@ importers:
       '@types/css-tree':
         specifier: ^3.2.0
         version: 3.2.0
+      '@types/semver':
+        specifier: ^7.7.1
+        version: 7.8.0
       css-tree:
         specifier: ^3.2.1
         version: 3.2.1
@@ -479,6 +491,9 @@ importers:
       parse5:
         specifier: 'catalog:'
         version: 7.3.0
+      semver:
+        specifier: ^7.7.2
+        version: 7.8.5
       typescript:
         specifier: ^6.0.3
         version: 6.0.3
@@ -611,6 +626,9 @@ importers:
       '@patchy/company-database':
         specifier: workspace:*
         version: link:../company-database
+      '@patchy/content-store':
+        specifier: workspace:*
+        version: link:../content-store
       '@patchy/integrations':
         specifier: workspace:*
         version: link:../integrations
@@ -1201,6 +1219,14 @@ packages:
   '@posthog/types@1.412.4':
     resolution: {integrity: sha512-Q7lV9O9TbLngjOYw1ucm3bS3tn48xb1B4ZQdDy8gv7yfKe99hCTeWYG4xZ36nJM80VxpTF9TriiJt5hngDOkBg==}
 
+  '@preact/signals-core@1.14.4':
+    resolution: {integrity: sha512-HNB6HYeYKhQbJ1aKl+YRjrS4+QWHLKX6qKoUsfS/m0vqzsVaEBiZiaKbG/e+NKk2ch5ALQr/ihWaMHxiCuuWHA==}
+
+  '@preact/signals@2.11.2':
+    resolution: {integrity: sha512-rVTRTt/T0HIRgbugwS5FigbfF/kfdEFYFtiqxa+lbpqTajepqnR0firuAS2iNdHyejWB7Yc9p9QePkVNBtTAwg==}
+    peerDependencies:
+      preact: '>= 10.25.0 || >=11.0.0-0'
+
   '@redis/bloom@6.2.1':
     resolution: {integrity: sha512-huQgNLaCIZfQ9SeLn4q9124uOUd8HbZDYHwwUzNcRgHqCHiHKl2dDxMqJCeWh8cMqZAoWuHR8XnWbDMIf+o7ag==}
     engines: {node: '>= 20.0.0'}
@@ -1533,6 +1559,9 @@ packages:
 
   '@types/pg@8.23.1':
     resolution: {integrity: sha512-fKVHpikPdg4GKks3JuLEhvwSyvwzF23hnabPy6DD8ljVbC7+6J5dQzdv4arV6jqq57djnMgs1HKBxX4P8aBI3A==}
+
+  '@types/semver@7.8.0':
+    resolution: {integrity: sha512-1mAINjtQCXXeLkJ9ehXkwOcBpqtLxiVtKhpUf83DdRNdQKV0iXZpaHYqRr7nj+wvxuJzoAmAwXI+sCNMv1CzLQ==}
 
   '@types/ws@8.18.1':
     resolution: {integrity: sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==}
@@ -2269,6 +2298,14 @@ packages:
       rxjs: ^7.0.0
     peerDependenciesMeta:
       rxjs:
+        optional: true
+
+  preact@10.29.8:
+    resolution: {integrity: sha512-ej2aVZ+vZ8WO7tvlQWRM9N63A0KzF9q4mWJfDUHgYaIofWY9hu74QdnQrjoPMmZi2/nZ5gN0bJCQF49xQqx09Q==}
+    peerDependencies:
+      preact-render-to-string: '>=5'
+    peerDependenciesMeta:
+      preact-render-to-string:
         optional: true
 
   prelude-ls@1.2.1:
@@ -3013,6 +3050,13 @@ snapshots:
 
   '@posthog/types@1.412.4': {}
 
+  '@preact/signals-core@1.14.4': {}
+
+  '@preact/signals@2.11.2(preact@10.29.8)':
+    dependencies:
+      '@preact/signals-core': 1.14.4
+      preact: 10.29.8
+
   '@redis/bloom@6.2.1(@redis/client@6.2.1)':
     dependencies:
       '@redis/client': 6.2.1
@@ -3201,6 +3245,8 @@ snapshots:
       '@types/node': 22.20.4
       pg-protocol: 1.16.0
       pg-types: 2.2.0
+
+  '@types/semver@7.8.0': {}
 
   '@types/ws@8.18.1':
     dependencies:
@@ -3886,6 +3932,8 @@ snapshots:
   posthog-node@5.52.5:
     dependencies:
       '@posthog/core': 1.55.1
+
+  preact@10.29.8: {}
 
   prelude-ls@1.2.1: {}
 

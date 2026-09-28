@@ -44,9 +44,14 @@ import {
 import { generateClient } from "../../sdk/src/generateClient.js";
 import { generate as generatePostgres } from "../../integrations/src/postgres/Generate.js";
 import { starterFiles } from "./initProject.js";
+import toolchain from "./toolchain.json" with { type: "json" };
 
 const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const cliPath = path.join(packageDir, "dist/index.js");
+const releaseArtifact = JSON.parse(
+  readFileSync(path.join(packageDir, "artifacts/release.json"), "utf8")
+) as { digest: string; integrity: string };
+const tarballPath = `/sdk/patchy-${CURRENT_RELEASE}-${releaseArtifact.digest}.tgz`;
 const tempDirs: string[] = [];
 const servers: Server[] = [];
 
@@ -84,7 +89,8 @@ type Handler = (
 const stubInstance = async (
   handler: Handler,
   release = () => CURRENT_RELEASE,
-  tarball?: Buffer
+  tarball?: Buffer,
+  releaseToolchain = toolchain
 ) => {
   const requests: Recorded[] = [];
   const server = createServer((request: IncomingMessage, response: ServerResponse) => {
@@ -103,7 +109,7 @@ const stubInstance = async (
         response.writeHead(status, { "content-type": "application/json" });
         response.end(JSON.stringify(body));
       };
-      if (recorded.url === "/sdk/patchy.tgz" && tarball) {
+      if (recorded.url === tarballPath && tarball) {
         response.writeHead(200, { "content-type": "application/octet-stream" });
         response.end(tarball);
         return;
@@ -111,9 +117,10 @@ const stubInstance = async (
       if (recorded.url === "/api/release") {
         respond(200, {
           release: release(),
-          package: { tarball: "/sdk/patchy.tgz", integrity: `sha512-${"A".repeat(86)}==` },
+          package: { tarball: tarballPath, integrity: releaseArtifact.integrity },
           manifestVersion: MANIFEST_VERSION,
-          wireVersion: WIRE_VERSION
+          wireVersion: WIRE_VERSION,
+          toolchain: releaseToolchain
         });
         return;
       }
@@ -399,7 +406,7 @@ const projectTree = (instance: string, source = projectConfig) => {
       name: "cli-project",
       private: true,
       type: "module",
-      devDependencies: { patchy: `${instance}/sdk/patchy.tgz` }
+      devDependencies: { patchy: `${instance}${tarballPath}` }
     }) + "\n"
   );
   mkdirSync(path.join(dir, "node_modules"));
@@ -416,7 +423,7 @@ const publishTree = (instance: string) => {
       name: "cli-project",
       tier: 1,
       purpose: "Synthetic notes",
-      tarball: `${instance}/sdk/patchy.tgz`
+      tarball: `${instance}${tarballPath}`
     })
   )) {
     mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
@@ -3727,7 +3734,7 @@ describe("patch-repo commands", () => {
     expect(result).toMatchObject({ status: 0, stderr: "" });
     expect(JSON.parse(result.stdout)).toMatchObject({
       ok: true,
-      release: { from: `${instance.url}/sdk/patchy.tgz`, to: CURRENT_RELEASE },
+      release: { from: CURRENT_RELEASE, to: CURRENT_RELEASE },
       changed: {
         pin: false,
         generated: expect.arrayContaining([
@@ -3754,6 +3761,80 @@ describe("patch-repo commands", () => {
     expect(existsSync(path.join(dir, "patchy/_generated/metadata.json"))).toBe(false);
     expect(readFileSync(path.join(dir, "patchy.config.ts"), "utf8")).toBe(projectConfig);
   });
+
+  it.each([
+    { name: "vite", delayed: false },
+    { name: "vite-plugin-singlefile", delayed: false },
+    { name: "vite-plugin-singlefile", delayed: true }
+  ] as const)(
+    "dev and publish refuse unsupported loaded $name with delayed=$delayed while refresh only warns",
+    async ({ name, delayed }) => {
+      const required = {
+        ...toolchain,
+        [name]: { testedAgainst: "99.0.0", accepted: "^99.0.0" }
+      };
+      const instance = await stubInstance(
+        projectHandler,
+        () => CURRENT_RELEASE,
+        undefined,
+        required
+      );
+      const dir = publishTree(instance.url);
+      // Resolve the plugin through an imported config, not the root's declared range.
+      const nested = path.join(dir, "builder");
+      mkdirSync(path.join(nested, "node_modules"), { recursive: true });
+      renameSync(path.join(dir, "vite.config.ts"), path.join(nested, "vite.config.ts"));
+      renameSync(
+        path.join(dir, "node_modules/vite-plugin-singlefile"),
+        path.join(nested, "node_modules/vite-plugin-singlefile")
+      );
+      writeFileSync(
+        path.join(dir, "vite.config.ts"),
+        'export { default } from "./builder/vite.config";\n'
+      );
+      if (delayed) {
+        writeFileSync(
+          path.join(nested, "vite.config.ts"),
+          `export default { plugins: [{
+  then(resolve: (plugin: unknown) => void, reject: (cause: unknown) => void) {
+    return import("vite-plugin-singlefile")
+      .then(({ viteSingleFile }) => viteSingleFile())
+      .then(resolve, reject);
+  }
+}] };\n`
+        );
+      }
+      const file = path.join(dir, "package.json");
+      const source = readFileSync(file, "utf8").replace(
+        JSON.stringify(toolchain[name].accepted),
+        JSON.stringify(required[name].accepted)
+      );
+      writeFileSync(file, source);
+      for (const json of [false, true]) {
+        const result = await runCli(["refresh", ...(json ? ["--json"] : [])], { cwd: dir, env });
+        expect(result.status, result.stderr).toBe(0);
+        const notice = json ? JSON.parse(result.stdout).warnings.join("\n") : result.stdout;
+        expect(notice).toContain(`Loaded ${name} ${toolchain[name].testedAgainst} is unsupported`);
+        expect(notice).toContain(`'${name}@^99.0.0'`);
+        expect(notice).toContain("pnpm add --save-dev");
+        expect(readFileSync(file, "utf8")).toBe(source);
+      }
+      for (const command of ["publish", "dev"]) {
+        const result = await runCli([command, "--json"], { cwd: dir, env });
+        expect(result).toMatchObject({ status: 1, stdout: "" });
+        expect(JSON.parse(result.stderr)).toMatchObject({
+          ok: false,
+          kind: "local",
+          code: "toolchain_unsupported",
+          error: expect.stringContaining(`Loaded ${name} ${toolchain[name].testedAgainst}`)
+        });
+        expect(JSON.parse(result.stderr).error).toContain(`'${name}@^99.0.0'`);
+      }
+      expect(instance.requests.some((request) => request.url === "/api/publish")).toBe(false);
+      expect(readFileSync(file, "utf8")).toBe(source);
+    },
+    30_000
+  );
 
   it("adds the sole connected Postgres declaration without overwriting fixtures", async () => {
     const instance = await stubInstance(projectHandler);
@@ -3852,7 +3933,7 @@ describe("patch-repo commands", () => {
     async (pinChanges) => {
       const barrier = requestBarrier();
       const tarball = readFileSync(
-        path.join(packageDir, `artifacts/patchy-${CURRENT_RELEASE}.tgz`)
+        path.join(packageDir, `artifacts/patchy-${CURRENT_RELEASE}-${releaseArtifact.digest}.tgz`)
       );
       const instance = await stubInstance(
         (request, respond, disconnect) => {
@@ -3864,7 +3945,7 @@ describe("patch-repo commands", () => {
         tarball
       );
       const dir = projectTree(instance.url);
-      const originalPin = `${instance.url}/sdk/${pinChanges ? "previous.tgz" : "patchy.tgz"}`;
+      const originalPin = `${instance.url}${pinChanges ? `/sdk/patchy-${CURRENT_RELEASE}-${"0".repeat(64)}.tgz` : tarballPath}`;
       const originalPackage = {
         name: "cli-project",
         private: true,
@@ -3896,7 +3977,7 @@ describe("patch-repo commands", () => {
         ...originalPackage,
         scripts: { typecheck: "tsc --noEmit", notes: "echo builder-owned" },
         description: "An author edit made after the release pin changed",
-        devDependencies: { patchy: `${instance.url}/sdk/patchy.tgz` }
+        devDependencies: { patchy: `${instance.url}${tarballPath}` }
       };
       writeFileSync(
         path.join(dir, "package.json"),
@@ -3992,7 +4073,9 @@ describe("patch-repo commands", () => {
     const instance = await stubInstance(
       projectHandler,
       () => CURRENT_RELEASE,
-      readFileSync(path.join(packageDir, `artifacts/patchy-${CURRENT_RELEASE}.tgz`))
+      readFileSync(
+        path.join(packageDir, `artifacts/patchy-${CURRENT_RELEASE}-${releaseArtifact.digest}.tgz`)
+      )
     );
     const parent = tempDir();
     const stateDir = tempDir();
