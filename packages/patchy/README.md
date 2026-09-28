@@ -120,11 +120,14 @@ It ignores stale frames and preserves the last value on an error. Retryable
 source refusals recover on restore or reshare; permanent refusals end that
 subscription.
 
-`patchy/server` also exports `createGuest`, the wire-1 entry used by generated
-server artifacts. It derives descriptors from the actual handler exports, builds
-kind-specific contexts and sends runtime operations through an invocation-bound
+`patchy/server` also exports `createGuest`, the wire-1 entry for server bundles.
+Generation does not emit that entry yet. `createGuest` derives descriptors from
+the actual handler exports, builds kind-specific contexts and sends runtime
+operations through an invocation-bound
 RPC stub. It receives no callback credential. File bytes stay binary, and host
 refusals and declared business errors retain their structured replies.
+SDK query-shape validation preserves its own `invalid_request` refusals without
+trusting arbitrary handler-created `PatchyError` objects.
 
 The pinned engine and isolated inspection run these guests directly. They are
 not yet connected to hosted or local tier 2 admission: the server still refuses

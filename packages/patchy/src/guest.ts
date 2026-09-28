@@ -127,7 +127,7 @@ const fileStore = (call: Call, callback: Callback, store: string, writable: bool
 };
 
 // Match the generated Postgres client's public-relation and schema namespace conventions.
-const postgres = (call: Call, connection: string) => {
+const postgres = (call: Call, connection: string, invalidRequest: (message: string) => never) => {
   const rows = async (op: string, args: Readonly<Record<string, unknown>>) => {
     const value = await call(op, args);
     if (
@@ -172,17 +172,13 @@ const postgres = (call: Call, connection: string) => {
         ) => {
           const wireShape = Object.fromEntries(
             Object.entries(shape).map(([column, value]) => {
+              if (value.kind === "ref" || ("hasDefault" in value && value.hasDefault))
+                invalidRequest("Query shapes do not accept references or defaults.");
               if (
-                value.kind === "ref" ||
-                value.hasDefault ||
-                (!("isOptional" in value) &&
-                  Object.keys(value).some((key) => key !== "kind" && key !== "optional"))
+                !("isOptional" in value) &&
+                Object.keys(value).some((key) => key !== "kind" && key !== "optional")
               )
-                throw new PatchyError(
-                  "invalid_request",
-                  "Query shapes accept only kind and optional fields.",
-                  {}
-                );
+                invalidRequest("Query shapes accept only kind and optional fields.");
               const optional = "isOptional" in value ? value.isOptional : value.optional;
               return [
                 column,
@@ -210,7 +206,7 @@ const postgres = (call: Call, connection: string) => {
   });
 };
 
-/** The generated bundle exports this Worker object, without importing privileged Workers APIs. */
+/** Worker entry for server bundles, without importing privileged Workers APIs. */
 export function createGuest(modules: Readonly<Record<string, Readonly<Record<string, unknown>>>>) {
   const descriptors = extractHandlerDescriptors(modules);
   const handlers = new Map(
@@ -243,6 +239,15 @@ export function createGuest(modules: Readonly<Record<string, Readonly<Record<str
         return json(failure("invalid_request", "Missing invocation callbacks."));
 
       const refusals = new WeakMap<Error, Failure>();
+      const invalidRequest = (message: string): never => {
+        const details = {};
+        const error = new PatchyError("invalid_request", message, details);
+        refusals.set(error, {
+          ...failure("invalid_request", message),
+          details
+        });
+        throw error;
+      };
       const errorReply = (error: unknown): Failure => {
         if (error instanceof Error) {
           const refused = refusals.get(error);
@@ -321,7 +326,7 @@ export function createGuest(modules: Readonly<Record<string, Readonly<Record<str
         ...(kind !== "action"
           ? {}
           : {
-              connections: names((connection) => postgres(call, connection)),
+              connections: names((connection) => postgres(call, connection, invalidRequest)),
               run: names((module) =>
                 names(
                   (name) =>

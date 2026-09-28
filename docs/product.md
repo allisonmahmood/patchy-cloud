@@ -362,16 +362,23 @@ but is not admitted by today's hosted runtime. Its engine and inspection process
 are built; the host and fleet still have to supply admission, settlement and
 termination.
 
+The decided promise: **a tier 2 patch's server code runs on Patchy's machines,
+never on yours. It holds no login and no credential and has no path to the
+internet: everything it does goes through Patchy, as you, while you have the
+patch open. It reaches outside systems only through your company's integrations,
+and every write is logged for your company's admins.**
+
 The patch also has server-side code, and Patchy runs it **while a viewer has the patch open**: it starts when someone asks, serves requests and live connections to every open client (two people with the same patch open can be kept in sync), and stops when nobody is looking. It costs nothing when nobody has it open. The line to tier 3 is the question a builder can answer: _does this need to happen when nobody has it open?_ If yes, it is not tier 2.
 
 The server side is handler-shaped code Patchy runs, with a fixed layout `init` lays down — not an arbitrary app listening on a port. Bringing a whole app is a second runtime with a second set of limits, and is not promised.
 
-Server-side code has two identities available. Company data and integrations are
-reached **as the initiating viewer**. The patch's own primitives are reached as
-the **patch identity**, accountable to its owner. The host chooses and reauthorizes
-the principal on each callback; the guest cannot choose credentials or identity.
-No login, database or object-store credential enters the execution service.
-Nothing leaves guest code except through Patchy.
+When hosted admission lands, server-side code will have two identities available.
+Company data and integrations will be reached **as the initiating viewer**. The
+patch's own primitives will be reached as the **patch identity**, accountable to
+its owner. The host will choose and reauthorize the principal on each callback;
+the guest will not choose credentials or identity. No login, database or
+object-store credential will enter the execution service. Nothing will leave
+guest code except through Patchy.
 
 When a patch asks for data the viewer may not reach, the viewer is told plainly that this is their access, not the patch being broken.
 

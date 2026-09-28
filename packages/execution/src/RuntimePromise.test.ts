@@ -37,6 +37,8 @@ const run = Effect.fnUntraced(function* (handler: string) {
     viewer,
     callback: { url: callbackUrl, capability: "host-only-test-capability" }
   });
+  expect(response.outcome).toBe("returned");
+  if (response.outcome !== "returned") throw new Error(`Guest did not return: ${response.outcome}`);
   expect(response.reply.ok).toBe(true);
   if (!response.reply.ok) throw new Error(`Runtime promise failed: ${response.reply.code}`);
   return response.reply.value;

@@ -36,8 +36,9 @@ its binding includes a verified SHA-256 of the exact bundle. Rebinding that
 identity to different bytes is refused. Worker Loader caches the isolate; each
 request obtains its own Worker handle because workerd handles are request-bound.
 
-The guest has no environment bindings. Its `globalOutbound` is a refusing
-loopback, including TCP connect. The guest's `ctx.props` contains its invocation
+The guest has no environment bindings. Its `globalOutbound` refuses fetch through
+a loopback. Closed-module validation prevents importing socket APIs; the loopback
+does not implement a TCP handler. The guest's `ctx.props` contains its invocation
 name and a callback RPC stub, never the capability or callback address. Each stub
 identifies one immutable attempt dispatch. A later dispatch with the same public
 identifiers cannot revive an old stub. The loader checks the deadline and liveness
@@ -57,11 +58,30 @@ cross the RPC loopback as data, never thrown errors with properties that workerd
 would discard. The SDK reconstructs local errors while the handler runs and
 preserves the original refusal when returning it.
 
+The loader-to-host `InvokeReply` reports an engine-owned observation separately:
+`returned` with the untrusted guest reply, `deadline` when already expired before
+dispatch, or `guest_failed` when execution or reply decoding fails. Late returns
+retain their guest data; late throws remain execution failures. These observations
+are not transaction outcomes. Only the host can classify `handler_timeout` after
+confirmed non-commit or `unknown_outcome` after uncertain settlement.
+
+Every guest reply is untrusted, including `source: "patchy"`, limit fields and
+`correlationId`. The future host must retain the refusals it issues to each attempt
+and accept a claimed platform refusal only when it matches one of those records;
+otherwise it returns `handler_failed`. A guest cannot designate another operation
+row by inventing its correlation id. This loader-to-host envelope does not change
+the guest wire stored in server bundles.
+
+Callback deadlines return `timeout`; transport and malformed-reply failures return
+`source_unavailable`, not permission denial. Ended non-expired stubs retain
+`access_denied`. These callback errors promise neither non-commit nor safe retry.
+
 File callbacks carry `Uint8Array` through RPC. HTTP carries raw bytes, their media
 type, and an `X-Patchy-Callback` header containing URI-encoded JSON `{ op, args }`.
 A binary reply has `X-Patchy-File-Body: 1`, its media type and raw bytes. Both
-byte directions enforce the shared 20 MiB file bound. The capability is only in
-the loader-to-host Authorization header. Redirects are not followed.
+byte directions enforce `tier2.callbacks.fileBytes`, the 20 MiB per-body contract,
+and refuse `too_large` with its limit id, scope and value. The capability is only
+in the loader-to-host Authorization header. Redirects are not followed.
 
 `createGuest` captures one handler map for dispatch and descriptors. It joins
 `ctx.log` callbacks before returning. Authoritative declaration checks, argument

@@ -1,4 +1,4 @@
-// @effect-diagnostics globalFetch:off globalFetchInEffect:off preferSchemaOverJson:off -- a wall-clock abort terminates inspection even under TestClock; the process scope reaps it.
+// @effect-diagnostics globalFetch:off globalFetchInEffect:off preferSchemaOverJson:off -- wall-clock abort bounds inspection under TestClock; JSON encodes a typed request and the unknown reply is Schema-decoded.
 import * as GuestProtocol from "@patchy/api/guest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -50,6 +50,6 @@ export const inspect = Effect.fn("Execution.inspect")(function* (
   const reply = yield* decodeReply(body).pipe(
     Effect.mapError((cause) => new InspectionError({ reason: "protocol", cause }))
   );
-  if (!reply.ok) return yield* new InspectionError({ reason: "load", cause: reply });
+  if (!reply.ok) return yield* new InspectionError({ reason: "load" });
   return reply.handlers;
 }, Effect.scoped);

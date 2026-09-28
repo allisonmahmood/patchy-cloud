@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off globalFetch:off globalFetchInEffect:off globalTimers:off globalTimersInEffect:off globalDate:off preferSchemaOverJson:off -- direct child ownership and wall-clock startup must work under TestClock too.
+// @effect-diagnostics nodeBuiltinImport:off globalFetch:off globalFetchInEffect:off globalTimers:off globalTimersInEffect:off globalDate:off preferSchemaOverJson:off -- direct child ownership and wall-clock startup work under TestClock; JSON encodes validated callback config and pinned compatibility flags.
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -14,12 +14,29 @@ import * as Schema from "effect/Schema";
 
 export class WorkerdError extends Schema.TaggedError<WorkerdError>()("WorkerdError", {
   stage: Schema.Literals(["binary", "bundle", "config", "spawn", "startup"]),
+  reason: Schema.Literals([
+    "unsupported_platform",
+    "resolution_failed",
+    "build_failed",
+    "unsupported_import",
+    "empty_output",
+    "invalid_callback_url",
+    "unavailable_port",
+    "acquisition_failed",
+    "exited",
+    "timeout",
+    "request_failed"
+  ]),
+  exitCode: Schema.optionalKey(Schema.NullOr(Schema.Int)),
+  signal: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  stderrBytes: Schema.optionalKey(Schema.Number),
   cause: Schema.optionalKey(Schema.Defect())
 }) {
   override get message() {
     return `The execution process failed at ${this.stage}.`;
   }
 }
+const isWorkerdError = Schema.is(WorkerdError);
 
 const packages: Readonly<Record<string, string>> = {
   "linux x64": "@cloudflare/workerd-linux-64",
@@ -33,22 +50,25 @@ const decodeVersion = Schema.decodeUnknownSync(
 );
 
 /** Resolve the pinned platform executable, never npm's Node launcher. */
-const binary = Effect.try({
-  try: () => {
-    const outer = createRequire(import.meta.url);
-    const manifest = outer.resolve("workerd/package.json");
-    decodeVersion(outer("workerd/package.json"));
-    const inner = createRequire(manifest);
-    const name = packages[`${process.platform} ${process.arch}`];
-    if (name === undefined) throw new Error("Unsupported workerd platform.");
-    decodeVersion(inner(`${name}/package.json`));
-    return join(
-      dirname(inner.resolve(`${name}/package.json`)),
-      "bin",
-      process.platform === "win32" ? "workerd.exe" : "workerd"
-    );
-  },
-  catch: (cause) => new WorkerdError({ stage: "binary", cause })
+const binary = Effect.gen(function* () {
+  const name = packages[`${process.platform} ${process.arch}`];
+  if (name === undefined)
+    return yield* new WorkerdError({ stage: "binary", reason: "unsupported_platform" });
+  return yield* Effect.try({
+    try: () => {
+      const outer = createRequire(import.meta.url);
+      const manifest = outer.resolve("workerd/package.json");
+      decodeVersion(outer("workerd/package.json"));
+      const inner = createRequire(manifest);
+      decodeVersion(inner(`${name}/package.json`));
+      return join(
+        dirname(inner.resolve(`${name}/package.json`)),
+        "bin",
+        process.platform === "win32" ? "workerd.exe" : "workerd"
+      );
+    },
+    catch: (cause) => new WorkerdError({ stage: "binary", reason: "resolution_failed", cause })
+  });
 });
 
 let source: Promise<string> | undefined;
@@ -70,16 +90,25 @@ const loaderSource = Effect.tryPromise({
       minify: true,
       legalComments: "none",
       metafile: true
-    }).then((result) => {
-      for (const output of Object.values(result.metafile.outputs)) {
-        if (output.imports.some(({ path }) => path !== "cloudflare:workers"))
-          throw new Error("The loader retains an unsupported external import.");
-      }
-      const output = result.outputFiles[0];
-      if (output === undefined) throw new Error("No loader output.");
-      return output.text;
-    })),
-  catch: (cause) => new WorkerdError({ stage: "bundle", cause })
+    })
+      .then((result) => {
+        for (const output of Object.values(result.metafile.outputs)) {
+          if (output.imports.some(({ path }) => path !== "cloudflare:workers"))
+            throw new WorkerdError({ stage: "bundle", reason: "unsupported_import" });
+        }
+        const output = result.outputFiles[0];
+        if (output === undefined || output.text.length === 0)
+          throw new WorkerdError({ stage: "bundle", reason: "empty_output" });
+        return output.text;
+      })
+      .catch((cause) => {
+        source = undefined;
+        throw cause;
+      })),
+  catch: (cause) =>
+    isWorkerdError(cause)
+      ? cause
+      : new WorkerdError({ stage: "bundle", reason: "build_failed", cause })
 });
 
 function config(callbackUrls: readonly string[] = []): string {
@@ -94,7 +123,7 @@ function config(callbackUrls: readonly string[] = []): string {
       url.password !== "" ||
       url.hash !== ""
     )
-      throw new Error("Invalid callback URL.");
+      throw new WorkerdError({ stage: "config", reason: "invalid_callback_url" });
     const address = `${url.hostname}:${url.port || (url.protocol === "https:" ? "443" : "80")}`;
     const protocol =
       url.protocol === "https:" ? "https = (tlsOptions = (trustBrowserCas = true))" : "http = ()";
@@ -122,18 +151,20 @@ const config :Workerd.Config = (
 `;
 }
 
-const reservePort = () =>
-  new Promise<number>((resolve, reject) => {
+function reservePort(): Promise<number> {
+  // Promise.withResolvers is outside this package's ES2022 library contract.
+  return new Promise((resolve, reject) => {
     const server = createServer();
     server.once("error", reject);
     server.listen(0, "127.0.0.1", () => {
       const address = server.address();
       if (address === null || typeof address === "string") {
         server.close();
-        reject(new Error("No loopback port."));
+        reject(new WorkerdError({ stage: "spawn", reason: "unavailable_port" }));
       } else server.close((error) => (error === undefined ? resolve(address.port) : reject(error)));
     });
   });
+}
 
 export interface WorkerdProcess {
   readonly url: string;
@@ -143,13 +174,16 @@ export interface WorkerdProcess {
 
 /** A direct process for tests and inspection. The owning scope kills and reaps it. */
 export const startWorkerd = Effect.fn("Execution.startWorkerd")(function* (
-  options: { readonly callbackUrls?: readonly string[]; readonly startupTimeoutMs?: number } = {}
+  options: { readonly callbackUrls?: readonly string[] } = {}
 ) {
   const executable = yield* binary;
   const loader = yield* loaderSource;
   const configuration = yield* Effect.try({
     try: () => config(options.callbackUrls),
-    catch: (cause) => new WorkerdError({ stage: "config", cause })
+    catch: (cause) =>
+      isWorkerdError(cause)
+        ? cause
+        : new WorkerdError({ stage: "config", reason: "invalid_callback_url", cause })
   });
   const resource = yield* Effect.acquireRelease(
     Effect.tryPromise({
@@ -174,11 +208,10 @@ export const startWorkerd = Effect.fn("Execution.startWorkerd")(function* (
               env: {}
             }
           );
-          let stderr = "";
+          let stderrBytes = 0;
           let spawnError: Error | undefined;
-          child.stderr?.setEncoding("utf8");
-          child.stderr?.on("data", (chunk: string) => {
-            stderr = (stderr + chunk).slice(-8192);
+          child.stderr?.on("data", (chunk: Buffer) => {
+            stderrBytes = Math.min(Number.MAX_SAFE_INTEGER, stderrBytes + chunk.byteLength);
           });
           child.once("error", (error) => {
             spawnError = error;
@@ -196,20 +229,31 @@ export const startWorkerd = Effect.fn("Execution.startWorkerd")(function* (
             child,
             directory,
             dispose,
-            failure: () => spawnError ?? new Error(stderr)
+            failure: (reason: "exited" | "timeout") =>
+              new WorkerdError({
+                stage: "startup",
+                reason,
+                exitCode: child.exitCode,
+                signal: child.signalCode,
+                stderrBytes,
+                ...(spawnError === undefined ? {} : { cause: spawnError })
+              })
           };
         } catch (cause) {
           await rm(directory, { recursive: true, force: true });
           throw cause;
         }
       },
-      catch: (cause) => new WorkerdError({ stage: "spawn", cause })
+      catch: (cause) =>
+        isWorkerdError(cause)
+          ? cause
+          : new WorkerdError({ stage: "spawn", reason: "acquisition_failed", cause })
     }),
     (resource) => Effect.promise(resource.dispose)
   );
   yield* Effect.tryPromise({
     try: async (signal) => {
-      const deadline = performance.now() + (options.startupTimeoutMs ?? 5_000);
+      const deadline = performance.now() + 5_000;
       while (performance.now() < deadline) {
         signal.throwIfAborted();
         if (
@@ -217,7 +261,7 @@ export const startWorkerd = Effect.fn("Execution.startWorkerd")(function* (
           resource.child.signalCode !== null ||
           resource.child.pid === undefined
         )
-          throw resource.failure();
+          throw resource.failure("exited");
         const response = await fetch(`${resource.url}/healthz`, {
           signal: AbortSignal.any([
             signal,
@@ -230,9 +274,12 @@ export const startWorkerd = Effect.fn("Execution.startWorkerd")(function* (
         }
         await delay(10, undefined, { signal });
       }
-      throw resource.failure();
+      throw resource.failure("timeout");
     },
-    catch: (cause) => new WorkerdError({ stage: "startup", cause })
+    catch: (cause) =>
+      isWorkerdError(cause)
+        ? cause
+        : new WorkerdError({ stage: "startup", reason: "request_failed", cause })
   }).pipe(Effect.onError(() => Effect.promise(resource.dispose)));
   return {
     url: resource.url,

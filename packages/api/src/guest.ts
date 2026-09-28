@@ -2,7 +2,7 @@ import * as Schema from "effect/Schema";
 import { HandlerDescriptors, HandlerName } from "./handlers.js";
 import { FileBody, RuntimeFailure, RuntimeReply } from "./runtime.js";
 import { Identity } from "./schemas.js";
-export { runtimeByteLimits } from "./runtime.js";
+import { limitRefusal } from "./limits.js";
 
 /** Private execution wire, never mounted on the public HttpApi. Stored versions retain it. */
 export const wireVersion = 1;
@@ -10,6 +10,7 @@ export const compatibilityDate = "2026-09-24";
 export const workerdVersion = "1.20260924.1";
 // This date enables Node compatibility by default; wire 1 explicitly refuses it.
 export const compatibilityFlags = ["no_nodejs_compat", "no_nodejs_compat_v2"] as const;
+export const callbackFileLimit = limitRefusal("tier2.callbacks.fileBytes");
 
 const identity = Schema.NonEmptyString;
 const sha256 = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/));
@@ -72,6 +73,7 @@ export const GuestRequest = Schema.Union([
   })
 ]);
 export type GuestRequest = typeof GuestRequest.Type;
+/** Guest-authored claims, including source: "patchy" and correlationId, are untrusted. */
 export const GuestReply = RuntimeReply;
 export type GuestReply = typeof GuestReply.Type;
 export const InspectRequest = Schema.Struct({
@@ -84,7 +86,12 @@ export const InspectionReply = Schema.Union([
   RuntimeFailure
 ]);
 export type InspectionReply = typeof InspectionReply.Type;
-export const InvokeReply = Schema.Struct({ reply: GuestReply, guestMs: milliseconds });
+/** Engine observations are separate from guest claims; only the host classifies settlement. */
+export const InvokeReply = Schema.Union([
+  Schema.Struct({ outcome: Schema.Literal("returned"), reply: GuestReply, guestMs: milliseconds }),
+  Schema.Struct({ outcome: Schema.Literal("deadline"), guestMs: milliseconds }),
+  Schema.Struct({ outcome: Schema.Literal("guest_failed"), guestMs: milliseconds })
+]);
 export type InvokeReply = typeof InvokeReply.Type;
 export const BindRequest = Schema.Struct({ wire: Schema.Literal(wireVersion), ...Bundle.fields });
 export type BindRequest = typeof BindRequest.Type;

@@ -64,10 +64,19 @@ let serial = 0;
 
 const json = (body: unknown, status = 200) => Response.json(body, { status });
 const refusal = (
-  code:
-    "access_denied" | "handler_failed" | "handler_timeout" | "limit_exceeded" | "invalid_request",
+  code: "access_denied" | "handler_failed" | "invalid_request" | "timeout" | "source_unavailable",
   error: string
 ) => ({ ok: false, source: "patchy", code, error }) as const;
+const fileTooLarge = {
+  ok: false,
+  source: "patchy",
+  error: "The file exceeds the callback byte limit.",
+  ...GuestProtocol.callbackFileLimit
+} as const;
+const endedCallback = (reference: AttemptReference) =>
+  Date.now() >= reference.deadline
+    ? refusal("timeout", "The invocation callback deadline has passed.")
+    : refusal("access_denied", "The invocation callback has ended.");
 const identity = (binding: GuestProtocol.BundleBinding) =>
   JSON.stringify([binding.companyId, binding.patchId, binding.versionId]);
 
@@ -160,11 +169,7 @@ async function invoke(
   ]);
   if (activeAttempts.has(attemptKey) || serial === Number.MAX_SAFE_INTEGER)
     return json({ ok: false, code: "invalid_request" }, 409);
-  if (Date.now() >= request.deadline)
-    return json({
-      reply: refusal("handler_timeout", "The invocation deadline has passed."),
-      guestMs: 0
-    });
+  if (Date.now() >= request.deadline) return json({ outcome: "deadline", guestMs: 0 });
   const reference: AttemptReference = {
     invocationId: request.invocationId,
     attemptId: request.attemptId,
@@ -202,18 +207,10 @@ async function invoke(
         } satisfies GuestProtocol.GuestRequest)
       });
     const reply = decodeGuestReply(await response.json());
-    return json({
-      reply:
-        Date.now() >= request.deadline
-          ? refusal("handler_timeout", "The invocation deadline has passed.")
-          : reply,
-      guestMs: Date.now() - started
-    });
+    // Even a late return remains guest data. Only the host knows whether effects committed.
+    return json({ outcome: "returned", reply, guestMs: Date.now() - started });
   } catch {
-    return json({
-      reply: refusal("handler_failed", "The handler failed."),
-      guestMs: Date.now() - started
-    });
+    return json({ outcome: "guest_failed", guestMs: Date.now() - started });
   } finally {
     attempts.delete(reference.serial);
     activeAttempts.delete(attemptKey);
@@ -288,7 +285,7 @@ async function readFileBody(response: Response): Promise<Uint8Array | undefined>
       const chunk = await reader.read();
       if (chunk.done) break;
       length += chunk.value.byteLength;
-      if (length > GuestProtocol.runtimeByteLimits.fileBytes) {
+      if (length > GuestProtocol.callbackFileLimit.value) {
         await reader.cancel();
         return undefined;
       }
@@ -309,8 +306,7 @@ async function readFileBody(response: Response): Promise<Uint8Array | undefined>
 /** Props name one immutable dispatch, not a reusable invocation registry key. */
 export class Callbacks extends WorkerEntrypoint<Environment, AttemptReference> {
   async call(input: unknown): Promise<GuestProtocol.CallbackReply> {
-    if (liveAttempt(this.ctx.props) === undefined)
-      return refusal("access_denied", "The invocation callback has ended.");
+    if (liveAttempt(this.ctx.props) === undefined) return endedCallback(this.ctx.props);
     let operation: GuestProtocol.Callback;
     try {
       operation = decodeCallback(input);
@@ -319,11 +315,11 @@ export class Callbacks extends WorkerEntrypoint<Environment, AttemptReference> {
     }
     if (
       operation.body !== undefined &&
-      operation.body.bytes.byteLength > GuestProtocol.runtimeByteLimits.fileBytes
+      operation.body.bytes.byteLength > GuestProtocol.callbackFileLimit.value
     )
-      return refusal("limit_exceeded", "The file exceeds the byte limit.");
+      return fileTooLarge;
     const live = liveAttempt(this.ctx.props);
-    if (live === undefined) return refusal("access_denied", "The invocation callback has ended.");
+    if (live === undefined) return endedCallback(this.ctx.props);
     try {
       const headers = new Headers({ authorization: `Bearer ${live.callback.capability}` });
       let body: BodyInit;
@@ -348,8 +344,7 @@ export class Callbacks extends WorkerEntrypoint<Environment, AttemptReference> {
       let reply: GuestProtocol.CallbackReply;
       if (response.ok && response.headers.get("x-patchy-file-body") === "1") {
         const bytes = await readFileBody(response);
-        if (bytes === undefined)
-          return refusal("limit_exceeded", "The file exceeds the byte limit.");
+        if (bytes === undefined) return fileTooLarge;
         reply = {
           ok: true,
           body: {
@@ -359,11 +354,13 @@ export class Callbacks extends WorkerEntrypoint<Environment, AttemptReference> {
         };
       } else reply = decodeCallbackReply(await response.json());
       // The host may finish or supersede the attempt while its body is arriving.
-      if (liveAttempt(this.ctx.props) !== live)
-        return refusal("access_denied", "The invocation callback has ended.");
+      if (liveAttempt(this.ctx.props) !== live) return endedCallback(this.ctx.props);
       return reply;
     } catch {
-      return refusal("access_denied", "The invocation callback could not complete.");
+      // A lost reply says nothing about commit. Settlement and safe retry belong to the host.
+      return Date.now() >= live.reference.deadline
+        ? refusal("timeout", "The invocation callback deadline has passed.")
+        : refusal("source_unavailable", "The invocation callback could not complete.");
     }
   }
 }

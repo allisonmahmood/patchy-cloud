@@ -37,10 +37,11 @@ is a separate breaking-change decision with a needs-rebuild door, not a package
 upgrade silently taking old patches down.
 
 For tier 2, wire 1 also fixes the private guest protocol and workerd compatibility
-date, `2026-09-24`, with Node compatibility explicitly disabled. This release pins
-`workerd` to `1.20260924.1`. Stored versions keep their guest wire and compatibility
-date rather than inheriting the next tooling release's settings. The engine and
-inspection share these constants and release checks; see
+date, `2026-09-24`, with Node compatibility explicitly disabled. The internal
+`packages/execution` dependency pins `workerd` to `1.20260924.1`; this is not yet a
+managed dependency in generated patch repos. Stored versions keep their guest
+wire and compatibility date rather than inheriting the next tooling release's
+settings. The engine and inspection share these constants and release checks; see
 [ADR-0012](./ADR-0012-credential-free-execution-service.md).
 
 `patchy/config` is a pure builder surface. The CLI executes a config in a child
@@ -75,7 +76,8 @@ page. `patchy/server` ships the handler builders and guest entry for hosted code
 `patchy/csv` belongs to the CSV ticket and has no placeholder export. The graph
 import checks arrive with the Preact scaffold and tier 2 publishing.
 
-The only managed package pin today is `patchy`; tier 2 init adds `workerd`.
+The only managed package pin in patch repos today is `patchy`; tier 2 init adds
+the patch-side `workerd` pin.
 Vite, `vite-plugin-singlefile`, TypeScript and `@types/*` belong to the builder.
 The scaffold supplies caret ranges and the release reports tested versions and
 accepted ranges. Dev and publish refuse unsupported loaded Vite and plugin

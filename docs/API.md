@@ -395,10 +395,11 @@ These are engine/inspection contracts, not public `HttpApi` routes or CLI operat
 - `BundleBinding`: company, patch and version ids plus lowercase SHA-256. `Bundle` adds the closed ESM source.
 - `BindRequest`: wire and bundle. `BindReply` acknowledges the binding with `ok: true` or returns a typed binding refusal.
 - `Invoke`: wire, binding, invocation id, attempt id, process generation, absolute deadline, handler, JSON arguments, initiating viewer and issuing-host callback address/capability.
-- `InvokeReply`: the ordinary runtime or declared-handler reply plus guest elapsed milliseconds. The capability stays in the loader; the guest receives only an invocation-named RPC stub.
+- `InvokeReply`: an engine-owned `outcome` plus guest elapsed milliseconds. `returned` carries an untrusted guest `reply`; `deadline` means expired before dispatch; `guest_failed` means execution or reply decoding failed. Late returns remain guest data. Only the host classifies transaction settlement and verifies guest-claimed platform refusals against its own attempt records.
 - `GuestRequest`: describe or invoke. Description yields handler descriptors; invocation yields the existing `RuntimeReply` envelope without wrapping successful business data.
 - `Callback`: runtime operation, arguments and optional raw file body. `CallbackReply` preserves runtime refusals or returns JSON/file bytes. File bodies carry `Uint8Array` bytes and a content type over RPC, not JSON byte arrays.
-- Host callback transport uses JSON except binary requests (`application/octet-stream`, URI-encoded operation metadata in `X-Patchy-Callback`) and binary replies (`X-Patchy-File-Body: 1`). Authorization is the private per-attempt bearer, never a guest field.
+- Host callback transport uses JSON except binary requests marked by `X-Patchy-Callback`, whose value is URI-encoded operation metadata. `Content-Type` carries the file media type. Binary replies use `X-Patchy-File-Body: 1` with the same media-type convention. Authorization is the private per-attempt bearer, never a guest field.
+- File callback bodies enforce `tier2.callbacks.fileBytes` and return `too_large` with limit id, scope and value. Callback deadline expiry returns `timeout`; transport or malformed replies return `source_unavailable`. Neither classifies commit or promises a safe retry.
 - `InspectRequest`: wire and source only. `InspectionReply` contains descriptors or a runtime refusal. Inspection has no company binding, capability or callback path and runs in a reaped, deadline-bounded process.
 
 See [ADR-0012](./adr/ADR-0012-credential-free-execution-service.md) for authority, lifetime and hosting contracts. Tier 2 publishing remains refused.

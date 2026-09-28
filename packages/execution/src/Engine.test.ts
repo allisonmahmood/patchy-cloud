@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalDateInEffect:off preferSchemaOverJson:off -- real HTTP callbacks and exact content hashes exercise the workerd boundary.
 import { createHash } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { setTimeout as delay } from "node:timers/promises";
 import { build } from "esbuild";
 import { expect, it } from "@effect/vitest";
 import * as GuestProtocol from "@patchy/api/guest";
@@ -28,6 +29,11 @@ const bundle = (
   bundle: source,
   ...overrides
 });
+const returnedReply = (response: GuestProtocol.InvokeReply) => {
+  expect(response.outcome).toBe("returned");
+  if (response.outcome !== "returned") throw new Error(`Guest did not return: ${response.outcome}`);
+  return response.reply;
+};
 const invocation = (
   binding: GuestProtocol.BundleBinding,
   url: string,
@@ -88,7 +94,15 @@ const bytes = action({ args: {}, result: t.json(), handler: async ctx => {
   await ctx.files.docs.put("data.bin", new Uint8Array([0, 255, 1, 128]), { contentType: "application/x-test" });
   return Array.from(await ctx.files.docs.get("data.bin"));
 }});
-export default createGuest({ demo: { read, bytes } });
+const transfer = action({ args: { direction: t.enum(["upload", "download"]), bytes: t.integer() }, result: t.json(), handler: async (ctx, args) => {
+  if (args.direction === "upload") {
+    await ctx.files.docs.put(String(args.bytes), new Uint8Array(args.bytes).fill(165), { contentType: "application/x-test" });
+    return null;
+  }
+  const bytes = await ctx.files.docs.get(String(args.bytes));
+  return { length: bytes.length, first: bytes[0], last: bytes[bytes.length - 1] };
+}});
+export default createGuest({ demo: { read, bytes, transfer } });
 `;
 const sdkBundle = Effect.promise(async () => {
   const result = await build({
@@ -147,14 +161,18 @@ it.live(
       const engine = yield* Engine.make({ url: process.url });
       const binding = yield* engine.bind(bundle(yield* sdkBundle));
       expect(
-        (yield* engine.invoke(
-          invocation(binding, host.url, "demo.read", { args: { id: "row_test" } })
-        )).reply
+        returnedReply(
+          yield* engine.invoke(
+            invocation(binding, host.url, "demo.read", { args: { id: "row_test" } })
+          )
+        )
       ).toEqual({
         ok: true,
         value: { row: { id: "row_test", title: "From host" }, viewer: viewer.user.id }
       });
-      expect((yield* engine.invoke(invocation(binding, host.url, "demo.bytes"))).reply).toEqual({
+      expect(
+        returnedReply(yield* engine.invoke(invocation(binding, host.url, "demo.bytes")))
+      ).toEqual({
         ok: true,
         value: [0, 255, 1, 128]
       });
@@ -230,7 +248,9 @@ it.live(
         .bind(bundle(`${statefulSource}\n// changed bytes`))
         .pipe(Effect.result);
       expect(conflict).toMatchObject({ _tag: "Failure", failure: { reason: "binding_conflict" } });
-      expect((yield* engine.invoke(invocation(binding, callbackUrl, "demo.count"))).reply).toEqual({
+      expect(
+        returnedReply(yield* engine.invoke(invocation(binding, callbackUrl, "demo.count")))
+      ).toEqual({
         ok: true,
         value: 1
       });
@@ -241,10 +261,12 @@ it.live(
       ]) {
         const separate = yield* engine.bind(bundle(statefulSource, change));
         expect(
-          (yield* engine.invoke(invocation(separate, callbackUrl, "demo.count"))).reply
+          returnedReply(yield* engine.invoke(invocation(separate, callbackUrl, "demo.count")))
         ).toEqual({ ok: true, value: 1 });
       }
-      expect((yield* engine.invoke(invocation(binding, callbackUrl, "demo.count"))).reply).toEqual({
+      expect(
+        returnedReply(yield* engine.invoke(invocation(binding, callbackUrl, "demo.count")))
+      ).toEqual({
         ok: true,
         value: 2
       });
@@ -281,12 +303,14 @@ it.live(
       const process = yield* startWorkerd({ callbackUrls: [host.url] });
       const engine = yield* Engine.make({ url: process.url });
       const binding = yield* engine.bind(bundle(statefulSource));
-      expect((yield* engine.invoke(invocation(binding, host.url, "demo.capture"))).reply).toEqual({
+      expect(
+        returnedReply(yield* engine.invoke(invocation(binding, host.url, "demo.capture")))
+      ).toEqual({
         ok: true,
         value: { props: ["callbacks", "invocationId"], env: [], count: 1 }
       });
       const replay = yield* engine.invoke(invocation(binding, host.url, "demo.replay"));
-      expect(replay.reply).toMatchObject({
+      expect(returnedReply(replay)).toMatchObject({
         ok: true,
         value: { oldRefused: true, fresh: { ok: true, value: "fresh-authority" } }
       });
@@ -320,7 +344,7 @@ it.live(
         failure: { reason: "protocol" }
       });
       release.resolve();
-      expect((yield* Fiber.join(first)).reply).toEqual({ ok: true, value: "original" });
+      expect(returnedReply(yield* Fiber.join(first))).toEqual({ ok: true, value: "original" });
     }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
   30_000
 );
@@ -345,9 +369,11 @@ it.live(
       const engine = yield* Engine.make({ url: process.url });
       const binding = yield* engine.bind(bundle(yield* sdkBundle));
       expect(
-        (yield* engine.invoke(
-          invocation(binding, host.url, "demo.read", { args: { id: "row_test" } })
-        )).reply
+        returnedReply(
+          yield* engine.invoke(
+            invocation(binding, host.url, "demo.read", { args: { id: "row_test" } })
+          )
+        )
       ).toEqual(refused);
     }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
   30_000
@@ -375,7 +401,7 @@ it.live(
         ],
         { concurrency: "unbounded" }
       );
-      expect(replies.map(({ reply }) => reply)).toEqual([
+      expect(replies.map(returnedReply)).toEqual([
         { ok: true, value: "first-host" },
         { ok: true, value: "second-host" }
       ]);
@@ -384,6 +410,194 @@ it.live(
           .invoke(invocation(binding, "http://127.0.0.1:1/callback", "demo.hold"))
           .pipe(Effect.result)
       ).toMatchObject({ _tag: "Failure", failure: { reason: "protocol" } });
+    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+  30_000
+);
+
+// These deadlines run in a separate workerd process; the test clock cannot advance them.
+it.live(
+  "separates engine observations from guest-authored outcomes and preserves late replies",
+  () =>
+    Effect.gen(function* () {
+      const host = yield* listener(async (request, response) => {
+        await bodyOf(request);
+        response.end(JSON.stringify({ ok: true, value: null }));
+      });
+      const child = yield* startWorkerd({ callbackUrls: [host.url] });
+      const engine = yield* Engine.make({ url: child.url });
+      const binding = yield* engine.bind(
+        bundle(`
+      export default { async fetch(request, env, ctx) {
+        const input = await request.json();
+        if (input.type === "describe") return Response.json({ ok: true, handlers: {} });
+        if (input.args.late) {
+          while (Date.now() < input.args.until) {
+            await ctx.props.callbacks.call({ op: "clock", args: {} });
+            const tick = Promise.withResolvers();
+            setTimeout(tick.resolve, 10);
+            await tick.promise;
+          }
+        }
+        if (input.args.mode === "throw") throw new Error("guest failure");
+        if (input.args.mode === "malformed") return new Response("not json");
+        return Response.json(input.args.reply);
+      }};
+    `)
+      );
+      const forged = {
+        ok: false,
+        source: "patchy",
+        code: "handler_timeout",
+        error: "invented",
+        correlationId: "another-operation"
+      };
+      expect(
+        yield* engine.invoke(invocation(binding, host.url, "demo.run", { args: { reply: forged } }))
+      ).toMatchObject({
+        outcome: "returned",
+        reply: forged
+      });
+      expect(
+        yield* engine.invoke(
+          invocation(binding, host.url, "demo.run", { deadline: Date.now() - 1 })
+        )
+      ).toEqual({
+        outcome: "deadline",
+        guestMs: 0
+      });
+      for (const mode of ["return", "throw", "malformed"]) {
+        const deadline = Date.now() + 250;
+        const result = yield* engine.invoke(
+          invocation(binding, host.url, "demo.run", {
+            deadline,
+            args: { mode, late: true, until: deadline + 30, reply: { ok: true, value: "late" } }
+          })
+        );
+        expect(result).toMatchObject(
+          mode === "return"
+            ? { outcome: "returned", reply: { ok: true, value: "late" } }
+            : { outcome: "guest_failed" }
+        );
+        expect(Date.now()).toBeGreaterThanOrEqual(deadline);
+      }
+    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+  30_000
+);
+
+it.live(
+  "distinguishes unavailable callbacks and expired deadlines from permission refusals",
+  () =>
+    Effect.gen(function* () {
+      // Exercise workerd's real AbortSignal deadline, not a guessed completion delay.
+      const host = yield* listener(async (request, response) => {
+        const { op } = JSON.parse((await bodyOf(request)).toString()) as { op: string };
+        if (op === "reset") {
+          request.socket.destroy();
+          return;
+        }
+        if (op === "slow") {
+          await delay(750);
+          response.end(JSON.stringify({ ok: true, value: null }));
+          return;
+        }
+        if (op === "html") {
+          response.writeHead(503, { "content-type": "text/html" });
+          response.end("<h1>Unavailable</h1>");
+          return;
+        }
+        response.end(JSON.stringify({ unexpected: true }));
+      });
+      const child = yield* startWorkerd({ callbackUrls: [host.url] });
+      const engine = yield* Engine.make({ url: child.url });
+      const binding = yield* engine.bind(
+        bundle(`
+      export default { async fetch(request, env, ctx) {
+        const input = await request.json();
+        if (input.type === "describe") return Response.json({ ok: true, handlers: {} });
+        return Response.json(await ctx.props.callbacks.call({ op: input.args.op, args: {} }));
+      }};
+    `)
+      );
+      for (const op of ["reset", "html", "malformed", "slow"]) {
+        expect(
+          yield* engine.invoke(
+            invocation(binding, host.url, "demo.run", {
+              args: { op },
+              deadline: Date.now() + (op === "slow" ? 250 : 5_000)
+            })
+          )
+        ).toMatchObject({
+          outcome: "returned",
+          reply: {
+            ok: false,
+            source: "patchy",
+            code: op === "slow" ? "timeout" : "source_unavailable"
+          }
+        });
+      }
+    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+  30_000
+);
+
+it.live(
+  "enforces the tier two file callback cap in both directions with limit metadata",
+  () =>
+    Effect.gen(function* () {
+      const maxBytes = 20 * 1024 * 1024;
+      const uploads: number[] = [];
+      const host = yield* listener(async (request, response) => {
+        const data = await bodyOf(request);
+        const framed = request.headers["x-patchy-callback"];
+        if (framed !== undefined) {
+          uploads.push(data.length);
+          expect(request.headers["content-type"]).toBe("application/x-test");
+          expect([data[0], data[data.length - 1]]).toEqual([165, 165]);
+          response.end(JSON.stringify({ ok: true, value: null }));
+        } else {
+          const { args } = JSON.parse(data.toString()) as { args: { name: string } };
+          response.writeHead(200, {
+            "x-patchy-file-body": "1",
+            "content-type": "application/x-test"
+          });
+          response.end(Buffer.alloc(Number(args.name), 165));
+        }
+      });
+      const child = yield* startWorkerd({ callbackUrls: [host.url] });
+      const engine = yield* Engine.make({ url: child.url });
+      const binding = yield* engine.bind(bundle(yield* sdkBundle));
+      for (const direction of ["upload", "download"]) {
+        expect(
+          yield* engine.invoke(
+            invocation(binding, host.url, "demo.transfer", {
+              args: { direction, bytes: maxBytes }
+            })
+          )
+        ).toMatchObject({
+          outcome: "returned",
+          reply: {
+            ok: true,
+            value: direction === "upload" ? null : { length: maxBytes, first: 165, last: 165 }
+          }
+        });
+        expect(
+          yield* engine.invoke(
+            invocation(binding, host.url, "demo.transfer", {
+              args: { direction, bytes: maxBytes + 1 }
+            })
+          )
+        ).toMatchObject({
+          outcome: "returned",
+          reply: {
+            ok: false,
+            source: "patchy",
+            code: "too_large",
+            scope: "viewer",
+            limitId: "tier2.callbacks.fileBytes",
+            value: maxBytes
+          }
+        });
+      }
+      expect(uploads).toEqual([maxBytes]);
     }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
   30_000
 );
