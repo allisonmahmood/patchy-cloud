@@ -16,6 +16,11 @@
       "types": "./dist/guest.d.ts",
       "import": "./dist/guest.js"
     },
+    "./management": {
+      "development": "./src/management.ts",
+      "types": "./dist/management.d.ts",
+      "import": "./dist/management.js"
+    },
     "./handlers": {
       "development": "./src/handlers.ts",
       "types": "./dist/handlers.d.ts",

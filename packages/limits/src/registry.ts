@@ -427,6 +427,15 @@ export const registry = {
     refusal: "limit_exceeded",
     overridable: true
   },
+  "execution.management.bodyBytes": {
+    kind: "operating",
+    default: 16777216,
+    unit: "bytes",
+    scope: "host",
+    measure: "Serialized private management request, including pushed bundle source",
+    refusal: "too_large",
+    overridable: false
+  },
   "execution.process.rss": {
     kind: "operating",
     default: 536870912,

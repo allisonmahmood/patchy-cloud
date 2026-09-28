@@ -35,10 +35,44 @@ Each harness scope owns its loopback port, process and temporary configuration.
 Inspection grants no callback service or company binding and kills and reaps
 non-terminating initializers under a load deadline.
 
-The engine and inspection are available independently. The supervised local
-executor and tier 2 `patchy dev` integration are separate tickets; the cloud dev
-runner and migrated test template do not start workerd. Tier 2 publish is still
-refused. These tests prove execution compatibility, not Fargate containment.
+The engine, inspection, supervisor and local executor are available independently.
+`@patchy/execution/local` owns the production loader and watchdog without a fleet
+pool. A killed generation requires a fresh host bind, never an invocation replay.
+It refuses construction when `NODE_ENV` or its explicit environment is production.
+The tier 2 `patchy dev` integration is a separate ticket; the cloud dev runner and
+migrated test template do not start workerd. Tier 2 publish is still refused.
+These tests prove execution compatibility and local recovery, not Fargate containment.
+
+To run only the execution task from this checkout:
+
+```sh
+node --import tsx --conditions=development apps/server/src/exec.ts
+```
+
+The server image includes the same entrypoint as `node dist/exec.js`; its default
+command remains the host (`node dist/start.js`).
+
+It requires `EXECUTION_MANAGEMENT_SECRET`, `EXECUTION_CALLBACK_URLS` as a JSON
+array of trusted host callback URLs, `EXECUTION_DEPLOYMENT_REVISION` and
+`EXECUTION_TASK_ID`. `EXECUTION_MANAGEMENT_PREVIOUS_SECRET` is optional during
+rollout. The listener defaults to `127.0.0.1:8788`; set
+`EXECUTION_MANAGEMENT_PORT=0` for an isolated smoke run and use its printed URL.
+For deployment, `EXECUTION_MANAGEMENT_HOST` may name an RFC1918 or ULA interface
+only with `EXECUTION_MANAGEMENT_PRIVATE_INTERFACE=true`; restrict it to the host
+security group. Wildcard and public addresses are refused. No database, storage,
+Clerk configuration or running dev instance is needed.
+
+The supervisor reads execution operating limits from `PATCHY_LIMITS_JSON`.
+Defaults are 12 resident processes, 1.5 GiB aggregate RSS, a 512 MiB per-process
+kill, 60 seconds idle and a 250 ms probe. The six-second stall and one-second
+post-deadline termination grace are release contracts. Linux uses `/proc` and
+macOS uses `ps` for metering; other platforms refuse supervised execution.
+Distinct child uids require a privileged supervisor. Scope shutdown kills and
+reaps children and removes their temporary configuration.
+
+The private management wire is documented in `docs/API.md`. The host must persist
+process reports before acknowledging them through `stats`. The supervisor has
+no database and reports interrupted attempt identities without classifying commits.
 
 ### Starting the local instance
 

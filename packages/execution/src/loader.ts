@@ -321,7 +321,12 @@ export class Callbacks extends WorkerEntrypoint<Environment, AttemptReference> {
     const live = liveAttempt(this.ctx.props);
     if (live === undefined) return endedCallback(this.ctx.props);
     try {
-      const headers = new Headers({ authorization: `Bearer ${live.callback.capability}` });
+      const headers = new Headers({
+        authorization: `Bearer ${live.callback.capability}`,
+        "x-patchy-invocation-id": live.reference.invocationId,
+        "x-patchy-attempt-id": live.reference.attemptId,
+        "x-patchy-process-generation": String(live.reference.processGeneration)
+      });
       let body: BodyInit;
       if (operation.body === undefined) {
         headers.set("content-type", "application/json");

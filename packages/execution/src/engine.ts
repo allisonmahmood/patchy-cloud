@@ -1,5 +1,5 @@
 import * as GuestProtocol from "@patchy/api/guest";
-import { Executor } from "@patchy/runtime/core";
+import * as Executor from "@patchy/runtime/executor";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -50,6 +50,7 @@ export const make = Effect.fn("ExecutionEngine.make")(function* (options: {
     return value;
   });
   return Executor.Executor.of({
+    implementation: "engine",
     bind: Effect.fn("ExecutionEngine.bind")(function* (input) {
       const bundle = yield* decodeBundle(input).pipe(
         Effect.mapError(
@@ -69,10 +70,12 @@ export const make = Effect.fn("ExecutionEngine.make")(function* (options: {
           reason: reply.code === "invalid_request" ? "protocol" : reply.code
         });
       return {
-        companyId: bundle.companyId,
-        patchId: bundle.patchId,
-        versionId: bundle.versionId,
-        sha256: bundle.sha256
+        binding: {
+          companyId: bundle.companyId,
+          patchId: bundle.patchId,
+          versionId: bundle.versionId,
+          sha256: bundle.sha256
+        }
       };
     }),
     invoke: Effect.fn("ExecutionEngine.invoke")(function* (input) {

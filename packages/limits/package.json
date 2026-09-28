@@ -16,6 +16,11 @@
       "types": "./dist/registry.d.ts",
       "import": "./dist/registry.js"
     },
+    "./deployment-config": {
+      "development": "./src/DeploymentConfig.ts",
+      "types": "./dist/DeploymentConfig.d.ts",
+      "import": "./dist/DeploymentConfig.js"
+    },
     "./migrations": {
       "development": "./src/migrations.ts",
       "types": "./dist/migrations.d.ts",

@@ -61,6 +61,14 @@ export function renderLimitsMarkdown(): string {
     "All byte limits, including process RSS and Fargate memory, are recorded in bytes. Defaults use binary multiples where the decision names KiB, MiB or GiB; Fargate memory defaults are converted from MiB. Deadlines, idle windows and retention periods are milliseconds; retry delays on the wire are seconds. A scope of viewer may be further bound to a patch or document as the measure column states.",
     "",
     "At a caller deadline, effects are fenced and cancellation begins. It does not promise rollback by that instant. An unresolved mutation commit is `unknown_outcome`, not `handler_timeout`; settlement destroys an unresolved connection after its cleanup bound. Query and mutation cancellation use their caller deadlines. No per-invocation CPU or memory guarantee is claimed.",
+    "",
+    "## Runaway code and residency",
+    "",
+    `The execution supervisor probes and samples process CPU/RSS every ${registry["execution.probe.interval"].default} ms. It kills a process still running at its caller deadline plus ${registry["tier2.query.kill"].default - registry["tier2.query.deadline"].default} ms, after ${registry["execution.stall"].default} ms without a successful probe, or at ${registry["execution.process.rss"].default} bytes RSS. Every in-flight attempt is reported to the host for commit-outcome classification; a kill alone never establishes rollback.`,
+    "",
+    `Residency permits ${registry["execution.residency.processes"].default} loaded version processes and ${registry["execution.residency.bytes"].default} bytes aggregate RSS, including the supervisor, bundles, reports and overlapping versions. Enforcement continues while processes are loaded. Memory pressure evicts the largest idle process first; otherwise the oldest idle process goes first. If none is idle, new work receives busy. Processes idle for ${registry["execution.process.idle"].default} ms are reaped.`,
+    "",
+    "Process reports retain CPU seconds and peak RSS sampled before the operating system removes the process record. The host receives and acknowledges these reports over the private management channel. CPU is attributed to the patch version, not individual invocations. The company task is the security boundary; process separation provides availability isolation. Local execution uses the same watchdog but proves neither Fargate containment nor per-invocation CPU or memory isolation.",
     ""
   ].join("\n");
 }

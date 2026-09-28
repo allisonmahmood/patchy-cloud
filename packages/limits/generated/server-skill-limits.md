@@ -53,6 +53,7 @@ PGlite dev has one connection. It does not reproduce production connection conte
 | `tier2.actions.viewer` | operating | 2 | actions | viewer | Actions in flight per viewer per patch per host replica | `busy` | Yes | deployment |
 | `company.admission.rate` | operating | 100 | calls/second | company | Company tier 1 operations and tier 2 calls per host replica; excludes public me, callbacks and re-runs | `limit_exceeded` | Yes | deployment |
 | `company.admission.burst` | operating | 200 | calls | company | Company admission burst per host replica | `limit_exceeded` | Yes | deployment |
+| `execution.management.bodyBytes` | operating | 16777216 | bytes | host | Serialized private management request, including pushed bundle source | `too_large` | No | deployment |
 | `execution.process.rss` | operating | 536870912 | bytes | patch | Process RSS at termination; memory configured in MiB | None | Yes | deployment |
 | `execution.breaker.kills` | operating | 3 | kills | patch | Kills across all versions of one patch within the breaker window | `patch_paused` | Yes | deployment |
 | `execution.breaker.window` | operating | 600000 | milliseconds | patch | Window counting process kills; breaker is off in dev | None | Yes | deployment |

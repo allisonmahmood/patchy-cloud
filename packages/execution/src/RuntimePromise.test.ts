@@ -18,7 +18,7 @@ const run = Effect.fnUntraced(function* (handler: string) {
   const callbackUrl = "http://127.0.0.1:1/callback";
   const process = yield* startWorkerd({ callbackUrls: [callbackUrl] });
   const engine = yield* Engine.make({ url: process.url });
-  const binding = yield* engine.bind({
+  const { binding } = yield* engine.bind({
     companyId: viewer.company.id,
     patchId: "pat_runtime",
     versionId: "ver_runtime",
