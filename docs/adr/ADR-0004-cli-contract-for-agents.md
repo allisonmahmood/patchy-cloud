@@ -318,6 +318,12 @@ The CLI executes config locally and writes `manifest.json`; server generation
 returns finished files, resolved declaration ids/revisions and typed declaration
 metadata, never that manifest or production rows/credentials. Both sides constrain
 paths to the managed roots; declaration snapshots are not generated repo files.
+For tier 2, refresh enumerates one-level `server/*.ts` filename stems into
+`serverModules`, independently of manifest handler descriptors. Generation uses
+that list for type-only imports in the bound server helpers and client. It does
+not load or bundle server code. Nested modules, invalid names and symbolic links
+are local refusals; tiers 0 and 1 send an empty list. Tier 2 publishing remains
+refused.
 Skills are sticky: refresh re-fetches every present skill and adds config-implied
 ones, never deleting on its own. A present skill no longer offered by the release
 fails refresh. Their canonical source is `packages/sdk`.

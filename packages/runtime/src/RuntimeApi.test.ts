@@ -4,7 +4,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as HttpApi from "effect/unstable/httpapi/HttpApi";
 import * as HttpApiTest from "effect/unstable/httpapi/HttpApiTest";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { RuntimeGroup, runtimeOperations, WIRE_VERSION } from "@patchy/api";
+import { RuntimeGroup, runtimeOperations, runtimeByteLimits, WIRE_VERSION } from "@patchy/api";
 import { PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { Limits } from "@patchy/limits";
@@ -638,5 +638,84 @@ it.effect(
         assert.deepStrictEqual(result, asValue ? { ok: true, value: business } : business);
       }
     }).pipe(Effect.provide(Fixtures.layer({ me, "server.call": serverCall })));
+  }
+);
+
+it.effect(
+  "server calls admit UTF-8 arguments through 1 MiB and bound their envelope separately",
+  () => {
+    const encoder = new TextEncoder();
+    const serverCall = Runtime.handler(
+      {
+        kind: runtimeOperations["server.call"].kind,
+        input: runtimeOperations["server.call"].request.fields.args,
+        output: runtimeOperations["server.call"].response
+      },
+      (request) =>
+        Effect.succeed({
+          ok: true as const,
+          value: encoder.encode(JSON.stringify(request.args)).byteLength
+        })
+    );
+    const argsAt = (bytes: number) => {
+      const contentBytes = bytes - encoder.encode(JSON.stringify({ text: "" })).byteLength;
+      return { text: "é".repeat(Math.floor(contentBytes / 2)) + "x".repeat(contentBytes % 2) };
+    };
+    return Effect.gen(function* () {
+      const api = yield* client;
+      const invoke = (bytes: number, mutationKey?: string) =>
+        api.call({
+          payload: {
+            patchId,
+            versionId,
+            principal: { userId: DEV_SEED.userId },
+            wire: WIRE_VERSION,
+            op: "server.call",
+            args: {
+              handler: "leads.read",
+              args: argsAt(bytes),
+              ...(mutationKey ? { mutationKey } : {})
+            }
+          },
+          headers: {
+            ...headers({ userId: DEV_SEED.userId }),
+            cookie: signedInCookies(),
+            origin: PUBLIC_BASE_URL
+          },
+          responseMode: "response-only"
+        });
+      for (const bytes of [runtimeByteLimits.callBytes + 1, runtimeByteLimits.serverArgsBytes]) {
+        const response = yield* invoke(bytes);
+        assert.strictEqual(response.status, 200);
+        assert.deepStrictEqual(yield* response.json, { ok: true, value: bytes });
+      }
+      const overflow = yield* invoke(runtimeByteLimits.serverArgsBytes + 1);
+      assert.strictEqual(overflow.status, 413);
+      assert.include(yield* overflow.json, {
+        source: "patchy",
+        code: "too_large",
+        scope: "viewer",
+        limitId: "tier2.args.bytes",
+        value: runtimeByteLimits.serverArgsBytes
+      });
+      const envelopeOverflow = yield* invoke(
+        runtimeByteLimits.serverArgsBytes,
+        "x".repeat(runtimeByteLimits.callBytes)
+      );
+      assert.strictEqual(envelopeOverflow.status, 413);
+      assert.include(yield* envelopeOverflow.json, {
+        source: "patchy",
+        code: "too_large",
+        limitId: "tier2.args.bytes",
+        value: runtimeByteLimits.serverArgsBytes + runtimeByteLimits.callBytes
+      });
+    }).pipe(
+      Effect.provide(
+        Fixtures.layer(
+          { me, "server.call": serverCall },
+          { "runtime.row.bytes": 512, "runtime.batch.bytes": 512, "runtime.postgres.bytes": 512 }
+        )
+      )
+    );
   }
 );

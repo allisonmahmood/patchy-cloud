@@ -71,6 +71,11 @@ digest URL.
 context types in `patchy/_generated/server.ts`, plus a server-only client whose
 handler signatures come from type-only server imports. Runtime callables resolve
 lazily, so renaming an export in an existing module does not require regeneration.
+Refresh discovers module names from one-level `server/*.ts` filenames and sends
+them separately from manifest handler descriptors. Adding, removing or renaming
+a module needs refresh. It never loads or bundles those sources; unfinished
+handler code does not block generation. Nested modules, invalid names and
+symbolic links are refused locally.
 Declared business errors retain their `source: "handler"`, code and details across
 HTTP and broker transports; similarly shaped successful data remains data.
 

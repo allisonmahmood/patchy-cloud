@@ -24,6 +24,7 @@ export const canonicalArgs = (args: unknown): string => {
         } else {
           const record = value as Readonly<Record<string, unknown>>;
           result = `{${Object.keys(record)
+            .filter((key) => record[key] !== undefined)
             .sort()
             .map((key) => `${JSON.stringify(key)}:${encode(record[key])}`)
             .join(",")}}`;

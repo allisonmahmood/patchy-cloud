@@ -30,11 +30,13 @@ const identity = new Identity({
  */
 const harness = Effect.fn("test.preparation.harness")(function* ({
   index,
+  tier = 1,
   uses = "{}",
   metadata = { postgres: {}, shared: {} },
   duringGeneration = () => Effect.void
 }: {
   readonly index: unknown;
+  readonly tier?: 0 | 1 | 2;
   readonly uses?: string;
   readonly metadata?: unknown;
   readonly duringGeneration?: (root: string) => Effect.Effect<void, unknown, FileSystem.FileSystem>;
@@ -51,7 +53,7 @@ const harness = Effect.fn("test.preparation.harness")(function* ({
     path.join(root, "patchy.config.ts"),
     `import { defineConfig, table, t, sharedTable } from ${JSON.stringify(builders)};\n` +
       'import { column } from "./fields.ts";\n' +
-      `export default defineConfig({ name: "preparation-test", tier: 1, tables: { notes: table("Notes identified by id.", { [column]: t.text() }) }, uses: ${uses} });\n`
+      `export default defineConfig({ name: "preparation-test", tier: ${tier}, tables: { notes: table("Notes identified by id.", { [column]: t.text() }) }, uses: ${uses} });\n`
   );
   const generated: Array<typeof GenerateRequest.Type> = [];
   const client = HttpClient.make((request) =>
@@ -80,6 +82,18 @@ const harness = Effect.fn("test.preparation.harness")(function* ({
 const currentIndex = { release: RELEASE, manifestVersion: MANIFEST_VERSION, uses: [], skills: [] };
 
 it.layer(NodeServices.layer)("DevPreparation.prepare", (it) => {
+  it.effect("discovers tier 2 source modules without evaluating unfinished server code", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { root, generated, prepare } = yield* harness({ index: currentIndex, tier: 2 });
+      yield* fs.makeDirectory(path.join(root, "server"));
+      yield* fs.writeFileString(path.join(root, "server/leads.ts"), "incomplete TypeScript {");
+      yield* prepare;
+      assert.deepStrictEqual(generated[0]!.serverModules, ["leads"]);
+      assert.isUndefined(generated[0]!.manifest.handlers);
+    })
+  );
   it.effect(
     "returns the manifest it generated from, even when an imported file changes mid-generation",
     () =>

@@ -370,7 +370,6 @@ export const generate = Effect.fn("Generation.generate")(function* (
     files.set(path, contents);
     skillFiles.push({ name, path });
   }
-  const handlers = request.manifest.tier === 2 ? (request.manifest.handlers ?? {}) : undefined;
   files.set(
     `${root}/client.ts`,
     generateClient({
@@ -379,11 +378,11 @@ export const generate = Effect.fn("Generation.generate")(function* (
       tier: request.manifest.tier
     })
   );
-  if (handlers !== undefined) {
+  if (request.manifest.tier === 2) {
     files.set(
       `${root}/server.ts`,
       generateServer({
-        modules: Object.keys(handlers).map((name) => name.split(".")[0]!),
+        modules: request.serverModules,
         shared,
         connections: factories
       })

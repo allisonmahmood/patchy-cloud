@@ -2,13 +2,7 @@ import { resolveObjectURL } from "node:buffer";
 import { expect, it } from "vitest";
 import { build } from "esbuild";
 import * as ts from "typescript";
-import {
-  createClient,
-  createSharedTable,
-  errorCodes,
-  decodeError,
-  type Transport
-} from "./client.js";
+import { createClient, createSharedTable, decodeError, type Transport } from "./client.js";
 import { defineConfig, files, table, t } from "./config.js";
 import { generateClient } from "../../sdk/src/generateClient.js";
 import { RuntimeCode, runtimeOperations } from "../../api/src/runtime.js";
@@ -25,9 +19,22 @@ const unusedRoute: Transport["route"] = {
   }
 };
 
-it("keeps the lightweight error decoder exactly on the authoritative runtime code contract", () => {
-  expect(Object.keys(errorCodes).sort()).toEqual([...RuntimeCode.literals].sort());
-  expect(decodeError({ code: "invented_code", message: "no" })).toBeUndefined();
+it("decodes every runtime refusal without confusing handler errors or untagged data", () => {
+  for (const code of RuntimeCode.literals) {
+    expect(decodeError({ source: "patchy", code, error: "Refused." })).toMatchObject({
+      source: "patchy",
+      code,
+      message: "Refused."
+    });
+  }
+  expect(decodeError({ source: "patchy", code: "invented_code", message: "no" })).toBeUndefined();
+  expect(
+    decodeError({ source: "handler", code: "access_denied", error: "business" })
+  ).toBeUndefined();
+  expect(decodeError({ code: "access_denied", error: "Missing source." })).toBeUndefined();
+  expect(
+    decodeError({ ok: true, source: "patchy", code: "busy", error: "Successful business data." })
+  ).toBeUndefined();
 });
 
 it("caches blob URLs until replacement/deletion and revokes them on close", async () => {

@@ -547,6 +547,7 @@ const identity = Fixtures.identities.uploader;
 const generateRequest = (manifest = Fixtures.manifest, skills: string[] = []) => ({
   release: CURRENT_RELEASE,
   manifest,
+  serverModules: [],
   skills
 });
 const sdkOver = <A, E, R>(dependencies: Layer.Layer<A, E, R>) =>
@@ -589,6 +590,20 @@ const failureSource = Effect.fn("sdk.failureSource")(function* (patchId: string)
 });
 
 it.layer(layer)("SDK company generation", (it) => {
+  it.effect("refuses module paths and invalid stems before generating imports", () =>
+    Effect.gen(function* () {
+      const client = yield* HttpClient.HttpClient;
+      for (const serverModules of [["nested/leads"], ["../outside"], ["leads.ts"], ["9leads"]]) {
+        const response = yield* client.execute(
+          HttpClientRequest.post("/api/sdk/generate").pipe(
+            HttpClientRequest.bearerToken(identity.machine.id),
+            HttpClientRequest.bodyJsonUnsafe({ ...generateRequest(), serverModules })
+          )
+        );
+        assert.strictEqual(response.status, 400);
+      }
+    })
+  );
   it.effect("refuses a manifest with unknown fields instead of stripping them", () =>
     Effect.gen(function* () {
       const client = yield* HttpClient.HttpClient;

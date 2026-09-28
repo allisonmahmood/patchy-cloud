@@ -3,12 +3,19 @@ import * as Schema from "effect/Schema";
 export const HandlerKind = Schema.Literals(["query", "mutation", "action"]);
 export type HandlerKind = typeof HandlerKind.Type;
 
+const moduleNamePattern = "[a-zA-Z_$][a-zA-Z0-9_$-]*";
+const moduleName = new RegExp(`^${moduleNamePattern}$`);
+const handlerName = new RegExp(`^${moduleNamePattern}\\.[a-zA-Z_$][a-zA-Z0-9_$]*$`);
+
+/** One server/*.ts filename stem, without an extension or directory traversal. */
+export const HandlerModuleName = Schema.String.check(
+  Schema.makeFilter((name) => moduleName.test(name) || "Invalid server module name.")
+);
+
 /** One server module and one named export, without directory traversal. */
 export const HandlerName = Schema.String.check(
   Schema.makeFilter(
-    (name) =>
-      /^[a-zA-Z_$][a-zA-Z0-9_$-]*\.[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(name) ||
-      "Handler names must be module.export, one level deep."
+    (name) => handlerName.test(name) || "Handler names must be module.export, one level deep."
   )
 );
 
@@ -22,11 +29,19 @@ export type HandlerSchema = (
   | { readonly kind: "fileHandle" | "upload" }
 ) & { readonly optional?: true };
 
-const modifiers = {
-  optional: Schema.optionalKey(Schema.Literal(true)),
-  // A default is a table-column modifier, never a handler-field modifier.
-  default: Schema.optionalKey(Schema.Never)
-};
+const modifiers = { optional: Schema.optionalKey(Schema.Literal(true)) };
+// Preserve only `default` for the check; other unknown keys retain normal parser behavior.
+// A pattern-keyed rest schema keeps this forbidden key out of the declared wire properties.
+const forbiddenDefault = Schema.Record(
+  Schema.String.check(Schema.isPattern(/^default$/)),
+  Schema.Unknown
+);
+const node = <F extends Schema.Struct.Fields>(fields: F) =>
+  Schema.StructWithRest(Schema.Struct(fields), [forbiddenDefault]).check(
+    Schema.makeFilter(
+      (value) => !Object.hasOwn(value, "default") || "Defaults are allowed only on table columns."
+    )
+  );
 const fields = <S extends Schema.Top>(value: S) =>
   Schema.Record(Schema.String, value).check(
     Schema.makeFilter(
@@ -37,17 +52,17 @@ const fields = <S extends Schema.Top>(value: S) =>
 
 export const HandlerSchema: Schema.Codec<HandlerSchema> = Schema.suspend(() =>
   Schema.Union([
-    Schema.Struct({
+    node({
       kind: Schema.Literals(["text", "integer", "number", "boolean", "timestamp", "json"]),
       ...modifiers
     }),
-    Schema.Struct({
+    node({
       kind: Schema.Literal("object"),
       fields: fields(HandlerSchema),
       ...modifiers
     }),
-    Schema.Struct({ kind: Schema.Literal("array"), element: HandlerSchema, ...modifiers }),
-    Schema.Struct({
+    node({ kind: Schema.Literal("array"), element: HandlerSchema, ...modifiers }),
+    node({
       kind: Schema.Literal("enum"),
       values: Schema.Array(Schema.String).check(
         Schema.isMinLength(1),
@@ -57,8 +72,8 @@ export const HandlerSchema: Schema.Codec<HandlerSchema> = Schema.suspend(() =>
       ),
       ...modifiers
     }),
-    Schema.Struct({ kind: Schema.Literal("nullable"), value: HandlerSchema, ...modifiers }),
-    Schema.Struct({
+    node({ kind: Schema.Literal("nullable"), value: HandlerSchema, ...modifiers }),
+    node({
       kind: Schema.Literal("row"),
       table: Schema.String.check(
         Schema.makeFilter(
@@ -67,9 +82,9 @@ export const HandlerSchema: Schema.Codec<HandlerSchema> = Schema.suspend(() =>
       ),
       ...modifiers
     }),
-    Schema.Struct({ kind: Schema.Literals(["fileHandle", "upload"]), ...modifiers })
+    node({ kind: Schema.Literals(["fileHandle", "upload"]), ...modifiers })
   ])
-);
+).annotate({ identifier: "HandlerSchema" });
 
 const schemaProblem = (
   schema: HandlerSchema,

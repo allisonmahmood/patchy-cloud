@@ -80,9 +80,11 @@ and mutation tickets; the types reserve the contract now.
 
 Call `patchy.server.<module>.<handler>(args)`. Queries also provide
 `.subscribe(args, onSnapshot)` and `useQuery(handler, args)` from `patchy/preact`.
-The hook returns `{ status, data, error, loading }`. It retains the last data
-through a stream error. Two components observing the same handler and canonical
-arguments share a subscription. A short unmount/remount retains it.
+The hook returns `{ status, data, error, loading }`, with status `"loading"`,
+`"ready"` or `"error"`. It retains the last data through a stream error.
+Two components observing the same handler and canonical arguments share a
+subscription. Omitted fields and object fields set to `undefined` have the same
+identity. A short unmount/remount retains the subscription.
 
 After a mutation, render from the subscription rather than merging the mutation
 reply into a second copy of query state. Patchy owns presence and reconciliation.

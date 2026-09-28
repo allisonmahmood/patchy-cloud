@@ -206,6 +206,7 @@ it.effect(
               "runtime.calls.perMinute": 20,
               "runtime.call.bytes": 512,
               "runtime.row.bytes": 64,
+              "tier2.args.bytes": 64,
               "runtime.batch.bytes": 128,
               "runtime.postgres.bytes": 128
             },
@@ -329,6 +330,7 @@ it.effect("distinguishes capacity refusals, timeouts, and unknown outcomes by ru
         assert.strictEqual(response.status, error.status);
         assert.deepStrictEqual(yield* response.json, {
           ok: false,
+          source: "patchy",
           code: error.code,
           error: error.message,
           ...responseFields

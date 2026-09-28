@@ -111,6 +111,7 @@ await esbuild.build({
   platform: "browser",
   target: "es2022",
   sourcemap: true,
+  conditions: common.conditions,
   // Keep one physical UI stack, shared by the SDK entries, optimizer and debug support.
   external: ["preact", "preact/*", "@preact/signals", "@preact/signals-core"]
 });

@@ -9,8 +9,14 @@ import * as Schema from "effect/Schema";
 import * as SchemaGetter from "effect/SchemaGetter";
 import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
 import { isPatchId } from "@patchy/core";
+import { registry } from "@patchy/limits/registry";
 import { Snapshot } from "./postgresSnapshot.js";
-import { HandlerDescriptors, handlerTablesValid, type HandlerSchema } from "./handlers.js";
+import {
+  HandlerDescriptors,
+  HandlerModuleName,
+  handlerTablesValid,
+  type HandlerSchema
+} from "./handlers.js";
 
 export const CURRENT_RELEASE = "0.0.1";
 export const MANIFEST_VERSION = 1;
@@ -399,7 +405,12 @@ export const handlerValueSchema = (
     case "nullable":
       return Schema.NullOr(handlerValueSchema(descriptor.value, tables));
     case "fileHandle":
-      return Schema.String.check(Schema.isLengthBetween(57, 57));
+      return Schema.String.check(
+        Schema.isLengthBetween(
+          registry["files.handle.length"].default,
+          registry["files.handle.length"].default
+        )
+      );
     case "upload":
       return NonEmptyText;
     case "row": {
@@ -539,6 +550,10 @@ export const ConnectionUnavailable = failure(503, {
 export const GenerateRequest = Schema.Struct({
   release: NonEmptyText,
   manifest: GenerationManifest,
+  serverModules: Schema.Array(HandlerModuleName).annotate({
+    description:
+      "One-level server/*.ts filename stems discovered locally for tier 2; empty for tiers 0 and 1. Used only for type-only imports, independently of manifest.handlers."
+  }),
   patchId: Schema.optionalKey(PatchId),
   skills: Schema.Array(NonEmptyText)
 });

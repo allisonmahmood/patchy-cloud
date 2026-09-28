@@ -1,3 +1,4 @@
+import { canonicalArgs } from "@patchy/api/canonical-args";
 import { PatchyError } from "./clientError.js";
 import { createPostMessageTransport, type Me, type Transport } from "./clientTransport.js";
 import { createQueryRegistry, type QueryDriver } from "./queryRegistry.js";
@@ -41,8 +42,11 @@ export function createServerClient<Modules>(
           if (typeof exported !== "string") return undefined;
           if (Object.hasOwn(handlers, exported)) return handlers[exported];
           const name = `${module}.${exported}`;
-          const call = (args: Readonly<Record<string, unknown>>) =>
-            transport.call("server.call", { handler: name, args });
+          const call = async (args: Readonly<Record<string, unknown>>) =>
+            transport.call("server.call", {
+              handler: name,
+              args: JSON.parse(canonicalArgs(args))
+            });
           // Types expose subscriptions only for queries. The host validates the loaded kind.
           return (handlers[exported] = Object.assign(call, {
             subscribe: (

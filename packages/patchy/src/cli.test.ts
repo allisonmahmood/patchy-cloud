@@ -43,6 +43,7 @@ import {
   WIRE_VERSION
 } from "@patchy/api";
 import { generateClient } from "../../sdk/src/generateClient.js";
+import { generateServer } from "../../sdk/src/generateServer.js";
 import { generate as generatePostgres } from "../../integrations/src/postgres/Generate.js";
 import { starterFiles } from "./initProject.js";
 import toolchain from "./toolchain.json" with { type: "json" };
@@ -328,7 +329,7 @@ const projectSource = {
 
 /** Only the instance metadata is stubbed: these are the shipped client generators. */
 const generateProjectResponse = (body: unknown): typeof Generated.Type => {
-  const { manifest } = decodeGenerateRequest(body);
+  const { manifest, serverModules } = decodeGenerateRequest(body);
   const files: Array<{ path: string; contents: string }> = [];
   const uses: Array<{
     alias: string;
@@ -360,7 +361,10 @@ const generateProjectResponse = (body: unknown): typeof Generated.Type => {
     skills.add("patchy-postgres");
   }
   files.push(
-    { path: "patchy/_generated/client.ts", contents: generateClient({ connections }) },
+    {
+      path: "patchy/_generated/client.ts",
+      contents: generateClient({ connections, tier: manifest.tier })
+    },
     {
       path: "patchy/_generated/index.json",
       contents: JSON.stringify({
@@ -371,6 +375,11 @@ const generateProjectResponse = (body: unknown): typeof Generated.Type => {
       })
     }
   );
+  if (manifest.tier === 2)
+    files.push({
+      path: "patchy/_generated/server.ts",
+      contents: generateServer({ modules: serverModules, connections })
+    });
   for (const skill of [...skills].sort())
     files.push({
       path: `.agents/skills/${skill}/SKILL.md`,
@@ -2828,6 +2837,30 @@ describe("publish description and lifecycle recovery", () => {
       ]);
     }
   );
+});
+
+describe("tier 2 refresh module discovery", () => {
+  it("discovers source filenames without evaluating server code or requiring descriptors", async () => {
+    const instance = await stubInstance(projectHandler);
+    const dir = projectTree(instance.url, projectConfig.replace("tier: 1", "tier: 2"));
+    mkdirSync(path.join(dir, "server"));
+    writeFileSync(path.join(dir, "server/leads.ts"), 'throw new Error("must not run");');
+    writeFileSync(path.join(dir, "server/import-rows.ts"), "incomplete TypeScript {");
+    const options = { cwd: dir, env: { PATCHY_API_TOKEN: "pp_owner" } };
+    const result = await runCli(["refresh", "--json"], options);
+    expect(result, result.stderr).toMatchObject({ status: 0, stderr: "" });
+    const request = instance.requests.find((request) => request.url === "/api/sdk/generate")!;
+    expect(decodeGenerateRequest(request.body).serverModules).toEqual(["import-rows", "leads"]);
+    expect(decodeGenerateRequest(request.body).manifest.handlers).toBeUndefined();
+
+    renameSync(path.join(dir, "server/leads.ts"), path.join(dir, "server/contacts.ts"));
+    const refreshed = await runCli(["refresh", "--json"], options);
+    expect(refreshed, refreshed.stderr).toMatchObject({ status: 0, stderr: "" });
+    const current = instance.requests
+      .filter((request) => request.url === "/api/sdk/generate")
+      .at(-1)!;
+    expect(decodeGenerateRequest(current.body).serverModules).toEqual(["contacts", "import-rows"]);
+  }, 30_000);
 });
 
 describe("repo description sync and change notices", () => {

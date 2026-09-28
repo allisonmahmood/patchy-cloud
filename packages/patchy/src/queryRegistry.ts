@@ -1,8 +1,9 @@
 // @effect-diagnostics globalTimers:off — The browser registry has no Effect runtime.
 import { canonicalArgs } from "@patchy/api/canonical-args";
+import { queryRemountGraceMs } from "@patchy/api/query-config";
 
 export interface QuerySnapshot<Result> {
-  readonly status: "loading" | "success" | "error";
+  readonly status: "loading" | "ready" | "error";
   readonly data: Result | undefined;
   readonly error: Error | undefined;
   readonly loading: boolean;
@@ -25,7 +26,7 @@ export interface QueryCallable<Args, Result> {
 }
 
 export type QueryFrame<Result = unknown> =
-  | { readonly status: "success"; readonly revision: number; readonly data: Result }
+  | { readonly status: "ready"; readonly revision: number; readonly data: Result }
   | { readonly status: "error"; readonly revision: number; readonly error: Error };
 
 export interface QueryRequest {
@@ -68,12 +69,8 @@ const loadingSnapshot: QuerySnapshot<never> = {
 };
 
 /** Create one registry per client identity and close it when that identity ends. */
-export function createQueryRegistry(
-  driver: QueryDriver,
-  options: { readonly remountGraceMs?: number } = {}
-): QueryRegistry {
+export function createQueryRegistry(driver: QueryDriver): QueryRegistry {
   const entries = new Map<string, Entry>();
-  const graceMs = options.remountGraceMs ?? 1_000;
   const closedError = new Error("The query client is closed.");
   let closed = false;
 
@@ -110,7 +107,7 @@ export function createQueryRegistry(
       entries.delete(key);
       entry.snapshot = loadingSnapshot;
       entry.revision = -1;
-    }, graceMs);
+    }, queryRemountGraceMs);
   };
   const errorSnapshot = (entry: Entry, error: Error): QuerySnapshot<unknown> => ({
     status: "error",
@@ -161,8 +158,8 @@ export function createQueryRegistry(
                 entry.revision = frame.revision;
                 publish(
                   entry,
-                  frame.status === "success"
-                    ? { status: "success", data: frame.data, error: undefined, loading: false }
+                  frame.status === "ready"
+                    ? { status: "ready", data: frame.data, error: undefined, loading: false }
                     : errorSnapshot(entry, frame.error)
                 );
               });

@@ -13,12 +13,17 @@ export const runtimeByteLimits = {
   rowBytes: registry["runtime.row.bytes"].default,
   batchBytes: registry["runtime.batch.bytes"].default,
   postgresBytes: registry["runtime.postgres.bytes"].default,
+  serverArgsBytes: registry["tier2.args.bytes"].default,
   resultBytes: registry["runtime.result.bytes"].default,
   fileBytes: registry["runtime.file.bytes"].default
 } as const;
 
 export type RuntimeBodyLimitId =
-  "runtime.call.bytes" | "runtime.row.bytes" | "runtime.batch.bytes" | "runtime.postgres.bytes";
+  | "runtime.call.bytes"
+  | "runtime.row.bytes"
+  | "runtime.batch.bytes"
+  | "runtime.postgres.bytes"
+  | "tier2.args.bytes";
 
 export function runtimeBodyLimitId(op: string): RuntimeBodyLimitId {
   return op === "tables.insert" || op === "tables.update"
@@ -27,7 +32,9 @@ export function runtimeBodyLimitId(op: string): RuntimeBodyLimitId {
       ? "runtime.batch.bytes"
       : op.startsWith("postgres.")
         ? "runtime.postgres.bytes"
-        : "runtime.call.bytes";
+        : op === "server.call"
+          ? "tier2.args.bytes"
+          : "runtime.call.bytes";
 }
 
 export function runtimeBodyLimit(
@@ -37,6 +44,7 @@ export function runtimeBodyLimit(
     readonly rowBytes: number;
     readonly batchBytes: number;
     readonly postgresBytes: number;
+    readonly serverArgsBytes: number;
   } = runtimeByteLimits
 ): number {
   switch (runtimeBodyLimitId(op)) {
@@ -46,6 +54,8 @@ export function runtimeBodyLimit(
       return limits.batchBytes + limits.callBytes;
     case "runtime.postgres.bytes":
       return limits.postgresBytes;
+    case "tier2.args.bytes":
+      return limits.serverArgsBytes + limits.callBytes;
     case "runtime.call.bytes":
       return limits.callBytes;
   }
@@ -348,7 +358,7 @@ export type RuntimeCode = typeof RuntimeCode.Type;
 /** Logged failures carry their row's correlation id; read and shell-local failures do not. */
 export const RuntimeFailure = Schema.Struct({
   ok: Schema.Literal(false),
-  source: Schema.optionalKey(Schema.Literal("patchy")),
+  source: Schema.Literal("patchy"),
   error: Schema.String,
   code: RuntimeCode,
   ...limitRefusalFields,
@@ -367,7 +377,8 @@ export const HandlerFailure = Schema.Struct({
 export type HandlerFailure = typeof HandlerFailure.Type;
 
 /**
- * The server encodes each value with its operation's response schema before this envelope.
+ * Primitive responses encode their value before this envelope. server.call already returns
+ * ServerCallReply, preserving a declared HandlerFailure as an HTTP 200 reply.
  * `value` stays plain JSON: a union of every response would match a table row with `ok`
  * and `rows` columns to a Postgres result and drop the row's other keys.
  */

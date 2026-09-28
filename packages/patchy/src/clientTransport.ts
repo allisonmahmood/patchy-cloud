@@ -71,6 +71,7 @@ export function createPortTransport(
     string,
     {
       resolve(value: unknown): void;
+      op: Operation;
       reject(error: unknown): void;
       timer: ReturnType<typeof setTimeout>;
       path?: string;
@@ -101,7 +102,7 @@ export function createPortTransport(
     pending.delete(value.id);
     if (value.kind === "error") {
       request.reject(
-        decodeHandlerError(value.error) ??
+        (request.op === "server.call" ? decodeHandlerError(value.error) : undefined) ??
           decodeError(value.error) ??
           new PatchyError("invalid_request", "The broker returned an invalid error.", {})
       );
@@ -142,6 +143,7 @@ export function createPortTransport(
       reject(lost());
     }, timeoutMs);
     pending.set(id, {
+      op,
       resolve,
       reject,
       timer,
@@ -359,8 +361,12 @@ export function createHttpTransport(options: HttpTransportOptions): Transport {
         };
       if (op === "files.put" && response.ok) return null;
       const result: unknown = await response.json();
-      const error = decodeHandlerError(result) ?? decodeError(result);
-      if (error) throw error;
+      if (result !== null && typeof result === "object" && "ok" in result && result.ok === false) {
+        const error =
+          (op === "server.call" && response.ok ? decodeHandlerError(result) : undefined) ??
+          decodeError(result);
+        if (error) throw error;
+      }
       if (
         !response.ok ||
         result === null ||

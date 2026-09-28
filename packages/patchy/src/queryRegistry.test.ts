@@ -40,13 +40,13 @@ it("shares one transport subscription for canonical arguments and releases only 
   );
   const releaseSecond = registry.subscribe<string>(
     "leads.list",
-    { page: 1, filter: { owner: "me", stage: "new" } },
+    { page: 1, filter: { owner: "me", stage: "new", search: undefined } },
     (snapshot) => second.push(snapshot)
   );
   expect(subscriptions).toHaveLength(1);
-  subscriptions[0]!.send({ status: "success", revision: 1, data: "first page" });
+  subscriptions[0]!.send({ status: "ready", revision: 1, data: "first page" });
   expect(first.at(-1)).toEqual({
-    status: "success",
+    status: "ready",
     data: "first page",
     error: undefined,
     loading: false
@@ -56,7 +56,7 @@ it("shares one transport subscription for canonical arguments and releases only 
   releaseFirst();
   vi.advanceTimersByTime(2_000);
   expect(subscriptions[0]!.closed).toBe(false);
-  subscriptions[0]!.send({ status: "success", revision: 2, data: "updated page" });
+  subscriptions[0]!.send({ status: "ready", revision: 2, data: "updated page" });
   expect(first.at(-1)?.data).toBe("first page");
   expect(second.at(-1)?.data).toBe("updated page");
   releaseSecond();
@@ -74,11 +74,11 @@ it("drops stale and duplicate revisions before reading their data, separately fo
   const other: QuerySnapshot<string>[] = [];
   registry.subscribe<string>("leads.list", { page: 1 }, (snapshot) => seen.push(snapshot));
   registry.subscribe<string>("leads.list", { page: 2 }, (snapshot) => other.push(snapshot));
-  subscriptions[0]!.send({ status: "success", revision: 10, data: "current" });
+  subscriptions[0]!.send({ status: "ready", revision: 10, data: "current" });
   const current = seen.at(-1);
   for (const revision of [9, 10]) {
     subscriptions[0]!.send({
-      status: "success",
+      status: "ready",
       revision,
       get data() {
         throw new Error("A stale frame must not inspect its result.");
@@ -90,7 +90,7 @@ it("drops stale and duplicate revisions before reading their data, separately fo
     { status: "loading", data: undefined, error: undefined, loading: true },
     current
   ]);
-  subscriptions[1]!.send({ status: "success", revision: 1, data: "other query" });
+  subscriptions[1]!.send({ status: "ready", revision: 1, data: "other query" });
   expect(other.at(-1)?.data).toBe("other query");
   registry.close();
 });
@@ -101,16 +101,16 @@ it("retains the last successful data through errors and clears the error on a ne
   const seen: QuerySnapshot<readonly string[]>[] = [];
   registry.subscribe<readonly string[]>("leads.list", {}, (snapshot) => seen.push(snapshot));
   const data = ["lead-1"];
-  subscriptions[0]!.send({ status: "success", revision: 1, data });
+  subscriptions[0]!.send({ status: "ready", revision: 1, data });
   const error = new Error("Stream disconnected");
   subscriptions[0]!.send({ status: "error", revision: 2, error });
   expect(seen.at(-1)).toEqual({ status: "error", data, error, loading: false });
   expect(seen.at(-1)?.data).toBe(data);
-  subscriptions[0]!.send({ status: "success", revision: 1, data: ["outdated"] });
+  subscriptions[0]!.send({ status: "ready", revision: 1, data: ["outdated"] });
   expect(seen.at(-1)?.error).toBe(error);
-  subscriptions[0]!.send({ status: "success", revision: 3, data: ["lead-2"] });
+  subscriptions[0]!.send({ status: "ready", revision: 3, data: ["lead-2"] });
   expect(seen.at(-1)).toEqual({
-    status: "success",
+    status: "ready",
     data: ["lead-2"],
     error: undefined,
     loading: false
@@ -124,7 +124,7 @@ it("keeps results across a remount within the grace period and fences frames aft
   const registry = createQueryRegistry(driver);
   const first = registry.getQuery<string>("leads.list", "{}");
   const release = first.subscribe(() => {});
-  subscriptions[0]!.send({ status: "success", revision: 8, data: "cached" });
+  subscriptions[0]!.send({ status: "ready", revision: 8, data: "cached" });
   release();
   vi.advanceTimersByTime(500);
   const remounted = registry.getQuery<string>("leads.list", "{}");
@@ -142,8 +142,8 @@ it("keeps results across a remount within the grace period and fences frames aft
   const fresh: QuerySnapshot<string>[] = [];
   registry.subscribe<string>("leads.list", {}, (snapshot) => fresh.push(snapshot));
   expect(fresh[0]?.status).toBe("loading");
-  subscriptions[0]!.send({ status: "success", revision: 99, data: "late old stream" });
-  subscriptions[1]!.send({ status: "success", revision: 0, data: "fresh stream" });
+  subscriptions[0]!.send({ status: "ready", revision: 99, data: "late old stream" });
+  subscriptions[1]!.send({ status: "ready", revision: 0, data: "fresh stream" });
   expect(fresh.at(-1)?.data).toBe("fresh stream");
   expect(seen.at(-1)?.data).toBe("cached");
   registry.close();
@@ -165,10 +165,10 @@ it("separates handlers, changed arguments, and client identities without retaini
   colleague.subscribe<string>("leads.list", args, (snapshot) => colleagueSeen.push(snapshot));
   expect(subscriptions).toHaveLength(4);
   expect(subscriptions[0]!.request.args).toEqual({ filter: { stage: "new" } });
-  subscriptions[0]!.send({ status: "success", revision: 1, data: "old arguments" });
+  subscriptions[0]!.send({ status: "ready", revision: 1, data: "old arguments" });
   expect(next.at(-1)?.status).toBe("loading");
-  subscriptions[1]!.send({ status: "success", revision: 1, data: "my result" });
-  subscriptions[3]!.send({ status: "success", revision: 1, data: "colleague result" });
+  subscriptions[1]!.send({ status: "ready", revision: 1, data: "my result" });
+  subscriptions[3]!.send({ status: "ready", revision: 1, data: "colleague result" });
   expect(next.at(-1)?.data).toBe("my result");
   expect(colleagueSeen.at(-1)?.data).toBe("colleague result");
   vi.advanceTimersByTime(1_000);
@@ -192,7 +192,7 @@ it("counts repeated callback subscriptions separately and makes each cleanup ide
   first();
   first();
   vi.advanceTimersByTime(1_000);
-  subscriptions[0]!.send({ status: "success", revision: 1, data: "still subscribed" });
+  subscriptions[0]!.send({ status: "ready", revision: 1, data: "still subscribed" });
   expect(seen.at(-1)?.data).toBe("still subscribed");
   expect(subscriptions[0]!.closed).toBe(false);
   second();
@@ -208,7 +208,7 @@ it("closes active and grace-period subscriptions immediately, retaining data and
   const seen: QuerySnapshot<string>[] = [];
   registry.subscribe<string>("leads.list", {}, (snapshot) => seen.push(snapshot));
   const release = registry.subscribe("leads.count", {}, () => {});
-  subscriptions[0]!.send({ status: "success", revision: 1, data: "last value" });
+  subscriptions[0]!.send({ status: "ready", revision: 1, data: "last value" });
   release();
   registry.close();
   registry.close();
@@ -216,7 +216,7 @@ it("closes active and grace-period subscriptions immediately, retaining data and
   const closedSnapshot = seen.at(-1);
   expect(closedSnapshot).toMatchObject({ status: "error", data: "last value", loading: false });
   expect(closedSnapshot?.error?.message).toBe("The query client is closed.");
-  subscriptions[0]!.send({ status: "success", revision: 2, data: "late value" });
+  subscriptions[0]!.send({ status: "ready", revision: 2, data: "late value" });
   expect(seen.at(-1)).toBe(closedSnapshot);
   const afterClose: QuerySnapshot<string>[] = [];
   registry.subscribe<string>("leads.list", {}, (snapshot) => afterClose.push(snapshot));
@@ -229,14 +229,14 @@ it("cleans up a synchronous subscription when its first result closes the client
   let stops = 0;
   const registry = createQueryRegistry({
     subscribe(_request, send) {
-      send({ status: "success", revision: 0, data: "first" });
+      send({ status: "ready", revision: 0, data: "first" });
       return () => {
         stops++;
       };
     }
   });
   registry.subscribe("leads.list", {}, (snapshot) => {
-    if (snapshot.status === "success") registry.close();
+    if (snapshot.status === "ready") registry.close();
   });
   expect(stops).toBe(1);
 });
@@ -254,7 +254,7 @@ it("releases an abandoned render's store and lets a delayed subscriber join the 
   mounted.subscribe((snapshot) => first.push(snapshot));
   abandoned.subscribe((snapshot) => second.push(snapshot));
   expect(subscriptions).toHaveLength(1);
-  subscriptions[0]!.send({ status: "success", revision: 0, data: "shared value" });
+  subscriptions[0]!.send({ status: "ready", revision: 0, data: "shared value" });
   expect(first.at(-1)?.data).toBe("shared value");
   expect(second.at(-1)).toBe(first.at(-1));
   expect(abandoned.getSnapshot()).toBe(mounted.getSnapshot());

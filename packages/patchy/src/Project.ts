@@ -43,6 +43,7 @@ import { processResult } from "./processResult.js";
 import { primitiveReminders } from "./primitiveReminders.js";
 import { runToolchain } from "./toolchainProcess.js";
 import { releaseFromPin } from "./packagePin.js";
+import { discoverServerModules } from "./serverModules.js";
 
 const repoSchema = Schema.Struct({
   instance: Schema.String,
@@ -460,6 +461,7 @@ export const generate = Effect.fn("Project.generate")(function* (
     if (skills.includes(skill)) removedSkills.push(skill);
     skills = skills.filter((name) => name !== skill);
   }
+  const serverModules = manifest.tier === 2 ? yield* discoverServerModules(cwd) : [];
   const client = yield* Api.client(token);
   const generated = yield* client
     .generate({
@@ -467,6 +469,7 @@ export const generate = Effect.fn("Project.generate")(function* (
         release,
         manifest,
         skills,
+        serverModules,
         ...(repo.patch === undefined ? {} : { patchId: repo.patch })
       }
     })

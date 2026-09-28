@@ -12,7 +12,7 @@ import {
   RuntimeRequest,
   handlerArgsSchema,
   handlerValueSchema,
-  type HandlerSchema
+  HandlerSchema
 } from "./index.js";
 import { canonicalArgs } from "./canonicalArgs.js";
 
@@ -104,6 +104,10 @@ describe("handler descriptors", () => {
   it("rejects table-only modifiers and misplaced capabilities at every nesting depth", () => {
     for (const args of [
       { value: { kind: "text", default: "hidden default" } },
+      { value: { kind: "text", optional: true, default: undefined } },
+      { value: { kind: "object", fields: { child: { kind: "text", default: null } } } },
+      { value: { kind: "array", element: { kind: "text", default: "hidden" } } },
+      { value: { kind: "nullable", value: { kind: "text", default: "hidden" } } },
       { value: { kind: "ref", table: "leads" } },
       { value: { kind: "array", element: { kind: "fileHandle" } } },
       { value: { kind: "object", fields: { upload: { kind: "upload" } } } },
@@ -126,6 +130,30 @@ describe("handler descriptors", () => {
     ]) {
       expect(decodeDescriptor({ ...query, kind: "action", result })._tag).toBe("Failure");
     }
+  });
+
+  it("rejects nested defaults in canonical JSON codecs without changing excess-key handling", () => {
+    const decode = Schema.decodeUnknownExit(Schema.toCodecJson(HandlerSchema));
+    for (const defaultValue of [undefined, null, "hidden"]) {
+      expect(
+        decode({
+          kind: "array",
+          element: {
+            kind: "object",
+            fields: { value: { kind: "text", optional: true, default: defaultValue } }
+          }
+        })._tag
+      ).toBe("Failure");
+    }
+    expect(Schema.decodeUnknownSync(HandlerSchema)({ kind: "text", extra: true })).toEqual({
+      kind: "text"
+    });
+    expect(
+      Schema.decodeUnknownExit(HandlerSchema, { onExcessProperty: "error" })({
+        kind: "text",
+        extra: true
+      })._tag
+    ).toBe("Failure");
   });
 
   it("rejects handler paths deeper than module.export and unknown row tables", () => {
@@ -229,6 +257,9 @@ describe("handler descriptors", () => {
       expect(
         Schema.encodeSync(RuntimeReply)(Schema.decodeUnknownSync(RuntimeReply)(refusal))
       ).toEqual(refusal);
+      expect(Schema.decodeUnknownExit(RuntimeReply)({ ...refusal, source: undefined })._tag).toBe(
+        "Failure"
+      );
     }
   });
 });
@@ -243,19 +274,18 @@ describe("canonical query arguments", () => {
     expect(canonicalArgs({ text: 'a"b\\c', value: -0 })).toBe('{"text":"a\\"b\\\\c","value":0}');
   });
 
+  it("omits undefined object fields recursively but keeps null distinct", () => {
+    expect(canonicalArgs({ stage: null, search: undefined })).toBe(canonicalArgs({ stage: null }));
+    expect(canonicalArgs({ filter: { search: undefined }, rows: [{ name: undefined }] })).toBe(
+      canonicalArgs({ filter: {}, rows: [{}] })
+    );
+    expect(canonicalArgs({ search: undefined })).not.toBe(canonicalArgs({ search: null }));
+  });
+
   it("refuses values that cannot have an unambiguous JSON subscription identity", () => {
     const cycle: Record<string, unknown> = {};
     cycle.self = cycle;
-    for (const value of [
-      undefined,
-      NaN,
-      Infinity,
-      1n,
-      new Date(),
-      { key: undefined },
-      [undefined],
-      cycle
-    ]) {
+    for (const value of [undefined, NaN, Infinity, 1n, new Date(), [undefined], cycle]) {
       expect(() => canonicalArgs(value)).toThrow(TypeError);
     }
   });

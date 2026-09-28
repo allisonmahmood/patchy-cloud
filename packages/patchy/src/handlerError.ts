@@ -27,6 +27,8 @@ export function decodeHandlerError(value: unknown): HandlerError | undefined {
   if (
     value === null ||
     typeof value !== "object" ||
+    !("ok" in value) ||
+    value.ok !== false ||
     !("source" in value) ||
     value.source !== "handler" ||
     !("code" in value) ||

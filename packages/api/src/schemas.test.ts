@@ -40,6 +40,7 @@ describe("wire schemas", () => {
   it("preserves refusals from a newer registry without treating them as unknown outcomes", () => {
     const refusal = {
       ok: false as const,
+      source: "patchy" as const,
       error: "Company admission is busy.",
       code: "busy" as const,
       scope: "company" as const,

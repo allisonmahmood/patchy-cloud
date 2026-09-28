@@ -218,6 +218,7 @@ function mount(frame: HTMLIFrameElement): void {
       id,
       kind: "error",
       error: {
+        source: "patchy",
         code: error.code,
         message: error.message,
         ...error.limit,
@@ -491,6 +492,8 @@ function mount(frame: HTMLIFrameElement): void {
       } catch (error) {
         throw error instanceof Refusal ? error : invalid();
       }
+      if (request?.op === "server.call")
+        jsonBytes(request.args.args, runtimeByteLimits.serverArgsBytes, "tier2.args.bytes");
       const me = await identify();
       if (closed) return;
       let reply: Reply;

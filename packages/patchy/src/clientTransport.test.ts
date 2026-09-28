@@ -32,6 +32,7 @@ it("correlates out-of-order replies and decodes the one error class with details
   const first = transport.call("tables.get", { table: "notes", id: "a" });
   const second = transport.call("postgres.query", {});
   const rejected = expect(second).rejects.toMatchObject({
+    source: "patchy",
     code: "invalid_query",
     details: { sqlstate: "42703" },
     correlationId: "log-1"
@@ -41,6 +42,7 @@ it("correlates out-of-order replies and decodes the one error class with details
     id: port.sent[1]!.id,
     kind: "error",
     error: {
+      source: "patchy",
       code: "invalid_query",
       error: "Missing column",
       details: { sqlstate: "42703", message: "Missing column" },
@@ -58,7 +60,11 @@ it("correlates out-of-order replies and decodes the one error class with details
 it("keeps lazy handler names and business errors distinct from similarly shaped values", async () => {
   const port = new FakePort();
   const transport = createPortTransport(port);
-  type Modules = { leads: { renamed: Handler<"query", Record<string, never>, unknown> } };
+  type Modules = {
+    leads: {
+      renamed: Handler<"query", { search?: string; filter?: { stage?: string } }, unknown>;
+    };
+  };
   const client = createServerClient<Modules>({ transport });
   const business = {
     ok: false,
@@ -66,7 +72,8 @@ it("keeps lazy handler names and business errors distinct from similarly shaped 
     code: "access_denied",
     details: { reason: "approval" }
   };
-  const call = client.server.leads.renamed({});
+  const call = client.server.leads.renamed({ search: undefined, filter: { stage: undefined } });
+  expect(port.sent[0]!.args).toEqual({ handler: "leads.renamed", args: { filter: {} } });
   port.reply({ v: 1, id: port.sent[0]!.id, kind: "result", value: business });
   await expect(call).resolves.toEqual(business);
   const refused = client.server.leads.renamed({});
@@ -84,7 +91,7 @@ it("closed ports and lost insert replies are unknown outcomes, never replayed", 
   const port = new FakePort();
   const transport = createPortTransport(port, { timeoutMs: 100 });
   const insert = transport.call("tables.insert", { table: "notes", row: { title: "one" } });
-  const lost = expect(insert).rejects.toMatchObject({ code: "unknown_outcome" });
+  const lost = expect(insert).rejects.toMatchObject({ source: "patchy", code: "unknown_outcome" });
   await vi.advanceTimersByTimeAsync(101);
   await lost;
   expect(port.sent.filter((request) => request.op === "tables.insert")).toHaveLength(1);
@@ -232,7 +239,12 @@ it("preserves bootstrap routes, acknowledges sets and receives popstate before i
           v: 1,
           id: data.id,
           kind: "error",
-          error: { code: "invalid_request", error: "Rejected route.", details: {} }
+          error: {
+            source: "patchy",
+            code: "invalid_request",
+            error: "Rejected route.",
+            details: {}
+          }
         });
     } else if (data.op === "me") {
       channel.port2.postMessage({ v: 1, id: data.id, kind: "result", value: null });
@@ -446,4 +458,48 @@ it("never retries a mutation when HTTP loses its response", async () => {
   });
   expect(sent).toEqual(["me", "tables.insert"]);
   transport.close();
+});
+
+it("HTTP distinguishes declared handler errors, platform refusals and business-shaped data", async () => {
+  const business = { ok: false, source: "handler", code: "access_denied", details: "business" };
+  const refusal = { ok: false, source: "patchy", code: "access_denied", error: "Platform denial." };
+  let reply = { status: 200, body: { ok: true, value: business } as unknown };
+  const transport = createHttpTransport({
+    baseUrl: "https://instance",
+    patchId: "p",
+    versionId: "v",
+    fetch: async (_url, init) => {
+      const body = JSON.parse(init!.body as string) as { op: string };
+      return body.op === "me"
+        ? Response.json({ ok: true, value: null })
+        : Response.json(reply.body, { status: reply.status });
+    }
+  });
+  try {
+    await expect(transport.call("server.call", {})).resolves.toEqual(business);
+    reply = { status: 200, body: business };
+    const declared = await transport.call("server.call", {}).catch((error: unknown) => error);
+    expect(isHandlerError(declared, "access_denied")).toBe(true);
+    expect(declared).toMatchObject({ source: "handler", details: "business" });
+    reply = { status: 403, body: refusal };
+    await expect(transport.call("server.call", {})).rejects.toMatchObject({
+      source: "patchy",
+      code: "access_denied",
+      message: "Platform denial."
+    });
+    for (const body of [business, { ok: false, code: "access_denied", error: "Missing source." }]) {
+      reply = { status: 403, body };
+      await expect(transport.call("server.call", {})).rejects.toMatchObject({
+        source: "patchy",
+        code: "invalid_request"
+      });
+    }
+    reply = { status: 200, body: business };
+    await expect(transport.call("tables.get", {})).rejects.toMatchObject({
+      source: "patchy",
+      code: "invalid_request"
+    });
+  } finally {
+    transport.close();
+  }
 });
