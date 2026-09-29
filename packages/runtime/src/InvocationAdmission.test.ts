@@ -99,71 +99,79 @@ it.effect(
     }).pipe(
       Effect.provideService(HttpServerRequest.HttpServerRequest, request),
       Effect.provideService(LoadedVersions.LoadedVersions, {
-        find: (_patch, id) =>
-          Effect.succeed(
-            Option.some(
-              id === undefined
-                ? { ...version, manifest: { ...version.manifest, tier: 1 } }
-                : version
-            )
-          )
+        find: () => Effect.succeed(Option.some({ ...version, patchTier: 1 }))
       }),
       Effect.provide(Limits.layer)
     )
 );
 
-it.effect("a retained tier 1 document gets only me after tier 2 becomes served", () =>
-  Effect.gen(function* () {
-    const runtime = yield* Runtime.make(
-      { me },
-      {
-        origin: "http://localhost",
-        identity: Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) })
-      }
-    );
-    for (const op of [
-      "tables.list",
-      "files.list",
-      "shared.list",
-      "members.list",
-      "postgres.query",
-      "server.call"
-    ]) {
-      const error = yield* runtime
-        .call({
-          patchId: version.patchId,
-          versionId: version.versionId,
-          wire: WIRE_VERSION,
-          principal: { userId: viewer.user.id },
-          op,
-          args: {}
+it.effect(
+  "a retained tier 1 document gets only me while tier 2 is served, and writes reopen on rollback",
+  () =>
+    Effect.gen(function* () {
+      let patchTier = 2;
+      const directWrite = { kind: "mutation" as const, run: () => Effect.succeed({ id: "saved" }) };
+      const runtime = yield* Runtime.make(
+        { me, "tables.insert": directWrite },
+        {
+          origin: "http://localhost",
+          identity: Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) })
+        }
+      ).pipe(
+        Effect.provideService(LoadedVersions.LoadedVersions, {
+          find: () =>
+            Effect.sync(() =>
+              Option.some({ ...version, manifest: { ...version.manifest, tier: 1 }, patchTier })
+            )
         })
-        .pipe(Effect.flip);
-      assert.strictEqual(error.code, "server_required");
-    }
-    assert.deepStrictEqual(
-      yield* runtime.call({
+      );
+      const call = {
         patchId: version.patchId,
         versionId: version.versionId,
         wire: WIRE_VERSION,
         principal: { userId: viewer.user.id },
-        op: "me",
         args: {}
-      }),
-      viewer
-    );
-  }).pipe(
-    Effect.provideService(HttpServerRequest.HttpServerRequest, request),
-    Effect.provideService(LoadedVersions.LoadedVersions, {
-      find: (_patch, id) =>
-        Effect.succeed(
-          Option.some(
-            id === undefined ? version : { ...version, manifest: { ...version.manifest, tier: 1 } }
-          )
-        )
-    }),
-    Effect.provide(Limits.layer)
-  )
+      };
+      for (const op of [
+        "tables.list",
+        "tables.insert",
+        "files.list",
+        "shared.list",
+        "members.list",
+        "postgres.query",
+        "server.call"
+      ]) {
+        const error = yield* runtime
+          .call({
+            patchId: version.patchId,
+            versionId: version.versionId,
+            wire: WIRE_VERSION,
+            principal: { userId: viewer.user.id },
+            op,
+            args: {}
+          })
+          .pipe(Effect.flip);
+        assert.strictEqual(error.code, "server_required");
+      }
+      assert.deepStrictEqual(
+        yield* runtime.call({
+          patchId: version.patchId,
+          versionId: version.versionId,
+          wire: WIRE_VERSION,
+          principal: { userId: viewer.user.id },
+          op: "me",
+          args: {}
+        }),
+        viewer
+      );
+      patchTier = 1;
+      assert.deepStrictEqual(yield* runtime.call({ ...call, op: "tables.insert" }), {
+        id: "saved"
+      });
+    }).pipe(
+      Effect.provideService(HttpServerRequest.HttpServerRequest, request),
+      Effect.provide(Limits.layer)
+    )
 );
 
 it.effect("reports unavailable host wiring for an admitted server call", () =>
@@ -192,7 +200,7 @@ it.effect("reports unavailable host wiring for an admitted server call", () =>
   }).pipe(
     Effect.provideService(HttpServerRequest.HttpServerRequest, request),
     Effect.provideService(LoadedVersions.LoadedVersions, {
-      find: () => Effect.succeed(Option.some(version))
+      find: () => Effect.succeed(Option.some({ ...version, patchTier: 2 }))
     }),
     Effect.provide(Limits.layer)
   )

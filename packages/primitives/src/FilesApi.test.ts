@@ -35,6 +35,7 @@ const versions = Layer.succeed(LoadedVersions.LoadedVersions, {
         : Option.some({
             patchId,
             versionId: version,
+            patchTier: manifest.tier,
             companyId,
             wireVersion: WIRE_VERSION,
             scope: version === publicVersionId ? ("public" as const) : ("company" as const),

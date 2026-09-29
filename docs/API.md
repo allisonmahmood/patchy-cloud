@@ -61,7 +61,7 @@ Responses:
 
 ### `POST /api/publish`
 
-Publish one HTML bundle and its manifest. Without `patchId` creates a patch (201); with an owned live `patchId` publishes a version (200). Authenticate, then replay by owner and `publishKey` before limits or release validation: identical payloads return the stored response and status, even after an upgrade; changed payloads answer 409 `publish_key_conflict`. New attempts require the exact current release and manifest version from `GET /api/release`. Tiers 0 and 1 may define tables and file stores, provisioned additively; tiers 2 and above answer `tier_mismatch`. Every table and file store requires a nonblank description; missing or blank descriptions and table/store name collisions answer `invalid_manifest`. Postgres uses carry `{ kind: "postgres", handle, id, revision }`, keyed by alias. The handle and id must name the same connected company connection, otherwise `connection_not_connected`; the revision must equal its current schema snapshot, otherwise `stale_generated` (run `patchy refresh`). Credential rotation and retargeting preserve the connection id. Postgres runtime calls retain the version's recorded snapshot. Shared-table uses carry `{ kind: "sharedTable", patchId, table, id, revision }`, keyed by alias. The resolved id is `<patchId>/<table>`, never a patch name; revision stamps the source inventory. Publish requires a live same-company source the publisher can open and an inventory table marked shared, otherwise `patch_not_openable`. A stamp behind the source revision warns, not refuses. Unsharing a defined table refuses with `has_dependants` and the distinct live declaring patches, including declarations in retained versions, unless `force` is true. Ask the person you are working for before forcing. Omission and rollback never change sharing. Ownership and lifecycle are checked before validating HTML and again at commit: another company's patch is 404; a same-company non-owner gets `not_owner` first, with the current owner. The owner gets `patch_retired` or `patch_deleted` with `purgeAt`, and must restore before publishing. Schema changes are checked before storage and rechecked under the patch lock. Preflight conservatively refuses new indexes with existing uncompressed key tuples over 2,000 bytes, and added columns that expand existing rows over the row limit. `not_additive` names every refused object, change and fix. Omitted tables and stores remain in the cumulative inventory with their data and appear as `unused`; a required column cannot be omitted. A new table or store cannot take a name the other kind holds in the inventory, even omitted. A publish replaces descriptions of the primitives it defines; omission and rollback preserve them. Description-only changes do not advance the schema revision. The revision advances for schema or sharing changes, never for a new bundle alone. File mode (empty definitions and no repo name, or file metadata) onto cumulative inventory answers `has_primitives`; an empty named repo manifest may omit all tables. Reports and schema revision are persisted for replay. Tier 0 HTML passes the safe-HTML policy; executable or otherwise unsafe content answers `tier_mismatch`. Empty or oversized tier 0 documents retain the HTML validation refusal. Tier 1 bundles are stored raw, without safe-HTML validation or transformation. Tier 0 keeps `PATCHY_MAX_HTML_BYTES` (512 KiB); tier 1 uses `PATCHY_MAX_BUNDLE_BYTES` (10 MiB), with oversized bundles refused as 413. Creates spend the per-token create limit and live-patch quota; updates do not. Omitted scope defaults to company on creates and remains unchanged on updates. `manifest.name` is an exact company-scoped name (3–32 lowercase letters, digits or hyphens, starting and ending with a letter or digit); another patch's current name, or any name of a retired or deleted patch, answers 409 `name_taken` on create or rename. `patches` and `connections` are reserved names and answer 422 `reserved_name` on create. Without a name, creates derive one from `metadata.filename` without its extension (title when absent), normalize it, fall back to `patch` and add `-2`, `-3`, etc. on collision. Updates with no name retain their existing name. Rename leaves a redirect until another patch claims it; retire and delete reserve names until the deletion sweep reclaims the patch after 30 days. `manifest.description` or file mode's `metadata.description` updates the description; omitted, the cloud text remains. Descriptions collapse whitespace, permit at most 500 Unicode code points and no control characters, and are returned with `descriptionUpdatedAt`. `address` and `publicUrl` both name the absolute `/<company>/<name>` address. The JSON body cap is three times the larger configured HTML or bundle cap.
+Publish an HTML artifact, a manifest, and a server artifact on tier 2. Without `patchId` creates a patch (201); with an owned live `patchId` publishes a version (200). Authenticate, then replay by owner and `publishKey` before limits or release validation: identical payloads return the stored response and status, even after an upgrade; changed payloads answer 409 `publish_key_conflict`. New attempts require the exact current release and manifest version from `GET /api/release`. Tiers 0, 1 and 2 may define tables and file stores, provisioned additively; tier 3 answers `tier_mismatch`. Tier 2 is admitted on dev and test instances; production requires the fleet executor. Tier 2 requires `server`, a closed JavaScript module. Stored bytes are inspected in a throwaway process: descriptor disagreement, load failure or timeout answers `invalid_manifest`. A server artifact below tier 2 is `tier_mismatch`. Zero handlers warns. `artifacts.html` is always returned; tier 2 also returns `artifacts.server` and `handlers: [{name, kind}]` sorted by name. Both artifact records carry `sha256` and UTF-8 `bytes`. Publishing tier 2 to a public patch requires explicit company scope, otherwise `tier2_not_public`. Stored versions retain their wire; tier 2 wire 1 fixes the guest protocol and workerd compatibility date. Every table and file store requires a nonblank description; missing or blank descriptions and table/store name collisions answer `invalid_manifest`. Postgres uses carry `{ kind: "postgres", handle, id, revision }`, keyed by alias. The handle and id must name the same connected company connection, otherwise `connection_not_connected`; the revision must equal its current schema snapshot, otherwise `stale_generated` (run `patchy refresh`). Credential rotation and retargeting preserve the connection id. Postgres runtime calls retain the version's recorded snapshot. Shared-table uses carry `{ kind: "sharedTable", patchId, table, id, revision }`, keyed by alias. The resolved id is `<patchId>/<table>`, never a patch name; revision stamps the source inventory. Publish requires a live same-company source the publisher can open and an inventory table marked shared, otherwise `patch_not_openable`. A stamp behind the source revision warns, not refuses. Unsharing a defined table refuses with `has_dependants` and the distinct live declaring patches, including declarations in retained versions, unless `force` is true. Ask the person you are working for before forcing. Omission and rollback never change sharing. Ownership and lifecycle are checked before validating HTML and again at commit: another company's patch is 404; a same-company non-owner gets `not_owner` first, with the current owner. The owner gets `patch_retired` or `patch_deleted` with `purgeAt`, and must restore before publishing. Schema changes are checked before storage and rechecked under the patch lock. Preflight conservatively refuses new indexes with existing uncompressed key tuples over 2,000 bytes, and added columns that expand existing rows over the row limit. `not_additive` names every refused object, change and fix. Omitted tables and stores remain in the cumulative inventory with their data and appear as `unused`; a required column cannot be omitted. A new table or store cannot take a name the other kind holds in the inventory, even omitted. A publish replaces descriptions of the primitives it defines; omission and rollback preserve them. Description-only changes do not advance the schema revision. The revision advances for schema or sharing changes, never for a new bundle alone. File mode (empty definitions and no repo name, or file metadata) onto cumulative inventory answers `has_primitives`; an empty named repo manifest may omit all tables. Reports and schema revision are persisted for replay. Tier 0 HTML passes the safe-HTML policy; executable or otherwise unsafe content answers `tier_mismatch`. Empty or oversized tier 0 documents retain the HTML validation refusal. Tier 1 and 2 HTML bundles are stored raw, without safe-HTML validation or transformation. Tier 0 keeps `PATCHY_MAX_HTML_BYTES` (512 KiB); each scripted artifact uses `PATCHY_MAX_BUNDLE_BYTES` (10 MiB), with oversized artifacts refused as 413. Creates spend the per-token create limit and live-patch quota; updates do not. Omitted scope defaults to company on creates and remains unchanged on updates. `manifest.name` is an exact company-scoped name (3–32 lowercase letters, digits or hyphens, starting and ending with a letter or digit); another patch's current name, or any name of a retired or deleted patch, answers 409 `name_taken` on create or rename. `patches` and `connections` are reserved names and answer 422 `reserved_name` on create. Without a name, creates derive one from `metadata.filename` without its extension (title when absent), normalize it, fall back to `patch` and add `-2`, `-3`, etc. on collision. Updates with no name retain their existing name. Rename leaves a redirect until another patch claims it; retire and delete reserve names until the deletion sweep reclaims the patch after 30 days. `manifest.description` or file mode's `metadata.description` updates the description; omitted, the cloud text remains. Descriptions collapse whitespace, permit at most 500 Unicode code points and no control characters, and are returned with `descriptionUpdatedAt`. `address` and `publicUrl` both name the absolute `/<company>/<name>` address. The JSON body cap is three times the sum of the larger configured HTML or bundle cap and the server bundle cap.
 
 Request body: [PublishRequest](#publishrequest)
 
@@ -75,7 +75,7 @@ Responses:
 - `404` { ok: false, error: string }
 - `409` { ok: false, error: string, code: "publish_key_conflict" } | { ok: false, error: string, code: "name_taken" } | { ok: false, error: string, code: "patch_retired" } | { ok: false, error: string, code: "patch_deleted", purgeAt: string } | { ok: false, error: string, code: "has_dependants", dependants: { patchId: string, name: string, owner: { id: string, name: string } }[] } | { ok: false, error: string }
 - `413` { ok: false, error: string }
-- `422` { ok: false, errors: string[], warnings: string[] } | { ok: false, error: string, code: "reserved_name" } | { ok: false, error: string, code: "invalid_description" } | { ok: false, error: string, code: "not_additive", changes: { object: string, change: string, fix: string }[] } | { ok: false, error: string, code: "release_mismatch" | "invalid_manifest" | "tier_mismatch" | "has_primitives" | "patch_not_openable" | "connection_not_connected" | "stale_generated" }
+- `422` { ok: false, errors: string[], warnings: string[] } | { ok: false, error: string, code: "reserved_name" } | { ok: false, error: string, code: "invalid_description" } | { ok: false, error: string, code: "tier2_not_public" } | { ok: false, error: string, code: "not_additive", changes: { object: string, change: string, fix: string }[] } | { ok: false, error: string, code: "release_mismatch" | "invalid_manifest" | "tier_mismatch" | "has_primitives" | "patch_not_openable" | "connection_not_connected" | "stale_generated" }
 - `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
 - `503` { ok: false, error: string, code: "busy" | "source_unavailable" }
 
@@ -136,7 +136,7 @@ Responses:
 
 ### `POST /api/patches/:patchId/share`
 
-Change the sharing scope of a patch owned by the bearer token's user, without publishing a version. `company` requires a company member's browser session; `public` lets anyone with the link open the current version. Only the current version of a public patch is public; older versions stay behind the company door. A same-company non-owner answers 403 `not_owner`, including an admin's machine token; another company answers 404. Only live patches permit scope changes, otherwise `wrong_state`. The current public version may be cached for 60 seconds at both `/<company>/<name>` and `/<company>/<name>/~v/<current n>`; older versions and company patches are `private, no-store` and answer 401 without a session. The JSON body is bounded by three times `PATCHY_MAX_HTML_BYTES`; the larger scripted-bundle cap applies only to publishing. An oversized declared body answers 413; streaming bodies are cut off at the cap. Rejected requests leave the scope unchanged.
+Change the sharing scope of a patch owned by the bearer token's user, without publishing a version. `company` requires a company member's browser session; `public` lets anyone with the link open the current version. Only the current version of a public patch is public; older versions stay behind the company door. Public sharing while the served version is tier 2 answers `tier2_not_public`. A same-company non-owner answers 403 `not_owner`, including an admin's machine token; another company answers 404. Only live patches permit scope changes, otherwise `wrong_state`. The current public version may be cached for 60 seconds at both `/<company>/<name>` and `/<company>/<name>/~v/<current n>`; older versions and company patches are `private, no-store` and answer 401 without a session. The JSON body is bounded by three times `PATCHY_MAX_HTML_BYTES`; the larger scripted-bundle cap applies only to publishing. An oversized declared body answers 413; streaming bodies are cut off at the cap. Rejected requests leave the scope unchanged.
 
 Request body: [ShareRequest](#sharerequest)
 
@@ -150,6 +150,7 @@ Responses:
 - `409` { ok: false, error: string, code: "wrong_state", state: "live" | "retired" | "deleted" }
 - `413` { ok: false, error: string }
 - `414` { ok: false, error: string }
+- `422` { ok: false, error: string, code: "tier2_not_public" }
 - `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
 
 ### `POST /api/patches/:patchId/retire`
@@ -205,7 +206,7 @@ Responses:
 
 ### `POST /api/patches/:patchId/rollback`
 
-Move an owned live patch's address to a retained `versionNumber`, creating no version. Tables, files, sharing, name and description do not change. A missing version answers 422 `version_unavailable`; an off patch answers `wrong_state`. The JSON body is bounded by three times `PATCHY_MAX_HTML_BYTES`, before decoding. An oversized declared body answers 413; streaming bodies are cut off at the cap. Rejected requests leave the patch unchanged.
+Move an owned live patch's address to a retained `versionNumber`, creating no version. Tables, files, sharing, name and description do not change. A missing version answers 422 `version_unavailable`; an off patch answers `wrong_state`. A rollback to tier 2 while the patch is public answers `tier2_not_public`. The JSON body is bounded by three times `PATCHY_MAX_HTML_BYTES`, before decoding. An oversized declared body answers 413; streaming bodies are cut off at the cap. Rejected requests leave the patch unchanged.
 
 Request body: [RollbackRequest](#rollbackrequest)
 
@@ -219,7 +220,7 @@ Responses:
 - `409` { ok: false, error: string, code: "wrong_state", state: "live" | "retired" | "deleted" }
 - `413` { ok: false, error: string }
 - `414` { ok: false, error: string }
-- `422` { ok: false, error: string, code: "version_unavailable" }
+- `422` { ok: false, error: string, code: "version_unavailable" } | { ok: false, error: string, code: "tier2_not_public" }
 - `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
 
 ### `PUT /api/patches/:patchId/description`
@@ -411,7 +412,7 @@ These are engine/inspection contracts, not public `HttpApi` routes or CLI operat
 - `server.call` arguments are at most one MiB; mutation results at most 64 KiB and query/action results at most eight MiB. Result schema failures and oversized results are `handler_failed`. A lost query reply is retried once by the client, using handler kinds supplied by the loaded shell's nonce-bound bootstrap. Mutation `unknown_outcome` offers explicit `retry()` with the same key and captured arguments; new calls mint fresh keys from stream `hello.serverTime`. Actions and unknown kinds are never replayed.
 - `InspectRequest`: wire and source only. `InspectionReply` contains descriptors or a runtime refusal. Inspection has no company binding, capability or callback path and runs in a reaped, deadline-bounded process.
 
-See [ADR-0012](./adr/ADR-0012-credential-free-execution-service.md) for authority, lifetime and hosting contracts. Tier 2 publishing remains refused.
+See [ADR-0012](./adr/ADR-0012-credential-free-execution-service.md) for authority, lifetime and hosting contracts. Tier 2 publishing and execution are available in dev and test; production admission requires the fleet executor.
 
 ## Private execution management protocol
 
@@ -563,6 +564,7 @@ substituting the host's limit configuration.
     sdkImports?: string[]
   },
   html: string,
+  server?: string,
   patchId?: string,
   scope?: "company" | "public",
   force?: boolean,
@@ -598,6 +600,17 @@ substituting the host's limit configuration.
     indexes: string[],
     stores: string[]
   },
+  artifacts: {
+    html: {
+      sha256: string,
+      bytes: integer
+    },
+    server?: {
+      sha256: string,
+      bytes: integer
+    }
+  },
+  handlers?: { name: string, kind: "query" | "mutation" | "action" }[],
   warnings: string[],
   description: string,
   descriptionUpdatedAt: string | null
@@ -631,6 +644,17 @@ substituting the host's limit configuration.
     indexes: string[],
     stores: string[]
   },
+  artifacts: {
+    html: {
+      sha256: string,
+      bytes: integer
+    },
+    server?: {
+      sha256: string,
+      bytes: integer
+    }
+  },
+  handlers?: { name: string, kind: "query" | "mutation" | "action" }[],
   warnings: string[],
   description: string,
   descriptionUpdatedAt: string | null

@@ -1,5 +1,7 @@
 import { Manifest } from "@patchy/api";
+import { workerdVersion } from "@patchy/api/guest";
 import { DEFAULT_MAX_HTML_BYTES, validateHtml } from "@patchy/core";
+import * as Inspection from "@patchy/execution/inspection";
 import * as CssTree from "css-tree";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -19,6 +21,7 @@ import * as Project from "./Project.js";
 import { primitiveReminders } from "./primitiveReminders.js";
 import { runToolchain } from "./toolchainProcess.js";
 import { releaseFromPin } from "./packagePin.js";
+import { discoverServerModules, validateGeneratedServerModules } from "./serverModules.js";
 
 const decodePackage = Schema.decodeUnknownSync(
   Schema.fromJsonString(
@@ -31,6 +34,13 @@ const decodeRuntime = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Stri
 const decodeManifest = Schema.decodeUnknownSync(Manifest, { onExcessProperty: "error" });
 const encodeManifest = Schema.encodeSync(Schema.fromJsonString(Manifest));
 const isLocalError = Schema.is(LocalError);
+const decodeServerPackage = Schema.decodeUnknownSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      devDependencies: Schema.Struct({ workerd: Schema.Literal(workerdVersion) })
+    })
+  )
+);
 const maxBundleBytes = 10 * 1024 * 1024;
 
 const embedded = (value: string) => /^(?:data:|#)/i.test(value.trim());
@@ -226,7 +236,7 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
     "patchy.json description",
     "invalid_manifest"
   );
-  const manifest = yield* Effect.tryPromise({
+  const configured = yield* Effect.tryPromise({
     try: async () =>
       decodeManifest({
         ...(await executeConfig(path.join(cwd, "patchy.config.ts"))),
@@ -234,14 +244,28 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
       }),
     catch: configFailure
   });
-  const warnings = [...syncWarnings, ...(yield* primitiveReminders(cwd, manifest))];
+  const warnings = [...syncWarnings, ...(yield* primitiveReminders(cwd, configured))];
+  const serverModules = configured.tier === 2 ? yield* discoverServerModules(cwd) : undefined;
+  if (serverModules !== undefined)
+    yield* fs.readFileString(path.join(cwd, "package.json")).pipe(
+      Effect.flatMap((source) => Effect.try(() => decodeServerPackage(source))),
+      Effect.mapError(
+        (cause) =>
+          new LocalError({
+            code: "release_mismatch",
+            message: `Tier 2 must pin workerd ${workerdVersion}. Run \`patchy refresh\`.`,
+            cause
+          })
+      )
+    );
+  if (serverModules !== undefined) yield* validateGeneratedServerModules(cwd, serverModules);
   // Definitions can change without generation; only index.json owns declaration stamps.
   const destination = yield* Effect.tryPromise({
     try: () => safePath(cwd, "patchy/_generated/manifest.json"),
     catch: (cause) =>
       new LocalError({ message: "Could not resolve the managed manifest path.", cause })
   });
-  yield* fs.writeFileString(destination, `${encodeManifest(manifest)}\n`).pipe(
+  yield* fs.writeFileString(destination, `${encodeManifest(configured)}\n`).pipe(
     Effect.mapError(
       (cause) =>
         new LocalError({
@@ -250,30 +274,38 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
         })
     )
   );
-  const html = yield* Effect.scoped(
+  const built = yield* Effect.scoped(
     Effect.gen(function* () {
       const output = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-publish-" });
-      yield* runToolchain(cwd, { build: output, toolchain });
+      const { sdkImports } = yield* runToolchain(cwd, {
+        build: output,
+        toolchain,
+        ...(serverModules === undefined ? {} : { serverModules })
+      });
       const entries = yield* fs.readDirectory(output, { recursive: true });
       const files: string[] = [];
       for (const entry of entries) {
         const info = yield* fs.stat(path.join(output, entry));
         if (info.type !== "Directory") files.push(entry);
       }
-      if (files.length !== 1 || files[0] !== "index.html")
+      const expected = serverModules === undefined ? ["index.html"] : ["index.html", "server.js"];
+      if (files.length !== expected.length || expected.some((file) => !files.includes(file)))
         return yield* new LocalError({
-          message: `Vite must emit only index.html; found ${files.length ? files.join(", ") : "no HTML output"}. Inline every asset with vite-plugin-singlefile; remove public files, sourcemaps and extra entrypoints.`
+          message: `Vite must emit only ${expected.join(" and ")}; found ${files.length ? files.join(", ") : "no output"}. Inline every page asset with vite-plugin-singlefile; remove public files, sourcemaps and extra entrypoints.`
         });
-      return yield* fs.readFileString(path.join(output, "index.html"));
+      return {
+        html: yield* fs.readFileString(path.join(output, "index.html")),
+        ...(serverModules === undefined
+          ? {}
+          : { server: yield* fs.readFileString(path.join(output, "server.js")) }),
+        sdkImports
+      };
     })
   ).pipe(
     Effect.mapError((cause) =>
       isLocalError(cause)
         ? cause
-        : new LocalError({
-            message: "Could not read the Vite build output.",
-            cause
-          })
+        : new LocalError({ message: "Could not read the Vite build output.", cause })
     )
   );
   const typecheck = yield* processResult(cwd, process.execPath, [
@@ -286,8 +318,29 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
         "Typecheck failed. Run `pnpm exec tsc --noEmit` and fix the errors before publishing.",
       cause: typecheck
     });
-  yield* validateRepoBundle(cwd, manifest, html);
-  return { manifest, html, warnings };
+  const handlers =
+    built.server === undefined
+      ? undefined
+      : yield* Inspection.inspect(built.server).pipe(
+          Effect.mapError(
+            (cause) =>
+              new LocalError({
+                message:
+                  "Could not inspect the server bundle. Its modules must load and export only valid handlers.",
+                code: "invalid_manifest",
+                cause
+              })
+          )
+        );
+  const manifest = decodeManifest({
+    ...configured,
+    sdkImports: built.sdkImports,
+    ...(handlers === undefined ? {} : { handlers })
+  });
+  if (handlers !== undefined && Object.keys(handlers).length === 0)
+    warnings.push("Tier 2 has no handlers. Add query, mutation or action exports under server/.");
+  yield* validateRepoBundle(cwd, manifest, built.html);
+  return { manifest, html: built.html, server: built.server, warnings };
 });
 
 /** Publish and watched dev builds enforce the same artifact and tier contract. */
@@ -329,11 +382,12 @@ export const validateRepoBundle = Effect.fn("validateRepoBundle")(function* (
         new LocalError({ message: "Could not inspect server/ for the evident tier.", cause })
     )
   );
-  if (server || manifest.tier >= 2)
+  if ((server && manifest.tier < 2) || manifest.tier > 2)
     return yield* new LocalError({
-      message: server
-        ? "server/ requires tier 2, which is not served yet. Remove server code before publishing."
-        : "Tier 2 and above are not served yet.",
+      message:
+        manifest.tier > 2
+          ? "Tier 3 is not served yet."
+          : "server/ requires tier 2. Change the tier and run `patchy refresh`, or remove server/.",
       code: "tier_mismatch"
     });
   if (manifest.tier === 0) {

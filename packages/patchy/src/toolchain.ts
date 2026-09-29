@@ -30,7 +30,8 @@ export function toolchainUpgrade(versions: typeof ReleaseToolchain.Type) {
 export async function runToolchain(
   root: string,
   versions: typeof ReleaseToolchain.Type = toolchain,
-  buildConfig?: Vite.InlineConfig
+  buildConfig?: Vite.InlineConfig,
+  graph: "page" | "server" = "page"
 ) {
   const warnOnly = buildConfig === undefined;
   const warnings = new Set<string>();
@@ -38,6 +39,7 @@ export async function runToolchain(
   const seen = new Set<string>();
   let refusal: LocalError | undefined;
   let importRefusal: LocalError | undefined;
+  const sdkImports = new Set<string>();
   const check = (name: CheckedPackage, version: string) => {
     if (satisfies(version, versions[name].accepted)) return;
     const message = `Loaded ${name} ${version} is unsupported; this release accepts ${versions[name].accepted} (tested against ${versions[name].testedAgainst}). Run: ${toolchainUpgrade(versions)}`;
@@ -80,7 +82,7 @@ export async function runToolchain(
   try {
     viteEntry = require.resolve("vite");
   } catch (cause) {
-    if (warnOnly) return { warnings: [] };
+    if (warnOnly) return { warnings: [], sdkImports: [] };
     throw new LocalError({
       message: "Could not load the repo's installed Vite. Run `pnpm install`.",
       cause
@@ -105,9 +107,13 @@ export async function runToolchain(
         buildConfig?.plugins,
         ...(buildConfig
           ? [
-              pageImports(root, (error) => {
-                importRefusal = error;
-              })
+              pageImports(
+                root,
+                (error) => {
+                  importRefusal = error;
+                },
+                { graph, sdkImports }
+              )
             ]
           : []),
         {
@@ -123,13 +129,18 @@ export async function runToolchain(
     // afterward. Preloading config here would bypass that ordering.
     if (!buildConfig) {
       await vite.resolveConfig(config, "build", "production", "production");
-      return { warnings: [...warnings] };
+      return { warnings: [...warnings], sdkImports: [...sdkImports].sort() };
     }
     const result = await vite.build(config);
-    return { result, warnings: [...warnings], importRefusal: () => importRefusal };
+    return {
+      result,
+      warnings: [...warnings],
+      sdkImports: [...sdkImports].sort(),
+      importRefusal: () => importRefusal
+    };
   } catch (cause) {
     // Refresh owns no builder config and must work while that config is incomplete.
-    if (warnOnly) return { warnings: [...warnings] };
+    if (warnOnly) return { warnings: [...warnings], sdkImports: [...sdkImports].sort() };
     // Config bundlers may wrap a resolution error; retain the CLI's refusal code.
     throw refusal ?? importRefusal ?? cause;
   } finally {

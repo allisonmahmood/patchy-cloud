@@ -13,7 +13,7 @@ import * as WideEvents from "@patchy/analytics/wide-events";
 import { Session } from "@patchy/auth";
 import { clerkEnv, PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
 import { Companies, Users } from "@patchy/companies";
-import { newInternalId, newPatchId } from "../../../packages/core/src/index.js";
+import { contentHash, newInternalId, newPatchId } from "../../../packages/core/src/index.js";
 import { Limits, OperatingLimits } from "@patchy/limits";
 import { LoadedVersions as DurableVersions, Patches } from "@patchy/patches";
 import { LoadedVersions, RuntimeStream, StreamAdmission, StreamLimits } from "@patchy/runtime";
@@ -60,7 +60,7 @@ const publish = (patchId: string, intent: "create" | "update") =>
     machineTokenId: identity.machine.id,
     title: "Async lifecycle dispatch",
     objectKey: `patches/${patchId}/${newInternalId("object")}.html`,
-    contentHash: "sha256:async-lifecycle",
+    contentHash: contentHash("async-lifecycle"),
     fileSize: 1,
     filename: null,
     repoOrg: null,

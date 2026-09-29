@@ -598,7 +598,9 @@ export const refresh = Effect.fn("Project.refresh")(function* (
               message: "Generation returned no SDK capability metadata."
             });
           const addedCapabilities = capabilities.filter(({ id }) => !previousCapabilities.has(id));
-          const toolchainWarnings = yield* runToolchain(cwd, { inspect: release.toolchain });
+          const { warnings: toolchainWarnings } = yield* runToolchain(cwd, {
+            inspect: release.toolchain
+          });
           yield* Output.rememberWarnings(toolchainWarnings);
           const warnings = [
             ...syncWarnings,

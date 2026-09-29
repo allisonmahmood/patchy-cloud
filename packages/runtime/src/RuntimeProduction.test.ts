@@ -114,7 +114,7 @@ const dependencies = Layer.mergeAll(
   RuntimeLog.layer,
   Limits.layer,
   Layer.succeed(LoadedVersions.LoadedVersions, {
-    find: () => Effect.succeed(Option.some(version))
+    find: () => Effect.succeed(Option.some({ ...version, patchTier: version.manifest.tier }))
   })
 ).pipe(
   Layer.provideMerge(session),

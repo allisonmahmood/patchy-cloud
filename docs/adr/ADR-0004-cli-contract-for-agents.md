@@ -69,16 +69,16 @@ local repo checks use exit 1 and `kind: "local"`; the same code received from th
 instance is `rejected` (exit 2). Not every local failure has a structured code
 (for example, compiler, bundle-completeness and local I/O errors).
 
-| `code`                  | Meaning and remedy                                                                                                                                                                                                                                                                                                                                                     |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `instance_mismatch`     | The effective target differs from the repo's stored instance, or the stored instance changed before result application. The diagnostic names both URLs. Remove or correct the effective override to match the repo; restore an unintended late target edit before recovery. Never remove the patch id or rebind the instance to bypass this refusal.                   |
-| `release_mismatch`      | The repo pin, executing CLI or installed runtime differs from the instance release. Run `pnpm patchy refresh` in the repo; file mode installs the exact package from `GET /api/release`.                                                                                                                                                                               |
-| `toolchain_unsupported` | Dev or publish loaded Vite or `vite-plugin-singlefile` outside the release's accepted range. The diagnostic names the loaded version, accepted range and tested version, with the exact `pnpm add --save-dev` command. Change the builder-owned dependencies and any shared config's dependency resolution; refresh never writes those keys.                           |
-| `import_refused`        | The page graph imports outside its SDK entry points. The diagnostic names the package, importer and allowed entries and points to "What the SDK gives you" in `patchy-loop`. Remove the import; anything else, write or copy into your patch as your company's own code. This is a local build contract, not a security boundary or a `package.json` dependency check. |
-| `stale_generated`       | Generated release metadata or declaration stamps no longer match the config. Run `pnpm patchy refresh`.                                                                                                                                                                                                                                                                |
-| `invalid_manifest`      | Config execution or manifest decoding failed. Fix `patchy.config.ts` and its imports/declarations before publishing.                                                                                                                                                                                                                                                   |
-| `too_large`             | The HTML bundle exceeds its tier's local cap: 512 KiB at tier 0, 10 MiB at tier 1. Reduce the resources named in the largest-contributor report; size alone is not a tier mismatch.                                                                                                                                                                                    |
-| `tier_mismatch`         | The evident capabilities do not fit the declared or supported tier. Remove unsupported server code/tier 2+, or use tier 1 for browser code; at tier 0 correct the reported core static-HTML policy violations.                                                                                                                                                         |
+| `code`                  | Meaning and remedy                                                                                                                                                                                                                                                                                                                                   |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `instance_mismatch`     | The effective target differs from the repo's stored instance, or the stored instance changed before result application. The diagnostic names both URLs. Remove or correct the effective override to match the repo; restore an unintended late target edit before recovery. Never remove the patch id or rebind the instance to bypass this refusal. |
+| `release_mismatch`      | The repo pin, executing CLI or installed runtime differs from the instance release. Run `pnpm patchy refresh` in the repo; file mode installs the exact package from `GET /api/release`.                                                                                                                                                             |
+| `toolchain_unsupported` | Dev or publish loaded Vite or `vite-plugin-singlefile` outside the release's accepted range. The diagnostic names the loaded version, accepted range and tested version, with the exact `pnpm add --save-dev` command. Change the builder-owned dependencies and any shared config's dependency resolution; refresh never writes those keys.         |
+| `import_refused`        | The page or server graph imports outside its SDK entry points. The message names the package, importer and allowed entries, then the company-code rule. Page imports of server implementations are refused; type-only imports are allowed. This is a build contract, not a security boundary or dependency-list check.                               |
+| `stale_generated`       | Generated release metadata, declaration stamps or the server module list no longer match the repo. Run `pnpm patchy refresh`.                                                                                                                                                                                                                        |
+| `invalid_manifest`      | Config, manifest or server descriptor extraction failed. Fix the named source, declaration or handler before publishing.                                                                                                                                                                                                                             |
+| `too_large`             | A bundle exceeds its local cap. HTML allows 512 KiB at tier 0 and 10 MiB at tiers 1 and 2. Reduce the resources named in the diagnostic.                                                                                                                                                                                                             |
+| `tier_mismatch`         | The code does not fit its declared or supported tier. `server/` requires tier 2; browser code requires at least tier 1; tiers above 2 are not served.                                                                                                                                                                                                |
 
 Description preflight in `init --purpose`, `describe` and file publishing with
 `--description` can also emit `invalid_description` locally (exit 1), before any
@@ -88,8 +88,11 @@ An instance's HTTP 422 `invalid_description` is still `rejected` (exit 2).
 The tier 2 contract's descriptor extraction refuses a non-handler export from a
 one-level server module with `invalid_manifest`, local exit 1. A handler must
 declare a query, mutation or action with valid argument and result descriptors.
-This contract does not admit tier 2 publishing: the current publish path still
-refuses unsupported tiers and `server/` with `tier_mismatch`.
+Tier 2 publication is admitted on dev and test instances. The server inspects
+the stored server bytes in a throwaway process. A descriptor disagreement,
+top-level throw, unresolved module or unfinished initializer is HTTP 422
+`invalid_manifest`, `kind: "rejected"`, exit 2. A tier 2 repo with no handlers
+publishes with a warning. Production refuses tier 2 until fleet execution lands.
 
 ### Instance, credentials and local state
 
@@ -337,8 +340,8 @@ For tier 2, refresh enumerates one-level `server/*.ts` filename stems into
 `serverModules`, independently of manifest handler descriptors. Generation uses
 that list for type-only imports in the bound server helpers and client. It does
 not load or bundle server code. Nested modules, invalid names and symbolic links
-are local refusals; tiers 0 and 1 send an empty list. Tier 2 publishing remains
-refused.
+are local refusals; tiers 0 and 1 send an empty list. Publish checks this module
+list before bundling, so module additions and removals require refresh.
 Skills are sticky: refresh re-fetches every present skill and adds config-implied
 ones, never deleting on its own. A present skill no longer offered by the release
 fails refresh. Their canonical source is `packages/sdk`.
@@ -427,17 +430,17 @@ relaxes that baseline. A standalone Vite preview does not execute capabilities.
 `publish` and `/api/publish` are the sole publish verbs; `upload` and
 `/api/uploads` were removed, not aliased.
 
-| command                                                                                                                   | behaviour                                                                                                                                                                                                                               | `--json` success                                                                |
-| ------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| `patchy publish <file> [--name <name>] [--share company\|public] [--patch <id>] [--new] [--description <text>] [--force]` | Static file, tier 0, empty definitions/declarations; never reads `patchy.json`. Omitted description preserves the cloud value. `--patch` and `--new` conflict.                                                                          | Publish wire response including description, descriptionUpdatedAt and warnings. |
-| `patchy publish [--share company\|public] [--force]`                                                                      | Repo tier 0 or 1; config name and `patchy.json` identity/description. Recover first, otherwise check release, sync description, check generation, types, bundle and tier. `--description` is a local refusal pointing at `patchy.json`. | Same publish response.                                                          |
-| `patchy share <file> <company\|public>` or `patchy share --patch <id> <company\|public>`                                  | Change sharing without a new version; exactly one file/cache or explicit-id target.                                                                                                                                                     | `{ ok, patchId, scope, publicUrl }`                                             |
-| `patchy retire [file] [--patch <id>] [--force]`                                                                           | Retire from live; dependants require force.                                                                                                                                                                                             | `{ ok, patchId, state: "retired", retiredAt }`                                  |
-| `patchy delete [file] [--patch <id>] [--yes] [--force]`                                                                   | Delete from live or retired; confirm interactively unless `--yes`. Non-interactive without it is local exit 1. Forget file-cache entries only after success.                                                                            | `{ ok, patchId, state: "deleted", deletedAt, purgeAt }`                         |
-| `patchy restore [file] [--patch <id>] [--force]`                                                                          | Restore to live before `purgeAt`; off sources require force.                                                                                                                                                                            | `{ ok, patchId, state: "live" }`                                                |
-| `patchy rollback <n> [file] [--patch <id>]`                                                                               | Serve retained version n of a live patch, preserving data, sharing, description and name.                                                                                                                                               | `{ ok, patchId, currentVersion, address }`                                      |
-| `patchy describe "<text>" [--patch <id>]` or `patchy describe <file> "<text>"`                                            | Set a live or retired patch's description; normalized text and stamp rewrite `patchy.json` in repo mode.                                                                                                                                | `{ ok, patchId, description, descriptionUpdatedAt }`                            |
-| `patchy describe [file] --clear [--patch <id>]`                                                                           | Explicitly clear the description; empty and whitespace-only positionals are refused.                                                                                                                                                    | Same description response.                                                      |
+| command                                                                                                                   | behaviour                                                                                                                                                                                               | `--json` success                                                                              |
+| ------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `patchy publish <file> [--name <name>] [--share company\|public] [--patch <id>] [--new] [--description <text>] [--force]` | Static file, tier 0, empty definitions/declarations; never reads `patchy.json`. Omitted description preserves the cloud value. `--patch` and `--new` conflict.                                          | Publish wire response including description, descriptionUpdatedAt and warnings.               |
+| `patchy publish [--share company\|public] [--force]`                                                                      | Repo tier 0, 1 or 2; config name and `patchy.json` identity/description. Recover first, otherwise check release, description, generation, types, artifacts and tier. `--description` remains file-only. | Publish response with `artifacts.html`; tier 2 adds `artifacts.server` and sorted `handlers`. |
+| `patchy share <file> <company\|public>` or `patchy share --patch <id> <company\|public>`                                  | Change sharing without a new version; exactly one file/cache or explicit-id target.                                                                                                                     | `{ ok, patchId, scope, publicUrl }`                                                           |
+| `patchy retire [file] [--patch <id>] [--force]`                                                                           | Retire from live; dependants require force.                                                                                                                                                             | `{ ok, patchId, state: "retired", retiredAt }`                                                |
+| `patchy delete [file] [--patch <id>] [--yes] [--force]`                                                                   | Delete from live or retired; confirm interactively unless `--yes`. Non-interactive without it is local exit 1. Forget file-cache entries only after success.                                            | `{ ok, patchId, state: "deleted", deletedAt, purgeAt }`                                       |
+| `patchy restore [file] [--patch <id>] [--force]`                                                                          | Restore to live before `purgeAt`; off sources require force.                                                                                                                                            | `{ ok, patchId, state: "live" }`                                                              |
+| `patchy rollback <n> [file] [--patch <id>]`                                                                               | Serve retained version n of a live patch, preserving data, sharing, description and name.                                                                                                               | `{ ok, patchId, currentVersion, address }`                                                    |
+| `patchy describe "<text>" [--patch <id>]` or `patchy describe <file> "<text>"`                                            | Set a live or retired patch's description; normalized text and stamp rewrite `patchy.json` in repo mode.                                                                                                | `{ ok, patchId, description, descriptionUpdatedAt }`                                          |
+| `patchy describe [file] --clear [--patch <id>]`                                                                           | Explicitly clear the description; empty and whitespace-only positionals are refused.                                                                                                                    | Same description response.                                                                    |
 
 Inside a published repo, untargeted share, retire, delete, restore, rollback and
 describe use `patchy.json`. An unpublished repo is a local refusal. A file and
@@ -474,8 +477,8 @@ aliases/identities and resolved stamps in `patchy/_generated/index.json`.
 `stale_generated` is local and names refresh. Definitions may change without
 regeneration; publish writes the current manifest before the Vite single-file
 build and import check, `tsc --noEmit`, and evident-tier check. Residual files/external resource
-dependencies, an oversized bundle (512 KiB at tier 0, 10 MiB at tier 1, both
-`too_large` with largest contributors), `server/`, or script at tier 0 fail
+dependencies, an oversized HTML bundle (512 KiB at tier 0, 10 MiB at tiers 1 and 2,
+`too_large` with largest contributors), `server/` below tier 2, or script at tier 0 fail
 locally before attempt persistence. Compiler/build failures name the stage and
 diagnostic command; raw tool output stays outside the failure envelope and
 successful JSON stdout.
@@ -489,7 +492,7 @@ Core's shared safe-HTML policy owns tier 0 safety.
 
 A file publish onto cumulative table/store inventory is `has_primitives`
 (422, exit 2, `rejected`), even if the current version omits every resource:
-publish from its repo. Repo manifests may provision at tier 0 or 1; tier is about
+publish from its repo. Repo manifests may provision at tier 0, 1 or 2; tier is about
 code. Additive refusals name each object, change and fix. A `patch_not_openable`
 refusal means a declared shared source is unavailable; correct the declaration
 or restore access. Postgres declarations must be connected at the current
@@ -510,6 +513,18 @@ at both addresses. Older versions stay behind the company door; company origin
 responses are `private, no-store`. Still-fresh public caches and downloaded copies
 cannot be recalled. Tier 1 public patches have no company capabilities, even for
 signed-in members; sharing publicly does not anonymously expose their resources.
+
+Tier 2 is company-only. `share --share public`, positional public sharing and the
+portal scope form read the served version's tier, never local config, and answer
+`tier2_not_public`, HTTP 422, exit 2. A tier 2 publish to a public patch must use
+`--share company`. Rollback to a tier 2 version also requires company scope.
+
+Publish JSON always includes `artifacts: { html: { sha256, bytes } }`.
+Tier 2 adds `artifacts.server: { sha256, bytes }` and
+`handlers: [{ name, kind }]`, sorted by name. SHA-256 is lowercase hexadecimal;
+bytes is the UTF-8 artifact size. The recovery slot retains both artifact bodies.
+The manifest records descriptors and SDK entry points; server code is one closed
+module without dynamic imports, separate from the HTML.
 
 ### Publish recovery
 
@@ -543,9 +558,9 @@ changed before result application fails locally and keeps the attempt;
 publishing never rebinds the repo. Failed local application remains recoverable:
 retry returns the saved result without building or creating another version.
 
-Saved attempts may recover receipts written before description metadata existed.
+Saved attempts may recover receipts written before description or artifact metadata existed.
 Recovery validates the receipt's identity and application fields, accepts absent
-description fields and preserves the retained JSON without inventing metadata.
+description and artifact fields, and preserves the retained JSON without inventing metadata.
 Fresh publishes still require the current response schema.
 
 ### Definitive publish refusals
@@ -557,7 +572,7 @@ attempt. Any wire code is retained in the CLI's JSON failure document.
 - **413**, regardless of code: reduce the payload.
 - **422** with `release_mismatch`, `invalid_manifest`, `tier_mismatch`,
   `has_primitives`, `patch_not_openable`, `connection_not_connected`,
-  `stale_generated`, `not_additive`, `reserved_name` or `invalid_description`,
+  `stale_generated`, `not_additive`, `reserved_name`, `invalid_description` or `tier2_not_public`,
   or any 422 carrying `errors`: repair the
   reported release, manifest, tier, inventory, declaration or HTML validation
   problem. File updates with inventory need repo publishing; non-additive

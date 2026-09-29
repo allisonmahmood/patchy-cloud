@@ -16,6 +16,14 @@ _Avoid_: endpoint, function route
 One admitted call to a server handler, including its attempts, callbacks and settlement. Its lifetime continues after the initiating document disconnects.
 _Avoid_: HTTP request, process, callback
 
+**Patch tier**:
+The tier of the version a patch currently serves, distinct from the tier of a document's loaded version.
+_Avoid_: declared tier, loaded tier
+
+**Server required**:
+The refusal of a direct operation when a tier 2 document must use handlers, or when a lower-tier document belongs to a patch currently serving tier 2. The latter keeps only its identity read until the patch serves a lower tier again.
+_Avoid_: revoked, permission lost
+
 **Invocation admission**:
 The decision that a live viewer may start a handler on an eligible loaded version of a live company patch, within its admission limits. Dispatched work retains that admission until settlement.
 _Avoid_: callback authorisation, presence lease

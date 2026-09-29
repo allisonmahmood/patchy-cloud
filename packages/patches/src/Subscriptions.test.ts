@@ -24,7 +24,7 @@ import * as WideEvents from "@patchy/analytics/wide-events";
 import { Session } from "@patchy/auth";
 import { clerkEnv, PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
 import { CompanyDatabases } from "@patchy/company-database";
-import { newInternalId, newPatchId } from "@patchy/core";
+import { contentHash, newInternalId, newPatchId } from "@patchy/core";
 import { Limits, OperatingLimits } from "@patchy/limits";
 import { SubscriptionReads, TableOperations } from "@patchy/primitives";
 import { Binding, RuntimeStream, StreamAdmission, StreamLimits, Wakes } from "@patchy/runtime";
@@ -104,7 +104,7 @@ const publish = Effect.fn("SubscriptionsTest.publish")(function* (
     machineTokenId: identity.machine.id,
     title: "Shared subscription acceptance",
     objectKey: `patches/${patchId}/${versionId}.html`,
-    contentHash: "sha256:subscription-acceptance",
+    contentHash: contentHash("subscription-acceptance"),
     fileSize: 1,
     filename: null,
     repoOrg: null,

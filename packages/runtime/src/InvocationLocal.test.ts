@@ -83,7 +83,7 @@ const services = Layer.mergeAll(
   Layer.provideMerge(Layer.succeed(ContractLimits.overrides, { "tier2.action.deadline": 2_000 })),
   Layer.provideMerge(
     Layer.succeed(LoadedVersions.LoadedVersions, {
-      find: () => Effect.succeed(Option.some(binding))
+      find: () => Effect.succeed(Option.some({ ...binding, patchTier: binding.manifest.tier }))
     })
   )
 );
@@ -144,7 +144,7 @@ it.live(
         return null;
       }});
       export default createGuest({demo:{read,quiet,fail,write,nested,forbidden,queryTimeout,writeThenTimeout}});`,
-                resolveDir: new URL("../../execution/src", import.meta.url).pathname,
+                resolveDir: new URL("../../patchy", import.meta.url).pathname,
                 sourcefile: "invocation-fixture.ts"
               },
               bundle: true,
@@ -382,7 +382,7 @@ it.live(
       const viewer = query({args:{},result:t.json(),handler:async ctx => ctx.viewer.user.id});
       const nested = action({args:{},result:t.json(),handler:async ctx => ctx.run.demo.viewer({})});
       export default createGuest({demo:{viewer,nested}});`,
-                resolveDir: new URL("../../execution/src", import.meta.url).pathname,
+                resolveDir: new URL("../../patchy", import.meta.url).pathname,
                 sourcefile: "resource-free-invocation-fixture.ts"
               },
               bundle: true,

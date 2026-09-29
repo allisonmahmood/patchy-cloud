@@ -97,7 +97,13 @@ const versionAuthority = Effect.gen(function* () {
     Effect.sync(() =>
       patchId !== Fixtures.patchId || state.current === undefined
         ? Option.none()
-        : Option.fromUndefinedOr(state.retained.get(versionId ?? state.current))
+        : Option.map(
+            Option.fromUndefinedOr(state.retained.get(versionId ?? state.current)),
+            (loaded) => ({
+              ...loaded,
+              patchTier: state.retained.get(state.current!)!.manifest.tier
+            })
+          )
     );
   return {
     state,

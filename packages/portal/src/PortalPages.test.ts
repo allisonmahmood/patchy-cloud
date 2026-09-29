@@ -15,6 +15,7 @@ import { CURRENT_RELEASE, MANIFEST_VERSION, WIRE_VERSION, sharedTableId } from "
 import { RequireSession, Session } from "@patchy/auth";
 import { clerkEnv, PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
 import { Companies, Users } from "@patchy/companies";
+import { contentHash } from "@patchy/core";
 import * as Testing from "@patchy/company-database/testing";
 import { ConnectionStoreDev } from "@patchy/integrations/dev";
 import { Patches } from "@patchy/patches";
@@ -109,7 +110,7 @@ const publish = Effect.fn("PortalPagesTest.publish")(function* (
     machineTokenId: person.machineTokenId,
     versionId: `ver_portal_${ordinal}`,
     objectKey: `patches/${patchId}/versions/${ordinal}.html`,
-    contentHash: `sha256:${ordinal}`,
+    contentHash: contentHash(String(ordinal)),
     fileSize: 1,
     filename: "patch.html",
     title: "A useful office tool",

@@ -19,7 +19,7 @@ export type AnalyticsEventName =
   "token.minted" | "patch.created" | "patch.updated" | "patch.deleted" | "patch.purged";
 
 /** What an event property may hold. Ids, sizes, counts, and states — nothing else. */
-export type AnalyticsPropertyValue = string | number | boolean | null;
+export type AnalyticsPropertyValue = string | number | boolean | null | ReadonlyArray<string>;
 
 export interface AnalyticsEvent {
   readonly name: AnalyticsEventName;

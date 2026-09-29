@@ -129,6 +129,7 @@ describe("wire schemas", () => {
     const full = {
       ...attempt,
       html: "<!doctype html><html></html>",
+      server: "export default {};",
       patchId: "abcdefghijkl",
       scope: "public" as const,
       metadata: { filename: "plan.html", repoOrg: "patchy", repoName: null, cliVersion: "0.0.1" }
@@ -164,6 +165,7 @@ describe("wire schemas", () => {
       schemaRevision: 0,
       provisioned: { tables: [], columns: [], indexes: [], stores: [] },
       unused: { tables: [], columns: [], indexes: [], stores: [] },
+      artifacts: { html: { sha256: "a".repeat(64), bytes: 512 } },
       warnings: ["Missing <title>."],
       description: "Tracks delivery plans.",
       descriptionUpdatedAt: "2026-01-01T00:00:00.000Z"

@@ -8,7 +8,6 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
-import { build } from "esbuild";
 import * as GuestProtocol from "@patchy/api/guest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -81,40 +80,48 @@ const binary = Effect.gen(function* () {
   });
 });
 
+// The offline CLI ships this worker already bundled; tsc-built services still build their loader.
+declare const __PATCHY_PACKED_LOADER__: boolean;
 let source: Promise<string> | undefined;
 const loaderSource = Effect.tryPromise({
   try: () =>
-    (source ??= build({
-      entryPoints: [
-        fileURLToPath(
-          new URL(import.meta.url.endsWith(".ts") ? "./loader.ts" : "./loader.js", import.meta.url)
-        )
-      ],
-      bundle: true,
-      write: false,
-      format: "esm",
-      platform: "browser",
-      target: "es2022",
-      conditions: import.meta.url.endsWith(".ts") ? ["development"] : [],
-      external: ["cloudflare:workers"],
-      minify: true,
-      legalComments: "none",
-      metafile: true
-    })
-      .then((result) => {
-        for (const output of Object.values(result.metafile.outputs)) {
-          if (output.imports.some(({ path }) => path !== "cloudflare:workers"))
-            throw new WorkerdError({ stage: "bundle", reason: "unsupported_import" });
-        }
-        const output = result.outputFiles[0];
-        if (output === undefined || output.text.length === 0)
-          throw new WorkerdError({ stage: "bundle", reason: "empty_output" });
-        return output.text;
-      })
-      .catch((cause) => {
-        source = undefined;
-        throw cause;
-      })),
+    (source ??= (async () => {
+      if (typeof __PATCHY_PACKED_LOADER__ !== "undefined" && __PATCHY_PACKED_LOADER__)
+        return await readFile(new URL("./loader.js", import.meta.url), "utf8");
+      // The offline CLI omits esbuild and uses the prebuilt branch above.
+      const { build } = await import("esbuild");
+      const result = await build({
+        entryPoints: [
+          fileURLToPath(
+            new URL(
+              import.meta.url.endsWith(".ts") ? "./loader.ts" : "./loader.js",
+              import.meta.url
+            )
+          )
+        ],
+        bundle: true,
+        write: false,
+        format: "esm",
+        platform: "browser",
+        target: "es2022",
+        conditions: import.meta.url.endsWith(".ts") ? ["development"] : [],
+        external: ["cloudflare:workers"],
+        minify: true,
+        legalComments: "none",
+        metafile: true
+      });
+      for (const output of Object.values(result.metafile.outputs)) {
+        if (output.imports.some(({ path }) => path !== "cloudflare:workers"))
+          throw new WorkerdError({ stage: "bundle", reason: "unsupported_import" });
+      }
+      const output = result.outputFiles[0];
+      if (output === undefined || output.text.length === 0)
+        throw new WorkerdError({ stage: "bundle", reason: "empty_output" });
+      return output.text;
+    })().catch((cause) => {
+      source = undefined;
+      throw cause;
+    })),
   catch: (cause) =>
     isWorkerdError(cause)
       ? cause

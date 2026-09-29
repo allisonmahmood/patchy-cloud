@@ -2,6 +2,7 @@ import { HandlerModuleName } from "@patchy/api";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
+import ts from "typescript";
 import { LocalError } from "./CliError.js";
 import { safePath } from "./ManagedProject.js";
 
@@ -48,4 +49,43 @@ export const discoverServerModules = Effect.fn("discoverServerModules")(
     PlatformError: (cause) =>
       Effect.fail(new LocalError({ message: "Could not inspect server/ source filenames.", cause }))
   })
+);
+
+/** Refresh owns the generated module list; publish must not silently repair it. */
+export const validateGeneratedServerModules = Effect.fn("validateGeneratedServerModules")(
+  function* (root: string, modules: readonly string[]) {
+    const fs = yield* FileSystem.FileSystem;
+    const file = yield* sourcePath(root, "patchy/_generated/server.ts");
+    const contents = yield* fs.readFileString(file).pipe(
+      Effect.mapError(
+        (cause) =>
+          new LocalError({
+            code: "stale_generated",
+            message: "The generated server module list is missing; run `patchy refresh`.",
+            cause
+          })
+      )
+    );
+    const source = ts.createSourceFile(file, contents, ts.ScriptTarget.Latest, true);
+    const generated: string[] = [];
+    for (const statement of source.statements) {
+      if (
+        ts.isImportDeclaration(statement) &&
+        statement.importClause?.isTypeOnly &&
+        ts.isStringLiteral(statement.moduleSpecifier)
+      ) {
+        const match = /^\.\.\/\.\.\/server\/([^/]+)\.js$/.exec(statement.moduleSpecifier.text);
+        if (match !== null) generated.push(match[1]!);
+      }
+    }
+    generated.sort();
+    if (
+      generated.length !== modules.length ||
+      generated.some((name, index) => name !== modules[index])
+    )
+      return yield* new LocalError({
+        code: "stale_generated",
+        message: "The server module list changed; run `patchy refresh`."
+      });
+  }
 );

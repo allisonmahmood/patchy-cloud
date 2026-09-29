@@ -22,9 +22,10 @@ import {
 import { LocalError, RejectedError, UnreachableError } from "./CliError.js";
 import * as Instance from "./Instance.js";
 
-/** Retained receipts predate description metadata; validate it only when present. */
+/** Retained receipts may predate description and artifact metadata. Validate them when present. */
 const PublishReceipt = Schema.Struct({
   ...PublishCreated.fields,
+  artifacts: Schema.optionalKey(PublishCreated.fields.artifacts),
   description: Schema.optionalKey(PublishCreated.fields.description),
   descriptionUpdatedAt: Schema.optionalKey(PublishCreated.fields.descriptionUpdatedAt)
 });

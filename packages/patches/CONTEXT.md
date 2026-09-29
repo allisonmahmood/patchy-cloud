@@ -5,7 +5,7 @@ What the company holds and how it is published: patches and versions, user owner
 ## Language
 
 **Patch**:
-A built unit in a company's cloud, owned by one user and published as immutable versions. Shared with the company by default or made public on purpose; served as a tier 0 static page or tier 1 browser tool.
+A built unit in a company's cloud, owned by one user and published as immutable versions. Shared with the company by default, with public sharing available below tier 2.
 _Avoid_: draft, page (how a patch is served, not what it is), app (one possible patch), document (the HTML a version holds)
 
 **Name**:
@@ -13,7 +13,7 @@ The human-readable label unique within a company's patch namespace, forming the 
 _Avoid_: id (the stable identity), title (the document's display text), slug
 
 **Tier**:
-Where a patch's code runs, not who may open it or what pricing plan it uses. Tier 0 is static; tier 1 runs in the reader's browser. Higher-runtime vocabulary is recorded in [the product](../../docs/product.md#runtime-tiers).
+Where a patch's code runs. Tier 0 is static; tier 1 runs in the reader's browser; tier 2 adds request-scoped server handlers while a viewer has the patch open. It is not a pricing plan.
 _Avoid_: runtime (the thing a tier names), level, plan (tiers are capability, not pricing)
 
 **Owner**:
@@ -77,7 +77,7 @@ One paragraph saying what a patch does, written by the building agent and editab
 _Avoid_: purpose (the agent instruction, kept separately), title (the document's `<title>`), summary
 
 **Version**:
-One immutable publication of a patch: its bundle, manifest, release and contract versions, the machine token that published it and where it came from. Numbered from 1 per patch; revoking its publishing machine token does not erase provenance, and changing sharing does not change the content a version URL names.
+One immutable publication of a patch: its HTML and optional server artifact, manifest, release and contract versions, publishing machine token and provenance. Numbered from 1 per patch; revoking its publishing key or changing sharing does not change its content.
 _Avoid_: revision, upload (the act, not the record)
 
 **Publish contract**:
@@ -85,7 +85,7 @@ The promise that a successful publish leaves both a version and its content, whi
 _Avoid_: two-phase commit, saga
 
 **Manifest**:
-The serializable description of one version's name, release, tier, owned tables and file stores, and declared connections and shared tables. It describes the patch's contract rather than executing its source.
+The serializable description of one version's name, release, tier, owned resources, declared connections and shared tables, server handler contracts and SDK imports. It describes the patch's contract rather than executing its source.
 _Avoid_: config (the source from which a manifest is produced), inventory (the cumulative provisioned definitions)
 
 **Inventory**:
@@ -101,7 +101,7 @@ The owner-scoped identity of one publish attempt. Resending its unchanged payloa
 _Avoid_: patch id, machine token, version id
 
 **Bundle**:
-The self-contained HTML content of one version, paired with its manifest. A tier 0 bundle obeys the safe-HTML policy; a tier 1 bundle retains its scripts and runs only inside the sandbox.
+A self-contained artifact of one version: the HTML content or the closed server module. A tier 0 HTML bundle obeys the safe-HTML policy; scripted HTML runs only inside the sandbox.
 _Avoid_: source tree, manifest, patch (the entity that holds versions)
 
 **Deletion sweep**:

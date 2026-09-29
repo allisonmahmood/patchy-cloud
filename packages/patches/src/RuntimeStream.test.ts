@@ -14,7 +14,7 @@ import { Session } from "@patchy/auth";
 import { clerkEnv, PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
 import * as Companies from "../../companies/src/Companies.js";
 import * as Users from "../../companies/src/Users.js";
-import { newInternalId, newPatchId } from "@patchy/core";
+import { contentHash, newInternalId, newPatchId } from "@patchy/core";
 import { Limits, OperatingLimits } from "@patchy/limits";
 import { RuntimeStream, Runtime, StreamAdmission, StreamLimits, me } from "@patchy/runtime";
 import { Wakes } from "@patchy/runtime/core";
@@ -75,7 +75,7 @@ const publish = (patchId: string, intent: "create" | "update") =>
     machineTokenId: identity.machine.id,
     title: "Stream lifecycle",
     objectKey: `patches/${patchId}/${newInternalId("object")}.html`,
-    contentHash: "sha256:stream-lifecycle",
+    contentHash: contentHash("stream-lifecycle"),
     fileSize: 1,
     filename: null,
     repoOrg: null,

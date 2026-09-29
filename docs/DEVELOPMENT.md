@@ -41,11 +41,10 @@ pool. A killed generation requires a fresh host bind, never an invocation replay
 It refuses construction when `NODE_ENV` or its explicit environment is production.
 The existing `pnpm dev` instance composes this executor into Runtime, so an
 eligible `server.call` executes through the private callback gateway rather than
-returning `InvocationUnavailable`. This is a server-composition boundary, not a
-new patch development command. Tier 2 publishing remains refused until #401;
-the `patchy dev` production-engine integration belongs to #404. Those tickets
-complete the end-to-end browser path. Runtime's `InvocationLocal.test.ts` also
-exercises the private callback listener and supervised local executor.
+returning `InvocationUnavailable`. It publishes and serves both tier 2 artifacts.
+The patch-repo `patchy dev`
+production-engine integration belongs to #404. Runtime's `InvocationLocal.test.ts`
+also exercises the private callback listener and supervised local executor.
 Nested queries and mutations use the parent's exact binding and have separate invocation rows.
 Resource-free queries use a fenced invocation
 resource with an empty watermark and zero database-held time, without provisioning
@@ -53,9 +52,9 @@ a company database. Data-bearing queries retain one read-only repeatable-read
 snapshot. The primitive snapshot tests use real Postgres for concurrent writes,
 live unsharing and deadline cancellation; PGlite does not prove production contention.
 `Invocation.test.ts` injects a non-returning executor to verify disconnected-client
-deadlines, inherited child budgets and unresolved-resource destruction. The fleet
-and tier 2 publish path remain separate work. These checks prove local execution
-and settlement, not Fargate containment.
+deadlines, inherited child budgets and unresolved-resource destruction. Fleet
+hosting remains separate work. These checks prove local execution and settlement,
+not Fargate containment.
 
 Mutations use one host-owned SERIALIZABLE transaction and up to three
 whole-handler attempts within the original five-second deadline. They return
@@ -70,8 +69,8 @@ multi-session contention and cancellation guarantees.
 eligible query, mutation and action calls through the same `Server.layer`
 selected by `pnpm dev`, including nested callbacks, committed-key replay,
 company isolation and production refusal.
-It supplies retained bundle fixtures through the existing data port, without
-enabling publishing or a patch-repo browser workflow.
+It publishes and executes stored tier 2 artifacts, and verifies production
+publication refusal.
 For a callback-free mutation on a fresh company, the host provisions the key
 store before execution. The replay check must begin with no company database;
 pre-provisioning a table would miss that first-call path.
@@ -717,7 +716,7 @@ defaults, references, indexes and schema revisions. These checks use the saved
 login and invented definitions, never a developer's instance or company data.
 The packed flow also reads the stored version's tier, release and server-stamped
 wire version. File mode synthesises a tier 0 manifest with empty `tables`, `files`
-and `uses`; the API admits tier 0 and tier 1 manifests with tables, file stores, shared-table declarations and resolved Postgres declarations. Tier 1 bundles are stored raw and served in the sandbox; tiers 2 and above remain refused. Tier 0 keeps `PATCHY_MAX_HTML_BYTES` (512 KiB), tier 1 uses `PATCHY_MAX_BUNDLE_BYTES` (10 MiB), and the enclosing JSON request cap is three times the larger value.
+and `uses`. The API admits tier 0, 1 and 2 manifests with tables, stores, shared-table declarations and resolved Postgres declarations in dev and test instances. Scripted HTML is stored raw and served in the sandbox. Tier 2 additionally stores one closed server module; descriptor disagreement, load failure or load timeout is `invalid_manifest`. Production refuses tier 2 until fleet execution lands. Tier 0 keeps `PATCHY_MAX_HTML_BYTES` (512 KiB); tiers 1 and 2 use `PATCHY_MAX_BUNDLE_BYTES` (10 MiB) per artifact.
 
 `GET /api/release` is public. A new CLI publish checks its executing version
 against that release. File attempts live in the isolated `PATCHY_STATE_DIR`;
@@ -936,14 +935,14 @@ later migration cannot fill a lower-numbered gap. The three migrator spreads are
 template without passing migrations. Packed and live browser servers migrate
 through the server's existing spread rather than maintaining another one.
 
-The supervisor sets `NODE_ENV=development` and `PATCHY_DEV_EXECUTION=true` in
-the server's closed environment. This selects local invocation execution in the
-existing server composition; production construction still refuses it. The
+The supervisor sets `NODE_ENV=development` in the server's closed environment.
+Development and test instances select local invocation execution automatically;
+production refuses tier 2 admission until the fleet executor is available. The
 private callback listener binds loopback, and company-local executors close
 with the server scope. Retained server bytes enter through Runtime's existing
-`ServerBundles` port. Until #401 supplies published server bundles, ordinary
-published versions cannot use this path; the focused composition test supplies
-an eligible retained version and bundle at that boundary.
+`ServerBundles` port, implemented by Patches' content store. The version's stored
+hash and byte count are checked before execution. Published versions retain
+their own server artifacts across new publishes and rollbacks.
 
 Company databases are created lazily, not in the seed or template.
 `@patchy/company-database/testing` layers use the embedded cluster's provisioning

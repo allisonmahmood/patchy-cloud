@@ -3,7 +3,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import { discoverServerModules } from "./serverModules.js";
+import { discoverServerModules, validateGeneratedServerModules } from "./serverModules.js";
 
 it.layer(NodeServices.layer)("server source module discovery", (it) => {
   it.effect("uses only filenames and permits an absent or empty server directory", () =>
@@ -21,6 +21,36 @@ it.layer(NodeServices.layer)("server source module discovery", (it) => {
       );
       yield* fs.writeFileString(path.join(root, "server/notes.txt"), "not a module");
       assert.deepStrictEqual(yield* discoverServerModules(root), ["import-rows", "zebra"]);
+    })
+  );
+
+  it.effect("refuses missing, renamed and duplicate generated modules until refresh", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-generated-modules-" });
+      yield* fs.makeDirectory(path.join(root, "server"));
+      yield* fs.makeDirectory(path.join(root, "patchy/_generated"), { recursive: true });
+      yield* fs.writeFileString(path.join(root, "server/leads.ts"), "");
+      const check = Effect.gen(function* () {
+        yield* validateGeneratedServerModules(root, yield* discoverServerModules(root));
+      });
+      assert.strictEqual((yield* check.pipe(Effect.flip)).code, "stale_generated");
+      const generated = path.join(root, "patchy/_generated/server.ts");
+      yield* fs.writeFileString(generated, 'import type * as leads from "../../server/leads.js";');
+      yield* check;
+      yield* fs.rename(path.join(root, "server/leads.ts"), path.join(root, "server/deals.ts"));
+      assert.strictEqual((yield* check.pipe(Effect.flip)).code, "stale_generated");
+      yield* fs.writeFileString(generated, 'import type * as deals from "../../server/deals.js";');
+      yield* check;
+      yield* fs.writeFileString(
+        generated,
+        [
+          'import type * as one from "../../server/deals.js";',
+          'import type * as two from "../../server/deals.js";'
+        ].join("\n")
+      );
+      assert.strictEqual((yield* check.pipe(Effect.flip)).code, "stale_generated");
     })
   );
 

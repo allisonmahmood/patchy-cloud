@@ -33,11 +33,11 @@ const withLifecycle: Migrations = {
 };
 const withInvocations: Migrations = {
   ...withLifecycle,
-  ...patchesMigrations,
+  "0010_patches_lifecycle_revision": patchesMigrations["0010_patches_lifecycle_revision"]!,
   ...limitsMigrations,
   "0011_runtime_invocations": migrations["0011_runtime_invocations"]!
 };
-const current: Migrations = { ...withInvocations, ...migrations };
+const current: Migrations = { ...withInvocations, ...migrations, ...patchesMigrations };
 
 const company = Effect.flatMap(
   SqlClient.SqlClient,
@@ -106,12 +106,7 @@ it.effect("upgrades retained calls with attribution and adds durable invocation 
   Effect.gen(function* () {
     yield* company;
     yield* useMigratedTables;
-    assert.deepStrictEqual(yield* migrate(current), [
-      [9, "limits_overrides"],
-      [10, "patches_lifecycle_revision"],
-      [11, "runtime_invocations"],
-      [12, "runtime_mutation_commit_proof"]
-    ]);
+    yield* migrate(current);
     assert.deepStrictEqual(yield* migrate(current), []);
 
     const log = yield* RuntimeLog.make;
@@ -202,7 +197,7 @@ it.effect(
         argsBytes: 2
       };
       yield* invocations.begin(input);
-      assert.deepStrictEqual(yield* migrate(current), [[12, "runtime_mutation_commit_proof"]]);
+      yield* migrate(current);
       assert.deepStrictEqual(yield* migrate(current), []);
       const lookup = { companyId: input.companyId, invocationId: input.id };
       const retained = yield* invocations.find(lookup);

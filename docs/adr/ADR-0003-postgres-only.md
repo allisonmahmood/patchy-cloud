@@ -47,6 +47,7 @@ belongs to the Neon branch selected by its endpoint, not to a global S3 namespac
    | 0010 | Patches          | `patches_lifecycle_revision`    |
    | 0011 | Runtime          | `runtime_invocations`           |
    | 0012 | Runtime          | `runtime_mutation_commit_proof` |
+   | 0013 | Patches          | `patches_server_artifact`       |
 
    The patches baseline includes names, manifests, version stamps and publish
    recovery; `connection_snapshots` belongs to the integrations baseline.

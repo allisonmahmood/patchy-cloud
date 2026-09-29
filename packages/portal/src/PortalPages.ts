@@ -373,6 +373,7 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Acti
         render(name, { status: 409, notice: `${error.message} Nothing was done.` }),
       SourcesOff: () => redisplay(409, "Some sources are off. Nothing was done."),
       InvalidDescription: (error) => invalid(`${error.message} Nothing was done.`),
+      Tier2NotPublic: (error) => invalid(`${error.message} Nothing was done.`),
       SchemaError: () => invalid("Check the submitted fields and try again. Nothing was done."),
       VersionUnavailable: (error) => invalid(`${error.message} Nothing was done.`),
       HasDependants: () =>

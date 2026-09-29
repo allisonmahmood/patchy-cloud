@@ -10,12 +10,13 @@ export const make = Effect.gen(function* () {
   return LoadedVersions.LoadedVersions.of({
     find: Effect.fn("LoadedVersions.find")(function* (patchId, versionId) {
       const found = yield* patches.find(patchId, undefined, versionId);
-      return Option.map(found, ({ patch, version }) => ({
+      return Option.map(found, ({ patch, version, patchTier }) => ({
         patchId: patch.id,
         versionId: version.id,
         companyId: patch.companyId,
         manifest: version.manifest,
         wireVersion: version.wireVersion,
+        patchTier,
         scope:
           patch.scope === "public" && patch.currentVersionId === version.id
             ? ("public" as const)

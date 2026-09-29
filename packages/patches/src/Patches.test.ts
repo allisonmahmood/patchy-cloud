@@ -2,6 +2,7 @@ import { assert, it } from "@effect/vitest";
 import { type Manifest, sharedTableId } from "@patchy/api";
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
 import { Wakes } from "@patchy/runtime/core";
+import { contentHash } from "@patchy/core";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
@@ -35,7 +36,7 @@ const input = (overrides: Partial<Patches.RecordInput> = {}): Patches.RecordInpu
     machineTokenId: uploader.machine.id,
     title: `Lifecycle ${ordinal}`,
     objectKey: `patches/${patchId}/versions/${ordinal}.html`,
-    contentHash: `sha256:${ordinal}`,
+    contentHash: contentHash(String(ordinal)),
     fileSize: 1,
     filename: null,
     repoOrg: null,

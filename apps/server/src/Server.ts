@@ -132,7 +132,11 @@ const services = Layer.mergeAll(
       const handlers = { me, ...tables, ...files, ...postgres };
       const runtime = RuntimeProduction.layer(handlers);
       return (yield* DevelopmentInvocation.enabled)
-        ? runtime.pipe(Layer.provide(DevelopmentInvocation.layer(handlers)))
+        ? runtime.pipe(
+            Layer.provide(
+              DevelopmentInvocation.layer(handlers).pipe(Layer.provide(Content.serverBundlesLayer))
+            )
+          )
         : runtime;
     })
   ).pipe(Layer.provide([LoadedVersions.layer, PostgresExecution.layer]))

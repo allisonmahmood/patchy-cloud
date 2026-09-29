@@ -33,6 +33,7 @@ import {
   ReservedName,
   InvalidDescription,
   VersionUnavailable,
+  Tier2NotPublic,
   Retired,
   Deleted,
   Restored,
@@ -157,6 +158,10 @@ const lifecycleFailures = {
   // Machine-token calls carry no portal precondition.
   StaleAction: Effect.die
 };
+const tierFailures = {
+  Tier2NotPublic: (error: Patches.Tier2NotPublic) =>
+    lifecycleFailure(Tier2NotPublic, "tier2_not_public", { error: error.message })
+};
 const ownerFailures = {
   ...lifecycleFailures,
   PatchUnavailable: () => Effect.succeed(notFound()),
@@ -260,6 +265,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
     const maxShareBodyBytes = maxHtmlBytes * 3;
     const currentRelease = yield* PatchesConfig.release;
     const livePatchesPerUser = yield* PatchesConfig.livePatchesPerUser;
+    const tier2Enabled = yield* PatchesConfig.tier2Enabled;
 
     const readOne = Effect.fn("PatchesApi.readOne")(function* (
       patchRef: string,
@@ -379,8 +385,20 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             })
           );
           if (HttpServerResponse.isHttpServerResponse(payload)) return payload;
-          if (manifest.tier >= 2)
-            return rejected("tier_mismatch", "Tier 2 and above are not served yet.");
+          if (manifest.tier > 2) return rejected("tier_mismatch", "Tier 3 is not served yet.");
+          if (manifest.tier === 2 && !tier2Enabled)
+            return rejected("tier_mismatch", "Tier 2 requires the fleet executor in production.");
+          if (manifest.tier < 2 && payload.server !== undefined)
+            return rejected("tier_mismatch", "Server code requires tier 2.");
+          if (manifest.tier === 2 && payload.server === undefined)
+            return rejected("invalid_manifest", "Tier 2 requires a server artifact.");
+          const serverBytes =
+            payload.server === undefined ? 0 : Buffer.byteLength(payload.server, "utf8");
+          if (serverBytes > maxBundleBytes)
+            return refuse(PayloadTooLarge, {
+              ok: false,
+              error: `Server bundle is ${serverBytes} bytes; maximum is ${maxBundleBytes} bytes.`
+            });
           const bytes = Buffer.byteLength(payload.html, "utf8");
           let title = manifest.name || "Untitled Patch";
           let warnings: string[] = [];
@@ -406,6 +424,8 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
                 error: `HTML bundle is ${bytes} bytes; maximum is ${maxBundleBytes} bytes.`
               });
           }
+          if (manifest.tier === 2 && Object.keys(manifest.handlers ?? {}).length === 0)
+            warnings.push("Tier 2 has no handlers.");
           const patchId = payload.patchId ?? null;
           const quotaResponse = () =>
             refuse(PatchQuotaExceeded, {
@@ -433,6 +453,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
               description: metadata.description ?? manifest.description,
               title,
               html: payload.html,
+              server: payload.server,
               filename: cleanText(metadata.filename),
               repoOrg: cleanText(metadata.repoOrg),
               repoName: cleanText(metadata.repoName),
@@ -451,6 +472,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             .pipe(
               Effect.catchTags({
                 ...lifecycleFailures,
+                ...tierFailures,
                 PatchUnavailable: () => replayOrRespond(notFound()),
                 PatchConflict: () =>
                   replayOrRespond(refuse(Conflict, { ok: false, error: "Patch already exists." })),
@@ -460,6 +482,8 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
                   ),
                 PublishKeyTaken: () => replayOrRespond(keyConflict()),
                 PatchQuotaReached: () => replayOrRespond(quotaResponse()),
+                InvalidManifest: (error) =>
+                  replayOrRespond(rejected("invalid_manifest", error.message)),
                 HasPrimitives: (error) =>
                   replayOrRespond(rejected("has_primitives", error.message)),
                 PatchNotOpenable: (error) =>
@@ -508,7 +532,23 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
               versionNumber: recorded.versionNumber,
               scope: recorded.scope,
               tier: recorded.tier,
-              htmlBytes: bytes
+              htmlBytes: recorded.artifacts.html.bytes,
+              serverBytes: recorded.artifacts.server?.bytes ?? 0,
+              sdkImports: manifest.sdkImports ?? [],
+              tables: Object.keys(manifest.tables),
+              stores: Object.keys(manifest.files),
+              integrations: Object.entries(manifest.uses).map(
+                ([alias, use]) => `${use.kind}:${alias}`
+              ),
+              queryHandlers: Object.values(manifest.handlers ?? {}).filter(
+                (handler) => handler.kind === "query"
+              ).length,
+              mutationHandlers: Object.values(manifest.handlers ?? {}).filter(
+                (handler) => handler.kind === "mutation"
+              ).length,
+              actionHandlers: Object.values(manifest.handlers ?? {}).filter(
+                (handler) => handler.kind === "action"
+              ).length
             }
           });
           return HttpServerResponse.text(recorded.responseBody, {
@@ -684,7 +724,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
           if (HttpServerResponse.isHttpServerResponse(payload)) return payload;
           const shared = yield* patches
             .setScope(params.patchId, { userId: identity.user.id, admin: false }, payload.scope)
-            .pipe(Effect.catchTags(ownerFailures));
+            .pipe(Effect.catchTags({ ...ownerFailures, ...tierFailures }));
           if (HttpServerResponse.isHttpServerResponse(shared)) return shared;
           return new Shared({
             ok: true,
@@ -743,7 +783,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
               { userId: identity.user.id, admin: false },
               payload.versionNumber
             )
-            .pipe(Effect.catchTags(ownerFailures));
+            .pipe(Effect.catchTags({ ...ownerFailures, ...tierFailures }));
           if (HttpServerResponse.isHttpServerResponse(result)) return result;
           return new RolledBack({
             ok: true,

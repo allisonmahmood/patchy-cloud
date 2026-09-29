@@ -4,6 +4,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { LoadedVersions as RuntimeLoadedVersions } from "@patchy/runtime";
+import { contentHash } from "@patchy/core";
 import * as LoadedVersions from "./LoadedVersions.js";
 import * as Patches from "./Patches.js";
 import * as Fixtures from "./test/fixtures.js";
@@ -32,7 +33,7 @@ it.layer(
           machineTokenId: identity.machine.id,
           title: "Loaded state",
           objectKey: `patches/${patchId}/versions/1.html`,
-          contentHash: "sha256:loaded-state",
+          contentHash: contentHash("loaded-state"),
           fileSize: 1,
           filename: null,
           repoOrg: null,

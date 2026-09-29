@@ -84,6 +84,7 @@ const versions = Layer.succeed(LoadedVersions.LoadedVersions, {
         ? Option.some({
             patchId,
             versionId,
+            patchTier: 1,
             companyId: DEV_SEED.companyId,
             scope: "company" as const,
             wireVersion: WIRE_VERSION,

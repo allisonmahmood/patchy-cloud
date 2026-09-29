@@ -324,20 +324,14 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
         send: (frame: RuntimeStreamFrame) => entry.send(frame),
         check: Effect.gen(function* () {
           yield* recheck;
-          const current = yield* find();
           const eligible = yield* find(input.versionId);
-          if (
-            Option.isNone(current) ||
-            Option.isNone(eligible) ||
-            current.value.companyId !== identity.companyId ||
-            eligible.value.companyId !== identity.companyId
-          )
+          if (Option.isNone(eligible) || eligible.value.companyId !== identity.companyId)
             return yield* new Runtime.AccessDenied({});
           if (eligible.value.scope === "public") return yield* new Runtime.PublicUnavailable({});
-          if (loaded.manifest.tier !== 1 || current.value.manifest.tier !== 1)
+          if (loaded.manifest.tier !== 1 || eligible.value.patchTier !== 1)
             return yield* new DirectSubscriptionRequired({
               loadedTier: loaded.manifest.tier,
-              servedTier: current.value.manifest.tier
+              servedTier: eligible.value.patchTier
             });
         }).pipe(
           Effect.tapError((error) =>
