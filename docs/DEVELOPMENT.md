@@ -576,6 +576,8 @@ The packed e2e runs inside `cli-smoke`, not a separate check.
 The runner, the vitest template and the packed CLI e2e apply the shared dev seed.
 `Testing.layer()` clones the seeded template; package fixtures add rows on
 top. SQL's migrator tests alone use its empty-database layer.
+The `apps/server` test helper creates its temporary storage directory when the
+server layer is built and removes it recursively when the layer's scope closes.
 
 Session tests use `@patchy/auth/testing`: fake Clerk keys under `.invalid`, an
 RSA fixture and a loopback-only fetch guard. The packed CLI e2e starts its

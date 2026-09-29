@@ -5,13 +5,12 @@
  * `it.layer` brings — reaches every fiber the server forks.
  */
 import { randomUUID } from "node:crypto";
-import { mkdtempSync } from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import { inject } from "vitest";
+import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
@@ -22,23 +21,29 @@ import * as Testing from "@patchy/sql/testing";
 import * as Server from "../Server.js";
 
 export const server = (env: Record<string, string | undefined> = {}) =>
-  Server.layer.pipe(
-    Layer.provideMerge(NodeHttpServer.layerTest),
-    Layer.provideMerge(Testing.layer()),
-    Layer.provide(
-      ConfigProvider.layer(
-        ConfigProvider.fromUnknown({
-          ...clerkEnv(),
-          PATCHY_STORAGE_DIR: mkdtempSync(path.join(os.tmpdir(), "patchy-server-")),
-          PATCHY_PUBLIC_BASE_URL: "https://patchy.example",
-          PATCHY_COMPANY_DB_ADMIN_URL: inject("postgres").adminUrl,
-          PATCHY_COMPANY_DB_URL: inject("postgres").adminUrl,
-          PATCHY_CREDENTIAL_KEYS: `test:${Buffer.alloc(32, 1).toString("base64")}`,
-          ...env
-        })
-      )
-    )
-  );
+  Layer.unwrap(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const storageDir = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-server-" });
+      return Server.layer.pipe(
+        Layer.provideMerge(NodeHttpServer.layerTest),
+        Layer.provideMerge(Testing.layer()),
+        Layer.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromUnknown({
+              ...clerkEnv(),
+              PATCHY_STORAGE_DIR: storageDir,
+              PATCHY_PUBLIC_BASE_URL: "https://patchy.example",
+              PATCHY_COMPANY_DB_ADMIN_URL: inject("postgres").adminUrl,
+              PATCHY_COMPANY_DB_URL: inject("postgres").adminUrl,
+              PATCHY_CREDENTIAL_KEYS: `test:${Buffer.alloc(32, 1).toString("base64")}`,
+              ...env
+            })
+          )
+        )
+      );
+    })
+  ).pipe(Layer.provide(NodeFileSystem.layer));
 
 /** One request to the server, as the socket sees it. */
 export const send = (request: HttpClientRequest.HttpClientRequest) =>
