@@ -9,21 +9,15 @@
   },
   "dependencies": {
     "@effect/platform-node": "catalog:",
-    "@effect/sql-pglite": "catalog:",
-    "@patchy/api": "workspace:*",
     "@patchy/auth": "workspace:*",
     "@patchy/companies": "workspace:*",
     "@patchy/company-database": "workspace:*",
-    "@patchy/core": "workspace:*",
-    "@patchy/execution": "workspace:*",
     "@patchy/integrations": "workspace:*",
     "@patchy/limits": "workspace:*",
     "@patchy/patches": "workspace:*",
-    "@patchy/primitives": "workspace:*",
     "@patchy/runtime": "workspace:*",
     "@patchy/sql": "workspace:*",
     "effect": "catalog:",
-    "esbuild": "0.28.2",
     "embedded-postgres": "18.4.0-beta.17"
   },
   "devDependencies": {

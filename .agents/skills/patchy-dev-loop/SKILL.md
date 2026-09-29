@@ -30,15 +30,12 @@ starting the cloud or touching Clerk. Prove that a killed generation cannot
 forward callbacks and a fresh bind recovers without replay. Local execution
 proves engine compatibility, not Fargate containment.
 
-For tier 2 query/action changes, follow DEVELOPMENT's **Tier 2 server development**
-recipe. Prepare a disposable patch with the source CLI's `dev prepare` command,
-then run `pnpm dev:server <patch-repo-path>` from this checkout.
-This runs inspected server sources through the actual local HTTP API, callback
-listener and supervised executor, with persistent PGlite fixture data and an
-invocation journal. Open its printed URL; prove a query, action and nested query
-through the generated page client. Stop the process you started. Server edits
-need a restart; config and fixture edits need preparation again. Packed tier 2
-dev lifecycle and server watch remain separate work, and publication stays refused.
+For tier 2 query/action changes, follow DEVELOPMENT's **The execution engine**
+guidance and exercise an eligible `server.call` through the existing `pnpm dev`
+server composition. The local executor, private callback gateway and snapshot
+adapter run there; this does not enable tier 2 publication or the patch-repo
+dev loop. The end-to-end browser path lands with publication in #401 and
+`patchy dev` on the production engine in #404.
 
 ## Patch repos and the local runtime
 

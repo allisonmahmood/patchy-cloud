@@ -795,12 +795,6 @@ importers:
       '@effect/platform-node':
         specifier: 4.0.0-rc.117
         version: 4.0.0-rc.117(effect@4.0.0-rc.117)(redis@6.2.1)
-      '@effect/sql-pglite':
-        specifier: 4.0.0-rc.117
-        version: 4.0.0-rc.117(effect@4.0.0-rc.117)
-      '@patchy/api':
-        specifier: workspace:*
-        version: link:../../packages/api
       '@patchy/auth':
         specifier: workspace:*
         version: link:../../packages/auth
@@ -810,12 +804,6 @@ importers:
       '@patchy/company-database':
         specifier: workspace:*
         version: link:../../packages/company-database
-      '@patchy/core':
-        specifier: workspace:*
-        version: link:../../packages/core
-      '@patchy/execution':
-        specifier: workspace:*
-        version: link:../../packages/execution
       '@patchy/integrations':
         specifier: workspace:*
         version: link:../../packages/integrations
@@ -825,9 +813,6 @@ importers:
       '@patchy/patches':
         specifier: workspace:*
         version: link:../../packages/patches
-      '@patchy/primitives':
-        specifier: workspace:*
-        version: link:../../packages/primitives
       '@patchy/runtime':
         specifier: workspace:*
         version: link:../../packages/runtime
@@ -840,9 +825,6 @@ importers:
       embedded-postgres:
         specifier: 18.4.0-beta.17
         version: 18.4.0-beta.17
-      esbuild:
-        specifier: 0.28.2
-        version: 0.28.2
     devDependencies:
       '@effect/vitest':
         specifier: 4.0.0-rc.117

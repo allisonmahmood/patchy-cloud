@@ -39,13 +39,15 @@ The engine, inspection, supervisor and local executor are available independentl
 `@patchy/execution/local` owns the production loader and watchdog without a fleet
 pool. A killed generation requires a fresh host bind, never an invocation replay.
 It refuses construction when `NODE_ENV` or its explicit environment is production.
-The checkout's [`pnpm dev:server <patch-repo-path>`](#tier-2-server-development)
-command runs inspected query and action sources in a persistent local dev instance.
-It shares the ordinary dev command's authenticated metadata, PGlite resources and
-invented fixtures. The cloud still refuses tier 2 publication. Runtime's
-`InvocationLocal.test.ts` also exercises the private callback listener and
-supervised local executor. Nested queries use the parent's exact binding and
-have separate invocation rows. Resource-free queries use a fenced invocation
+The existing `pnpm dev` instance composes this executor into Runtime, so an
+eligible `server.call` executes through the private callback gateway rather than
+returning `InvocationUnavailable`. This is a server-composition boundary, not a
+new patch development command. Tier 2 publishing remains refused until #401;
+the `patchy dev` production-engine integration belongs to #404. Those tickets
+complete the end-to-end browser path. Runtime's `InvocationLocal.test.ts` also
+exercises the private callback listener and supervised local executor.
+Nested queries use the parent's exact binding and have separate invocation rows.
+Resource-free queries use a fenced invocation
 resource with an empty watermark and zero database-held time, without provisioning
 a company database. Data-bearing queries retain one read-only repeatable-read
 snapshot. The primitive snapshot tests use real Postgres for concurrent writes,
@@ -54,6 +56,12 @@ live unsharing and deadline cancellation; PGlite does not prove production conte
 deadlines, inherited child budgets and unresolved-resource destruction. The fleet
 and tier 2 publish path remain separate work. These checks prove local execution
 and settlement, not Fargate containment.
+
+`pnpm exec vitest run apps/server/src/DevelopmentExecution.test.ts` exercises
+eligible query and action calls through the same `Server.layer` selected by
+`pnpm dev`, including nested callbacks, company isolation and production refusal.
+It supplies retained bundle fixtures through the existing data port, without
+enabling publishing or a patch-repo browser workflow.
 
 To run only the execution task from this checkout:
 
@@ -386,119 +394,6 @@ Issue #202 adds exact operation outcome codes to the unmerged
 `0006_runtime_baseline`; no new migration ID is introduced. Disposable development
 databases created before this baseline change must be recreated with `pnpm dev reset`.
 Do not use a reset or baseline rewrite to upgrade a live database.
-
-### Tier 2 server development
-
-From this source checkout, `pnpm dev:server <patch-repo-path>` runs real query and
-action handlers through the local runtime HTTP API and the supervised local
-executor. The public runtime and private callback listener both bind loopback.
-The runner inspects actual `server/*.ts` exports in workerd before admitting
-calls. Argument and result schemas come from that inspection, not handwritten
-manifest entries.
-
-First start this worktree's cloud with `pnpm dev` and initialize a disposable patch
-repo as described above. Tier 2 init is not enabled yet: initialize tier 1, change
-its `patchy.config.ts` to `tier: 2`, and retain its generated `notes` table. Add
-`server/notes.ts`:
-
-```ts
-import { query, action } from "../patchy/_generated/server.js";
-import { t } from "patchy/server";
-
-export const list = query({
-  args: {},
-  result: t.array(t.row("notes")),
-  handler: async (ctx) => (await ctx.tables.notes.list()).rows
-});
-export const add = action({
-  args: { title: t.text() },
-  result: t.array(t.row("notes")),
-  handler: async (ctx, args) => {
-    await ctx.tables.notes.insert({ title: args.title });
-    return ctx.run.notes.list({});
-  }
-});
-```
-
-Replace `src/App.tsx` with a page that calls the generated server client:
-
-```tsx
-import { useEffect, useState } from "patchy/preact";
-import { patchy } from "../patchy/_generated/client.js";
-
-export function App() {
-  const [rows, setRows] = useState<readonly { id: string; title: string }[]>([]);
-  const [error, setError] = useState("");
-  useEffect(() => {
-    patchy.server.notes
-      .list({})
-      .then(setRows)
-      .catch((e) => setError(String(e)));
-  }, []);
-  return (
-    <main>
-      <button
-        onClick={() => {
-          setError("");
-          patchy.server.notes
-            .add({ title: "Local executor" })
-            .then(setRows)
-            .catch((e) => setError(String(e)));
-        }}
-      >
-        Add note
-      </button>
-      <p role="alert">{error}</p>
-      <ul>
-        {rows.map((row) => (
-          <li key={row.id}>{row.title}</li>
-        ))}
-      </ul>
-    </main>
-  );
-}
-```
-
-Prepare the current authenticated identity, generated client and declaration
-metadata without starting a daemon. From inside the patch repo, with `cloud` set
-to the checkout's absolute path, stop any existing patch runtime first, then run:
-
-```sh
-node --import "$cloud/node_modules/tsx/dist/loader.mjs" --conditions=development \
-  "$cloud/packages/patchy/src/index.ts" dev prepare --json
-pnpm --dir "$cloud" dev:server "$PWD"
-```
-
-Open the printed `Ready:` URL. The initial query must return an empty list on a
-fresh repo. Click **Add note** and observe **Local executor** without a reload;
-the action inserts a row and calls a child query. Reload to read the persisted row.
-The source runner uses the prepared metadata under `.patchy/dev/<instance-hash>/`;
-it refuses an already-running patch daemon or config changed since preparation.
-`server.json` records the inspected handler schemas, patch/version ids and local
-principal for HTTP smoke requests. Callback credentials never enter that file.
-
-The command runs in the foreground. Ctrl-C, or `patchy dev stop` in the patch repo,
-closes both listeners, the local executor and databases. Rows, files, fixtures and
-invocation/callback records survive a clean restart. Invocation records use the
-real runtime migrations and log services in a separate PGlite database at
-`.patchy/dev/<instance-hash>/invocations`; they do not block a held query snapshot
-on the company's PGlite connection. Runtime events print to the command's terminal.
-This command does not read a connection keyring or send fixture queries to a
-company's live database. Existing shared-table and Postgres declaration fixtures
-work through the same `DevResources` adapters as tier 1.
-
-Restart `dev:server` after server-source edits. Config, declaration and fixture
-changes require `dev prepare` again after stopping the runner. The existing page build watcher
-still reloads completed page builds; full server watch, packed tier 2 dev lifecycle
-and publication remain #404 work. Production execution, mutation execution and
-handler subscriptions remain unavailable. `NODE_ENV=production` refuses this
-local runner before it opens resources.
-
-The focused regression is:
-
-```sh
-pnpm exec vitest run scripts/dev/src/server.test.ts
-```
 
 ### Seed
 
@@ -1025,6 +920,15 @@ later migration cannot fill a lower-numbered gap. The three migrator spreads are
 `scripts/dev/src/supervisor.ts` and `test/postgres.ts`; server tests clone the
 template without passing migrations. Packed and live browser servers migrate
 through the server's existing spread rather than maintaining another one.
+
+The supervisor sets `NODE_ENV=development` and `PATCHY_DEV_EXECUTION=true` in
+the server's closed environment. This selects local invocation execution in the
+existing server composition; production construction still refuses it. The
+private callback listener binds loopback, and company-local executors close
+with the server scope. Retained server bytes enter through Runtime's existing
+`ServerBundles` port. Until #401 supplies published server bundles, ordinary
+published versions cannot use this path; the focused composition test supplies
+an eligible retained version and bundle at that boundary.
 
 Company databases are created lazily, not in the seed or template.
 `@patchy/company-database/testing` layers use the embedded cluster's provisioning

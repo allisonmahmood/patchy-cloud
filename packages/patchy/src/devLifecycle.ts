@@ -126,50 +126,6 @@ const stopRecorded = Effect.fn("Dev.stopRecorded")(function* (record: Daemon | u
   });
 });
 
-const prepareProject = Effect.fn("Dev.prepareProject")(function* (
-  root: string,
-  stateDir: string,
-  credential: Redacted.Redacted
-) {
-  const toolchain = yield* checkRepoRelease(root, credential);
-  const prepared = yield* Preparation.prepare(root, credential).pipe(
-    Effect.catchTags({
-      DevFixtureMissing: (cause) => new LocalError({ message: cause.message, cause }),
-      PlatformError: (cause) =>
-        new LocalError({ message: "Could not read the patch repo while preparing dev.", cause })
-    })
-  );
-  yield* io("Could not save local dev metadata.", async () => {
-    await atomicJson(stateDir, "prepared.json", { ...prepared, toolchain });
-    await fs.rm(await safePath(stateDir, "failure.json"), { force: true });
-  });
-  return prepared;
-});
-
-/** Prepare authenticated metadata without starting a page watcher or runtime. */
-export const prepare = Effect.fn("Dev.prepare")(function* <R>(
-  cwd: string,
-  token: Effect.Effect<Redacted.Redacted, CliError, R>
-) {
-  const instance = yield* Instance.Instance;
-  const { root, stateDir } = yield* directory(cwd, instance.apiUrl);
-  return yield* Effect.scoped(
-    Effect.gen(function* () {
-      yield* lock(stateDir);
-      const prior = yield* recorded(root, stateDir, instance.apiUrl);
-      if (prior && (yield* io("Could not inspect the dev process.", () => sameProcess(prior))))
-        return yield* new LocalError({
-          message: "Stop the running patch runtime with `patchy dev stop` before preparing."
-        });
-      const prepared = yield* prepareProject(root, stateDir, yield* token);
-      yield* Output.report({ ok: true, prepared: true, stateDir, warnings: prepared.warnings }, [
-        ...prepared.warnings,
-        `Prepared local metadata: ${stateDir}`
-      ]);
-    })
-  );
-});
-
 /** Resolve credentials only for a new session. A release or logout cannot invalidate a healthy one. */
 export const start = Effect.fn("Dev.start")(function* <R>(
   cwd: string,
@@ -188,7 +144,22 @@ export const start = Effect.fn("Dev.start")(function* <R>(
           message:
             "This repo's dev runtime is alive but not healthy. Read `patchy dev logs`, then `patchy dev stop`."
         });
-      const prepared = yield* prepareProject(root, stateDir, yield* token);
+      const credential = yield* token;
+      const toolchain = yield* checkRepoRelease(root, credential);
+      const prepared = yield* Preparation.prepare(root, credential).pipe(
+        Effect.catchTags({
+          DevFixtureMissing: (cause) => new LocalError({ message: cause.message, cause }),
+          PlatformError: (cause) =>
+            new LocalError({
+              message: "Could not read the patch repo while preparing dev.",
+              cause
+            })
+        })
+      );
+      yield* io("Could not save local dev metadata.", async () => {
+        await atomicJson(stateDir, "prepared.json", { ...prepared, toolchain });
+        await fs.rm(await safePath(stateDir, "failure.json"), { force: true });
+      });
       const nonce = randomUUID();
       // Write the nonce before spawning; the child may reach its entrypoint before spawn returns.
       const initial: Daemon = {

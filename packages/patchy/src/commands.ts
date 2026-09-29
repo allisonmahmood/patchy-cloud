@@ -1092,20 +1092,8 @@ const dev = Command.make(
   Command.withDescription(
     "Start this patch repo's local runtime over fixtures (detached and idempotent)."
   ),
-  Command.withSubcommands([
-    Command.make("prepare", {}, () =>
-      runProject(
-        Effect.gen(function* () {
-          yield* Project.readRepo(yield* Cwd);
-          yield* Dev.prepare(yield* Cwd, requiredToken());
-        })
-      )
-    ).pipe(
-      Command.withDescription(
-        "Prepare authenticated local metadata and fixtures without starting a runtime."
-      )
-    ),
-    ...(["status", "stop", "logs", "reset"] as const).map((action) =>
+  Command.withSubcommands(
+    (["status", "stop", "logs", "reset"] as const).map((action) =>
       Command.make(action, {}, () =>
         runProject(
           Effect.gen(function* () {
@@ -1124,7 +1112,7 @@ const dev = Command.make(
         )
       )
     )
-  ])
+  )
 );
 
 // --- the tree ---------------------------------------------------------------

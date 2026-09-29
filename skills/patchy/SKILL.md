@@ -131,14 +131,6 @@ Use invented local fixture inserts. Every readable row is available to whoever
 can open the patch; tier 1 has no outbound access or client storage. The project
 skills carry the complete runtime limits and the local-only workflow.
 
-`pnpm patchy dev prepare --json` authenticates and regenerates local metadata
-without starting a daemon or building sources. It returns
-`{ ok: true, prepared: true, stateDir, warnings }`, not a healthy page URL.
-Stop a running patch runtime before preparing. For tier 2 query/action checks
-from a Patchy Cloud source checkout, follow its `docs/DEVELOPMENT.md` tier 2
-server development recipe, then run `pnpm dev:server <patch-repo-path>` there.
-Preparation does not enable tier 2 publishing.
-
 Repo recovery lives under `.patchy/publish/`. Keep it after interruptions or a
 failed `patchy.json` write and rerun `pnpm patchy publish` as the same owning user.
 Recovery precedes release checks and rebuilding, returning the original result.

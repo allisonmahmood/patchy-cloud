@@ -345,50 +345,6 @@ const call = Effect.fn("test.lifecycle.call")(function* (url: string, op: string
 });
 
 it.live(
-  "prepares tier 2 metadata without a daemon or source build and refuses a running session",
-  () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const { root, instance, stateDir, requests } = yield* fixture;
-      const configPath = path.join(root, "patchy.config.ts");
-      const config = yield* fs.readFileString(configPath);
-      yield* fs.writeFileString(configPath, config.replace("tier: 1", "tier: 2"));
-      yield* fs.makeDirectory(path.join(root, "server"));
-      // Preparation discovers names without requiring finished handler implementations.
-      yield* fs.writeFileString(path.join(root, "server", "notes.ts"), "export const unfinished =");
-      yield* fs.remove(path.join(root, "index.html"));
-      const prepared = yield* command(root, instance, ["prepare"]);
-      assert.deepInclude(prepared, { ok: true, prepared: true, stateDir });
-      assert.isUndefined(yield* Effect.promise(() => readRecord(stateDir)));
-      const stopped = yield* cli(root, instance, ["status", "--json"]);
-      assert.strictEqual((yield* exited(stopped)).code, 1);
-      assert.strictEqual(JSON.parse(stopped.stderr()).code, "not_running");
-      const saved = yield* fs.readFileString(path.join(stateDir, "prepared.json"));
-      const active = yield* subprocess(["--eval", idleProcess], root);
-      yield* output(active, "stdout", "ready");
-      yield* Effect.promise(async () =>
-        atomicJson(stateDir, "daemon.json", {
-          root,
-          instance,
-          release: RELEASE,
-          identity,
-          nonce: "active-preparation",
-          pid: active.child.pid!,
-          birth: (await birth(active.child.pid!))!
-        })
-      );
-      const before = requests.length;
-      const refused = yield* cli(root, instance, ["prepare", "--json"]);
-      assert.strictEqual((yield* exited(refused)).code, 1);
-      assert.strictEqual(JSON.parse(refused.stderr()).kind, "local");
-      assert.strictEqual(requests.length, before);
-      assert.strictEqual(yield* fs.readFileString(path.join(stateDir, "prepared.json")), saved);
-      assert.isNull(active.child.exitCode);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  30_000
-);
-
-it.live(
   "fresh CLI start is idempotent; stop preserves data and reset discards it before fetching published schema again",
   () =>
     Effect.gen(function* () {

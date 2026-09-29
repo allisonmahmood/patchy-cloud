@@ -6,9 +6,9 @@ description: "Build tier 2 queries, mutations and actions; type helpers, handle 
 # Server handlers
 
 Queries and actions run on the local executor in tests and the source checkout's
-`pnpm dev:server <patch-repo-path>` instance. Follow the checkout's
-`docs/DEVELOPMENT.md` tier 2 server development recipe for preparation and startup.
-The packed tier 2 `patchy dev` lifecycle, server watch, production hosting,
+existing `pnpm dev` cloud server for eligible `server.call` requests. See the
+checkout's `docs/DEVELOPMENT.md` for local startup.
+The tier 2 `patchy dev` lifecycle, server watch, production hosting,
 mutations and server subscriptions land separately.
 
 ## Define the contract

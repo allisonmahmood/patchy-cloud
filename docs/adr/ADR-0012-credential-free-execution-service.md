@@ -26,13 +26,12 @@ Issue #396 implements the supervisor, private management listener and supervised
 local executor. Issue #397 adds Runtime's invocation admission, host-owned
 lifetime, capability registry, private callback gateway and invocation records.
 Issue #398 adds query read snapshots, action file and integration callbacks, and
-nested query calls on the local executor. The source checkout's
-`pnpm dev:server <patch-repo-path>` runs these handlers through the actual local
-runtime HTTP API. It reuses authenticated dev preparation and fixture resources,
-inspects server exports in workerd, and owns the private callback listener,
-capabilities and persistent invocation journal. Full server watch and the packed
-tier 2 development lifecycle remain #404 work. Mutation transactions and keys,
-fleet wiring and tier 2 publication remain their own tickets. Tier 2 publish remains refused.
+nested query calls on the local executor, composed into the existing `pnpm dev`
+instance. Eligible calls use the same host invocation lifetime, private callback
+gateway and snapshot adapter. Tier 2 publication remains refused until #401;
+`patchy dev` on the production engine belongs to #404. The end-to-end browser
+path lands with those tickets. Mutation transactions and keys, and hosted fleet
+wiring remain separate work.
 
 ## Engine, guest wire and inspection
 

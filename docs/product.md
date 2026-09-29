@@ -8,7 +8,7 @@ Signed-in members find company patches at `/` and open their cards at `/patches/
 
 Agents discover company tools and data sources through `patchy list` and its patch, primitive and connection drill-downs. Description edits pull back into the repo at refresh, dev start and publish. Clerk sign-in, create-or-join, company administration, company/public sharing and machine login, logout and revocation are built. Postgres connections have browser administration, immutable schema snapshots and generated relation clients. Portal, Company, Connections and Your machines share one app shell and component set.
 
-Tier 2 invocation admission, patch identity for own-resource callbacks, viewer reauthorization and bounded settlement are implemented in local execution tests and the source-checkout dev runner. Hosted tier 2 publication and fleet wiring, narrower sharing, shared file stores, other integrations, billing, source recovery and the remaining company lifecycle remain future work.
+Tier 2 invocation admission, patch identity for own-resource callbacks, viewer reauthorization and bounded settlement are implemented in local execution tests and the existing `pnpm dev` instance's server composition. Hosted tier 2 publication and fleet wiring, narrower sharing, shared file stores, other integrations, billing, source recovery and the remaining company lifecycle remain future work.
 
 ## Patches
 
@@ -79,11 +79,10 @@ retains its last value through errors. The pinned workerd engine, credential-fre
 SDK guest, isolated descriptor inspection, process supervisor, private management
 listener and supervised local executor are implemented. Runtime now admits and
 settles invocations through a private capability gateway in isolated execution
-tests and the source-checkout `pnpm dev:server <repo>` runner after authenticated
-`patchy dev prepare`. The runner serves queries and actions against local fixtures;
-server-source changes require a restart. See [the development recipe](./DEVELOPMENT.md#tier-2-server-development).
-Hosted fleet wiring and the full tier 2 watch loop remain separate work;
-tier 2 publish remains refused.
+tests and the existing `pnpm dev` instance. An eligible `server.call` executes on
+the local executor. Tier 2 publication remains refused until #401; `patchy dev`
+on the production engine belongs to #404. The end-to-end browser path lands with
+those tickets, not through a separate development command or runner.
 
 ### Building a patch
 
@@ -407,7 +406,7 @@ ADR-0012.
 
 ### Declaring and changing a tier
 
-The tier is an explicit field in `patchy.config.ts`, written by `init`. The CLI checks the tree and built HTML: `server/` requires tier 2 and is refused for publishing and ordinary dev startup; the source-checkout server runner admits it only with local execution attached. A bundle with script cannot claim tier 0. The server independently checks the submitted bundle: tier 0 must pass the safe-HTML policy, tier 1 runs only in the sandbox, and tier 2 and above are refused. Claiming a higher built tier than the code needs is fine. A tier 0 repo may provision tables and stores; resources do not make a tier.
+The tier is an explicit field in `patchy.config.ts`, written by `init`. The CLI checks the tree and built HTML: `server/` requires tier 2 and is refused today, and a bundle with script cannot claim tier 0. The server independently checks the submitted bundle: tier 0 must pass the safe-HTML policy, tier 1 runs only in the sandbox, and tier 2 and above are refused. Claiming a higher built tier than the code needs is fine. A tier 0 repo may provision tables and stores; resources do not make a tier.
 
 A **version** has exactly one tier; the patch's tier is the tier of the version it serves. Changing tier means publishing a new version, not moving an existing one in place. Primitives belong to the patch, not its tier, so their data persists across the change. Rollback selects the older version's tier without rolling back cumulative provisioning or sharing flags.
 

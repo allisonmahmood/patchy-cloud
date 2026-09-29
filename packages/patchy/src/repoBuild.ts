@@ -286,16 +286,15 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
         "Typecheck failed. Run `pnpm exec tsc --noEmit` and fix the errors before publishing.",
       cause: typecheck
     });
-  yield* validateRepoBundle(cwd, manifest, html, "publish");
+  yield* validateRepoBundle(cwd, manifest, html);
   return { manifest, html, warnings };
 });
 
-/** All builds share artifact validation; only an attached local executor admits tier 2. */
+/** Publish and watched dev builds enforce the same artifact and tier contract. */
 export const validateRepoBundle = Effect.fn("validateRepoBundle")(function* (
   cwd: string,
   manifest: typeof Manifest.Type,
-  html: string,
-  destination: "publish" | "dev" | "local-server"
+  html: string
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -330,7 +329,7 @@ export const validateRepoBundle = Effect.fn("validateRepoBundle")(function* (
         new LocalError({ message: "Could not inspect server/ for the evident tier.", cause })
     )
   );
-  if ((server || manifest.tier >= 2) && !(destination === "local-server" && manifest.tier === 2))
+  if (server || manifest.tier >= 2)
     return yield* new LocalError({
       message: server
         ? "server/ requires tier 2, which is not served yet. Remove server code before publishing."
