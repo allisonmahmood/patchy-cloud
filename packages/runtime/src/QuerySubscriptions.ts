@@ -68,7 +68,20 @@ export const make = Effect.gen(function* () {
       Effect.mapError((cause) => new Runtime.InvalidRequest({ cause }))
     );
     if (Option.isNone(invocation)) return yield* new Runtime.InvocationUnavailable();
-    return input.dependencies ?? [];
+    if (input.dependencies === undefined || input.dependencies.length === 0) return [];
+    const allowed = new Set([
+      ...Object.keys(binding.manifest.tables).map((name) => `table:${binding.patchId}:${name}`),
+      ...Object.keys(binding.manifest.files).map((name) => `store:${binding.patchId}:${name}`)
+    ]);
+    for (const declaration of Object.values(binding.manifest.uses)) {
+      if (declaration.kind === "sharedTable") {
+        allowed.add(`table:${declaration.patchId}:${declaration.table}`);
+        allowed.add(`patch:${declaration.patchId}`);
+      }
+    }
+    // Resume keys are untrusted. Only fence declared resources; callbacks still
+    // trace the actual dependencies, including accesses which fail.
+    return input.dependencies.filter((key) => allowed.delete(key));
   });
   const read = Effect.fn("QuerySubscriptions.read")(function* (input: SubscriptionReads.Input) {
     if (input.op !== "server.call") return yield* reads.read(input);

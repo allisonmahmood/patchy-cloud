@@ -112,6 +112,7 @@ const recoverable: Readonly<Record<string, true>> = {
   rate_limited: true,
   source_unavailable: true,
   handler_timeout: true,
+  unknown_outcome: true,
   timeout: true,
   access_denied: true,
   patch_paused: true
@@ -279,13 +280,17 @@ export const make = Effect.gen(function* () {
       event,
       Effect.gen(function* () {
         doc.reruns++;
-        const snapshot = yield* reads.read(input).pipe(
-          Effect.timeout(deadline),
-          Effect.catchTags({
-            TimeoutError: (cause) =>
-              Effect.fail(new SubscriptionTimeout({ deadlineMs: deadline, cause }))
-          })
-        );
+        // Invocation owns the query deadline and settles retained resources before returning.
+        const read = reads.read(input);
+        const snapshot = yield* sub.input.op === "server.call"
+          ? read
+          : read.pipe(
+              Effect.timeout(deadline),
+              Effect.catchTags({
+                TimeoutError: (cause) =>
+                  Effect.fail(new SubscriptionTimeout({ deadlineMs: deadline, cause }))
+              })
+            );
         const result = yield* encodeResult(snapshot.result).pipe(
           Effect.mapError((cause) => new InvalidSnapshot({ cause }))
         );
@@ -386,7 +391,8 @@ export const make = Effect.gen(function* () {
               yield* Effect.suspend(() => schedule);
             })
           ),
-          Effect.forkIn(doc.scope)
+          // Disconnect only drops delivery. Keep query slots until Invocation settles.
+          Effect.forkIn(sub.input.op === "server.call" ? scope : doc.scope)
         );
       }
     }

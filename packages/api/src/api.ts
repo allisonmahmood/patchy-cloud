@@ -800,7 +800,8 @@ export class RuntimeStreamGroup extends HttpApiGroup.make("runtimeStream", { top
           "are admitted. Handlers belong to the document's retained loaded version, so publishing " +
           "a version without a handler does not remove it from an already loaded document. " +
           "Optional `vector` and `revision` describe the snapshot the client actually received, " +
-          "not the last frame the server sent. " +
+          "not the last frame the server sent. Tier 2 resume revision checks ignore keys outside " +
+          "the loaded version's owned tables/stores and declared shared-table resources. " +
           "`{type:'replace',sequence,subscriptions}` installs the full desired set and supersedes " +
           "buffered deltas through that sequence; older replacements are refused. All requests " +
           "also carry `patchId`, `versionId`, `documentId` and `generation`. A gap after 5 seconds " +
@@ -822,7 +823,10 @@ export class RuntimeStreamGroup extends HttpApiGroup.make("runtimeStream", { top
           "company-database query snapshot. Mutations return committed resource revisions; render " +
           "from the subscription rather than replaying a mutation result into its data. " +
           "The newest subscription is refused at 64 per document, 256 per patch or 1024 per " +
-          "company; snapshots are at most 8 MiB. Periodic durable reconciliation repairs missed wakes."
+          "company; snapshots are at most 8 MiB. Re-runs occupy at most two slots per company " +
+          "and one per patch. Hosted query slots remain occupied until invocation resources settle, " +
+          "including after a timeout or document disconnect; `unknown_outcome` is retryable. " +
+          "Periodic durable reconciliation repairs missed wakes."
       )
     )
   )

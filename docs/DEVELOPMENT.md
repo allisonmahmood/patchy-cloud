@@ -84,6 +84,13 @@ after a publish; a new document sees the new handler set.
 The fixture owns disposable Postgres and offline browser sessions, not live Clerk
 or a daily-driver instance.
 
+`SubscriptionsSettlement.test.ts` exercises real invocation ownership with delayed
+executor and snapshot cancellation. A timeout or disconnected document must not
+release its re-run slot before cleanup settles or destroys the retained resources.
+`QuerySubscriptions.test.ts` exercises forged resume vectors: undeclared resource
+keys never reach revision reads, while declared keys still support equal-vector
+resume and failed-first-access recovery.
+
 `pnpm test:packed-preact-e2e` checks a clean installed SDK with Vite dependency
 optimisation enabled and its single-file production artifact. Signals, hooks,
 compat components and `useQuery` must update together, retain data through a
