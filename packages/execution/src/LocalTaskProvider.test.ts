@@ -1,25 +1,69 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalDateInEffect:off -- Real processes exercise provider identity, execution and stop metering.
 import { createHash } from "node:crypto";
+import { createServer, type IncomingMessage } from "node:http";
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
+import * as Scope from "effect/Scope";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import * as LocalTaskProvider from "./localTaskProvider.js";
 
+const listener = (headers: IncomingMessage["headers"][]) =>
+  Effect.acquireRelease(
+    Effect.promise(async () => {
+      const server = createServer((request, response) => {
+        headers.push(request.headers);
+        response.setHeader("content-type", "application/json");
+        response.end('{"ok":true,"value":42}');
+      });
+      const ready = Promise.withResolvers<void>();
+      server.once("error", ready.reject);
+      server.listen(0, "127.0.0.1", ready.resolve);
+      await ready.promise;
+      const address = server.address();
+      if (address === null || typeof address === "string")
+        throw new Error("Missing callback address");
+      return { server, url: `http://127.0.0.1:${address.port}/callback` };
+    }),
+    ({ server }) =>
+      Effect.promise(
+        () =>
+          new Promise<void>((resolve) => {
+            server.closeAllConnections();
+            server.close(() => resolve());
+          })
+      )
+  );
+
 it.live(
-  "keeps one task identity across retries and retains final process metering after stop",
+  "routes independent providers to one task after its creating host closes and retains final metering",
   () =>
     Effect.gen(function* () {
-      const provider = yield* LocalTaskProvider.make({
-        callbackUrls: ["http://127.0.0.1:1/callback"]
+      const hostScope = yield* Scope.make();
+      const firstHeaders: IncomingMessage["headers"][] = [];
+      const otherHeaders: IncomingMessage["headers"][] = [];
+      const firstHost = yield* listener(firstHeaders).pipe(
+        Effect.provideService(Scope.Scope, hostScope)
+      );
+      const otherHost = yield* listener(otherHeaders);
+      const options = yield* LocalTaskProvider.resource({
+        callbackUrls: [firstHost.url, otherHost.url]
       });
+      const provider = yield* LocalTaskProvider.make(options).pipe(
+        Effect.provideService(Scope.Scope, hostScope)
+      );
+      const other = yield* LocalTaskProvider.make(options);
       const input = { taskId: "provider-task", deploymentRevision: "deployment-a" };
-      const [first, repeated] = yield* Effect.all([provider.start(input), provider.start(input)], {
+      const [first, repeated] = yield* Effect.all([provider.start(input), other.start(input)], {
         concurrency: "unbounded"
       });
       assert.strictEqual(first.startedAt, repeated.startedAt);
-      const source = `export default { async fetch(request) { const input = await request.json(); return Response.json(input.type === "describe" ? {ok:true,handlers:{}} : {ok:true,value:42}); } };`;
-      const bound = yield* provider.bind(input.taskId, {
+      yield* Scope.close(hostScope, Exit.void);
+      assert.deepStrictEqual(yield* other.list, [first]);
+      const source = `export default { async fetch(request, env, ctx) { const input = await request.json(); return Response.json(input.type === "describe" ? {ok:true,handlers:{}} : await ctx.props.callbacks.call({op:"read",args:{}})); } };`;
+      const bound = yield* other.bind(input.taskId, {
         companyId: "company",
         bindingEpoch: 1,
         bundle: {
@@ -31,7 +75,7 @@ it.live(
         }
       });
       assert.isDefined(bound.binding);
-      const result = yield* provider.invoke(input.taskId, {
+      const result = yield* other.invoke(input.taskId, {
         bindingEpoch: 1,
         request: {
           wire: 1,
@@ -47,16 +91,25 @@ it.live(
             company: { id: "company", name: "Company", handle: "company" },
             admin: false
           },
-          callback: { url: "http://127.0.0.1:1/callback", capability: "unused" }
+          callback: { url: otherHost.url, capability: "other-host-capability" }
         }
       });
       assert.strictEqual(result.outcome, "returned");
       if (result.outcome !== "returned") return assert.fail("The handler did not return.");
       assert.deepStrictEqual(result.reply, { ok: true, value: 42 });
-      const stopped = yield* provider.stop(input.taskId);
+      assert.deepStrictEqual(firstHeaders, []);
+      assert.strictEqual(otherHeaders[0]?.authorization, "Bearer other-host-capability");
+      assert.strictEqual(otherHeaders[0]?.["x-patchy-binding-epoch"], "1");
+      assert.strictEqual(
+        otherHeaders[0]?.["x-patchy-process-generation"],
+        String(bound.processGeneration)
+      );
+      const stopped = yield* other.stop(input.taskId);
       assert.strictEqual(stopped.state, "stopped");
       assert.isAtLeast(stopped.stoppedAt!, first.startedAt);
-      const reports = yield* provider.stats(input.taskId, { bindingEpoch: 1 });
+      const restarted = yield* LocalTaskProvider.make(options);
+      assert.deepStrictEqual(yield* restarted.stop(input.taskId), stopped);
+      const reports = yield* restarted.stats(input.taskId, { bindingEpoch: 1 });
       assert.strictEqual(reports.stopped, true);
       assert.strictEqual(reports.reports[0]?.cause, "stopped");
       assert.strictEqual(reports.reports[0]?.callsServed, 1);
@@ -66,6 +119,10 @@ it.live(
         acknowledgeReports: reports.reports.map(({ reportId }) => reportId)
       });
       assert.deepStrictEqual(ack.reports, []);
+      assert.deepStrictEqual(
+        (yield* restarted.stats(input.taskId, { bindingEpoch: 1 })).reports,
+        []
+      );
       assert.strictEqual((yield* provider.start(input)).state, "stopped");
       const refused = yield* provider
         .bind(input.taskId, { companyId: "other-company", bindingEpoch: 2 })
@@ -76,10 +133,45 @@ it.live(
 );
 
 it.live(
+  "keeps exact identity after interrupted start and lost stop acknowledgement on another client",
+  () =>
+    Effect.gen(function* () {
+      const options = yield* LocalTaskProvider.resource({ callbackUrls: [] });
+      const left = yield* LocalTaskProvider.make(options);
+      const right = yield* LocalTaskProvider.make(options);
+      const input = { taskId: "ambiguous-task", deploymentRevision: "deployment" };
+      const starting = yield* left.start(input).pipe(Effect.forkChild);
+      const observed = yield* Effect.gen(function* () {
+        while (true) {
+          const [task] = yield* right.list;
+          if (task !== undefined) return task;
+          yield* Effect.sleep(10);
+        }
+      }).pipe(Effect.timeout("5 seconds"));
+      yield* Fiber.interrupt(starting);
+      const ready = yield* right.start(input);
+      assert.strictEqual(ready.startedAt, observed.startedAt);
+      assert.strictEqual(ready.taskId, observed.taskId);
+      assert.deepStrictEqual(yield* left.list, [ready]);
+      const stopping = yield* left
+        .stop(input.taskId)
+        .pipe(Effect.andThen(Effect.never), Effect.forkChild);
+      const stopped = yield* right.stop(input.taskId);
+      yield* Fiber.interrupt(stopping);
+      assert.strictEqual(stopped.state, "stopped");
+      assert.deepStrictEqual(yield* left.start(input), stopped);
+      assert.deepStrictEqual(yield* right.stop(input.taskId), stopped);
+      assert.deepStrictEqual(yield* left.list, [stopped]);
+    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+  { timeout: 20_000 }
+);
+
+it.live(
   "applies company process limits without letting a delayed older bind restore them",
   () =>
     Effect.gen(function* () {
-      const provider = yield* LocalTaskProvider.make({ callbackUrls: [] });
+      const options = yield* LocalTaskProvider.resource({ callbackUrls: [] });
+      const provider = yield* LocalTaskProvider.make(options);
       const task = yield* provider.start({
         taskId: "limit-task",
         deploymentRevision: "deployment"
@@ -127,7 +219,8 @@ it.live(
   "reaps a task that misses readiness instead of retaining a running fleet slot",
   () =>
     Effect.gen(function* () {
-      const provider = yield* LocalTaskProvider.make({ callbackUrls: [] }).pipe(
+      const options = yield* LocalTaskProvider.resource({ callbackUrls: [] });
+      const provider = yield* LocalTaskProvider.make(options).pipe(
         Effect.provide(
           ConfigProvider.layer(
             ConfigProvider.fromUnknown({ PATCHY_LIMITS_JSON: '{"execution.pool.wait":1}' })

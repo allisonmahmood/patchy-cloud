@@ -1,5 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalDateInEffect:off -- actual child supervisors use wall-clock deadlines; TestClock controls the host's idle and breaker windows.
 import { createHash } from "node:crypto";
+import { readdir } from "node:fs/promises";
+import { join } from "node:path";
 import { assert, it } from "@effect/vitest";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import * as GuestProtocol from "@patchy/api/guest";
@@ -18,6 +20,7 @@ import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as Fleet from "./fleet.js";
 import * as LocalTaskProvider from "./localTaskProvider.js";
+import * as LocalTaskStore from "./localTaskStore.js";
 import * as TaskProvider from "./TaskProvider.js";
 
 const callbackUrl = "http://127.0.0.1:32127/callback";
@@ -33,12 +36,16 @@ const services = OperatingLimits.layer.pipe(
   Layer.merge(WideEvents.layerNoop),
   Layer.merge(FetchHttpClient.layer)
 );
-const setup = Effect.fn("FleetTest.setup")(function* (name: string) {
+const setup = Effect.fn("FleetTest.setup")(function* (name: string, warm = true) {
   yield* TestClock.setTime(Date.now());
   const sql = yield* SqlClient.SqlClient;
+  yield* sql`TRUNCATE execution_deployments, execution_housekeeping, execution_breakers CASCADE`;
+  yield* sql`INSERT INTO execution_rollout(singleton) VALUES (true)`;
   const companyId = `cmp_fleet_${name}`;
   yield* sql`INSERT INTO companies(id, handle, name) VALUES (${companyId}, ${`fleet-${name}`}, 'Fleet test')`;
-  const provider = yield* LocalTaskProvider.make({ callbackUrls: [callbackUrl] });
+  const resource = yield* LocalTaskProvider.resource({ callbackUrls: [callbackUrl] });
+  const provider = yield* LocalTaskProvider.make(resource);
+  const otherProvider = yield* LocalTaskProvider.make(resource);
   const left = yield* Fleet.make({
     replicaId: `${name}-left`,
     deploymentRevision: name,
@@ -48,7 +55,7 @@ const setup = Effect.fn("FleetTest.setup")(function* (name: string) {
     replicaId: `${name}-right`,
     deploymentRevision: name,
     automaticHousekeeping: false
-  }).pipe(Effect.provideService(TaskProvider.TaskProvider, provider));
+  }).pipe(Effect.provideService(TaskProvider.TaskProvider, otherProvider));
   const bundle: GuestProtocol.Bundle = {
     companyId,
     patchId: `pat_${name}`,
@@ -56,7 +63,22 @@ const setup = Effect.fn("FleetTest.setup")(function* (name: string) {
     sha256,
     bundle: source
   };
-  return { sql, companyId, provider, left, right, bundle };
+  if (warm) {
+    yield* left.housekeeping();
+    yield* sql`DELETE FROM execution_housekeeping WHERE owner_id = ${`${name}-left`}`;
+  }
+  return { sql, companyId, provider, otherProvider, resource, left, right, bundle };
+});
+const liveChildren = Effect.fn("FleetTest.liveChildren")(function* (directory: string) {
+  return yield* Effect.promise(async () => {
+    let total = 0;
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const record = await LocalTaskStore.readRecord(join(directory, entry.name));
+      if (record?.child && (await LocalTaskStore.alive(record.child))) total++;
+    }
+    return total;
+  });
 });
 const request = (
   bundle: GuestProtocol.BundleBinding,
@@ -284,7 +306,7 @@ it.layer(services)("host fleet controller", (it) => {
         }).pipe(Effect.provideService(TaskProvider.TaskProvider, delayed));
         const pass = yield* old.housekeeping().pipe(Effect.result, Effect.forkChild);
         yield* Deferred.await(observed);
-        yield* TestClock.adjust(15_000);
+        yield* sql`UPDATE execution_housekeeping SET expires_at = 0`;
         assert.isTrue(yield* right.housekeeping());
         yield* Deferred.succeed(resume, undefined);
         assert.strictEqual((yield* Fiber.join(pass))._tag, "Failure");
@@ -338,7 +360,9 @@ it.layer(services)("host fleet controller", (it) => {
     "allows only the leased replica to replenish, respects budget, and stops unknown provider tasks",
     () =>
       Effect.gen(function* () {
-        const { provider, left, right, sql } = yield* setup("budget");
+        const { provider, resource, companyId, bundle, left, right, sql } = yield* setup("budget");
+        const admission = yield* left.lifecycle.acquire(companyId, bundle.patchId);
+        const loaded = yield* left.executor.bind(bundle, admission.binding);
         assert.isTrue(yield* left.housekeeping());
         assert.isFalse(yield* right.housekeeping());
         assert.strictEqual(
@@ -353,9 +377,21 @@ it.layer(services)("host fleet controller", (it) => {
         );
         const rows = yield* sql`SELECT task_id FROM execution_tasks WHERE state <> 'stopped'`;
         assert.strictEqual(rows.length, 2);
+        assert.strictEqual(yield* liveChildren(resource.directory), 2);
         yield* TestClock.adjust(15_000);
         assert.isTrue(yield* right.housekeeping());
         assert.isFalse(yield* left.housekeeping());
+        assert.strictEqual(
+          (yield* right.ensureBinding(companyId)).taskId,
+          admission.binding.taskId
+        );
+        const reply = yield* right.executor.invoke(
+          request(loaded.binding, loaded.processGeneration!, "after-real-lease-transfer"),
+          admission.binding
+        );
+        assert.strictEqual(reply.outcome, "returned");
+        assert.strictEqual(yield* liveChildren(resource.directory), 2);
+        yield* admission.release;
       }).pipe(
         Effect.scoped,
         Effect.provide(
@@ -396,11 +432,15 @@ it.layer(services)("host fleet controller", (it) => {
         }).pipe(Effect.provideService(TaskProvider.TaskProvider, delayed));
         const opening = yield* original.ensureBinding(companyId).pipe(Effect.forkChild);
         const predecessor = yield* Deferred.await(acknowledged);
-        yield* Fleet.make({
+        const replacement = yield* Fleet.make({
           replicaId: "bind-rollout-new",
           deploymentRevision: "bind-rollout-new",
           automaticHousekeeping: false
         }).pipe(Effect.provideService(TaskProvider.TaskProvider, provider));
+        assert.isTrue(yield* replacement.stageDeployment("bind-rollout-new"));
+        yield* replacement.housekeeping();
+        assert.isTrue(yield* replacement.promoteDeployment("bind-rollout-new"));
+        yield* replacement.housekeeping();
         yield* Deferred.succeed(release, undefined);
         const current = yield* Fiber.join(opening);
         assert.notStrictEqual(current.taskId, predecessor);
@@ -415,7 +455,7 @@ it.layer(services)("host fleet controller", (it) => {
   );
 
   it.effect(
-    "fences superseded admissions before housekeeping while predecessor calls drain and reports the emitting build",
+    "promotes warm spares explicitly and replaces admissions while predecessor calls drain",
     () =>
       Effect.gen(function* () {
         const { companyId, provider, left, bundle } = yield* setup("rollout-old");
@@ -431,7 +471,12 @@ it.layer(services)("host fleet controller", (it) => {
           Effect.provideService(WideEvents.WideEvents, captured.events)
         );
         assert.isFalse(yield* replacement.adopt(admitted.binding, "rollout-old-left"));
-        // No housekeeping pass has fenced the predecessor. Admission must do it.
+        assert.isTrue(yield* replacement.stageDeployment("rollout-new"));
+        assert.isFalse(yield* replacement.promoteDeployment("rollout-new"));
+        yield* replacement.housekeeping();
+        assert.isTrue(yield* replacement.promoteDeployment("rollout-new"));
+        assert.strictEqual((yield* left.ensureBinding(companyId)).taskId, admitted.binding.taskId);
+        yield* replacement.housekeeping();
         const freshAdmission = yield* left.lifecycle.acquire(companyId, bundle.patchId);
         const fresh = freshAdmission.binding;
         assert.notStrictEqual(fresh.taskId, admitted.binding.taskId);
@@ -515,7 +560,7 @@ it.layer(services)("host fleet controller", (it) => {
           Effect.provideService(WideEvents.WideEvents, captured.events)
         );
         yield* TestClock.adjust(15_000);
-        assert.strictEqual((yield* collector.housekeeping().pipe(Effect.result))._tag, "Failure");
+        assert.isTrue(yield* collector.housekeeping());
         yield* collector.housekeeping();
         let delivered = yield* captured.take;
         while (delivered.type !== "process" || delivered.taskId !== admitted.binding.taskId)
@@ -552,7 +597,7 @@ it.layer(services)("host fleet controller", (it) => {
     "pauses across versions and hosts after three real watchdog kills, clears on publish, and expires after ten minutes",
     () =>
       Effect.gen(function* () {
-        const { companyId, left, right, bundle, sql } = yield* setup("breaker");
+        const { companyId, provider, left, right, bundle, sql } = yield* setup("breaker");
         const seed = (yield* sql`SELECT u.id AS user_id, m.id AS token_id FROM users u
         JOIN machine_tokens m ON m.user_id = u.id LIMIT 1`)[0]!;
         yield* sql`INSERT INTO patches(id, company_id, owner_user_id, title, name)
@@ -572,7 +617,7 @@ it.layer(services)("host fleet controller", (it) => {
             const admission = yield* host.lifecycle.acquire(companyId, bundle.patchId);
             const version = { ...bundle, versionId: `breaker-${round}-${index}` };
             const loaded = yield* host.executor.bind(version, admission.binding);
-            yield* host.executor
+            const failure = yield* host.executor
               .invoke(
                 request(
                   loaded.binding,
@@ -582,7 +627,28 @@ it.layer(services)("host fleet controller", (it) => {
                 ),
                 admission.binding
               )
-              .pipe(Effect.result);
+              .pipe(Effect.flip);
+            assert.strictEqual(failure.reason, "process_killed");
+            // Invocation failure is fail-fast; final metering follows the actual child reap.
+            yield* TestClock.testClockWith((clock) =>
+              clock.withLive(
+                Effect.gen(function* () {
+                  while (true) {
+                    const stats = yield* provider.stats(admission.binding.taskId, {
+                      bindingEpoch: admission.binding.bindingEpoch
+                    });
+                    const report = stats.reports.find(
+                      (report) => report.processGeneration === loaded.processGeneration
+                    );
+                    if (report) {
+                      assert.oneOf(report.cause, ["deadline", "stall", "memory"]);
+                      return;
+                    }
+                    yield* Effect.sleep(10);
+                  }
+                }).pipe(Effect.timeout("5 seconds"))
+              )
+            );
             yield* admission.release;
             yield* left.housekeeping();
           }
@@ -623,6 +689,322 @@ it.layer(services)("host fleet controller", (it) => {
         const metering =
           yield* sql`SELECT count(*)::integer AS kills FROM execution_breaker_kills WHERE company_id = ${companyId}`;
         assert.strictEqual(metering[0]!.kills, 6);
+      }).pipe(Effect.scoped),
+    60_000
+  );
+
+  it.effect(
+    "renews the lease during concurrent cold starts longer than the lease and serves within the pool deadline",
+    () =>
+      Effect.gen(function* () {
+        const { provider, resource, companyId, right, sql } = yield* setup("slow-cold", false);
+        const starting = yield* Deferred.make<void>();
+        const ids = new Set<string>();
+        const slow = TaskProvider.TaskProvider.of({
+          ...provider,
+          start: Effect.fn("slowColdStart")(function* (input) {
+            ids.add(input.taskId);
+            if (ids.size === 2) yield* Deferred.succeed(starting, undefined);
+            yield* Effect.sleep(25_000);
+            return yield* provider.start(input);
+          })
+        });
+        const owner = yield* Fleet.make({
+          replicaId: "slow-cold-owner",
+          deploymentRevision: "slow-cold",
+          automaticHousekeeping: false
+        }).pipe(Effect.provideService(TaskProvider.TaskProvider, slow));
+        let settled = false;
+        const opening = yield* owner.ensureBinding(companyId).pipe(
+          Effect.tap(() =>
+            Effect.sync(() => {
+              settled = true;
+            })
+          ),
+          Effect.forkChild
+        );
+        yield* Deferred.await(starting);
+        yield* TestClock.adjust(20_000);
+        assert.isFalse(settled);
+        assert.isFalse(yield* right.housekeeping());
+        const lease = (yield* sql`SELECT owner_id, lease_epoch FROM execution_housekeeping`)[0]!;
+        assert.strictEqual(lease.owner_id, "slow-cold-owner");
+        assert.strictEqual(lease.lease_epoch, 1);
+        yield* TestClock.adjust(5_000);
+        const binding = yield* Fiber.join(opening);
+        assert.isAtLeast(binding.spareWaitMs, 25_000);
+        assert.isBelow(binding.spareWaitMs, 40_000);
+        assert.strictEqual((yield* right.ensureBinding(companyId)).taskId, binding.taskId);
+        const tasks = yield* provider.list;
+        assert.strictEqual(tasks.filter((task) => task.state === "running").length, 2);
+        assert.strictEqual(ids.size, 2);
+        assert.strictEqual(yield* liveChildren(resource.directory), 2);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromUnknown({
+              PATCHY_LIMITS_JSON: '{"execution.fleet.budget":2}'
+            })
+          )
+        )
+      ),
+    30_000
+  );
+
+  it.effect(
+    "isolates wedged stats and failed binds, stops and starts while healthy companies claim replenished spares",
+    () =>
+      Effect.gen(function* () {
+        const { provider, companyId, left, sql } = yield* setup("isolated");
+        const secondCompany = "cmp_fleet_isolated_second";
+        const thirdCompany = "cmp_fleet_isolated_third";
+        for (const company of [secondCompany, thirdCompany])
+          yield* sql`INSERT INTO companies(id, handle, name) VALUES (${company}, ${company}, 'Fleet isolation')`;
+        const wedged = yield* left.ensureBinding(companyId);
+        const failing = yield* left.ensureBinding(secondCompany);
+        yield* sql`UPDATE execution_bindings SET state = 'claiming' WHERE task_id = ${failing.taskId}`;
+        yield* provider.start({ taskId: "isolated-stubborn", deploymentRevision: "isolated" });
+        const observed = yield* Deferred.make<void>();
+        const replenished = yield* Deferred.make<void>();
+        let launches = 0;
+        const unhealthy = TaskProvider.TaskProvider.of({
+          ...provider,
+          stats: (taskId, input) =>
+            taskId === wedged.taskId
+              ? Deferred.succeed(observed, undefined).pipe(Effect.andThen(Effect.never))
+              : provider.stats(taskId, input),
+          bind: (taskId, input) =>
+            taskId === failing.taskId
+              ? Effect.fail(
+                  new TaskProvider.TaskProviderError({
+                    operation: "bind",
+                    taskId,
+                    reason: "transport"
+                  })
+                )
+              : provider.bind(taskId, input),
+          stop: (taskId) =>
+            taskId === "isolated-stubborn"
+              ? Effect.fail(
+                  new TaskProvider.TaskProviderError({
+                    operation: "stop",
+                    taskId,
+                    reason: "transport"
+                  })
+                )
+              : provider.stop(taskId),
+          start: Effect.fn("failOneLaunch")(function* (input) {
+            const number = ++launches;
+            if (number === 1)
+              return yield* new TaskProvider.TaskProviderError({
+                operation: "start",
+                taskId: input.taskId,
+                reason: "provider"
+              });
+            const task = yield* provider.start(input);
+            if (number >= 3) yield* Deferred.succeed(replenished, undefined);
+            return task;
+          })
+        });
+        const owner = yield* Fleet.make({
+          replicaId: "isolated-owner",
+          deploymentRevision: "isolated",
+          automaticHousekeeping: false
+        }).pipe(Effect.provideService(TaskProvider.TaskProvider, unhealthy));
+        let completed = false;
+        const pass = yield* owner.housekeeping().pipe(
+          Effect.tap(() =>
+            Effect.sync(() => {
+              completed = true;
+            })
+          ),
+          Effect.forkChild
+        );
+        yield* Deferred.await(observed);
+        const healthy = yield* owner.ensureBinding(thirdCompany);
+        assert.notStrictEqual(healthy.taskId, wedged.taskId);
+        assert.notStrictEqual(healthy.taskId, failing.taskId);
+        assert.strictEqual(healthy.state, "active");
+        assert.isFalse(completed);
+        yield* TestClock.adjust(5_000);
+        yield* Deferred.await(replenished);
+        yield* TestClock.testClockWith((clock) =>
+          clock.withLive(
+            Effect.gen(function* () {
+              while (true) {
+                const rows = yield* sql`SELECT task_id FROM execution_tasks WHERE state = 'spare'`;
+                if (rows.length > 0) return;
+                yield* Effect.sleep(10);
+              }
+            }).pipe(Effect.timeout("5 seconds"))
+          )
+        );
+        yield* TestClock.adjust(35_000);
+        assert.isTrue(yield* Fiber.join(pass));
+        const rows =
+          yield* sql`SELECT state FROM execution_bindings WHERE task_id = ${failing.taskId}`;
+        assert.strictEqual(rows[0]!.state, "claiming");
+        const spares =
+          yield* sql`SELECT count(*)::integer AS total FROM execution_tasks WHERE state = 'spare'`;
+        assert.isAtLeast(spares[0]!.total, 1);
+        assert.strictEqual((yield* owner.ensureBinding(thirdCompany)).taskId, healthy.taskId);
+        assert.strictEqual(
+          (yield* provider.list).find((task) => task.taskId === "isolated-stubborn")!.state,
+          "running"
+        );
+      }).pipe(Effect.scoped),
+    30_000
+  );
+
+  it.effect(
+    "keeps a waiter until its full pool deadline despite failed provider work",
+    () =>
+      Effect.gen(function* () {
+        const { provider, companyId, left } = yield* setup("wait-failures", false);
+        yield* left.setLimitOverride({
+          companyId,
+          limitId: "execution.pool.wait",
+          value: 4_000,
+          actor: "fleet-test"
+        });
+        const attempted = yield* Deferred.make<void>();
+        const unavailable = TaskProvider.TaskProvider.of({
+          ...provider,
+          start: Effect.fn("failStartAcknowledgement")(function* (input) {
+            yield* provider.start(input);
+            yield* Deferred.succeed(attempted, undefined);
+            return yield* new TaskProvider.TaskProviderError({
+              operation: "start",
+              taskId: input.taskId,
+              reason: "transport"
+            });
+          })
+        });
+        const host = yield* Fleet.make({
+          replicaId: "wait-failures-owner",
+          deploymentRevision: "wait-failures",
+          automaticHousekeeping: false
+        }).pipe(Effect.provideService(TaskProvider.TaskProvider, unavailable));
+        let settled = false;
+        const opening = yield* host.ensureBinding(companyId).pipe(
+          Effect.result,
+          Effect.tap(() =>
+            Effect.sync(() => {
+              settled = true;
+            })
+          ),
+          Effect.forkChild
+        );
+        yield* Deferred.await(attempted);
+        yield* TestClock.adjust(3_999);
+        assert.isFalse(settled);
+        yield* TestClock.adjust(1);
+        const result = yield* Fiber.join(opening);
+        assert.strictEqual(result._tag, "Failure");
+        if (result._tag === "Failure") {
+          assert.strictEqual(result.failure.code, "busy");
+          assert.strictEqual(result.failure.limitId, "execution.pool.wait");
+          assert.strictEqual(result.failure.value, 4_000);
+        }
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromUnknown({
+              PATCHY_LIMITS_JSON: '{"execution.pool.wait":4000}'
+            })
+          )
+        )
+      ),
+    30_000
+  );
+
+  it.effect(
+    "leaves registration inert, promotes warm deployments incrementally, and rolls back an earlier revision",
+    () =>
+      Effect.gen(function* () {
+        const { provider, companyId, left, sql } = yield* setup("staged-old");
+        const companies = [companyId, "cmp_fleet_staged_second", "cmp_fleet_staged_third"];
+        for (const company of companies.slice(1))
+          yield* sql`INSERT INTO companies(id, handle, name) VALUES (${company}, ${company}, 'Staged rollout')`;
+        const original = [];
+        for (const company of companies) {
+          original.push(yield* left.ensureBinding(company));
+          yield* left.housekeeping();
+        }
+        const candidate = yield* Fleet.make({
+          replicaId: "staged-candidate",
+          deploymentRevision: "staged-new",
+          automaticHousekeeping: false
+        }).pipe(Effect.provideService(TaskProvider.TaskProvider, provider));
+        for (let restart = 0; restart < 3; restart++)
+          yield* Fleet.make({
+            replicaId: `staged-crash-loop-${restart}`,
+            deploymentRevision: "unready-crash-loop",
+            automaticHousekeeping: false
+          }).pipe(Effect.provideService(TaskProvider.TaskProvider, provider));
+        yield* left.housekeeping();
+        for (let index = 0; index < companies.length; index++)
+          assert.strictEqual(
+            (yield* candidate.ensureBinding(companies[index]!)).taskId,
+            original[index]!.taskId
+          );
+        assert.isFalse(yield* candidate.promoteDeployment("staged-new"));
+        assert.isTrue(yield* candidate.stageDeployment("staged-new"));
+        assert.isFalse(yield* candidate.promoteDeployment("staged-new"));
+        yield* left.housekeeping();
+        assert.isTrue(yield* candidate.promoteDeployment("staged-new"));
+        // Promotion changes spare admission, not every company's existing binding at once.
+        for (let index = 0; index < companies.length; index++)
+          assert.strictEqual(
+            (yield* candidate.ensureBinding(companies[index]!)).taskId,
+            original[index]!.taskId
+          );
+        yield* left.housekeeping();
+        const changed = yield* sql`SELECT b.company_id FROM execution_bindings b
+        JOIN execution_tasks t ON t.task_id = b.task_id
+        WHERE b.state = 'active' AND t.deployment_revision = 'staged-new'`;
+        assert.strictEqual(changed.length, 1);
+        for (let restart = 0; restart < 2; restart++)
+          yield* Fleet.make({
+            replicaId: `staged-old-restart-${restart}`,
+            deploymentRevision: "staged-old",
+            automaticHousekeeping: false
+          }).pipe(Effect.provideService(TaskProvider.TaskProvider, provider));
+        assert.strictEqual(
+          (yield* sql`SELECT current_revision FROM execution_rollout`)[0]!.current_revision,
+          "staged-new"
+        );
+        for (let pass = 0; pass < companies.length; pass++) yield* left.housekeeping();
+        yield* left.retireDeployment("staged-old");
+        assert.isTrue(
+          (yield* sql`SELECT retired FROM execution_deployments WHERE revision = 'staged-old'`)[0]!
+            .retired
+        );
+        assert.isTrue(yield* left.stageDeployment("staged-old"));
+        assert.isFalse(
+          (yield* sql`SELECT retired FROM execution_deployments WHERE revision = 'staged-old'`)[0]!
+            .retired
+        );
+        yield* left.housekeeping();
+        assert.isTrue(yield* left.promoteDeployment("staged-old"));
+        for (let pass = 0; pass < companies.length; pass++) yield* left.housekeeping();
+        for (const company of companies) {
+          const binding = yield* candidate.ensureBinding(company);
+          assert.strictEqual(
+            (yield* provider.list).find((task) => task.taskId === binding.taskId)!
+              .deploymentRevision,
+            "staged-old"
+          );
+        }
+        assert.strictEqual(
+          (yield* sql`SELECT current_revision FROM execution_rollout`)[0]!.current_revision,
+          "staged-old"
+        );
+        assert.isFalse(
+          (yield* provider.list).some((task) => task.deploymentRevision === "unready-crash-loop")
+        );
       }).pipe(Effect.scoped),
     60_000
   );

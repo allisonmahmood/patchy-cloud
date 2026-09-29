@@ -26,6 +26,7 @@ import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import type * as HttpClient from "effect/unstable/http/HttpClient";
@@ -78,11 +79,19 @@ export const make: (
   const deploymentRevision = yield* Config.String("PATCHY_DEPLOYMENT_REVISION").pipe(
     Config.withDefault("development")
   );
+  const directory = yield* Config.String("EXECUTION_LOCAL_DIRECTORY");
+  const callbackUrls = yield* Config.schema(
+    Schema.fromJsonString(Schema.Array(Schema.String)),
+    "EXECUTION_CALLBACK_URLS"
+  );
+  const callbackPort = yield* Config.Int("EXECUTION_CALLBACK_PORT");
   const gateway = yield* CallbackGateway.make(handlers);
-  const listener = yield* CallbackGatewayApi.listen().pipe(
+  const listener = yield* CallbackGatewayApi.listen({ port: callbackPort }).pipe(
     Effect.provideService(CallbackGateway.CallbackGateway, gateway)
   );
-  const provider = yield* LocalTaskProvider.make({ callbackUrls: [listener.url] });
+  if (!callbackUrls.includes(listener.url))
+    return yield* new Executor.ExecutionError({ operation: "bind", reason: "protocol" });
+  const provider = yield* LocalTaskProvider.make({ directory, callbackUrls });
   const fleet = yield* Fleet.make({
     replicaId,
     deploymentRevision,

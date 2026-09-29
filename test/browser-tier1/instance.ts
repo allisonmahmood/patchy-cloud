@@ -11,6 +11,10 @@ import { StringDecoder } from "node:string_decoder";
 import { build } from "esbuild";
 import { Client } from "pg";
 import type EmbeddedPostgres from "embedded-postgres";
+import * as ConfigProvider from "effect/ConfigProvider";
+import * as Effect from "effect/Effect";
+import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as LocalTaskProvider from "../../packages/execution/src/localTaskProvider.js";
 import type { BrowserContext } from "@playwright/test";
 import type { Manifest } from "../../packages/api/src/index.js";
 import { clerkEnv, signedInCookies, signSession } from "../../packages/auth/src/testing.js";
@@ -131,6 +135,9 @@ export async function startInstance(
   let foreign: Server | undefined;
   const connections = new Set<Client>();
   let closed = false;
+  const fleetDirectory = path.join(directory, "execution-fleet");
+  let fleetStarted = false;
+  let callbackPorts: number[] | undefined;
   const close = async () => {
     if (closed) return;
     closed = true;
@@ -142,6 +149,13 @@ export async function startInstance(
     }
     if (foreign) await stopServer(foreign);
     for (const server of children) await stopChild(server);
+    if (fleetStarted)
+      await Effect.runPromise(
+        LocalTaskProvider.cleanup(fleetDirectory).pipe(
+          Effect.provide(FetchHttpClient.layer),
+          Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ NODE_ENV: "test" })))
+        )
+      );
     if (platform) await platform.end();
     if (postgres) await postgres.stop();
     await rm(directory, { recursive: true, force: true });
@@ -383,7 +397,17 @@ export async function startInstance(
     const origin = `${options.tls ? "https" : "http"}://127.0.0.1:${await listen(proxy)}`;
     const backendOrigin = `http://127.0.0.1:${port}`;
     await stopServer(serverReservation);
-    const launch = async (serverPort: number) => {
+    const launch = async (serverPort: number, replica = false) => {
+      const fleet = environment.EXECUTION_PROVIDER === "local-fleet";
+      if (fleet && callbackPorts === undefined) {
+        const reservations = [createServer(), createServer()];
+        try {
+          callbackPorts = await Promise.all(reservations.map(listen));
+        } finally {
+          await Promise.all(reservations.map(stopServer));
+        }
+      }
+      if (fleet) fleetStarted = true;
       let log = "";
       const server = spawn(process.execPath, [path.join(root, "apps/server/dist/start.js")], {
         cwd: root,
@@ -400,7 +424,16 @@ export async function startInstance(
           PATCHY_CREDENTIAL_KEYS: `test:${Buffer.alloc(32, 1).toString("base64")}`,
           PATCHY_STORAGE_DIR: path.join(directory, "storage"),
           PATCHY_PUBLIC_BASE_URL: origin,
-          ...environment
+          ...environment,
+          ...(fleet
+            ? {
+                EXECUTION_LOCAL_DIRECTORY: fleetDirectory,
+                EXECUTION_CALLBACK_PORT: String(callbackPorts![replica ? 1 : 0]),
+                EXECUTION_CALLBACK_URLS: JSON.stringify(
+                  callbackPorts!.map((port) => `http://127.0.0.1:${port}/callback`)
+                )
+              }
+            : {})
         },
         stdio: ["ignore", "pipe", "pipe"]
       });
@@ -491,7 +524,7 @@ export async function startInstance(
         const reservation = createServer();
         const replicaPort = await listen(reservation);
         await stopServer(reservation);
-        const replica = await launch(replicaPort);
+        const replica = await launch(replicaPort, true);
         return {
           origin: `http://127.0.0.1:${replicaPort}`,
           async stop(signal) {

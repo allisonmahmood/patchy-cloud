@@ -31,11 +31,15 @@ forward callbacks and a fresh bind recovers without replay. Local execution
 proves engine compatibility, not Fargate containment.
 
 For fleet-controller changes, use DEVELOPMENT's **Exercising the fleet offline**
-recipe on a disposable instance with `EXECUTION_PROVIDER=local-fleet`. Cover
-concurrent claims, stopping/adoption and release/open races, provider-stop metering
-and the database breaker. Exercise first-open and resumed starting in the browser,
-including held calls across a stream drop and refusal without replay on failure.
-Keep the ordinary no-pool patch-repo dev loop unchanged.
+recipe on a disposable instance with `EXECUTION_PROVIDER=local-fleet`, its shared
+task directory and stable callback addresses. Use independently constructed hosts
+to verify routing, lease transfer and budget accounting. Cover stopping/adoption,
+release/open races, slow starts, session loss, staged promotion and rollback.
+Verify provider-stop metering and the database breaker. Exercise first-open and
+resumed starting in the browser, including held calls across a stream drop and
+refusal without replay on failure. Stop the disposable task resource explicitly;
+host shutdown leaves shared tasks running. Keep the ordinary no-pool patch-repo
+dev loop unchanged.
 
 For tier 2 handler changes, follow DEVELOPMENT's **The execution engine**
 guidance and exercise an eligible `server.call` through the existing `pnpm dev`

@@ -47,22 +47,23 @@ class Target extends Schema.Class<Target>("Fleet.Target")({
   coldStart: Schema.Number,
   spares: Schema.Number
 }) {}
-class Deployment extends Schema.Class<Deployment>("Fleet.Deployment")({
-  revision: Schema.String
+class Rollout extends Schema.Class<Rollout>("Fleet.Rollout")({
+  currentRevision: Schema.NullOr(Schema.String),
+  stagedRevision: Schema.NullOr(Schema.String)
 }) {}
 class Pause extends Schema.Class<Pause>("Fleet.Pause")({ pausedUntil: Schema.Number }) {}
 class Flag extends Schema.Class<Flag>("Fleet.Flag")({ acquired: Schema.Boolean }) {}
-class CurrentTask extends Schema.Class<CurrentTask>("Fleet.CurrentTask")({
-  current: Schema.Boolean
+class AdmissibleTask extends Schema.Class<AdmissibleTask>("Fleet.AdmissibleTask")({
+  admissible: Schema.Boolean
 }) {}
 const decodeBindings = Schema.decodeUnknownEffect(Schema.Array(Binding));
 const decodeTasks = Schema.decodeUnknownEffect(Schema.Array(Task));
 const decodeLeases = Schema.decodeUnknownEffect(Schema.Array(Lease));
 const decodeTargets = Schema.decodeUnknownEffect(Schema.Array(Target));
-const decodeDeployments = Schema.decodeUnknownEffect(Schema.Array(Deployment));
+const decodeRollouts = Schema.decodeUnknownEffect(Schema.Array(Rollout));
 const decodePauses = Schema.decodeUnknownEffect(Schema.Array(Pause));
 const decodeFlags = Schema.decodeUnknownEffect(Schema.Array(Flag));
-const decodeCurrentTasks = Schema.decodeUnknownEffect(Schema.Array(CurrentTask));
+const decodeAdmissibleTasks = Schema.decodeUnknownEffect(Schema.Array(AdmissibleTask));
 const reportJson = Schema.encodeSync(Schema.fromJsonString(Management.ProcessReport));
 
 export const companyLock = (companyId: string) => `execution/company/${companyId}`;
@@ -99,14 +100,13 @@ export const make = Effect.gen(function* () {
     Result: Binding,
     execute: (task) => sql`SELECT ${bindingColumns} FROM execution_bindings WHERE task_id = ${task}`
   });
-  const isCurrentTask = (taskId: string) =>
+  const isAdmissibleTask = (taskId: string) =>
     sql`SELECT EXISTS (
-    SELECT 1 FROM execution_tasks WHERE task_id = ${taskId} AND deployment_revision = (
-      SELECT revision FROM execution_deployments WHERE NOT retired ORDER BY ordinal DESC LIMIT 1
-    )
-  ) AS current`.pipe(
-      Effect.flatMap(decodeCurrentTasks),
-      Effect.map((rows) => rows[0]!.current)
+    SELECT 1 FROM execution_tasks t JOIN execution_deployments d ON d.revision = t.deployment_revision
+    WHERE t.task_id = ${taskId} AND t.state = 'bound' AND NOT d.retired
+  ) AS admissible`.pipe(
+      Effect.flatMap(decodeAdmissibleTasks),
+      Effect.map((rows) => rows[0]!.admissible)
     );
   const history = SqlSchema.findAll({
     Request: Schema.String,
@@ -130,7 +130,7 @@ export const make = Effect.gen(function* () {
     if (existing[0]) return existing[0];
     const spare = yield* sql`UPDATE execution_tasks SET state = 'bound' WHERE task_id = (
       SELECT task_id FROM execution_tasks WHERE state = 'spare' AND deployment_revision = (
-        SELECT revision FROM execution_deployments WHERE NOT retired ORDER BY ordinal DESC LIMIT 1
+        SELECT current_revision FROM execution_rollout WHERE singleton
       ) ORDER BY requested_at FOR UPDATE SKIP LOCKED LIMIT 1
     ) RETURNING ${taskColumns}`.pipe(Effect.flatMap(decodeTasks));
     if (!spare[0]) return undefined;
@@ -155,6 +155,36 @@ export const make = Effect.gen(function* () {
   ), task_fence AS (
     UPDATE execution_tasks SET state = 'stopping' WHERE task_id IN (SELECT task_id FROM fenced)
   ) SELECT ${bindingColumns} FROM fenced`.pipe(Effect.flatMap(decodeBindings));
+  const replaceDeploymentBinding = Effect.fn("FleetStore.replaceDeploymentBinding")(function* (
+    owner: string,
+    now: number
+  ) {
+    const deployment = yield* sql`SELECT current_revision FROM execution_rollout
+      WHERE singleton FOR SHARE`;
+    const revision = deployment[0]?.current_revision;
+    if (typeof revision !== "string") return undefined;
+    // One unfinished replacement at a time keeps draining calls within the fleet budget.
+    const pending = yield* sql`SELECT binding_id FROM execution_bindings
+      WHERE state = 'stopping' AND release_cause = 'deployment' LIMIT 1`;
+    if (pending.length > 0) return undefined;
+    const candidates = yield* sql`SELECT b.company_id FROM execution_bindings b
+      JOIN execution_tasks t ON t.task_id = b.task_id
+      WHERE b.state IN ('active', 'claiming') AND t.deployment_revision <> ${revision}
+      ORDER BY b.binding_id LIMIT 1`;
+    const company = candidates[0]?.company_id;
+    if (typeof company !== "string") return undefined;
+    yield* sql`SELECT pg_advisory_xact_lock(hashtextextended(${`execution/claim/${company}`}, 0))`;
+    const previous = (yield* findCompany(company))[0];
+    if (!previous) return undefined;
+    const spare = yield* sql`SELECT task_id FROM execution_tasks
+      WHERE state = 'spare' AND deployment_revision = ${revision}
+      ORDER BY requested_at FOR UPDATE SKIP LOCKED LIMIT 1`;
+    if (spare.length === 0) return undefined;
+    const fenced = yield* fence(previous, "deployment");
+    if (!fenced[0]) return undefined;
+    const replacement = yield* claim(company, owner, now, 0);
+    return replacement ? { previous: fenced[0], replacement } : undefined;
+  }, sql.withTransaction);
   const adopt = Effect.fn("FleetStore.adopt")(function* (
     binding: Binding,
     owner: string,
@@ -165,10 +195,8 @@ export const make = Effect.gen(function* () {
       binding_epoch = nextval('execution_binding_epochs'), state = 'claiming'
       WHERE binding_id = ${binding.bindingId} AND binding_epoch = ${binding.bindingEpoch}
         AND owner_id = ${binding.ownerId} AND state = 'active' AND protected_until <= ${now}
-        AND EXISTS (SELECT 1 FROM execution_tasks t WHERE t.task_id = execution_bindings.task_id
-          AND t.deployment_revision = (
-            SELECT revision FROM execution_deployments WHERE NOT retired ORDER BY ordinal DESC LIMIT 1
-          ))
+        AND EXISTS (SELECT 1 FROM execution_tasks t JOIN execution_deployments d ON d.revision = t.deployment_revision
+          WHERE t.task_id = execution_bindings.task_id AND t.state = 'bound' AND NOT d.retired)
       RETURNING ${bindingColumns}`.pipe(Effect.flatMap(decodeBindings));
   }, sql.withTransaction);
   const touch = (company: string, now: number) => sql`UPDATE execution_bindings
@@ -177,10 +205,9 @@ export const make = Effect.gen(function* () {
     sql`UPDATE execution_bindings
     SET protected_until = GREATEST(protected_until, ${until}), last_activity_at = ${now}, idle_since = NULL
     WHERE binding_epoch = ${binding.bindingEpoch} AND state = 'active'
-      AND EXISTS (SELECT 1 FROM execution_tasks t WHERE t.task_id = execution_bindings.task_id
-        AND t.deployment_revision = (
-          SELECT revision FROM execution_deployments WHERE NOT retired ORDER BY ordinal DESC LIMIT 1
-        )) RETURNING ${bindingColumns}`.pipe(Effect.flatMap(decodeBindings));
+      AND EXISTS (SELECT 1 FROM execution_tasks t JOIN execution_deployments d ON d.revision = t.deployment_revision
+        WHERE t.task_id = execution_bindings.task_id AND t.state = 'bound' AND NOT d.retired)
+      RETURNING ${bindingColumns}`.pipe(Effect.flatMap(decodeBindings));
   const exclusive = (key: string) =>
     sql`SELECT pg_try_advisory_xact_lock(hashtextextended(${key}, 0)) AS acquired`.pipe(
       Effect.flatMap(decodeFlags),
@@ -194,8 +221,11 @@ export const make = Effect.gen(function* () {
     if (
       !(yield* exclusive(companyLock(binding.companyId))) ||
       !(yield* exclusive(bindingLock(binding.bindingId)))
-    )
+    ) {
+      yield* sql`UPDATE execution_bindings SET idle_since = NULL
+        WHERE binding_epoch = ${binding.bindingEpoch} AND state = 'active'`;
       return [];
+    }
     const rows = yield* sql`SELECT ${bindingColumns} FROM execution_bindings
       WHERE binding_epoch = ${binding.bindingEpoch} AND owner_id = ${binding.ownerId}
         AND state = 'active' FOR UPDATE`.pipe(Effect.flatMap(decodeBindings));
@@ -249,15 +279,49 @@ export const make = Effect.gen(function* () {
       Effect.flatMap(decodeLeases),
       Effect.map((rows) => rows.length === 1)
     );
-  const registerDeployment = (revision: string) => sql`INSERT INTO execution_deployments(revision)
-    VALUES (${revision}) ON CONFLICT DO NOTHING`;
-  const currentDeployment =
-    sql`SELECT revision FROM execution_deployments WHERE NOT retired ORDER BY ordinal DESC LIMIT 1`.pipe(
-      Effect.flatMap(decodeDeployments),
-      Effect.map((rows) => rows[0]?.revision)
+  const registerDeployment = Effect.fn("FleetStore.registerDeployment")(function* (
+    revision: string
+  ) {
+    yield* sql`INSERT INTO execution_deployments(revision) VALUES (${revision}) ON CONFLICT DO NOTHING`;
+    yield* sql`UPDATE execution_rollout SET staged_revision = ${revision}
+      WHERE singleton AND current_revision IS NULL AND staged_revision IS NULL
+        AND EXISTS (SELECT 1 FROM execution_deployments WHERE revision = ${revision} AND NOT retired)`;
+  }, sql.withTransaction);
+  const rollout =
+    sql`SELECT current_revision AS "currentRevision", staged_revision AS "stagedRevision"
+    FROM execution_rollout WHERE singleton`.pipe(
+      Effect.flatMap(decodeRollouts),
+      Effect.map((rows) => rows[0]!)
     );
-  const retireDeployment = (revision: string) =>
-    sql`UPDATE execution_deployments SET retired = true WHERE revision = ${revision}`;
+  const stageDeployment = Effect.fn("FleetStore.stageDeployment")(function* (revision: string) {
+    yield* sql`SELECT singleton FROM execution_rollout WHERE singleton FOR UPDATE`;
+    const registered = yield* sql`UPDATE execution_deployments SET retired = false
+      WHERE revision = ${revision} RETURNING revision`;
+    if (registered.length === 0) return false;
+    yield* sql`UPDATE execution_rollout SET staged_revision = ${revision} WHERE singleton`;
+    return true;
+  }, sql.withTransaction);
+  const promoteDeployment = Effect.fn("FleetStore.promoteDeployment")(function* (
+    revision: string,
+    minimumSpares: number,
+    bootstrapOnly = false
+  ) {
+    yield* sql`SELECT singleton FROM execution_rollout WHERE singleton FOR UPDATE`;
+    return yield* sql`UPDATE execution_rollout SET current_revision = ${revision}, staged_revision = NULL
+      WHERE singleton AND staged_revision = ${revision}
+        AND (${!bootstrapOnly} OR current_revision IS NULL)
+        AND EXISTS (SELECT 1 FROM execution_deployments WHERE revision = ${revision} AND NOT retired)
+        AND (SELECT count(*) FROM execution_tasks
+          WHERE deployment_revision = ${revision} AND state = 'spare') >= ${minimumSpares}
+      RETURNING singleton`.pipe(Effect.map((rows) => rows.length === 1));
+  }, sql.withTransaction);
+  const retireDeployment = Effect.fn("FleetStore.retireDeployment")(function* (revision: string) {
+    yield* sql`UPDATE execution_rollout SET
+      current_revision = CASE WHEN current_revision = ${revision} THEN NULL ELSE current_revision END,
+      staged_revision = CASE WHEN staged_revision = ${revision} THEN NULL ELSE staged_revision END
+      WHERE singleton`;
+    yield* sql`UPDATE execution_deployments SET retired = true WHERE revision = ${revision}`;
+  }, sql.withTransaction);
   const reserve = Effect.fn("FleetStore.reserve")(function* (
     taskId: string,
     revision: string,
@@ -276,6 +340,8 @@ export const make = Effect.gen(function* () {
       SELECT ${taskId}, ${revision}, 'starting', ${now}
       WHERE (SELECT count(*) FROM execution_tasks WHERE state <> 'stopped') < ${budget}
         AND EXISTS (SELECT 1 FROM execution_deployments WHERE revision = ${revision} AND NOT retired)
+        AND EXISTS (SELECT 1 FROM execution_rollout WHERE singleton
+          AND (current_revision = ${revision} OR staged_revision = ${revision}))
       RETURNING ${taskColumns}`.pipe(Effect.flatMap(decodeTasks));
     return rows.length === 1;
   }, sql.withTransaction);
@@ -372,11 +438,12 @@ export const make = Effect.gen(function* () {
     tasks,
     findCompany,
     findTask,
-    isCurrentTask,
+    isAdmissibleTask,
     history,
     claim,
     activate,
     fence,
+    replaceDeploymentBinding,
     adopt,
     touch,
     protect,
@@ -386,7 +453,9 @@ export const make = Effect.gen(function* () {
     lease,
     renewLease,
     registerDeployment,
-    currentDeployment,
+    rollout,
+    stageDeployment,
+    promoteDeployment,
     retireDeployment,
     reserve,
     ready,

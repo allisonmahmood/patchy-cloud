@@ -155,10 +155,28 @@ or `development`. The default dev executor remains no-pool; production refuses
 the local task provider. Do not use a daily-driver instance for fleet checks.
 
 This path runs the same controller that will receive the ECS provider, over the
-platform database, with one separate Node supervisor process per local task.
-Children receive only management identity, a generated deployment secret and
-trusted callback URLs, not the host's database, storage or login environment.
-Closing the provider scope stops its tasks and workerd children.
+platform database. Local hosts on one Linux machine share a durable task directory;
+`flock` serializes launches, and detached task owners retain readiness, final process
+reports and observed stop times independently of the host that launched them.
+Each task still has a separate supervisor process. Children receive only local
+management identity, a generated deployment secret and trusted callback URLs, not
+the host's database, storage or login environment.
+
+Set these for every local-fleet host:
+
+- `EXECUTION_LOCAL_DIRECTORY`: the same private directory for hosts sharing one
+  platform database. Use a different directory for a different database.
+- `EXECUTION_CALLBACK_URLS`: a JSON array containing every host's trusted private
+  callback URL, such as `["http://127.0.0.1:41001/callback","http://127.0.0.1:41002/callback"]`.
+- `EXECUTION_CALLBACK_PORT`: that host's stable callback port, such as `41001`.
+  Its URL must appear in the common allowlist. Keep the port stable across restarts.
+
+Closing a host or provider scope does not stop shared tasks. Controller release
+and drain operations stop them. Disposable tests own a
+`LocalTaskProvider.resource({ callbackUrls })` scope or explicitly call
+`LocalTaskProvider.cleanup(directory)` before removing their directory.
+Hosts must share the local filesystem and process/network namespace. This provider
+does not support cross-machine discovery; that belongs to the ECS provider.
 
 The controller claims spare tasks, fences stopping bindings, drains retained
 invocations and reconciles provider stop times. Its housekeeping lease is shared
@@ -166,6 +184,18 @@ by host replicas. `PATCHY_LIMITS_JSON` configures the registry's fleet budget,
 spare floor, housekeeping interval and lease. `PATCHY_REPLICA` identifies the host
 and `PATCHY_DEPLOYMENT_REVISION` identifies the deployment; neither is a binding
 epoch or process generation.
+
+Registering a new host revision does not switch the fleet. The first deployment
+warms and promotes automatically. Later rollouts call `stageDeployment(revision)`,
+let housekeeping prepare spares, then call `promoteDeployment(revision)`.
+Promotion returns false until the required warm capacity exists. Existing companies
+move to ready replacement tasks incrementally, retaining admitted work on the old
+binding. Rollback stages and promotes the earlier revision through the same operations.
+No direct row edits are needed.
+
+The housekeeping lease renews during provider work, and a failing task does not
+block unrelated reconciliation or replenishment. A lost activity database session
+is replaced and its live locks restored, including for documents making no requests.
 
 `packages/execution/src/Fleet.test.ts` covers controller transitions over Postgres.
 `LocalTaskProvider.test.ts` executes real workerd and verifies final process reports

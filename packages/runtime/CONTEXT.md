@@ -68,6 +68,10 @@ _Avoid_: publish, process load, connection checkout
 The temporary exclusive authority for one host replica to maintain the execution fleet.
 _Avoid_: document presence, binding epoch, process generation
 
+**Fleet promotion**:
+Selecting a prepared deployment revision for new company bindings and gradual replacement of existing tasks. An earlier revision can be promoted again for rollback.
+_Avoid_: host startup, patch publish
+
 **Stopping**:
 A binding whose admissions are fenced while admitted work drains and its task is stopped. It cannot be adopted or return to serving.
 _Avoid_: idle, spare, stopped

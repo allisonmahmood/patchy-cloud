@@ -4,9 +4,14 @@ export const migrations: Migrations = {
   "0014_execution_fleet": ddl(
     `CREATE TABLE execution_deployments (
       revision TEXT PRIMARY KEY,
-      ordinal INTEGER GENERATED ALWAYS AS IDENTITY UNIQUE,
       retired BOOLEAN NOT NULL DEFAULT false
     )`,
+    `CREATE TABLE execution_rollout (
+      singleton BOOLEAN PRIMARY KEY DEFAULT true CHECK (singleton),
+      current_revision TEXT REFERENCES execution_deployments(revision),
+      staged_revision TEXT REFERENCES execution_deployments(revision)
+    )`,
+    `INSERT INTO execution_rollout(singleton) VALUES (true)`,
     `CREATE TABLE execution_tasks (
       task_id TEXT PRIMARY KEY,
       deployment_revision TEXT NOT NULL REFERENCES execution_deployments(revision),

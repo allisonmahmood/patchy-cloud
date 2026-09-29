@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { mkdtempSync } from "node:fs";
+import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { assert, it } from "@effect/vitest";
@@ -10,10 +11,12 @@ import { signedInCookies, signSession } from "@patchy/auth/testing";
 import { Runtime } from "@patchy/runtime";
 import { ContentStore, FilesystemContentStore } from "@patchy/content-store";
 import { contentHash, sha256 } from "../../../packages/core/src/index.js";
+import * as LocalTaskProvider from "@patchy/execution/local-task-provider";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
+import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { answer, publish, send, server } from "./test/server.js";
@@ -66,15 +69,44 @@ const manifest: typeof Manifest.Type = {
 
 const testServer = (env: Record<string, string> = {}) => {
   const directory = mkdtempSync(path.join(os.tmpdir(), "patchy-execution-test-"));
-  return server({ ...env, PATCHY_STORAGE_DIR: directory }).pipe(
-    Layer.provideMerge(
-      FilesystemContentStore.layer.pipe(
-        Layer.provide(
-          ConfigProvider.layer(ConfigProvider.fromUnknown({ PATCHY_STORAGE_DIR: directory }))
+  return Layer.unwrap(
+    Effect.gen(function* () {
+      let fleetConfig: Record<string, string> = {};
+      if (env.EXECUTION_PROVIDER === "local-fleet") {
+        const callbackPort = yield* Effect.promise(
+          () =>
+            new Promise<number>((resolve, reject) => {
+              const socket = createServer();
+              socket.once("error", reject);
+              socket.listen(0, "127.0.0.1", () => {
+                const address = socket.address();
+                if (address === null || typeof address === "string") {
+                  socket.close();
+                  reject(new Error("Missing callback port"));
+                } else socket.close(() => resolve(address.port));
+              });
+            })
+        );
+        const resource = yield* LocalTaskProvider.resource({
+          callbackUrls: [`http://127.0.0.1:${callbackPort}/callback`]
+        });
+        fleetConfig = {
+          EXECUTION_LOCAL_DIRECTORY: resource.directory,
+          EXECUTION_CALLBACK_PORT: String(callbackPort),
+          EXECUTION_CALLBACK_URLS: JSON.stringify(resource.callbackUrls)
+        };
+      }
+      return server({ ...env, ...fleetConfig, PATCHY_STORAGE_DIR: directory }).pipe(
+        Layer.provideMerge(
+          FilesystemContentStore.layer.pipe(
+            Layer.provide(
+              ConfigProvider.layer(ConfigProvider.fromUnknown({ PATCHY_STORAGE_DIR: directory }))
+            )
+          )
         )
-      )
-    )
-  );
+      );
+    })
+  ).pipe(Layer.provide(FetchHttpClient.layer));
 };
 
 // Retained historical versions exercise company isolation independently of publication.

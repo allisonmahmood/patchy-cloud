@@ -7,17 +7,29 @@ import * as Executor from "@patchy/runtime/executor";
 import * as ExecutionLifecycle from "@patchy/runtime/execution-lifecycle";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
+import * as FleetActivity from "./fleetActivity.js";
 import * as FleetStore from "./fleetStore.js";
 import * as TaskProvider from "./TaskProvider.js";
 
 export class FleetError extends Schema.TaggedError<FleetError>()("FleetError", {
-  operation: Schema.Literals(["bind", "release", "drain", "housekeeping", "publish", "history"]),
+  operation: Schema.Literals([
+    "bind",
+    "release",
+    "drain",
+    "housekeeping",
+    "stage",
+    "promote",
+    "publish",
+    "history"
+  ]),
   cause: Schema.Defect()
 }) {
   override get message() {
@@ -27,6 +39,8 @@ export class FleetError extends Schema.TaggedError<FleetError>()("FleetError", {
 class LeaseLost extends Schema.TaggedError<LeaseLost>()("FleetLeaseLost", {
   leaseEpoch: Schema.Number
 }) {}
+const isLeaseLost = Schema.is(LeaseLost);
+const isFleetError = Schema.is(FleetError);
 const housekeepingGuard = Context.Reference<Effect.Effect<void, SqlError | LeaseLost>>(
   "@patchy/execution/FleetHousekeepingGuard",
   { defaultValue: () => Effect.void }
@@ -62,16 +76,19 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
   const sql = yield* SqlClient.SqlClient;
   const scope = yield* Scope.Scope;
   const housekeepingLock = yield* Semaphore.make(1);
-  // A single reserved session owns all this replica's activity locks. PostgreSQL
-  // releases them if the replica dies. There are no document rows or heartbeats.
-  const activity = yield* sql.reserve;
-  yield* Effect.addFinalizer(() =>
-    activity.execute("SELECT pg_advisory_unlock_all()", [], undefined).pipe(Effect.orDie)
-  );
+  const activity = yield* FleetActivity.make({
+    checkInterval: config.get("execution.housekeeping.interval")
+  });
   yield* store.registerDeployment(options.deploymentRevision);
   yield* Effect.addFinalizer(() =>
     sql`DELETE FROM execution_housekeeping WHERE owner_id = ${options.replicaId}`.pipe(Effect.orDie)
   );
+  let changed = yield* Deferred.make<void>();
+  const notify = Effect.gen(function* () {
+    const previous = changed;
+    changed = yield* Deferred.make<void>();
+    yield* Deferred.succeed(previous, undefined);
+  });
   const supervisorLimits = Effect.fn("Fleet.supervisorLimits")(function* (companyId: string) {
     const effective = yield* limits.getMany({
       companyId,
@@ -89,21 +106,6 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
       ),
       configRevision: effective["execution.process.rss"].configRevision
     };
-  });
-  const hold = Effect.fn("Fleet.holdActivity")(function* (key: string) {
-    yield* activity.execute(
-      "SELECT pg_advisory_lock_shared(hashtextextended($1, 0))",
-      [key],
-      undefined
-    );
-    let released = false;
-    return Effect.suspend(() => {
-      if (released) return Effect.void;
-      released = true;
-      return activity
-        .execute("SELECT pg_advisory_unlock_shared(hashtextextended($1, 0))", [key], undefined)
-        .pipe(Effect.asVoid);
-    });
   });
   const lifecycleFailure = (cause: unknown) =>
     new ExecutionLifecycle.LifecycleError({
@@ -265,12 +267,28 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
   const retireDeployment = Effect.fn("Fleet.retireDeployment")(
     function* (revision: string) {
       yield* store.retireDeployment(revision);
-      for (const task of yield* store.tasks(undefined)) {
-        if (task.deploymentRevision === revision) yield* drainTask(task.taskId, "deployment");
-      }
+      yield* Effect.forEach(
+        (yield* store.tasks(undefined)).filter((task) => task.deploymentRevision === revision),
+        (task) => isolate(task.taskId, drainTask(task.taskId, "deployment")),
+        { concurrency: 8, discard: true }
+      );
     },
     Effect.mapError((cause) => new FleetError({ operation: "drain", cause }))
   );
+  const minimumSpares = Math.max(
+    1,
+    Math.min(config.get("execution.pool.spares"), config.get("execution.fleet.budget"))
+  );
+  const isolate = <A, E, R>(taskId: string, work: Effect.Effect<A, E, R>) =>
+    work.pipe(
+      Effect.timeout(config.get("execution.pool.wait")),
+      Effect.asVoid,
+      Effect.catch((cause) => {
+        if (isLeaseLost(cause)) return Effect.fail(cause);
+        if (isFleetError(cause) && isLeaseLost(cause.cause)) return Effect.fail(cause.cause);
+        return Effect.logWarning("Execution task reconciliation failed", { taskId });
+      })
+    );
   const housekeeping = Effect.fn("Fleet.housekeeping")(
     function* () {
       const now = yield* Clock.currentTimeMillis;
@@ -288,93 +306,23 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
         )
           return yield* new LeaseLost({ leaseEpoch: lease.leaseEpoch });
       }).pipe(Effect.catchTags({ SchemaError: Effect.die }));
-      return yield* Effect.gen(function* () {
-        const revision = yield* store.currentDeployment;
-        const observed = yield* provider.list;
-        yield* guard;
-        const tasks = yield* store.tasks(undefined);
-        const observedById = new Map(observed.map((task) => [task.taskId, task]));
-        for (const task of tasks) {
-          yield* guard;
-          const remote = observedById.get(task.taskId);
-          if (remote?.state === "stopped") {
-            const binding = (yield* store.findTask(task.taskId))[0];
-            if (binding)
-              yield* collect(binding, true).pipe(
-                Effect.catchTags({
-                  TaskProviderError: (cause) =>
-                    cause.reason === "stopped" ? Effect.void : Effect.fail(cause)
-                })
-              );
-            yield* guard;
-            yield* store.stopped(task.taskId, remote.stoppedAt ?? now, "task_lost");
-          } else if (task.state === "starting") {
-            // Ambiguous launches retain the persisted identity, even after lease transfer.
-            if (task.deploymentRevision === revision) {
-              const started = yield* provider.start({
-                taskId: task.taskId,
-                deploymentRevision: task.deploymentRevision
-              });
-              yield* guard;
-              yield* store.ready(started);
-            } else yield* drainTask(task.taskId, "deployment");
-          } else if (!remote) {
-            yield* store.stopped(task.taskId, now, "task_lost");
-          } else if (task.deploymentRevision !== revision)
-            yield* drainTask(task.taskId, "deployment");
-          else if (task.state === "stopping") yield* drainTask(task.taskId);
-        }
-        const known = new Set(tasks.map((task) => task.taskId));
-        for (const task of observed) {
-          if (task.state !== "running" || known.has(task.taskId)) continue;
-          yield* guard;
-          // A concurrent operation may have persisted this identity since the snapshot.
-          const recorded =
-            yield* sql`SELECT task_id FROM execution_tasks WHERE task_id = ${task.taskId}`;
-          if (recorded.length === 0) {
-            yield* guard;
-            yield* provider.stop(task.taskId);
-          }
-        }
-        for (const binding of yield* store.bindings(undefined)) {
-          yield* guard;
-          if (binding.state === "stopping") {
-            yield* finishStop(binding);
-            continue;
-          }
-          if (binding.state === "claiming") {
-            const settings = yield* supervisorLimits(binding.companyId);
-            yield* guard;
-            yield* provider.bind(binding.taskId, {
-              companyId: binding.companyId,
-              bindingEpoch: binding.bindingEpoch,
-              ...settings
-            });
-            yield* guard;
-            yield* store.activate(binding);
-          }
-          yield* collect(binding);
-          const idle = yield* limits.get({
-            companyId: binding.companyId,
-            limitId: "execution.company.idle"
-          });
-          yield* guard;
-          const fenced = yield* store.idleFence(
-            binding,
-            yield* Clock.currentTimeMillis,
-            idle.value
-          );
-          if (fenced[0]) yield* finishStop(fenced[0]);
-        }
-        if (revision !== undefined) {
+      const replenishLock = yield* Semaphore.make(1);
+      const replenish = Effect.gen(function* () {
+        const rollout = yield* store.rollout;
+        const revisions = [...new Set([rollout.stagedRevision, rollout.currentRevision])];
+        for (const revision of revisions) {
+          if (revision === null) continue;
           const window = config.get("execution.pool.wakeWindow");
-          const measured = yield* store.target(now, window, revision);
+          const measured = yield* store.target(yield* Clock.currentTimeMillis, window, revision);
           const target = Math.ceil(
             Math.max(
-              config.get("execution.pool.spares"),
-              (measured.wakes / window) * measured.coldStart
+              minimumSpares,
+              revision === rollout.currentRevision
+                ? (measured.wakes / window) * measured.coldStart
+                : 0
             )
           );
+          const reserved: string[] = [];
           for (let count = measured.spares; count < target; count++) {
             yield* guard;
             const taskId = yield* Effect.sync(randomUUID);
@@ -389,18 +337,214 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
               ))
             )
               break;
-            const started = yield* provider.start({ taskId, deploymentRevision: revision });
-            yield* guard;
-            yield* store.ready(started);
+            reserved.push(taskId);
           }
+          yield* Effect.forEach(
+            reserved,
+            (taskId) =>
+              isolate(
+                taskId,
+                Effect.gen(function* () {
+                  const started = yield* provider.start({ taskId, deploymentRevision: revision });
+                  yield* guard;
+                  yield* store.ready(started);
+                  yield* notify;
+                })
+              ),
+            { concurrency: 8, discard: true }
+          );
+          yield* guard;
+          if (
+            rollout.currentRevision === null &&
+            (yield* store.promoteDeployment(revision, minimumSpares, true))
+          )
+            yield* notify;
+        }
+      }).pipe(replenishLock.withPermit);
+      const reconcileTasks = Effect.gen(function* () {
+        const tasks = yield* store.tasks(undefined);
+        const observed = yield* provider.list.pipe(
+          Effect.timeout(config.get("execution.pool.wait"))
+        );
+        yield* guard;
+        const rollout = yield* store.rollout;
+        const retained = new Set([rollout.currentRevision, rollout.stagedRevision]);
+        const observedById = new Map(observed.map((task) => [task.taskId, task]));
+        yield* Effect.forEach(
+          tasks,
+          (task) =>
+            isolate(
+              task.taskId,
+              Effect.gen(function* () {
+                yield* guard;
+                const remote = observedById.get(task.taskId);
+                if (remote?.state === "stopped") {
+                  const binding = (yield* store.findTask(task.taskId))[0];
+                  if (binding)
+                    yield* collect(binding, true).pipe(
+                      Effect.catchTags({
+                        TaskProviderError: (cause) =>
+                          cause.reason === "stopped" ? Effect.void : Effect.fail(cause)
+                      })
+                    );
+                  yield* guard;
+                  yield* store.stopped(task.taskId, remote.stoppedAt ?? now, "task_lost");
+                } else if (task.state === "starting") {
+                  if (retained.has(task.deploymentRevision)) {
+                    const started = yield* provider.start({
+                      taskId: task.taskId,
+                      deploymentRevision: task.deploymentRevision
+                    });
+                    yield* guard;
+                    yield* store.ready(started);
+                  } else yield* drainTask(task.taskId, "deployment");
+                } else if (!remote) {
+                  yield* store.stopped(task.taskId, now, "task_lost");
+                } else if (
+                  task.state === "stopping" ||
+                  (task.state === "spare" && !retained.has(task.deploymentRevision))
+                )
+                  yield* drainTask(task.taskId, "deployment");
+              })
+            ),
+          { concurrency: 8, discard: true }
+        );
+        const known = new Set(tasks.map((task) => task.taskId));
+        yield* Effect.forEach(
+          observed.filter((task) => task.state === "running" && !known.has(task.taskId)),
+          (task) =>
+            isolate(
+              task.taskId,
+              Effect.gen(function* () {
+                yield* guard;
+                const recorded =
+                  yield* sql`SELECT task_id FROM execution_tasks WHERE task_id = ${task.taskId}`;
+                if (recorded.length === 0) {
+                  yield* guard;
+                  yield* provider.stop(task.taskId);
+                }
+              })
+            ),
+          { concurrency: 8, discard: true }
+        );
+      }).pipe(
+        Effect.catchTags({
+          TaskProviderError: () => Effect.logWarning("Execution provider observation failed"),
+          TimeoutError: () => Effect.logWarning("Execution provider observation timed out")
+        })
+      );
+      const reconcileBindings = Effect.gen(function* () {
+        yield* Effect.forEach(
+          yield* store.bindings(undefined),
+          (binding) =>
+            isolate(
+              binding.taskId,
+              Effect.gen(function* () {
+                yield* guard;
+                if (binding.state === "stopping") {
+                  yield* finishStop(binding);
+                  return;
+                }
+                if (binding.state === "claiming") {
+                  const settings = yield* supervisorLimits(binding.companyId);
+                  yield* guard;
+                  yield* provider.bind(binding.taskId, {
+                    companyId: binding.companyId,
+                    bindingEpoch: binding.bindingEpoch,
+                    ...settings
+                  });
+                  yield* guard;
+                  yield* store.activate(binding);
+                }
+                yield* collect(binding);
+                const idle = yield* limits.get({
+                  companyId: binding.companyId,
+                  limitId: "execution.company.idle"
+                });
+                yield* guard;
+                const fenced = yield* store.idleFence(
+                  binding,
+                  yield* Clock.currentTimeMillis,
+                  idle.value
+                );
+                if (fenced[0]) yield* finishStop(fenced[0]);
+              })
+            ),
+          { concurrency: 8, discard: true }
+        );
+      });
+      const work = Effect.gen(function* () {
+        yield* Effect.all([reconcileTasks, reconcileBindings, replenish], {
+          concurrency: "unbounded"
+        }).pipe(
+          // Slow or unhealthy bindings must not prevent subsequent spare replenishment.
+          Effect.raceFirst(
+            Effect.sleep(config.get("execution.housekeeping.interval")).pipe(
+              Effect.andThen(replenish),
+              Effect.forever
+            )
+          )
+        );
+        yield* guard;
+        const rollout = yield* store.rollout;
+        if (
+          rollout.currentRevision === null &&
+          rollout.stagedRevision !== null &&
+          (yield* store.promoteDeployment(rollout.stagedRevision, minimumSpares, true))
+        )
+          yield* notify;
+        const replaced = yield* store.replaceDeploymentBinding(
+          options.replicaId,
+          yield* Clock.currentTimeMillis
+        );
+        if (replaced) {
+          yield* isolate(
+            replaced.replacement.taskId,
+            Effect.gen(function* () {
+              const binding = replaced.replacement;
+              yield* provider.bind(binding.taskId, {
+                companyId: binding.companyId,
+                bindingEpoch: binding.bindingEpoch,
+                ...(yield* supervisorLimits(binding.companyId))
+              });
+              yield* guard;
+              yield* store.activate(binding);
+            })
+          );
+          yield* isolate(replaced.previous.taskId, finishStop(replaced.previous));
         }
         yield* emitBindings;
         return true;
-      }).pipe(Effect.provideService(housekeepingGuard, guard));
+      });
+      return yield* work.pipe(
+        Effect.raceFirst(
+          Effect.sleep(Math.max(1, Math.floor(leaseDuration / 3))).pipe(
+            Effect.andThen(guard),
+            Effect.forever
+          )
+        ),
+        Effect.provideService(housekeepingGuard, guard)
+      );
     },
-    housekeepingLock.withPermit,
+    housekeepingLock.withPermitsIfAvailable(1),
+    Effect.map(Option.getOrElse(() => false)),
     Effect.mapError((cause) => new FleetError({ operation: "housekeeping", cause }))
   );
+  let housekeepingRequested = false;
+  const requestHousekeeping = Effect.suspend(() => {
+    if (housekeepingRequested) return Effect.void;
+    housekeepingRequested = true;
+    return housekeeping().pipe(
+      Effect.catchTags({ FleetError: () => Effect.logWarning("Execution housekeeping failed") }),
+      Effect.ensuring(
+        Effect.sync(() => {
+          housekeepingRequested = false;
+        })
+      ),
+      Effect.forkIn(scope),
+      Effect.asVoid
+    );
+  });
   const ensure = Effect.fn("Fleet.ensureBinding")(
     function* (companyId: string) {
       const wait = yield* limits.get({ companyId, limitId: "execution.pool.wait" });
@@ -408,11 +552,14 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
       return yield* Effect.gen(function* () {
         let claimed: FleetStore.Binding | undefined;
         while (true) {
+          const wake = changed;
           const now = yield* Clock.currentTimeMillis;
           claimed ??= yield* store.claim(companyId, options.replicaId, now, now - startedAt);
           if (claimed) {
-            if (!(yield* store.isCurrentTask(claimed.taskId))) {
-              yield* fence(claimed, "deployment");
+            if (!(yield* store.isAdmissibleTask(claimed.taskId))) {
+              yield* fence(claimed, "deployment").pipe(
+                Effect.catchTags({ TaskProviderError: () => Effect.void })
+              );
               claimed = undefined;
               continue;
             }
@@ -425,28 +572,20 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
               })
               .pipe(
                 Effect.catchTags({
-                  TaskProviderError: (cause) => {
-                    if (cause.reason === "provider" || cause.reason === "transport")
-                      return Effect.succeed(undefined);
-                    return Effect.fail(cause);
-                  }
+                  TaskProviderError: () => Effect.void
                 })
               );
             if (reply) {
               yield* store.activate(claimed);
               const active = (yield* store.findTask(claimed.taskId))[0];
-              if (active?.state === "active" && (yield* store.isCurrentTask(active.taskId)))
+              if (active?.state === "active" && (yield* store.isAdmissibleTask(active.taskId)))
                 return active;
               claimed = active?.state === "active" ? active : undefined;
               continue;
             }
-          } else {
-            yield* housekeeping();
-            const after = yield* Clock.currentTimeMillis;
-            claimed = yield* store.claim(companyId, options.replicaId, after, after - startedAt);
-            if (claimed) continue;
           }
-          yield* Effect.sleep(50);
+          yield* requestHousekeeping;
+          yield* Effect.sleep(50).pipe(Effect.raceFirst(Deferred.await(wake)));
         }
       }).pipe(
         Effect.timeoutOrElse({ duration: wait.value, orElse: () => Effect.fail(busy(wait.value)) })
@@ -479,7 +618,7 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
   const lifecycle = ExecutionLifecycle.ExecutionLifecycle.of({
     connect: Effect.fn("Fleet.connect")(function* (companyId) {
       yield* Effect.acquireRelease(
-        hold(FleetStore.companyLock(companyId)).pipe(Effect.mapError(lifecycleFailure)),
+        activity.hold(FleetStore.companyLock(companyId)).pipe(Effect.mapError(lifecycleFailure)),
         (unlock) => releaseActivity(companyId, unlock)
       ).pipe(Effect.asVoid);
       yield* store
@@ -509,9 +648,9 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
         Effect.gen(function* () {
           while (true) {
             const binding = yield* restore(ensure(companyId));
-            const unlock = yield* hold(FleetStore.bindingLock(binding.bindingId)).pipe(
-              Effect.mapError(lifecycleFailure)
-            );
+            const unlock = yield* activity
+              .hold(FleetStore.bindingLock(binding.bindingId))
+              .pipe(Effect.mapError(lifecycleFailure));
             const protectedBinding = yield* store
               .protect(
                 binding,
@@ -600,6 +739,15 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
     housekeeping,
     drainTask,
     retireDeployment,
+    stageDeployment: (revision: string) =>
+      store
+        .stageDeployment(revision)
+        .pipe(Effect.mapError((cause) => new FleetError({ operation: "stage", cause }))),
+    promoteDeployment: (revision: string) =>
+      store.promoteDeployment(revision, minimumSpares).pipe(
+        Effect.tap(() => notify),
+        Effect.mapError((cause) => new FleetError({ operation: "promote", cause }))
+      ),
     ensureBinding: ensure,
     releaseCompany: Effect.fn("Fleet.releaseCompany")(
       function* (companyId: string) {
@@ -642,7 +790,7 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
     ) {
       const result = yield* limits.setOverride(input);
       const binding = (yield* store.findCompany(input.companyId))[0];
-      if (binding?.state === "active" && (yield* store.isCurrentTask(binding.taskId)))
+      if (binding?.state === "active" && (yield* store.isAdmissibleTask(binding.taskId)))
         yield* provider.bind(binding.taskId, {
           companyId: input.companyId,
           bindingEpoch: binding.bindingEpoch,
@@ -655,7 +803,7 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
     ) {
       const result = yield* limits.removeOverride(input);
       const binding = (yield* store.findCompany(input.companyId))[0];
-      if (binding?.state === "active" && (yield* store.isCurrentTask(binding.taskId)))
+      if (binding?.state === "active" && (yield* store.isAdmissibleTask(binding.taskId)))
         yield* provider.bind(binding.taskId, {
           companyId: input.companyId,
           bindingEpoch: binding.bindingEpoch,
