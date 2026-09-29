@@ -157,9 +157,9 @@ A new call is not that retry and can duplicate a write. Actions are never replay
 Tier 2 publication builds and uploads both HTML and server artifacts, then the
 instance re-derives handler descriptors from stored bytes before recording the
 version. It runs on the local executor in dev and test instances. Production
-hosting remains separate work. Tier 2 query subscriptions belong to #403; the
-production-engine `patchy dev` integration, live server rebinding and colleague
-mount belong to #404. Init does not claim those runtime integrations.
+hosting requires the fleet executor. This release does not support tier 2 query
+subscriptions, the production-engine `patchy dev` integration, live server
+rebinding or colleague mount.
 The `patchy-server` skill documents handler behavior and registry limits.
 Authorised handles and staged upload adoption remain reserved contracts.
 
@@ -407,10 +407,11 @@ fixtures/                     postgres-<handle>.sql and shared-<alias>.sql stubs
 
 `AGENTS.md` is written once, says install already ran, points at the generated
 index, and describes the `src/` page and `server/` handler split for either tier.
+It points to the release-bound `patchy-loop` skill for how to exercise the
+configured tier, so refresh can update that workflow without rewriting `AGENTS.md`.
 The repo typechecks without added setup, and `pnpm patchy --help` runs its pinned
-copy. Use `pnpm patchy dev` to exercise tiers 0 and 1 before publishing.
-Until #404 lands, exercise tier 2 handlers by publishing to a development
-instance with invented data.
+copy. This release supports `pnpm patchy dev` for tiers 0 and 1. Exercise tier 2
+handlers by publishing to a development instance with invented data.
 
 To move between tiers, edit `tier` in `patchy.config.ts`, then run `pnpm patchy refresh`.
 

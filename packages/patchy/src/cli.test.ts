@@ -4391,7 +4391,7 @@ document.body.textContent = JSON.stringify({
   });
 
   it.each([1, 2] as const)(
-    "initializes a tier %s typechecking tree offline and refuses to initialize it again",
+    "initializes a tier %s typechecking tree offline, refuses reinitialization and preserves sources across tier changes",
     async (tier) => {
       const registry = await localPackageRegistry();
       const instance = await stubInstance(
@@ -4462,9 +4462,67 @@ document.body.textContent = JSON.stringify({
       expect(treeBytes(path.join(dir, "patchy/_generated"))).toEqual(generatedBefore);
       for (const name of authoredPaths)
         expect(readFileSync(path.join(dir, name))).toEqual(before[name]);
+
+      if (tier === 1) {
+        const refreshOptions = { ...options, cwd: dir };
+        const compilerOptions = {
+          cwd: dir,
+          env: { PATH: process.env.PATH, HOME: stateDir, ...registry }
+        };
+        const config = before["patchy.config.ts"]!.toString("utf8");
+        const upgradedConfig = config.replace("tier: 1", "tier: 2");
+        writeFileSync(path.join(dir, "patchy.config.ts"), upgradedConfig);
+        const upgraded = await runCli(["refresh", "--json"], refreshOptions);
+        expect(upgraded).toMatchObject({ status: 0, stderr: "" });
+        expect(JSON.parse(upgraded.stdout)).toMatchObject({
+          ok: true,
+          changed: { pin: true }
+        });
+        expect(readJson(path.join(dir, "package.json"))).toMatchObject({
+          devDependencies: { workerd: workerdVersion }
+        });
+        expect(readJson(path.join(dir, "node_modules/workerd/package.json"))).toMatchObject({
+          version: workerdVersion
+        });
+        expect(existsSync(path.join(dir, "patchy/_generated/server.ts"))).toBe(true);
+        expect(existsSync(path.join(dir, ".agents/skills/patchy-server/SKILL.md"))).toBe(true);
+        expect(readFileSync(path.join(dir, "patchy.config.ts"), "utf8")).toBe(upgradedConfig);
+        for (const name of authoredPaths.filter(
+          (name) => name !== "patchy.config.ts" && name !== "package.json"
+        ))
+          expect(readFileSync(path.join(dir, name))).toEqual(before[name]);
+        await expect(exec("pnpm", ["typecheck"], compilerOptions)).rejects.toMatchObject({
+          code: 2,
+          stdout: expect.stringMatching(/src\/App\.tsx\(\d+,\d+\): error TS2339: Property 'tables'/)
+        });
+
+        writeFileSync(path.join(dir, "patchy.config.ts"), config);
+        const downgraded = await runCli(["refresh", "--json"], refreshOptions);
+        expect(downgraded).toMatchObject({ status: 0, stderr: "" });
+        expect(JSON.parse(downgraded.stdout)).toMatchObject({
+          ok: true,
+          changed: { pin: true }
+        });
+        expect(readJson(path.join(dir, "package.json"))).not.toHaveProperty(
+          "devDependencies.workerd"
+        );
+        expect(existsSync(path.join(dir, "patchy/_generated/server.ts"))).toBe(false);
+        expect(existsSync(path.join(dir, ".agents/skills/patchy-server"))).toBe(false);
+        for (const name of authoredPaths)
+          expect(readFileSync(path.join(dir, name))).toEqual(before[name]);
+        await exec("pnpm", ["typecheck"], compilerOptions);
+
+        const unchanged = await runCli(["refresh", "--json"], refreshOptions);
+        expect(unchanged).toMatchObject({ status: 0, stderr: "" });
+        expect(JSON.parse(unchanged.stdout)).toMatchObject({
+          ok: true,
+          changed: { pin: false }
+        });
+        expect(readFileSync(path.join(dir, "package.json"))).toEqual(before["package.json"]);
+      }
     },
-    60_000
-  ); // Real archive creation, isolated pnpm installation and tsc can exceed 30 seconds.
+    120_000
+  ); // Real archives, isolated pnpm installs and tier-transition typechecks can exceed 30 seconds.
 });
 
 describe("patchy delete target selection", () => {

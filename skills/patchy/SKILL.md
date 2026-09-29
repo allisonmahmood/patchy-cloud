@@ -141,10 +141,9 @@ navigation.
 For tiers 0 and 1, before publishing run `pnpm patchy dev --json` and exercise
 the local shell at its returned `url`; it uses real handlers over local PGlite.
 Tier 2 repos can build and publish to dev and test instances using their local
-executor. Production requires the fleet executor. The tier 2 `patchy dev`
-engine integration, server watch and colleague mount belong to #404; do not
-claim that local loop proves handlers yet. Exercise the published tool on a
-development instance with invented data.
+executor. Production requires the fleet executor. This release does not support
+the tier 2 `patchy dev` engine integration, server watch or colleague mount.
+Exercise the published tool on a development instance with invented data.
 `dev status`, `stop`, `logs` and `reset` all accept `--json`. Reset stops and
 wipes disposable local state; it does not change published resources. Start again
 afterwards to fetch the published inventory. Code rebuilds reload the whole shell

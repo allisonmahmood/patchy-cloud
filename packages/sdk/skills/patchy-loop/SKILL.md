@@ -17,7 +17,7 @@ Talk through edge cases and product behaviour with the person before building.
    - A vanilla tier 1 repo keeps its existing entrypoint and framework-free generated client. Refresh does not convert it to Preact.
      Read `../patchy-tables/SKILL.md` for rows, `../patchy-files/SKILL.md` for bytes, and each declaration's skill and generated context before using it. In a scripted page, import the generated client by relative path; from `src/App.tsx` or `src/main.ts`, use `import { patchy } from "../patchy/_generated/client.js"`.
 3. Edit source, config and invented fixtures. Run `pnpm patchy refresh` after changing definitions, declarations, tier or server module filenames. The generated index must name every declaration and its context before you use it. Run `pnpm typecheck` and, when `package.json` supplies a lint script, `pnpm lint`; the Preact scaffold supplies both. Repair source or config, never generated output.
-4. On tiers 0 and 1, run `pnpm patchy dev --json` and open its `url`. Inspect the static page or exercise the tool's interactions through the local shell, including its rows, files and declarations. The command returns only when healthy and is idempotent. Code rebuilds reload the whole shell at its current route. After config or fixture changes, stop and start dev again. A standalone Vite preview cannot exercise declared capabilities. Tier 2's production-engine dev loop, live server rebinding and colleague mount belong to #404; use a development instance and invented data to exercise published handlers until that integration lands.
+4. On tiers 0 and 1, run `pnpm patchy dev --json` and open its `url`. Inspect the static page or exercise the tool's interactions through the local shell, including its rows, files and declarations. The command returns only when healthy and is idempotent. Code rebuilds reload the whole shell at its current route. After config or fixture changes, stop and start dev again. A standalone Vite preview cannot exercise declared capabilities. This release does not support tier 2's production-engine dev loop, live server rebinding or colleague mount. Use a development instance and invented data to exercise published tier 2 handlers.
 5. When asked to publish, run `pnpm patchy publish` from the repo root. It recovers any saved attempt first; otherwise checks the release, executes config, verifies declarations and server module names, typechecks and builds the HTML bundle. Tier 2 also builds a closed server module; dev and test instances inspect and serve it. Fix `stale_generated` with `pnpm patchy refresh`, build errors in source, and `not_additive` using the reported object/change/fix. Tier 2 is company-only: publish to a public patch with `--share company`. Report the address, scope, tier, version, artifacts, handlers, provisioned and unused resources.
 
 <!-- sdk-capabilities -->
@@ -153,7 +153,7 @@ access-loss notices. Keep presence out of patch tables and heartbeat code.
 Render from the subscription's latest result rather than copying mutation
 replies into a second query-state cache. Tier 1 table subscriptions work in dev
 and hosted company pages. Tier 2 query subscriptions have generated types but
-their runtime integration belongs to #403. Follow the current server skill's
+have no runtime support in this release. Follow the current server skill's
 availability boundary rather than claiming a live flow works.
 
 ## Tier 1 constraints

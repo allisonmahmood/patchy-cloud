@@ -12,10 +12,9 @@ use `pnpm patchy`; read `patchy-loop` for changing an existing repo's tier.
 
 Queries, mutations and actions from published tier 2 repos run on dev and test
 instances' local executor. See the checkout's `docs/DEVELOPMENT.md` for startup.
-Production admission requires the fleet executor. The tier 2 `patchy dev`
-engine integration, live server rebinding and colleague mount belong to #404.
-Server subscriptions belong to #403 and are not admitted yet. Until those
-runtime integrations land, exercise published handlers on a development
+Production admission requires the fleet executor. This release does not support
+the tier 2 `patchy dev` engine integration, live server rebinding, colleague
+mount or server subscriptions. Exercise published handlers on a development
 instance with invented data.
 
 Publish builds HTML and a closed server module, records handler descriptors

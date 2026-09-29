@@ -147,7 +147,12 @@ export class ManagedProject {
     const { patchPackagePin } = await import("./packagePin.js");
     const target = await safePath(this.root, "package.json");
     const source = await fs.readFile(target, "utf8");
-    const edited = patchPackagePin(source, name, expected, JSON.stringify(pin));
+    const edited = patchPackagePin(
+      source,
+      name,
+      expected,
+      pin === undefined ? undefined : JSON.stringify(pin)
+    );
     if (!edited) throw new ProjectChanged({ file: "package.json" });
     await this.replacePackage(edited.contents);
     this.pinEdits.push({

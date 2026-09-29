@@ -47,11 +47,14 @@ export function patchPackagePin(
   const property = matches[0];
   if (!property) {
     if (replacementLiteral === undefined) return { contents: source, previousLiteral: undefined };
-    const start = dependencies.getStart(file) + 1;
+    const opening = dependencies.getStart(file) + 1;
+    const first = dependencies.properties[0];
+    const start = first?.getStart(file) ?? opening;
+    const separator = first ? `,${source.slice(opening, start)}` : "";
     return {
       contents:
         source.slice(0, start) +
-        `${JSON.stringify(name)}: ${replacementLiteral}${dependencies.properties.length ? "," : ""}` +
+        `${JSON.stringify(name)}: ${replacementLiteral}${separator}` +
         source.slice(start),
       previousLiteral: undefined
     };
