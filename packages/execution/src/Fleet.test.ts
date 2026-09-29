@@ -7,6 +7,7 @@ import * as WideEvents from "@patchy/analytics/wide-events";
 import * as GuestProtocol from "@patchy/api/guest";
 import { OperatingLimits } from "@patchy/limits";
 import * as Testing from "@patchy/sql/testing";
+import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -724,7 +725,16 @@ it.layer(services)("host fleet controller", (it) => {
           Effect.forkChild
         );
         yield* Deferred.await(starting);
-        yield* TestClock.adjust(20_000);
+        // TestClock cannot await real Postgres I/O before jumping to the next timer.
+        // Observe each renewal commit before advancing beyond that lease window.
+        for (let elapsed = 0; elapsed < 20_000; elapsed += 5_000) {
+          yield* TestClock.adjust(5_000);
+          const renewedUntil = (yield* Clock.currentTimeMillis) + 15_000;
+          const renewal = yield* sql<{ readonly renewed: boolean }>`
+            SELECT expires_at >= ${renewedUntil} AS renewed FROM execution_housekeeping
+          `.pipe(Effect.repeat({ while: (rows) => !rows[0]?.renewed, times: 100 }));
+          assert.isTrue(renewal[0]?.renewed);
+        }
         assert.isFalse(settled);
         assert.isFalse(yield* right.housekeeping());
         const lease = (yield* sql`SELECT owner_id, lease_epoch FROM execution_housekeeping`)[0]!;
