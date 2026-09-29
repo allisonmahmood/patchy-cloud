@@ -1,6 +1,7 @@
 import * as PgliteClient from "@effect/sql-pglite/PgliteClient";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as WideEvents from "@patchy/analytics/wide-events";
 import {
   DeclarationMetadata,
   Identity,
@@ -128,7 +129,7 @@ VALUES ('invented-contact', 'Invented contact', 'missing-member');\n`;
         .pipe(Effect.provideService(Binding.Binding, binding), Effect.flip);
       assert.strictEqual(undeclared._tag, "TableNotDeclared");
       assert.strictEqual(yield* fs.readFileString(fixturePath), fixture);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer), Effect.provide(WideEvents.layerNoop)),
   { timeout: 30_000 }
 );
 
@@ -251,7 +252,7 @@ it.live(
         notes: [],
         contacts: ["Updated contact"]
       });
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer), Effect.provide(WideEvents.layerNoop)),
   { timeout: 60_000 }
 );
 
@@ -353,7 +354,7 @@ it.live(
       yield* fixture("title");
       assert.deepStrictEqual(yield* session().pipe(Effect.scoped), expected);
       assert.deepStrictEqual(yield* session().pipe(Effect.scoped), expected);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer), Effect.provide(WideEvents.layerNoop)),
   { timeout: 60_000 }
 );
 
@@ -528,7 +529,7 @@ it.live(
         [],
         "recreated@example.test"
       ).pipe(Effect.scoped);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer), Effect.provide(WideEvents.layerNoop)),
   { timeout: 60_000 }
 );
 
@@ -623,6 +624,6 @@ CREATE TEMP TABLE session_marker AS SELECT * FROM fixture_marker;`
           ]);
         }
       }).pipe(Effect.scoped);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer), Effect.provide(WideEvents.layerNoop)),
   { timeout: 60_000 }
 );

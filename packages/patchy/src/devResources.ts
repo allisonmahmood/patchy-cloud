@@ -18,6 +18,7 @@ import {
 } from "@patchy/integrations/dev";
 import { Files, TableOperations, Tables, SubscriptionReads } from "@patchy/primitives";
 import { LoadedVersions, Wakes, me } from "@patchy/runtime/core";
+import { Runtime, StreamLimits, Subscriptions } from "@patchy/runtime/dev";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -30,6 +31,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { FixtureMissing, type Prepared } from "./devPreparation.js";
 import { safePath } from "./ManagedProject.js";
+import * as DevExecution from "./devExecution.js";
 
 export class StateUnavailable extends Schema.TaggedError<StateUnavailable>()(
   "DevStateUnavailable",
@@ -218,7 +220,8 @@ const make = Effect.fn("DevResources.make")(function* (prepared: Prepared, state
 export const prepare = Effect.fn("DevResources.prepare")(function* (
   prepared: Prepared,
   root: string,
-  stateDir: string
+  stateDir: string,
+  options: DevExecution.Options = {}
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -242,6 +245,7 @@ export const prepare = Effect.fn("DevResources.prepare")(function* (
     scope: "company",
     wireVersion: WIRE_VERSION
   };
+  let currentVersion = version;
   const versions = new Map<string, LoadedVersions.LoadedVersion>([[prepared.patchId, version]]);
   const fixtures: Array<{ patchId: string; path: string; contents: string }> = [];
   for (const [alias, { declaration, tables }] of Object.entries(prepared.metadata.shared)) {
@@ -342,7 +346,7 @@ export const prepare = Effect.fn("DevResources.prepare")(function* (
         if (requestedVersion !== undefined)
           return Effect.succeed(
             patchId === version.patchId && requestedVersion === version.versionId
-              ? Option.some({ ...version, patchTier: version.manifest.tier })
+              ? Option.some({ ...currentVersion, patchTier: currentVersion.manifest.tier })
               : Option.none()
           );
         return Effect.succeed(
@@ -433,5 +437,32 @@ export const prepare = Effect.fn("DevResources.prepare")(function* (
     versions,
     fixtures
   }).pipe(Effect.provideContext(context));
-  return { ...preparedResources, context };
+  if (version.manifest.tier === 2) {
+    const execution = yield* DevExecution.make(
+      version,
+      preparedResources.handlers,
+      options,
+      (next) => {
+        currentVersion = next;
+        versions.set(next.patchId, next);
+      }
+    ).pipe(Effect.provideContext(context));
+    return {
+      handlers: preparedResources.handlers,
+      get version() {
+        return currentVersion;
+      },
+      context: Context.merge(context, execution.context),
+      stage: execution.stage
+    };
+  }
+  const subscriptions = yield* Subscriptions.make.pipe(
+    Effect.provideContext(context),
+    Effect.provide(StreamLimits.layerLocal)
+  );
+  return {
+    ...preparedResources,
+    context: Context.add(context, Subscriptions.Subscriptions, subscriptions),
+    stage: () => Effect.fail(new Runtime.InvocationUnavailable())
+  };
 });

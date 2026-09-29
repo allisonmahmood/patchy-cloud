@@ -61,6 +61,7 @@ const bound = new Map<string, BoundWorker>();
 const attempts = new Map<number, LiveAttempt>();
 const activeAttempts = new Set<string>();
 let serial = 0;
+let inspectionSerial = 0;
 
 const json = (body: unknown, status = 200) => Response.json(body, { status });
 const refusal = (
@@ -254,7 +255,9 @@ export default {
         return json(refusal("invalid_request", "Malformed inspection request."), 400);
       }
       try {
-        return json(await describe(load(env, ctx, "inspection", input.bundle)));
+        return json(
+          await describe(load(env, ctx, `inspection:${++inspectionSerial}`, input.bundle))
+        );
       } catch {
         return json(refusal("handler_failed", "The bundle could not be loaded."));
       }

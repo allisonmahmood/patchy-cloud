@@ -5,7 +5,7 @@ import { registry } from "@patchy/limits/registry";
 import { DefinitionName, Identity, IsoTimestamp, PatchId, PostgresText } from "./schemas.js";
 import { postgresOperations } from "./postgres.js";
 import { limitRefusalFields } from "./limits.js";
-import { HandlerName } from "./handlers.js";
+import { HandlerKind, HandlerName } from "./handlers.js";
 
 /** Release contract shared by the browser broker and server runtime. */
 export const runtimeByteLimits = {
@@ -185,6 +185,10 @@ export const RuntimeStreamFrame = Schema.Union([
     type: Schema.Literal("served"),
     versionId: RuntimeVersionId,
     tier: Schema.Int
+  }),
+  Schema.Struct({
+    type: Schema.Literal("handlers"),
+    kinds: Schema.Record(HandlerName, HandlerKind)
   }),
   Schema.Struct({
     type: Schema.Literal("snapshot"),

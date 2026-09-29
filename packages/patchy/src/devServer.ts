@@ -2,10 +2,10 @@
 import { createServer } from "node:http";
 import { randomBytes } from "node:crypto";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
-import * as WideEvents from "@patchy/analytics/wide-events";
 import { RuntimeGroup, RuntimeStreamGroup } from "@patchy/api";
 import type { ReleaseToolchain } from "@patchy/api";
 import {
+  Binding,
   RuntimeDev,
   RuntimeApi,
   RuntimeStream,
@@ -24,18 +24,23 @@ import {
   NO_REFERRER_POLICY
 } from "@patchy/serving/shell";
 import * as Console from "effect/Console";
+import * as Config from "effect/Config";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as HttpApi from "effect/unstable/httpapi/HttpApi";
+import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServer from "effect/unstable/http/HttpServer";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import * as DevResources from "./devResources.js";
+import * as DevLog from "./devLog.js";
 import type { Prepared } from "./devPreparation.js";
 import { atomicJson, birth, io, readRecord, type Daemon } from "./devState.js";
 import { watch } from "./devWatch.js";
+import * as DevServerWatch from "./devServerWatch.js";
 
 const api = HttpApi.make("patchy").add(RuntimeGroup, RuntimeStreamGroup);
 const headers = {
@@ -65,153 +70,214 @@ export const serve = Effect.fn("Dev.serve")(function* (
   record: Daemon,
   toolchain: typeof ReleaseToolchain.Type
 ) {
-  const resources = yield* DevResources.prepare(prepared, record.root, stateDir);
+  // Vite sets NODE_ENV while building. Execution uses the daemon's startup environment.
+  const environment = yield* Config.String("NODE_ENV").pipe(Config.withDefault("development"));
+  const executionConfig = ConfigProvider.orElse(
+    ConfigProvider.fromUnknown({ NODE_ENV: environment }),
+    yield* ConfigProvider.ConfigProvider
+  );
+  const events = yield* Layer.build(DevLog.layer(record.logJson ?? false));
+  const nextServer =
+    prepared.manifest.tier === 2 ? yield* DevServerWatch.watch(record.root, toolchain) : undefined;
+  const initialServer = nextServer === undefined ? undefined : yield* nextServer;
+  const resources = yield* DevResources.prepare(prepared, record.root, stateDir, {
+    ...(initialServer === undefined
+      ? {}
+      : {
+          server: {
+            bytes: new TextEncoder().encode(initialServer.server),
+            handlers: yield* initialServer.inspect
+          }
+        }),
+    observe: (event) => DevLog.invocation(event, record.logJson ?? false)
+  }).pipe(
+    Effect.provideContext(events),
+    Effect.provideService(ConfigProvider.ConfigProvider, executionConfig),
+    Effect.provide(FetchHttpClient.layer)
+  );
   const nextBuild = yield* watch(record.root, stateDir, toolchain);
   let html = yield* nextBuild(prepared.manifest);
   let revision = 1;
-  const origin = yield* HttpServer.addressFormattedWith(Effect.succeed);
-  const shellPolicy = shellContentSecurityPolicy(prepared.manifest.tier);
-  // Tier 0 keeps its production policy, permitting only the trusted reload script and poll.
-  const localShellPolicy =
-    prepared.manifest.tier >= 1
-      ? shellPolicy
-      : `${shellPolicy}; script-src ${origin}/~dev/reload.js; connect-src ${origin}/~dev/build`;
-  const version = resources.version;
-  const base = `/dev/${version.patchId}` as const;
-  const content = `/~content/${version.patchId}/${version.versionId}` as const;
-  const pages = HttpRouter.use((router) =>
-    Effect.gen(function* () {
-      yield* router.add(
-        "GET",
-        "/healthz",
+  if (nextServer !== undefined) {
+    yield* Effect.forever(
+      nextServer.pipe(
+        Effect.flatMap(
+          Effect.fn("Dev.installServer")(function* (
+            build: Effect.Success<NonNullable<typeof nextServer>>
+          ) {
+            const [handlers, install] = yield* Effect.all(
+              [build.inspect, resources.stage(new TextEncoder().encode(build.server))],
+              { concurrency: "unbounded" }
+            );
+            yield* install(handlers);
+          })
+        ),
+        Effect.tap(() => Console.log("Server binding ready; waking subscriptions.")),
+        Effect.catch((error) => Console.error(error.message))
+      )
+    ).pipe(Effect.forkScoped);
+  }
+  const mount = Effect.fn("Dev.mount")(function* (
+    identity: NonNullable<Binding.Binding["Service"]["identity"]>
+  ) {
+    const origin = yield* HttpServer.addressFormattedWith(Effect.succeed);
+    const shellPolicy = shellContentSecurityPolicy(prepared.manifest.tier);
+    // Tier 0 keeps its production policy, permitting only the trusted reload script and poll.
+    const localShellPolicy =
+      prepared.manifest.tier >= 1
+        ? shellPolicy
+        : `${shellPolicy}; script-src ${origin}/~dev/reload.js; connect-src ${origin}/~dev/build`;
+    const version = resources.version;
+    const base = `/dev/${version.patchId}` as const;
+    const content = `/~content/${version.patchId}/${version.versionId}` as const;
+    const pages = HttpRouter.use((router) =>
+      Effect.gen(function* () {
+        yield* router.add(
+          "GET",
+          "/healthz",
+          Effect.gen(function* () {
+            const request = yield* HttpServerRequest.HttpServerRequest;
+            return request.headers["x-patchy-dev"] === record.nonce
+              ? HttpServerResponse.jsonUnsafe(
+                  { nonce: record.nonce, root: record.root, instance: record.instance },
+                  { headers }
+                )
+              : absent;
+          })
+        );
+        yield* router.add(
+          "GET",
+          "/~dev/build",
+          Effect.sync(() => HttpServerResponse.text(String(revision), { headers }))
+        );
+        yield* router.add(
+          "GET",
+          "/~dev/reload.js",
+          HttpServerResponse.text(reloadScript, {
+            contentType: "text/javascript; charset=utf-8",
+            headers
+          })
+        );
+        yield* router.add(
+          "GET",
+          "/~shell/broker.js",
+          HttpServerResponse.text(brokerScript, {
+            contentType: "text/javascript; charset=utf-8",
+            headers
+          })
+        );
+        yield* router.add(
+          "GET",
+          content,
+          Effect.sync(() =>
+            HttpServerResponse.text(html, {
+              contentType: "text/html; charset=utf-8",
+              headers: {
+                ...headers,
+                "content-security-policy": contentSecurityPolicy(prepared.manifest.tier)
+              }
+            })
+          )
+        );
+        const shell = Effect.gen(function* () {
+          const request = yield* HttpServerRequest.HttpServerRequest;
+          const url = new URL(request.url, origin);
+          const route = url.pathname.slice(base.length) || "/";
+          if (route.split("/").some((segment) => segment.startsWith("~"))) return absent;
+          return HttpServerResponse.text(
+            renderPatchWrapper({
+              scope: "local",
+              viewerId: identity.user.id,
+              handlerKinds: Object.fromEntries(
+                Object.entries(resources.version.manifest.handlers ?? {}).map(([name, handler]) => [
+                  name,
+                  handler.kind
+                ])
+              ),
+              patch: { id: version.patchId, title: prepared.manifest.name ?? "Local patch" },
+              version: {
+                id: version.versionId,
+                versionNumber: 1,
+                tier: prepared.manifest.tier,
+                wireVersion: version.wireVersion
+              },
+              html,
+              nonce: randomBytes(24).toString("hex"),
+              route,
+              base,
+              head: `<script defer src="/~dev/reload.js?v=${revision}"></script>`
+            }),
+            {
+              contentType: "text/html; charset=utf-8",
+              headers: { ...headers, "content-security-policy": localShellPolicy }
+            }
+          );
+        });
+        yield* router.add("GET", `${base}/*`, shell);
+      })
+    );
+    const guard = HttpRouter.middleware(
+      (requestEffect) =>
         Effect.gen(function* () {
           const request = yield* HttpServerRequest.HttpServerRequest;
-          return request.headers["x-patchy-dev"] === record.nonce
-            ? HttpServerResponse.jsonUnsafe(
-                { nonce: record.nonce, root: record.root, instance: record.instance },
-                { headers }
-              )
-            : absent;
-        })
-      );
-      yield* router.add(
-        "GET",
-        "/~dev/build",
-        Effect.sync(() => HttpServerResponse.text(String(revision), { headers }))
-      );
-      yield* router.add(
-        "GET",
-        "/~dev/reload.js",
-        HttpServerResponse.text(reloadScript, {
-          contentType: "text/javascript; charset=utf-8",
-          headers
-        })
-      );
-      yield* router.add(
-        "GET",
-        "/~shell/broker.js",
-        HttpServerResponse.text(brokerScript, {
-          contentType: "text/javascript; charset=utf-8",
-          headers
-        })
-      );
-      yield* router.add(
-        "GET",
-        content,
-        Effect.sync(() =>
-          HttpServerResponse.text(html, {
-            contentType: "text/html; charset=utf-8",
-            headers: {
-              ...headers,
-              "content-security-policy": contentSecurityPolicy(prepared.manifest.tier)
-            }
+          // Loopback binding alone does not prevent DNS rebinding into the authenticated local runtime.
+          if (request.headers.host !== new URL(origin).host) return absent;
+          return yield* requestEffect;
+        }),
+      { global: true }
+    );
+    const streamIdentity = {
+      companyId: identity.company.id,
+      viewerId: identity.user.id,
+      expiresAt: Number.POSITIVE_INFINITY,
+      identity
+    };
+    const runtime = Layer.mergeAll(
+      RuntimeDev.layer(resources.handlers, { origin, identity }),
+      RuntimeStream.layer.pipe(
+        Layer.provide([
+          StreamLimits.layerLocal,
+          Layer.succeed(StreamAdmission.StreamAdmission, {
+            admit: Effect.succeed({
+              ...streamIdentity,
+              recheck: Effect.succeed(streamIdentity)
+            })
           })
-        )
-      );
-      const shell = Effect.gen(function* () {
-        const request = yield* HttpServerRequest.HttpServerRequest;
-        const url = new URL(request.url, origin);
-        const route = url.pathname.slice(base.length) || "/";
-        if (route.split("/").some((segment) => segment.startsWith("~"))) return absent;
-        return HttpServerResponse.text(
-          renderPatchWrapper({
-            scope: "local",
-            viewerId: prepared.identity.user.id,
-            handlerKinds: Object.fromEntries(
-              Object.entries(prepared.manifest.handlers ?? {}).map(([name, handler]) => [
-                name,
-                handler.kind
-              ])
-            ),
-            patch: { id: version.patchId, title: prepared.manifest.name ?? "Local patch" },
-            version: {
-              id: version.versionId,
-              versionNumber: 1,
-              tier: prepared.manifest.tier,
-              wireVersion: version.wireVersion
-            },
-            html,
-            nonce: randomBytes(24).toString("hex"),
-            route,
-            base,
-            head: `<script defer src="/~dev/reload.js?v=${revision}"></script>`
-          }),
-          {
-            contentType: "text/html; charset=utf-8",
-            headers: { ...headers, "content-security-policy": localShellPolicy }
-          }
-        );
-      });
-      yield* router.add("GET", `${base}/*`, shell);
-    })
-  );
-  const guard = HttpRouter.middleware(
-    (requestEffect) =>
-      Effect.gen(function* () {
-        const request = yield* HttpServerRequest.HttpServerRequest;
-        // Loopback binding alone does not prevent DNS rebinding into the authenticated local runtime.
-        if (request.headers.host !== new URL(origin).host) return absent;
-        return yield* requestEffect;
-      }),
-    { global: true }
-  );
-  const identity = {
+        ])
+      )
+    ).pipe(Layer.provide([Limits.layer, Layer.succeedContext(resources.context)]));
+    yield* Layer.build(
+      HttpRouter.serve(
+        Layer.mergeAll(
+          HttpApiBuilder.layer(api).pipe(
+            Layer.provide([RuntimeApi.layer, RuntimeStreamApi.layerLocal])
+          ),
+          pages,
+          guard
+        ),
+        { disableLogger: true, disableListenLog: true }
+      ).pipe(Layer.provide(runtime), Layer.provide(Layer.succeedContext(events)))
+    );
+    return `${origin}${base}`;
+  });
+  const url = yield* mount({
     user: prepared.identity.user,
     company: prepared.identity.company,
     admin: prepared.identity.role === "admin"
-  };
-  const streamIdentity = {
-    companyId: identity.company.id,
-    viewerId: identity.user.id,
-    expiresAt: Number.POSITIVE_INFINITY,
-    identity
-  };
-  const runtime = Layer.mergeAll(
-    RuntimeDev.layer(resources.handlers, { origin, identity }),
-    RuntimeStream.layer.pipe(
-      Layer.provide([
-        StreamLimits.layerLocal,
-        Layer.succeed(StreamAdmission.StreamAdmission, {
-          admit: Effect.succeed({
-            ...streamIdentity,
-            recheck: Effect.succeed(streamIdentity)
-          })
-        })
-      ])
-    )
-  ).pipe(Layer.provide([Limits.layer, Layer.succeedContext(resources.context)]));
-  yield* Layer.build(
-    HttpRouter.serve(
-      Layer.mergeAll(
-        HttpApiBuilder.layer(api).pipe(
-          Layer.provide([RuntimeApi.layer, RuntimeStreamApi.layerLocal])
-        ),
-        pages,
-        guard
-      ),
-      { disableLogger: true, disableListenLog: true }
-    ).pipe(Layer.provide(runtime), Layer.provide(WideEvents.layerDev()))
-  );
+  });
+  let colleagueUrl: string | undefined;
+  if (prepared.manifest.tier >= 1) {
+    const colleagueServer = yield* Layer.build(Layer.fresh(layer));
+    colleagueUrl = yield* mount({
+      user: {
+        id: "usr_dev_colleague",
+        name: "Dev Colleague",
+        email: "colleague@patchy.local"
+      },
+      company: prepared.identity.company,
+      admin: false
+    }).pipe(Effect.provideContext(colleagueServer));
+  }
   const ready = {
     ...record,
     pid: process.pid,
@@ -220,17 +286,23 @@ export const serve = Effect.fn("Dev.serve")(function* (
       if (!value) throw new Error("Process identity unavailable");
       return value;
     }),
-    url: `${origin}${base}`
+    url,
+    ...(colleagueUrl === undefined ? {} : { colleagueUrl })
   };
   yield* io("Could not record the healthy dev daemon.", () =>
     atomicJson(stateDir, "daemon.json", ready)
   );
   yield* Console.log(`Ready: ${ready.url}`);
+  if (colleagueUrl !== undefined) yield* Console.log(`Colleague: ${colleagueUrl}`);
   yield* Effect.addFinalizer(() =>
     io("Could not clear the stopped dev daemon.", async () => {
       const current = await readRecord(stateDir);
       if (current?.nonce === record.nonce)
-        await atomicJson(stateDir, "daemon.json", { ...ready, url: undefined });
+        await atomicJson(stateDir, "daemon.json", {
+          ...ready,
+          url: undefined,
+          colleagueUrl: undefined
+        });
     }).pipe(Effect.orDie)
   );
   return yield* Effect.forever(

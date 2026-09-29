@@ -41,7 +41,7 @@ concurrent-session behavior. Publish a tier 2 repo to this local instance and
 exercise its generated client in the hosted shell. Verify both artifact hashes,
 `invalid_manifest` for bad descriptors, `tier2_not_public` on public sharing and
 `server_required` in an older tier 1 tab, then rollback recovery. The patch-repo
-`patchy dev` production-engine loop remains #404.
+`patchy dev` loop below runs the same supervised engine and callback gateway.
 
 ## Patch repos and the local runtime
 
@@ -51,18 +51,34 @@ healthy; this keeps instance discovery scoped here. `init` installs the release,
 so run the pinned `pnpm patchy dev --json` without reinstalling.
 Open its `url` and exercise the real generated client through the local shell:
 insert/list, file upload/`url(name)`, and declared Postgres/shared fixtures as applicable.
-For subscriptions, open two copies: save through one and observe the other's
-`useQuery` result without reload. Local dev uses the real subscription stream
-over owned tables and shared fixtures; fixture/config changes still need restart.
+For tiers 1 and 2, open `colleagueUrl` as the fixed non-admin colleague at a second
+origin. Save through one viewer and observe the other's subscribed result without
+reload. Tier 2 handlers use shared-table and Postgres fixtures through `ctx.shared`
+and `ctx.connections`; fixture/config changes still need restart.
 Done means the observed local result, not an ordinary Vite preview or a cloud read.
 
 `patchy dev` is detached and idempotent; its `status`, `stop`, `logs` and `reset`
-subcommands accept `--json`. Config and fixture edits require stop/start; code
-builds reload the whole shell at its current route. Reset wipes disposable local
-state and leaves the runtime stopped; the next start fetches the published inventory
-again. Missing fixtures name the file to author. Dev calls print compact events
-in the local dev log, without PostHog delivery or a production runtime log store.
-No connection keyring is loaded.
+subcommands accept `--json`. Config and fixture edits require stop/start.
+`src/` builds reload the whole shell; `server/` edits atomically rebind without
+reload. Check unsaved browser state survives, in-flight nested calls retain the old
+binding, and subscriptions wake on the new one while discarding crossing results.
+Removed handlers or incompatible arguments permanently end affected subscriptions.
+Add a module without restarting: the watcher discovers it and logs a reminder
+to refresh types. A bad build must leave the last good binding serving.
+Reset wipes disposable local state and leaves the runtime stopped; the next start
+fetches the published inventory again. Missing fixtures name the file to author.
+`dev.log` records viewer, handler, outcome, milliseconds, `ctx.log` and local-only
+failure message/stack. Starting with `--json` records full wide events and
+invocation JSON; `dev logs --json` remains `{ ok, log, text }`. No runtime database
+log rows, PostHog delivery or connection keyring are used.
+
+`patchy dev` runs the same handler engine and callback path as production.
+It does not reproduce production's scheduling, limits or containment. A handler
+that spins forever times out, and a health check restarts the dev engine, which
+can interrupt other calls in flight. Contract limits still apply; production
+operating capacity does not. Use real Postgres, not PGlite, to prove hosted
+`busy` or `write_conflict` behavior. The `HandlerTls.test.ts` acceptance covers a
+verify-full TLS connection and a non-superuser role through `ctx.connections`.
 
 For worktree runtime edits, DEVELOPMENT gives the source-CLI invocation from inside
 the patch repo. For a packed-release check, restart the cloud and follow DEVELOPMENT's

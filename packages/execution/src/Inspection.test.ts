@@ -21,6 +21,44 @@ it.live(
 );
 
 it.live(
+  "inspects each replacement bundle independently and recovers after a refused load",
+  () =>
+    Effect.gen(function* () {
+      const inspection = yield* Inspection.make();
+      expect(yield* inspection.inspect(source)).toEqual(descriptors);
+      const replacement = {
+        "leads.list": { kind: "query", args: {}, result: { kind: "number" } }
+      };
+      expect(
+        yield* inspection.inspect(
+          `export default { fetch() { return Response.json({ ok: true, handlers: ${JSON.stringify(replacement)} }); } };`
+        )
+      ).toEqual(replacement);
+      expect(
+        yield* inspection
+          .inspect('throw new Error("bad replacement"); export default {};')
+          .pipe(Effect.result)
+      ).toMatchObject({ _tag: "Failure", failure: { reason: "load" } });
+      expect(yield* inspection.inspect(source)).toEqual(descriptors);
+    }).pipe(Effect.scoped),
+  30_000
+);
+
+it.live(
+  "restarts reusable inspection after a replacement spins during initialization",
+  () =>
+    Effect.gen(function* () {
+      const inspection = yield* Inspection.make({ loadTimeoutMs: 150 });
+      expect(yield* inspection.inspect(source)).toEqual(descriptors);
+      expect(
+        yield* inspection.inspect("while (true) {} export default {};").pipe(Effect.result)
+      ).toMatchObject({ _tag: "Failure", failure: { reason: "timeout" } });
+      expect(yield* inspection.inspect(source)).toEqual(descriptors);
+    }).pipe(Effect.scoped),
+  30_000
+);
+
+it.live(
   "reports load throws and malformed descriptions",
   () =>
     Effect.gen(function* () {

@@ -32,7 +32,9 @@ gateway and snapshot adapter. Issue #400 adds host-owned SERIALIZABLE mutation
 transactions, mutation keys, explicit client retries and nested mutations.
 Issue #401 publishes both artifacts, re-derives descriptors from stored server
 bytes and serves tier 2 on dev and test instances. Production admission requires
-the fleet executor. The patch-repo `patchy dev` engine loop belongs to #404.
+the fleet executor. Issue #404 composes the same supervised engine and callback
+gateway into the patch-repo `patchy dev` loop over PGlite and fixtures, with
+atomic live server rebinding and a separate non-admin colleague listener.
 
 ## Engine, guest wire and inspection
 

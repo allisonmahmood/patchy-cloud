@@ -138,19 +138,32 @@ safe-HTML policy owns tier 0 safety. Fragment, relative and external anchors
 have identical bundle acceptance across supported tiers; the runtime sandbox governs
 navigation.
 
-For tiers 0 and 1, before publishing run `pnpm patchy dev --json` and exercise
-the local shell at its returned `url`; it uses real handlers over local PGlite.
-Tier 2 repos can build and publish to dev and test instances using their local
-executor. Production requires the fleet executor. This release does not support
-the tier 2 `patchy dev` engine integration, server watch or colleague mount.
-Exercise the published tool on a development instance with invented data.
-`dev status`, `stop`, `logs` and `reset` all accept `--json`. Reset stops and
-wipes disposable local state; it does not change published resources. Start again
-afterwards to fetch the published inventory. Code rebuilds reload the whole shell
-at its current route. Config and fixture changes need a stop/start. New dev starts
-check the release, authenticate as the machine's user and regenerate declarations;
-existing sessions are not killed
-by a release. Use `--foreground` to stay attached with logs.
+Before publishing, run `pnpm patchy dev --json` and exercise the local shell at
+`url`. Tiers 1 and 2 also return `colleagueUrl`, a separate origin for a fixed
+non-admin viewer sharing the same local data. Tier 2 handlers and subscriptions
+use the supervised production engine and callback gateway over local PGlite and
+fixtures. `server/` edits atomically rebind without reload; calls and nested calls
+in flight finish on the old binding, while subscriptions rerun on the new one.
+Removed handlers or incompatible arguments end affected subscriptions permanently.
+New modules are discovered live with a reminder to refresh types; failed builds
+leave the last good binding serving. `src/` edits still reload the shell.
+
+`patchy dev` runs the same handler engine and callback path as production.
+It does not reproduce production's scheduling, limits or containment. A handler
+that spins forever times out, and a health check restarts the dev engine, which
+can interrupt other calls in flight. Contract limits still apply; production
+operating capacity does not. PGlite is not evidence for hosted `busy` or
+`write_conflict` behavior. Production hosting requires the fleet executor.
+
+`dev status`, `stop`, `logs` and `reset` accept `--json`. Reset stops and wipes
+disposable local state, not published resources. Start again to fetch the published
+inventory. Config and fixture changes need stop/start. New starts check the release,
+authenticate as the machine user and regenerate declarations; existing sessions
+survive release changes. `--foreground` stays attached with logs.
+`dev.log` records viewer, handler, outcome, milliseconds, `ctx.log` and local-only
+failure message/stack. Starting with `--json` records full wide events and invocation
+JSON; `dev logs --json` returns `{ ok, log, text }`. No runtime database log rows
+are written.
 Use invented local fixture inserts. On tier 1, every readable row is available
 to whoever can open the patch; it has no outbound access or client storage.
 Tier 2 puts access rules in handlers. The project skills carry the complete

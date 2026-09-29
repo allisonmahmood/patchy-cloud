@@ -18,7 +18,9 @@ export const Daemon = Schema.Struct({
   nonce: Schema.String,
   pid: Schema.Int,
   birth: Schema.String,
-  url: Schema.optionalKey(Schema.String)
+  url: Schema.optionalKey(Schema.String),
+  colleagueUrl: Schema.optionalKey(Schema.String),
+  logJson: Schema.optionalKey(Schema.Boolean)
 });
 export type Daemon = typeof Daemon.Type;
 const decodeDaemon = Schema.decodeUnknownSync(Schema.fromJsonString(Daemon));

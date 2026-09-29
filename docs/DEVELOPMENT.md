@@ -42,9 +42,9 @@ It refuses construction when `NODE_ENV` or its explicit environment is productio
 The existing `pnpm dev` instance composes this executor into Runtime, so an
 eligible `server.call` executes through the private callback gateway rather than
 returning `InvocationUnavailable`. It publishes and serves both tier 2 artifacts.
-The patch-repo `patchy dev`
-production-engine integration belongs to #404. Runtime's `InvocationLocal.test.ts`
-also exercises the private callback listener and supervised local executor.
+The patch-repo `patchy dev` uses this same engine and callback gateway over local
+PGlite and fixtures, without platform invocation rows. `InvocationLocal.test.ts`
+exercises the hosted composition; `devExecution.test.ts` covers the patch-repo one.
 Nested queries and mutations use the parent's exact binding and have separate invocation rows.
 Resource-free queries use a fenced invocation
 resource with an empty watermark and zero database-held time, without provisioning
@@ -361,21 +361,44 @@ pnpm patchy dev --json
 
 Installation already ran in `init`. Open the returned `url`: it is the production
 shell and broker at a loopback origin, authenticated as `/api/me`'s machine user
-without a browser sign-in. Insert and list through the generated client; exercise
+without a browser sign-in. For tiers 1 and 2, open `colleagueUrl` in a second tab:
+it has a distinct origin and a fixed non-admin viewer in the same company. Writes
+and subscriptions share local data across both mounts. Use `--tier 2` at init to
+exercise queries, mutations and actions through generated server calls.
+Insert and list through the generated client; exercise
 `files.<store>.put` and `url(name)` when files are declared. Postgres and shared-table
 declarations need invented inserts in `fixtures/postgres-<handle>.sql` and
 `fixtures/shared-<alias>.sql`. Missing files fail before declaration regeneration;
 dev generation leaves fixture files untouched.
 Never seed these files by querying a company's live rows or bytes.
+Tier 2 handlers use those same fixtures through `ctx.shared` and `ctx.connections`.
+
+`patchy dev` runs the same handler engine and callback path as production.
+It does not reproduce production's scheduling, limits or containment. A handler
+that spins forever times out, and a health check restarts the dev engine, which
+can interrupt other calls in flight. Fixed contract limits still apply; production
+operating capacity does not. PGlite is not evidence for hosted `busy` or
+`write_conflict` behavior. `HandlerTls.test.ts` separately exercises a real
+verify-full Postgres connection with a non-superuser through the handler callback
+path; it rejects a wrong hostname and an untrusted certificate authority.
 
 `pnpm patchy dev` twice reports one healthy daemon without reauthenticating or
 checking a newer release. An alive but unhealthy daemon refuses another start;
-read `dev logs`, then use `dev stop`. Vite build-watch swaps only complete
-single-file artifacts and reloads the whole shell at its current route; there is
-no Vite dev server or HMR escape from the production sandbox. Config and fixture
-edits need `dev stop` then `dev`. `dev status`, `stop`, `logs` and `reset` take
+read `dev logs`, then use `dev stop`. Vite build-watch swaps complete page artifacts;
+`src/` edits reload the shell at its current route. `server/` edits atomically
+rebind bundle bytes and descriptors without a browser reload. New modules are
+discovered live and log a notice to refresh types. Calls and nested calls already
+in flight finish on their old binding. Subscriptions rerun on the new binding,
+discard crossing results and end permanently on removed handlers or incompatible
+arguments. Failed builds leave the last good page or binding serving.
+There is no Vite dev server or HMR escape from the production sandbox.
+Config and fixture edits need `dev stop` then `dev`. `dev status`, `stop`, `logs` and `reset` take
 `--json`; `--foreground` streams logs in text mode, and Ctrl-C stops only a session
 it started. Joining an existing session leaves it running on interruption.
+Each call in `dev.log` identifies viewer, handler, outcome and milliseconds, with
+`ctx.log` output and local-only failure message/stack. A session started with
+`--json` records full wide events and invocation JSON; `dev logs --json` retains
+`{ ok, log, text }`. No runtime database log rows are written.
 Reset stops and wipes disposable local state and requires a separate start;
 it does not change published resources. State is scoped to this repo and instance
 under `.patchy/dev/`. The next start fetches and materialises the full published

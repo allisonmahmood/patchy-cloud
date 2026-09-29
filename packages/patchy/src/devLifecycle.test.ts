@@ -152,7 +152,7 @@ const exited = (running: Running) =>
   Effect.promise(() => running.exit).pipe(Effect.timeout("12 seconds"));
 const cli = (root: string, instance: string, args: ReadonlyArray<string>) =>
   subprocess(
-    [path.join(packageDir, "dist/index.js"), "dev", ...args, "--api-url", instance],
+    [path.join(root, "node_modules/patchy/dist/index.js"), "dev", ...args, "--api-url", instance],
     root,
     {
       PATCHY_API_TOKEN: "disposable-lifecycle-token"
@@ -319,7 +319,12 @@ const fixture = Effect.gen(function* () {
 const nodeFsLink = (from: string, to: string) =>
   Effect.promise(() => nodeFs.symlink(from, to, "dir"));
 
-const call = Effect.fn("test.lifecycle.call")(function* (url: string, op: string, args: unknown) {
+const call = Effect.fn("test.lifecycle.call")(function* (
+  url: string,
+  op: string,
+  args: unknown,
+  viewerId = identity.user.id
+) {
   const http = yield* HttpClient.HttpClient;
   const origin = new URL(url).origin;
   const response = yield* http.execute(
@@ -327,13 +332,13 @@ const call = Effect.fn("test.lifecycle.call")(function* (url: string, op: string
       HttpClientRequest.setHeaders({
         origin,
         "x-patchy-wire": String(WIRE_VERSION),
-        "x-patchy-principal": JSON.stringify({ userId: identity.user.id })
+        "x-patchy-principal": JSON.stringify({ userId: viewerId })
       }),
       HttpClientRequest.bodyJsonUnsafe({
         patchId,
         versionId,
         wire: WIRE_VERSION,
-        principal: { userId: identity.user.id },
+        principal: { userId: viewerId },
         op,
         args
       })
@@ -351,16 +356,23 @@ it.live(
       const fs = yield* FileSystem.FileSystem;
       const { root, instance, stateDir, requests } = yield* fixture;
       const first = yield* command(root, instance, []);
+      assert.isString(first.colleagueUrl);
+      assert.notStrictEqual(new URL(first.colleagueUrl).origin, new URL(first.url).origin);
       const record = (yield* Effect.promise(() => readRecord(stateDir)))!;
       assert.isTrue(yield* Effect.promise(() => sameProcess(record)));
       const requested = requests.length;
       assert.deepStrictEqual(yield* command(root, instance, []), first);
       assert.strictEqual(requests.length, requested);
       assert.isFalse(yield* fs.exists(path.join(stateDir, "baseline.json")));
-      yield* call(first.url, "tables.insert", {
-        table: "notes",
-        row: { title: "Keep until reset" }
-      });
+      yield* call(
+        first.colleagueUrl,
+        "tables.insert",
+        {
+          table: "notes",
+          row: { title: "Keep until reset" }
+        },
+        "usr_dev_colleague"
+      );
       const origin = new URL(first.url).origin;
       const http = yield* HttpClient.HttpClient;
       const uploaded = yield* http.execute(
@@ -382,6 +394,18 @@ it.live(
         reset: false
       });
       assert.isFalse(yield* Effect.promise(() => sameProcess(record)));
+      const log = yield* command(root, instance, ["logs"]);
+      assert.deepStrictEqual(Object.keys(log).sort(), ["log", "ok", "text"]);
+      const events = (log.text as string)
+        .split("\n")
+        .filter((line) => line.startsWith("{"))
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+      assert.include(
+        events.find(
+          (event) => Array.isArray(event.operations) && event.operations.includes("tables.insert")
+        ),
+        { viewerId: "usr_dev_colleague", outcome: "success" }
+      );
       const retained = yield* command(root, instance, []);
       assert.nestedPropertyVal(
         yield* call(retained.url, "tables.list", { table: "notes" }),
@@ -413,6 +437,66 @@ it.live(
         0
       );
       assert.strictEqual(requests.filter((url) => url.endsWith("/inventory")).length, 3);
+    }).pipe(Effect.provide(NodeHttpClient.layerNodeHttp), Effect.provide(NodeServices.layer)),
+  { timeout: 60_000 }
+);
+
+it.live(
+  "packed tier 2 dev starts after Vite and executes handlers for both viewers",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { root, instance } = yield* fixture;
+      // Unlike the tier-1 symlink fixture, an installed CLI resolves the repo's workerd pin.
+      const sdk = path.join(root, "node_modules/patchy");
+      yield* Effect.promise(() => nodeFs.unlink(sdk));
+      yield* fs.makeDirectory(sdk);
+      yield* Effect.promise(() =>
+        nodeFs.cp(path.join(packageDir, "dist"), path.join(sdk, "dist"), { recursive: true })
+      );
+      yield* fs.copyFile(path.join(packageDir, "package.json"), path.join(sdk, "package.json"));
+      yield* nodeFsLink(path.join(packageDir, "node_modules"), path.join(sdk, "node_modules"));
+      const executionRequire = createRequire(
+        new URL("../../execution/package.json", import.meta.url)
+      );
+      yield* nodeFsLink(
+        path.dirname(executionRequire.resolve("workerd/package.json")),
+        path.join(root, "node_modules/workerd")
+      );
+      const configPath = path.join(root, "patchy.config.ts");
+      yield* fs.writeFileString(
+        configPath,
+        (yield* fs.readFileString(configPath)).replace("tier: 1", "tier: 2")
+      );
+      yield* fs.makeDirectory(path.join(root, "server"));
+      yield* fs.writeFileString(
+        path.join(root, "server/viewer.ts"),
+        'import { query, t } from "patchy/server";\n' +
+          "export const current = query({ args: {}, result: t.text(), handler: async (ctx) => ctx.viewer.user.id });\n"
+      );
+      const started = yield* command(root, instance, []);
+      for (const [url, viewerId] of [
+        [started.url, identity.user.id],
+        [started.colleagueUrl, "usr_dev_colleague"]
+      ] as const) {
+        assert.nestedPropertyVal(
+          yield* call(url, "server.call", { handler: "viewer.current", args: {} }, viewerId),
+          "value",
+          viewerId
+        );
+      }
+      yield* command(root, instance, ["stop"]);
+      const log = yield* command(root, instance, ["logs"]);
+      const calls = (log.text as string)
+        .split("\n")
+        .filter((line) => line.startsWith("{"))
+        .map((line) => JSON.parse(line) as Record<string, unknown>)
+        .filter((event) => event.type === "invocation" && event.handler === "viewer.current")
+        .map((event) => ({ viewerId: event.initiatingViewerId, outcome: event.outcome }));
+      assert.sameDeepMembers(calls, [
+        { viewerId: identity.user.id, outcome: "success" },
+        { viewerId: "usr_dev_colleague", outcome: "success" }
+      ]);
     }).pipe(Effect.provide(NodeHttpClient.layerNodeHttp), Effect.provide(NodeServices.layer)),
   { timeout: 60_000 }
 );

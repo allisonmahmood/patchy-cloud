@@ -144,6 +144,58 @@ it.layer(layer)("document streams", (it) => {
     }).pipe(Effect.scoped)
   );
 
+  it.effect("sends the current dev handler kinds on initial admission and reconnect", () =>
+    Effect.gen(function* () {
+      const authority = yield* versionAuthority;
+      const initial = {
+        ...authority.initial,
+        executionVersionId: "dev-execution-initial",
+        manifest: {
+          ...authority.initial.manifest,
+          tier: 2 as const,
+          handlers: {
+            "leads.save": { kind: "query" as const, args: {}, result: { kind: "text" as const } }
+          }
+        }
+      };
+      authority.state.retained.set(initial.versionId, initial);
+      const streams = yield* makeStreams.pipe(
+        Effect.provide(authority.layer),
+        Effect.provide(WideEvents.layerNoop)
+      );
+      const first = yield* open("dev_metadata_document").pipe(
+        Effect.provideService(RuntimeStream.RuntimeStream, streams)
+      );
+      assert.strictEqual(frame(yield* first.pull).type, "hello");
+      assert.strictEqual(frame(yield* first.pull).type, "served");
+      assert.deepStrictEqual(frame(yield* first.pull), {
+        type: "handlers",
+        kinds: { "leads.save": "query" }
+      });
+      yield* Scope.close(first.scope, Exit.void);
+      authority.state.retained.set(initial.versionId, {
+        ...initial,
+        executionVersionId: "dev-execution-rebuilt",
+        manifest: {
+          ...initial.manifest,
+          handlers: {
+            "leads.save": { kind: "mutation", args: {}, result: { kind: "text" } },
+            "added.save": { kind: "mutation", args: {}, result: { kind: "text" } }
+          }
+        }
+      });
+      const reconnected = yield* open("dev_metadata_document").pipe(
+        Effect.provideService(RuntimeStream.RuntimeStream, streams)
+      );
+      assert.strictEqual(frame(yield* reconnected.pull).type, "hello");
+      assert.strictEqual(frame(yield* reconnected.pull).type, "served");
+      assert.deepStrictEqual(frame(yield* reconnected.pull), {
+        type: "handlers",
+        kinds: { "leads.save": "mutation", "added.save": "mutation" }
+      });
+    }).pipe(Effect.scoped)
+  );
+
   it.effect("enforces the viewer document bound and frees slots on disconnect", () =>
     Effect.gen(function* () {
       const streams = yield* RuntimeStream.RuntimeStream;

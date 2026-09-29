@@ -117,6 +117,33 @@ export async function runToolchain(
             ]
           : []),
         {
+          name: "patchy-closed-server",
+          enforce: "post",
+          generateBundle(_options, bundle) {
+            if (graph !== "server") return;
+            for (const output of Object.values(bundle)) {
+              if (output.type !== "chunk") continue;
+              // Native module metadata includes computed and dormant imports without
+              // allocating a second JavaScript AST for the bundled SDK on every save.
+              const parsed = vite.parseSync(output.fileName, output.code);
+              if (
+                parsed.errors.length !== 0 ||
+                parsed.module.staticImports.length !== 0 ||
+                parsed.module.dynamicImports.length !== 0 ||
+                parsed.module.staticExports.some((statement) =>
+                  statement.entries.some((entry) => entry.moduleRequest !== null)
+                )
+              ) {
+                importRefusal = new LocalError({
+                  code: "invalid_manifest",
+                  message: "The server build must be a closed module without imports."
+                });
+                throw new Error(importRefusal.message);
+              }
+            }
+          }
+        },
+        {
           name: "patchy-toolchain-versions",
           enforce: "pre",
           configResolved(resolved) {
@@ -135,7 +162,9 @@ export async function runToolchain(
     return {
       result,
       warnings: [...warnings],
-      sdkImports: [...sdkImports].sort(),
+      get sdkImports() {
+        return [...sdkImports].sort();
+      },
       importRefusal: () => importRefusal
     };
   } catch (cause) {

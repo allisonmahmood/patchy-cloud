@@ -47,7 +47,10 @@ export default tseslint.config(
   {
     files: ["packages/patchy/src/**/*.{ts,mts,cts,tsx}"],
     // CLI imports stay wire-only except for isolated server-artifact inspection.
-    ignores: ["**/*.test.ts", "packages/patchy/src/dev{Preparation,Resources,Server}.ts"],
+    ignores: [
+      "**/*.test.ts",
+      "packages/patchy/src/dev{Preparation,Resources,Server,Execution,Log}.ts"
+    ],
     rules: {
       "no-restricted-imports": [
         "error",
@@ -70,7 +73,7 @@ export default tseslint.config(
     }
   },
   {
-    files: ["packages/patchy/src/dev{Preparation,Resources,Server}.ts"],
+    files: ["packages/patchy/src/dev{Preparation,Resources,Server,Execution,Log}.ts"],
     rules: {
       "no-restricted-imports": [
         "error",
@@ -78,7 +81,7 @@ export default tseslint.config(
           patterns: [
             {
               regex:
-                "^@patchy/(?!(api|core|analytics/wide-events|company-database/dev|content-store|integrations/dev|primitives|runtime/core|runtime/dev|limits|serving/shell)$)",
+                "^@patchy/(?!(api|core|analytics/wide-events|company-database/dev|content-store|execution/local|integrations/dev|primitives|runtime/core|runtime/dev|limits|serving/shell)$)",
               message:
                 "The local runtime may compose only explicit local capability surfaces, never production auth or credential wiring."
             },

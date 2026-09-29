@@ -16,6 +16,7 @@ import {
   RuntimeStreamFrame,
   RuntimeStreamRequest,
   RuntimeSubscriptionRequest,
+  type HandlerKind,
   WIRE_VERSION
 } from "@patchy/api";
 import * as WideEvents from "@patchy/analytics/wide-events";
@@ -77,6 +78,7 @@ type Entry = {
   readonly viewerId: string;
   readonly generation: string;
   lastServed: { readonly versionId: string; readonly tier: number } | undefined;
+  lastHandlerKinds: Readonly<Record<string, HandlerKind>> | undefined;
   readonly recheck: Effect.Effect<void, Runtime.RuntimeError>;
   readonly subscriptions: Subscriptions.DocumentSubscriptions;
   readonly send: (frame: RuntimeStreamFrame) => void;
@@ -127,7 +129,10 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
     const callsPerMinute = yield* ContractLimits.get("runtime.calls.perMinute");
     const documentLimit = yield* ContractLimits.get("stream.documents");
     const operatingLimits = yield* StreamLimits.StreamLimits;
-    const subscriptions = yield* Subscriptions.make;
+    const sharedSubscriptions = yield* Effect.serviceOption(Subscriptions.Subscriptions);
+    const subscriptions = Option.isSome(sharedSubscriptions)
+      ? sharedSubscriptions.value
+      : yield* Subscriptions.make;
     const rootScope = yield* Scope.Scope;
     const context = yield* Effect.context<never>();
     const wakes = yield* Wakes.Wakes;
@@ -203,6 +208,7 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
           }
           if (Option.isNone(eligible) || eligible.value.companyId !== entry.companyId) {
             entry.close("access_denied", { type: "access_denied" });
+            continue;
           } else if (
             entry.lastServed?.versionId !== served.value.versionId ||
             entry.lastServed?.tier !== served.value.manifest.tier
@@ -217,6 +223,19 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
               tier: served.value.manifest.tier
             });
           }
+          // Rebinding updates this registry synchronously. A lookup begun before a
+          // swap must not overwrite the newer kinds already delivered to the document.
+          const kinds =
+            subscriptions.handlerKinds(patchId) ??
+            (eligible.value.executionVersionId === undefined
+              ? undefined
+              : Object.fromEntries(
+                  Object.entries(eligible.value.manifest.handlers ?? {}).map(
+                    ([name, descriptor]) => [name, descriptor.kind]
+                  )
+                ));
+          if (kinds !== undefined && entry.lastHandlerKinds !== kinds)
+            entry.send({ type: "handlers", kinds });
         }
       }).pipe(
         // A failed lookup must not fail the publish that already committed. EOF
@@ -361,11 +380,13 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
         viewerId: identity.viewerId,
         generation,
         lastServed: undefined,
+        lastHandlerKinds: undefined,
         recheck,
         subscriptions: documentSubscriptions,
         close,
         send: (frame) => {
           if (closeReason !== undefined) return;
+          if (frame.type === "handlers") entry.lastHandlerKinds = frame.kinds;
           if (!put(frame)) close("slow_consumer", { type: "closed", reason: "slow_consumer" });
         }
       };

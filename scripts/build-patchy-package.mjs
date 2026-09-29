@@ -93,7 +93,7 @@ await esbuild.build({
 });
 await esbuild.build({
   ...common,
-  entryPoints: ["config", "client", "server", "guest"].map((name) =>
+  entryPoints: ["config", "client", "server"].map((name) =>
     path.join(packageDir, `src/${name}.ts`)
   ),
   outdir: distDir,

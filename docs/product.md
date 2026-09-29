@@ -8,7 +8,7 @@ Signed-in members find company patches at `/` and open their cards at `/patches/
 
 Agents discover company tools and data sources through `patchy list` and its patch, primitive and connection drill-downs. Description edits pull back into the repo at refresh, dev start and publish. Clerk sign-in, create-or-join, company administration, company/public sharing and machine login, logout and revocation are built. Postgres connections have browser administration, immutable schema snapshots and generated relation clients. Portal, Company, Connections and Your machines share one app shell and component set.
 
-Tier 2 repos publish an HTML artifact and an inspected server artifact. Dev and test instances serve them on the local executor, with patch identity for own-resource callbacks, live viewer authorization for company data and bounded settlement. Production admission remains closed until fleet execution lands. The patch-repo tier 2 dev loop, narrower sharing, shared file stores, other integrations, billing, source recovery and the remaining company lifecycle remain future work.
+Tier 2 repos publish an HTML artifact and an inspected server artifact. Dev and test instances serve them on the local executor, with patch identity for own-resource callbacks, live viewer authorization for company data and bounded settlement. The patch-repo dev loop uses that same handler engine and callback path, with live server rebinding and a non-admin colleague mount. Production admission remains closed until fleet execution lands. Narrower sharing, shared file stores, other integrations, billing, source recovery and the remaining company lifecycle remain future work.
 
 ## Patches
 
@@ -81,7 +81,7 @@ listener and supervised local executor are implemented. Runtime now admits and
 settles invocations through a private capability gateway in isolated execution
 tests and the existing `pnpm dev` instance. An eligible `server.call` executes on
 the local executor. Published tier 2 pages use the generated handler client in
-the hosted shell. `patchy dev` on the production engine belongs to #404.
+the hosted shell. `patchy dev` uses that engine and gateway over local PGlite and fixtures.
 
 ### Building a patch
 
@@ -119,30 +119,39 @@ skill paths, runtime-check guidance and the generated-index pointer.
 `CLAUDE.md` imports it. The local dev runtime uses real handlers over local data,
 never a production-data shortcut.
 
-For tiers 0 and 1, `patchy dev` checks the pin, CLI and runtime against the instance release, then
+For tiers 0, 1 and 2, `patchy dev` checks the pin, CLI and runtime against the instance release, then
 authenticates a new session as the machine token's user. It refreshes declarations
 and pulls the published inventory when the repo has an id. It provisions the same
 table/store definitions over PGlite and serves the production shell, sandbox,
-CSP and broker. Vite builds the same single-file artifact as publish; a completed
-build replaces the bundle atomically and reloads the whole shell at its current
-route. Config and fixture changes take effect on the next stop/start.
+CSP and broker. Vite builds the same single-file page artifact as publish;
+`src/` rebuilds swap it atomically and reload the shell. Tier 2 `server/` edits
+atomically rebind bundle bytes and descriptors without reload, discovering new
+modules live. Existing calls and nested calls finish on the old binding.
+Subscriptions wake on the new binding, discard crossing results and permanently
+end for removed handlers or incompatible arguments. Bad builds keep the last good
+page or binding. Config and fixture changes take effect on the next stop/start.
 
-The daemon is detached and idempotent, returning one local page URL only when
-healthy, with its log path and stop command. `dev status`, `stop`, `logs` and
-`reset` also accept `--json`; `--foreground` stays attached with logs.
+The daemon is detached and idempotent, returning a primary local page URL only when
+healthy, with its log path and stop command. Tiers 1 and 2 also return `colleagueUrl`,
+a distinct origin for a fixed non-admin viewer sharing the same local data.
+`dev status`, `stop`, `logs` and `reset` accept `--json`; `--foreground` stays attached.
 State lives under `.patchy/dev/`, scoped to repo and instance; process identity
 includes birth time, so a stale PID cannot stop a different process.
 Reset stops and wipes disposable local state without changing published resources;
 the next start fetches the published inventory again.
 Before the first publish every schema change recreates local data. Afterwards,
 the published inventory determines additive changes and refusals, not the last
-local config; compatible additions preserve rows. Dev calls print compact wide
-events to the local dev log without PostHog delivery. Neither the connection
-keyring nor the production runtime log store is loaded.
+local config; compatible additions preserve rows. `dev.log` records each call's
+viewer, handler, outcome and milliseconds, `ctx.log` output and local-only failure
+message/stack. Starting with `--json` records full wide events and invocation JSON.
+There are no runtime database log rows, PostHog delivery or connection keyring.
 
-Tier 2 handlers and query subscriptions can be published and exercised on a
-development instance with invented data. The production-engine `patchy dev`
-integration, live server rebinding and colleague mount belong to #404.
+`patchy dev` runs the same handler engine and callback path as production.
+It does not reproduce production's scheduling, limits or containment. A handler
+that spins forever times out, and a health check restarts the dev engine, which
+can interrupt other calls in flight. Contract limits still apply; production
+operating capacity does not. PGlite is not evidence for hosted `busy` or
+`write_conflict` behavior.
 
 From the repo root, `patchy publish` recovers any saved attempt first. For a new
 attempt it checks the release, executes config, compares generated declaration
