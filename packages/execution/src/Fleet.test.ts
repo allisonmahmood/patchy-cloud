@@ -81,6 +81,20 @@ const liveChildren = Effect.fn("FleetTest.liveChildren")(function* (directory: s
     return total;
   });
 });
+// TestClock sees SQL waits as suspended fibers; observe renewal commits between jumps.
+const advanceWithRenewals = Effect.fn("FleetTest.advanceWithRenewals")(function* (
+  milliseconds: number
+) {
+  const sql = yield* SqlClient.SqlClient;
+  for (let elapsed = 0; elapsed < milliseconds; elapsed += 5_000) {
+    yield* TestClock.adjust(Math.min(5_000, milliseconds - elapsed));
+    const renewedUntil = (yield* Clock.currentTimeMillis) + 15_000;
+    const renewal = yield* sql<{ readonly renewed: boolean }>`
+      SELECT expires_at >= ${renewedUntil} AS renewed FROM execution_housekeeping
+    `.pipe(Effect.repeat({ while: (rows) => !rows[0]?.renewed, times: 100 }));
+    assert.isTrue(renewal[0]?.renewed);
+  }
+});
 const request = (
   bundle: GuestProtocol.BundleBinding,
   generation: number,
@@ -725,16 +739,7 @@ it.layer(services)("host fleet controller", (it) => {
           Effect.forkChild
         );
         yield* Deferred.await(starting);
-        // TestClock cannot await real Postgres I/O before jumping to the next timer.
-        // Observe each renewal commit before advancing beyond that lease window.
-        for (let elapsed = 0; elapsed < 20_000; elapsed += 5_000) {
-          yield* TestClock.adjust(5_000);
-          const renewedUntil = (yield* Clock.currentTimeMillis) + 15_000;
-          const renewal = yield* sql<{ readonly renewed: boolean }>`
-            SELECT expires_at >= ${renewedUntil} AS renewed FROM execution_housekeeping
-          `.pipe(Effect.repeat({ while: (rows) => !rows[0]?.renewed, times: 100 }));
-          assert.isTrue(renewal[0]?.renewed);
-        }
+        yield* advanceWithRenewals(20_000);
         assert.isFalse(settled);
         assert.isFalse(yield* right.housekeeping());
         const lease = (yield* sql`SELECT owner_id, lease_epoch FROM execution_housekeeping`)[0]!;
@@ -837,7 +842,7 @@ it.layer(services)("host fleet controller", (it) => {
         assert.notStrictEqual(healthy.taskId, failing.taskId);
         assert.strictEqual(healthy.state, "active");
         assert.isFalse(completed);
-        yield* TestClock.adjust(5_000);
+        yield* advanceWithRenewals(5_000);
         yield* Deferred.await(replenished);
         yield* TestClock.testClockWith((clock) =>
           clock.withLive(
@@ -850,7 +855,7 @@ it.layer(services)("host fleet controller", (it) => {
             }).pipe(Effect.timeout("5 seconds"))
           )
         );
-        yield* TestClock.adjust(35_000);
+        yield* advanceWithRenewals(35_000);
         assert.isTrue(yield* Fiber.join(pass));
         const rows =
           yield* sql`SELECT state FROM execution_bindings WHERE task_id = ${failing.taskId}`;
