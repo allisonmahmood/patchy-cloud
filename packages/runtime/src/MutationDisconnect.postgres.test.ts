@@ -209,7 +209,11 @@ for (const kind of ["query", "mutation", "action"] as const) {
               while (true) {
                 const rows = yield* platform<{ outcome: string; reply_delivered: boolean }>`
                 SELECT outcome, reply_delivered FROM runtime_invocations
-                WHERE correlation_id = ${correlationId}`;
+                WHERE correlation_id = ${correlationId}
+                  AND NOT EXISTS (
+                    SELECT 1 FROM runtime_invocations
+                    WHERE patch_id = ${binding.patchId} AND outcome = 'pending'
+                  )`;
                 if (rows[0] !== undefined && rows[0].outcome !== "pending") return rows[0];
                 yield* Effect.sleep(20);
               }

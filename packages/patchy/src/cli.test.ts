@@ -4714,7 +4714,7 @@ describe("repo publish recovery", () => {
     expect(result).toMatchObject({ status: 1, stdout: "" });
     expect(JSON.parse(result.stderr)).toMatchObject({ ok: false, kind: "local" });
     expect(instance.requests.some((request) => request.url === "/api/publish")).toBe(false);
-  });
+  }, 30_000); // Refresh and publish run real config, compiler and Vite child processes.
 
   it.each(["file", "parent"])(
     "refuses a generated manifest %s symlink without truncating its target",
