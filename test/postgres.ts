@@ -16,6 +16,7 @@ import { migrations as companyDatabaseMigrations } from "../packages/company-dat
 import { migrations as runtimeMigrations } from "../packages/runtime/src/migrations.js";
 import { migrations as integrationsMigrations } from "../packages/integrations/src/migrations.js";
 import { migrations as limitsMigrations } from "../packages/limits/src/migrations.js";
+import { migrations as executionMigrations } from "../packages/execution/src/migrations.js";
 import * as Patches from "../packages/patches/src/Patches.js";
 import { layerFromUrl, migrate } from "../packages/sql/src/index.js";
 import { PG_FLAGS, PG_PASSWORD, PG_USER } from "../scripts/dev/src/postgres.js";
@@ -82,7 +83,8 @@ export default async function setup(project: TestProject): Promise<() => Promise
         ...runtimeMigrations,
         ...integrationsMigrations,
         ...patchesMigrations,
-        ...limitsMigrations
+        ...limitsMigrations,
+        ...executionMigrations
       }).pipe(Effect.provide(layerFromUrl(Redacted.make(templateUrl))))
     );
     // The same rows `pnpm dev` seeds, so a test and the dev instance agree

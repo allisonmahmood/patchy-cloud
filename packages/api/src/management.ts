@@ -8,11 +8,25 @@ export const ProcessGeneration = Schema.Int.check(Schema.isGreaterThanOrEqualTo(
 const identity = Schema.NonEmptyString;
 const nonnegative = Schema.Number.check(Schema.isFinite(), Schema.isGreaterThanOrEqualTo(0));
 const count = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
+const positive = Schema.Number.check(Schema.isFinite(), Schema.isGreaterThan(0));
+export const SupervisorLimits = Schema.Struct({
+  "execution.probe.interval": Schema.optionalKey(positive),
+  "execution.process.rss": Schema.optionalKey(positive),
+  "execution.residency.processes": Schema.optionalKey(Schema.Int.check(Schema.isGreaterThan(0))),
+  "execution.residency.bytes": Schema.optionalKey(positive),
+  "execution.process.idle": Schema.optionalKey(positive)
+});
+export const LimitRevision = Schema.Struct({
+  deploymentRevision: identity,
+  overrideRevision: Schema.String.check(Schema.isPattern(/^\d+$/))
+});
 
 export const BindRequest = Schema.Struct({
   companyId: identity,
   bindingEpoch: BindingEpoch,
-  bundle: Schema.optionalKey(GuestProtocol.Bundle)
+  bundle: Schema.optionalKey(GuestProtocol.Bundle),
+  operatingLimits: Schema.optionalKey(SupervisorLimits),
+  configRevision: Schema.optionalKey(LimitRevision)
 });
 export type BindRequest = typeof BindRequest.Type;
 export const BindReply = Schema.Struct({

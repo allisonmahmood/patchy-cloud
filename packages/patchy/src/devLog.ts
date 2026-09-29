@@ -41,6 +41,7 @@ export const layer = (json: boolean) =>
     WideEvents.WideEvents,
     Effect.map(WideEvents.make, (events) =>
       WideEvents.WideEvents.of({
+        emit: events.emit,
         withEvent: (seed, work) =>
           Effect.suspend(() =>
             events.withEvent(seed, work).pipe(Effect.provideService(settlement, { logged: false }))

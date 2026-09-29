@@ -30,8 +30,8 @@ S3-compatible API; development and offline tests use the filesystem. A bucket
 belongs to the Neon branch selected by its endpoint, not to a global S3 namespace.
 
 1. **Migrations belong to capabilities, with one platform ledger.** The original
-   baselines were rewritten before deployment. The current ledger has twelve
-   records across seven owners:
+   baselines were rewritten before deployment. The current ledger has fourteen
+   records across eight owners:
 
    | id   | owner            | record                          |
    | ---- | ---------------- | ------------------------------- |
@@ -48,6 +48,7 @@ belongs to the Neon branch selected by its endpoint, not to a global S3 namespac
    | 0011 | Runtime          | `runtime_invocations`           |
    | 0012 | Runtime          | `runtime_mutation_commit_proof` |
    | 0013 | Patches          | `patches_server_artifact`       |
+   | 0014 | Execution        | `execution_fleet`               |
 
    The patches baseline includes names, manifests, version stamps and publish
    recovery; `connection_snapshots` belongs to the integrations baseline.

@@ -59,8 +59,8 @@ snapshot. The primitive snapshot tests use real Postgres for concurrent writes,
 live unsharing and deadline cancellation; PGlite does not prove production contention.
 `Invocation.test.ts` injects a non-returning executor to verify disconnected-client
 deadlines, inherited child budgets and unresolved-resource destruction. Fleet
-hosting remains separate work. These checks prove local execution and settlement,
-not Fargate containment.
+hosting can be exercised with the local task provider below. These checks prove
+local execution and settlement, not Fargate containment.
 
 Mutations use one host-owned SERIALIZABLE transaction and up to three
 whole-handler attempts within the original five-second deadline. They return
@@ -147,6 +147,32 @@ apply locally.
 The private management wire is documented in `docs/API.md`. The host must persist
 process reports before acknowledging them through `stats`. The supervisor has
 no database and reports interrupted attempt identities without classifying commits.
+
+### Exercising the fleet offline
+
+An isolated host can opt into `EXECUTION_PROVIDER=local-fleet` with `NODE_ENV=test`
+or `development`. The default dev executor remains no-pool; production refuses
+the local task provider. Do not use a daily-driver instance for fleet checks.
+
+This path runs the same controller that will receive the ECS provider, over the
+platform database, with one separate Node supervisor process per local task.
+Children receive only management identity, a generated deployment secret and
+trusted callback URLs, not the host's database, storage or login environment.
+Closing the provider scope stops its tasks and workerd children.
+
+The controller claims spare tasks, fences stopping bindings, drains retained
+invocations and reconciles provider stop times. Its housekeeping lease is shared
+by host replicas. `PATCHY_LIMITS_JSON` configures the registry's fleet budget,
+spare floor, housekeeping interval and lease. `PATCHY_REPLICA` identifies the host
+and `PATCHY_DEPLOYMENT_REVISION` identifies the deployment; neither is a binding
+epoch or process generation.
+
+`packages/execution/src/Fleet.test.ts` covers controller transitions over Postgres.
+`LocalTaskProvider.test.ts` executes real workerd and verifies final process reports
+survive task stop. The fleet case in `DevelopmentExecution.test.ts` opens a real
+document stream through `starting` and `ready`, then exercises nested callbacks
+and committed mutation-key replay. The ECS provider and containment checks remain
+the next ticket.
 
 ### Starting the local instance
 

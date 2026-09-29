@@ -25,6 +25,7 @@ import { newInternalId } from "@patchy/core";
 import { ContractLimits, Limits } from "@patchy/limits";
 import { registry } from "@patchy/limits/registry";
 import * as LoadedVersions from "./LoadedVersions.js";
+import * as ExecutionLifecycle from "./ExecutionLifecycle.js";
 import * as Runtime from "./Runtime.js";
 import * as StreamAdmission from "./StreamAdmission.js";
 import * as Binding from "./Binding.js";
@@ -123,6 +124,7 @@ type Dependencies =
 export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies | Scope.Scope> =
   Effect.gen(function* () {
     const admission = yield* StreamAdmission.StreamAdmission;
+    const executionLifecycle = yield* Effect.serviceOption(ExecutionLifecycle.ExecutionLifecycle);
     const versions = yield* LoadedVersions.LoadedVersions;
     const events = yield* WideEvents.WideEvents;
     const limits = yield* Limits.Limits;
@@ -278,6 +280,7 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
         return yield* new Runtime.ShellOutdated({});
       const queue = yield* Queue.make<Uint8Array, Cause.Done>();
       const done = yield* Deferred.make<void>();
+      const lifecycleClosed = yield* Deferred.make<void>();
       const scope = yield* Scope.Scope;
       const now = yield* Clock.currentTimeMillis;
       const key = `${identity.companyId}:${input.patchId}:${input.documentId}`;
@@ -305,6 +308,7 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
       let peakBuffered = buffered;
       let bytes = 0;
       let closeReason: string | undefined;
+      let executionReady = loaded.manifest.tier !== 2;
       const put = (frame: RuntimeStreamFrame) => {
         const chunk = encoder.encode(`data: ${encodeFrame(frame)}\n\n`);
         if (buffered + chunk.byteLength > bufferLimit) return false;
@@ -316,6 +320,7 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
       const close = (reason: string, frame?: RuntimeStreamFrame) => {
         if (closeReason !== undefined) return;
         closeReason = reason;
+        Deferred.doneUnsafe(lifecycleClosed, Effect.void);
         documentSubscriptions.close();
         // Drop stale queued updates so the terminal reason is always next, even at capacity.
         while (Queue.takeUnsafe(queue) !== undefined) {
@@ -335,6 +340,7 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
         generation,
         binding: () => binding,
         scope,
+        ready: () => executionReady,
         send: (frame: RuntimeStreamFrame) => entry.send(frame),
         check: Effect.gen(function* () {
           yield* recheck;
@@ -456,6 +462,63 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
           closeReason === undefined ? refresh(input.patchId, [entry], false) : Effect.void
         )
       );
+      if (loaded.manifest.tier === 2 && closeReason === undefined) {
+        if (Option.isNone(executionLifecycle)) {
+          executionReady = true;
+          entry.send({ type: "ready" });
+        } else {
+          entry.send({ type: "starting" });
+          yield* Effect.gen(function* () {
+            const { wait } = yield* operatingLimits.getMany({
+              companyId: identity.companyId,
+              limits: { wait: "execution.pool.wait" }
+            });
+            yield* executionLifecycle.value.connect(identity.companyId).pipe(
+              Effect.timeoutOption(wait.value),
+              Effect.flatMap((connected) =>
+                Option.isSome(connected)
+                  ? Effect.void
+                  : Effect.fail(
+                      new ExecutionLifecycle.LifecycleError({
+                        code: "busy",
+                        status: 503,
+                        retryAfterSeconds: 1,
+                        limitId: "execution.pool.wait",
+                        scope: "company",
+                        value: wait.value
+                      })
+                    )
+              )
+            );
+            if (closeReason !== undefined) return;
+            executionReady = true;
+            entry.send({ type: "ready" });
+            yield* documentSubscriptions.reconcile();
+            yield* Deferred.await(lifecycleClosed);
+          }).pipe(
+            Effect.catch((error) =>
+              Effect.sync(() => {
+                if (closeReason === undefined)
+                  entry.send({
+                    type: "start_failed",
+                    code: "busy",
+                    retryAfter: "retryAfterSeconds" in error ? (error.retryAfterSeconds ?? 1) : 1,
+                    ...("scope" in error && error.scope !== undefined
+                      ? { scope: error.scope }
+                      : {}),
+                    ...("limitId" in error && error.limitId !== undefined
+                      ? { limitId: error.limitId }
+                      : {}),
+                    ...("value" in error && error.value !== undefined ? { value: error.value } : {})
+                  });
+              })
+            ),
+            Effect.raceFirst(Deferred.await(lifecycleClosed)),
+            Effect.scoped,
+            Effect.forkIn(scope)
+          );
+        }
+      }
       yield* Effect.gen(function* () {
         while (closeReason === undefined) {
           const interval = yield* operatingLimits

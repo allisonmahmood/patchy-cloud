@@ -30,6 +30,13 @@ starting the cloud or touching Clerk. Prove that a killed generation cannot
 forward callbacks and a fresh bind recovers without replay. Local execution
 proves engine compatibility, not Fargate containment.
 
+For fleet-controller changes, use DEVELOPMENT's **Exercising the fleet offline**
+recipe on a disposable instance with `EXECUTION_PROVIDER=local-fleet`. Cover
+concurrent claims, stopping/adoption and release/open races, provider-stop metering
+and the database breaker. Exercise first-open and resumed starting in the browser,
+including held calls across a stream drop and refusal without replay on failure.
+Keep the ordinary no-pool patch-repo dev loop unchanged.
+
 For tier 2 handler changes, follow DEVELOPMENT's **The execution engine**
 guidance and exercise an eligible `server.call` through the existing `pnpm dev`
 server composition. The local executor, private callback gateway, query snapshot

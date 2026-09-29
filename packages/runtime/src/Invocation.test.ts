@@ -17,12 +17,14 @@ import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as Binding from "./Binding.js";
 import * as CallbackGateway from "./CallbackGateway.js";
 import * as Executor from "./Executor.js";
+import * as ExecutionLifecycle from "./ExecutionLifecycle.js";
 import * as Invocation from "./Invocation.js";
 import * as InvocationCapabilities from "./InvocationCapabilities.js";
 import * as InvocationLog from "./InvocationLog.js";
 import * as LoadedVersions from "./LoadedVersions.js";
 import * as Runtime from "./Runtime.js";
 import * as RuntimeLog from "./RuntimeLog.js";
+import * as RuntimeApi from "./RuntimeApi.js";
 import * as ServerBundles from "./ServerBundles.js";
 import * as QuerySnapshot from "./QuerySnapshot.js";
 import { snapshot, mutations } from "./test/callbacks.js";
@@ -83,15 +85,115 @@ const services = Layer.mergeAll(
   Limits.layer,
   InvocationCapabilities.layer
 ).pipe(Layer.provideMerge(Testing.layer()));
-const makeInvocation = (invoke: Executor.Executor["Service"]["invoke"]) =>
+const makeInvocation = (
+  invoke: Executor.Executor["Service"]["invoke"],
+  bind: Executor.Executor["Service"]["bind"] = () => Effect.succeed(bound)
+) =>
   Invocation.make({ callbackUrl: "http://127.0.0.1:1/callback" }).pipe(
     Effect.provideService(QuerySnapshot.QuerySnapshot, { open: () => Effect.succeed(snapshot) }),
     Effect.provideService(MutationTransaction.MutationTransaction, mutations),
-    Effect.provideService(Executor.Executor, { bind: () => Effect.succeed(bound), invoke }),
+    Effect.provideService(Executor.Executor, { bind, invoke }),
     Effect.provideService(ServerBundles.ServerBundles, { load: () => Effect.succeed(bundle) })
   );
 
 it.layer(services)("Invocation", (it) => {
+  it.effect("refuses a paused patch before loading code and preserves retryAfter on HTTP", () =>
+    Effect.gen(function* () {
+      const invocations = yield* makeInvocation(() => Effect.die("Paused code must not run.")).pipe(
+        Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
+          connect: () => Effect.void,
+          acquire: () =>
+            Effect.fail(
+              new ExecutionLifecycle.LifecycleError({
+                code: "patch_paused",
+                status: 429,
+                retryAfterSeconds: 137,
+                limitId: "execution.breaker.kills",
+                scope: "patch",
+                value: 3
+              })
+            )
+        })
+      );
+      const error = yield* invocations
+        .call({ handler: "demo.query", args: { id: 1 } }, binding, Effect.succeed(viewer))
+        .pipe(Effect.flip);
+      assert.deepInclude(Runtime.toFailure(error), {
+        code: "patch_paused",
+        retryAfter: 137,
+        scope: "patch",
+        limitId: "execution.breaker.kills"
+      });
+      assert.strictEqual(RuntimeApi.failure(error).headers["retry-after"], "137");
+    })
+  );
+
+  it.effect("retains a child's admitted task after its action settles during replacement", () =>
+    Effect.gen(function* () {
+      const capabilities = yield* InvocationCapabilities.InvocationCapabilities;
+      const seen = yield* Queue.unbounded<GuestProtocol.Invoke>();
+      const actionDone = yield* Deferred.make<void>();
+      const childDone = yield* Deferred.make<void>();
+      const original = { taskId: "task-before-rollout", bindingEpoch: 1 };
+      let current = original;
+      let acquisitions = 0;
+      let releases = 0;
+      const invocations = yield* makeInvocation(
+        (request, selected) =>
+          Effect.gen(function* () {
+            assert.deepStrictEqual(selected, original);
+            yield* Queue.offer(seen, request);
+            yield* Deferred.await(request.handler === "demo.action" ? actionDone : childDone);
+            return {
+              outcome: "returned" as const,
+              reply: { ok: true as const, value: 42 },
+              guestMs: 1
+            };
+          }),
+        (_, selected) =>
+          Effect.sync(() => {
+            assert.deepStrictEqual(selected, original);
+            return bound;
+          })
+      ).pipe(
+        Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
+          connect: () => Effect.void,
+          acquire: () =>
+            Effect.sync(() => {
+              acquisitions++;
+              return {
+                binding: current,
+                release: Effect.sync(() => {
+                  releases++;
+                })
+              };
+            })
+        })
+      );
+      const parent = yield* invocations
+        .call(
+          { handler: "demo.action", args: {} },
+          { ...binding, correlationId: "retained-child-action" },
+          Effect.succeed(viewer)
+        )
+        .pipe(Effect.forkChild);
+      const request = yield* Queue.take(seen);
+      const capability = yield* capabilities.resolve(request.callback.capability, request);
+      current = { taskId: "task-after-rollout", bindingEpoch: 2 };
+      const child = yield* capability.run!({ handler: "demo.query", args: { id: 1 } }).pipe(
+        Effect.forkChild
+      );
+      yield* Queue.take(seen);
+      yield* Deferred.succeed(actionDone, undefined);
+      assert.deepStrictEqual(yield* Fiber.join(parent), { ok: true, value: 42 });
+      assert.strictEqual(acquisitions, 1);
+      assert.strictEqual(releases, 0);
+      yield* Deferred.succeed(childDone, undefined);
+      assert.deepStrictEqual(yield* Fiber.join(child), { ok: true, value: 42 });
+      assert.strictEqual(releases, 1);
+    })
+  );
+
   it.effect("validates loaded descriptors and refuses undeclared and forged handler failures", () =>
     Effect.gen(function* () {
       const seen = yield* Queue.unbounded<GuestProtocol.Invoke>();
@@ -297,8 +399,24 @@ it.layer(services)("Invocation", (it) => {
     () =>
       Effect.gen(function* () {
         const seen = yield* Queue.unbounded<GuestProtocol.Invoke>();
+        const released = yield* Deferred.make<void>();
+        let active = false;
         const invocations = yield* makeInvocation((request) =>
           Queue.offer(seen, request).pipe(Effect.andThen(Effect.never))
+        ).pipe(
+          Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
+            connect: () => Effect.void,
+            acquire: () =>
+              Effect.sync(() => {
+                active = true;
+                return {
+                  binding: { taskId: "disconnect-task", bindingEpoch: 1 },
+                  release: Effect.sync(() => {
+                    active = false;
+                  }).pipe(Effect.andThen(Deferred.succeed(released, undefined)), Effect.asVoid)
+                };
+              })
+          })
         );
         const runtime = yield* Runtime.make(
           {},
@@ -342,6 +460,7 @@ it.layer(services)("Invocation", (it) => {
           );
         const dispatched = yield* Queue.take(seen);
         yield* Fiber.interrupt(caller);
+        assert.isTrue(active);
         yield* TestClock.adjust("5 seconds");
         const capabilities = yield* InvocationCapabilities.InvocationCapabilities;
         assert.strictEqual(
@@ -363,6 +482,8 @@ it.layer(services)("Invocation", (it) => {
           }
         });
         const row = yield* readSettled;
+        yield* Deferred.await(released);
+        assert.isFalse(active);
         assert.strictEqual(row?.outcome, "handler_timeout");
         assert.strictEqual(row?.replyDelivered, false);
       })
@@ -377,6 +498,7 @@ it.layer(services)("Invocation", (it) => {
         const cancelled = yield* Deferred.make<void>();
         const resourceSettled = yield* Deferred.make<void>();
         let destroyed = false;
+        let active = false;
         const invocations = yield* makeInvocation((request) =>
           Effect.gen(function* () {
             yield* capabilities.retain(request.callback.capability, request, {
@@ -389,6 +511,20 @@ it.layer(services)("Invocation", (it) => {
             yield* Queue.offer(seen, request);
             return yield* Effect.never;
           })
+        ).pipe(
+          Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
+            connect: () => Effect.void,
+            acquire: () =>
+              Effect.sync(() => {
+                active = true;
+                return {
+                  binding: { taskId: "cleanup-task", bindingEpoch: 1 },
+                  release: Effect.sync(() => {
+                    active = false;
+                  })
+                };
+              })
+          })
         );
         const caller = yield* invocations
           .call(
@@ -400,11 +536,13 @@ it.layer(services)("Invocation", (it) => {
         const request = yield* Queue.take(seen);
         yield* TestClock.adjust("5 seconds");
         yield* Deferred.await(cancelled);
+        assert.isTrue(active);
         yield* TestClock.adjust("5 seconds");
         const result = yield* Fiber.join(caller);
         assert.strictEqual(result._tag, "Failure");
         if (result._tag === "Failure") assert.strictEqual(result.failure.code, "unknown_outcome");
         assert.isTrue(destroyed);
+        assert.isFalse(active);
         const log = yield* InvocationLog.InvocationLog;
         assert.strictEqual(
           (yield* log.find({ companyId: binding.companyId, invocationId: request.invocationId }))
@@ -419,8 +557,27 @@ it.layer(services)("Invocation", (it) => {
     Effect.gen(function* () {
       const capabilities = yield* InvocationCapabilities.InvocationCapabilities;
       const seen = yield* Queue.unbounded<GuestProtocol.Invoke>();
-      const invocations = yield* makeInvocation((request) =>
-        Queue.offer(seen, request).pipe(Effect.andThen(Effect.never))
+      const route = { taskId: "original-task", bindingEpoch: 7 };
+      let acquisitions = 0;
+      let released = false;
+      const releasedSignal = yield* Deferred.make<void>();
+      const invocations = yield* makeInvocation((request, selected) => {
+        assert.deepStrictEqual(selected, route);
+        return Queue.offer(seen, request).pipe(Effect.andThen(Effect.never));
+      }).pipe(
+        Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
+          connect: () => Effect.void,
+          acquire: () =>
+            Effect.sync(() => {
+              acquisitions++;
+              return {
+                binding: route,
+                release: Effect.sync(() => {
+                  released = true;
+                }).pipe(Effect.andThen(Deferred.succeed(releasedSignal, undefined)), Effect.asVoid)
+              };
+            })
+        })
       );
       const parent = yield* invocations
         .call(
@@ -436,6 +593,8 @@ it.layer(services)("Invocation", (it) => {
         Effect.flip
       );
       assert.strictEqual(forbidden.code, "access_denied");
+      yield* Fiber.interrupt(parent);
+      assert.isFalse(released);
       yield* TestClock.adjust("59 seconds");
       const child = yield* capability.run!({ handler: "demo.query", args: { id: 1 } }).pipe(
         Effect.exit,
@@ -446,11 +605,13 @@ it.layer(services)("Invocation", (it) => {
       assert.notStrictEqual(nested.invocationId, request.invocationId);
       const childCapability = yield* capabilities.resolve(nested.callback.capability, nested);
       assert.strictEqual(childCapability.tree, capability.tree);
+      assert.strictEqual(acquisitions, 1);
+      assert.isFalse(released);
       yield* TestClock.adjust("1 second");
-      for (const fiber of [child, parent]) {
-        const result = yield* Fiber.join(fiber);
-        assert.isTrue(Exit.isFailure(result));
-      }
+      const result = yield* Fiber.join(child);
+      assert.isTrue(Exit.isFailure(result));
+      yield* Deferred.await(releasedSignal);
+      assert.isTrue(released);
       const log = yield* InvocationLog.InvocationLog;
       const row = yield* log.find({
         companyId: binding.companyId,

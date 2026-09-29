@@ -164,6 +164,27 @@ export const shellStyles = `
     .shell-bottom, .shell-bottom * { box-sizing: border-box; }
     .shell-bottom > * { pointer-events: auto; }
     .shell-bottom [hidden] { display: none; }
+    /* shell-scrim: the T-1 modal cover blocks the frame until its company task is ready. */
+    .shell-scrim {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      max-width: none;
+      max-height: none;
+      margin: 0;
+      padding: 20px;
+      border: 0;
+      background: rgba(255, 253, 244, .94);
+      color: var(--ink-soft);
+      font-family: var(--font-sans);
+    }
+    .shell-scrim[open] { display: grid; place-items: center; }
+    .shell-scrim, .shell-scrim * { box-sizing: border-box; }
+    .shell-scrim::backdrop { background: transparent; }
+    .shell-scrim > .note { width: min(100%, 480px); }
+    .shell-scrim .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    .shell-scrim .actions:has(> [hidden]) { display: none; }
     /* note-inline: a note-float laid out as one row (text, actions, then any Hide) for the bottom-centre bar. */
     .note-inline { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px 16px; max-width: 620px; }
     .note-inline:has(> .note-collapse) { grid-template-columns: minmax(0, 1fr) auto auto; }

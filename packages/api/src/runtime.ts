@@ -220,6 +220,7 @@ export const RuntimeStreamFrame = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("start_failed"),
     code: Schema.Literal("busy"),
+    ...limitRefusalFields,
     retryAfter: Schema.Number
   }),
   Schema.Struct({

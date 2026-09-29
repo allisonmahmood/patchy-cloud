@@ -71,6 +71,16 @@ export function renderLimitsMarkdown(): string {
     "The local executor applies the aggregate ceiling only to supervised workerd processes. Its PGlite, fixture and Vite host does not consume that budget. The dedicated fleet supervisor retains host-inclusive accounting; both modes keep the same process count, per-process RSS and watchdog enforcement.",
     "",
     "Process reports retain CPU seconds and peak RSS sampled before the operating system removes the process record. The host receives and acknowledges these reports over the private management channel. CPU is attributed to the patch version, not individual invocations. The company task is the security boundary; process separation provides availability isolation. Local execution uses the same watchdog but proves neither Fargate containment nor per-invocation CPU or memory isolation.",
+    "",
+    "## Company tasks and the fleet",
+    "",
+    `The controller targets max(${registry["execution.pool.spares"].default}, company wakes per millisecond over ${registry["execution.pool.wakeWindow"].default} ms times measured cold-start milliseconds), rounded up. Spares, bound tasks and draining tasks share the ${registry["execution.fleet.budget"].default}-task fleet budget. One replica holds the ${registry["execution.housekeeping.lease"].default} ms housekeeping lease; passes run every ${registry["execution.housekeeping.interval"].default} ms.`,
+    "",
+    `A first open waits at most ${registry["execution.pool.wait"].default} ms for a binding. The shell holds calls within its normal byte and outstanding-call bounds, shows the starting cover after two seconds and refuses held calls busy on start_failed, without replay. It retries binding with backoff while open. Release follows ${registry["execution.company.idle"].default} ms with no connected tier 2 documents and no admitted work, including nested calls, retries and cleanup. The controller fences admissions before stopping a task; released tasks never become spares.`,
+    "",
+    `Across host replicas and versions, ${registry["execution.breaker.kills"].default} watchdog kills within ${registry["execution.breaker.window"].default} ms pause the patch for ${registry["execution.breaker.pause"].default} ms. Admission returns patch_paused with retryAfter. A new publish clears the pause; rollback and sharing changes do not. The breaker is off in the no-pool development executor.`,
+    "",
+    "Binding history meters company bound seconds through the provider's observed stop time, including reconciliation after a lost task. Supervisor process reports are stored before acknowledgement. These records do not depend on best-effort wide-event delivery.",
     ""
   ].join("\n");
 }

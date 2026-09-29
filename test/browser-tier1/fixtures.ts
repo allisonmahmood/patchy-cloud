@@ -4,8 +4,16 @@ import { startInstance } from "./instance.js";
 import type { Instance, Published } from "./instance.js";
 import type { FixtureWindow } from "./fixture-client.js";
 
-export const test = base.extend<{ instance: Instance; preparedContext: void }, { tls: boolean }>({
+export const test = base.extend<
+  {
+    instance: Instance;
+    preparedContext: void;
+    serverEnvironment: Readonly<Record<string, string>>;
+  },
+  { tls: boolean }
+>({
   tls: [false, { option: true, scope: "worker" }],
+  serverEnvironment: [{}, { option: true }],
   preparedContext: [
     async ({ context, instance }, use) => {
       await prepare(context, instance);
@@ -14,8 +22,8 @@ export const test = base.extend<{ instance: Instance; preparedContext: void }, {
     { auto: true }
   ],
   instance: [
-    async ({ tls }, use) => {
-      const instance = await startInstance({ tls });
+    async ({ tls, serverEnvironment }, use) => {
+      const instance = await startInstance({ tls, environment: serverEnvironment });
       try {
         await use(instance);
       } finally {

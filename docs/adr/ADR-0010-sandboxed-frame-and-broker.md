@@ -149,8 +149,13 @@ each snapshot is bounded to 8 MiB. Reruns are limited to two
 per company and one per patch. Overflow and stale-generation work never leave
 unbounded listeners or queues.
 
-`starting`, `ready` and `start_failed` remain wire contracts for the fleet
-controller, which owns their emission and waiting UI.
+Tier 2 streams now emit `starting` while the fleet binds the company, `ready` on
+success and `start_failed` with busy and retryAfter after the bounded wait.
+The broker holds calls within its normal bounds, including across stream loss,
+and refuses held calls on failure without replay. The selected T-1 cover appears
+after two seconds on first open and resume, holds focus with an accessible name,
+and replaces the reconnecting pill while starting. It offers Retry after failure
+and backs off automatic binding retries while open. Core owns its shared styles.
 
 ## Tier-scoped promise
 
@@ -163,4 +168,4 @@ patch open. It reaches outside systems only through your company's integrations,
 and every write is logged for your company's admins.** ADR-0012 defines the
 credential-free execution boundary and its resource-principal rules. Dev and
 test instances admit published tier 2 versions on the local executor.
-Production admission stays closed until the fleet executor is available.
+Production admission stays closed until the ECS task provider is available.

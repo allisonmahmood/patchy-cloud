@@ -79,6 +79,7 @@ interface Document {
   readonly send: (frame: RuntimeStreamFrame) => void;
   readonly checkOperation?: (op: string) => Effect.Effect<void, Runtime.RuntimeError>;
   readonly scope: Scope.Scope;
+  readonly ready?: () => boolean;
   readonly subscriptions: Map<string, Subscription>;
   readonly buffered: Map<number, RuntimeSubscriptionRequest>;
   readonly gate: Semaphore.Semaphore;
@@ -106,7 +107,7 @@ export class Subscriptions extends Context.Service<
     readonly attach: (
       options: Pick<
         Document,
-        "generation" | "binding" | "check" | "checkOperation" | "send" | "scope"
+        "generation" | "binding" | "check" | "checkOperation" | "send" | "scope" | "ready"
       >
     ) => DocumentSubscriptions;
     /** Invalidates snapshots, including reads already in flight, after a dev binding swap. */
@@ -381,6 +382,7 @@ export const make = Effect.gen(function* () {
     let documentsLeft = documents.size;
     for (const doc of documents) {
       if (documentsLeft-- === 0) break;
+      if (!doc.active || doc.ready?.() === false) continue;
       const binding = doc.binding();
       const patchKey = `${binding.companyId}:${binding.patchId}`;
       let subscriptionsLeft = doc.subscriptions.size;
@@ -440,7 +442,7 @@ export const make = Effect.gen(function* () {
   const attach = (
     options: Pick<
       Document,
-      "generation" | "binding" | "check" | "checkOperation" | "send" | "scope"
+      "generation" | "binding" | "check" | "checkOperation" | "send" | "scope" | "ready"
     >
   ): DocumentSubscriptions => {
     const doc: Document = {

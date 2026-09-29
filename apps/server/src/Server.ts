@@ -51,6 +51,7 @@ import {
 } from "@patchy/integrations";
 import { Limits, OperatingLimits } from "@patchy/limits";
 import { migrations as limitsMigrations } from "@patchy/limits/migrations";
+import { migrations as executionMigrations } from "@patchy/execution/migrations";
 import {
   Content,
   LoadedVersions,
@@ -81,6 +82,7 @@ import { Artifact, SdkApi } from "@patchy/sdk";
 import { migrate } from "@patchy/sql";
 import * as ApiGuard from "./ApiGuard.js";
 import * as DevelopmentInvocation from "./DevelopmentInvocation.js";
+import * as FleetInvocation from "./FleetInvocation.js";
 
 /** The port the server listens on. */
 export const port = Config.Int("PORT").pipe(Config.withDefault(3000));
@@ -105,7 +107,8 @@ const migrated = Layer.effectDiscard(
     ...runtimeMigrations,
     ...integrationsMigrations,
     ...patchesMigrations,
-    ...limitsMigrations
+    ...limitsMigrations,
+    ...executionMigrations
   })
 );
 
@@ -134,6 +137,12 @@ const services = Layer.mergeAll(
           Layer.provide([SubscriptionReads.layer, StreamAdmission.layer, StreamLimits.layer])
         )
       );
+      if (yield* FleetInvocation.enabled)
+        return runtime.pipe(
+          Layer.provide(
+            FleetInvocation.layer(handlers).pipe(Layer.provide(Content.serverBundlesLayer))
+          )
+        );
       return (yield* DevelopmentInvocation.enabled)
         ? runtime.pipe(
             Layer.provide(

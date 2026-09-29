@@ -13,6 +13,7 @@ import { contentHash, sha256 } from "../../../packages/core/src/index.js";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { answer, publish, send, server } from "./test/server.js";
@@ -286,6 +287,59 @@ it.layer(testServer({ NODE_ENV: "test" }), { excludeTestServices: true })(
     );
   }
 );
+
+it.layer(testServer({ NODE_ENV: "test", EXECUTION_PROVIDER: "local-fleet" }), {
+  excludeTestServices: true
+})("fleet-backed cloud server", (it) => {
+  it.effect(
+    "starts a company task over its document stream and executes nested callbacks on that binding",
+    () =>
+      Effect.gen(function* () {
+        yield* retain(fixtures[0]);
+        const fixture = fixtures[0];
+        const response = yield* send(
+          HttpClientRequest.get("/api/runtime/stream").pipe(
+            HttpClientRequest.setUrlParams({
+              patchId: fixture.patchId,
+              versionId: fixture.versionId,
+              documentId: "fleet_starting_document"
+            }),
+            HttpClientRequest.setHeaders({
+              "x-patchy-wire": String(WIRE_VERSION),
+              "x-patchy-principal": JSON.stringify({ userId: fixture.userId }),
+              "sec-fetch-site": "same-origin",
+              cookie: signedInCookies(
+                signSession({ sub: fixture.clerkUserId, email: fixture.email, azp: origin })
+              )
+            })
+          )
+        );
+        assert.strictEqual(response.status, 200);
+        const pull = yield* Stream.toPull(response.stream);
+        const decoder = new TextDecoder();
+        let frames = "";
+        while (!frames.includes('"type":"ready"')) {
+          for (const bytes of yield* pull) frames += decoder.decode(bytes, { stream: true });
+        }
+        assert.include(frames, '"type":"starting"');
+        assert.deepStrictEqual(yield* answer(yield* call(fixture, "demo.nested")), {
+          status: 200,
+          body: {
+            ok: true,
+            value: { answer: 42, viewer: fixture.userId, company: fixture.companyId, via: "action" }
+          }
+        });
+        const mutationKey = `${Date.now()}-${randomBytes(16).toString("base64url")}`;
+        const committed = yield* answer(yield* call(fixture, "demo.commit", fixture, mutationKey));
+        assert.strictEqual(committed.status, 200);
+        assert.deepStrictEqual(
+          yield* answer(yield* call(fixture, "demo.commit", fixture, mutationKey)),
+          committed
+        );
+      }).pipe(Effect.scoped),
+    60_000
+  );
+});
 
 it.layer(testServer({ NODE_ENV: "production" }))("production tier 2 admission", (it) => {
   it.effect("refuses publication and never runs a retained bundle on the local executor", () =>

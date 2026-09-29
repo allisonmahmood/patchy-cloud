@@ -8,7 +8,7 @@ Signed-in members find company patches at `/` and open their cards at `/patches/
 
 Agents discover company tools and data sources through `patchy list` and its patch, primitive and connection drill-downs. Description edits pull back into the repo at refresh, dev start and publish. Clerk sign-in, create-or-join, company administration, company/public sharing and machine login, logout and revocation are built. Postgres connections have browser administration, immutable schema snapshots and generated relation clients. Portal, Company, Connections and Your machines share one app shell and component set.
 
-Tier 2 repos publish an HTML artifact and an inspected server artifact. Dev and test instances serve them on the local executor, with patch identity for own-resource callbacks, live viewer authorization for company data and bounded settlement. The patch-repo dev loop uses that same handler engine and callback path, with live server rebinding and a non-admin colleague mount. Production admission remains closed until fleet execution lands. Narrower sharing, shared file stores, other integrations, billing, source recovery and the remaining company lifecycle remain future work.
+Tier 2 repos publish an HTML artifact and an inspected server artifact. Dev and test instances serve them on the local executor, with patch identity for own-resource callbacks, live viewer authorization for company data and bounded settlement. The patch-repo dev loop uses that same handler engine and callback path, with live server rebinding and a non-admin colleague mount. The fleet controller now runs offline against separate local task processes, including spare claims, stopping and drain, crash metering and the patch breaker. Its starting cover holds calls until the company is ready. Production admission remains closed until the ECS provider lands. Narrower sharing, shared file stores, other integrations, billing, source recovery and the remaining company lifecycle remain future work.
 
 ## Patches
 
@@ -421,8 +421,10 @@ result into one host-owned serializable transaction, retrying serialization
 conflicts up to three times within five seconds. A mutation key makes an explicit
 retry after an unknown outcome recover a committed result without duplicate
 writes. Actions can transfer file bytes, call company integrations as the viewer
-and run sibling queries or mutations under their remaining deadline. Company
-tasks remain separate work; production refuses tier 2 admission until the fleet executor lands.
+and run sibling queries or mutations under their remaining deadline. The fleet
+controller binds one company task, manages spares and drains stopping bindings.
+Its local provider runs separate supervisor processes for offline acceptance;
+production still requires the ECS provider.
 
 Metering records calls and database-held milliseconds from the first admitted
 invocation, independently of best-effort request events. Invocation rows record
@@ -448,9 +450,9 @@ configuration revisions and name the highest peak-to-bound ratio in
 `closestLimitId`. They are not metering storage.
 
 The metering model records bound seconds, database time and calls; billing decides
-what is priced. Bound seconds need the fleet binding history, which is not built
-yet. An action's database time includes the connection time of its nested
-queries and mutations.
+what is priced. Binding history now records bound seconds through release or the
+provider's observed stop time. Process reports record CPU seconds and peak RSS.
+An action's database time includes its nested queries and mutations.
 
 The promise: **A tier 2 patch's server code runs on Patchy's machines,
 never on yours. It holds no login and no credential and has no path to the
@@ -458,7 +460,7 @@ internet: everything it does goes through Patchy, as you, while you have the
 patch open. It reaches outside systems only through your company's integrations,
 and every write is logged for your company's admins.**
 
-The patch also has server-side code, and Patchy runs it **while a viewer has the patch open**: it starts when someone asks, serves requests and live connections to every open client (two people with the same patch open can be kept in sync), and stops when nobody is looking. It costs nothing when nobody has it open. The line to tier 3 is the question a builder can answer: _does this need to happen when nobody has it open?_ If yes, it is not tier 2.
+The patch also has server-side code, and Patchy admits new work **while a viewer has the patch open**. Already-admitted work finishes after departure. The company task is released after thirty minutes with no connected tier 2 documents and no admitted work, including retries, nested calls and cleanup. The line to tier 3 is whether work must start when nobody has the patch open.
 
 The server side is handler-shaped code Patchy runs, with a fixed layout `init` lays down — not an arbitrary app listening on a port. Bringing a whole app is a second runtime with a second set of limits, and is not promised.
 

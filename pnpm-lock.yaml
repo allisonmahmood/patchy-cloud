@@ -124,6 +124,9 @@ importers:
       '@patchy/content-store':
         specifier: workspace:*
         version: link:../../packages/content-store
+      '@patchy/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@patchy/execution':
         specifier: workspace:*
         version: link:../../packages/execution
@@ -325,15 +328,24 @@ importers:
       '@effect/platform-node':
         specifier: 4.0.0-rc.117
         version: 4.0.0-rc.117(effect@4.0.0-rc.117)(redis@6.2.1)
+      '@patchy/analytics':
+        specifier: workspace:*
+        version: link:../analytics
       '@patchy/api':
         specifier: workspace:*
         version: link:../api
+      '@patchy/core':
+        specifier: workspace:*
+        version: link:../core
       '@patchy/limits':
         specifier: workspace:*
         version: link:../limits
       '@patchy/runtime':
         specifier: workspace:*
         version: link:../runtime
+      '@patchy/sql':
+        specifier: workspace:*
+        version: link:../sql
       effect:
         specifier: 4.0.0-rc.117
         version: 4.0.0-rc.117
@@ -804,6 +816,9 @@ importers:
       '@patchy/company-database':
         specifier: workspace:*
         version: link:../../packages/company-database
+      '@patchy/execution':
+        specifier: workspace:*
+        version: link:../../packages/execution
       '@patchy/integrations':
         specifier: workspace:*
         version: link:../../packages/integrations

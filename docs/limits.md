@@ -74,6 +74,9 @@ Host-wide limits cannot have company overrides. Per-company admission counters r
 | `execution.residency.processes` | operating | 12 | processes | company | Loaded version processes; idle processes evicted first | `busy` | Yes | deployment |
 | `execution.residency.bytes` | operating | 1610612736 | bytes | company | Aggregate RSS including supervisor, bundles and overlapping versions | `busy` | Yes | deployment |
 | `execution.process.idle` | operating | 60000 | milliseconds | company | Process idle window before reap and maximum unfinished initialization lifetime | None | Yes | deployment |
+| `execution.fleet.budget` | operating | 100 | tasks | host | Maximum live tasks across bound companies, draining tasks and spares | `busy` | No | deployment |
+| `execution.housekeeping.interval` | operating | 5000 | milliseconds | host | Interval between fleet reconciliation and replenishment passes | None | No | deployment |
+| `execution.housekeeping.lease` | operating | 15000 | milliseconds | host | Exclusive fleet housekeeping ownership window | None | No | deployment |
 | `execution.pool.spares` | operating | 2 | tasks | host | Global spare floor; target is max(floor, wake rate times measured cold start) within fleet budget | None | No | deployment |
 | `execution.pool.wakeWindow` | operating | 900000 | milliseconds | host | Observation window for company wake rate | None | No | deployment |
 | `execution.pool.wait` | operating | 40000 | milliseconds | company | Empty-pool wait before start_failed; held calls are never replayed | `busy` | Yes | deployment |
@@ -129,3 +132,13 @@ Residency permits 12 loaded version processes and 1610612736 bytes aggregate RSS
 The local executor applies the aggregate ceiling only to supervised workerd processes. Its PGlite, fixture and Vite host does not consume that budget. The dedicated fleet supervisor retains host-inclusive accounting; both modes keep the same process count, per-process RSS and watchdog enforcement.
 
 Process reports retain CPU seconds and peak RSS sampled before the operating system removes the process record. The host receives and acknowledges these reports over the private management channel. CPU is attributed to the patch version, not individual invocations. The company task is the security boundary; process separation provides availability isolation. Local execution uses the same watchdog but proves neither Fargate containment nor per-invocation CPU or memory isolation.
+
+## Company tasks and the fleet
+
+The controller targets max(2, company wakes per millisecond over 900000 ms times measured cold-start milliseconds), rounded up. Spares, bound tasks and draining tasks share the 100-task fleet budget. One replica holds the 15000 ms housekeeping lease; passes run every 5000 ms.
+
+A first open waits at most 40000 ms for a binding. The shell holds calls within its normal byte and outstanding-call bounds, shows the starting cover after two seconds and refuses held calls busy on start_failed, without replay. It retries binding with backoff while open. Release follows 1800000 ms with no connected tier 2 documents and no admitted work, including nested calls, retries and cleanup. The controller fences admissions before stopping a task; released tasks never become spares.
+
+Across host replicas and versions, 3 watchdog kills within 600000 ms pause the patch for 600000 ms. Admission returns patch_paused with retryAfter. A new publish clears the pause; rollback and sharing changes do not. The breaker is off in the no-pool development executor.
+
+Binding history meters company bound seconds through the provider's observed stop time, including reconciliation after a lost task. Supervisor process reports are stored before acknowledgement. These records do not depend on best-effort wide-event delivery.
