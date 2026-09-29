@@ -7,8 +7,10 @@ import * as WideEvents from "@patchy/analytics/wide-events";
 import * as GuestProtocol from "@patchy/api/guest";
 import { OperatingLimits } from "@patchy/limits";
 import * as Testing from "@patchy/sql/testing";
+import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -18,6 +20,7 @@ import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as Statement from "effect/unstable/sql/Statement";
 import * as Fleet from "./fleet.js";
 import * as LocalTaskProvider from "./localTaskProvider.js";
 import * as LocalTaskStore from "./localTaskStore.js";
@@ -79,6 +82,48 @@ const liveChildren = Effect.fn("FleetTest.liveChildren")(function* (directory: s
     }
     return total;
   });
+});
+
+// A SQL commit alone is not a clock barrier: its fiber may not have armed its next
+// sleep yet. Observe the real renewal query, then acknowledge its armed TestClock timer.
+const renewalClock = Effect.gen(function* () {
+  const clock = yield* TestClock.testClockWith(Effect.succeed);
+  const armed = yield* Queue.unbounded<void>();
+  const renewed = new WeakSet<Fiber.Fiber<unknown, unknown>>();
+  const transform: Statement.Transformer = (statement, _sql, fiber) =>
+    Effect.sync(() => {
+      if (/^\s*UPDATE execution_housekeeping\b/.test(statement.compile()[0])) renewed.add(fiber);
+      else renewed.delete(fiber);
+      return statement;
+    });
+  const observed: Clock.Clock = {
+    ...clock,
+    sleep: (duration) =>
+      Effect.withFiber((fiber) => {
+        if (Duration.toMillis(duration) !== 5_000 || !renewed.has(fiber))
+          return clock.sleep(duration);
+        return Effect.gen(function* () {
+          const sleeping = yield* clock
+            .sleep(duration)
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Queue.offer(armed, undefined);
+          yield* Fiber.join(sleeping);
+        });
+      })
+  };
+  return {
+    provide: <A, E, R>(work: Effect.Effect<A, E, R>) =>
+      work.pipe(
+        Effect.provideService(Clock.Clock, observed),
+        Effect.provideService(Statement.CurrentTransformer, transform)
+      ),
+    advance: Effect.fn("FleetTest.advanceRenewals")(function* (milliseconds: number) {
+      for (let elapsed = 0; elapsed < milliseconds; elapsed += 5_000) {
+        yield* clock.adjust(5_000);
+        yield* Queue.take(armed);
+      }
+    })
+  };
 });
 const request = (
   bundle: GuestProtocol.BundleBinding,
@@ -698,8 +743,8 @@ it.layer(services)("host fleet controller", (it) => {
     () =>
       Effect.gen(function* () {
         const { provider, resource, companyId, right, sql } = yield* setup("slow-cold", false);
-        // Renewal uses real Postgres I/O; keep it and the lease deadline on one clock.
-        yield* TestClock.withLive(
+        const clock = yield* renewalClock;
+        yield* clock.provide(
           Effect.gen(function* () {
             const starting = yield* Deferred.make<void>();
             const ids = new Set<string>();
@@ -727,13 +772,14 @@ it.layer(services)("host fleet controller", (it) => {
               Effect.forkChild
             );
             yield* Deferred.await(starting);
-            yield* Effect.sleep(20_000);
+            yield* clock.advance(20_000);
             assert.isFalse(settled);
             assert.isFalse(yield* right.housekeeping());
             const lease =
               (yield* sql`SELECT owner_id, lease_epoch FROM execution_housekeeping`)[0]!;
             assert.strictEqual(lease.owner_id, "slow-cold-owner");
             assert.strictEqual(lease.lease_epoch, 1);
+            yield* TestClock.adjust(5_000);
             const binding = yield* Fiber.join(opening);
             assert.isAtLeast(binding.spareWaitMs, 25_000);
             assert.isBelow(binding.spareWaitMs, 40_000);
@@ -754,7 +800,7 @@ it.layer(services)("host fleet controller", (it) => {
           )
         )
       ),
-    60_000
+    30_000
   );
 
   it.effect(
@@ -762,7 +808,8 @@ it.layer(services)("host fleet controller", (it) => {
     () =>
       Effect.gen(function* () {
         const { provider, companyId, left, sql } = yield* setup("isolated");
-        yield* TestClock.withLive(
+        const clock = yield* renewalClock;
+        yield* clock.provide(
           Effect.gen(function* () {
             const secondCompany = "cmp_fleet_isolated_second";
             const thirdCompany = "cmp_fleet_isolated_third";
@@ -834,14 +881,16 @@ it.layer(services)("host fleet controller", (it) => {
             assert.notStrictEqual(healthy.taskId, failing.taskId);
             assert.strictEqual(healthy.state, "active");
             assert.isFalse(completed);
+            yield* clock.advance(5_000);
             yield* Deferred.await(replenished);
             yield* Effect.gen(function* () {
               while (true) {
                 const rows = yield* sql`SELECT task_id FROM execution_tasks WHERE state = 'spare'`;
                 if (rows.length > 0) return;
-                yield* Effect.sleep(10);
               }
-            }).pipe(Effect.timeout("5 seconds"));
+            });
+            yield* clock.advance(30_000);
+            yield* TestClock.adjust(5_000);
             assert.isTrue(yield* Fiber.join(pass));
             const rows =
               yield* sql`SELECT state FROM execution_bindings WHERE task_id = ${failing.taskId}`;
@@ -857,7 +906,7 @@ it.layer(services)("host fleet controller", (it) => {
           })
         );
       }).pipe(Effect.scoped),
-    60_000
+    30_000
   );
 
   it.effect(

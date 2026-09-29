@@ -198,6 +198,10 @@ block unrelated reconciliation or replenishment. A lost activity database sessio
 is replaced and its live locks restored, including for documents making no requests.
 
 `packages/execution/src/Fleet.test.ts` covers controller transitions over Postgres.
+Its lease and housekeeping cases use `TestClock` with an explicit renewal barrier:
+the real SQL renewal must return and the next timer must be armed before time
+advances again. A committed row alone does not prove that the renewal fiber has
+resumed. These tests do not use wall-clock sleeps to race database I/O.
 `LocalTaskProvider.test.ts` executes real workerd and verifies final process reports
 survive task stop. The fleet case in `DevelopmentExecution.test.ts` opens a real
 document stream through `starting` and `ready`, then exercises nested callbacks
