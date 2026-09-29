@@ -5,7 +5,7 @@ description: Define a Patchy file store, save or retrieve bytes, page stored fil
 
 # File stores
 
-Read `../patchy-loop/SKILL.md` first. Every readable row and stored file is available to whoever can open the patch: file names and hidden UI controls are not access rules. Tier 1 has no outbound access or client storage. Use local invented files while building, never download production bytes to seed development, and never edit generated output.
+Read `../patchy-loop/SKILL.md` first. On tier 1, every stored file is available to whoever can open the patch; file names and hidden UI controls are not access rules. Tier 2 uses `ctx.files` in handlers, not named stores on the page client. Use local invented files while building, never download production bytes to seed development, and never edit generated output.
 
 ## Discover stores without reading files
 
@@ -31,7 +31,7 @@ Use distinct names for tables and file stores. Publishing a store definition
 replaces its description; omission and rollback preserve it. Description-only
 changes do not advance the schema revision.
 
-From a module under `src/`:
+From a tier 1 module under `src/`:
 
 ```ts
 import { patchy } from "../patchy/_generated/client.js";
@@ -45,6 +45,10 @@ const page = await attachments.list({ prefix: "examples/", limit: 20 });
 ```
 
 Run this against the local dev runtime when available; this release's generated client does not by itself provide that runtime or its broker. Do not replace missing local support with direct cloud requests. For an image already saved in the local store, set an image element's `src` to `await attachments.url("examples/photo.png")`.
+On tier 2, queries use `ctx.files.<store>.list` and `.stat` for metadata;
+actions use the store's byte operations. The page calls those handlers.
+`../patchy-server/SKILL.md` owns the supported kinds and development boundary;
+authorised handles and staged uploads are not available yet.
 
 ## Operations and limits
 

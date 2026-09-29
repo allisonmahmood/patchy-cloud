@@ -42,6 +42,7 @@ import {
   PublishRequest,
   WIRE_VERSION
 } from "@patchy/api";
+import { workerdVersion } from "@patchy/api/guest";
 import { generateClient } from "../../sdk/src/generateClient.js";
 import { generateServer } from "../../sdk/src/generateServer.js";
 import { generate as generatePostgres } from "../../integrations/src/postgres/Generate.js";
@@ -342,6 +343,7 @@ const generateProjectResponse = (body: unknown): typeof Generated.Type => {
   const postgres: Record<string, (typeof DeclarationMetadata.Type)["postgres"][string]> = {};
   const connections: Record<string, string> = {};
   const skills = new Set(coreProjectSkills);
+  if (manifest.tier === 2) skills.add("patchy-server");
   for (const [alias, declaration] of Object.entries(manifest.uses)) {
     if (declaration.kind !== "postgres") throw new Error("Unexpected fixture declaration.");
     const stamp = { ...declaration, id: "conn-sales", revision: 1 };
@@ -536,6 +538,7 @@ const localPackageRegistry = async () => {
     await pack(resolvePackage(name, import.meta.url));
   await pack(resolvePackage("vite", require.resolve("vitest/package.json")));
   await pack(resolvePackage("eslint-plugin-react-hooks", path.join(packageDir, "package.json")));
+  await pack(resolvePackage("workerd", path.join(packageDir, "../execution/package.json")));
   const server = createServer((request, response) => {
     const name = decodeURIComponent((request.url ?? "/").slice(1));
     const archive = [...packages.values()].find(
@@ -2853,6 +2856,15 @@ describe("tier 2 refresh module discovery", () => {
   it("discovers source filenames without evaluating server code or requiring descriptors", async () => {
     const instance = await stubInstance(projectHandler);
     const dir = projectTree(instance.url, projectConfig.replace("tier: 1", "tier: 2"));
+    writeFileSync(
+      path.join(dir, "package.json"),
+      JSON.stringify({
+        name: "cli-project",
+        private: true,
+        type: "module",
+        devDependencies: { patchy: `${instance.url}${tarballPath}`, workerd: workerdVersion }
+      })
+    );
     mkdirSync(path.join(dir, "server"));
     writeFileSync(path.join(dir, "server/leads.ts"), 'throw new Error("must not run");');
     writeFileSync(path.join(dir, "server/import-rows.ts"), "incomplete TypeScript {");
@@ -4378,68 +4390,81 @@ document.body.textContent = JSON.stringify({
     expect(instance.requests.some((request) => request.url.split("?")[0] === route)).toBe(true);
   });
 
-  it("initializes an unchanged typechecking tree offline and refuses to initialize it again", async () => {
-    const registry = await localPackageRegistry();
-    const instance = await stubInstance(
-      projectHandler,
-      () => CURRENT_RELEASE,
-      readFileSync(
-        path.join(packageDir, `artifacts/patchy-${CURRENT_RELEASE}-${releaseArtifact.digest}.tgz`)
-      )
-    );
-    const parent = tempDir();
-    const stateDir = tempDir();
-    // Init targets the remembered instance, not the parent project's binding.
-    writeFileSync(path.join(parent, "patchy.json"), '{"instance":"http://127.0.0.1:1"}\n');
-    writeFileSync(path.join(stateDir, "config.json"), JSON.stringify({ apiUrl: instance.url }));
-    const dir = path.join(parent, "notes-project");
-    const options = { cwd: parent, stateDir, env: { ...env, ...registry } };
-    const args = ["init", "notes-project", "--purpose", "Synthetic notes for CLI tests", "--json"];
-    const result = await runCli(args, options);
-    expect(result).toMatchObject({ status: 0, stderr: "" });
-    expect(JSON.parse(result.stdout)).toEqual({
-      ok: true,
-      dir,
-      release: CURRENT_RELEASE,
-      tier: 1,
-      generated: expect.arrayContaining([
-        "patchy/_generated/client.ts",
-        "patchy/_generated/index.json",
-        "patchy/_generated/manifest.json"
-      ]),
-      skills: coreProjectSkills,
-      installed: true
-    });
-    const authoredPaths = [
-      "patchy.config.ts",
-      "package.json",
-      "tsconfig.json",
-      "vite.config.ts",
-      "src/main.tsx",
-      "src/App.tsx",
-      "index.html",
-      "AGENTS.md",
-      "CLAUDE.md"
-    ];
-    const before = Object.fromEntries(
-      authoredPaths.map((name) => [name, readFileSync(path.join(dir, name))])
-    );
-    const generatedBefore = treeBytes(path.join(dir, "patchy/_generated"));
-    await exec("pnpm", ["typecheck"], {
-      cwd: dir,
-      env: { PATH: process.env.PATH, HOME: stateDir, ...registry }
-    });
-    expect(readJson(path.join(dir, "patchy.json"))).toEqual({
-      instance: instance.url,
-      description: "Synthetic notes for CLI tests"
-    });
-    const repeated = await runCli(args, options);
-    expect(repeated).toMatchObject({ status: 1, stdout: "" });
-    expect(JSON.parse(repeated.stderr)).toMatchObject({ ok: false, kind: "local" });
-    expect(treeBytes(path.join(dir, "patchy/_generated"))).toEqual(generatedBefore);
-    for (const name of authoredPaths)
-      expect(readFileSync(path.join(dir, name))).toEqual(before[name]);
-  }, 60_000); // Real archive creation, isolated pnpm installation and tsc can exceed 30 seconds.
+  it.each([1, 2] as const)(
+    "initializes a tier %s typechecking tree offline and refuses to initialize it again",
+    async (tier) => {
+      const registry = await localPackageRegistry();
+      const instance = await stubInstance(
+        projectHandler,
+        () => CURRENT_RELEASE,
+        readFileSync(
+          path.join(packageDir, `artifacts/patchy-${CURRENT_RELEASE}-${releaseArtifact.digest}.tgz`)
+        )
+      );
+      const parent = tempDir();
+      const stateDir = tempDir();
+      // Init targets the remembered instance, not the parent project's binding.
+      writeFileSync(path.join(parent, "patchy.json"), '{"instance":"http://127.0.0.1:1"}\n');
+      writeFileSync(path.join(stateDir, "config.json"), JSON.stringify({ apiUrl: instance.url }));
+      const dir = path.join(parent, "notes-project");
+      const options = { cwd: parent, stateDir, env: { ...env, ...registry } };
+      const args = [
+        "init",
+        "notes-project",
+        "--tier",
+        String(tier),
+        "--purpose",
+        "Synthetic notes for CLI tests",
+        "--json"
+      ];
+      const result = await runCli(args, options);
+      expect(result).toMatchObject({ status: 0, stderr: "" });
+      expect(JSON.parse(result.stdout)).toEqual({
+        ok: true,
+        dir,
+        release: CURRENT_RELEASE,
+        tier,
+        generated: expect.arrayContaining([
+          "patchy/_generated/client.ts",
+          "patchy/_generated/index.json",
+          "patchy/_generated/manifest.json"
+        ]),
+        skills: tier === 2 ? [...coreProjectSkills, "patchy-server"].sort() : coreProjectSkills,
+        installed: true
+      });
+      const authoredPaths = [
+        "patchy.config.ts",
+        "package.json",
+        "tsconfig.json",
+        "vite.config.ts",
+        "src/main.tsx",
+        "src/App.tsx",
+        "index.html",
+        ...(tier === 2 ? ["server/notes.ts"] : []),
+        "AGENTS.md",
+        "CLAUDE.md"
+      ];
+      const before = Object.fromEntries(
+        authoredPaths.map((name) => [name, readFileSync(path.join(dir, name))])
+      );
+      const generatedBefore = treeBytes(path.join(dir, "patchy/_generated"));
+      await exec("pnpm", ["typecheck"], {
+        cwd: dir,
+        env: { PATH: process.env.PATH, HOME: stateDir, ...registry }
+      });
+      expect(readJson(path.join(dir, "patchy.json"))).toEqual({
+        instance: instance.url,
+        description: "Synthetic notes for CLI tests"
+      });
+      const repeated = await runCli(args, options);
+      expect(repeated).toMatchObject({ status: 1, stdout: "" });
+      expect(JSON.parse(repeated.stderr)).toMatchObject({ ok: false, kind: "local" });
+      expect(treeBytes(path.join(dir, "patchy/_generated"))).toEqual(generatedBefore);
+      for (const name of authoredPaths)
+        expect(readFileSync(path.join(dir, name))).toEqual(before[name]);
+    },
+    60_000
+  ); // Real archive creation, isolated pnpm installation and tsc can exceed 30 seconds.
 });
 
 describe("patchy delete target selection", () => {

@@ -54,7 +54,7 @@ Import UI functions from `patchy/preact`, for example `render`, `useState`,
 `oxc.jsx.importSource: "patchy/preact"` when writing TSX. Compat transitions
 are synchronous; there is no React scheduler.
 
-Tier 1 starts with `src/main.tsx` and `src/App.tsx`, an empty HTML root, and
+Tiers 1 and 2 start with `src/main.tsx` and `src/App.tsx`, an empty HTML root, and
 matching JSX settings. `pnpm lint` checks hooks, including `useQuery`, and refuses
 React or direct Preact imports. No router, CSS framework, state library or test
 runner is installed. Tier 0 is unchanged. Vanilla repos still use the
@@ -157,7 +157,9 @@ A new call is not that retry and can duplicate a write. Actions are never replay
 Tier 2 publication builds and uploads both HTML and server artifacts, then the
 instance re-derives handler descriptors from stored bytes before recording the
 version. It runs on the local executor in dev and test instances. Production
-hosting, the tier 2 `patchy dev` lifecycle and server watch remain separate work.
+hosting remains separate work. Tier 2 query subscriptions belong to #403; the
+production-engine `patchy dev` integration, live server rebinding and colleague
+mount belong to #404. Init does not claim those runtime integrations.
 The `patchy-server` skill documents handler behavior and registry limits.
 Authorised handles and staged upload adoption remain reserved contracts.
 
@@ -337,8 +339,8 @@ instance's release tarball as described above.
 
 | command                                                                                                     | behaviour                                                                                                                                                                                                                         | `--json` success                                                                                            |
 | ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `patchy init [dir] [--tier 0\|1] [--purpose <text>]`                                                        | Authenticates first, prints instance and identity, asks purpose when interactive, installs the pinned release and generates a new repo. Tier 1 is the default; an initialized target is refused.                                  | `{ ok, dir, release, tier, generated, skills, installed }`                                                  |
-| `patchy refresh`                                                                                            | Refreshes the managed set as one release-bound transaction, installing and re-executing a new CLI if the pin changes.                                                                                                             | `{ ok, release: { from, to }, changed: { pin, generated, skills, fixtures }, addedCapabilities, warnings }` |
+| `patchy init [dir] [--tier 0\|1\|2] [--purpose <text>]`                                                     | Authenticates first, prints instance and identity, installs the release and generates a new repo. Tier 1 is the default; tier 2 adds handlers and its managed engine pin. An initialized target is refused.                       | `{ ok, dir, release, tier, generated, skills, installed }`                                                  |
+| `patchy refresh`                                                                                            | Reconciles managed pins and generated files with the release and tier as one transaction, installing and re-executing a new CLI as needed.                                                                                        | `{ ok, release: { from, to }, changed: { pin, generated, skills, fixtures }, addedCapabilities, warnings }` |
 | `patchy add postgres/<handle> [--as <alias>]` or `patchy add shared-table <patchId>/<table> [--as <alias>]` | Inserts one literal declaration into `uses` by TypeScript AST without changing imports, then generates client, context, missing fixture and skill. An uneditable block names its source line and the declaration to add manually. | `{ ok, alias, declaration, generated, skills, addedCapabilities, warnings }`                                |
 | `patchy remove <alias>`                                                                                     | Reverses the declaration and generated output; removes an unused declaration skill. Leaves the fixture and says so.                                                                                                               | `{ ok, alias, removed, addedCapabilities, warnings }`                                                       |
 
@@ -361,6 +363,20 @@ pnpm typecheck
 pnpm patchy remove sales --json
 ```
 
+Use tier 1 by default. Choose tier 2 when the tool needs enforced rules, atomic
+multi-row writes or server-side work. Live sync and sequential operations are
+already available on tier 1. To start on tier 2:
+
+```sh
+patchy init ./team-approvals --tier 2 --purpose "Approve team requests with enforced rules" --json
+```
+
+Tier 2 adds a starter handler module in `server/`, config-bound builders in
+`patchy/_generated/server.ts`, and `patchy-server` alongside `patchy-preact` and
+`patchy-loop`. Its page uses generated server query and mutation calls.
+The release's exact `workerd` pin installs with scripts disabled; execution
+spawns its platform package's binary, not a postinstall-created wrapper.
+
 Use actual connection handles from `list connections`; inspect one with
 `list connections <handle>`. Shared-table targets come from the discovery
 chain above, using the response's canonical patch id.
@@ -376,22 +392,40 @@ The generated repo includes:
 ```text
 patchy.config.ts              definitions and uses declarations
 patchy.json                   instance, patch description and sync stamp; optional patch id
-package.json, pnpm-lock.yaml   pinned package; install already ran
-index.html, src/main.tsx, src/App.tsx  tier 1 Preact insert/list through the generated client
+package.json, pnpm-lock.yaml   managed pins; install already ran with scripts disabled
+index.html, src/main.tsx, src/App.tsx  tiers 1 and 2 Preact page
+server/                       tier 2 starter handlers
 vite.config.ts, tsconfig.json  single-file build, JSX settings, typechecking
-eslint.config.js              tier 1 import and hooks lint
+eslint.config.js              tiers 1 and 2 import and hooks lint
 helpers/                      company-owned helpers
 AGENTS.md, CLAUDE.md            purpose, layout, skills, index; @AGENTS.md
-patchy/_generated/             README, index, client, manifest, metadata, declaration context
-.agents/skills/patchy-*/       core and declaration-driven project skills
+patchy/_generated/             README, index, client, manifest, context; server.ts on tier 2
+.agents/skills/patchy-*/       core, page, tier-driven and declaration-driven skills
 fixtures/                     postgres-<handle>.sql and shared-<alias>.sql stubs
 .gitignore                    excludes .patchy/, node_modules/, dist/
 ```
 
 `AGENTS.md` is written once, says install already ran, points at the generated
-index, and says to test with `patchy dev`. The repo typechecks without added setup,
-and `pnpm patchy --help` runs its pinned copy. Use `pnpm patchy dev` to
-exercise the generated client locally before publishing.
+index, and describes the `src/` page and `server/` handler split for either tier.
+The repo typechecks without added setup, and `pnpm patchy --help` runs its pinned
+copy. Use `pnpm patchy dev` to exercise tiers 0 and 1 before publishing.
+Until #404 lands, exercise tier 2 handlers by publishing to a development
+instance with invented data.
+
+To move between tiers, edit `tier` in `patchy.config.ts`, then run `pnpm patchy refresh`.
+
+- Moving to tier 2 adds the `workerd` pin, generated `server.ts` and
+  `patchy-server` skill. Create `server/` handlers and run `pnpm typecheck`;
+  its errors identify the direct resource calls to move out of the page.
+  Publish with `--share company` if the patch is public.
+- Moving to tier 1 removes those managed parts. Remove `server/`, refresh and
+  run `pnpm typecheck`; its errors identify every `patchy.server.*` call to
+  rewrite. Handler-enforced rules and cross-call transactions do not carry over.
+  Serving a tier 1 version through publish or rollback permits public sharing
+  again; local config alone does not.
+
+Refresh does not migrate source, rewrite agent instructions or change the
+patch id. Existing patch data stays in place in either direction.
 
 `init --purpose` writes the initial description to `patchy.json` and the purpose
 to `AGENTS.md`. They are independent after initialization. Descriptions are one
@@ -419,24 +453,32 @@ as `false` does not change the definition. Notices do not block the command;
 JSON includes them in `warnings`, including in the failure document if a later
 step fails. Text mode prints those notices before the error.
 
-Managed generation writes are exactly the `patchy` package pin, `patchy/_generated/`,
-`.agents/skills/patchy-*/`, missing fixture stubs, the lockfile through install,
-and one `uses` edit for add/remove. The CLI writes `manifest.json` from local
-config execution; the server never returns that file. Server paths are checked
-against the managed roots. Existing fixtures, app source and agent instructions
-are not overwritten. Deleting `.patchy/` destroys local rows and files.
+Managed generation writes are exactly the `patchy` package pin and tier 2's
+`workerd` pin, `patchy/_generated/`, `.agents/skills/patchy-*/`, missing fixture
+stubs, the lockfile through install, and one `uses` edit for add/remove.
+Refresh alone updates the pins and generated server module list after init;
+dev and publish do not repair them. It removes stale generated context files.
+The CLI writes `manifest.json` from local config execution; the server never
+returns that file. Server paths are checked against the managed roots. Existing
+fixtures, app source and agent instructions are not overwritten.
+Deleting `.patchy/` destroys local rows and files.
 Generation returns typed declaration metadata for the local runtime alongside
 the managed files; full snapshots are not written into `patchy/_generated/`.
 Description sync separately updates `patchy.json`; the pulled text remains
 there if a later generation or build step fails, with its notice in the failure.
 
-Refresh fetches one release, updates and installs the pin if needed, re-execs
-that CLI before executing config, requests generation, then stages and activates
-the set. Failure leaves the old managed set intact. Skills are sticky: refresh
-re-fetches every present skill and adds any the config implies, but never deletes
-one on its own. A present skill no longer offered by the release fails refresh.
+Refresh fetches one release, reconciles the pins with the release and tier,
+installs as needed, re-execs that CLI before generation, then stages and
+activates the set. Failure leaves the old managed set intact. Skills are sticky:
+refresh re-fetches every present skill and adds any the config implies.
+`patchy-server` is the sole tier-keyed exception, removed below tier 2.
+A different present skill no longer offered by the release fails refresh.
 Edit definitions, declarations and invented fixtures; never hand-edit generated
-clients, stamps or project skills.
+clients, stamps or project skills. Module additions, removals and renames need
+refresh before publishing; a stale module list is `stale_generated`.
+`changed.pin` in refresh's JSON is true when either managed pin changes,
+including adding or removing `workerd`; rollback restores both pins and their
+installation if the transaction fails.
 
 Refresh announces new SDK capabilities in text and `addedCapabilities` in JSON,
 including where each runs and its limits. Entries have
@@ -450,7 +492,7 @@ The `patchy-preact` project skill is included on tiers 1 and 2.
 
 Vite, `vite-plugin-singlefile`, TypeScript and `@types/*` belong to the builder.
 Init writes caret ranges; refresh never edits those keys or adds overrides.
-Tier 2 init will add `workerd` as the only other managed pin.
+`workerd` is the only other managed pin, present exactly on tier 2.
 `GET /api/release` reports `toolchain`, with a `testedAgainst` version and
 `accepted` range for each scaffold dependency.
 

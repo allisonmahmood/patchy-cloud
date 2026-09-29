@@ -5,7 +5,7 @@ description: Declare another patch's shared table, read its generated client, au
 
 # Shared-table reads
 
-Read `../patchy-loop/SKILL.md` first. Every readable row is available to whoever can open the patch, subject to the source's live access: UI filters are not authorization. Tier 1 has no outbound access or client storage. Build with invented local fixtures, never production rows, and never manually edit generated clients, context or revision stamps.
+Read `../patchy-loop/SKILL.md` first. On tier 1, every readable row is available to whoever can open the patch, subject to the source's live access; UI filters are not authorization. Tier 2 reads shared tables through `ctx.shared` in queries or actions, with live viewer authorization on each callback. Build with invented local fixtures, never production rows, and never manually edit generated clients, context or revision stamps.
 
 ## Declare, seed locally, read
 
@@ -13,7 +13,7 @@ Read `../patchy-loop/SKILL.md` first. Every readable row is available to whoever
 2. Run `pnpm patchy add shared-table <patchId>/<table> --as contacts`. It inserts `contacts: { kind: "sharedTable", patchId: "<patchId>", table: "<table>" }` into `uses` without changing imports, and generates client, context, fixture stub and this skill. When hand-editing config, you may instead import `sharedTable` from `patchy/config` and write the equivalent `contacts: sharedTable("<patchId>", "<table>")`; run `pnpm patchy refresh` afterwards.
 3. Read the `contacts` entry in `patchy/_generated/index.json` and its context file. They identify the source definition, revision and indexes; use these fields rather than guessing the source's current application schema.
 4. Fill `fixtures/shared-contacts.sql` with invented `INSERT` rows. Use the exact local namespace, quoted table and columns from the stub header, not the source patch's production namespace. For a stub listing a `title` column, include an invented value such as `'Local contact'` alongside any other required columns the header names. These inserts populate the local copy, not the source patch; runtime reads stay read-only.
-5. Run `pnpm typecheck`, then `pnpm patchy dev --json` and read the fixture through the generated client in its local shell. A missing fixture fails naming the file. After changing fixture rows, stop and start dev again; never substitute a cloud read or copy production rows.
+5. Run `pnpm typecheck`. On tier 1, run `pnpm patchy dev --json` and read the fixture through the generated client in its local shell. A missing fixture fails naming the file. After changing fixture rows, stop and start dev again. Tier 2 handler fixtures belong to the #404 dev integration; follow `patchy-server` for the current boundary. Never copy production rows for development.
 
 Follow the loop skill's state and JSON contracts at each discovery level. No
 match means none you can use; check `--state retired` before concluding a tool
@@ -24,7 +24,7 @@ Null inventory means unavailable. Branch on `declarable` and `reason`, not
 `hint`: ask the named owner about `not_shared`, arrange restoration for
 `source_off`, and use an owned store for files marked `not_shareable`.
 
-In application source, if the declaration's generated alias is `contacts`:
+In tier 1 application source, if the declaration's generated alias is `contacts`:
 
 ```ts
 import { patchy } from "../patchy/_generated/client.js";
@@ -37,14 +37,17 @@ if (first) {
 }
 ```
 
+On tier 2, call the same read operations on `ctx.shared.contacts` in a query or
+action and call that handler from the page. Mutations cannot read shared tables.
+
 ## Read contract
 
 The only methods are `get(id)`, `getMany(ids)` and `list({ index?, eq?, range?, order?, limit?, cursor? })`. There are no insert, update or delete methods on `patchy.shared`. `get` returns null for a missing row; `getMany` preserves input order with null per missing id.
 
 `list` returns `{ rows, cursor }`, using the source's declared indexes. Equality covers leading columns and at most one trailing column has a range `{ column, gt?, gte?, lt?, lte? }`. Without an index, order is creation time and id, newest first. Pass the same query and a non-null cursor for the next page; null ends pagination. Pages default to 100, at most 1,000; getMany is bounded to 1,000 ids and 8 MiB, and list/getMany results to 8 MiB. Declare and use the appropriate index rather than fetching everything to filter in the browser.
 
-`list.subscribe(options, onSnapshot)`, `get.subscribe(id, onSnapshot)` and
-`useQuery(patchy.shared.contacts.list, options)` keep company screens live.
+On tier 1, `list.subscribe(options, onSnapshot)`, `get.subscribe(id, onSnapshot)`
+and `useQuery(patchy.shared.contacts.list, options)` keep company screens live.
 Follow `../patchy-tables/SKILL.md` for whole-result rendering and error handling.
 Source unshare, retirement or deletion reports a recoverable subscription error,
 keeping the last result and dependencies; restoring the source or its sharing

@@ -67,6 +67,12 @@ or file contents.
 
 When the user wants a tool with its own rows, files or company connections,
 start a patch repo rather than putting JavaScript into a static-file publish.
+Choose tier 1 by default. Choose tier 2 for enforced rules, atomic multi-row
+writes, or server-side work such as combining connection data before the viewer
+sees it. Tier 1 rules are advisory because a viewer can make the same writes
+from devtools. Live sync and sequential steps work on tier 1 and do not require
+tier 2.
+
 Use the instance-installed CLI described under Publishing, settle the instance
 and identity, and complete the login handoff below if needed. Then run:
 
@@ -74,11 +80,17 @@ and identity, and complete the login handoff below if needed. Then run:
 patchy init ./team-tool --tier 1 --purpose "The user's purpose for this tool" --json
 ```
 
+For tier 2, use the same command with `--tier 2`. It adds starter handlers in
+`server/`, config-bound `patchy/_generated/server.ts`, the release's exact
+`workerd` pin with install scripts disabled, and `patchy-server` alongside
+`patchy-preact` and `patchy-loop`.
+
 Use the user's actual purpose and chosen directory. Initialization authenticates
 first; without a key it exits 1 with `Run: patchy login`, not a half-created repo.
 It installs the pinned package and generates client, context, fixture stubs and
-project skills; tier 1 starts with an empty HTML root and Preact components in
-`src/main.tsx` and `src/App.tsx`. It refuses a second initialization there. Do not reinstall.
+project skills; tiers 1 and 2 start with an empty HTML root and Preact components
+in `src/main.tsx` and `src/App.tsx`. It refuses a second initialization there.
+Do not reinstall.
 The purpose also initializes `description` in `patchy.json`, at most 500 Unicode
 code points after whitespace normalization. Front-load what the tool does.
 The purpose in `AGENTS.md` is independent; edit `patchy.json` for the published
@@ -91,15 +103,23 @@ Use the discovery chain above before adding a dependency.
 `pnpm patchy add postgres/<handle> --as <alias>`
 or `pnpm patchy add shared-table <patchId>/<table> --as <alias>` adds a declaration
 and generates its client, context, fixture stub and skill. `pnpm patchy remove <alias>`
-reverses it while leaving its fixture. `pnpm patchy refresh` updates the pin,
-generated files and present skills transactionally, preserving application source.
+reverses it while leaving its fixture. `pnpm patchy refresh` updates the managed
+pins, generated server module list, other generated files and present skills
+transactionally, removing stale generated context while preserving application source.
+To move between tiers 1 and 2, edit `tier` in `patchy.config.ts`, then refresh.
+Follow the loop skill's "Moving tiers" steps to migrate calls and add or remove
+`server/`. Refresh adds or removes the `workerd` pin, generated `server.ts` and
+`patchy-server` skill with the tier; that skill is the exception to sticky skills.
 Its `addedCapabilities` JSON list names new SDK capabilities, where they run and
 their limits. Read the generated loop skill's catalogue before choosing imports.
 Never manually edit `patchy/_generated/` or managed project skills.
 
 Publish from the repo root with `pnpm patchy publish [--share company|public]`.
-It checks release, declaration stamps, types, the single-file build and tier,
-then publishes and records the patch id and description sync stamp in `patchy.json`,
+Tier 2 is company-only; a public patch needs `--share company` when publishing
+tier 2. Serving a tier 1 version makes public sharing possible again.
+Publish checks the release, declaration stamps, server module list, types,
+imports and tier, then builds the HTML and, on tier 2, the server artifact.
+It records the patch id and description sync stamp in `patchy.json`,
 preserving its authoritative instance. On `instance_mismatch`, correct the effective URL
 override to match the stored instance; the refusal names both URLs before any
 HTTP request. Keep the instance binding and patch id intact.
@@ -109,17 +129,22 @@ On `stale_generated`, run `pnpm patchy refresh`; on `invalid_manifest`, fix the
 config and its imports, or the named `patchy.json.description` field. On a build failure, fix the repo rather than publishing
 `dist/index.html` as a static file.
 `too_large` means reduce the largest contributors reported: the local HTML cap
-is 512 KiB at tier 0 and 10 MiB at tier 1. `tier_mismatch` instead means remove
-unsupported server code or correct the tier/static-HTML policy violation;
-browser code needs tier 1.
+is 512 KiB at tier 0 and 10 MiB at tiers 1 and 2. `tier_mismatch` means the
+code does not fit the tier: browser code needs at least tier 1 and `server/`
+needs tier 2.
 Bundle inspection requires embedded resources and inline scripts/styles;
 CSS `@import` is unsupported. It is a resource-completeness check, while core's
 safe-HTML policy owns tier 0 safety. Fragment, relative and external anchors
-have identical acceptance in both tiers; the runtime sandbox still governs
+have identical bundle acceptance across supported tiers; the runtime sandbox governs
 navigation.
 
-Before publishing, run `pnpm patchy dev --json` and exercise the local shell at
-its returned `url`; it uses real handlers over local PGlite.
+For tiers 0 and 1, before publishing run `pnpm patchy dev --json` and exercise
+the local shell at its returned `url`; it uses real handlers over local PGlite.
+Tier 2 repos can build and publish to dev and test instances using their local
+executor. Production requires the fleet executor. The tier 2 `patchy dev`
+engine integration, server watch and colleague mount belong to #404; do not
+claim that local loop proves handlers yet. Exercise the published tool on a
+development instance with invented data.
 `dev status`, `stop`, `logs` and `reset` all accept `--json`. Reset stops and
 wipes disposable local state; it does not change published resources. Start again
 afterwards to fetch the published inventory. Code rebuilds reload the whole shell
@@ -127,9 +152,10 @@ at its current route. Config and fixture changes need a stop/start. New dev star
 check the release, authenticate as the machine's user and regenerate declarations;
 existing sessions are not killed
 by a release. Use `--foreground` to stay attached with logs.
-Use invented local fixture inserts. Every readable row is available to whoever
-can open the patch; tier 1 has no outbound access or client storage. The project
-skills carry the complete runtime limits and the local-only workflow.
+Use invented local fixture inserts. On tier 1, every readable row is available
+to whoever can open the patch; it has no outbound access or client storage.
+Tier 2 puts access rules in handlers. The project skills carry the complete
+runtime limits and development boundaries.
 
 Repo recovery lives under `.patchy/publish/`. Keep it after interruptions or a
 failed `patchy.json` write and rerun `pnpm patchy publish` as the same owning user.
@@ -322,8 +348,10 @@ browser sign-out is a separate control on **Your machines**.
 - A new publish checks the executing CLI against `GET /api/release`, then validates the file.
   A `release_mismatch` names both releases: install the exact package reported
   by that endpoint using the integrity check above. Inside a patch repo, use `pnpm patchy refresh`.
-  File mode synthesises a tier 0 manifest with no resources. Repo mode admits tiers
-  0 and 1 with tables, stores, shared tables and Postgres declarations.
+  File mode synthesises a tier 0 manifest with no resources. Repo mode admits
+  tiers 0, 1 and 2 with tables, stores, shared tables and Postgres declarations.
+  Tier 2 publishes both HTML and server artifacts on dev and test instances;
+  production admission requires the fleet executor. Tier 2 is company-only.
   If the instance returns `has_primitives`, publish from the patch's repo, not a
   file: omitted definitions still count as inventory.
 - An interrupted file publish keeps the complete attempt under the state dir;

@@ -252,12 +252,16 @@ patch inventory and reads, table keys and types, then `add` by canonical id.
 
 ### Patch-repo commands and managed files
 
-| command                                                                                                     | behaviour                                                                                                                                                                                                                | `--json` success                                                                                            |
-| ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
-| `patchy init [dir] [--tier 0\|1] [--purpose <text>]`                                                        | Authenticate first, print instance/identity, ask purpose only at a human terminal, stage a new repo, install and generate before activating it. Default tier 1; target must be empty or absent under an existing parent. | `{ ok, dir, release, tier, generated, skills, installed }`                                                  |
-| `patchy refresh`                                                                                            | Fetch one release, update/install the pin if needed, re-exec that CLI before config execution, generate and activate the managed set transactionally. Failure leaves the previous set intact.                            | `{ ok, release: { from, to }, changed: { pin, generated, skills, fixtures }, addedCapabilities, warnings }` |
-| `patchy add postgres/<handle> [--as <alias>]` or `patchy add shared-table <patchId>/<table> [--as <alias>]` | Insert a literal declaration into `uses` by TypeScript AST without import changes, then generate client, context, missing fixture and skill.                                                                             | `{ ok, alias, declaration, generated, skills, addedCapabilities, warnings }`                                |
-| `patchy remove <alias>`                                                                                     | Remove the declaration and its generated output; remove the declaration skill only when no declaration of that kind remains. Keep the fixture and say so.                                                                | `{ ok, alias, removed, addedCapabilities, warnings }`                                                       |
+| command                                                                                                     | behaviour                                                                                                                                                                                                                                                                 | `--json` success                                                                                            |
+| ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `patchy init [dir] [--tier 0\|1\|2] [--purpose <text>]`                                                     | Authenticate first, print instance/identity, ask purpose only at a human terminal, stage a new repo, install and generate before activating it. Default tier 1; tier 2 adds handlers and its managed engine pin. Target must be empty or absent under an existing parent. | `{ ok, dir, release, tier, generated, skills, installed }`                                                  |
+| `patchy refresh`                                                                                            | Fetch one release, reconcile managed pins with the release and tier, install/re-exec as needed, generate and activate the managed set transactionally. Failure leaves the previous set intact.                                                                            | `{ ok, release: { from, to }, changed: { pin, generated, skills, fixtures }, addedCapabilities, warnings }` |
+| `patchy add postgres/<handle> [--as <alias>]` or `patchy add shared-table <patchId>/<table> [--as <alias>]` | Insert a literal declaration into `uses` by TypeScript AST without import changes, then generate client, context, missing fixture and skill.                                                                                                                              | `{ ok, alias, declaration, generated, skills, addedCapabilities, warnings }`                                |
+| `patchy remove <alias>`                                                                                     | Remove the declaration and its generated output; remove the declaration skill only when no declaration of that kind remains. Keep the fixture and say so.                                                                                                                 | `{ ok, alias, removed, addedCapabilities, warnings }`                                                       |
+
+`refresh` reports `changed.pin: true` when either managed pin changes, including
+adding or removing `workerd` on a tier change. Its transaction restores both
+pins and their installation on failure.
 
 Agent, JSON and non-terminal `init` calls require `--purpose`; purpose is never
 inferred. A company with no connections gets empty `uses` and core skills. The
@@ -272,11 +276,25 @@ Config execution refuses blank descriptions and table/store name collisions
 as `invalid_manifest`, naming both conflicting definitions.
 The tree typechecks without more setup. Nothing identifying the person is committed.
 
-Tier 1 starts with an empty root in `index.html`, `src/main.tsx` and `src/App.tsx`,
-using Preact with compat semantics through `patchy/preact`. TypeScript and Vite
-share that JSX import source, and module preloading is off. `pnpm lint` checks
-hooks, including `useQuery`, and rejects React and direct Preact imports.
-Tier 0 stays static; vanilla tier 1 repos can keep using the generated core client.
+Tiers 1 and 2 start with an empty root in `index.html`, `src/main.tsx` and
+`src/App.tsx`, using Preact with compat semantics through `patchy/preact`.
+TypeScript and Vite share that JSX import source, and module preloading is off.
+`pnpm lint` checks hooks, including `useQuery`, and rejects React and direct
+Preact imports. Tier 2 adds a starter module in `server/`,
+`patchy/_generated/server.ts` bound to config, and `patchy-server` alongside
+`patchy-preact` and `patchy-loop`. Its page calls generated server queries and
+mutations. Write-once `AGENTS.md` describes the page/handler split for either
+tier. Tier 0 stays static; vanilla tier 1 repos keep the generated core client.
+
+Tier 1 is the default. Enforced rules, atomic multi-row writes or server-side
+work call for tier 2; live sync and sequential operations do not.
+Changing tier is a config edit plus refresh, with no dedicated command or
+source rewrite. Moving to tier 2 adds the `workerd` pin, generated `server.ts`
+and `patchy-server`; typechecking names direct resource calls to move into
+handlers. Moving to tier 1 removes those managed parts; typechecking names
+`patchy.server.*` calls to replace. The builder removes `server/` before a tier
+1 publish. Serving tier 1 by publish or rollback makes public sharing possible
+again, not merely changing local config.
 
 `addedCapabilities` contains `{ id, group, name, entrypoints, runs, limits }`
 entries newly present since the last generated capability inventory. Text output
@@ -284,7 +302,7 @@ names each capability, where it runs and its limits. The inventory lives in
 `patchy/_generated/index.json`; generation uses the same release catalogue to
 render "What the SDK gives you" in `patchy-loop`. An older repo without an
 inventory receives the catalogue once; an unchanged refresh returns `[]`.
-Neither capability announcements nor refresh rewrite `src/` or `helpers/`.
+Neither capability announcements nor refresh rewrite `src/`, `server/` or `helpers/`.
 
 `patchy.json` is `{ instance, patch?, description, descriptionSyncedAt? }`.
 `init --purpose` writes its normalized purpose as `description`, with at most
@@ -321,17 +339,21 @@ Connection setup, reconnection and credential forms are browser-only for admins;
 no CLI command accepts connection secrets. A shared-source refusal names the
 source-access repair path.
 
-Managed package pins are only `devDependencies.patchy` today. The tier 2 init
-ticket adds `workerd` on that tier. A pin includes the release's content-digest
-tarball URL, so refresh replaces it and installs again when bytes change even if
-the release version string does not. `release_mismatch` keeps the same contract.
+Managed package pins are `devDependencies.patchy`, the release's content-digest
+tarball URL, and `devDependencies.workerd`, an exact version only on tier 2.
+Refresh owns their updates, including adding or removing `workerd` after a tier
+change. A changed tarball URL triggers installation even when the release
+version string is unchanged. Installation disables lifecycle scripts; workerd
+is spawned from its platform package rather than its postinstall-created
+wrapper. Publish refuses a mismatched managed pin with `release_mismatch`.
 There is no scaffold `pnpm.overrides`.
 
 Other managed writes are the lockfile through install, `patchy/_generated/`,
 `.agents/skills/patchy-*/`, fixture stubs only when absent, and one `uses` edit
-for add/remove. Existing fixtures, app code and agent instructions are preserved.
-Refresh replaces only the managed package literal, preserving every builder-owned
-dependency key and the surrounding `package.json` bytes.
+for add/remove. Refresh removes stale generated context files. Existing
+fixtures, app code and agent instructions are preserved. Refresh changes only
+the managed dependency keys, preserving builder-owned keys and the surrounding
+`package.json` bytes.
 The CLI executes config locally and writes `manifest.json`; server generation
 returns finished files, resolved declaration ids/revisions and typed declaration
 metadata, never that manifest or production rows/credentials. Both sides constrain
@@ -340,11 +362,14 @@ For tier 2, refresh enumerates one-level `server/*.ts` filename stems into
 `serverModules`, independently of manifest handler descriptors. Generation uses
 that list for type-only imports in the bound server helpers and client. It does
 not load or bundle server code. Nested modules, invalid names and symbolic links
-are local refusals; tiers 0 and 1 send an empty list. Publish checks this module
-list before bundling, so module additions and removals require refresh.
+are local refusals; tiers 0 and 1 use an empty list and have no generated
+`server.ts`. Refresh alone changes the generated module list after init; dev
+and publish never repair it. Publish checks the list before bundling and
+returns `stale_generated` for additions, removals or renames.
 Skills are sticky: refresh re-fetches every present skill and adds config-implied
-ones, never deleting on its own. A present skill no longer offered by the release
-fails refresh. Their canonical source is `packages/sdk`.
+ones. `patchy-server` is the sole tier-keyed exception, removed below tier 2.
+A different present skill no longer offered by the release fails refresh.
+Their canonical source is `packages/sdk`.
 
 Vite, `vite-plugin-singlefile`, TypeScript and `@types/node` belong to the builder.
 Init writes caret ranges from `GET /api/release`'s `toolchain` metadata. Each entry
@@ -391,6 +416,11 @@ runtime log store. Calls and bytes routes print compact wide events to local
 stdout without PostHog delivery. The existing `dev logs` response remains text.
 Tier 0 retains its production shell policy with only the trusted local
 reload script and polling endpoint added; its content remains script-free.
+This patch-repo loop covers tiers 0 and 1. Tier 2 handler execution on a
+development instance is already available, but the production-engine
+`patchy dev` integration, live server rebinding and `colleagueUrl` belong to
+#404. Tier 2 query subscriptions belong to #403. Init and refresh do not
+claim those runtime integrations.
 
 | command                 | `--json` success                                                              |
 | ----------------------- | ----------------------------------------------------------------------------- |

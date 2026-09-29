@@ -18,8 +18,8 @@ Keep `jsx: "react-jsx"` and `jsxImportSource: "patchy/preact"` in tsconfig and
 `oxc.jsx.importSource: "patchy/preact"` in Vite. `react-jsx` is the compiler
 setting, not a React dependency.
 
-In the tier 1 Preact scaffold, `src/main.tsx` mounts `src/App.tsx` into the empty
-HTML root. Import the generated client by relative path, for example from `src/App.tsx`:
+In the tier 1 and tier 2 Preact scaffolds, `src/main.tsx` mounts `src/App.tsx` into
+the empty HTML root. Import the generated client by relative path, for example from `src/App.tsx`:
 
 ```tsx
 import { useEffect, useState } from "patchy/preact";
@@ -28,6 +28,9 @@ import { patchy } from "../patchy/_generated/client.js";
 
 Keep a vanilla page on the same framework-free generated client when components
 are unnecessary. Refresh updates managed output, not your `src/` files.
+Tier 2 pages call `patchy.server.<module>.<handler>`; move direct resource calls
+into `server/` handlers. `patchy-loop` owns the config-and-refresh steps for
+moving tiers, and `patchy-server` owns handler kinds and their availability.
 
 ## Hooks and compat limits
 
@@ -82,9 +85,10 @@ build mode. `patchy dev` uses production build-watch, so it is false there.
 It is not a test for local data and must not guard fixture inserts. Use the
 local fixtures and shell workflow in `patchy-loop`.
 
-Run `pnpm typecheck` and the scaffold's `pnpm lint` before exercising the page
-through `pnpm patchy dev`. Lint checks hook usage and supported imports; fix
-failures in source rather than disabling the rules.
+Run `pnpm typecheck` and the scaffold's `pnpm lint`, then exercise tier 1 through
+`pnpm patchy dev`. For tier 2, follow `patchy-server`'s current runtime boundary.
+Lint checks hook usage and supported imports; fix failures in source rather
+than disabling the rules.
 
 Put reusable company code in `helpers/`, outside `server/` handler discovery.
 Page-only helpers may live under `src/`. A helper imported at runtime by a page

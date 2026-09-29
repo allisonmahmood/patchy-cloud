@@ -5,10 +5,18 @@ description: "Build tier 2 queries, mutations and actions; type helpers, handle 
 
 # Server handlers
 
+Start with `patchy init <dir> --tier 2 --purpose "<purpose>"`. It installs the
+Preact page, a starter `server/` module, config-bound generated builders and
+the exact `workerd` managed pin with install scripts disabled. Inside the repo,
+use `pnpm patchy`; read `patchy-loop` for changing an existing repo's tier.
+
 Queries, mutations and actions from published tier 2 repos run on dev and test
 instances' local executor. See the checkout's `docs/DEVELOPMENT.md` for startup.
 Production admission requires the fleet executor. The tier 2 `patchy dev`
-lifecycle, server watch and server subscriptions land separately.
+engine integration, live server rebinding and colleague mount belong to #404.
+Server subscriptions belong to #403 and are not admitted yet. Until those
+runtime integrations land, exercise published handlers on a development
+instance with invented data.
 
 Publish builds HTML and a closed server module, records handler descriptors
 and SDK imports, and sends both artifacts. The instance re-derives descriptors
@@ -17,6 +25,9 @@ unfinished initialization or unresolved imports return `invalid_manifest`,
 exit 2. Keep module initialization bounded and side-effect-free.
 `server/` below tier 2 is `tier_mismatch`; zero handlers publishes with a warning.
 After adding, removing or renaming a server module, run `pnpm patchy refresh`.
+Refresh alone regenerates the module list; publish refuses a stale list with
+`stale_generated`. Renaming an export within an existing module changes its
+type-only contract without requiring a new module list.
 
 Tier 2 is company-only. Publishing to a public patch needs `--share company`;
 public sharing is `tier2_not_public`. Older tier 1 pages lose direct operations
@@ -173,6 +184,22 @@ capacity returns `busy`. Respect the supplied `retryAfter` before a new attempt.
 Disable submit controls while a call is pending. For an action's lost reply,
 inspect the resulting state before deciding which remaining steps to perform.
 
+## Bound concurrent work
+
+The 32 outstanding requests per frame are not a company execution allowance.
+Default company bounds, counted per host replica, can refuse work earlier:
+
+- 4 company database connections, shared by both tiers; at most 32 queued
+  acquisitions wait up to 1 second within the caller's deadline, then `busy`.
+- 8 actions in flight per company and 2 per viewer per patch, then `busy`.
+- At most 2 company connections for subscription re-runs and 1 re-run per patch.
+  These are the scheduling bounds when server subscriptions are available.
+- 100 admitted calls per second with a burst of 200, then `limit_exceeded`.
+
+Company operating bounds may have overrides. Coalesce screen reads and use
+bounded action batches rather than launching one call per card. Respect
+`retryAfter`; the full registry below distinguishes contract and operating limits.
+
 ## Render from subscriptions
 
 Call `patchy.server.<module>.<handler>(args)`. Queries also provide
@@ -184,8 +211,10 @@ subscription. Omitted fields and object fields set to `undefined` have the same
 identity. A short unmount/remount retains the subscription.
 
 After a mutation, render from the subscription rather than merging the mutation
-reply into a second copy of query state. Patchy owns presence and reconciliation.
-The stream and hosted subscriptions are enabled by their own runtime tickets.
+reply into a second copy of query state. Patchy owns presence through the
+document stream and owns reconciliation; patches need no heartbeat or presence
+table. Tier 1 already uses this stream. Tier 2 query subscriptions require
+their separate runtime integration before this live-screen workflow is usable.
 
 <!-- generated-limits:start -->
 

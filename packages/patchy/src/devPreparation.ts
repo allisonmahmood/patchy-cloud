@@ -136,13 +136,21 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
             });
         }
         const warnings = [...syncWarnings, ...(yield* primitiveReminders(root, manifest))];
+        // Dev refreshes declarations, but only refresh owns the server module type list.
+        const serverFile = "patchy/_generated/server.ts";
+        const serverPath = yield* io("Read server module list path", () =>
+          safePath(root, serverFile)
+        );
+        const files = generated.files.filter(
+          (file) => !file.path.startsWith("fixtures/") && file.path !== serverFile
+        );
+        if (yield* fs.exists(serverPath))
+          files.push({ path: serverFile, contents: yield* fs.readFileString(serverPath) });
         yield* io("Activate generated files", () =>
-          transaction.activate(
-            generated.files.filter((file) => !file.path.startsWith("fixtures/")),
-            encodeManifest(manifest),
-            [],
-            { before: source, after: source }
-          )
+          transaction.activate(files, encodeManifest(manifest), [], {
+            before: source,
+            after: source
+          })
         ).pipe(Effect.uninterruptible);
         return {
           manifest,

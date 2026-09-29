@@ -4,7 +4,7 @@ import ts from "typescript";
 
 const decode = Schema.decodeUnknownOption(
   Schema.fromJsonString(
-    Schema.Struct({ devDependencies: Schema.Struct({ patchy: Schema.String }) })
+    Schema.Struct({ devDependencies: Schema.Record(Schema.String, Schema.String) })
   )
 );
 
@@ -13,31 +13,62 @@ export function releaseFromPin(pin: string) {
   return /(?:^|\/)patchy-([^/?#]+?)(?:-[a-f0-9]{64})?\.tgz(?:[?#].*)?$/.exec(pin)?.[1] ?? pin;
 }
 
-/** Replace only the effective pin literal; refuse a changed pin or unfinished author edit. */
-export function patchPackagePin(source: string, expected: string, replacementLiteral: string) {
+/** Edit one managed dependency without rewriting author-owned fields or formatting. */
+export function patchPackagePin(
+  source: string,
+  name: "patchy" | "workerd",
+  expected: string | undefined,
+  replacementLiteral: string | undefined
+) {
   const decoded = decode(source);
-  if (Option.isNone(decoded) || decoded.value.devDependencies.patchy !== expected) return undefined;
+  if (Option.isNone(decoded) || decoded.value.devDependencies[name] !== expected) return undefined;
   const file = ts.parseJsonText("package.json", source);
   const statement = file.statements[0];
-  let node: ts.Expression | undefined =
-    statement && ts.isExpressionStatement(statement) ? statement.expression : undefined;
-  for (const key of ["devDependencies", "patchy"]) {
-    if (!node || !ts.isObjectLiteralExpression(node)) return undefined;
-    let value: ts.Expression | undefined;
-    for (const property of node.properties) {
-      if (
+  if (!statement || !ts.isExpressionStatement(statement)) return undefined;
+  const root = statement.expression;
+  if (!ts.isObjectLiteralExpression(root)) return undefined;
+  const dependencies = root.properties
+    .filter(
+      (property): property is ts.PropertyAssignment =>
         ts.isPropertyAssignment(property) &&
         ts.isStringLiteral(property.name) &&
-        property.name.text === key
-      )
-        value = property.initializer;
-    }
-    node = value;
+        property.name.text === "devDependencies"
+    )
+    .at(-1)?.initializer;
+  if (!dependencies || !ts.isObjectLiteralExpression(dependencies)) return undefined;
+  const matches = dependencies.properties.filter(
+    (property): property is ts.PropertyAssignment =>
+      ts.isPropertyAssignment(property) &&
+      ts.isStringLiteral(property.name) &&
+      property.name.text === name
+  );
+  // Removing an effective duplicate would expose an older unmanaged value.
+  if (matches.length > 1) return undefined;
+  const property = matches[0];
+  if (!property) {
+    if (replacementLiteral === undefined) return { contents: source, previousLiteral: undefined };
+    const start = dependencies.getStart(file) + 1;
+    return {
+      contents:
+        source.slice(0, start) +
+        `${JSON.stringify(name)}: ${replacementLiteral}${dependencies.properties.length ? "," : ""}` +
+        source.slice(start),
+      previousLiteral: undefined
+    };
   }
-  if (!node || !ts.isStringLiteral(node)) return undefined;
-  const start = node.getStart(file);
-  return {
-    contents: source.slice(0, start) + replacementLiteral + source.slice(node.end),
-    previousLiteral: source.slice(start, node.end)
-  };
+  const node = property.initializer;
+  if (!ts.isStringLiteral(node)) return undefined;
+  const previousLiteral = source.slice(node.getStart(file), node.end);
+  if (replacementLiteral !== undefined) {
+    return {
+      contents: source.slice(0, node.getStart(file)) + replacementLiteral + source.slice(node.end),
+      previousLiteral
+    };
+  }
+  const index = dependencies.properties.indexOf(property);
+  const previous = dependencies.properties[index - 1];
+  const next = dependencies.properties[index + 1];
+  const start = previous ? previous.end : property.getStart(file);
+  const end = !previous && next ? next.getStart(file) : property.end;
+  return { contents: source.slice(0, start) + source.slice(end), previousLiteral };
 }
