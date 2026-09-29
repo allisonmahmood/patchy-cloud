@@ -9,7 +9,6 @@ import type { Resource } from "../QuerySnapshot.js";
 export const snapshot: Resource = {
   run: (effect) => effect,
   watermark: {},
-  dbMs: 0,
   cancel: Effect.void,
   settled: Effect.void,
   destroy: () => {}

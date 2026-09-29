@@ -24,7 +24,6 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as Schedule from "effect/Schedule";
 import * as Binding from "./Binding.js";
 import * as Executor from "./Executor.js";
 import * as InvocationCapabilities from "./InvocationCapabilities.js";
@@ -490,7 +489,8 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
               reason = "process_killed";
           }
           if (timedOut) execution.interruptUnsafe();
-          if (timedOut) yield* WideEvents.enrich({ limitId: `tier2.${descriptor.kind}.deadline` });
+          if (timedOut && parent === undefined)
+            yield* WideEvents.enrich({ limitId: `tier2.${descriptor.kind}.deadline` });
           const settled =
             capability === undefined
               ? true
@@ -631,7 +631,7 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
             // Metering settlement belongs to the host, never to reply delivery.
             // Retrying an ambiguous write keeps the same run id.
             yield* rollups
-              .record({
+              .settle({
                 runId: id,
                 companyId: binding.companyId,
                 patchId: binding.patchId,
@@ -646,7 +646,7 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
                 argsBytes,
                 resultBytes
               })
-              .pipe(Effect.retry(Schedule.spaced("50 millis")), Effect.forkIn(scope));
+              .pipe(Effect.forkIn(scope));
           }
           yield* WideEvents.add({
             callbacks: capability?.counters.callbacks ?? 0,

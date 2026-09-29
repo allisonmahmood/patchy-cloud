@@ -1,13 +1,23 @@
+import * as PgClient from "@effect/sql-pg/PgClient";
 import { assert, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
+import * as Random from "effect/Random";
 import * as Redacted from "effect/Redacted";
+import * as TestClock from "effect/testing/TestClock";
+import * as Reactivity from "effect/unstable/reactivity/Reactivity";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlError from "effect/unstable/sql/SqlError";
 import { inject } from "vitest";
 import { layerFromUrl } from "@patchy/sql";
 import * as Testing from "@patchy/sql/testing";
 import * as QueryRollups from "./QueryRollups.js";
+import * as RollupSocketProxy from "./test/rollupSocketProxy.js";
 
 const MINUTE = Date.UTC(2026, 0, 1);
 const input = (runId: string, handler: string): QueryRollups.Record => ({
@@ -26,13 +36,25 @@ const input = (runId: string, handler: string): QueryRollups.Record => ({
   resultBytes: 53
 });
 
-const secondClient = Effect.gen(function* () {
+const databaseUrl = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const rows = yield* sql<{ database: string }>`SELECT current_database() AS database`;
   const url = new URL(inject("postgres").adminUrl);
   url.pathname = `/${rows[0]!.database}`;
-  const context = yield* Layer.build(layerFromUrl(Redacted.make(url.toString())));
+  return url.toString();
+});
+
+const secondClient = Effect.gen(function* () {
+  const url = yield* databaseUrl;
+  const context = yield* Layer.build(layerFromUrl(Redacted.make(url)));
   return Context.get(context, SqlClient.SqlClient);
+});
+
+const rollupsFromUrl = Effect.fnUntraced(function* (url: string) {
+  const context = yield* Layer.build(layerFromUrl(Redacted.make(url)));
+  return yield* QueryRollups.make.pipe(
+    Effect.provideService(SqlClient.SqlClient, Context.get(context, SqlClient.SqlClient))
+  );
 });
 
 const totals = Effect.fnUntraced(function* (handler: string) {
@@ -267,4 +289,196 @@ it.layer(Testing.layer())("QueryRollups", (it) => {
       ]);
     })
   );
+  for (const fault of ["before-statement", "after-commit"] as const) {
+    it.effect(`settles once after a real PostgreSQL socket loss ${fault}`, () =>
+      Effect.gen(function* () {
+        const run = input(`socket-${fault}`, `socket-${fault}`);
+        const proxy = yield* RollupSocketProxy.make(yield* databaseUrl, fault);
+        const rollups = yield* rollupsFromUrl(proxy.url);
+        const logs: unknown[] = [];
+        const settling = yield* rollups
+          .settle(run)
+          .pipe(
+            Effect.provideService(Clock.Clock, Clock.Clock.defaultValue()),
+            Effect.provide(Logger.layer([Logger.make((event) => logs.push(event.message))])),
+            Effect.forkChild
+          );
+        assert.strictEqual(yield* proxy.reached, fault === "after-commit" ? "I" : "not-sent");
+        yield* Fiber.join(settling);
+        assert.deepStrictEqual(logs, []);
+        yield* rollups.settle(run);
+        const sql = yield* SqlClient.SqlClient;
+        assert.deepStrictEqual(
+          yield* sql`SELECT runs, guest_ms, db_ms FROM runtime_query_rollups
+            WHERE handler = ${run.handler}`,
+          [{ runs: "1", guest_ms: "17", db_ms: "29" }]
+        );
+        assert.deepStrictEqual(
+          yield* sql`SELECT run_id FROM runtime_query_rollup_runs WHERE run_id = ${run.runId}`,
+          [{ run_id: run.runId }]
+        );
+      }).pipe(Effect.scoped)
+    );
+  }
+
+  it.effect("keeps an acknowledged increment when the separate pruning connection drops", () =>
+    Effect.gen(function* () {
+      const run = input("socket-prune", "socket-prune");
+      const proxy = yield* RollupSocketProxy.make(yield* databaseUrl, "before-prune");
+      const logs: unknown[] = [];
+      const rollups = yield* rollupsFromUrl(proxy.url);
+      yield* rollups
+        .settle(run)
+        .pipe(Effect.provide(Logger.layer([Logger.make((event) => logs.push(event.message))])));
+      assert.strictEqual(yield* proxy.reached, "not-sent");
+      const sql = yield* SqlClient.SqlClient;
+      assert.deepStrictEqual(
+        yield* sql`SELECT runs, guest_ms FROM runtime_query_rollups WHERE handler = ${run.handler}`,
+        [{ runs: "1", guest_ms: "17" }]
+      );
+      assert.deepStrictEqual(logs, [
+        ["Query rollup dedup pruning failed", { reason: "ConnectionError" }]
+      ]);
+      yield* rollups.settle(run);
+      assert.deepStrictEqual(
+        yield* sql`SELECT runs FROM runtime_query_rollups WHERE handler = ${run.handler}`,
+        [{ runs: "1" }]
+      );
+    }).pipe(Effect.scoped)
+  );
 });
+
+const failingSql = (acquirer: Effect.Effect<never, SqlError.SqlError>) =>
+  Layer.effect(
+    SqlClient.SqlClient,
+    SqlClient.make({ acquirer, compiler: PgClient.makeCompiler(), spanAttributes: [] })
+  ).pipe(Layer.provide(Reactivity.layer));
+
+it.effect("backs off with jitter and stops retrying within the dedup retention window", () =>
+  Effect.gen(function* () {
+    const attempts: number[] = [];
+    const logs: unknown[] = [];
+    const unavailable = new SqlError.SqlError({
+      reason: new SqlError.ConnectionError({ cause: new Error("postgres://secret@private") })
+    });
+    const start = yield* Clock.currentTimeMillis;
+    const layer = failingSql(
+      Effect.gen(function* () {
+        attempts.push((yield* Clock.currentTimeMillis) - start);
+        return yield* Effect.fail(unavailable);
+      })
+    );
+    const rollups = yield* QueryRollups.make.pipe(Effect.provide(layer));
+    let done = false;
+    const settlement = yield* rollups.settle(input("outage", "outage")).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          done = true;
+        })
+      ),
+      Random.withSeed("rollup-retry"),
+      Effect.provide(Logger.layer([Logger.make((event) => logs.push(event.message))])),
+      Effect.forkChild
+    );
+    yield* TestClock.adjust("299999 millis");
+    assert.isFalse(done);
+    assert.isAtLeast(attempts.length, 25);
+    assert.isAtMost(attempts.length, 50);
+    assert.strictEqual(attempts[0], 0);
+    const gaps = attempts.slice(1).map((time, index) => time - attempts[index]!);
+    assert.isAtLeast(gaps[0]!, 80);
+    assert.isAtMost(gaps[0]!, 120);
+    for (let index = 0; index < gaps.length; index++) {
+      assert.isAtLeast(gaps[index]!, Math.min(100 * 2 ** index, 10_000) * 0.8 - 1);
+      assert.isAtMost(gaps[index]!, Math.min(100 * 2 ** index * 1.2, 10_000) + 1);
+    }
+    assert.isAbove(new Set(gaps.slice(-10)).size, 1);
+    yield* TestClock.adjust(1);
+    yield* Fiber.join(settlement);
+    assert.isTrue(done);
+    assert.deepStrictEqual(logs, [
+      ["Query rollup settlement dropped", { reason: "retry_budget_exhausted" }]
+    ]);
+    const stopped = [...attempts];
+    yield* TestClock.adjust("2 hours");
+    assert.deepStrictEqual(attempts, stopped);
+  })
+);
+
+it.effect("includes a stalled SQL acquisition in the total settlement budget", () =>
+  Effect.gen(function* () {
+    let attempts = 0;
+    let interrupted = false;
+    const logs: unknown[] = [];
+    const layer = failingSql(
+      Effect.suspend(() => {
+        attempts++;
+        return Effect.never.pipe(
+          Effect.onInterrupt(() =>
+            Effect.sync(() => {
+              interrupted = true;
+            })
+          )
+        );
+      })
+    );
+    const rollups = yield* QueryRollups.make.pipe(Effect.provide(layer));
+    const settlement = yield* rollups
+      .settle(input("stalled", "stalled"))
+      .pipe(
+        Effect.provide(Logger.layer([Logger.make((event) => logs.push(event.message))])),
+        Effect.forkChild
+      );
+    yield* TestClock.adjust("5 minutes");
+    yield* Fiber.join(settlement);
+    assert.strictEqual(attempts, 1);
+    assert.isTrue(interrupted);
+    assert.deepStrictEqual(logs, [
+      ["Query rollup settlement dropped", { reason: "retry_budget_exhausted" }]
+    ]);
+  })
+);
+
+for (const Reason of [
+  SqlError.AuthenticationError,
+  SqlError.AuthorizationError,
+  SqlError.ConstraintError,
+  SqlError.SqlSyntaxError,
+  SqlError.UnknownError
+]) {
+  it.effect(`drops ${Reason.name} without retrying or logging the raw SQL failure`, () =>
+    Effect.gen(function* () {
+      const error = new SqlError.SqlError({
+        reason: new Reason({ cause: new Error("postgres://secret@private"), message: "secret SQL" })
+      });
+      let attempts = 0;
+      const logs: unknown[] = [];
+      const rollups = yield* QueryRollups.make.pipe(
+        Effect.provide(
+          failingSql(
+            Effect.suspend(() => {
+              attempts++;
+              return Effect.fail(error);
+            })
+          )
+        )
+      );
+      yield* rollups
+        .settle(input("permanent", "permanent"))
+        .pipe(Effect.provide(Logger.layer([Logger.make((event) => logs.push(event.message))])));
+      assert.strictEqual(attempts, 1);
+      assert.deepStrictEqual(logs, [
+        ["Query rollup settlement dropped", { reason: error.reason._tag }]
+      ]);
+    })
+  );
+}
+
+it.effect("does not swallow defects as best-effort SQL failures", () =>
+  Effect.gen(function* () {
+    const defect = new Error("programming defect");
+    const rollups = yield* QueryRollups.make.pipe(Effect.provide(failingSql(Effect.die(defect))));
+    const result = yield* rollups.settle(input("defect", "defect")).pipe(Effect.exit);
+    assert.isTrue(Exit.hasDies(result));
+  })
+);

@@ -1,7 +1,6 @@
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
 import { InvocationCapabilities, QuerySnapshot, Runtime } from "@patchy/runtime/core";
 import * as Cause from "effect/Cause";
-import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -38,7 +37,6 @@ export const make = Effect.gen(function* () {
   const inventory = yield* Inventory.Inventory;
   const capabilities = yield* InvocationCapabilities.InvocationCapabilities;
   const scope = yield* Effect.scope;
-  const clock = yield* Clock.Clock;
 
   const open = Effect.fn("QuerySnapshot.open")(function* (
     capability: InvocationCapabilities.Capability
@@ -51,8 +49,6 @@ export const make = Effect.gen(function* () {
         const settled = yield* Deferred.make<void>();
         let owner: Fiber.Fiber<void, Runtime.RuntimeError> | undefined;
         let lease: CompanyDatabases.Lease | undefined;
-        let startedAt: number | undefined;
-        let stoppedAt: number | undefined;
         let closed = false;
         let watermark: Readonly<Record<string, string>> = Object.freeze({});
         let callbackContext: Context.Context<never> | undefined;
@@ -60,11 +56,6 @@ export const make = Effect.gen(function* () {
         const resource: QuerySnapshot.Resource = {
           get watermark() {
             return watermark;
-          },
-          get dbMs() {
-            return startedAt === undefined
-              ? 0
-              : Math.max(0, (stoppedAt ?? clock.currentTimeMillisUnsafe()) - startedAt);
           },
           run: (effect) =>
             Effect.gen(function* () {
@@ -124,7 +115,6 @@ export const make = Effect.gen(function* () {
           lease = yield* databases
             .lease(capability.binding.companyId, reserveAuthority)
             .pipe(Effect.catchTags(databaseFailures));
-          startedAt = clock.currentTimeMillisUnsafe();
           const held = lease;
           const sql = held.sql;
           return yield* held
@@ -170,7 +160,6 @@ export const make = Effect.gen(function* () {
             Effect.gen(function* () {
               closed = true;
               owner = undefined;
-              stoppedAt = clock.currentTimeMillisUnsafe();
               if (Exit.isFailure(exit)) yield* Deferred.failCause(ready, exit.cause);
               yield* Deferred.succeed(settled, undefined);
               yield* Queue.shutdown(jobs);

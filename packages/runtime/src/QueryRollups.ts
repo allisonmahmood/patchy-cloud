@@ -1,4 +1,6 @@
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Schedule from "effect/Schedule";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 export interface Record {
@@ -17,11 +19,22 @@ export interface Record {
   readonly resultBytes: number;
 }
 
+// The whole settlement, including stalled SQL, expires before dedup ids can age out.
+const SETTLEMENT_BUDGET = "5 minutes";
+const MAX_RETRY_DELAY = Duration.seconds(10);
+const retrySchedule = Schedule.min([
+  Schedule.exponential("100 millis"),
+  Schedule.spaced(MAX_RETRY_DELAY)
+]).pipe(
+  Schedule.jittered,
+  Schedule.modifyDelay(({ duration }) => Effect.succeed(Duration.min(duration, MAX_RETRY_DELAY)))
+);
+
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const record = Effect.fn("QueryRollups.record")(function* (input: Record) {
-    // Only the transaction that inserts this run id may add its counters.
-    // A retry after a lost commit acknowledgement therefore adds nothing.
+    // This single statement commits the run id and counters together. A retry
+    // after a lost acknowledgement adds nothing, without a separate COMMIT.
     yield* sql`
         WITH inserted AS (
           INSERT INTO runtime_query_rollup_runs (run_id, applied_at)
@@ -48,11 +61,36 @@ export const make = Effect.gen(function* () {
           callbacks = runtime_query_rollups.callbacks + EXCLUDED.callbacks,
           args_bytes = runtime_query_rollups.args_bytes + EXCLUDED.args_bytes,
           result_bytes = runtime_query_rollups.result_bytes + EXCLUDED.result_bytes`;
-    // Retention follows persistence time, not the invocation's start minute.
+    // Pruning is independent: its failure must not turn an acknowledged increment
+    // into another settlement attempt. Retention follows persistence time.
     yield* sql`
         DELETE FROM runtime_query_rollup_runs
-        WHERE applied_at < statement_timestamp() - INTERVAL '1 hour'`;
-  }, sql.withTransaction);
+        WHERE applied_at < statement_timestamp() - INTERVAL '1 hour'`.pipe(
+      Effect.catchTags({
+        SqlError: (error) =>
+          Effect.logWarning("Query rollup dedup pruning failed", {
+            reason: error.reason._tag
+          })
+      })
+    );
+  });
 
-  return { record };
+  const settle = Effect.fn("QueryRollups.settle")((input: Record) =>
+    record(input).pipe(
+      Effect.retry({ schedule: retrySchedule, while: (error) => error.isRetryable }),
+      Effect.timeout(SETTLEMENT_BUDGET),
+      Effect.catchTags({
+        SqlError: (error) =>
+          Effect.logWarning("Query rollup settlement dropped", {
+            reason: error.reason._tag
+          }),
+        TimeoutError: () =>
+          Effect.logWarning("Query rollup settlement dropped", {
+            reason: "retry_budget_exhausted"
+          })
+      })
+    )
+  );
+
+  return { record, settle };
 });

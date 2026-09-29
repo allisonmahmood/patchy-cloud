@@ -2,7 +2,7 @@ import { assert, it } from "@effect/vitest";
 import { CURRENT_RELEASE, WIRE_VERSION, type GuestProtocol } from "@patchy/api";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { DEV_SEED } from "@patchy/auth/seed";
-import { Limits, OperatingLimits } from "@patchy/limits";
+import { ContractLimits, Limits, OperatingLimits } from "@patchy/limits";
 import { newInternalId } from "@patchy/core";
 import * as Testing from "@patchy/sql/testing";
 import * as Deferred from "effect/Deferred";
@@ -15,12 +15,14 @@ import * as Queue from "effect/Queue";
 import * as TestClock from "effect/testing/TestClock";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as Binding from "./Binding.js";
+import * as CallbackGateway from "./CallbackGateway.js";
 import * as Executor from "./Executor.js";
 import * as Invocation from "./Invocation.js";
 import * as InvocationCapabilities from "./InvocationCapabilities.js";
 import * as InvocationLog from "./InvocationLog.js";
 import * as LoadedVersions from "./LoadedVersions.js";
 import * as Runtime from "./Runtime.js";
+import * as RuntimeLog from "./RuntimeLog.js";
 import * as ServerBundles from "./ServerBundles.js";
 import * as QuerySnapshot from "./QuerySnapshot.js";
 import { snapshot } from "./test/callbacks.js";
@@ -445,6 +447,77 @@ it.layer(services)("Invocation", (it) => {
       });
       assert.strictEqual(row?.parentId, request.invocationId);
       assert.strictEqual(row?.outcome, "handler_timeout");
+    })
+  );
+
+  it.effect("attributes only root timeouts while retaining handled nested deadline peaks", () =>
+    Effect.gen(function* () {
+      const queryDeadline = yield* ContractLimits.get("tier2.query.deadline");
+      const gateway = yield* CallbackGateway.make({}).pipe(Effect.provide(RuntimeLog.layer));
+      const queries = yield* Queue.unbounded<GuestProtocol.Invoke>();
+      const invocations = yield* makeInvocation((request) =>
+        Effect.gen(function* () {
+          if (request.handler === "demo.query") {
+            yield* Queue.offer(queries, request);
+            return yield* Effect.never;
+          }
+          const reply = yield* gateway.callback(request.callback.capability, request, {
+            op: "server.call",
+            args: { handler: "demo.query", args: { id: 1 } }
+          });
+          assert.deepInclude(reply, { ok: false, source: "patchy", code: "handler_timeout" });
+          return {
+            outcome: "returned" as const,
+            reply: { ok: true as const, value: "recovered" },
+            guestMs: 0
+          };
+        })
+      );
+      const records = yield* Queue.unbounded<WideEvents.WideEvent>();
+      const events = yield* WideEvents.make.pipe(
+        Effect.provideService(WideEvents.Sink, {
+          write: (event) => Queue.offer(records, event).pipe(Effect.asVoid)
+        })
+      );
+      for (const handler of ["demo.action", "demo.query"]) {
+        const caller = yield* events
+          .withEvent(
+            { type: "request" },
+            invocations.call(
+              { handler, args: handler === "demo.query" ? { id: 1 } : {} },
+              { ...binding, correlationId: newInternalId("call") },
+              Effect.succeed(viewer)
+            )
+          )
+          .pipe(Effect.result, Effect.forkChild);
+        yield* Queue.take(queries);
+        yield* TestClock.adjust(queryDeadline);
+        const result = yield* Fiber.join(caller);
+        const event = yield* Queue.take(records);
+        if (event.type !== "request") return assert.fail("Expected request event");
+        assert.strictEqual(event.handler, handler);
+        assert.strictEqual(event.closestLimitId, "tier2.query.deadline");
+        assert.deepInclude(event.limits, {
+          limitId: "tier2.query.deadline",
+          value: queryDeadline,
+          peak: queryDeadline,
+          configRevision: { deploymentRevision: "contract", overrideRevision: "0" }
+        });
+        if (handler === "demo.action") {
+          assert.strictEqual(result._tag, "Success");
+          if (result._tag === "Success")
+            assert.deepStrictEqual(result.success, { ok: true, value: "recovered" });
+          assert.strictEqual(event.outcome, "success");
+          assert.isUndefined(event.limitId);
+          assert.isUndefined(event.code);
+        } else {
+          assert.strictEqual(result._tag, "Failure");
+          if (result._tag === "Failure") assert.strictEqual(result.failure.code, "handler_timeout");
+          assert.strictEqual(event.outcome, "failure");
+          assert.strictEqual(event.limitId, "tier2.query.deadline");
+          assert.strictEqual(event.code, "handler_timeout");
+        }
+      }
     })
   );
 
