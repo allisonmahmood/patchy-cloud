@@ -1,5 +1,5 @@
 import { canonicalArgs } from "@patchy/api/canonical-args";
-import { PatchyError } from "./clientError.js";
+import { PatchyError, isPatchyError } from "./clientError.js";
 import {
   createPostMessageTransport,
   LostReply,
@@ -31,6 +31,15 @@ const unavailableSubscriptions: QueryDriver = {
   }
 };
 
+const mutationKey = (serverTime: number): string => {
+  const random = crypto.getRandomValues(new Uint8Array(16));
+  const suffix = btoa(String.fromCharCode(...random))
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replaceAll("=", "");
+  return `${Math.floor(serverTime)}-${suffix}`;
+};
+
 /** Properties follow the type-only module imports, without a generated export inventory. */
 export function createServerClient<Modules>(
   options: { readonly transport?: Transport; readonly queries?: QueryDriver } = {}
@@ -47,14 +56,35 @@ export function createServerClient<Modules>(
           if (Object.hasOwn(handlers, exported)) return handlers[exported];
           const name = `${module}.${exported}`;
           const call = async (args: Readonly<Record<string, unknown>>) => {
-            const request = { handler: name, args: JSON.parse(canonicalArgs(args)) };
-            try {
-              return await transport.call("server.call", request);
-            } catch (error) {
-              if (!(error instanceof LostReply) || transport.handlerKind(name) !== "query")
+            const snapshot: unknown = JSON.parse(canonicalArgs(args));
+            await transport.ready();
+            const kind = transport.handlerKind(name);
+            const request = {
+              handler: name,
+              args: snapshot,
+              ...(kind === "mutation"
+                ? {
+                    mutationKey: mutationKey(
+                      transport.serverTime() ?? (await transport.waitForServerTime())
+                    )
+                  }
+                : {})
+            };
+            let queryRetried = false;
+            const send = async (): Promise<unknown> => {
+              try {
+                return await transport.call("server.call", request);
+              } catch (error) {
+                if (kind === "mutation" && isPatchyError(error, "unknown_outcome"))
+                  throw Object.assign(error, { retry: send });
+                if (kind === "query" && error instanceof LostReply && !queryRetried) {
+                  queryRetried = true;
+                  return send();
+                }
                 throw error;
-              return transport.call("server.call", request);
-            }
+              }
+            };
+            return send();
           };
           // Types expose subscriptions only for queries. The host validates the loaded kind.
           return (handlers[exported] = Object.assign(call, {

@@ -30,22 +30,23 @@ S3-compatible API; development and offline tests use the filesystem. A bucket
 belongs to the Neon branch selected by its endpoint, not to a global S3 namespace.
 
 1. **Migrations belong to capabilities, with one platform ledger.** The original
-   baselines were rewritten before deployment. The current ledger has eleven
+   baselines were rewritten before deployment. The current ledger has twelve
    records across seven owners:
 
-   | id   | owner            | record                       |
-   | ---- | ---------------- | ---------------------------- |
-   | 0001 | Companies        | `companies_baseline`         |
-   | 0002 | Auth             | `auth_baseline`              |
-   | 0003 | Patches          | `patches_baseline`           |
-   | 0004 | Companies        | `invites_expiry`             |
-   | 0005 | Company database | `company_database_baseline`  |
-   | 0006 | Runtime          | `runtime_baseline`           |
-   | 0007 | Integrations     | `integrations_baseline`      |
-   | 0008 | Patches          | `patches_lifecycle`          |
-   | 0009 | Limits           | `limits_overrides`           |
-   | 0010 | Patches          | `patches_lifecycle_revision` |
-   | 0011 | Runtime          | `runtime_invocations`        |
+   | id   | owner            | record                          |
+   | ---- | ---------------- | ------------------------------- |
+   | 0001 | Companies        | `companies_baseline`            |
+   | 0002 | Auth             | `auth_baseline`                 |
+   | 0003 | Patches          | `patches_baseline`              |
+   | 0004 | Companies        | `invites_expiry`                |
+   | 0005 | Company database | `company_database_baseline`     |
+   | 0006 | Runtime          | `runtime_baseline`              |
+   | 0007 | Integrations     | `integrations_baseline`         |
+   | 0008 | Patches          | `patches_lifecycle`             |
+   | 0009 | Limits           | `limits_overrides`              |
+   | 0010 | Patches          | `patches_lifecycle_revision`    |
+   | 0011 | Runtime          | `runtime_invocations`           |
+   | 0012 | Runtime          | `runtime_mutation_commit_proof` |
 
    The patches baseline includes names, manifests, version stamps and publish
    recovery; `connection_snapshots` belongs to the integrations baseline.
@@ -61,8 +62,15 @@ belongs to the Neon branch selected by its endpoint, not to a global S3 namespac
    metering fields including database-held milliseconds. Settlement can reconcile
    `unknown_outcome`, but cannot replace a final outcome.
    The same migration creates minute-keyed query rollups and applied-run ids.
-   Rollup increments, deduplication transactions and pruning belong to the
-   metering implementation; host-owned mutation transactions are separate work.
+   Rollup increments, deduplication transactions and pruning belong to metering.
+   Mutation keys live in the company database, committed with the mutation's
+   writes, result and originating invocation id. That link lets later replay
+   reconcile an unresolved platform invocation without losing its metering.
+   Their idempotent inventory upgrade does not allocate a platform migration id.
+   Platform migration `0012` records mutation commit proof separately from host
+   settlement. A replay can establish success before the original finalizer
+   writes its timing and metering, without fabricating those measurements or
+   allowing a late unknown outcome to overwrite committed success.
 
 2. **Embedded Postgres is the cloud worktree and test store.** `pnpm dev`
    migrates and seeds one per worktree. `@patchy/sql/testing` gives each

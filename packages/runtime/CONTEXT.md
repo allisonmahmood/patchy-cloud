@@ -32,6 +32,10 @@ _Avoid_: SQL query, polling function
 A handler whose owned-table writes and validated result settle in one transaction; a failed attempt leaves no writes.
 _Avoid_: action, individual row write
 
+**Mutation key**:
+The identity of one mutation call, bound to its handler, loaded version, initiating viewer and arguments. Retrying that call preserves its key so a committed result can be recovered without applying its writes twice.
+_Avoid_: correlation id, invocation id, action retry
+
 **Action**:
 A handler for work outside one transaction, including file bytes, company integrations and sibling queries or mutations.
 _Avoid_: background job, transaction

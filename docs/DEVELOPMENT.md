@@ -46,7 +46,7 @@ new patch development command. Tier 2 publishing remains refused until #401;
 the `patchy dev` production-engine integration belongs to #404. Those tickets
 complete the end-to-end browser path. Runtime's `InvocationLocal.test.ts` also
 exercises the private callback listener and supervised local executor.
-Nested queries use the parent's exact binding and have separate invocation rows.
+Nested queries and mutations use the parent's exact binding and have separate invocation rows.
 Resource-free queries use a fenced invocation
 resource with an empty watermark and zero database-held time, without provisioning
 a company database. Data-bearing queries retain one read-only repeatable-read
@@ -57,11 +57,24 @@ deadlines, inherited child budgets and unresolved-resource destruction. The flee
 and tier 2 publish path remain separate work. These checks prove local execution
 and settlement, not Fargate containment.
 
+Mutations use one host-owned SERIALIZABLE transaction and up to three
+whole-handler attempts within the original five-second deadline. They return
+only after committing the result and mutation key. Unknown mutation outcomes
+offer an explicit client `retry()` with the original key and arguments.
+The real-Postgres mutation tests cover concurrent writes, rollback, cross-host
+key races, dropped callers in all three handler kinds, and nested mutation
+database time. PGlite can exercise transaction rollback but not those
+multi-session contention and cancellation guarantees.
+
 `pnpm exec vitest run apps/server/src/DevelopmentExecution.test.ts` exercises
-eligible query and action calls through the same `Server.layer` selected by
-`pnpm dev`, including nested callbacks, company isolation and production refusal.
+eligible query, mutation and action calls through the same `Server.layer`
+selected by `pnpm dev`, including nested callbacks, committed-key replay,
+company isolation and production refusal.
 It supplies retained bundle fixtures through the existing data port, without
 enabling publishing or a patch-repo browser workflow.
+For a callback-free mutation on a fresh company, the host provisions the key
+store before execution. The replay check must begin with no company database;
+pre-provisioning a table would miss that first-call path.
 
 To run only the execution task from this checkout:
 
@@ -911,9 +924,11 @@ configuration revisions and attributed change history. Patches adds
 `0010_patches_lifecycle_revision`, the durable counter for source publishes,
 sharing and lifecycle changes. Runtime adds `0011_runtime_invocations`, with
 invocation and query-rollup records, callback invocation/principal attribution
-and explicit unknown operation outcomes. Published seed patches stay live until
-retired or deleted; only deletion starts their 30-day recovery window. Token and
-invitation expiry remain separate.
+and explicit unknown operation outcomes. `0012_runtime_mutation_commit_proof`
+keeps committed mutation evidence independent of the original host's settlement
+timing and metering. Published seed patches stay live until retired or deleted;
+only deletion starts their 30-day recovery window. Token and invitation expiry
+remain separate.
 Allocate migration ids monotonically in landing order:
 Effect's Migrator applies only ids above the ledger's highest applied id, so a
 later migration cannot fill a lower-numbered gap. The three migrator spreads are `apps/server/src/Server.ts`,

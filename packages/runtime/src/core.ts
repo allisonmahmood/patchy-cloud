@@ -8,4 +8,5 @@ export * as SubscriptionReads from "./SubscriptionReads.js";
 export * as StreamAdmission from "./StreamAdmission.js";
 export * as QuerySnapshot from "./QuerySnapshot.js";
 export * as InvocationCapabilities from "./InvocationCapabilities.js";
+export * as MutationTransaction from "./MutationTransaction.js";
 export { me } from "./me.js";

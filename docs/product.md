@@ -370,10 +370,13 @@ runaway version processes and unfinished initialisation. The local executor
 refuses production construction. Queries with declared company resources retain
 one read-only repeatable-read snapshot, with live shared-table access checks.
 Resource-free queries retain the same fenced callback lifetime without requiring
-a company database. Actions can transfer file bytes,
-call company integrations as the viewer and run sibling queries under their
-remaining deadline. Mutation transactions and keys, company tasks and the publish
-path remain separate work.
+a company database. Mutations group owned-table operations and a validated
+result into one host-owned serializable transaction, retrying serialization
+conflicts up to three times within five seconds. A mutation key makes an explicit
+retry after an unknown outcome recover a committed result without duplicate
+writes. Actions can transfer file bytes, call company integrations as the viewer
+and run sibling queries or mutations under their remaining deadline. Company
+tasks and the publish path remain separate work.
 
 Metering records calls and database-held milliseconds from the first admitted
 invocation, independently of best-effort request events. Invocation rows record
@@ -400,8 +403,8 @@ configuration revisions and name the highest peak-to-bound ratio in
 
 The metering model records bound seconds, database time and calls; billing decides
 what is priced. Bound seconds need the fleet binding history, which is not built
-yet. Nested mutation metering uses the same connection accounting when #400 adds
-mutation execution; this stack still refuses nested mutations.
+yet. An action's database time includes the connection time of its nested
+queries and mutations.
 
 The decided promise: **a tier 2 patch's server code runs on Patchy's machines,
 never on yours. It holds no login and no credential and has no path to the

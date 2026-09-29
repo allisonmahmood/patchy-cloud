@@ -10,6 +10,8 @@ import {
   createServerClient,
   PatchyError,
   isHandlerError,
+  isPatchyError,
+  type MutationUnknownOutcome,
   type QueryRegistry,
   type QuerySnapshot,
   type Call
@@ -118,11 +120,13 @@ it("keeps lazy handler names and business errors distinct from similarly shaped 
     details: { reason: "approval" }
   };
   const call = client.server.leads.renamed({ search: undefined, filter: { stage: undefined } });
+  await Promise.resolve();
   expect(port.sent[0]!.args).toEqual({ handler: "leads.renamed", args: { filter: {} } });
   port.reply({ v: 1, id: port.sent[0]!.id, kind: "result", value: business });
   await expect(call).resolves.toEqual(business);
   const refused = client.server.leads.renamed({});
   const failure = refused.catch((error: unknown) => error);
+  await Promise.resolve();
   port.reply({ v: 1, id: port.sent[1]!.id, kind: "error", error: business });
   const error = await failure;
   expect(isHandlerError(error, "access_denied")).toBe(true);
@@ -192,11 +196,17 @@ it.each([
   }>({
     transport: createPortTransport(port, { timeoutMs: 100, handlerKinds: kinds })
   });
-  const lost = expect(client.server.leads.find({})).rejects.toMatchObject({
-    code: "unknown_outcome"
+  port.reply({
+    v: 1,
+    kind: "event",
+    event: "stream",
+    data: { type: "hello", generation: "first", serverTime: 50_000 }
   });
+  const result = client.server.leads.find({}).catch((error: unknown) => error);
   await vi.advanceTimersByTimeAsync(201);
-  await lost;
+  const error = await result;
+  expect(error).toMatchObject({ code: "unknown_outcome" });
+  if (kinds?.["leads.find"] !== "mutation") expect(error).not.toHaveProperty("retry");
   expect(port.sent).toHaveLength(1);
   client.close();
 });
@@ -217,6 +227,7 @@ it.each([
     transport: createPortTransport(port, { handlerKinds: { "leads.find": "query" } })
   });
   const rejected = expect(client.server.leads.find({})).rejects.toMatchObject(error);
+  await Promise.resolve();
   port.reply({
     v: 1,
     kind: "error",
@@ -286,6 +297,267 @@ it("learns query retry eligibility only from its nonce-bound parent bootstrap", 
   expect(port.sent.filter((request) => request.op === "server.call")).toHaveLength(2);
   port.reply({ v: 1, kind: "result", id: port.sent.at(-1)!.id, value: "retried" });
   await expect(result).resolves.toBe("retried");
+  client.close();
+});
+
+it("mints distinct 128-bit mutation keys from the advancing server clock, not the wall clock", async () => {
+  vi.useFakeTimers({ toFake: ["Date", "performance", "setTimeout", "clearTimeout"] });
+  vi.setSystemTime(new Date("2099-01-01T00:00:00Z"));
+  const port = new FakePort();
+  const client = createServerClient<{
+    leads: { save: Handler<"mutation", { name: string }, string> };
+  }>({
+    transport: createPortTransport(port, { handlerKinds: { "leads.save": "mutation" } })
+  });
+  port.reply({
+    v: 1,
+    kind: "event",
+    event: "stream",
+    data: { type: "hello", generation: "first", serverTime: 1_800_000_000_000 }
+  });
+  await vi.advanceTimersByTimeAsync(125);
+  const first = client.server.leads.save({ name: "Ada" });
+  const second = client.server.leads.save({ name: "Ada" });
+  await Promise.resolve();
+  const keys = port.sent.map(({ args }) => {
+    if (
+      args === null ||
+      typeof args !== "object" ||
+      !("mutationKey" in args) ||
+      typeof args.mutationKey !== "string"
+    )
+      throw new Error("Mutation call did not carry a key.");
+    return args.mutationKey;
+  });
+  expect(keys[0]).toMatch(/^1800000000125-[A-Za-z0-9_-]{22}$/);
+  expect(keys[1]).toMatch(/^1800000000125-[A-Za-z0-9_-]{22}$/);
+  expect(keys[0]).not.toBe(keys[1]);
+  for (const key of keys) {
+    const suffix = key
+      .slice(key.indexOf("-") + 1)
+      .replaceAll("-", "+")
+      .replaceAll("_", "/");
+    expect(atob(suffix)).toHaveLength(16);
+  }
+  port.reply({ v: 1, kind: "result", id: port.sent[0]!.id, value: "first" });
+  port.reply({ v: 1, kind: "result", id: port.sent[1]!.id, value: "second" });
+  await expect(Promise.all([first, second])).resolves.toEqual(["first", "second"]);
+  client.close();
+});
+
+it.each(["timeout", "broker", "runtime"] as const)(
+  "retries an uncertain mutation from %s only explicitly, with its original key and deep arguments",
+  async (failure) => {
+    vi.useFakeTimers();
+    const port = new FakePort();
+    const client = createServerClient<{
+      leads: {
+        save: Handler<"mutation", { names: { name: string }[]; note?: string }, string>;
+      };
+    }>({
+      transport: createPortTransport(port, {
+        timeoutMs: 100,
+        handlerKinds: { "leads.save": "mutation" }
+      })
+    });
+    port.reply({
+      v: 1,
+      kind: "event",
+      event: "stream",
+      data: { type: "hello", generation: "first", serverTime: 50_000 }
+    });
+    const args = { names: [{ name: "Ada" }], note: undefined };
+    const result = client.server.leads.save(args).catch((error: unknown) => error);
+    args.names[0]!.name = "Grace";
+    await Promise.resolve();
+    const original = structuredClone(port.sent[0]!.args);
+    if (failure !== "timeout")
+      port.reply({
+        v: 1,
+        kind: "error",
+        id: port.sent[0]!.id,
+        ...(failure === "broker" ? { replyLost: true } : {}),
+        error: {
+          source: "patchy",
+          code: "unknown_outcome",
+          message: "Commit acknowledgement missing.",
+          correlationId: "invocation-1",
+          details: { phase: "commit" }
+        }
+      });
+    await vi.advanceTimersByTimeAsync(101);
+    const error = await result;
+    expect(isPatchyError(error, "unknown_outcome")).toBe(true);
+    if (failure === "runtime")
+      expect(error).toMatchObject({
+        message: "Commit acknowledgement missing.",
+        correlationId: "invocation-1",
+        details: { phase: "commit" }
+      });
+    expect(port.sent).toHaveLength(1);
+    args.names.push({ name: "Katherine" });
+    port.reply({
+      v: 1,
+      kind: "event",
+      event: "stream",
+      data: { type: "hello", generation: "replacement", serverTime: 60_000 }
+    });
+    const uncertain = error as MutationUnknownOutcome<string>;
+    const retried = uncertain.retry();
+    expect(port.sent[1]!.args).toEqual(original);
+    expect(port.sent[1]!.args).toMatchObject({ args: { names: [{ name: "Ada" }] } });
+    port.reply({ v: 1, kind: "result", id: port.sent[0]!.id, value: "late original" });
+    port.reply({ v: 1, kind: "result", id: port.sent[1]!.id, value: "stored result" });
+    await expect(retried).resolves.toBe("stored result");
+    client.close();
+  }
+);
+
+it("waits for trusted bootstrap metadata and hello before sending a pre-bootstrap mutation", async () => {
+  vi.useFakeTimers();
+  const parent = {};
+  const frame = Object.assign(new EventTarget(), {
+    parent,
+    location: { href: "https://instance/~content/p/v?n=document-one" }
+  });
+  const port = new FakePort();
+  const client = createServerClient<{
+    leads: { save: Handler<"query", { name: string }, string> };
+  }>({
+    transport: createPostMessageTransport({ window: frame as unknown as Window })
+  });
+  const args = { name: "Ada" };
+  const result = client.server.leads.save(args);
+  args.name = "Grace";
+  const bootstrap = (source: unknown, nonce: string, kind: string) => {
+    const event = new Event("message");
+    Object.assign(event, {
+      source,
+      data: {
+        v: 1,
+        kind: "bootstrap",
+        nonce,
+        route: "/",
+        handlerKinds: { "leads.save": kind }
+      },
+      ports: [port]
+    });
+    frame.dispatchEvent(event);
+  };
+  bootstrap({}, "document-one", "query");
+  bootstrap(parent, "other-document", "query");
+  await vi.advanceTimersByTimeAsync(0);
+  expect(port.sent).toEqual([]);
+  bootstrap(parent, "document-one", "mutation");
+  await vi.advanceTimersByTimeAsync(0);
+  expect(port.sent).toEqual([{ kind: "ready", wire: 1, nonce: "document-one" }]);
+  port.reply({
+    v: 1,
+    kind: "event",
+    event: "stream",
+    data: { type: "hello", generation: "first", serverTime: 50_000 }
+  });
+  await vi.advanceTimersByTimeAsync(0);
+  const sent = port.sent.find(({ op }) => op === "server.call")!;
+  expect(sent.args).toEqual({
+    handler: "leads.save",
+    args: { name: "Ada" },
+    mutationKey: expect.stringMatching(/^50000-[A-Za-z0-9_-]{22}$/)
+  });
+  port.reply({ v: 1, kind: "result", id: sent.id, value: "saved" });
+  await expect(result).resolves.toBe("saved");
+  client.close();
+});
+
+it.each(["timeout", "close"] as const)(
+  "settles a mutation waiting for hello on %s without sending it",
+  async (failure) => {
+    vi.useFakeTimers();
+    const port = new FakePort();
+    const client = createServerClient<{
+      leads: { save: Handler<"mutation", Record<string, never>, string> };
+    }>({
+      transport: createPortTransport(port, {
+        timeoutMs: 100,
+        handlerKinds: { "leads.save": "mutation" }
+      })
+    });
+    const result = client.server.leads.save({}).catch((error: unknown) => error);
+    await Promise.resolve();
+    if (failure === "close") client.close();
+    await vi.advanceTimersByTimeAsync(101);
+    expect(await result).toMatchObject({
+      code: failure === "timeout" ? "timeout" : "unknown_outcome"
+    });
+    expect(await result).not.toHaveProperty("retry");
+    port.reply({
+      v: 1,
+      kind: "event",
+      event: "stream",
+      data: { type: "hello", generation: "late", serverTime: 50_000 }
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(port.sent).toEqual([]);
+    client.close();
+  }
+);
+
+it.each(["timeout", "close"] as const)(
+  "settles a pre-bootstrap mutation on %s without retry",
+  async (failure) => {
+    vi.useFakeTimers();
+    const frame = Object.assign(new EventTarget(), {
+      parent: {},
+      location: { href: "https://instance/~content/p/v?n=document-one" }
+    });
+    const client = createServerClient<{
+      leads: { save: Handler<"mutation", Record<string, never>, string> };
+    }>({
+      transport: createPostMessageTransport({
+        window: frame as unknown as Window,
+        timeoutMs: 100
+      })
+    });
+    const result = client.server.leads.save({}).catch((error: unknown) => error);
+    if (failure === "close") client.close();
+    await vi.advanceTimersByTimeAsync(101);
+    expect(await result).toMatchObject({
+      code: failure === "timeout" ? "shell_outdated" : "unknown_outcome"
+    });
+    expect(await result).not.toHaveProperty("retry");
+    client.close();
+  }
+);
+
+it.each([
+  { source: "handler", code: "unknown_outcome" },
+  { source: "patchy", code: "write_conflict" }
+])("does not offer mutation retry for a $source $code failure", async (failure) => {
+  const port = new FakePort();
+  const client = createServerClient<{
+    leads: { save: Handler<"mutation", Record<string, never>, string> };
+  }>({
+    transport: createPortTransport(port, { handlerKinds: { "leads.save": "mutation" } })
+  });
+  port.reply({
+    v: 1,
+    kind: "event",
+    event: "stream",
+    data: { type: "hello", generation: "first", serverTime: 50_000 }
+  });
+  const result = client.server.leads.save({}).catch((error: unknown) => error);
+  await Promise.resolve();
+  port.reply({
+    v: 1,
+    kind: "error",
+    id: port.sent[0]!.id,
+    error: { ok: false, ...failure, message: "Refused.", details: {} }
+  });
+  const error = await result;
+  expect(error).toMatchObject(failure);
+  expect(error).not.toHaveProperty("retry");
+  expect(isHandlerError(error, failure.code)).toBe(failure.source === "handler");
+  expect(port.sent).toHaveLength(1);
   client.close();
 });
 

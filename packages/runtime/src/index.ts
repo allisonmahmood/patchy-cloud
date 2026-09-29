@@ -6,6 +6,7 @@ export * as Invocation from "./Invocation.js";
 export * as InvocationLog from "./InvocationLog.js";
 export * as InvocationCapabilities from "./InvocationCapabilities.js";
 export * as QuerySnapshot from "./QuerySnapshot.js";
+export * as MutationTransaction from "./MutationTransaction.js";
 export * as CallbackGateway from "./CallbackGateway.js";
 export * as CallbackGatewayApi from "./CallbackGatewayApi.js";
 export * as Runtime from "./Runtime.js";

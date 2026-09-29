@@ -1,4 +1,5 @@
 import { ContentStore } from "@patchy/content-store";
+import { ContractLimits } from "@patchy/limits";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -58,6 +59,7 @@ export const make = Effect.gen(function* () {
   const platform = yield* SqlClient.SqlClient;
   const companies = yield* CompanyDatabases.CompanyDatabases;
   const store = yield* ContentStore.ContentStore;
+  const keyLifetime = yield* ContractLimits.get("tier2.mutation.keyLifetime");
 
   // Foreground leases remain fail-fast. Only this background caller waits for
   // retained idle pools to expire, once, without holding another company lease.
@@ -218,9 +220,12 @@ export const make = Effect.gen(function* () {
     if (placements === undefined) return { ...result, failed: 1 };
 
     for (const placement of placements) {
-      yield* withCompany(
+      const scan = withCompany(
         placement.companyId,
         Effect.gen(function* () {
+          const sql = yield* CompanyDatabases.CompanyConnection;
+          yield* sql`DELETE FROM patchy.mutation_keys
+            WHERE issued_at < to_timestamp(${DateTime.toEpochMillis(now) - keyLifetime}::double precision / 1000)`;
           let after = "";
           while (true) {
             const batch = yield* namespaces(after).pipe(
@@ -252,7 +257,10 @@ export const make = Effect.gen(function* () {
             after = batch[batch.length - 1]!.namespace;
           }
         })
-      ).pipe(
+      );
+      // Upgrade retained inventory before taking a lease or any patch locks.
+      yield* companies.ensureReady(placement.companyId).pipe(
+        Effect.andThen(scan),
         Effect.catch((error) =>
           Effect.logWarning("Orphan sweep could not scan a company database.", error._tag).pipe(
             Effect.annotateLogs({ companyId: placement.companyId }),

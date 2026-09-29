@@ -502,7 +502,8 @@ export type HandlerFailure = typeof HandlerFailure.Type;
  */
 export const RuntimeSuccess = Schema.Struct({
   ok: Schema.Literal(true),
-  value: Schema.Json
+  value: Schema.Json,
+  revisions: Schema.optionalKey(Schema.Record(Schema.String, Schema.String))
 }).annotate({ identifier: "RuntimeSuccess" });
 export type RuntimeSuccess = typeof RuntimeSuccess.Type;
 

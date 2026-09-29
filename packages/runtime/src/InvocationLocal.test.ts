@@ -19,6 +19,7 @@ import * as Testing from "../../company-database/src/testing.js";
 import * as Tables from "../../primitives/src/Tables.js";
 import * as TableOperations from "../../primitives/src/TableOperations.js";
 import * as QuerySnapshot from "../../primitives/src/QuerySnapshot.js";
+import * as MutationTransaction from "../../primitives/src/MutationTransaction.js";
 import * as TestWakes from "../../primitives/src/test/wakes.js";
 import * as Local from "../../execution/src/local.js";
 import * as Binding from "./Binding.js";
@@ -72,7 +73,8 @@ const services = Layer.mergeAll(
   RuntimeLog.layer,
   OperatingLimits.layer,
   Limits.layer,
-  QuerySnapshot.layer
+  QuerySnapshot.layer,
+  MutationTransaction.layer
 ).pipe(
   Layer.provideMerge(InvocationCapabilities.layer),
   Layer.provideMerge(Testing.layer()),

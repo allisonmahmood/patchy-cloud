@@ -24,6 +24,7 @@ import { Binding, LoadedVersions, Runtime, Wakes } from "@patchy/runtime/core";
 import { boundedRows } from "./bounded-rows.js";
 import { inventoryManifest } from "./Tables.js";
 import * as ReadSnapshot from "./ReadSnapshot.js";
+import * as MutationWrites from "./MutationWrites.js";
 
 export class TableNotDeclared extends Schema.TaggedError<TableNotDeclared>()("TableNotDeclared", {
   table: Schema.String
@@ -378,7 +379,10 @@ export const make = Effect.gen(function* () {
           })
         )
       );
-      yield* wakes.publish([`table:${binding.patchId}:${name}`]);
+      const transaction = yield* Effect.serviceOption(MutationWrites.MutationWrites);
+      const resource = `table:${binding.patchId}:${name}`;
+      if (Option.isSome(transaction)) transaction.value.resources.add(resource);
+      else yield* wakes.publish([resource]);
       return result;
     });
   const insert = Effect.fn("TableOperations.insertRow")(function* (

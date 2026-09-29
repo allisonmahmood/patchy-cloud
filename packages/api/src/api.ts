@@ -642,6 +642,12 @@ export class RuntimeGroup extends HttpApiGroup.make("runtime", { topLevel: true 
           "Action concurrency defaults to eight per company and two per viewer per patch (`busy`). " +
           "The host owns deadlines independently of the HTTP caller: 3 s for queries, 5 s for mutations, 60 s for actions, plus at most 5 s for cleanup. " +
           "Unresolved effects remain `unknown_outcome`, never `handler_timeout`; a late guest reply cannot restore authority. " +
+          "Mutations commit owned-table writes, their key and a validated result of at most 64 KiB in one SERIALIZABLE transaction. " +
+          "A `40001` retries the whole handler up to three attempts in the original deadline; exhaustion is `write_conflict`, never `busy`. " +
+          "Mutation calls require a fresh `<ms>-<128 random bits, base64url>` key using the stream's server clock. " +
+          "A repeat returns the committed result; expired keys over 24 hours old, keys over five minutes ahead, and changed bindings or arguments are refused. " +
+          "The client's mutation `unknown_outcome.retry()` re-sends that key and captured arguments; actions are never replayed. " +
+          "Successful mutation replies include `revisions`, the resource revision vector committed with their writes. " +
           "`handler_failed` carries a host correlation id; exception messages and stacks remain in the invocation log. " +
           "The isolated local executor exercises this host path; tier 2 publishing remains refused. " +
           "Request bodies allow 1 MiB plus envelope for " +

@@ -35,6 +35,14 @@ The connection wait bounds contention for company slots, not placement reads,
 socket establishment, or SQL execution. A caller's earlier deadline or cancellation
 ends the wait and retains that caller's timeout or interruption outcome.
 
+Tier 2 queries and mutations retain one lease across their invocation callbacks.
+A mutation's SERIALIZABLE transaction opens on its first database callback,
+or at result settlement when it has no callbacks. Its table savepoints reuse
+that connection. Commit, confirmed rollback or destruction releases the slot;
+the four-connection default and bounded acquisition queue are unchanged.
+Database-held time excludes acquisition wait and includes a nested mutation's
+connection time in its parent action.
+
 Pool overrides change only the named company. Existing leases drain before a
 replacement pool opens, so old and new maxima do not overlap. New leases can
 return `busy` during this drain; an increase does not bypass existing leases.

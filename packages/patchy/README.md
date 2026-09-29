@@ -134,7 +134,7 @@ refusals and declared business errors retain their structured replies.
 SDK query-shape validation preserves its own `invalid_request` refusals without
 trusting arbitrary handler-created `PatchyError` objects.
 
-Queries and actions run through the pinned local executor in tests and the
+Queries, mutations and actions run through the pinned local executor in tests and the
 source checkout's existing `pnpm dev` cloud server for eligible `server.call`
 requests. See [the development guide](../../docs/DEVELOPMENT.md).
 A query with declared data resources shares one read-only `REPEATABLE READ`
@@ -144,14 +144,20 @@ database-held time.
 Shared-table authority is still checked live on every callback. File reads in
 queries are `list` and `stat`, returning metadata without handles. Actions have
 60 seconds, plain-byte file operations, declared connections with a 15-second
-per-call limit, and typed nested queries under the parent's remaining deadline.
-Actions have no transaction of their own.
+per-call limit, and typed nested queries or mutations under the parent's remaining
+deadline. Actions have no transaction of their own.
 
-The tier 2 `patchy dev` lifecycle and server watch, production hosting,
-tier 2 publishing, mutation-key execution and `unknown_outcome.retry()` behavior
-land separately.
-The `patchy-server` skill
-documents query and action behavior and embeds registry-generated limits;
+Mutations use one host-owned `SERIALIZABLE` transaction, with up to three
+whole-handler attempts inside a 5-second deadline. Exhausted serialization
+conflicts return `write_conflict`, not `busy`. Results are at most 64 KiB and
+are validated before commit. Every call gets a fresh mutation key from the
+stream's server clock. An `unknown_outcome` error offers `retry()` with the
+same key and captured arguments; a repeat returns the committed result.
+A new call is not that retry and can duplicate a write. Actions are never replayed.
+
+The tier 2 `patchy dev` lifecycle and server watch, production hosting and
+tier 2 publishing land separately. The `patchy-server` skill documents handler
+behavior and embeds registry-generated limits;
 tier 2 init will install it. Authorised handles and staged upload adoption remain
 reserved contracts.
 

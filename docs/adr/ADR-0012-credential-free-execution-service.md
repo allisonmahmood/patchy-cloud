@@ -30,8 +30,9 @@ nested query calls on the local executor, composed into the existing `pnpm dev`
 instance. Eligible calls use the same host invocation lifetime, private callback
 gateway and snapshot adapter. Tier 2 publication remains refused until #401;
 `patchy dev` on the production engine belongs to #404. The end-to-end browser
-path lands with those tickets. Mutation transactions and keys, and hosted fleet
-wiring remain separate work.
+path lands with those tickets. Issue #400 adds host-owned SERIALIZABLE mutation
+transactions, mutation keys, explicit client retries and nested mutations.
+Hosted fleet wiring remains separate work.
 
 ## Engine, guest wire and inspection
 
@@ -334,25 +335,24 @@ or `unknown` (operations); stored evidence is retained for later reconciliation.
 Resource owners register cancellation, a settled signal and synchronous
 destruction through `InvocationCapabilities.retain`. Settlement waits at most
 five seconds for callbacks and registered resources. An unresolved resource is
-destroyed, never pooled. Until mutation transactions and keys land, interrupted
-mutation/integration callbacks and any abnormal fence after one has started make
-the invocation `unknown_outcome`, even if an earlier autocommit completed.
-Interrupting a callback fiber is not proof of non-commit. Interrupted callback
-operation rows are explicitly recorded as unknown when the journal is available.
-Queries attach their connection to this lifetime. Mutation transactions and keys
-will add commit classification and key reconciliation.
+destroyed, never pooled. An abnormal action fence after a mutation or integration
+callback started can remain `unknown_outcome`, even if an earlier autocommit
+completed. Interrupting a callback fiber is not proof of non-commit.
+Mutation transactions instead classify their own acknowledged commit or rollback
+and resolve uncertain commits by mutation key. Queries and mutations attach
+their connections to this retained-resource lifetime.
 
 `runtime_invocations` records actions and mutations before dispatch. Top-level
 queries create a row only on a log line, business refusal or failure. Nested
-queries always have a row with their action's invocation id as `parent_id`.
+queries and mutations always have a row with their action's invocation id as `parent_id`.
 Callback writes and integration calls retain their operation rows, with `invocation_id` and
 `effective_principal`; own-resource rows have null `user_id` and principal
 `patch`. Invocation rows keep the initiating viewer separately. Declared
 `HandlerError` codes have outcome `handler_error`; undeclared codes, invalid
 results and forged platform refusals become `handler_failed` with a host
 correlation id. SDK exception messages and stacks go through the bounded private
-log callback, never the browser reply. Metering columns and query-rollup tables
-are present; exact query-rollup increments arrive with metering.
+log callback, never the browser reply. Quiet query runs meter into exact
+per-minute rollups independently of reply delivery.
 
 The host pushes bundles on `bundle_required` or process-generation change. The
 task never pulls from content storage. It holds bundles, processes, the attempt
@@ -391,16 +391,66 @@ viewer and gets at most fifteen seconds or the action's remaining budget, whiche
 is less. File put accepts plain bytes; get and delete retain the existing file
 operation semantics. Put followed by another call is not atomic.
 
-`ctx.run` admits sibling queries under the action's existing admission, exact bundle
-and process generation. Each child has its own invocation id, capability, snapshot
-and row. Its deadline is the lesser of three seconds and the parent's remaining
-budget. Children share the call-tree byte allowance, not log allowances. The host
-refuses action targets; nested mutations arrive with mutation transactions.
+`ctx.run` admits sibling queries and mutations under the action's existing
+admission, exact bundle and process generation. Each child has its own invocation
+id, capability, resource and row. Its deadline is the lesser of its kind's budget
+and the parent's remaining time. Children share the call-tree byte allowance,
+not log allowances. The host refuses action targets. A nested mutation has a
+host-minted key to resolve its commit uncertainty, never to replay its parent.
+Its held-connection time contributes to both its own and the action's `db_ms`.
 
 Arguments are at most one MiB. Query and action results are at most eight MiB;
 invalid result schemas are `handler_failed`. Each invocation has a thirty-two KiB
 log allowance. The client retries a lost query reply once using handler kinds from
 the loaded shell's bootstrap. Unknown kinds and actions are never replayed.
+
+## Mutation transactions and keys
+
+Runtime owns the invocation's SERIALIZABLE transaction and serial callback jobs.
+Primitives adapts its database port to the company lease. The first database
+callback opens the transaction; a callback-free mutation opens one to persist its
+key and result. Table operations reuse that connection and keep their savepoints.
+The pool still defaults to four connections. A mutation holds one slot until
+commit, confirmed rollback or destruction, not one slot per callback.
+
+Handler completion closes callback admission and refuses queued jobs before
+finalization. Only a validated result may commit. A `40001` marks the attempt
+abort-only even if guest code catches the callback failure. Runtime rolls back,
+fences the old capability, and re-invokes the complete handler with a fresh
+attempt, at most three times. Retries wait with jitter after rollback, without
+holding a connection; the base delay comes from the operating registry. The
+original five-second deadline covers queue wait, acquisition, all attempts and
+settlement. Exhaustion is `write_conflict`, which proves non-commit; pool
+contention is `busy`.
+
+Each attempt sets database timeouts from its remaining budget. Commit submission
+and acknowledgement are distinct states. A known commit rejection is rollback;
+a resolved `COMMIT` whose command tag says `ROLLBACK` is also rollback.
+`handler_timeout` requires confirmed non-commit. Unresolved cancellation or commit
+at the cleanup bound destroys the session and remains `unknown_outcome` until
+key reconciliation supplies evidence.
+
+The company inventory upgrade creates the mutation-key store idempotently.
+The key, owning patch, handler, loaded version, initiating viewer, originating
+invocation id, argument fingerprint, result and written revisions commit together.
+Only the transaction owner announces touched resources after that commit. A replay
+returns the stored result and revisions. Stored commit evidence also reconciles
+the originating invocation's unresolved outcome without replacing its metering
+or reply-delivery record. A duplicate-key `23505` at insert or commit rolls back the
+loser before reading the winner; another constraint's uniqueness error is not a
+mutation-key race.
+
+The client mints `<ms>-<128 random bits, base64url>` from the stream's server
+clock. A key expires after 24 hours even if its stored row survives; keys more
+than five minutes in the future are refused. A changed binding or argument
+fingerprint is refused rather than executed afresh. Stored rows are swept after
+24 hours. An in-window key without a visible committed result may execute;
+the key constraint settles concurrent attempts across hosts.
+
+A lost mutation reply becomes `unknown_outcome` with an explicit `retry()` that
+preserves the key and captured arguments. It can recover a committed result
+without duplicate writes. A new handler call mints a new key. Neither mutation
+transport loss nor action transport loss causes automatic replay.
 
 ## Server runtime promise
 

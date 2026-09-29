@@ -5,11 +5,11 @@ description: "Build tier 2 queries, mutations and actions; type helpers, handle 
 
 # Server handlers
 
-Queries and actions run on the local executor in tests and the source checkout's
-existing `pnpm dev` cloud server for eligible `server.call` requests. See the
-checkout's `docs/DEVELOPMENT.md` for local startup.
+Queries, mutations and actions run on the local executor in tests and the source
+checkout's existing `pnpm dev` cloud server for eligible `server.call` requests.
+See the checkout's `docs/DEVELOPMENT.md` for local startup.
 The tier 2 `patchy dev` lifecycle, server watch, production hosting,
-mutations and server subscriptions land separately.
+tier 2 publishing and server subscriptions land separately.
 
 ## Define the contract
 
@@ -52,8 +52,9 @@ belongs to the member-directory release, not this contract.
 options?)` accepts `Uint8Array`, `ArrayBuffer` or `Blob`; `get(name)` returns
   bytes and `delete(name)` removes the object. Staged upload adoption is not
   available yet.
-- A mutation reserves atomic owned-table writes. Its execution and safe retry
-  contract land with the mutations ticket. Keep external effects in actions.
+- A mutation reads and writes owned tables in one atomic transaction. It can
+  inspect file metadata, but file bytes, shared data, integrations and `ctx.run`
+  belong in actions.
 
 `ctx.viewer` is never null. Owned resources act as the patch, company data as
 the viewer. Handler memory is not durable state, and handlers cannot schedule
@@ -82,7 +83,32 @@ Queries have no `ctx.connections`. Company Postgres reads belong in actions,
 not subscribed queries. The host enforces this kind rule, even if code bypasses
 the TypeScript context.
 
-### Actions and nested queries
+### Atomic mutations
+
+A mutation uses one host-owned `SERIALIZABLE` company transaction. Reads see
+its earlier writes, including writes to other owned tables. Patchy commits only
+after validating the handler result; a throw or invalid result rolls back the
+attempt. Its 5 s deadline includes connection wait, all attempts and settlement,
+not 5 s per attempt. A guest still running at 6 s is killed.
+
+On a serialization conflict, Patchy reruns the entire handler in a fresh
+transaction, up to three attempts within that deadline. Treat handler memory,
+time and randomness as non-authoritative. Aborted attempts leave no writes.
+Repeated `write_conflict` means redesign the contended write, for example by
+reducing how many rows one mutation touches. `busy` means wait for capacity,
+respecting `retryAfter`; it is not a serialization conflict.
+
+Every mutation call gets a fresh key bound to its handler, loaded version,
+viewer and argument snapshot. If its outcome is unknown, use the error's
+`retry()` to send that same key and arguments. A committed key returns the stored
+result without running the handler again. Calling the handler afresh creates
+another mutation and can duplicate a committed write. Retry within 24 hours;
+an expired key is refused even after its stored result has been swept.
+Check `isPatchyError(error, "unknown_outcome") && error.retry` before offering
+that action. An action or tier 1 write can also have an unknown outcome, but
+does not have a safe mutation retry.
+
+### Actions and nested handlers
 
 An action has 60 s and no transaction around its callbacks or external effects.
 A guest still running at 61 s is killed. `ctx.connections.<alias>` uses the
@@ -91,12 +117,12 @@ Each integration call has at most 15 s, or the action's remaining budget if
 shorter. A disconnected connection can refuse the next call after an earlier
 call succeeded.
 
-Use typed `ctx.run.<module>.<query>(args)` to call a sibling query from an action.
-Each child has its own invocation row, parent link and query resource.
-Data-bearing children retain their own snapshot. The child's
-deadline is the lesser of 3 s and the parent's remaining budget, not another
-full action budget. The host refuses action targets. Nested mutations become
-available with mutation execution, each in its own transaction.
+Use typed `ctx.run.<module>.<handler>(args)` to call a sibling query or mutation
+from an action. Each child has its own invocation row and parent link. A query
+retains its own snapshot; a mutation owns its own transaction and host-minted
+key. Its deadline is the lesser of its kind's budget and the parent's remaining
+budget. The host refuses action targets. A child's key resolves its commit
+uncertainty; it never makes replaying the parent action safe.
 
 Process bulk work in bounded batches. An action is never replayed, and a failure
 does not undo its completed writes. A file put followed by a table write is not
@@ -115,8 +141,9 @@ Patchy's refusals have `source: "patchy"`; business errors have
 `source: "handler"`. Keep them separate.
 
 Arguments are limited to 1 MiB of encoded JSON. Query and action results are
-limited to 8 MiB. Oversized arguments are `too_large`; an oversized result or
-result-schema violation is `handler_failed`.
+limited to 8 MiB; mutation results are limited to 64 KiB.
+Oversized arguments are `too_large`; an oversized result or result-schema
+violation is `handler_failed`.
 
 The client retries a lost query reply once with the same arguments. It uses the
 loaded version's served handler kind, not page-side imports or handler names.
@@ -124,11 +151,10 @@ A delivered refusal, including `unknown_outcome`, `busy`, `handler_timeout` or
 a declared business error, is not a lost reply and is not retried. Actions are
 never replayed.
 
-The reserved mutation contract permits up to three attempts inside one call
-after serialization conflicts. Aborted attempts leave no writes. Exhaustion is
-`write_conflict`, meaning no commit. An `unknown_outcome` mutation will offer
-`retry()` with the same key and arguments; a fresh call is not that retry.
-These mutation behaviors are not enabled yet.
+`write_conflict` confirms that the mutation did not commit. `handler_timeout`
+also requires confirmed non-commit; unresolved cancellation or commit remains
+`unknown_outcome`. Closing the page does not cancel admitted work. Patchy
+settles it under its original deadline and records the actual outcome.
 
 Company call-rate admission returns `limit_exceeded`; connection or execution
 capacity returns `busy`. Respect the supplied `retryAfter` before a new attempt.
@@ -194,6 +220,7 @@ PGlite dev has one connection. It does not reproduce production connection conte
 | `tier2.mutation.keyLifetime` | contract | 86400000 | milliseconds | viewer | Mutation key retention and validity window | None | No | release |
 | `tier2.mutation.keyFutureSkew` | contract | 300000 | milliseconds | viewer | Maximum mutation key timestamp ahead of server clock | None | No | release |
 | `tier2.mutation.attempts` | contract | 3 | attempts | viewer | Maximum full handler attempts after serialization failures | `write_conflict` | No | release |
+| `tier2.mutation.retryDelayMs` | operating | 100 | milliseconds | host | Base serialization retry delay; doubles per retry with jitter, inside the invocation deadline | None | No | deployment |
 | `tier2.capability.tombstone` | operating | 300000 | milliseconds | host | Expired capability replay tombstone lifetime | None | No | deployment |
 | `company.connections` | operating | 4 | connections | company | Company connections per host replica | `busy` | Yes | deployment |
 | `company.connections.hostBackends` | operating | 200 | connections | host | Company database backend budget per host replica; PATCHY_COMPANY_DB_MAX_BACKENDS | `busy` | No | legacy |
