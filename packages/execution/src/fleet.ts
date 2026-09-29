@@ -289,11 +289,10 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
         WHERE task_id = ${taskId} AND state IN ('starting', 'spare') RETURNING task_id`;
         if (fenced.length === 0) return false;
       }
-      const remote = (yield* provider.list).find((task) => task.taskId === taskId);
       yield* checkHousekeeping;
-      const stopped = remote === undefined ? undefined : yield* provider.stop(taskId);
+      const stopped = yield* provider.stop(taskId);
       yield* checkHousekeeping;
-      yield* store.stopped(taskId, stopped?.stoppedAt ?? (yield* Clock.currentTimeMillis), cause);
+      yield* store.stopped(taskId, stopped.stoppedAt ?? (yield* Clock.currentTimeMillis), cause);
       return true;
     },
     Effect.mapError((cause) => new FleetError({ operation: "drain", cause }))
@@ -355,7 +354,9 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
         }
       }).pipe(Effect.catchTags({ SchemaError: Effect.die }));
       const replenishLock = yield* Semaphore.make(1);
+      const inventoryRecorded = yield* Deferred.make<void>();
       const replenish = Effect.gen(function* () {
+        yield* Deferred.await(inventoryRecorded);
         const rollout = yield* store.rollout;
         const revisions = [...new Set([rollout.stagedRevision, rollout.currentRevision])];
         for (const revision of revisions) {
@@ -415,6 +416,16 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
           Effect.timeout(config.get("execution.pool.wait"))
         );
         yield* guard;
+        // Account for reappearing stopped rows before replenishment can spend their budget.
+        const known = new Set(tasks.map((task) => task.taskId));
+        const orphans: TaskProvider.Task[] = [];
+        for (const task of observed) {
+          if (task.state === "running" && !known.has(task.taskId)) {
+            yield* guard;
+            if (yield* store.recordOrphan(task, now)) orphans.push(task);
+          }
+        }
+        yield* Deferred.succeed(inventoryRecorded, undefined);
         const rollout = yield* store.rollout;
         const retained = new Set([rollout.currentRevision, rollout.stagedRevision]);
         const observedById = new Map(observed.map((task) => [task.taskId, task]));
@@ -447,8 +458,6 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
                     yield* guard;
                     yield* store.ready(started);
                   } else yield* drainTask(task.taskId, "deployment");
-                } else if (!remote) {
-                  yield* store.stopped(task.taskId, now, "task_lost");
                 } else if (
                   task.state === "stopping" ||
                   (task.state === "spare" && !retained.has(task.deploymentRevision))
@@ -458,20 +467,16 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
             ),
           { concurrency: 8, discard: true }
         );
-        const known = new Set(tasks.map((task) => task.taskId));
         yield* Effect.forEach(
-          observed.filter((task) => task.state === "running" && !known.has(task.taskId)),
+          orphans,
           (task) =>
             isolate(
               task.taskId,
               Effect.gen(function* () {
                 yield* guard;
-                const recorded =
-                  yield* sql`SELECT task_id FROM execution_tasks WHERE task_id = ${task.taskId}`;
-                if (recorded.length === 0) {
-                  yield* guard;
-                  yield* provider.stop(task.taskId);
-                }
+                const stopped = yield* provider.stop(task.taskId);
+                yield* guard;
+                yield* store.stopped(task.taskId, stopped.stoppedAt ?? now, "task_lost");
               })
             ),
           { concurrency: 8, discard: true }
@@ -480,7 +485,8 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
         Effect.catchTags({
           TaskProviderError: () => Effect.logWarning("Execution provider observation failed"),
           TimeoutError: () => Effect.logWarning("Execution provider observation timed out")
-        })
+        }),
+        Effect.ensuring(Deferred.succeed(inventoryRecorded, undefined))
       );
       const reconcileBindings = Effect.gen(function* () {
         yield* Effect.forEach(

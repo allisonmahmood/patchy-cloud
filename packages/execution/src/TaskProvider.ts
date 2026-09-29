@@ -37,9 +37,9 @@ export class TaskProviderError extends Schema.TaggedError<TaskProviderError>()(
 }
 
 /**
- * All host clients address the same authoritative inventory. Identity survives ambiguous starts
+ * All host clients address the same shared inventory. Identity survives ambiguous starts
  * and stops; closing a host does not stop its tasks. A stopped observation certifies actual exit.
- * Management calls are bounded; timeout is not evidence that a task stopped.
+ * Omitted tasks and management timeouts are uncertainty, never evidence that a task stopped.
  */
 export class TaskProvider extends Context.Service<
   TaskProvider,

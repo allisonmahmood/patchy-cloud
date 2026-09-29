@@ -196,6 +196,10 @@ No direct row edits are needed.
 The housekeeping lease renews during provider work, and a failing task does not
 block unrelated reconciliation or replenishment. A lost activity database session
 is replaced and its live locks restored, including for documents making no requests.
+An omitted ECS task or a `MISSING` response is not proof that the task stopped.
+The controller retains its durable allocation and budget until the provider
+confirms a stop. Cold-start sizing uses `ready_at - requested_at`, so placement
+and image-pull time count toward the spare target.
 
 `packages/execution/src/Fleet.test.ts` covers controller transitions over Postgres.
 Its lease and housekeeping cases use `TestClock` with an explicit renewal barrier:
@@ -209,15 +213,24 @@ and committed mutation-key replay. The ECS provider uses the same controller.
 
 ### Deploying only the tier 2 spike
 
-`scripts/tier2-spike.mjs` refuses accounts other than `614817375332`, regions
-other than `us-east-1`, and Neon projects other than `fancy-mode-72369071`.
-It reads the disposable user and resource ids from
-`~/.config/patchy-cloud/aws-spike.env`, and database/storage credentials from
-`~/.config/patchy-cloud/neon-spike.env`. Before mutation it checks AWS resource
-ownership and tags, then resolves the approved Neon project's database endpoint,
-branch storage endpoint and bucket through the Neon API. A mismatched credential
-file fails closed. It never uses the production Azure group.
-The initial stack must have no running tasks or services.
+`scripts/tier2-spike.mjs` reads its allowlist only from the existing private
+files below. It does not accept account, caller, region or project overrides
+from command-line arguments or the ambient environment.
+
+| Private file                            | Required identity fields                                                                                                                                                                         |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `~/.config/patchy-cloud/aws-spike.env`  | `AWS_ACCOUNT_ID` is the approved account; `SPIKE_IAM_USER` is the approved IAM user name, not an ARN. Together they specify the exact expected caller ARN, `arn:aws:iam::<account>:user/<user>`. |
+| `~/.config/patchy-cloud/neon-spike.env` | `NEON_PROJECT_ID` is the approved disposable project.                                                                                                                                            |
+
+Keep these files private and outside git. The AWS file also supplies the
+deployer's credentials and spike resource IDs; the Neon file supplies database,
+API and storage credentials. Missing or malformed identity fields fail closed.
+The script requires the exact STS account and caller, fixes AWS to `us-east-1`,
+and checks AWS resource ownership and tags before mutation. It resolves the
+configured project's database endpoint, branch storage endpoint and bucket
+through the Neon API, checking the project ID and `aws-us-east-1` region.
+It never uses the production Azure group. The initial stack must have no
+running tasks or services.
 
 Build on Linux x64 with Node 24.20.0, pnpm 11.5.2, GNU tar and crane v0.22.1:
 
@@ -235,6 +248,9 @@ it with `node dist/exec.js`. Only the supervisor runs as root, retaining the
 capabilities needed to chown temporary files, switch child uid/gid, sample and
 kill children. Workerd children have distinct unprivileged uids and empty
 environments. Neither image assembly nor CI publishes or deploys to production.
+Exec task definitions must declare a root supervisor user explicitly, such as
+`user: "0"`. The ECS provider rejects a missing user or a non-root user rather
+than relying on the image's default user.
 
 The spike starts two hosts behind the existing ALB and registers an exec task
 definition at 512 CPU units and 2048 MiB. There is no exec service or desired
@@ -258,15 +274,70 @@ server-issued cookie: subscription control POSTs must reach the replica holding
 the document stream. The spike certificate is self-signed; only acceptance
 clients against this ALB may ignore its certificate error.
 
-The spike host role has no fleet policy, so this deploy passes the approved
-disposable IAM user's credentials to hosts only. Exec tasks never receive them.
-This is not the production IAM recipe. Production hosts use a task role granting
-the provider ECS describe/list/run/stop/tag operations and narrowly scoped
-`iam:PassRole` for the exec task-execution role. The spike creates a separate
-platform database and a fresh signing key for fixture sessions; it does not
-create Clerk users or use a production session. Its native database connections
-use `sslmode=verify-full`; the supplied `channel_binding` URL parameter is not
-supported by the native driver. The source credential files are unchanged.
+Hosts and the disposable promotion task use only the existing
+`patchy-tier2-spike-host-task` role named by `SPIKE_HOST_TASK_ROLE_ARN` in the
+private AWS file. The script requires its exact ARN in the approved account.
+The AWS SDK obtains temporary credentials from the ECS task credential endpoint.
+The deployer's `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and session tokens
+are never added to host task definitions; there is no fallback to IAM user
+credentials. Neon storage credentials use the separate `PATCHY_S3_*` settings
+and are not part of the AWS credential chain. Exec tasks have no task role.
+
+An operator authorized to manage the existing host role must inspect its trust
+and permission policies before deployment and add missing fleet permissions.
+Do not assume the disposable deployer can inspect or change IAM policies.
+The deployer does not create roles or manage policies. Its local preflight
+rejects a different host role, credential overrides and environment files before
+host registration, and checks a stored host definition before promotion.
+This does not prove the role has the required IAM permissions. If the role
+still has no fleet policy, provision that policy before running `up`; do not
+forward user keys to work around an authorization failure.
+The role-only spike probe obtained task credentials, but `ecs:ListTasks` was
+denied. The deployer was also denied `iam:PutRolePolicy`, so fleet permissions
+remain an operator prerequisite. Earlier acceptance using IAM-user credentials
+does not verify the role-only deployment path.
+
+The provider needs the following host-role permissions. Substitute the approved
+account and cluster name from the private AWS file. `<cluster-arn>` is the full
+ARN of `SPIKE_ECS_CLUSTER`; `<task-arns>` means
+`arn:aws:ecs:us-east-1:<account>:task/<cluster-name>/*`.
+
+| IAM action                   | Resource and restriction                                                                                                                                                  |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ecs:DescribeTaskDefinition` | `*`. AWS does not support resource-level permissions for this action.                                                                                                     |
+| `ecs:ListTasks`              | `*`, with `ArnEquals` on `ecs:cluster` set to `<cluster-arn>`. The provider lists running and stopped Fargate tasks without a container-instance target.                  |
+| `ecs:DescribeTasks`          | `<task-arns>`, with the approved `ecs:cluster` condition. The provider requests task tags with each description.                                                          |
+| `ecs:RunTask`                | `arn:aws:ecs:us-east-1:<account>:task-definition/patchy-tier2-spike-406-exec:*`, with the approved `ecs:cluster` condition. Do not grant the host task-definition family. |
+| `ecs:StopTask`               | `<task-arns>`, with the approved `ecs:cluster` and `aws:ResourceTag/patchy:role=exec` conditions.                                                                         |
+| `ecs:TagResource`            | `<task-arns>`, with `ecs:CreateAction=RunTask`. This authorizes tags at task creation, not arbitrary later tag changes.                                                   |
+| `iam:PassRole`               | Only `SPIKE_TASK_EXECUTION_ROLE_ARN`, the existing `patchy-tier2-spike-task-execution` role, with `iam:PassedToService=ecs-tasks.amazonaws.com`.                          |
+
+Restrict ECS actions to `us-east-1` with `aws:RequestedRegion`. The provider
+adds `patchy:execution-fleet`, `patchy:execution-task`,
+`patchy:deployment-revision` and `patchy:role=exec` tags, and propagates the
+exec task definition's tags. `RunTask` can require the role tag on the request.
+The `StopTask` policy can also require `patchy:execution-fleet` to match the
+active run's `fleetId` in the private state journal.
+Do not apply resource-tag conditions to the unscoped describe permission or
+to inventory listing. The host role does not need ECR, CloudWatch Logs, EC2,
+task-definition registration, role management or `sts:AssumeRole` permissions.
+Image pulls and log delivery remain permissions of the task-execution role.
+
+The host role trust policy must allow `sts:AssumeRole` for
+`ecs-tasks.amazonaws.com`, restricted by `aws:SourceAccount` to the approved
+account and `aws:SourceArn` to `arn:aws:ecs:us-east-1:<account>:*`.
+AWS does not support narrowing this trust condition to a specific cluster.
+The deployer separately needs `iam:PassRole` for both existing roles when
+registering and starting hosts; the host role itself may pass only the
+task-execution role. See AWS's [ECS authorization reference](https://docs.aws.amazon.com/service-authorization/latest/reference/list_amazonelasticcontainerservice.html),
+[tag-on-create permissions](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/supported-iam-actions-tagging.html)
+and [task role trust guidance](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task-iam-roles.html).
+
+The spike creates a separate platform database and a fresh signing key for
+fixture sessions; it does not create Clerk users or use a production session.
+Its native database connections use `sslmode=verify-full`; the supplied
+`channel_binding` URL parameter is not supported by the native driver.
+The script leaves the source credential files unchanged.
 The acceptance profile sets `execution.company.idle` to 10000 ms,
 `execution.housekeeping.interval` to 1000 ms and `execution.fleet.budget` to
 eight; the production registry defaults are unchanged.

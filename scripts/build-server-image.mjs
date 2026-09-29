@@ -166,7 +166,8 @@ try {
     await stageRuntime(path.resolve(values.stage));
     console.log(`Staged server runtime at ${path.resolve(values.stage)}`);
   } else {
-    if (capture("crane", ["version"]) !== "v0.22.1") throw new Error("Use crane v0.22.1.");
+    if (capture("crane", ["version"]).replace(/^v/, "") !== "0.22.1")
+      throw new Error("Use crane v0.22.1.");
     if (!capture("tar", ["--version"]).startsWith("tar (GNU tar)")) {
       throw new Error("GNU tar is required for deterministic archive metadata.");
     }

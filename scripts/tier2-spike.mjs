@@ -6,10 +6,8 @@ import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { Client } from "pg";
 
-// This deployer deliberately has no account, region or project override.
-const account = "614817375332";
+// Approved identities come only from the private spike files; the region is fixed.
 const region = "us-east-1";
-const project = "fancy-mode-72369071";
 const targetAttributes = [
   { Key: "deregistration_delay.timeout_seconds", Value: "90" },
   { Key: "stickiness.enabled", Value: "true" },
@@ -40,15 +38,27 @@ const run = (bin, args, options = {}) => {
 };
 const load = (file) =>
   JSON.parse(
-    run("bash", [
-      "-c",
-      'set -a; source "$1"; node -e "console.log(JSON.stringify(process.env))"',
-      "spike",
-      file
-    ])
+    run(
+      "bash",
+      [
+        "-c",
+        'set -ae; source "$1"; node -e "console.log(JSON.stringify(process.env))"',
+        "spike",
+        file
+      ],
+      { env: { HOME: homedir(), PATH: process.env.PATH } }
+    )
   );
 const awsEnv = load(path.join(homedir(), ".config/patchy-cloud/aws-spike.env"));
 const neon = load(path.join(homedir(), ".config/patchy-cloud/neon-spike.env"));
+const account = awsEnv.AWS_ACCOUNT_ID;
+const user = awsEnv.SPIKE_IAM_USER;
+const project = neon.NEON_PROJECT_ID;
+if (!/^\d{12}$/.test(account ?? "") || !/^[\w+=,.@-]{1,64}$/.test(user ?? ""))
+  throw new Error("aws-spike.env must name the approved AWS_ACCOUNT_ID and SPIKE_IAM_USER.");
+if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(project ?? ""))
+  throw new Error("neon-spike.env must name the approved NEON_PROJECT_ID.");
+const callerArn = `arn:aws:iam::${account}:user/${user}`;
 const aws = (service, operation, input = {}) => {
   const temporary = mkdtempSync(path.join(tmpdir(), "patchy-spike-request-"));
   const file = path.join(temporary, "input.json");
@@ -77,12 +87,8 @@ const aws = (service, operation, input = {}) => {
   }
 };
 const identity = aws("sts", "get-caller-identity");
-if (
-  identity.Account !== account ||
-  identity.Arn !== `arn:aws:iam::${account}:user/patchy-tier2-spike-agent`
-)
+if (identity.Account !== account || identity.Arn !== callerArn)
   throw new Error("Refusing a non-spike AWS identity.");
-if (neon.NEON_PROJECT_ID !== project) throw new Error("Refusing a non-spike Neon project.");
 if (!neon.NEON_API_KEY)
   throw new Error("NEON_API_KEY is required to verify the approved project before any mutation.");
 const neonGet = async (resource) => {
@@ -196,6 +202,26 @@ if (
   awsEnv.SPIKE_LOG_GROUP !== "/patchy/tier2-spike"
 )
   throw new Error("Refusing roles or a log group outside the approved spike stack.");
+const verifyHostDefinition = (definition) => {
+  const containers = definition?.containerDefinitions ?? [];
+  if (
+    definition?.taskRoleArn !== awsEnv.SPIKE_HOST_TASK_ROLE_ARN ||
+    containers.length !== 1 ||
+    containers[0]?.name !== "host" ||
+    containers.some(
+      (container) =>
+        (container.environmentFiles?.length ?? 0) > 0 ||
+        [...(container.environment ?? []), ...(container.secrets ?? [])].some(
+          (entry) =>
+            /^(AWS_|ECS_CONTAINER_CREDENTIALS)/.test(entry.name ?? "") &&
+            !(entry.name === "AWS_REGION" && entry.value === region)
+        )
+    )
+  )
+    throw new Error(
+      "Host tasks must use the approved spike task role without AWS credential overrides or environment files."
+    );
+};
 const groups = [awsEnv.SPIKE_SG_HOST, awsEnv.SPIKE_SG_EXEC_BOOTSTRAP, awsEnv.SPIKE_SG_EXEC_SEALED];
 for (const group of aws("ec2", "describe-security-groups", { GroupIds: groups }).SecurityGroups) {
   if (!owned(group.Tags) || group.OwnerId !== account || group.VpcId !== vpc.VpcId)
@@ -403,18 +429,26 @@ if (command === "status") {
       `Drained ${old.length} old hosts for 90 seconds; all old execution tasks stopped.${latest.sealedAt ? " Previous management secret retired." : ""}`
     );
   } else {
+    verifyHostDefinition(
+      aws("ecs", "describe-task-definition", { taskDefinition: latest.hostDefinition })
+        .taskDefinition
+    );
     const code = `
       import * as Effect from "effect/Effect";
       import * as Fetch from "effect/unstable/http/FetchHttpClient";
       import * as Fleet from "@patchy/execution/fleet";
+      import * as Ecs from "@patchy/execution/ecs";
       import * as Provider from "@patchy/execution/ecs-task-provider";
       import * as TaskProvider from "@patchy/execution/task-provider";
       import * as Sql from "@patchy/sql";
       import { OperatingLimits } from "@patchy/limits";
       import * as Wide from "@patchy/analytics/wide-events";
       await Effect.runPromise(Effect.gen(function* () {
-        const provider = yield* Provider.make({ ...(yield* Provider.config),
-          callbackUrls: ${JSON.stringify(state.hosts.map((host) => `http://${host.address}:8789/callback`))} });
+        const providerOptions = { ...(yield* Provider.config),
+          callbackUrls: ${JSON.stringify(state.hosts.map((host) => `http://${host.address}:8789/callback`))} };
+        const ecs = yield* Ecs.make(providerOptions.region);
+        const provider = yield* Provider.make(providerOptions)
+          .pipe(Effect.provideService(Ecs.Ecs, ecs));
         const fleet = yield* Fleet.make({ replicaId: "spike-deploy", deploymentRevision: ${JSON.stringify(latest.revision)}, automaticHousekeeping: false })
           .pipe(Effect.provideService(TaskProvider.TaskProvider, provider));
         yield* fleet.stageDeployment(${JSON.stringify(latest.revision)});
@@ -687,8 +721,10 @@ if (command === "status") {
     imageIds: [{ imageTag: revision }]
   }).imageDetails[0].imageDigest;
   const imageRef = `${awsEnv.SPIKE_ECR_URI}@${digest}`;
-  const definition = (family, container, role) =>
-    aws("ecs", "register-task-definition", {
+  const definition = (family, container, role) => {
+    if (container.name === "host")
+      verifyHostDefinition({ taskRoleArn: role, containerDefinitions: [container] });
+    return aws("ecs", "register-task-definition", {
       family,
       networkMode: "awsvpc",
       requiresCompatibilities: ["FARGATE"],
@@ -715,6 +751,7 @@ if (command === "status") {
         }
       ]
     }).taskDefinition.taskDefinitionArn;
+  };
   // Root is supervisor-only. Children drop uid/gid and receive an empty environment.
   const execDefinition = definition("patchy-tier2-spike-406-exec", {
     name: "exec",
@@ -777,8 +814,6 @@ if (command === "status") {
     PATCHY_S3_ACCESS_KEY_ID: neon.AWS_ACCESS_KEY_ID,
     PATCHY_S3_SECRET_ACCESS_KEY: neon.AWS_SECRET_ACCESS_KEY,
     AWS_REGION: region,
-    AWS_ACCESS_KEY_ID: awsEnv.AWS_ACCESS_KEY_ID,
-    AWS_SECRET_ACCESS_KEY: awsEnv.AWS_SECRET_ACCESS_KEY,
     PATCHY_LIMITS_JSON: JSON.stringify({
       "execution.fleet.budget": 8,
       "execution.housekeeping.interval": 1000,

@@ -1,14 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- ECS idempotency tokens use Node's SHA-256 implementation.
 import { createHash } from "node:crypto";
-import {
-  DescribeTaskDefinitionCommand,
-  DescribeTasksCommand,
-  ECSClient,
-  ListTasksCommand,
-  RunTaskCommand,
-  StopTaskCommand,
-  type Task
-} from "@aws-sdk/client-ecs";
+import type { Task } from "@aws-sdk/client-ecs";
 import * as GuestProtocol from "@patchy/api/guest";
 import * as Management from "@patchy/api/management";
 import * as DeploymentConfig from "@patchy/limits/deployment-config";
@@ -23,6 +15,7 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as Ecs from "./ecs.js";
 import * as TaskProvider from "./TaskProvider.js";
 
 const decodeBind = Schema.decodeUnknownEffect(Management.BindReply);
@@ -127,6 +120,7 @@ export const config = Config.all({
 /** Closing a host destroys its SDK client, not its tasks. ECS remains the shared inventory. */
 export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Options) {
   const http = yield* HttpClient.HttpClient;
+  const client = yield* Ecs.Ecs;
   const limits = yield* DeploymentConfig.load;
   const startupTimeout = limits.get("execution.pool.wait");
   const managementTimeout = registry["tier2.settlement.cleanup"].default + 5_000;
@@ -157,10 +151,6 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
   )
     return yield* new TaskProvider.TaskProviderError({ operation: "start", reason: "provider" });
 
-  const client = yield* Effect.acquireRelease(
-    Effect.sync(() => new ECSClient({ region: options.region })),
-    (value) => Effect.sync(() => value.destroy())
-  );
   const startedBy = digest(options.fleetId).slice(0, 36);
   const group = `patchy-exec:${startedBy}`;
   const family = familyOf(options.current.taskDefinition);
@@ -188,29 +178,30 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
   const aws = <A>(
     operation: Operation,
     taskId: string | undefined,
-    run: (signal: AbortSignal) => Promise<A>
+    effect: Effect.Effect<A, Ecs.EcsError>
   ) =>
     bounded(
       operation,
       taskId,
-      Effect.tryPromise({
-        try: run,
-        catch: (cause) =>
-          new TaskProvider.TaskProviderError({
-            operation,
-            ...(taskId === undefined ? {} : { taskId }),
-            reason: "provider",
-            cause
-          })
-      })
+      effect.pipe(
+        Effect.mapError(
+          (cause) =>
+            new TaskProvider.TaskProviderError({
+              operation,
+              ...(taskId === undefined ? {} : { taskId }),
+              reason: "provider",
+              cause
+            })
+        )
+      )
     );
 
   // Do not trust a mutable task family or a definition that supplies guest-accessible credentials.
   for (const revision of revisions) {
-    const response = yield* aws("start", undefined, (abortSignal) =>
-      client.send(new DescribeTaskDefinitionCommand({ taskDefinition: revision.taskDefinition }), {
-        abortSignal
-      })
+    const response = yield* aws(
+      "start",
+      undefined,
+      client.describeTaskDefinition({ taskDefinition: revision.taskDefinition })
     );
     const definition = response.taskDefinition;
     const containers = definition?.containerDefinitions ?? [];
@@ -221,6 +212,7 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
       !definition.requiresCompatibilities?.includes("FARGATE") ||
       containers.length !== 1 ||
       containers[0]?.name !== containerName ||
+      !["0", "root", "0:0", "root:root"].includes(containers[0]?.user ?? "") ||
       containers.some(
         (container) =>
           (container.secrets?.length ?? 0) > 0 ||
@@ -259,15 +251,14 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
   ) {
     const tasks: ManagedTask[] = [];
     for (let offset = 0; offset < arns.length; offset += 100) {
-      const response = yield* aws(operation, taskId, (abortSignal) =>
-        client.send(
-          new DescribeTasksCommand({
-            cluster: options.cluster,
-            tasks: arns.slice(offset, offset + 100),
-            include: ["TAGS"]
-          }),
-          { abortSignal }
-        )
+      const response = yield* aws(
+        operation,
+        taskId,
+        client.describeTasks({
+          cluster: options.cluster,
+          tasks: arns.slice(offset, offset + 100),
+          include: ["TAGS"]
+        })
       );
       if (response.failures?.some((failure) => failure.reason !== "MISSING"))
         return yield* new TaskProvider.TaskProviderError({
@@ -286,22 +277,22 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
     operation: Operation,
     taskId?: string
   ) {
-    const arns = new Set<string>();
+    // ListTasks is eventually consistent. Never discard a known ARN merely because it is omitted.
+    const arns = new Set(addresses.values());
     // PENDING tasks have desiredStatus RUNNING. ECS retains stopped tasks for at least one hour.
     for (const desiredStatus of ["RUNNING", "STOPPED"] as const) {
       let nextToken: string | undefined;
       do {
-        const page = yield* aws(operation, taskId, (abortSignal) =>
-          client.send(
-            new ListTasksCommand({
-              cluster: options.cluster,
-              family,
-              desiredStatus,
-              maxResults: 100,
-              ...(nextToken === undefined ? {} : { nextToken })
-            }),
-            { abortSignal }
-          )
+        const page = yield* aws(
+          operation,
+          taskId,
+          client.listTasks({
+            cluster: options.cluster,
+            family,
+            desiredStatus,
+            maxResults: 100,
+            ...(nextToken === undefined ? {} : { nextToken })
+          })
         );
         for (const arn of page.taskArns ?? []) arns.add(arn);
         if (page.nextToken !== undefined && page.nextToken === nextToken)
@@ -329,7 +320,7 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
       return yield* new TaskProvider.TaskProviderError({
         operation,
         taskId,
-        reason: matches.length === 0 ? "stopped" : "provider"
+        reason: matches.length === 0 ? "transport" : "provider"
       });
     return matches[0]!;
   });
@@ -346,12 +337,17 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
         taskId: task.taskId,
         reason: "provider"
       });
+    const readyAt = readiness.get(task.taskId) ?? 0;
+    if (stopped) {
+      addresses.delete(task.taskId);
+      readiness.delete(task.taskId);
+    }
     return {
       taskId: task.taskId,
       deploymentRevision: task.deploymentRevision,
       state: stopped ? ("stopped" as const) : ("running" as const),
       startedAt,
-      readyAt: readiness.get(task.taskId) ?? 0,
+      readyAt,
       stoppedAt: stopped ? stoppedAt! : null
     };
   });
@@ -470,7 +466,7 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
       const task = yield* resolve(taskId, "start").pipe(
         Effect.catchTags({
           TaskProviderError: (cause) =>
-            cause.reason === "stopped" ? Effect.void : Effect.fail(cause)
+            cause.reason === "transport" ? Effect.void : Effect.fail(cause)
         })
       );
       if (task === undefined) {
@@ -526,67 +522,66 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
               taskId: input.taskId,
               reason: "binding_conflict"
             });
-          if (existing.length === 0) {
-            const response = yield* aws("start", input.taskId, (abortSignal) =>
-              client.send(
-                new RunTaskCommand({
-                  cluster: options.cluster,
-                  taskDefinition: revision.taskDefinition,
-                  launchType: "FARGATE",
-                  platformVersion: "1.4.0",
-                  propagateTags: "TASK_DEFINITION",
-                  count: 1,
-                  clientToken: digest(`${options.fleetId}\0${input.taskId}`),
-                  startedBy,
-                  group,
-                  enableExecuteCommand: false,
-                  networkConfiguration: {
-                    awsvpcConfiguration: {
-                      subnets: [...options.subnetIds],
-                      securityGroups: [options.bootstrapSecurityGroupId],
-                      assignPublicIp: "DISABLED"
-                    }
-                  },
-                  tags: [
-                    { key: ownerTag, value: options.fleetId },
-                    { key: roleTag, value: "exec" },
-                    { key: taskTag, value: input.taskId },
-                    { key: revisionTag, value: input.deploymentRevision }
-                  ],
-                  overrides: {
-                    containerOverrides: [
-                      {
-                        name: containerName,
-                        command: ["node", "dist/exec.js"],
-                        environment: [
-                          { name: "EXECUTION_TASK_ID", value: input.taskId },
-                          {
-                            name: "EXECUTION_DEPLOYMENT_REVISION",
-                            value: input.deploymentRevision
-                          },
-                          {
-                            name: "EXECUTION_MANAGEMENT_SECRET",
-                            value: Redacted.value(revision.secret)
-                          },
-                          ...(revision !== options.current || options.previous === undefined
-                            ? []
-                            : [
-                                {
-                                  name: "EXECUTION_MANAGEMENT_PREVIOUS_SECRET",
-                                  value: Redacted.value(options.previous.secret)
-                                }
-                              ]),
-                          { name: "EXECUTION_MANAGEMENT_HOST", value: "auto" },
-                          { name: "EXECUTION_MANAGEMENT_PORT", value: String(managementPort) },
-                          { name: "EXECUTION_MANAGEMENT_PRIVATE_INTERFACE", value: "true" },
-                          { name: "EXECUTION_CALLBACK_URLS", value: "[]" }
-                        ]
-                      }
-                    ]
+          if (existing.length === 0 && !addresses.has(input.taskId)) {
+            const response = yield* aws(
+              "start",
+              input.taskId,
+              client.runTask({
+                cluster: options.cluster,
+                taskDefinition: revision.taskDefinition,
+                launchType: "FARGATE",
+                platformVersion: "1.4.0",
+                propagateTags: "TASK_DEFINITION",
+                count: 1,
+                clientToken: digest(`${options.fleetId}\0${input.taskId}`),
+                startedBy,
+                group,
+                enableExecuteCommand: false,
+                networkConfiguration: {
+                  awsvpcConfiguration: {
+                    subnets: [...options.subnetIds],
+                    securityGroups: [options.bootstrapSecurityGroupId],
+                    assignPublicIp: "DISABLED"
                   }
-                }),
-                { abortSignal }
-              )
+                },
+                tags: [
+                  { key: ownerTag, value: options.fleetId },
+                  { key: roleTag, value: "exec" },
+                  { key: taskTag, value: input.taskId },
+                  { key: revisionTag, value: input.deploymentRevision }
+                ],
+                overrides: {
+                  containerOverrides: [
+                    {
+                      name: containerName,
+                      command: ["node", "dist/exec.js"],
+                      environment: [
+                        { name: "EXECUTION_TASK_ID", value: input.taskId },
+                        {
+                          name: "EXECUTION_DEPLOYMENT_REVISION",
+                          value: input.deploymentRevision
+                        },
+                        {
+                          name: "EXECUTION_MANAGEMENT_SECRET",
+                          value: Redacted.value(revision.secret)
+                        },
+                        ...(revision !== options.current || options.previous === undefined
+                          ? []
+                          : [
+                              {
+                                name: "EXECUTION_MANAGEMENT_PREVIOUS_SECRET",
+                                value: Redacted.value(options.previous.secret)
+                              }
+                            ]),
+                        { name: "EXECUTION_MANAGEMENT_HOST", value: "auto" },
+                        { name: "EXECUTION_MANAGEMENT_PORT", value: String(managementPort) },
+                        { name: "EXECUTION_MANAGEMENT_PRIVATE_INTERFACE", value: "true" },
+                        { name: "EXECUTION_CALLBACK_URLS", value: "[]" }
+                      ]
+                    }
+                  ]
+                }
+              })
             );
             if (
               response.failures?.length ||
@@ -607,16 +602,7 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
       "list",
       undefined,
       inventory("list").pipe(
-        Effect.flatMap((tasks) => {
-          const retained = new Set(tasks.map((task) => task.taskId));
-          for (const taskId of addresses.keys()) {
-            if (!retained.has(taskId)) {
-              addresses.delete(taskId);
-              readiness.delete(taskId);
-            }
-          }
-          return Effect.forEach(tasks, (task) => observation(task, "list"));
-        })
+        Effect.flatMap((tasks) => Effect.forEach(tasks, (task) => observation(task, "list")))
       ),
       startupTimeout
     ),
@@ -633,15 +619,14 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
         Effect.gen(function* () {
           let task = yield* resolve(taskId, "stop");
           if (task.value.lastStatus !== "STOPPED") {
-            yield* aws("stop", taskId, (abortSignal) =>
-              client.send(
-                new StopTaskCommand({
-                  cluster: options.cluster,
-                  task: task.value.taskArn!,
-                  reason: "Patchy execution controller released task"
-                }),
-                { abortSignal }
-              )
+            yield* aws(
+              "stop",
+              taskId,
+              client.stopTask({
+                cluster: options.cluster,
+                task: task.value.taskArn!,
+                reason: "Patchy execution controller released task"
+              })
             );
             do {
               yield* Effect.sleep(500);
@@ -682,7 +667,8 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
 
 /** Only fleet hosts import this layer; local and exec entrypoints never load the AWS SDK. */
 export const layer = (options?: Options) =>
-  Layer.effect(
-    TaskProvider.TaskProvider,
-    options === undefined ? config.pipe(Effect.flatMap(make)) : make(options)
+  Layer.unwrap(
+    (options === undefined ? config : Effect.succeed(options)).pipe(
+      Effect.map((value) => Layer.effect(TaskProvider.TaskProvider, make(value)))
+    )
   );

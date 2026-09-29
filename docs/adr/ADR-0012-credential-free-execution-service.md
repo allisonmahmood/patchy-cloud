@@ -241,12 +241,19 @@ reconciles lost tasks and retires superseded deployments. The target is
 draining task counted against the fleet budget. The initial budget is 100 tasks,
 the pass interval five seconds and the lease fifteen seconds. These values come
 from the limits registry, not another timer or counter convention.
+Measured cold start spans the durable task request through readiness, including
+Fargate provisioning and image pull, rather than only time since ECS `RUNNING`.
 Passes serialize within a replica. A scoped renewal fiber keeps the lease alive
 during provider waits, while mutation guards still fence a replica that loses it.
 Reacquisition after expiry has a new lease epoch, even for the same replica.
 Per-task failures are bounded and isolated, and replenishment does not depend on a
 successful stats or stop call for every bound task. An empty-pool open keeps waiting
 through housekeeping failures until its configured pool deadline.
+An omitted ECS listing or transient `MISSING` description is not proof of exit.
+Known tasks remain budgeted until the provider confirms they stopped. A running
+task that reappears after a recorded stop is fenced and stopped again. If ECS
+has already forgotten a task and no stop observation exists, its unresolved
+reservation requires operator reconciliation rather than an inferred exit.
 
 Process reports commit before their acknowledgement. Newly recorded process events
 are forwarded unchanged through the best-effort analytics sink. Binding history
@@ -286,6 +293,8 @@ logs and private host callbacks. The sealed comparison group cannot pull the
 image and is not a post-start replacement. The root supervisor drops each
 workerd child to a distinct uid with an empty environment. Management and
 callback listeners bind the task's private address, not the ALB.
+The provider rejects exec definitions without an explicit root container user;
+it does not silently accept the image's default unprivileged host user.
 
 The disposable spike used two hosts, application-cookie affinity on
 `patchy_stream_affinity`, and 512-CPU-unit/2048-MiB exec tasks. First open claimed
@@ -340,6 +349,16 @@ their pre-run snapshots. The script removed run artifacts and company databases,
 and deregistered the run task definitions and requested their deletion.
 The pre-existing tagged AWS stack and
 Neon project remain available; CloudWatch run logs are retained as evidence.
+
+The first acceptance run passed the deployer's IAM-user credentials to hosts.
+That path is removed: hosts must use the existing spike host task role.
+A subsequent role-only host probe assumed that role successfully, but
+ECS denied `ListTasks`; the deployer was also denied `iam:PutRolePolicy`.
+The role-only fleet deployment therefore remains unverified until an authorized
+operator grants the documented fleet permissions. The probe was stopped and
+its definition deregistered. The earlier credential-bearing host definitions
+are deregistered and pending ECS deletion; CloudTrail history is not scrubbed
+by deletion. No IAM user or access key was rotated or deleted.
 
 ## Seven hosting decisions
 

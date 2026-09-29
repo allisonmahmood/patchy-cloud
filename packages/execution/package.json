@@ -26,6 +26,11 @@
       "types": "./dist/ecsTaskProvider.d.ts",
       "import": "./dist/ecsTaskProvider.js"
     },
+    "./ecs": {
+      "development": "./src/ecs.ts",
+      "types": "./dist/ecs.d.ts",
+      "import": "./dist/ecs.js"
+    },
     "./migrations": {
       "development": "./src/migrations.ts",
       "types": "./dist/migrations.d.ts",

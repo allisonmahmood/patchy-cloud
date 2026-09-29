@@ -2,6 +2,7 @@ import type * as WideEvents from "@patchy/analytics/wide-events";
 import type { CompanyDatabases, Inventory } from "@patchy/company-database";
 import { newInternalId } from "@patchy/core";
 import * as Fleet from "@patchy/execution/fleet";
+import * as Ecs from "@patchy/execution/ecs";
 import * as EcsTaskProvider from "@patchy/execution/ecs-task-provider";
 import * as LocalTaskProvider from "@patchy/execution/local-task-provider";
 import * as TaskProvider from "@patchy/execution/task-provider";
@@ -102,9 +103,13 @@ export const make: (
   }).pipe(Effect.provideService(CallbackGateway.CallbackGateway, gateway));
   const provider =
     providerKind === "ecs"
-      ? yield* EcsTaskProvider.make({
-          ...(yield* EcsTaskProvider.config),
-          callbackUrls: [...new Set([...callbackUrls, listener.url])]
+      ? yield* Effect.gen(function* () {
+          const options = yield* EcsTaskProvider.config;
+          const ecs = yield* Ecs.make(options.region);
+          return yield* EcsTaskProvider.make({
+            ...options,
+            callbackUrls: [...new Set([...callbackUrls, listener.url])]
+          }).pipe(Effect.provideService(Ecs.Ecs, ecs));
         })
       : yield* Effect.gen(function* () {
           if (!callbackUrls.includes(listener.url))
