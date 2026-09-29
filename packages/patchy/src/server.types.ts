@@ -154,10 +154,21 @@ const consumer = async (
   // @ts-expect-error actions are not query subscriptions
   useQuery(client.leads.sync, {});
   void hookName;
-  client.leads.list.subscribe({ stage: null }, (snapshot) => {
+  const unsubscribe: () => void = client.leads.list.subscribe({ stage: null }, (snapshot) => {
     const name: string | undefined = snapshot.data?.[0]?.name;
+    const error: Error | undefined = snapshot.error;
+    const loading: boolean = snapshot.loading;
+    // @ts-expect-error subscribed results remain deeply readonly
+    if (snapshot.data?.[0]) snapshot.data[0].name = "changed";
     void name;
+    void error;
+    void loading;
   });
+  unsubscribe();
+  // @ts-expect-error subscriptions require non-optional query arguments
+  client.leads.list.subscribe({}, () => {});
+  // @ts-expect-error subscription arguments retain descriptor types
+  client.leads.list.subscribe({ stage: 7 }, () => {});
   const guard: HandlerErrorGuard<ServerModules> = isHandlerError;
   if (guard(error, "duplicate")) {
     const code: "duplicate" = error.code;

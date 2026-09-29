@@ -157,7 +157,7 @@ The identity of one admitted connection. A replacement fences requests naming th
 _Avoid_: document id, wire version
 
 **Subscription**:
-A document's desired live result for one read and canonical argument set. Tier 1 supports owned and declared shared-table `list` and `get`; writes and reconnects trigger reconciliation, not replay of mutations.
+A document's desired live result for one read and canonical argument set, bound to its patch, loaded version and initiating viewer. Tier 1 subscribes to table reads; tier 2 subscribes to queries. A publish does not change a retained document's handlers.
 _Avoid_: stream, polling loop
 
 **Revision**:
@@ -173,8 +173,16 @@ A subscription's whole read result with the dependency revisions observed by tha
 _Avoid_: row diff, cached response
 
 **Dependency set**:
-The resource and source-patch keys a subscription has observed, including keys recorded before a read is refused. Keeping refused dependencies lets reshare and restore recover the subscription.
+The canonical owner resources observed by a subscription's host, including attempts refused for access. Successful runs replace this set even when their result is unchanged; failed runs retain previous and attempted resources. A wake received during a run applies to the resulting set.
 _Avoid_: declared resources (the permitted capabilities), row locks
+
+**Recoverable refusal**:
+A handler's business error or a refused callback that leaves its subscription eligible to run again when its sources change. Its last value remains available. This differs from losing document authority, which stops the document.
+_Avoid_: permanent failure, successful snapshot
+
+**Permanent subscription failure**:
+A handler failure, invalid result or missing handler in the loaded version that ends one subscription while preserving its last value. Other subscriptions on the document continue.
+_Avoid_: served-version change, document revocation
 
 **Fence**:
 The revision vector a subscription must reach for its current desired-set sequence before reconnect catch-up is complete. Reopening the stream alone does not satisfy it.

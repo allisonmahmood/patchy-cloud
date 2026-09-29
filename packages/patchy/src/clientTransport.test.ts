@@ -1114,15 +1114,15 @@ it("shares table subscriptions with hook stores and retains data and query error
   stream({ type: "hello", generation: "next", serverTime: 100 });
   expect(sharedRows.at(-1)).toBe(ended);
   expect(port.sent.filter((request) => request.op === "subscriptions.subscribe")).toHaveLength(2);
-  client.shared.team.list.subscribe({ limit: 20 }, () => {});
-  expect(port.sent.filter((request) => request.op === "subscriptions.subscribe")).toHaveLength(3);
-  const resumed = port.sent.at(-1)!;
-  port.reply({ v: 1, kind: "result", id: resumed.id, value: null });
+  const remounted: QuerySnapshot<unknown>[] = [];
+  client.shared.team.list.subscribe({ limit: 20 }, (snapshot) => remounted.push(snapshot));
+  expect(remounted.at(-1)).toBe(ended);
+  expect(port.sent.filter((request) => request.op === "subscriptions.subscribe")).toHaveLength(2);
   client.close();
   await Promise.resolve();
 });
 
-it("does not resurrect a refused subscription on reconnect and allows an explicit retry", async () => {
+it("keeps a refused subscription ended across reconnect and additional consumers", async () => {
   const port = new FakePort();
   const transport = createPortTransport(port);
   const config = defineConfig({
@@ -1156,28 +1156,129 @@ it("does not resurrect a refused subscription on reconnect and allows an explici
     data: { type: "hello", generation: "next", serverTime: 100 }
   });
   expect(port.sent).toHaveLength(1);
-  client.tables.notes.list.subscribe({}, () => {});
-  expect(port.sent).toHaveLength(2);
-  port.reply({ v: 1, kind: "result", id: port.sent[1]!.id, value: null });
+  const remounted: QuerySnapshot<unknown>[] = [];
+  client.tables.notes.list.subscribe({}, (snapshot) => remounted.push(snapshot));
+  expect(remounted.at(-1)).toBe(seen.at(-1));
+  expect(port.sent).toHaveLength(1);
   client.close();
   await Promise.resolve();
 });
 
-it("refuses server subscriptions as not admitted instead of dispatching them as primitive queries", () => {
+it("shares canonical server queries over the document stream and retains data through refusals", async () => {
   const port = new FakePort();
   const transport = createPortTransport(port);
-  type Modules = { leads: { list: Handler<"query", Record<string, never>, readonly string[]> } };
+  type Modules = {
+    leads: {
+      list: Handler<
+        "query",
+        { filter: { stage: string; owner?: string }; limit: number },
+        readonly string[]
+      >;
+      count: Handler<"query", Record<string, never>, number>;
+    };
+  };
   const client = createServerClient<Modules>({ transport });
   const seen: QuerySnapshot<readonly string[]>[] = [];
-  client.server.leads.list.subscribe({}, (snapshot) => seen.push(snapshot));
+  const other: QuerySnapshot<number>[] = [];
+  const args = { filter: { stage: "open" }, limit: 20 };
+  client.server.leads.list.subscribe(args, (snapshot) => seen.push(snapshot));
+  args.filter.stage = "closed";
+  const joined: QuerySnapshot<readonly string[]>[] = [];
+  client.server.leads.list.subscribe(
+    { limit: 20, filter: { owner: undefined, stage: "open" } },
+    (snapshot) => joined.push(snapshot)
+  );
+  client.server.leads.count.subscribe({}, (snapshot) => other.push(snapshot));
+  expect(port.sent.map((request) => request.op)).toEqual([
+    "subscriptions.subscribe",
+    "subscriptions.subscribe"
+  ]);
+  const request = port.sent[0]!;
+  expect(request.args).toEqual({
+    id: expect.any(String),
+    op: "server.call",
+    args: { handler: "leads.list", args: { filter: { stage: "open" }, limit: 20 } }
+  });
+  const queryArgs = request.args;
+  const otherArgs = port.sent[1]!.args;
+  if (
+    !queryArgs ||
+    typeof queryArgs !== "object" ||
+    !("id" in queryArgs) ||
+    !otherArgs ||
+    typeof otherArgs !== "object" ||
+    !("id" in otherArgs)
+  )
+    throw new Error("Subscription commands must identify their query.");
+  const id = queryArgs.id;
+  const otherId = otherArgs.id;
+  for (const request of port.sent) {
+    port.reply({ v: 1, kind: "result", id: request.id, value: null });
+  }
+  const stream = (data: unknown) => port.reply({ v: 1, kind: "event", event: "stream", data });
+  stream({
+    type: "snapshot",
+    id,
+    revision: "1",
+    result: ["Ada"],
+    vector: { "table:own:leads": "1" }
+  });
+  expect(seen.at(-1)).toEqual({
+    status: "ready",
+    data: ["Ada"],
+    error: undefined,
+    loading: false
+  });
+  expect(joined.at(-1)).toBe(seen.at(-1));
+  stream({
+    type: "error",
+    id,
+    permanent: false,
+    error: { ok: false, source: "patchy", code: "access_denied", error: "Source unshared" }
+  });
   expect(seen.at(-1)).toMatchObject({
     status: "error",
-    error: {
-      source: "patchy",
-      code: "server_required",
-      message: "This runtime does not admit server subscriptions."
-    }
+    data: ["Ada"],
+    error: { code: "access_denied" },
+    loading: false
   });
-  expect(port.sent).toEqual([]);
+  stream({ type: "hello", generation: "reconnected", serverTime: 100 });
+  stream({
+    type: "snapshot",
+    id,
+    revision: "2",
+    result: ["Grace"],
+    vector: { "table:own:leads": "2" }
+  });
+  expect(seen.at(-1)).toEqual({
+    status: "ready",
+    data: ["Grace"],
+    error: undefined,
+    loading: false
+  });
+  stream({
+    type: "error",
+    id,
+    permanent: true,
+    error: { ok: false, source: "patchy", code: "handler_failed", error: "Invalid result" }
+  });
+  const ended = seen.at(-1);
+  expect(ended).toMatchObject({
+    status: "error",
+    data: ["Grace"],
+    error: { code: "handler_failed" },
+    loading: false
+  });
+  client.server.leads.list.subscribe({ filter: { stage: "open" }, limit: 20 }, (snapshot) =>
+    joined.push(snapshot)
+  );
+  stream({ type: "hello", generation: "next", serverTime: 200 });
+  stream({ type: "snapshot", id, revision: "3", result: [], vector: {} });
+  expect(joined.at(-1)).toBe(ended);
+  expect(seen.at(-1)).toBe(ended);
+  expect(port.sent).toHaveLength(2);
+  stream({ type: "snapshot", id: otherId, revision: "1", result: 2, vector: {} });
+  expect(other.at(-1)).toEqual({ status: "ready", data: 2, error: undefined, loading: false });
   client.close();
+  await Promise.resolve();
 });

@@ -6,7 +6,7 @@ import {
   type Me,
   type Transport
 } from "./clientTransport.js";
-import { createQueryRegistry, type QueryDriver } from "./queryRegistry.js";
+import { createQueryRegistry } from "./queryRegistry.js";
 import type { ServerClient } from "./server.js";
 
 export interface ServerOnlyClient<Modules> {
@@ -15,21 +15,6 @@ export interface ServerOnlyClient<Modules> {
   me(): Promise<Me>;
   close(): void;
 }
-
-const unavailableSubscriptions: QueryDriver = {
-  subscribe(_request, onFrame) {
-    onFrame({
-      status: "error",
-      permanent: true,
-      error: new PatchyError(
-        "server_required",
-        "This runtime does not admit server subscriptions.",
-        {}
-      )
-    });
-    return () => {};
-  }
-};
 
 const mutationKey = (serverTime: number): string => {
   const random = crypto.getRandomValues(new Uint8Array(16));
@@ -42,10 +27,13 @@ const mutationKey = (serverTime: number): string => {
 
 /** Properties follow the type-only module imports, without a generated export inventory. */
 export function createServerClient<Modules>(
-  options: { readonly transport?: Transport; readonly queries?: QueryDriver } = {}
+  options: { readonly transport?: Transport } = {}
 ): ServerOnlyClient<Modules> {
   const transport = options.transport ?? createPostMessageTransport();
-  const registry = createQueryRegistry(options.queries ?? unavailableSubscriptions);
+  const registry = createQueryRegistry({
+    subscribe: ({ handler, args }, onFrame) =>
+      transport.queries.subscribe({ handler: "server.call", args: { handler, args } }, onFrame)
+  });
   const modules: Record<string, Record<string, unknown>> = Object.create(null);
   const server = new Proxy(modules, {
     get(target, module: string | symbol) {

@@ -51,31 +51,50 @@ interruptible. `useDeferredValue` does not defer work. `useInsertionEffect`
 has layout-effect semantics. Bound expensive work and page data rather than
 expecting scheduler priority to keep the UI responsive.
 
-Use `useQuery` for subscribed table screens. For one-shot table reads or
-integration reads, use an effect with visible loading and error states. Ignore
-an old request's result after its inputs change or the component unmounts.
+Use `useQuery` for subscribed screens: tier 1 table reads or tier 2 server
+queries. For one-shot reads, use an effect with visible loading and error states.
+Ignore an old request's result after its inputs change or the component unmounts.
 A read failure is not an empty successful result.
 
 ## useQuery
 
-`useQuery(query, args)` accepts a table's `list` or `get` callable, including
-shared tables. Pass list options or a get row id. It returns
-`{ status, data, error, loading }`. Status is `"loading"`, `"ready"` or `"error"`.
-Render `data` when present and show a separate error or loading notice; the hook
-retains the last data through a stream error. See `../patchy-tables/SKILL.md`
-for whole-result rendering, table-grain wakes and permanent errors.
+`useQuery(query, args)` accepts a tier 1 table's `list` or `get` callable,
+including shared tables, or a tier 2 generated server query. Pass list options,
+a get row id, or the handler's declared arguments:
+
+```tsx
+const snapshot = useQuery(patchy.server.leads.list, { stage: "open" });
+```
+
+It returns `{ status, data, error, loading }`. Status is `"loading"`, `"ready"`
+or `"error"`. Render the whole `data` value when present and show a separate
+error or loading notice. Both recoverable and permanent errors keep the last
+successful data. A first-run failure has `data: undefined`, not an empty result.
+Source refusals inside a server handler recover after access returns.
+`handler_failed`, invalid results and a removed handler end the subscription
+with its last data kept. Another consumer or a reconnect does not restart it.
+Loss of document authority instead produces the shell's stopping notice.
 
 The adapter shares a subscription for the same handler and canonical arguments.
 Object key order does not change identity; omitted fields and object fields set
-to `undefined` have the same identity. A short unmount/remount retains the
-subscription. Keep query arguments JSON-compatible and call the hook at the top
-level like the other hooks.
+to `undefined` have the same identity. A remount within about one second retains
+the subscription. Hidden documents suspend after 30 seconds and reconcile on
+return. Keep query arguments JSON-compatible and call the hook at the top level.
+Signals, this hook, ordinary hooks and compat components use the same installed
+Preact runtime; leave Vite dependency optimisation enabled.
 
-Tier 1 table subscriptions run over the shell stream in hosted company pages
-and `patchy dev`. Generated server query types are available, but hosted handler
-subscriptions are not admitted yet. Arbitrary promises, `getMany`, integrations,
-mutations and actions are not query callables. `useFileUrl`, file handles and
-staged uploads are not available yet.
+After a mutation, keep rendering the subscribed result rather than maintaining
+a second copy of server data. Read only what the screen needs, since resources
+read by a handler determine which changes wake it. Member-directory reads are
+outside the query's company-database snapshot. See `../patchy-server/SKILL.md`
+for handler dependencies, failures and bounds, or `../patchy-tables/SKILL.md`
+for whole-result rendering and table-grain wakes on tier 1.
+
+Tier 1 table subscriptions run in hosted company pages and `patchy dev`.
+Tier 2 query subscriptions run on published patches in dev and test instances;
+the tier 2 `patchy dev` engine and production fleet hosting remain separate.
+Arbitrary promises, `getMany`, integrations, mutations and actions are not query
+callables. `useFileUrl`, file handles and staged uploads are not available yet.
 
 ## Development and helpers
 

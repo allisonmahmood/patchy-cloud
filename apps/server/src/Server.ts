@@ -120,17 +120,18 @@ const services = Layer.mergeAll(
   DeletionSweep.layer,
   DeviceLogins.layer,
   OrphanSweep.layer,
-  RuntimeStream.layer.pipe(
-    Layer.provide([SubscriptionReads.layer, StreamAdmission.layer, StreamLimits.layer]),
-    Layer.provide(LoadedVersions.layer)
-  ),
   Layer.unwrap(
     Effect.gen(function* () {
       const tables = yield* TableOperations.make;
       const files = yield* Files.make;
       const postgres = yield* PostgresOperations.makeHandlers;
       const handlers = { me, ...tables, ...files, ...postgres };
-      const runtime = RuntimeProduction.layer(handlers);
+      const runtime = Layer.merge(
+        RuntimeProduction.layer(handlers),
+        RuntimeStream.layer.pipe(
+          Layer.provide([SubscriptionReads.layer, StreamAdmission.layer, StreamLimits.layer])
+        )
+      );
       return (yield* DevelopmentInvocation.enabled)
         ? runtime.pipe(
             Layer.provide(

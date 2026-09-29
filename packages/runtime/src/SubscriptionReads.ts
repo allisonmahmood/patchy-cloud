@@ -1,7 +1,17 @@
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import { HandlerFailure, type RuntimeMe } from "@patchy/api";
 import type * as Binding from "./Binding.js";
 import type * as Runtime from "./Runtime.js";
+
+export class HandlerRefusal extends Schema.TaggedError<HandlerRefusal>()(
+  "SubscriptionHandlerRefusal",
+  {
+    failure: HandlerFailure
+  }
+) {}
+export const isHandlerRefusal = Schema.is(HandlerRefusal);
 
 export interface Input {
   readonly op: string;
@@ -9,6 +19,8 @@ export interface Input {
   readonly binding: Binding.Binding["Service"];
   /** Called before access checks, including attempts which fail. */
   readonly onDependency?: (key: string) => void;
+  readonly dependencies?: readonly string[];
+  readonly reauthorize?: Effect.Effect<NonNullable<RuntimeMe>, Runtime.RuntimeError>;
 }
 
 /** Primitives supplies tier 1 reads without Runtime importing its storage adapter. */

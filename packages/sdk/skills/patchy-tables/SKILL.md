@@ -117,10 +117,10 @@ dispose framework-free subscriptions when their screen ends. A short remount
 keeps the current result.
 
 Transient errors keep the last value and recover through the stream. A permanent
-error ends the subscription with its last value kept; it stays ended until the
-page explicitly subscribes again. Render errors separately rather than clearing
-the previous result. A shared-source refusal remains subscribed so restoring
-sharing or the source can recover without changing the consumer.
+error ends the subscription with its last value kept. Additional consumers,
+short remounts and reconnects do not restart it. Render errors separately rather
+than clearing the previous result. A shared-source refusal remains subscribed
+so restoring sharing or the source can recover without changing the consumer.
 
 There are at most 64 subscriptions per document, 256 per patch and 1,024 per
 company. The newest is refused without evicting another. Each snapshot is at

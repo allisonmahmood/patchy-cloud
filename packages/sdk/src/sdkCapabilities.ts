@@ -41,9 +41,9 @@ export const sdkCapabilities: readonly SdkCapability[] = [
     group: "Core",
     name: "useQuery adapter",
     entrypoints: ["patchy/preact"],
-    runs: "Tier 1 page through the shell's subscribed own and shared table queries",
+    runs: "Tier 1 company pages and patchy dev; published tier 2 pages in dev and test instances",
     limits:
-      "Returns status, data, error and loading; retains data through errors. Accepts table list/get callables. Handler subscriptions are not admitted yet."
+      "Accepts table list/get callables or generated server queries. Returns status, data, error and loading. Retains data through errors; a permanent error ends the subscription without restarting for another consumer or reconnect."
   },
   {
     id: "primitives.table-subscriptions",
@@ -73,7 +73,19 @@ export const sdkCapabilities: readonly SdkCapability[] = [
     entrypoints: ["patchy/_generated/client.ts: patchy.server", "patchy/_generated/server.ts"],
     runs: "Published tier 2 versions on the local executor in dev and test instances; production admission requires fleet execution",
     limits:
-      "Queries share a read-only snapshot with a 3-second deadline; resource-free queries need no company database. Mutations use one SERIALIZABLE transaction, up to three attempts in 5 seconds and a keyed retry() for unknown outcomes. Actions have 60 seconds, declared connections and nested queries or mutations. Shared access is checked per callback. Lost query replies retry once; actions are never replayed. Args are at most 1 MiB, mutation results 64 KiB and query/action results 8 MiB. Tier 2 patchy dev lifecycle, server watch, production hosting and handler subscriptions remain separate."
+      "Queries share a read-only snapshot with a 3-second deadline; resource-free queries need no company database. Mutations use one SERIALIZABLE transaction, up to three attempts in 5 seconds and a keyed retry() for unknown outcomes. Actions have 60 seconds, declared connections and nested queries or mutations. Shared access is checked per callback. Lost query replies retry once; actions are never replayed. Args are at most 1 MiB, mutation results 64 KiB and query/action results 8 MiB. Tier 2 patchy dev lifecycle, server watch and production hosting remain separate."
+  },
+  {
+    id: "core.server-subscriptions",
+    group: "Core",
+    name: "Live server queries",
+    entrypoints: [
+      "patchy/_generated/client.ts: patchy.server.<module>.<query>.subscribe",
+      "patchy/preact: useQuery"
+    ],
+    runs: "Published tier 2 company pages in dev and test instances through the document stream",
+    limits:
+      "Queries only. Host-observed reads determine dependencies; read only what the screen needs. A source refusal can recover after reshare, even on the first run. Permanent errors retain the last data. Canonical arguments share one subscription, with remount grace, hidden suspension and reconciliation. At most 64 subscriptions per document, 256 per patch, 1,024 per company and 8 MiB per snapshot. Member reads are outside the company snapshot."
   },
   {
     id: "primitives.tables",
@@ -115,7 +127,7 @@ export const sdkCapabilities: readonly SdkCapability[] = [
 
 const groups = ["Core", "Primitives", "Integrations", "Helpers"] as const;
 const unavailable: Record<(typeof groups)[number], string> = {
-  Core: "Hosted handler execution and handler subscriptions, authorised file handles, staged uploads, useFileUrl and generated-file downloads are not available in this release.",
+  Core: "Production fleet hosting, authorised file handles, staged uploads, useFileUrl and generated-file downloads are not available in this release.",
   Primitives: "The member directory and shared file stores are not available in this release.",
   Integrations: "Postgres is the only shipped company integration.",
   Helpers:

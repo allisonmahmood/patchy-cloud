@@ -22,6 +22,7 @@ import { DEV_SEED } from "@patchy/auth/seed";
 import { ContractLimits, Limits, OperatingLimits } from "@patchy/limits";
 import * as LoadedVersions from "./LoadedVersions.js";
 import * as Fixtures from "./test/fixtures.js";
+import { HandlerFailed } from "./Invocation.js";
 import * as Runtime from "./Runtime.js";
 import * as RuntimeApi from "./RuntimeApi.js";
 import * as RuntimeProduction from "./RuntimeProduction.js";
@@ -576,9 +577,10 @@ it.layer(layer)("document streams", (it) => {
       }).pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, request()), Effect.scoped)
   );
 
-  for (const resume of [false, true]) {
+  for (const delivery of ["snapshot", "resume", "failure"] as const) {
+    const resume = delivery === "resume";
     it.effect(
-      `refuses ${resume ? "an equal-vector resume" : "a snapshot"} when the loaded version becomes public before delivery`,
+      `refuses ${resume ? "an equal-vector resume" : `a ${delivery}`} when the loaded version becomes public before delivery`,
       () =>
         Effect.gen(function* () {
           const authority = yield* versionAuthority;
@@ -604,6 +606,8 @@ it.layer(layer)("document streams", (it) => {
                 Effect.gen(function* () {
                   reads++;
                   yield* waiting;
+                  if (delivery === "failure")
+                    return yield* new HandlerFailed({ correlationId: "public-delivery" });
                   return { result: { rows: [{ id: "private-row" }], cursor: null }, vector };
                 })
             })
@@ -658,9 +662,10 @@ it.layer(layer)("document streams", (it) => {
     );
   }
 
-  for (const resume of [false, true]) {
+  for (const delivery of ["snapshot", "resume", "failure"] as const) {
+    const resume = delivery === "resume";
     it.effect(
-      `stops ${resume ? "an equal-vector resume" : "a snapshot"} when authority is lost before delivery`,
+      `stops ${resume ? "an equal-vector resume" : `a ${delivery}`} when authority is lost before delivery`,
       () =>
         Effect.gen(function* () {
           const authority = yield* versionAuthority;
@@ -686,6 +691,8 @@ it.layer(layer)("document streams", (it) => {
                 Effect.gen(function* () {
                   reads++;
                   yield* waiting;
+                  if (delivery === "failure")
+                    return yield* new HandlerFailed({ correlationId: "refused-delivery" });
                   return { result: { rows: [{ id: "private-row" }], cursor: null }, vector };
                 })
             })

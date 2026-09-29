@@ -10,12 +10,12 @@ Preact page, a starter `server/` module, config-bound generated builders and
 the exact `workerd` managed pin with install scripts disabled. Inside the repo,
 use `pnpm patchy`; read `patchy-loop` for changing an existing repo's tier.
 
-Queries, mutations and actions from published tier 2 repos run on dev and test
-instances' local executor. See the checkout's `docs/DEVELOPMENT.md` for startup.
-Production admission requires the fleet executor. This release does not support
-the tier 2 `patchy dev` engine integration, live server rebinding, colleague
-mount or server subscriptions. Exercise published handlers on a development
-instance with invented data.
+Queries, mutations, actions and query subscriptions from published tier 2 repos
+run on dev and test instances' local executor. See the checkout's
+`docs/DEVELOPMENT.md` for startup. Production admission requires the fleet
+executor. This release does not support the tier 2 `patchy dev` engine
+integration, live server rebinding or colleague mount. Exercise published
+handlers on a development instance with invented data.
 
 Publish builds HTML and a closed server module, records handler descriptors
 and SDK imports, and sends both artifacts. The instance re-derives descriptors
@@ -192,7 +192,6 @@ Default company bounds, counted per host replica, can refuse work earlier:
   acquisitions wait up to 1 second within the caller's deadline, then `busy`.
 - 8 actions in flight per company and 2 per viewer per patch, then `busy`.
 - At most 2 company connections for subscription re-runs and 1 re-run per patch.
-  These are the scheduling bounds when server subscriptions are available.
 - 100 admitted calls per second with a burst of 200, then `limit_exceeded`.
 
 Company operating bounds may have overrides. Coalesce screen reads and use
@@ -201,19 +200,45 @@ bounded action batches rather than launching one call per card. Respect
 
 ## Render from subscriptions
 
-Call `patchy.server.<module>.<handler>(args)`. Queries also provide
-`.subscribe(args, onSnapshot)` and `useQuery(handler, args)` from `patchy/preact`.
-The hook returns `{ status, data, error, loading }`, with status `"loading"`,
-`"ready"` or `"error"`. It retains the last data through a stream error.
-Two components observing the same handler and canonical arguments share a
-subscription. Omitted fields and object fields set to `undefined` have the same
-identity. A short unmount/remount retains the subscription.
+Call `patchy.server.<module>.<handler>(args)` for a one-shot result. For a live
+screen, pass a generated query to `useQuery(handler, args)` from `patchy/preact`,
+or call `.subscribe(args, onSnapshot)` and keep its returned unsubscribe function.
+Mutations and actions have neither subscription API.
 
-After a mutation, render from the subscription rather than merging the mutation
-reply into a second copy of query state. Patchy owns presence through the
-document stream and owns reconciliation; patches need no heartbeat or presence
-table. Tier 1 already uses this stream. Tier 2 query subscriptions require
-their separate runtime integration before this live-screen workflow is usable.
+Both forms deliver `{ status, data, error, loading }`, with status `"loading"`,
+`"ready"` or `"error"`. Render the whole `data` value and show errors separately.
+An error keeps the last successful data; an initially failing query has no data.
+`busy`, `rate_limited`, `source_unavailable` and `handler_timeout` back off.
+A refusal inside a handler, such as an unshared source, keeps the subscription
+so a reshare can recover it without a reload, even when its first run was refused.
+`handler_failed`, invalid results and a removed handler end only that subscription.
+Its last data and error remain visible to mounted consumers; mounting another
+consumer or reconnecting does not restart it. Loss of permission to open the
+document instead produces the shell's stopping notice.
+
+Two consumers of the same handler and canonical arguments share a subscription.
+Object key order does not matter; omitted fields and object fields set to
+`undefined` have the same identity. Keep arguments JSON-compatible. A remount
+within about one second retains the subscription. Hidden documents suspend after
+30 seconds and reconcile on return; patches need no visibility timer or polling.
+
+Patchy tracks the resources each query actually reads, including a refused
+callback. Shared aliases refer to their owner's resource. Each successful run
+replaces the dependency set, even if its result is unchanged; failures retain
+previous and attempted dependencies until a successful run replaces them.
+Read only what the screen needs to avoid wakes from unrelated resources.
+Time and randomness are not dependencies. Member-directory reads, when
+available, are outside the query's company-database snapshot.
+
+After a mutation commits, Patchy announces its touched resources and returns
+their revisions on the wire. Render from the subscription rather than merging
+the mutation reply into a second copy of query state. Patchy owns presence and
+reconciliation through the document stream; patches need no heartbeat or
+presence table.
+
+There are at most 64 subscriptions per document, 256 per patch and 1,024 per
+company. The newest is refused without evicting another. Each snapshot is at
+most 8 MiB; an oversized result ends only that subscription.
 
 <!-- generated-limits:start -->
 

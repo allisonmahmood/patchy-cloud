@@ -139,7 +139,8 @@ export const RuntimeSubscriptionOperation = Schema.Literals([
   "tables.list",
   "tables.get",
   "shared.list",
-  "shared.get"
+  "shared.get",
+  "server.call"
 ]);
 export const RuntimeSubscription = Schema.Struct({
   id: RuntimeSubscriptionId,

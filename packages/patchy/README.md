@@ -120,10 +120,17 @@ cannot write, mutations cannot reach shared data, connections, file bytes or
 Server-side shared reads return promises, without browser subscription methods
 or query stores.
 
-The subscription registry is framework-free; `useQuery` is its Preact adapter.
-It ignores stale frames and preserves the last value on an error. Retryable
-source refusals recover on restore or reshare; permanent refusals end that
-subscription.
+Generated server queries expose `.subscribe(args, onSnapshot)` and work with
+`useQuery(handler, args)` through the same document stream as tier 1 tables.
+Mutations and actions cannot subscribe. The framework-free registry shares
+canonical arguments and retains subscriptions across a one-second remount grace;
+hidden suspension and reconnection use the shell's existing stream machinery.
+`useQuery` observes the registry through the bundled Preact external-store hook.
+It ignores stale frames and preserves the last value through recoverable and
+permanent errors. Refusals inside a handler recover on restore or reshare,
+including an initial access failure. `handler_failed`, invalid results and
+removed handlers end only their subscription; new consumers and reconnects do
+not restart an ended subscription while it remains mounted.
 
 The CLI's server build wraps discovered modules with `createGuest`, the wire-1
 entry exported by `patchy/server`. It derives descriptors from actual handler
@@ -157,9 +164,9 @@ A new call is not that retry and can duplicate a write. Actions are never replay
 Tier 2 publication builds and uploads both HTML and server artifacts, then the
 instance re-derives handler descriptors from stored bytes before recording the
 version. It runs on the local executor in dev and test instances. Production
-hosting requires the fleet executor. This release does not support tier 2 query
-subscriptions, the production-engine `patchy dev` integration, live server
-rebinding or colleague mount.
+hosting requires the fleet executor. Query subscriptions use that same hosted
+runtime. This release does not support the production-engine `patchy dev`
+integration, live server rebinding or colleague mount.
 The `patchy-server` skill documents handler behavior and registry limits.
 Authorised handles and staged upload adoption remain reserved contracts.
 

@@ -48,8 +48,9 @@ const layerFor = (secure: boolean) =>
           Effect.gen(function* () {
             const request = yield* HttpServerRequest.HttpServerRequest;
             const callBytes = yield* ContractLimits.get("runtime.call.bytes");
+            const serverArgsBytes = yield* ContractLimits.get("tier2.args.bytes");
             const documents = yield* ContractLimits.get("subscriptions.document");
-            const maxBytes = callBytes * (documents + 1);
+            const maxBytes = (callBytes + serverArgsBytes) * documents + callBytes;
             let size = 0;
             let text = "";
             const decoder = new TextDecoder();
