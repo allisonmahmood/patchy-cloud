@@ -59,7 +59,7 @@ export class RuntimeLog extends Context.Service<
     readonly begin: (input: Begin) => Effect.Effect<string, SqlError>;
     readonly finish: (input: {
       readonly correlationId: string;
-      readonly outcome: "success" | "handler_error" | "failure";
+      readonly outcome: "success" | "handler_error" | "failure" | "unknown";
       readonly outcomeCode?: string | null;
       readonly durationMs: number;
       readonly rowCount: number | null;

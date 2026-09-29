@@ -1,8 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Node supplies opaque cryptographic capability tokens.
 import { randomBytes } from "node:crypto";
-import type { HandlerKind, RuntimeFailure, RuntimeMe } from "@patchy/api";
+import { limitRefusal, type HandlerKind, type RuntimeFailure, type RuntimeMe } from "@patchy/api";
 import * as GuestProtocol from "@patchy/api/guest";
 import { ContractLimits, DeploymentConfig } from "@patchy/limits";
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
@@ -38,15 +39,13 @@ export interface Capability {
   readonly tree: TreeBudget;
   readonly counters: Counters;
   readonly logs: Array<Schema.Json>;
-  readonly refusals: Array<RuntimeFailure>;
+  readonly refusals: Array<{ readonly failure: RuntimeFailure; readonly status: number }>;
 }
 export interface Issue {
   readonly binding: Binding.Binding["Service"];
   readonly attempt: GuestProtocol.Attempt;
   readonly kind: HandlerKind;
   readonly reauthorize: Effect.Effect<NonNullable<RuntimeMe>, RuntimeError>;
-  readonly tree?: TreeBudget;
-  readonly counters?: Counters;
 }
 
 /** Owners signal settled only after the commit or cancellation outcome is known. */
@@ -98,6 +97,18 @@ export class InvocationCapabilities extends Context.Service<
       attempt: AttemptIdentity,
       resource: RetainedResource
     ) => Effect.Effect<void, CapabilityRefused>;
+    /** Tracks effects separately from callback fibers, whose interruption is not non-commit. */
+    readonly performEffect: <A, E, R>(
+      capability: Capability,
+      effect: Effect.Effect<A, E, R>
+    ) => Effect.Effect<A, E | CapabilityRefused, R>;
+    readonly chargeCallback: (capability: Capability) => RuntimeFailure | undefined;
+    readonly chargeBytes: (capability: Capability, bytes: number) => RuntimeFailure | undefined;
+    readonly rememberRefusal: (
+      capability: Capability,
+      failure: RuntimeFailure,
+      status: number
+    ) => RuntimeFailure;
     readonly execute: <A, E, R>(
       capability: Capability,
       effect: Effect.Effect<A, E, R>
@@ -111,6 +122,48 @@ export const make = Effect.gen(function* () {
   const tombstoneMs = deployment.get("tier2.capability.tombstone");
   const cleanupMs = yield* ContractLimits.get("tier2.settlement.cleanup");
   const outstanding = yield* ContractLimits.get("tier2.callbacks.outstanding");
+  const countLimit = yield* ContractLimits.get("tier2.callbacks.count");
+  const byteLimit = yield* ContractLimits.get("tier2.callbacks.bytes");
+  const rememberRefusal: InvocationCapabilities["Service"]["rememberRefusal"] = (
+    capability,
+    failure,
+    status
+  ) => {
+    if (
+      capability.refusals.length <= countLimit &&
+      !capability.refusals.some((entry) => entry.failure === failure)
+    )
+      capability.refusals.push({ failure, status });
+    return failure;
+  };
+  const chargeCallback: InvocationCapabilities["Service"]["chargeCallback"] = (capability) => {
+    capability.counters.callbacks++;
+    if (capability.counters.callbacks > countLimit)
+      return rememberRefusal(
+        capability,
+        {
+          ok: false,
+          source: "patchy",
+          error: "The invocation callback count is exhausted.",
+          ...limitRefusal("tier2.callbacks.count", countLimit)
+        },
+        429
+      );
+  };
+  const chargeBytes: InvocationCapabilities["Service"]["chargeBytes"] = (capability, bytes) => {
+    if (capability.tree.bytes + bytes > byteLimit)
+      return rememberRefusal(
+        capability,
+        {
+          ok: false,
+          source: "patchy",
+          error: "The invocation callback bytes are exhausted.",
+          ...limitRefusal("tier2.callbacks.bytes", byteLimit)
+        },
+        429
+      );
+    capability.tree.bytes += bytes;
+  };
   interface Retained {
     readonly resource: RetainedResource;
     readonly watcher: Fiber.Fiber<void>;
@@ -133,6 +186,9 @@ export const make = Effect.gen(function* () {
     readonly ended: Deferred.Deferred<EndReason>;
     readonly fibers: Set<Fiber.Fiber<unknown, unknown>>;
     readonly resources: Set<Retained>;
+    effectsStarted: boolean;
+    effectsPending: number;
+    effectsUncertain: boolean;
     timer?: Fiber.Fiber<void>;
     reason?: EndReason;
     expiresAt?: number;
@@ -193,7 +249,7 @@ export const make = Effect.gen(function* () {
     return entry.capability;
   });
   const issue = Effect.fn("InvocationCapabilities.issue")(function* (input: Issue) {
-    const counters = input.counters ?? { callbacks: 0, logBytes: 0, logs: [] };
+    const counters: Counters = { callbacks: 0, logBytes: 0, logs: [] };
     const capability: Capability = Object.freeze({
       token: randomBytes(32).toString("base64url"),
       binding: Object.freeze({
@@ -211,7 +267,7 @@ export const make = Effect.gen(function* () {
       attempt: Object.freeze({ ...input.attempt }),
       kind: input.kind,
       reauthorize: input.reauthorize,
-      tree: input.tree ?? { bytes: 0 },
+      tree: { bytes: 0 },
       counters,
       logs: counters.logs,
       refusals: []
@@ -221,7 +277,10 @@ export const make = Effect.gen(function* () {
       gate: Semaphore.makeUnsafe(outstanding),
       ended: yield* Deferred.make<EndReason>(),
       fibers: new Set(),
-      resources: new Set()
+      resources: new Set(),
+      effectsStarted: false,
+      effectsPending: 0,
+      effectsUncertain: false
     };
     entries.set(capability.token, entry);
     const remaining = capability.attempt.deadline - (yield* Clock.currentTimeMillis);
@@ -244,6 +303,25 @@ export const make = Effect.gen(function* () {
     if (entry.reason !== undefined)
       retained.cancellation = yield* resource.cancel.pipe(Effect.forkIn(scope));
   });
+  const performEffect: InvocationCapabilities["Service"]["performEffect"] = (capability, effect) =>
+    Effect.gen(function* () {
+      yield* resolve(capability.token, capability.attempt);
+      const entry = entries.get(capability.token)!;
+      entry.effectsStarted = true;
+      entry.effectsPending++;
+      return yield* effect.pipe(
+        Effect.onExit((exit) =>
+          Effect.sync(() => {
+            entry.effectsPending--;
+            if (
+              Exit.isFailure(exit) &&
+              (Cause.hasInterrupts(exit.cause) || Cause.hasDies(exit.cause))
+            )
+              entry.effectsUncertain = true;
+          })
+        )
+      );
+    });
   const execute = <A, E, R>(capability: Capability, effect: Effect.Effect<A, E, R>) =>
     Effect.gen(function* () {
       yield* resolve(capability.token, capability.attempt);
@@ -286,7 +364,11 @@ export const make = Effect.gen(function* () {
         )
       )
     ]).pipe(Effect.timeoutOption(Math.max(0, bound)));
-    let settled = Option.isSome(result);
+    let settled =
+      Option.isSome(result) &&
+      entry.effectsPending === 0 &&
+      !entry.effectsUncertain &&
+      (entry.reason === "returned" || !entry.effectsStarted);
     for (const retained of entry.resources) {
       if (!resourceSettled(retained)) {
         settled = false;
@@ -344,7 +426,18 @@ export const make = Effect.gen(function* () {
         if (tombstone.expiresAt <= now) tombstones.delete(token);
     }
   }).pipe(Effect.forkIn(scope));
-  return InvocationCapabilities.of({ issue, resolve, end, settle, execute, retain });
+  return InvocationCapabilities.of({
+    issue,
+    resolve,
+    end,
+    settle,
+    execute,
+    retain,
+    performEffect,
+    chargeCallback,
+    chargeBytes,
+    rememberRefusal
+  });
 });
 
 export const layer = Layer.effect(InvocationCapabilities, make);

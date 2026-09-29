@@ -8,7 +8,7 @@ Signed-in members find company patches at `/` and open their cards at `/patches/
 
 Agents discover company tools and data sources through `patchy list` and its patch, primitive and connection drill-downs. Description edits pull back into the repo at refresh, dev start and publish. Clerk sign-in, create-or-join, company administration, company/public sharing and machine login, logout and revocation are built. Postgres connections have browser administration, immutable schema snapshots and generated relation clients. Portal, Company, Connections and Your machines share one app shell and component set.
 
-Hosted runtimes and patch identity, narrower sharing, shared file stores, other integrations, billing, source recovery and the remaining company lifecycle are future work.
+Tier 2 invocation admission, patch identity for own-resource callbacks, viewer reauthorization and bounded settlement are implemented behind the isolated local execution path. Hosted tier 2 publication and fleet wiring, narrower sharing, shared file stores, other integrations, billing, source recovery and the remaining company lifecycle remain future work.
 
 ## Patches
 
@@ -519,7 +519,7 @@ A machine token is **the user's**, shared by every agent using that machine's sa
 - **Agent** — software acting for a user, with that user's machine token. Never a who, always a how; it is indistinguishable from its user except by the token's machine name.
 - **Member**, **admin** — the two roles a user has in the company.
 - **Owner**: the user a patch belongs to and the only user who publishes its code. Same-company admin actors may perform the other management acts; admitted viewers may write its data.
-- **Viewer** — the active signed-in user, company and role that Auth establishes for a first-party page or a company patch's door, without a machine credential. Tier 1 patch code acts within that viewer's permissions; a public runtime has no such acting identity, even for a signed-in reader.
+- **Viewer** — the active signed-in user, company and role that Auth establishes for a first-party page or a company patch's door, without a machine credential. Tier 1 patch code acts within that viewer's permissions. Tier 2 retains the initiating viewer and rechecks their live session and membership for company resources; its own-resource callbacks act as the patch. Public documents have no company runtime authority, even for a signed-in reader.
 - **Operator** — Patchy, running the platform. Platform powers only, never a role inside a company, and never the word for whoever drives the CLI — that is the agent, the CLI's primary **driver**.
 
 ## Primitives
@@ -881,4 +881,4 @@ against real Postgres in CI, not promised by the local dev loop.
 
 ### The edges
 
-A tier 2 patch's own **patch identity** against a shared connection is sketched under [Runtime tiers](#tier-2--hosted); its mechanics are settled when tier 2 is designed. Patch-owned shared tables already provide read-only access across declaring patches; company-owned tables and broader composition remain undesigned.
+A tier 2 invocation acts as the patch for its own tables and files, and as the initiating viewer for shared tables, company connections and members. The latter require live viewer reauthorization; patch identity does not grant shared-connection access. Patch-owned shared tables already provide read-only access across declaring patches; company-owned tables and broader composition remain undesigned.

@@ -38,7 +38,7 @@ export const migrations: Migrations = {
       ALTER COLUMN effective_principal SET NOT NULL,
       DROP CONSTRAINT runtime_calls_outcome_check,
       ADD CONSTRAINT runtime_calls_outcome_check
-        CHECK (outcome IN ('pending', 'success', 'handler_error', 'failure'))`,
+        CHECK (outcome IN ('pending', 'unknown', 'success', 'handler_error', 'failure'))`,
     `CREATE INDEX runtime_calls_invocation
       ON runtime_calls (company_id, invocation_id, at, id)
       WHERE invocation_id IS NOT NULL`,

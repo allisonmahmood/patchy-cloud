@@ -3,7 +3,7 @@ import { Buffer } from "node:buffer";
 import { createServer } from "node:http";
 import { isIP } from "node:net";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
-import { limitRefusal, type RuntimeFailure } from "@patchy/api";
+import { limitRefusal, RuntimeFailure } from "@patchy/api";
 import * as GuestProtocol from "@patchy/api/guest";
 import { ContractLimits } from "@patchy/limits";
 import * as Effect from "effect/Effect";
@@ -37,9 +37,33 @@ export class ListenerUnavailable extends Schema.TaggedError<ListenerUnavailable>
     return `Callback listener could not listen on ${this.host}:${this.port}.`;
   }
 }
-class RequestRefused extends Schema.TaggedError<RequestRefused>()("CallbackRequestRefused", {
-  reason: Schema.Literals(["malformed", "bytes", "file_bytes"])
-}) {}
+class MalformedCallback extends Schema.TaggedError<MalformedCallback>()("MalformedCallback", {
+  cause: Schema.Defect()
+}) {
+  override get message() {
+    return "Malformed callback request.";
+  }
+}
+class CallbackFileTooLarge extends Schema.TaggedError<CallbackFileTooLarge>()(
+  "CallbackFileTooLarge",
+  {
+    maxBytes: Schema.Number
+  }
+) {
+  override get message() {
+    return "The callback file body exceeds its byte limit.";
+  }
+}
+class CallbackBudgetExceeded extends Schema.TaggedError<CallbackBudgetExceeded>()(
+  "CallbackBudgetExceeded",
+  {
+    failure: RuntimeFailure
+  }
+) {
+  override get message() {
+    return this.failure.error;
+  }
+}
 export interface Options {
   readonly host?: string;
   readonly port?: number;
@@ -52,7 +76,6 @@ const JsonCallback = Schema.Struct({
   args: GuestProtocol.Callback.fields.args
 });
 const decodeCallback = Schema.decodeUnknownEffect(Schema.fromJsonString(JsonCallback), strict);
-const isCapabilityRefused = Schema.is(InvocationCapabilities.CapabilityRefused);
 const decodeIdentity = Schema.decodeUnknownEffect(
   Schema.Struct({
     invocationId: GuestProtocol.Attempt.fields.invocationId,
@@ -96,7 +119,6 @@ export const make = Effect.gen(function* () {
   const capabilities = yield* InvocationCapabilities.InvocationCapabilities;
   const byteLimit = yield* ContractLimits.get("tier2.callbacks.bytes");
   const fileLimit = yield* ContractLimits.get("tier2.callbacks.fileBytes");
-  const countLimit = yield* ContractLimits.get("tier2.callbacks.count");
   return Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
     if (request.method !== "POST" || request.url.split("?")[0] !== "/callback")
@@ -121,110 +143,96 @@ export const make = Effect.gen(function* () {
     const resolved = yield* Effect.result(capabilities.resolve(token, identity.success));
     if (resolved._tag === "Failure") return json(resolved.failure.failure);
     const capability = resolved.success;
-    capability.counters.callbacks++;
-    if (capability.counters.callbacks > countLimit) {
-      const failure: RuntimeFailure = {
-        ok: false,
-        source: "patchy",
-        error: "The invocation callback count is exhausted.",
-        ...limitRefusal("tier2.callbacks.count", countLimit)
-      };
-      if (capability.refusals.length <= countLimit) capability.refusals.push(failure);
-      return json(failure);
-    }
+    const countRefusal = capabilities.chargeCallback(capability);
+    if (countRefusal !== undefined) return json(countRefusal);
     const raw = request.headers["x-patchy-callback"];
     const available = Math.max(0, byteLimit - capability.tree.bytes);
     const maxBytes = raw === undefined ? available : Math.min(fileLimit, available);
-    const overflow = () =>
-      new RequestRefused({
-        reason: raw !== undefined && fileLimit <= available ? "file_bytes" : "bytes"
-      });
-    const result = yield* Effect.result(
-      capabilities
-        .execute(
-          capability,
-          Effect.gen(function* () {
-            if (raw !== undefined) {
-              const metadataBytes = Buffer.byteLength(raw);
-              if (capability.tree.bytes + metadataBytes > byteLimit)
-                return yield* new RequestRefused({ reason: "bytes" });
-              capability.tree.bytes += metadataBytes;
-            }
-            if (Number(request.headers["content-length"]) > maxBytes) return yield* overflow();
-            const chunks: Uint8Array[] = [];
-            let size = 0;
-            // Pull in the request scope so refusal is sent before closing the unread socket.
-            const pull = yield* Stream.toPull(request.stream);
-            while (true) {
-              const batch = yield* pull.pipe(
-                Pull.catchDone(() => Effect.void),
-                Effect.mapError(() => new RequestRefused({ reason: "malformed" }))
-              );
-              if (batch === undefined) break;
-              for (const chunk of batch) {
-                size += chunk.byteLength;
-                if (size > maxBytes) return yield* overflow();
-                if (capability.tree.bytes + chunk.byteLength > byteLimit)
-                  return yield* new RequestRefused({ reason: "bytes" });
-                capability.tree.bytes += chunk.byteLength;
-                chunks.push(chunk);
-              }
-            }
-            const bytes = new Uint8Array(size);
-            let offset = 0;
-            for (const chunk of chunks) {
-              bytes.set(chunk, offset);
-              offset += chunk.byteLength;
-            }
-            const text =
-              raw === undefined
-                ? new TextDecoder().decode(bytes)
-                : yield* Effect.try({
-                    try: () => decodeURIComponent(raw),
-                    catch: () => new RequestRefused({ reason: "malformed" })
-                  });
-            const input = yield* decodeCallback(text).pipe(
-              Effect.mapError(() => new RequestRefused({ reason: "malformed" }))
+    const overflow = (bytes: number) =>
+      raw !== undefined && fileLimit <= available
+        ? new CallbackFileTooLarge({ maxBytes: fileLimit })
+        : new CallbackBudgetExceeded({ failure: capabilities.chargeBytes(capability, bytes)! });
+    const reply = yield* capabilities
+      .execute(
+        capability,
+        Effect.gen(function* () {
+          if (raw !== undefined) {
+            const metadataBytes = Buffer.byteLength(raw);
+            const failure = capabilities.chargeBytes(capability, metadataBytes);
+            if (failure !== undefined) return yield* new CallbackBudgetExceeded({ failure });
+          }
+          const length = Number(request.headers["content-length"]);
+          if (length > maxBytes) return yield* overflow(length);
+          const chunks: Uint8Array[] = [];
+          let size = 0;
+          // Pull in the request scope so refusal is sent before closing the unread socket.
+          const pull = yield* Stream.toPull(request.stream);
+          while (true) {
+            const batch = yield* pull.pipe(
+              Pull.catchDone(() => Effect.void),
+              Effect.mapError((cause) => new MalformedCallback({ cause }))
             );
-            const callback: GuestProtocol.Callback =
-              raw === undefined
-                ? input
-                : {
-                    ...input,
-                    body: {
-                      bytes,
-                      contentType: request.headers["content-type"] ?? "application/octet-stream"
-                    }
-                  };
-            return callback;
-          })
-        )
-        .pipe(
-          Effect.flatMap((callback) => gateway.callback(token, identity.success, callback, true))
-        )
-    );
-    const reply: GuestProtocol.CallbackReply =
-      result._tag === "Success"
-        ? result.success
-        : isCapabilityRefused(result.failure)
-          ? result.failure.failure
-          : result.failure.reason === "malformed"
-            ? invalid
-            : {
-                ok: false,
-                source: "patchy",
-                error: "The callback body exceeds its byte limit.",
-                ...(result.failure.reason === "file_bytes"
-                  ? limitRefusal("tier2.callbacks.fileBytes", fileLimit)
-                  : limitRefusal("tier2.callbacks.bytes", byteLimit))
-              };
-    if (
-      result._tag === "Failure" &&
-      !reply.ok &&
-      reply.source === "patchy" &&
-      capability.refusals.length <= countLimit
-    )
-      capability.refusals.push(reply);
+            if (batch === undefined) break;
+            for (const chunk of batch) {
+              size += chunk.byteLength;
+              if (size > maxBytes) return yield* overflow(chunk.byteLength);
+              const failure = capabilities.chargeBytes(capability, chunk.byteLength);
+              if (failure !== undefined) return yield* new CallbackBudgetExceeded({ failure });
+              chunks.push(chunk);
+            }
+          }
+          const bytes = new Uint8Array(size);
+          let offset = 0;
+          for (const chunk of chunks) {
+            bytes.set(chunk, offset);
+            offset += chunk.byteLength;
+          }
+          const text =
+            raw === undefined
+              ? new TextDecoder().decode(bytes)
+              : yield* Effect.try({
+                  try: () => decodeURIComponent(raw),
+                  catch: (cause) => new MalformedCallback({ cause })
+                });
+          const input = yield* decodeCallback(text).pipe(
+            Effect.mapError((cause) => new MalformedCallback({ cause }))
+          );
+          const callback: GuestProtocol.Callback =
+            raw === undefined
+              ? input
+              : {
+                  ...input,
+                  body: {
+                    bytes,
+                    contentType: request.headers["content-type"] ?? "application/octet-stream"
+                  }
+                };
+          return callback;
+        })
+      )
+      .pipe(
+        Effect.flatMap((callback) => gateway.callback(token, identity.success, callback, true)),
+        Effect.catchTags({
+          CapabilityRefused: (error) =>
+            Effect.succeed(capabilities.rememberRefusal(capability, error.failure, 403)),
+          MalformedCallback: () =>
+            Effect.succeed(capabilities.rememberRefusal(capability, invalid, 400)),
+          CallbackFileTooLarge: (error) =>
+            Effect.succeed(
+              capabilities.rememberRefusal(
+                capability,
+                {
+                  ok: false,
+                  source: "patchy",
+                  error: error.message,
+                  ...limitRefusal("tier2.callbacks.fileBytes", error.maxBytes)
+                },
+                413
+              )
+            ),
+          CallbackBudgetExceeded: (error) => Effect.succeed(error.failure)
+        })
+      );
     if (reply.ok && "body" in reply)
       return HttpServerResponse.uint8Array(reply.body.bytes, {
         contentType: reply.body.contentType,

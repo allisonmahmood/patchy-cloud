@@ -9,6 +9,7 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -16,6 +17,20 @@ import * as Binding from "./Binding.js";
 import * as InvocationCapabilities from "./InvocationCapabilities.js";
 import * as Runtime from "./Runtime.js";
 import * as RuntimeLog from "./RuntimeLog.js";
+
+export class CallbackJournalTimeout extends Schema.TaggedError<CallbackJournalTimeout>()(
+  "CallbackJournalTimeout",
+  {
+    correlationId: Schema.String,
+    deadline: Schema.Number
+  }
+) {
+  readonly code = "unknown_outcome" as const;
+  readonly status = 503;
+  override get message() {
+    return "The callback outcome could not be recorded before cleanup ended.";
+  }
+}
 
 const strict = { onExcessProperty: "error" } as const;
 const decodeCallback = Schema.decodeUnknownEffect(GuestProtocol.Callback, strict);
@@ -73,11 +88,7 @@ const refused = (
   error: string
 ): RuntimeFailure => ({ ok: false, source: "patchy", code, error });
 const bounded = (
-  id:
-    | "tier2.callbacks.count"
-    | "tier2.callbacks.bytes"
-    | "tier2.callbacks.fileBytes"
-    | "tier2.log.bytes",
+  id: "tier2.callbacks.fileBytes" | "tier2.log.bytes",
   value: number
 ): RuntimeFailure => ({
   ok: false,
@@ -105,8 +116,7 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
   const capabilities = yield* InvocationCapabilities.InvocationCapabilities;
   const log = yield* RuntimeLog.RuntimeLog;
   const limits = yield* Effect.all({
-    count: ContractLimits.get("tier2.callbacks.count"),
-    bytes: ContractLimits.get("tier2.callbacks.bytes"),
+    cleanup: ContractLimits.get("tier2.settlement.cleanup"),
     fileBytes: ContractLimits.get("tier2.callbacks.fileBytes"),
     logBytes: ContractLimits.get("tier2.log.bytes"),
     mutationDeadline: ContractLimits.get("runtime.mutation.deadline"),
@@ -121,58 +131,59 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
     const resolved = yield* Effect.result(capabilities.resolve(token, attempt));
     if (resolved._tag === "Failure") return resolved.failure.failure;
     const capability = resolved.success;
-    const remember = (reply: GuestProtocol.CallbackReply): GuestProtocol.CallbackReply => {
-      if (!reply.ok && reply.source === "patchy") {
-        // Beyond the count cap every reply is the same refusal. Retain it only once.
-        if (capability.refusals.length <= limits.count) capability.refusals.push(reply);
-      }
-      return reply;
-    };
+    const remember = (
+      reply: GuestProtocol.CallbackReply,
+      status: number
+    ): GuestProtocol.CallbackReply =>
+      !reply.ok && reply.source === "patchy"
+        ? capabilities.rememberRefusal(capability, reply, status)
+        : reply;
     if (!transportCharged) {
-      capability.counters.callbacks++;
-      if (capability.counters.callbacks > limits.count)
-        return remember(bounded("tier2.callbacks.count", limits.count));
+      const refusal = capabilities.chargeCallback(capability);
+      if (refusal !== undefined) return refusal;
     }
     const decoded = yield* Effect.result(decodeCallback(input));
     if (decoded._tag === "Failure")
-      return remember(refused("invalid_request", "Malformed callback."));
+      return remember(refused("invalid_request", "Malformed callback."), 400);
     const request = decoded.success;
     const requestBytes = transportCharged
       ? 0
       : Buffer.byteLength(encodeJson({ op: request.op, args: request.args })) +
         (request.body?.bytes.byteLength ?? 0);
     if (request.body !== undefined && request.body.bytes.byteLength > limits.fileBytes)
-      return remember(bounded("tier2.callbacks.fileBytes", limits.fileBytes));
-    if (capability.tree.bytes + requestBytes > limits.bytes)
-      return remember(bounded("tier2.callbacks.bytes", limits.bytes));
-    capability.tree.bytes += requestBytes;
+      return remember(bounded("tier2.callbacks.fileBytes", limits.fileBytes), 413);
+    const bytesRefusal = capabilities.chargeBytes(capability, requestBytes);
+    if (bytesRefusal !== undefined) return bytesRefusal;
     if (!allowed(capability.kind, request.op))
       return remember(
-        refused("access_denied", "The handler kind cannot use this callback operation.")
+        refused("access_denied", "The handler kind cannot use this callback operation."),
+        403
       );
     const operation = Object.hasOwn(handlers, request.op) ? handlers[request.op] : undefined;
     if (request.op !== "log" && operation === undefined)
-      return remember(refused("invalid_request", "Unknown callback operation."));
+      return remember(refused("invalid_request", "Unknown callback operation."), 400);
     if (capability.kind === "query" && operation?.transport !== undefined)
-      return remember(refused("access_denied", "Queries cannot transfer file bytes."));
+      return remember(refused("access_denied", "Queries cannot transfer file bytes."), 403);
     const run = Effect.gen(function* (): Effect.fn.Return<
       GuestProtocol.CallbackReply,
       Runtime.RuntimeError | InvocationCapabilities.CapabilityRefused
     > {
       if (request.op === "log") {
         if (request.body !== undefined)
-          return refused("invalid_request", "Log callbacks require JSON.");
+          return remember(refused("invalid_request", "Log callbacks require JSON."), 400);
         const line = yield* decodeLog(request.args).pipe(
           Effect.mapError((cause) => new Runtime.InvalidRequest({ cause }))
         );
         const bytes = Buffer.byteLength(encodeJson(line));
         if (capability.counters.logBytes + bytes > limits.logBytes)
-          return bounded("tier2.log.bytes", limits.logBytes);
+          return remember(bounded("tier2.log.bytes", limits.logBytes), 429);
         capability.counters.logBytes += bytes;
         capability.logs.push(line);
         return { ok: true, value: null };
       }
       const handler = operation!;
+      const perform = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+        handler.kind === "read" ? effect : capabilities.performEffect(capability, effect);
       const now = yield* Clock.currentTimeMillis;
       const deadlineMs = Math.max(
         0,
@@ -212,23 +223,25 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
         if (handler.transport === "bytes-put") {
           if (request.body === undefined) return yield* new Runtime.InvalidRequest({});
           const args = { ...request.args, contentType: request.body.contentType };
-          yield* handler
-            .run(args, request.body.bytes)
-            .pipe(Effect.provideService(Binding.Binding, binding));
+          yield* perform(
+            handler
+              .run(args, request.body.bytes)
+              .pipe(Effect.provideService(Binding.Binding, binding))
+          );
           return { ok: true, value: null };
         }
         if (request.body !== undefined) return yield* new Runtime.InvalidRequest({});
         if (handler.transport === "bytes-get") {
-          const body = yield* handler
-            .run(request.args)
-            .pipe(Effect.provideService(Binding.Binding, binding));
+          const body = yield* perform(
+            handler.run(request.args).pipe(Effect.provideService(Binding.Binding, binding))
+          );
           if (body.bytes.byteLength > limits.fileBytes)
-            return bounded("tier2.callbacks.fileBytes", limits.fileBytes);
+            return remember(bounded("tier2.callbacks.fileBytes", limits.fileBytes), 413);
           return { ok: true, body };
         }
-        const value = yield* handler
-          .run(request.args)
-          .pipe(Effect.provideService(Binding.Binding, binding));
+        const value = yield* perform(
+          handler.run(request.args).pipe(Effect.provideService(Binding.Binding, binding))
+        );
         return {
           ok: true,
           value: yield* decodeJson(value).pipe(
@@ -272,51 +285,88 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
           deadlineMs
         })
         .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
-      const result = yield* Effect.exit(withDeadline);
-      if (Exit.isFailure(result) && Cause.hasInterrupts(result.cause))
-        return yield* Effect.failCause(result.cause);
-      const failure = Exit.isFailure(result) ? Cause.findErrorOption(result.cause) : Option.none();
-      const reply = Exit.isSuccess(result) ? result.value : undefined;
-      yield* log
-        .finish({
-          correlationId: binding.correlationId,
-          outcome: reply?.ok === true ? "success" : "failure",
-          outcomeCode:
-            reply !== undefined && !reply.ok
-              ? reply.code
-              : Option.isSome(failure)
-                ? isCapabilityRefused(failure.value)
-                  ? "access_denied"
-                  : failure.value.code
-                : reply?.ok
-                  ? null
-                  : "source_unavailable",
-          durationMs: (yield* Clock.currentTimeMillis) - now,
-          rowCount: reply?.ok && "value" in reply ? (handler.rowCount?.(reply.value) ?? null) : null
+      return yield* Effect.uninterruptibleMask((restore) =>
+        Effect.gen(function* () {
+          const result = yield* Effect.exit(restore(withDeadline));
+          const failure = Exit.isFailure(result)
+            ? Cause.findErrorOption(result.cause)
+            : Option.none();
+          const reply = Exit.isSuccess(result) ? result.value : undefined;
+          const uncertain =
+            Exit.isFailure(result) &&
+            (Cause.hasInterrupts(result.cause) ||
+              Cause.hasDies(result.cause) ||
+              (Option.isSome(failure) &&
+                !isCapabilityRefused(failure.value) &&
+                (failure.value.code === "unknown_outcome" || failure.value.code === "timeout")));
+          const cleanupDeadline =
+            Math.min(now + deadlineMs, capability.attempt.deadline) + limits.cleanup;
+          const remaining = Math.max(0, cleanupDeadline - (yield* Clock.currentTimeMillis));
+          if (remaining === 0)
+            return yield* new CallbackJournalTimeout({
+              correlationId: binding.correlationId,
+              deadline: cleanupDeadline
+            });
+          const journal = yield* log
+            .finish({
+              correlationId: binding.correlationId,
+              outcome: uncertain ? "unknown" : reply?.ok === true ? "success" : "failure",
+              outcomeCode: uncertain
+                ? "unknown_outcome"
+                : reply !== undefined && !reply.ok
+                  ? reply.code
+                  : Option.isSome(failure)
+                    ? isCapabilityRefused(failure.value)
+                      ? "access_denied"
+                      : failure.value.code
+                    : reply?.ok
+                      ? null
+                      : "source_unavailable",
+              durationMs: (yield* Clock.currentTimeMillis) - now,
+              rowCount:
+                reply?.ok && "value" in reply ? (handler.rowCount?.(reply.value) ?? null) : null
+            })
+            .pipe(Effect.interruptible, Effect.forkDetach);
+          // Await only the fiber handle: a stuck SQL finalizer must not extend cleanup.
+          const recorded = yield* Fiber.await(journal).pipe(Effect.timeoutOption(remaining));
+          if (Option.isNone(recorded)) {
+            journal.interruptUnsafe();
+            return yield* new CallbackJournalTimeout({
+              correlationId: binding.correlationId,
+              deadline: cleanupDeadline
+            });
+          }
+          yield* recorded.value.pipe(
+            Effect.mapError(
+              (cause) => new Runtime.UnknownOutcome({ cause, correlationId: binding.correlationId })
+            )
+          );
+          if (Exit.isFailure(result)) {
+            if (Option.isSome(failure) && !isCapabilityRefused(failure.value))
+              return remember(
+                { ...Runtime.toFailure(failure.value), correlationId: binding.correlationId },
+                failure.value.status
+              );
+            return yield* Effect.failCause(result.cause);
+          }
+          return result.value;
         })
-        .pipe(
-          Effect.mapError(
-            (cause) => new Runtime.UnknownOutcome({ cause, correlationId: binding.correlationId })
-          )
-        );
-      if (Exit.isFailure(result)) {
-        if (Option.isSome(failure) && !isCapabilityRefused(failure.value))
-          return { ...Runtime.toFailure(failure.value), correlationId: binding.correlationId };
-        return yield* Effect.failCause(result.cause);
-      }
-      return result.value;
+      );
     });
     const result = yield* Effect.exit(capabilities.execute(capability, run));
     let reply: GuestProtocol.CallbackReply;
+    let status = 200;
     if (Exit.isSuccess(result)) reply = result.value;
     else {
       const error = Cause.findErrorOption(result.cause);
-      if (Option.isSome(error))
+      if (Option.isSome(error)) {
+        status = isCapabilityRefused(error.value) ? 403 : error.value.status;
         reply = isCapabilityRefused(error.value)
           ? error.value.failure
           : Runtime.toFailure(error.value);
-      else {
+      } else {
         const live = yield* Effect.result(capabilities.resolve(token, attempt));
+        status = live._tag === "Failure" ? 403 : 503;
         reply =
           live._tag === "Failure"
             ? live.failure.failure
@@ -327,10 +377,9 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
       reply.ok && "body" in reply
         ? reply.body.bytes.byteLength
         : Buffer.byteLength(encodeJson(reply));
-    if (capability.tree.bytes + responseBytes > limits.bytes)
-      return remember(bounded("tier2.callbacks.bytes", limits.bytes));
-    capability.tree.bytes += responseBytes;
-    return remember(reply);
+    const responseRefusal = capabilities.chargeBytes(capability, responseBytes);
+    if (responseRefusal !== undefined) return responseRefusal;
+    return remember(reply, status);
   });
   return CallbackGateway.of({ callback });
 });

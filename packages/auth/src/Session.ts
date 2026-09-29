@@ -2,7 +2,9 @@
 import { createHash, createPublicKey } from "node:crypto";
 import { isIP } from "node:net";
 import { createClerkClient } from "@clerk/backend";
+import { isClerkAPIResponseError } from "@clerk/backend/errors";
 import { constants, createClerkRequest } from "@clerk/backend/internal";
+import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -13,7 +15,7 @@ import * as Schema from "effect/Schema";
 import * as SchemaGetter from "effect/SchemaGetter";
 
 export class SessionError extends Schema.TaggedError<SessionError>()("SessionError", {
-  operation: Schema.Literals(["configuration", "authenticate", "revoke"]),
+  operation: Schema.Literals(["configuration", "authenticate", "recheck", "revoke"]),
   setting: Schema.optional(Schema.String),
   cause: Schema.optional(Schema.Defect())
 }) {
@@ -92,6 +94,11 @@ export const config = Config.all({
   authorizedParty: Config.option(Config.schema(Origin, "CLERK_AUTHORIZED_PARTIES"))
 });
 
+/** Backend transport override for offline tests; browser input never selects this URL. */
+export const backendApiUrl = Context.Reference<string>("@patchy/auth/Session/backendApiUrl", {
+  defaultValue: () => "https://api.clerk.com"
+});
+
 export class Session extends Context.Service<
   Session,
   {
@@ -99,6 +106,10 @@ export class Session extends Context.Service<
     readonly publishableKey: string;
     readonly frontendApiHost: string;
     readonly authenticate: (request: Request) => Effect.Effect<SessionResult, SessionError>;
+    readonly isActive: (identity: {
+      readonly sid: string;
+      readonly sub: string;
+    }) => Effect.Effect<boolean, SessionError>;
     readonly revoke: (sid: string) => Effect.Effect<void, SessionError>;
     readonly signOutCookies: () => ReadonlyArray<string>;
   }
@@ -155,6 +166,7 @@ export const make = Effect.gen(function* () {
     onSome: (url) => [url.origin]
   });
   const client = createClerkClient({
+    apiUrl: yield* backendApiUrl,
     publishableKey,
     secretKey,
     jwtKey,
@@ -300,6 +312,32 @@ export const make = Effect.gen(function* () {
     return { status: "signed-in", claims: claims.value, cookies };
   });
 
+  const isActive = Effect.fn("Session.isActive")(function* (identity: {
+    readonly sid: string;
+    readonly sub: string;
+  }) {
+    const live = yield* Effect.tryPromise({
+      try: () => client.sessions.getSession(identity.sid),
+      catch: (cause) => new SessionError({ operation: "recheck", cause })
+    }).pipe(
+      Effect.catchTags({
+        SessionError: (error) =>
+          isClerkAPIResponseError(error.cause) && error.cause.status === 404
+            ? Effect.succeed(null)
+            : Effect.fail(error)
+      })
+    );
+    const now = yield* Clock.currentTimeMillis;
+    return (
+      live !== null &&
+      live.id === identity.sid &&
+      live.userId === identity.sub &&
+      live.status === "active" &&
+      live.expireAt > now &&
+      live.abandonAt > now
+    );
+  });
+
   const revoke = Effect.fn("Session.revoke")(function* (sid: string) {
     yield* Effect.tryPromise({
       try: () => client.sessions.revokeSession(sid),
@@ -311,6 +349,7 @@ export const make = Effect.gen(function* () {
     publishableKey,
     frontendApiHost,
     authenticate,
+    isActive,
     revoke,
     signOutCookies: () => clearedCookies
   });

@@ -894,9 +894,11 @@ Patches adds `0008_patches_lifecycle`, with lifecycle and actor stamps, descript
 and visit counts. Limits adds `0009_limits_overrides`, with company overrides,
 configuration revisions and attributed change history. Patches adds
 `0010_patches_lifecycle_revision`, the durable counter for source publishes,
-sharing and lifecycle changes. Published seed patches stay live until retired or
-deleted; only deletion starts their 30-day recovery window. Token and invitation
-expiry remain separate.
+sharing and lifecycle changes. Runtime adds `0011_runtime_invocations`, with
+invocation and query-rollup records, callback invocation/principal attribution
+and explicit unknown operation outcomes. Published seed patches stay live until
+retired or deleted; only deletion starts their 30-day recovery window. Token and
+invitation expiry remain separate.
 Allocate migration ids monotonically in landing order:
 Effect's Migrator applies only ids above the ledger's highest applied id, so a
 later migration cannot fill a lower-numbered gap. The three migrator spreads are `apps/server/src/Server.ts`,

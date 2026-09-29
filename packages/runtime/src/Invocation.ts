@@ -103,9 +103,9 @@ export class ExecutorBusy extends Schema.TaggedError<ExecutorBusy>()("ExecutorBu
 }
 /** A guest may relay only the exact refusal its host issued to this attempt. */
 export class CallbackRefusal extends Schema.TaggedError<CallbackRefusal>()("CallbackRefusal", {
-  failure: RuntimeFailure
+  failure: RuntimeFailure,
+  status: Schema.Number
 }) {
-  readonly status = 400;
   get code() {
     return this.failure.code;
   }
@@ -154,6 +154,21 @@ const compile = (descriptor: HandlerDescriptor, manifest: typeof Manifest.Type) 
   result: Schema.decodeUnknownEffect(handlerValueSchema(descriptor.result, manifest.tables), {
     onExcessProperty: "error"
   })
+});
+
+// Only await the fiber, never its cancellation finalizers. A stuck SQL driver must
+// not extend the invocation's lifetime or keep its admission slot.
+const awaitUntil = Effect.fnUntraced(function* <A, E>(
+  effect: Effect.Effect<A, E>,
+  deadline: number
+) {
+  const remaining = deadline - (yield* Clock.currentTimeMillis);
+  if (remaining <= 0) return Option.none<Exit.Exit<A, E>>();
+  const fiber = yield* Effect.forkDetach(Effect.interruptible(effect));
+  return yield* Fiber.await(fiber).pipe(
+    Effect.timeoutOption(remaining),
+    Effect.ensuring(Effect.sync(() => fiber.interruptUnsafe()))
+  );
 });
 
 export class Invocation extends Context.Service<
@@ -262,12 +277,18 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
         }
         const startedAt = yield* Clock.currentTimeMillis;
         const deadline = startedAt + bounds[descriptor.kind];
+        const settlementDeadline = deadline + bounds.cleanup;
         const id = newInternalId("inv");
         const attemptId = newInternalId("attempt");
         let replyDelivered = true;
         let capability: InvocationCapabilities.Capability | undefined;
+        let execution:
+          | Fiber.Fiber<GuestProtocol.InvokeReply, Runtime.RuntimeError | Executor.ExecutionError>
+          | undefined;
+        let logStarted = false;
         let guestMs = 0;
         let resultBytes = 0;
+        let logs: Array<typeof Schema.Json.Type> | undefined;
         const begin = {
           id,
           companyId: binding.companyId,
@@ -282,8 +303,47 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
           deadline,
           argsBytes
         };
+        const finish = Effect.fnUntraced(function* (
+          outcome: InvocationLog.Finish["outcome"],
+          outcomeCode: string | null,
+          until: number
+        ) {
+          const settledAt = yield* Clock.currentTimeMillis;
+          const written = yield* awaitUntil(
+            log.finish({
+              id,
+              outcome,
+              outcomeCode,
+              settledAt,
+              durationMs: settledAt - startedAt,
+              guestMs,
+              dbMs: 0,
+              callbacks: capability?.counters.callbacks ?? 0,
+              resultBytes,
+              attempts: 1,
+              logLines: capability?.logs ?? logs ?? [],
+              replyDelivered
+            }),
+            until
+          );
+          if (Option.isNone(written))
+            return yield* new UnsettledInvocation({ correlationId: binding.correlationId });
+          return yield* written.value.pipe(
+            Effect.mapError(
+              (cause) => new Runtime.UnknownOutcome({ cause, correlationId: binding.correlationId })
+            )
+          );
+        });
         const run = Effect.gen(function* () {
           const dispatch = Effect.gen(function* () {
+            if (descriptor.kind !== "query") {
+              yield* log
+                .begin(begin)
+                .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
+              logStarted = true;
+            }
+            if ((yield* Clock.currentTimeMillis) >= deadline)
+              return yield* new HandlerTimeout({ correlationId: binding.correlationId });
             const bundle = yield* bundles.load(binding);
             if (
               bundle.companyId !== binding.companyId ||
@@ -326,11 +386,7 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
               callback: { url: options.callbackUrl, capability: capability.token }
             });
           });
-          if (descriptor.kind !== "query")
-            yield* log
-              .begin(begin)
-              .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
-          const execution = yield* Effect.forkIn(dispatch, scope);
+          execution = yield* Effect.forkDetach(Effect.interruptible(dispatch));
           const raced = yield* Fiber.await(execution).pipe(
             Effect.map((exit) => ({ type: "completed" as const, exit })),
             Effect.raceFirst(
@@ -360,10 +416,7 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
                   reason,
                   Math.max(
                     0,
-                    Math.min(
-                      bounds.cleanup,
-                      deadline + bounds.cleanup - (yield* Clock.currentTimeMillis)
-                    )
+                    Math.min(bounds.cleanup, settlementDeadline - (yield* Clock.currentTimeMillis))
                   )
                 );
           const outcome = yield* Effect.exit(
@@ -407,10 +460,9 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
                     return yield* new HandlerFailed({ correlationId: binding.correlationId });
                 } else {
                   const trusted = capability?.refusals.find(
-                    (failure) => canonicalArgs(failure) === canonicalArgs(reply)
+                    (entry) => canonicalArgs(entry.failure) === canonicalArgs(reply)
                   );
-                  if (trusted !== undefined)
-                    return yield* new CallbackRefusal({ failure: trusted });
+                  if (trusted !== undefined) return yield* new CallbackRefusal(trusted);
                   return yield* new HandlerFailed({ correlationId: binding.correlationId });
                 }
               }
@@ -441,7 +493,7 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
             : Option.none();
           const outcomeCode =
             Option.isSome(failure) && "code" in failure.value ? failure.value.code : null;
-          const logs = capability?.logs ?? [];
+          logs = capability?.logs ?? [];
           if (
             Option.isSome(failure) &&
             isHandlerFailed(failure.value) &&
@@ -465,52 +517,54 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
             logs.length > 0 ||
             !outcome.value.ok
           ) {
-            if (descriptor.kind === "query")
-              yield* log
-                .begin(begin)
-                .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
-            const settledAt = yield* Clock.currentTimeMillis;
-            yield* log
-              .finish({
-                id,
-                outcome:
-                  outcomeCode === "unknown_outcome"
-                    ? "unknown_outcome"
-                    : outcomeCode === "handler_timeout"
-                      ? "handler_timeout"
-                      : Exit.isFailure(outcome)
-                        ? "failure"
-                        : outcome.value.ok
-                          ? "success"
-                          : "handler_error",
-                outcomeCode:
-                  Exit.isSuccess(outcome) && !outcome.value.ok ? outcome.value.code : outcomeCode,
-                settledAt,
-                durationMs: settledAt - startedAt,
-                guestMs,
-                dbMs: 0,
-                callbacks: capability?.counters.callbacks ?? 0,
-                resultBytes,
-                attempts: 1,
-                logLines: logs,
-                replyDelivered
-              })
-              .pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new Runtime.UnknownOutcome({ cause, correlationId: binding.correlationId })
-                )
+            if (descriptor.kind === "query") {
+              const admitted = yield* awaitUntil(log.begin(begin), settlementDeadline);
+              if (Option.isNone(admitted))
+                return yield* new UnsettledInvocation({ correlationId: binding.correlationId });
+              yield* admitted.value.pipe(
+                Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))
+              );
+              logStarted = true;
+            }
+            if (logStarted)
+              yield* finish(
+                outcomeCode === "unknown_outcome"
+                  ? "unknown_outcome"
+                  : outcomeCode === "handler_timeout"
+                    ? "handler_timeout"
+                    : Exit.isFailure(outcome)
+                      ? "failure"
+                      : outcome.value.ok
+                        ? "success"
+                        : "handler_error",
+                Exit.isSuccess(outcome) && !outcome.value.ok ? outcome.value.code : outcomeCode,
+                settlementDeadline
               );
           }
           return yield* outcome;
         }).pipe(
           Effect.onInterrupt(() =>
-            capability === undefined
-              ? Effect.void
-              : capabilities.end(capability.token, "process_killed")
+            Effect.gen(function* () {
+              execution?.interruptUnsafe();
+              const until = Math.min(
+                settlementDeadline,
+                (yield* Clock.currentTimeMillis) + bounds.cleanup
+              );
+              if (capability !== undefined) {
+                yield* capabilities.end(capability.token, "process_killed");
+                yield* capabilities.settle(
+                  capability.token,
+                  "process_killed",
+                  Math.max(0, until - (yield* Clock.currentTimeMillis))
+                );
+              }
+              if (logStarted)
+                yield* finish("unknown_outcome", "unknown_outcome", until).pipe(Effect.ignore);
+            })
           ),
           Effect.ensuring(
             Effect.sync(() => {
+              execution?.interruptUnsafe();
               if (actionLimits === undefined) return;
               for (const [counts, entry] of [
                 [companyActions, binding.companyId],

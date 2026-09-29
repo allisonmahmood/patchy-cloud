@@ -2,7 +2,7 @@ import { assert, it } from "@effect/vitest";
 import { build } from "esbuild";
 import { CURRENT_RELEASE, TablePage, WIRE_VERSION, type GuestProtocol } from "@patchy/api";
 import { sha256 } from "@patchy/core";
-import { Limits, OperatingLimits } from "@patchy/limits";
+import { ContractLimits, Limits, OperatingLimits } from "@patchy/limits";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -52,7 +52,8 @@ const binding: Binding.Binding["Service"] = {
     handlers: {
       "demo.read": { kind: "query", args: {}, result: { kind: "json" } },
       "demo.fail": { kind: "query", args: {}, result: { kind: "json" } },
-      "demo.write": { kind: "action", args: {}, result: { kind: "json" } }
+      "demo.write": { kind: "action", args: {}, result: { kind: "json" } },
+      "demo.writeThenTimeout": { kind: "action", args: {}, result: { kind: "json" } }
     }
   }
 };
@@ -67,6 +68,7 @@ const services = Layer.mergeAll(
   Layer.provideMerge(Testing.layer()),
   Layer.provideMerge(TestWakes.layer),
   Layer.provideMerge(FetchHttpClient.layer),
+  Layer.provideMerge(Layer.succeed(ContractLimits.overrides, { "tier2.action.deadline": 2_000 })),
   Layer.provideMerge(
     Layer.succeed(LoadedVersions.LoadedVersions, {
       find: () => Effect.succeed(Option.some(binding))
@@ -75,7 +77,7 @@ const services = Layer.mergeAll(
 );
 
 it.live(
-  "runs an own-table handler through the private gateway on supervised workerd and keeps diagnostics private",
+  "keeps handler diagnostics private and partial-write outcomes truthful on supervised workerd",
   () =>
     Effect.gen(function* () {
       const platform = yield* SqlClient.SqlClient;
@@ -110,7 +112,15 @@ it.live(
       const read = query({args:{},result:t.json(),handler:async ctx => { ctx.log("Reading own notes"); return {viewer:ctx.viewer.user.id, page:await ctx.tables.notes.list()}; }});
       const fail = query({args:{},result:t.json(),handler:async () => { throw new Error("private diagnostic 397"); }});
       const write = action({args:{},result:t.json(),handler:async ctx => await ctx.tables.notes.insert({title:"Attributed write"})});
-      export default createGuest({demo:{read,fail,write}});`,
+      const writeThenTimeout = action({args:{},result:t.json(),handler:async ctx => {
+        await ctx.tables.notes.insert({title:"Committed before deadline"});
+        // This guest runs in a separate workerd process, outside the host TestClock.
+        const waiting = Promise.withResolvers();
+        setTimeout(waiting.resolve, 60_000);
+        await waiting.promise;
+        return null;
+      }});
+      export default createGuest({demo:{read,fail,write,writeThenTimeout}});`,
                 resolveDir: new URL("../../execution/src", import.meta.url).pathname,
                 sourcefile: "invocation-fixture.ts"
               },
@@ -141,7 +151,7 @@ it.live(
       );
       const runtime = yield* Runtime.make(handlers, {
         origin: "http://localhost",
-        identity: Effect.succeed(viewer)
+        identity: Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) })
       }).pipe(Effect.provideService(Invocation.Invocation, invocations));
       const request = HttpServerRequest.fromWeb(
         new Request("http://localhost/api/runtime/call", {
@@ -203,6 +213,22 @@ it.live(
       }>`SELECT log_lines FROM runtime_invocations WHERE correlation_id = ${failure.correlationId!}`;
       assert.include(JSON.stringify(diagnostics[0]?.log_lines), "private diagnostic 397");
       assert.include(JSON.stringify(diagnostics[0]?.log_lines), "stack");
+      const uncertain = yield* call("demo.writeThenTimeout").pipe(Effect.flip);
+      assert.strictEqual(uncertain.code, "unknown_outcome");
+      const page = yield* handlers["tables.list"]
+        .run({ table: "notes" })
+        .pipe(
+          Effect.provideService(Binding.Binding, binding),
+          Effect.flatMap(Schema.decodeUnknownEffect(TablePage))
+        );
+      assert.include(
+        page.rows.map((row) => row.title),
+        "Committed before deadline"
+      );
+      const outcomes = yield* platform<{ outcome: string }>`
+        SELECT outcome FROM runtime_invocations WHERE correlation_id = ${uncertain.correlationId!}
+      `;
+      assert.strictEqual(outcomes[0]?.outcome, "unknown_outcome");
     }).pipe(Effect.scoped, Effect.provide(services)),
   30_000
 );

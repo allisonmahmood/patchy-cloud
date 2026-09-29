@@ -69,10 +69,11 @@ are not transaction outcomes. Only the host can classify `handler_timeout` after
 confirmed non-commit or `unknown_outcome` after uncertain settlement.
 
 Every guest reply is untrusted, including `source: "patchy"`, limit fields and
-`correlationId`. The host retains the refusals it issues to each attempt
-and accepts a claimed platform refusal only when it matches one of those records;
-otherwise it returns `handler_failed`. A guest cannot designate another operation
-row by inventing its correlation id. This loader-to-host envelope does not change
+`correlationId`. The host retains each refusal's body and trusted HTTP status
+and accepts a claimed platform refusal only when its body matches one of those
+records, preserving the recorded status; otherwise it returns `handler_failed`.
+A guest cannot designate another operation row by inventing its correlation id.
+This loader-to-host envelope does not change
 the guest wire stored in server bundles.
 
 Callback deadlines return `timeout`; transport and malformed-reply failures return
@@ -207,9 +208,9 @@ or per-invocation CPU and memory guarantees.
    reconciled against ECS stop times. Billing decides which measurements it prices.
 7. **The tier 2 promise.** A tier 2 patch's server code runs on Patchy's machines,
    never on yours. It holds no login and no credential and has no path to the
-   internet: everything it does goes through Patchy, as you, while you have the
-   patch open. It reaches outside systems only through your company's
-   integrations, and every write is logged for your company's admins.
+   internet: everything goes through Patchy. Own resources use the patch's
+   identity; company resources and integrations use the initiating viewer's live
+   authority. Every write is logged for the company's admins.
 
 ## Eight contracts
 
@@ -223,7 +224,8 @@ or per-invocation CPU and memory guarantees.
    kills at deadline plus 1 second or a 6-second event-loop stall, probing every
    250 ms. A process kill affects all its invocations, each classified by actual
    settlement. No per-invocation CPU or memory guarantee is claimed. A dropped
-   browser must not leave a pending row, held slot or idle transaction.
+   browser must not leave a held slot or idle transaction. If journal writes are
+   unavailable, overdue pending records are reported as unknown, not still running.
 2. **Cross-host mutation keys can race.** Duplicate-key `23505` can arise at insert
    or commit. The loser rolls back and resolves the winner's stored outcome;
    unrelated uniqueness violations never deduplicate. A `40001` instead makes
@@ -272,9 +274,13 @@ The host mints an opaque per-attempt capability resolvable only by its issuing
 replica. Callbacks return to that replica's private address, which owns any held
 transaction. The gateway resolves the effective principal on every callback:
 the patch for its own resources, the initiating viewer for shared resources,
-connections and members with live reauthorization. Operation rows include the
-invocation id. Capabilities end on return, deadline, serialization supersession
-or process kill, independently of browser connection lifetime.
+connections and members with live reauthorization. Production rechecks the
+admitted Clerk session id and subject through the backend, independently of the
+admission JWT's expiry, then reloads current membership, role and deactivation.
+It refuses a changed application user or company. No session credential enters
+the guest. Operation rows include the invocation id. Capabilities end on return,
+deadline, serialization supersession or process kill, independently of browser
+connection lifetime.
 
 `Runtime` admits `server.call` through the same live-session and loaded-version
 door as browser operations, then hands the call to `Invocation`. It validates
@@ -285,6 +291,8 @@ including calls whose HTTP waiter has disconnected. A tier 2 document's direct
 name-based table, file, shared-resource, member and connection calls are refused
 even after a rollback serves tier 1. Conversely, while tier 2 is served, an older
 tier 1 document can call only `me`. Public documents cannot call handlers.
+An unwired invocation seam returns `source_unavailable` (503), not a malformed
+request refusal.
 
 `InvocationCapabilities` assigns a fresh opaque token to every immutable attempt.
 The token is local to one host replica and binds its company, patch, version,
@@ -303,13 +311,23 @@ missing logging layer cannot silently disable attribution.
 
 The invocation owner runs in the host service scope, independently of its HTTP
 waiter. Its absolute deadline fences the capability and starts cancellation even
-when the executor never returns. Resource owners register cancellation, a settled
-signal and synchronous destruction through `InvocationCapabilities.retain`.
-Settlement waits at most five seconds for callbacks and registered resources.
-An unresolved resource is destroyed, never pooled, and the invocation records
-`unknown_outcome`. Only a later known outcome may replace that state; a late guest
-reply cannot do so. The query and mutation tickets attach their connections to
-this lifetime and provide snapshot/commit classification and key reconciliation.
+when the executor never returns. Pre-dispatch journal insertion shares that
+deadline: the executor never runs before its required row is confirmed. Final
+journal writes share the absolute deadline plus cleanup bound. Waiting on a
+detached journal fiber cannot let blocked SQL cancellation hold the owner or its
+action slot. Overdue pending journal rows read as `unknown_outcome` (invocations)
+or `unknown` (operations); stored evidence is retained for later reconciliation.
+
+Resource owners register cancellation, a settled signal and synchronous
+destruction through `InvocationCapabilities.retain`. Settlement waits at most
+five seconds for callbacks and registered resources. An unresolved resource is
+destroyed, never pooled. Until mutation transactions and keys land, interrupted
+mutation/integration callbacks and any abnormal fence after one has started make
+the invocation `unknown_outcome`, even if an earlier autocommit completed.
+Interrupting a callback fiber is not proof of non-commit. Interrupted callback
+operation rows are explicitly recorded as unknown when the journal is available.
+The query and mutation tickets attach their connections to this lifetime and
+provide snapshot/commit classification and key reconciliation.
 
 `runtime_invocations` records actions and mutations before dispatch. Queries
 create a row only on a log line, business refusal or failure. Callback writes and

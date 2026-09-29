@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 import { DEV_SEED } from "@patchy/auth/seed";
 import * as Testing from "@patchy/sql/testing";
 import * as InvocationLog from "./InvocationLog.js";
@@ -158,6 +159,26 @@ it.layer(InvocationLog.layer.pipe(Layer.provideMerge(Testing.layer())))("Invocat
       })
     );
   }
+
+  it.effect(
+    "presents overdue pending admissions as unknown without preventing late settlement",
+    () =>
+      Effect.gen(function* () {
+        const log = yield* InvocationLog.InvocationLog;
+        const input = begin("invocation-overdue");
+        const lookup = { companyId: input.companyId, invocationId: input.id };
+        yield* TestClock.setTime(input.deadline - 1);
+        yield* log.begin(input);
+        assert.strictEqual((yield* log.find(lookup))?.outcome, "pending");
+        yield* TestClock.adjust(1);
+        const overdue = yield* log.find(lookup);
+        assert.strictEqual(overdue?.outcome, "unknown_outcome");
+        assert.isNull(overdue?.settledAt);
+        assert.isNull(overdue?.durationMs);
+        yield* log.finish(finish(input.id));
+        assert.strictEqual((yield* log.find(lookup))?.outcome, "success");
+      })
+  );
 
   it.effect("refuses duplicate admission ids and correlations without replacing attribution", () =>
     Effect.gen(function* () {

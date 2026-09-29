@@ -14,5 +14,11 @@ export const layer = (
 ): Layer.Layer<Runtime.Runtime, never, LoadedVersions.LoadedVersions | Limits.Limits> =>
   Layer.effect(
     Runtime.Runtime,
-    Runtime.make(handlers, { origin: options.origin, identity: Effect.succeed(options.identity) })
+    Runtime.make(handlers, {
+      origin: options.origin,
+      identity: Effect.succeed({
+        viewer: options.identity,
+        reauthorize: Effect.succeed(options.identity)
+      })
+    })
   );

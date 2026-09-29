@@ -279,7 +279,10 @@ it.layer(services)("Invocation", (it) => {
         );
         const runtime = yield* Runtime.make(
           {},
-          { origin: "http://localhost", identity: Effect.succeed(viewer) }
+          {
+            origin: "http://localhost",
+            identity: Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) })
+          }
         ).pipe(
           Effect.provideService(Invocation.Invocation, invocations),
           Effect.provideService(LoadedVersions.LoadedVersions, {
@@ -327,7 +330,7 @@ it.layer(services)("Invocation", (it) => {
               companyId: binding.companyId,
               invocationId: dispatched.invocationId
             });
-            if (row?.outcome !== "pending") return row;
+            if (row !== null && row.settledAt !== null) return row;
             yield* Effect.yieldNow;
           }
         });

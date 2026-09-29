@@ -81,6 +81,26 @@ it.effect("the deadline fences callbacks without a caller asking to settle", () 
   }).pipe(Effect.scoped)
 );
 
+it.effect("interrupting a started effect is not confirmation that it did not commit", () =>
+  Effect.gen(function* () {
+    const capabilities = yield* InvocationCapabilities.make;
+    const capability = yield* Fixtures.issue(capabilities);
+    const started = yield* Deferred.make<void>();
+    const callback = yield* capabilities
+      .execute(
+        capability,
+        capabilities.performEffect(
+          capability,
+          Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never))
+        )
+      )
+      .pipe(Effect.exit, Effect.forkChild);
+    yield* Deferred.await(started);
+    assert.isFalse(yield* capabilities.settle(capability.token, "returned"));
+    yield* Fiber.join(callback);
+  }).pipe(Effect.scoped)
+);
+
 it.effect(
   "unresolved resources are destroyed at the cleanup bound and never reported settled",
   () =>

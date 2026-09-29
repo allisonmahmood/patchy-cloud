@@ -1,3 +1,4 @@
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -92,12 +93,18 @@ export class InvocationLog extends Context.Service<
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const findInvocation = SqlSchema.findOneOption({
-    Request: Schema.Struct({ companyId: Schema.String, invocationId: Schema.String }),
+    Request: Schema.Struct({
+      companyId: Schema.String,
+      invocationId: Schema.String,
+      now: Schema.Number
+    }),
     Result: Invocation,
-    execute: ({ companyId, invocationId }) => sql`
+    execute: ({ companyId, invocationId, now }) => sql`
       SELECT id, company_id AS "companyId", patch_id AS "patchId", version_id AS "versionId",
         handler, kind, initiating_viewer_id AS "initiatingViewerId",
-        effective_principal AS "effectivePrincipal", parent_id AS "parentId", outcome,
+        effective_principal AS "effectivePrincipal", parent_id AS "parentId",
+        CASE WHEN outcome = 'pending' AND deadline <= to_timestamp(${now / 1_000})
+          THEN 'unknown_outcome' ELSE outcome END AS outcome,
         outcome_code AS "outcomeCode", correlation_id AS "correlationId",
         started_at AS "startedAt", deadline, settled_at AS "settledAt",
         duration_ms AS "durationMs", guest_ms AS "guestMs", db_ms AS "dbMs", callbacks,
@@ -135,7 +142,9 @@ export const make = Effect.gen(function* () {
   const find = Effect.fn("InvocationLog.find")(function* (
     input: Parameters<InvocationLog["Service"]["find"]>[0]
   ) {
-    const row = yield* findInvocation(input).pipe(Effect.catchTags({ SchemaError: Effect.die }));
+    const row = yield* findInvocation({ ...input, now: yield* Clock.currentTimeMillis }).pipe(
+      Effect.catchTags({ SchemaError: Effect.die })
+    );
     return Option.getOrNull(row);
   });
 

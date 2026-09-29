@@ -223,7 +223,7 @@ it.layer(RuntimeLog.layer.pipe(Layer.provide(Testing.layer())))("CallbackGateway
   );
 
   it.effect(
-    "callback count, shared tree bytes, file bytes, and UTF-8 log bytes are host-enforced",
+    "callback count, callback bytes, file bytes, and UTF-8 log bytes are host-enforced",
     () =>
       Effect.gen(function* () {
         const capabilities = yield* InvocationCapabilities.make;
@@ -257,9 +257,8 @@ it.layer(RuntimeLog.layer.pipe(Layer.provide(Testing.layer())))("CallbackGateway
           yield* gateway.callback(first.token, first.attempt, { op: "tables.get", args: {} }),
           { ok: true, value: "x".repeat(100) }
         );
-        const child = yield* Fixtures.issue(capabilities, { tree: first.tree });
         assert.include(
-          yield* gateway.callback(child.token, child.attempt, { op: "tables.get", args: {} }),
+          yield* gateway.callback(first.token, first.attempt, { op: "tables.get", args: {} }),
           { ok: false, limitId: "tier2.callbacks.bytes", value: 250 }
         );
         const file = yield* Fixtures.issue(capabilities, { kind: "action" });
@@ -293,6 +292,39 @@ it.layer(RuntimeLog.layer.pipe(Layer.provide(Testing.layer())))("CallbackGateway
           "tier2.log.bytes": 32
         })
       )
+  );
+
+  it.effect("a fenced integration records an unknown outcome rather than a confirmed failure", () =>
+    Effect.gen(function* () {
+      const capabilities = yield* InvocationCapabilities.make;
+      const log = yield* RuntimeLog.RuntimeLog;
+      const started = yield* Deferred.make<string>();
+      const gateway = yield* CallbackGateway.make({
+        "postgres.query": {
+          kind: "integration",
+          run: () =>
+            Effect.gen(function* () {
+              const binding = yield* Binding.Binding;
+              yield* Deferred.succeed(started, binding.correlationId);
+              return yield* Effect.never;
+            })
+        }
+      }).pipe(Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities));
+      const capability = yield* Fixtures.issue(capabilities, { kind: "action" });
+      const callback = yield* gateway
+        .callback(capability.token, capability.attempt, {
+          op: "postgres.query",
+          args: {}
+        })
+        .pipe(Effect.forkChild);
+      const correlationId = yield* Deferred.await(started);
+      assert.isFalse(yield* capabilities.settle(capability.token, "deadline"));
+      assert.include(yield* Fiber.join(callback), { ok: false, code: "access_denied" });
+      assert.include(yield* log.find({ companyId: Fixtures.identity.company.id, correlationId }), {
+        outcome: "unknown",
+        outcomeCode: "unknown_outcome"
+      });
+    }).pipe(Effect.scoped)
   );
 
   it.effect("operation attribution precedes effects and integration reauthorization refusals", () =>
@@ -373,7 +405,7 @@ it.layer(RuntimeLog.layer.pipe(Layer.provide(Testing.layer())))("CallbackGateway
         code: "session_expired",
         correlationId: denied!.correlationId
       });
-      assert.deepStrictEqual(capability.refusals, [refusal]);
+      assert.deepStrictEqual(capability.refusals, [{ failure: refusal, status: 401 }]);
     }).pipe(Effect.scoped)
   );
 });

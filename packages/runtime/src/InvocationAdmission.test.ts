@@ -68,7 +68,7 @@ it.effect(
         { me, ...handlers },
         {
           origin: "http://localhost",
-          identity: Effect.succeed(viewer)
+          identity: Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) })
         }
       );
       for (const op of operations) {
@@ -118,7 +118,7 @@ it.effect("a retained tier 1 document gets only me after tier 2 becomes served",
       { me },
       {
         origin: "http://localhost",
-        identity: Effect.succeed(viewer)
+        identity: Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) })
       }
     );
     for (const op of [
@@ -161,6 +161,38 @@ it.effect("a retained tier 1 document gets only me after tier 2 becomes served",
             id === undefined ? version : { ...version, manifest: { ...version.manifest, tier: 1 } }
           )
         )
+    }),
+    Effect.provide(Limits.layer)
+  )
+);
+
+it.effect("reports unavailable host wiring for an admitted server call", () =>
+  Effect.gen(function* () {
+    const runtime = yield* Runtime.make(
+      {},
+      {
+        origin: "http://localhost",
+        identity: Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) })
+      }
+    );
+    const error = yield* runtime
+      .call({
+        patchId: version.patchId,
+        versionId: version.versionId,
+        wire: WIRE_VERSION,
+        principal: { userId: viewer.user.id },
+        op: "server.call",
+        args: { handler: "leads.list", args: {} }
+      })
+      .pipe(Effect.flip);
+    assert.instanceOf(error, Runtime.InvocationUnavailable);
+    assert.strictEqual(error.code, "source_unavailable");
+    assert.strictEqual(error.status, 503);
+    assert.notProperty(error, "cause");
+  }).pipe(
+    Effect.provideService(HttpServerRequest.HttpServerRequest, request),
+    Effect.provideService(LoadedVersions.LoadedVersions, {
+      find: () => Effect.succeed(Option.some(version))
     }),
     Effect.provide(Limits.layer)
   )

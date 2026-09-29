@@ -200,6 +200,16 @@ export class SourceUnavailable extends Schema.TaggedError<SourceUnavailable>()(
     return "Runtime request refused: source_unavailable.";
   }
 }
+export class InvocationUnavailable extends Schema.TaggedError<InvocationUnavailable>()(
+  "InvocationUnavailable",
+  {}
+) {
+  readonly code = "source_unavailable" as const;
+  readonly status = 503;
+  override get message() {
+    return "The host has no server invocation service.";
+  }
+}
 export class UnknownOutcome extends Schema.TaggedError<UnknownOutcome>()("UnknownOutcome", {
   cause: Schema.Defect(),
   correlationId: Schema.String
@@ -238,6 +248,7 @@ export type RuntimeError =
   | RateLimited
   | LimitExceeded
   | SourceUnavailable
+  | InvocationUnavailable
   | UnknownOutcome
   | OperationError;
 
@@ -401,11 +412,19 @@ export interface Execution {
   readonly deadlineMs: number;
 }
 
+export interface AdmittedIdentity {
+  readonly viewer: NonNullable<Binding.Binding["Service"]["identity"]>;
+  readonly reauthorize: Effect.Effect<
+    NonNullable<Binding.Binding["Service"]["identity"]>,
+    RuntimeError
+  >;
+}
+
 /** Environment adapters choose identity and recording; admission and execution stay shared. */
 export interface Options {
   readonly origin: string;
   readonly identity: Effect.Effect<
-    NonNullable<Binding.Binding["Service"]["identity"]>,
+    AdmittedIdentity,
     RuntimeError,
     HttpServerRequest.HttpServerRequest
   >;
@@ -525,10 +544,13 @@ export const make = (
         )
           return yield* new ShellOutdated({});
         let identity: Binding.Binding["Service"]["identity"] = null;
+        let reauthorize: AdmittedIdentity["reauthorize"] = Effect.fail(new AccessDenied({}));
         if (version.scope === "public") {
           if (input.op !== "me") return yield* new PublicUnavailable({});
         } else {
-          identity = yield* options.identity;
+          const admitted = yield* options.identity;
+          identity = admitted.viewer;
+          reauthorize = admitted.reauthorize;
           yield* WideEvents.enrich({ viewerId: identity.user.id });
           if (identity.company.id !== version.companyId) return yield* new AccessDenied({});
         }
@@ -598,17 +620,10 @@ export const make = (
         // refuse it. Attribution comes only from the live viewer and loaded version.
         if (!integration) yield* admit;
         if (input.op === "server.call") {
-          if (Option.isNone(invocations)) return yield* new InvalidRequest({});
+          if (Option.isNone(invocations)) return yield* new InvocationUnavailable();
           return yield* run({
             kind: "read",
-            run: (args) =>
-              invocations.value.call(
-                args,
-                binding,
-                options.identity.pipe(
-                  Effect.provideService(HttpServerRequest.HttpServerRequest, request)
-                )
-              )
+            run: (args) => invocations.value.call(args, binding, reauthorize)
           }).pipe(Effect.provideService(Binding.Binding, binding));
         }
         if (operation === undefined) return yield* new InvalidRequest({});
