@@ -2275,7 +2275,7 @@ describe("patchy delete", async () => {
     });
     expect(repeated.status).toBe(2);
     expect(JSON.parse(repeated.stderr)).toMatchObject({ kind: "rejected", code: "wrong_state" });
-  });
+  }, 30_000); // Five real CLI processes exercise publish, cache removal and repeated deletion.
 });
 
 describe("patch lifecycle commands", () => {
