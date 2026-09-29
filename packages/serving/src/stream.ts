@@ -182,7 +182,7 @@ export function openDocumentStream(options: {
     const failed = execution === "failed";
     execution = "starting";
     options.executionState("starting");
-    status.starting(failed);
+    status.starting(failed ? "retry" : undefined);
   };
   const retryBinding = () => {
     if (closed || suspended || execution !== "failed") return;
@@ -398,7 +398,7 @@ export function openDocumentStream(options: {
     } else if (suspended) {
       suspended = false;
       refreshAttempts = 0;
-      if (options.tier === 2) status.starting(true);
+      if (options.tier === 2) status.starting("resume");
       // Detach the aborted read before reconnecting; its finalizer cannot retry this generation.
       controller = undefined;
       void connect();

@@ -154,7 +154,7 @@ success and `start_failed` with busy and retryAfter after the bounded wait.
 The broker holds calls within its normal bounds, including across stream loss,
 and refuses held calls on failure without replay. The selected T-1 cover appears
 after two seconds on first open and resume, holds focus with an accessible name,
-and replaces the reconnecting pill while starting. It offers Retry after failure
+and replaces the reconnecting pill while starting. It offers Try again after failure
 and backs off automatic binding retries while open. Core owns its shared styles.
 
 ## Tier-scoped promise

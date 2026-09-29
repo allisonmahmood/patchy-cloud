@@ -243,7 +243,7 @@ and broker. Breaker refusals carry the same fields on invocation admission.
 The shell holds calls inside its existing bounds and keeps them across stream
 loss. Failure refuses those calls once; later retries never replay them. The
 selected T-1 cover appears after two seconds on both first open and resume, holds
-focus under an accessible name and offers Retry after failure. Automatic retries
+focus under an accessible name and offers Try again after failure. Automatic retries
 back off while the document remains open.
 
 ## Seven hosting decisions

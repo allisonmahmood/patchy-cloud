@@ -104,6 +104,10 @@ test("starting holds calls before stream bytes, covers first open and resume, an
   await page.clock.fastForward(1);
   await expect(cover).toBeVisible();
   await expect(cover.locator(".glyph-sm")).toBeVisible();
+  // Progress is the elapsed time, rewritten once a second from the start of starting.
+  await expect(cover).toContainText("2 s so far");
+  await page.clock.fastForward(1_000);
+  await expect(cover).toContainText("3 s so far");
   await expect(page.locator('[data-stream-status="reconnecting"]')).toBeHidden();
   await expect(cover).toBeFocused();
   for (const key of ["Tab", "Shift+Tab", "Escape"]) {
@@ -334,7 +338,7 @@ test.describe("fleet bind retry", () => {
           request.path.startsWith("/api/runtime/stream?") && request.path.includes(waiting.patchId)
       ).length;
     await expect.poll(attempts).toBeGreaterThan(1);
-    const retry = cover.getByRole("button", { name: "Retry", exact: true });
+    const retry = cover.getByRole("button", { name: "Try again", exact: true });
     await expect(retry).toBeVisible();
     await page.keyboard.press("Tab");
     await expect(retry).toBeFocused();
