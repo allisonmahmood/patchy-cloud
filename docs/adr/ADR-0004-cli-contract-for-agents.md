@@ -518,6 +518,8 @@ Tier 2 is company-only. `share --share public`, positional public sharing and th
 portal scope form read the served version's tier, never local config, and answer
 `tier2_not_public`, HTTP 422, exit 2. A tier 2 publish to a public patch must use
 `--share company`. Rollback to a tier 2 version also requires company scope.
+The refusal uses channel-neutral guidance to keep the patch company-scoped, not
+a publish-only flag in sharing, rollback or portal responses.
 
 Publish JSON always includes `artifacts: { html: { sha256, bytes } }`.
 Tier 2 adds `artifacts.server: { sha256, bytes }` and

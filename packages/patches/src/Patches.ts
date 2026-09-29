@@ -201,7 +201,7 @@ export class AdminRequired extends Schema.TaggedError<AdminRequired>()("AdminReq
 }
 export class Tier2NotPublic extends Schema.TaggedError<Tier2NotPublic>()("Tier2NotPublic", {}) {
   override get message() {
-    return "Tier 2 patches cannot be public. Use --share company before serving a tier 2 version.";
+    return "Tier 2 versions cannot be served publicly. Keep the patch company-scoped.";
   }
 }
 export type LifecycleError =
