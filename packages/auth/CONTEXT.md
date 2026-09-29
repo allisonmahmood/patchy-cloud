@@ -21,7 +21,7 @@ The boundary that extracts a machine credential from a request's Authorization h
 _Avoid_: header validation
 
 **Session**:
-The browser's sign-in held by Clerk and kept fresh while a person reads a first-party page or company patch. A session can exist before a company is chosen or after deactivation, so signing out remains available even when company access is refused. Tier 2 viewer callbacks check the admitted session id and subject against Clerk's live session, not the expiry of the JWT that originally admitted the invocation.
+The browser's sign-in held by Clerk and kept fresh while a person reads a first-party page or company patch. A session can exist before a company is chosen or after deactivation, so signing out remains available even when company access is refused. Tier 2 viewer callbacks trust the admission JWT until its expiry, then share one backend session check for the rest of the invocation. Database membership, role and deactivation are still checked on every callback.
 _Avoid_: token (a machine's credential, not a browser's), cookie (how, not what)
 
 **Viewer**:

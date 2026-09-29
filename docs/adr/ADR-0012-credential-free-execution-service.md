@@ -274,11 +274,15 @@ The host mints an opaque per-attempt capability resolvable only by its issuing
 replica. Callbacks return to that replica's private address, which owns any held
 transaction. The gateway resolves the effective principal on every callback:
 the patch for its own resources, the initiating viewer for shared resources,
-connections and members with live reauthorization. Production rechecks the
-admitted Clerk session id and subject through the backend, independently of the
-admission JWT's expiry, then reloads current membership, role and deactivation.
-It refuses a changed application user or company. No session credential enters
-the guest. Operation rows include the invocation id. Capabilities end on return,
+connections and members with live reauthorization. Production trusts the admitted
+JWT until its `exp`. At expiry, callbacks share one lazy backend check of the
+admitted Clerk session id and subject for the rest of that invocation, including
+concurrent callers and failed results. The cache does not cross invocations.
+Clerk revocation after that check is observed by a later invocation, not by
+polling every callback. Every authorized callback still reloads current database
+membership, role and deactivation and refuses a changed user or company. No
+session credential enters the guest. Operation rows include the invocation id.
+Capabilities end on return,
 deadline, serialization supersession or process kill, independently of browser
 connection lifetime.
 

@@ -48,13 +48,17 @@ export const make = (
       const viewer = yield* resolveViewer;
       if (viewer === null || HttpServerResponse.isHttpServerResponse(viewer))
         return yield* new Runtime.AccessDenied({});
+      // Admission covers the JWT's remaining lifetime. After expiry, concurrent
+      // callbacks share one backend result for this invocation, including failures.
+      const activeAfterExpiry = yield* session.isActive(claims).pipe(
+        Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })),
+        Effect.cached
+      );
       return {
         viewer: { user: viewer.user, company: viewer.company, admin: viewer.role === "admin" },
         reauthorize: Effect.gen(function* () {
-          const active = yield* session
-            .isActive(claims)
-            .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
-          if (!active) return yield* new Runtime.SessionExpired({});
+          if ((yield* Clock.currentTimeMillis) >= claims.exp * 1_000 && !(yield* activeAfterExpiry))
+            return yield* new Runtime.SessionExpired({});
           const current = yield* resolveViewer;
           if (
             current === null ||
