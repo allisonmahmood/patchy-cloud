@@ -10,10 +10,13 @@ export const release = Context.Reference<string>("@patchy/patches/Release", {
   defaultValue: () => CURRENT_RELEASE
 });
 
-/** The fleet executor is not configured yet; production must not admit local execution. */
+/** Production admits server artifacts only when startup selects the ECS fleet. */
 export const tier2Enabled = Config.map(
-  Config.String("NODE_ENV").pipe(Config.withDefault("development")),
-  (environment) => environment !== "production"
+  Config.all({
+    environment: Config.String("NODE_ENV").pipe(Config.withDefault("development")),
+    provider: Config.String("EXECUTION_PROVIDER").pipe(Config.withDefault("local"))
+  }),
+  ({ environment, provider }) => environment !== "production" || provider === "ecs"
 );
 
 /** The required origin a patch's public URL is built on. */

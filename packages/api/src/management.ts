@@ -20,13 +20,22 @@ export const LimitRevision = Schema.Struct({
   deploymentRevision: identity,
   overrideRevision: Schema.String.check(Schema.isPattern(/^\d+$/))
 });
+export const CallbackUrls = Schema.Array(
+  Schema.String.check(
+    Schema.isPattern(
+      /^http:\/\/(?:10\.\d+\.\d+\.\d+|172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+|192\.168\.\d+\.\d+|127\.\d+\.\d+\.\d+):\d+\/callback$/
+    )
+  )
+).check(Schema.isMaxLength(64));
 
 export const BindRequest = Schema.Struct({
   companyId: identity,
   bindingEpoch: BindingEpoch,
   bundle: Schema.optionalKey(GuestProtocol.Bundle),
   operatingLimits: Schema.optionalKey(SupervisorLimits),
-  configRevision: Schema.optionalKey(LimitRevision)
+  configRevision: Schema.optionalKey(LimitRevision),
+  /** Authenticated hosts register their private callback address during rolling replacement. */
+  callbackUrls: Schema.optionalKey(CallbackUrls)
 });
 export type BindRequest = typeof BindRequest.Type;
 export const BindReply = Schema.Struct({

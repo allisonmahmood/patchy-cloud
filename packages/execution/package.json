@@ -21,6 +21,11 @@
       "types": "./dist/localTaskProvider.d.ts",
       "import": "./dist/localTaskProvider.js"
     },
+    "./ecs-task-provider": {
+      "development": "./src/ecsTaskProvider.ts",
+      "types": "./dist/ecsTaskProvider.d.ts",
+      "import": "./dist/ecsTaskProvider.js"
+    },
     "./migrations": {
       "development": "./src/migrations.ts",
       "types": "./dist/migrations.d.ts",
@@ -61,6 +66,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@aws-sdk/client-ecs": "^3.1141.0",
     "@effect/platform-node": "catalog:",
     "@patchy/analytics": "workspace:*",
     "@patchy/core": "workspace:*",

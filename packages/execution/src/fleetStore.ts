@@ -260,9 +260,12 @@ export const make = Effect.gen(function* () {
       FROM execution_bindings b WHERE h.binding_id = b.binding_id AND h.task_id = ${taskId}
         AND h.released_at IS NULL`;
   }, sql.withTransaction);
-  const lease = (owner: string, now: number, duration: number) =>
+  const lease = (owner: string, revision: string, now: number, duration: number) =>
     sql`INSERT INTO execution_housekeeping
-    (singleton, owner_id, lease_epoch, expires_at) VALUES (true, ${owner}, 1, ${now + duration})
+    (singleton, owner_id, lease_epoch, expires_at) SELECT true, ${owner}, 1, ${now + duration}
+    WHERE EXISTS (
+      SELECT 1 FROM execution_rollout WHERE COALESCE(staged_revision, current_revision) = ${revision}
+    )
     ON CONFLICT (singleton) DO UPDATE SET owner_id = EXCLUDED.owner_id,
       lease_epoch = CASE WHEN execution_housekeeping.owner_id = EXCLUDED.owner_id AND execution_housekeeping.expires_at > ${now}
         THEN execution_housekeeping.lease_epoch ELSE execution_housekeeping.lease_epoch + 1 END,
@@ -272,9 +275,18 @@ export const make = Effect.gen(function* () {
       Effect.flatMap(decodeLeases),
       Effect.map((rows) => rows[0])
     );
-  const renewLease = (owner: string, epoch: number, now: number, duration: number) =>
+  const renewLease = (
+    owner: string,
+    revision: string,
+    epoch: number,
+    now: number,
+    duration: number
+  ) =>
     sql`UPDATE execution_housekeeping
     SET expires_at = ${now + duration} WHERE owner_id = ${owner} AND lease_epoch = ${epoch} AND expires_at > ${now}
+      AND EXISTS (
+        SELECT 1 FROM execution_rollout WHERE COALESCE(staged_revision, current_revision) = ${revision}
+      )
     RETURNING lease_epoch AS "leaseEpoch"`.pipe(
       Effect.flatMap(decodeLeases),
       Effect.map((rows) => rows.length === 1)

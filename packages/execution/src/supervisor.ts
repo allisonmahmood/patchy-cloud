@@ -104,7 +104,7 @@ interface Resident {
   readonly ready: Deferred.Deferred<Management.BindReply, SupervisorError>;
   readonly dead: Deferred.Deferred<never, SupervisorError>;
   readonly reaped: Deferred.Deferred<void>;
-  readonly proxyUrls: ReadonlyMap<string, string>;
+  readonly proxyUrl: string;
   readonly invocations: Map<string, Invocation>;
   readonly startedAt: number;
   readonly eventId: string;
@@ -174,7 +174,8 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
     overrideRevision: "0"
   };
   const residents = new Map<string, Resident>();
-  const callbacks = new Map<string, { resident: Resident; target: string }>();
+  const callbacks = new Map<string, Resident>();
+  const callbackUrls = new Set(options.callbackUrls);
   const reports = new Map<string, Management.ProcessReport>();
   const admission = yield* Semaphore.make(1);
   let companyId: string | null = null;
@@ -218,7 +219,7 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
     if (!resident.alive) return yield* Deferred.await(resident.reaped);
     // Fence before any asynchronous cleanup, including callbacks already reading a body.
     resident.alive = false;
-    for (const url of resident.proxyUrls.values()) callbacks.delete(new URL(url).pathname);
+    callbacks.delete(new URL(resident.proxyUrl).pathname);
     const invocations = [...resident.invocations.values()].map(({ attempt }) => attempt);
     const error = new SupervisorError({ operation: "invoke", reason: "process_killed" });
     yield* Deferred.fail(
@@ -358,9 +359,8 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
   yield* proxy.serve(
     Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest;
-      const route = callbacks.get(request.url);
-      if (request.method !== "POST" || route === undefined) return refusedCallback();
-      const resident = route.resident;
+      const resident = callbacks.get(request.url);
+      if (request.method !== "POST" || resident === undefined) return refusedCallback();
       const invocation = resident.invocations.get(
         attemptKey({
           invocationId: request.headers["x-patchy-invocation-id"] ?? "",
@@ -371,7 +371,6 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
       const live = () =>
         resident.alive &&
         invocation.epoch === bindingEpoch &&
-        invocation.target === route.target &&
         resident.invocations.get(attemptKey(invocation.attempt)) === invocation &&
         request.headers["x-patchy-process-generation"] === String(resident.generation) &&
         request.headers.authorization === `Bearer ${invocation.capability}`;
@@ -410,7 +409,7 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
           headers["x-patchy-callback"] = request.headers["x-patchy-callback"];
         const response = yield* http
           .execute(
-            HttpClientRequest.post(route.target).pipe(
+            HttpClientRequest.post(invocation.target).pipe(
               HttpClientRequest.setHeaders(headers),
               HttpClientRequest.bodyUint8Array(body, headers["content-type"])
             )
@@ -570,6 +569,7 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
             configRevision = request.configRevision;
           }
         }
+        for (const url of request.callbackUrls ?? []) callbackUrls.add(url);
         companyId = request.companyId;
         bindingEpoch = request.bindingEpoch;
         if (request.bundle === undefined) return undefined;
@@ -605,7 +605,7 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
         yield* checkEpoch(request.bindingEpoch, "bind");
         if (stopped) return yield* new SupervisorError({ operation: "bind", reason: "stopped" });
         const now = Date.now();
-        const proxyUrls = new Map<string, string>();
+        const path = `/callback/${generation + 1}/${randomUUID()}`;
         const resident: Resident = {
           binding: {
             companyId: bundle.companyId,
@@ -618,7 +618,7 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
           ready: yield* Deferred.make<Management.BindReply, SupervisorError>(),
           dead: yield* Deferred.make<never, SupervisorError>(),
           reaped: yield* Deferred.make<void>(),
-          proxyUrls,
+          proxyUrl: `${proxyBase}${path}`,
           invocations: new Map(),
           startedAt: now,
           eventId: randomUUID(),
@@ -635,16 +635,12 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
           cpuSeconds: 0,
           callsServed: 0
         };
-        for (const target of options.callbackUrls) {
-          const path = `/callback/${resident.generation}/${randomUUID()}`;
-          proxyUrls.set(target, `${proxyBase}${path}`);
-          callbacks.set(path, { resident, target });
-        }
+        callbacks.set(path, resident);
         residents.set(key, resident);
         stampPeaks();
         yield* Effect.gen(function* () {
           const child = yield* startWorkerd({
-            callbackUrls: [...proxyUrls.values()],
+            callbackUrls: [resident.proxyUrl],
             separateUid: true
           }).pipe(Effect.provideService(Scope.Scope, resident.scope));
           resident.process = child;
@@ -738,10 +734,9 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
                 operation: "invoke",
                 reason: "binding_conflict"
               });
-            const target = resident.proxyUrls.get(request.callback.url);
-            if (target === undefined || resident.invocations.has(key))
+            if (!callbackUrls.has(request.callback.url) || resident.invocations.has(key))
               return yield* new SupervisorError({ operation: "invoke", reason: "protocol" });
-            return { resident, engine: resident.engine, target };
+            return { resident, engine: resident.engine, target: resident.proxyUrl };
           });
           const selected = yield* select;
           const blockedBy = yield* evict(0, selected.resident);

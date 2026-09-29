@@ -37,8 +37,9 @@ gateway into the patch-repo `patchy dev` loop over PGlite and fixtures, with
 atomic live server rebinding and a separate non-admin colleague listener.
 Issue #405 adds the host fleet controller over platform Postgres and a local task
 provider that launches separate supervisor processes. `EXECUTION_PROVIDER=local-fleet`
-selects that path on an isolated development or test host. Production remains closed
-until the ECS provider arrives; local processes do not prove Fargate containment.
+selects that path on an isolated development or test host. Issue #406 adds
+`EXECUTION_PROVIDER=ecs`, selecting the same controller over Fargate. Only that
+provider admits production tier 2; local processes do not prove Fargate containment.
 
 ## Engine, guest wire and inspection
 
@@ -65,6 +66,10 @@ trusted caller's responsibility, not patch input. Inspection configures none.
 The supervisor supplies the deployment's issuing-host addresses. Each workerd
 process can reach only its supervisor callback proxy, which forwards to those
 addresses after checking the current epoch and live process generation.
+Authenticated management binds register replacement hosts' private callback
+addresses without restarting a loaded process. The proxy selects the issuing
+host from the admitted invocation record, not a path or address supplied by guest
+code. Registrations cannot cross a stale binding epoch.
 
 `@patchy/api/guest` contains the private schemas, never public `HttpApi` routes.
 JSON callbacks carry `{ op, args }`; both callbacks and handler replies preserve
@@ -267,6 +272,74 @@ loss. Failure refuses those calls once; later retries never replay them. The
 selected T-1 cover appears after two seconds on both first open and resume, holds
 focus under an accessible name and offers Try again after failure. Automatic retries
 back off while the document remains open.
+
+## Fargate deployment and measurements
+
+Issue [#406](https://github.com/allisonmahmood/patchy-cloud/issues/406) runs the
+same fleet controller through the ECS task provider. The image has a host default
+command and a separate exec entrypoint. CI assembles it without Docker, from a
+digest-pinned Node base, and compares two independently assembled archives.
+
+Exec tasks use a private subnet with no default internet route, no public IP
+and no task role. The bootstrap security group stays attached for image pulls,
+logs and private host callbacks. The sealed comparison group cannot pull the
+image and is not a post-start replacement. The root supervisor drops each
+workerd child to a distinct uid with an empty environment. Management and
+callback listeners bind the task's private address, not the ALB.
+
+The disposable spike used two hosts, application-cookie affinity on
+`patchy_stream_affinity`, and 512-CPU-unit/2048-MiB exec tasks. First open claimed
+a ready spare and reached the stream's ready frame in **685 ms**. Sixty
+subscription control POSTs across two independently observed replicas had no
+generation refusal. Guest fetches to both metadata addresses, the public
+internet, the task's management address and management loopback all failed.
+Closing the document released the idle binding and stopped its ECS task.
+The acceptance overrides used a ten-second company idle window and one-second
+housekeeping interval; these are not new production defaults.
+On the final image, the observed task became ready 28.311 seconds after the
+controller requested it. Idle detection through physical ECS stop took
+49.844 seconds, including the idle window and task shutdown; a ten-second idle
+window is not a ten-second physical-stop guarantee.
+
+Adjacent host revisions served through both directions: a replacement host
+invoked the old bound task, then an old host invoked the replacement task.
+The original binding was durably released with cause `deployment`; the ALB
+kept the old hosts through its 90-second deregistration window before they
+stopped. A browser mutation was committed while its HTTP reply was deliberately
+dropped. Its actual SDK error exposed `retry()`, which returned the same stored
+nonce after task replacement and host drain, without reloading the document.
+
+Secret rotation ends with a sealing revision: the same current secret, without
+the previous-secret configuration, followed by promotion and another host drain.
+After sealing, the retired key returned HTTP 401 on all three running exec
+tasks; before sealing it authenticated to the overlap tasks. A nested action
+also crossed the real private callback listener and returned the expected
+viewer, company and query result. Thirty additional browser queries completed
+successfully, and the original keyed retry still replayed after sealing.
+
+Two distinct spinning version processes were measured alongside a healthy
+version on one half-vCPU task. Healthy probes were dispatched at 10/s. These
+are **host-observed request milliseconds**, including host/database overhead,
+not isolated guest CPU time:
+
+| Run | Baseline p50 / p95 / p99 (60 calls) | Both spin calls outstanding p50 / p95 / p99 | Outcomes                                                               |
+| --- | ----------------------------------- | ------------------------------------------- | ---------------------------------------------------------------------- |
+| A   | 1266 / 1716 / 1930                  | 778 / 1020 / 1033 (50 calls)                | 50/50 healthy replies                                                  |
+| B   | 1954 / 2985 / 3441                  | 724 / 1040 / 1443 (49 logged successes)     | 49/50 client requests succeeded; one non-200 response was not retained |
+
+The spinning calls ended after 6.35/6.75 seconds in A and 6.76/6.77 seconds in B.
+Their persisted process reports record `stall`, 1.37/1.45 CPU seconds in A and
+1.50/1.39 in B. The short windows and differing baselines do not establish a
+latency guarantee or a speed improvement. Process isolation stops the offending
+processes; it does **not** reserve a sibling's share of the task's CPU.
+
+The run was torn down after acceptance. Post-teardown checks found zero ECS
+tasks or services, no run target registrations, image tags or security-group
+rules, and no run platform database. ALB and target-group attributes matched
+their pre-run snapshots. The script removed run artifacts and company databases,
+and deregistered the run task definitions and requested their deletion.
+The pre-existing tagged AWS stack and
+Neon project remain available; CloudWatch run logs are retained as evidence.
 
 ## Seven hosting decisions
 

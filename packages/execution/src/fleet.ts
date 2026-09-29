@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import type { GuestProtocol } from "@patchy/api";
+import type { StatsReply } from "@patchy/api/management";
 import * as DeploymentConfig from "@patchy/limits/deployment-config";
 import { ContractLimits, OperatingLimits } from "@patchy/limits";
 import * as Executor from "@patchy/runtime/executor";
@@ -123,34 +124,38 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
       scope: "company",
       value: wait
     });
-  const collect = Effect.fn("Fleet.collectReports")(function* (
+  const readStats = Effect.fn("Fleet.readStats")(function* (
     binding: FleetStore.Binding,
     stopped = false
   ) {
     yield* checkHousekeeping;
-    const stats = yield* provider
-      .stats(binding.taskId, { bindingEpoch: binding.bindingEpoch })
-      .pipe(
-        Effect.catchTags({
-          TaskProviderError: (cause) => {
-            if (!stopped || cause.reason !== "stale_epoch") return Effect.fail(cause);
-            // A stop can win after the durable claim but before the supervisor's
-            // first bind. Epoch zero is accepted only as a stopped, unbound task.
-            return provider
-              .stats(binding.taskId, { bindingEpoch: 0 })
-              .pipe(
-                Effect.flatMap((final) =>
-                  final.stopped &&
-                  final.companyId === null &&
-                  final.bindingEpoch === 0 &&
-                  final.reports.length === 0
-                    ? Effect.succeed(final)
-                    : Effect.fail(cause)
-                )
-              );
-          }
-        })
-      );
+    return yield* provider.stats(binding.taskId, { bindingEpoch: binding.bindingEpoch }).pipe(
+      Effect.catchTags({
+        TaskProviderError: (cause) => {
+          if (!stopped || cause.reason !== "stale_epoch") return Effect.fail(cause);
+          // A stop can win after the durable claim but before the supervisor's
+          // first bind. Epoch zero is accepted only as a stopped, unbound task.
+          return provider
+            .stats(binding.taskId, { bindingEpoch: 0 })
+            .pipe(
+              Effect.flatMap((final) =>
+                final.stopped &&
+                final.companyId === null &&
+                final.bindingEpoch === 0 &&
+                final.reports.length === 0
+                  ? Effect.succeed(final)
+                  : Effect.fail(cause)
+              )
+            );
+        }
+      })
+    );
+  });
+  const collect = Effect.fn("Fleet.collectReports")(function* (
+    binding: FleetStore.Binding,
+    stats: StatsReply
+  ) {
+    yield* checkHousekeeping;
     const settings = yield* limits.getMany({
       companyId: binding.companyId,
       limits: {
@@ -225,10 +230,39 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
     const now = yield* Clock.currentTimeMillis;
     if (!(yield* store.drained(binding, now))) return false;
     yield* checkHousekeeping;
-    // Stopping is irreversible. Neither adoption nor an open can select this task.
-    const task = yield* provider.stop(binding.taskId);
-    yield* collect(binding, true);
+    // Persist and acknowledge final process reports while the management listener still exists.
+    const quiesceFailure = yield* provider.quiesce(binding.taskId, binding.bindingEpoch).pipe(
+      Effect.catchTags({
+        TaskProviderError: (cause) =>
+          cause.reason === "stale_epoch" ? provider.quiesce(binding.taskId, 0) : Effect.fail(cause)
+      }),
+      Effect.as(undefined),
+      Effect.catchTags({
+        TaskProviderError: (cause) =>
+          cause.reason === "transport" || cause.reason === "stopped"
+            ? Effect.succeed(cause)
+            : Effect.fail(cause)
+      })
+    );
+    const stats = yield* readStats(binding, true).pipe(
+      Effect.catchTags({
+        TaskProviderError: (cause) =>
+          quiesceFailure && (cause.reason === "transport" || cause.reason === "stopped")
+            ? Effect.void
+            : Effect.fail(cause)
+      })
+    );
+    if (quiesceFailure && stats && !stats.stopped) return yield* quiesceFailure;
+    // Only an unavailable supervisor permits losing final reports. Storage or acknowledgement
+    // failure after quiescence leaves the task fenced and alive for the next collection attempt.
+    if (stats) yield* collect(binding, stats);
     yield* checkHousekeeping;
+    const task = yield* provider.stop(binding.taskId);
+    yield* checkHousekeeping;
+    if (!stats)
+      yield* sql`UPDATE execution_bindings SET release_cause = 'task_lost'
+        WHERE binding_id = ${binding.bindingId} AND binding_epoch = ${binding.bindingEpoch}
+          AND state = 'stopping'`;
     yield* store.stopped(task.taskId, task.stoppedAt ?? now, binding.releaseCause ?? "released");
     yield* emitBindings;
     return true;
@@ -291,20 +325,34 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
     );
   const housekeeping = Effect.fn("Fleet.housekeeping")(
     function* () {
+      const selected = yield* store.rollout;
+      if ((selected.stagedRevision ?? selected.currentRevision) !== options.deploymentRevision) {
+        yield* sql`DELETE FROM execution_housekeeping WHERE owner_id = ${options.replicaId}`;
+        return false;
+      }
       const now = yield* Clock.currentTimeMillis;
       const leaseDuration = config.get("execution.housekeeping.lease");
-      const lease = yield* store.lease(options.replicaId, now, leaseDuration);
+      const lease = yield* store.lease(
+        options.replicaId,
+        options.deploymentRevision,
+        now,
+        leaseDuration
+      );
       if (!lease) return false;
       const guard = Effect.gen(function* () {
         if (
           !(yield* store.renewLease(
             options.replicaId,
+            options.deploymentRevision,
             lease.leaseEpoch,
             yield* Clock.currentTimeMillis,
             leaseDuration
           ))
-        )
+        ) {
+          yield* sql`DELETE FROM execution_housekeeping
+            WHERE owner_id = ${options.replicaId} AND lease_epoch = ${lease.leaseEpoch}`;
           return yield* new LeaseLost({ leaseEpoch: lease.leaseEpoch });
+        }
       }).pipe(Effect.catchTags({ SchemaError: Effect.die }));
       const replenishLock = yield* Semaphore.make(1);
       const replenish = Effect.gen(function* () {
@@ -381,7 +429,8 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
                 if (remote?.state === "stopped") {
                   const binding = (yield* store.findTask(task.taskId))[0];
                   if (binding)
-                    yield* collect(binding, true).pipe(
+                    yield* readStats(binding, true).pipe(
+                      Effect.flatMap((stats) => collect(binding, stats)),
                       Effect.catchTags({
                         TaskProviderError: (cause) =>
                           cause.reason === "stopped" ? Effect.void : Effect.fail(cause)
@@ -456,7 +505,7 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
                   yield* guard;
                   yield* store.activate(binding);
                 }
-                yield* collect(binding);
+                yield* collect(binding, yield* readStats(binding));
                 const idle = yield* limits.get({
                   companyId: binding.companyId,
                   limitId: "execution.company.idle"

@@ -130,6 +130,46 @@ const idleHost = (_request: IncomingMessage, response: ServerResponse) => {
 };
 const largeAggregate = { "execution.residency.bytes": 8 * 1024 ** 3 } as const;
 
+it.live("keeps a loaded process callable across issuing-host replacement", () =>
+  Effect.gen(function* () {
+    const first = yield* listener((_request, response) => {
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify({ ok: true, value: "first host" }));
+    });
+    const replacement = yield* listener((_request, response) => {
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify({ ok: true, value: "replacement host" }));
+    });
+    const supervisor = yield* Supervisor.make({
+      callbackUrls: [first.url],
+      operatingLimits: largeAggregate
+    });
+    const loaded = yield* bind(supervisor, "ver_host_rollout");
+    expect(yield* supervisor.invoke(invocation(loaded, first.url, "callback"))).toMatchObject({
+      outcome: "returned",
+      reply: { ok: true, value: "first host" }
+    });
+    expect(
+      yield* supervisor.invoke(invocation(loaded, replacement.url, "callback")).pipe(Effect.result)
+    ).toMatchObject({ _tag: "Failure", failure: { reason: "protocol" } });
+    yield* supervisor.bind({
+      companyId: "com_supervisor",
+      bindingEpoch: 1,
+      callbackUrls: [replacement.url]
+    });
+    expect(yield* supervisor.invoke(invocation(loaded, replacement.url, "callback"))).toMatchObject(
+      {
+        outcome: "returned",
+        reply: { ok: true, value: "replacement host" }
+      }
+    );
+    expect(yield* supervisor.invoke(invocation(loaded, first.url, "callback"))).toMatchObject({
+      outcome: "returned",
+      reply: { ok: true, value: "first host" }
+    });
+  }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer))
+);
+
 it.live("rejects a probe interval that cannot enforce the six-second stall bound", () =>
   Supervisor.make({
     callbackUrls: [],

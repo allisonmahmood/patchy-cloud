@@ -7,11 +7,13 @@ import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as PrivateInterface from "./PrivateInterface.js";
 
 // This entrypoint loads no host services, database, object store or auth credentials.
 NodeRuntime.runMain(
   Effect.gen(function* () {
     const management = yield* Management.config;
+    const host = yield* PrivateInterface.resolve(management.host ?? "127.0.0.1");
     const callbackUrls = yield* Config.schema(
       Schema.fromJsonString(Schema.Array(Schema.NonEmptyString)),
       "EXECUTION_CALLBACK_URLS"
@@ -34,6 +36,7 @@ NodeRuntime.runMain(
     });
     const listener = yield* Management.serve({
       ...management,
+      host,
       maxRequestBytes: limits.get("execution.management.bodyBytes")
     }).pipe(Effect.provideService(Supervisor.Supervisor, supervisor));
     yield* Console.log(`Patchy execution supervisor listening on ${listener.url}`);

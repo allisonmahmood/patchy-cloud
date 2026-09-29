@@ -8,7 +8,7 @@ Signed-in members find company patches at `/` and open their cards at `/patches/
 
 Agents discover company tools and data sources through `patchy list` and its patch, primitive and connection drill-downs. Description edits pull back into the repo at refresh, dev start and publish. Clerk sign-in, create-or-join, company administration, company/public sharing and machine login, logout and revocation are built. Postgres connections have browser administration, immutable schema snapshots and generated relation clients. Portal, Company, Connections and Your machines share one app shell and component set.
 
-Tier 2 repos publish an HTML artifact and an inspected server artifact. Dev and test instances serve them on the local executor, with patch identity for own-resource callbacks, live viewer authorization for company data and bounded settlement. The patch-repo dev loop uses that same handler engine and callback path, with live server rebinding and a non-admin colleague mount. The fleet controller now runs offline against separate local task processes, including spare claims, stopping and drain, crash metering and the patch breaker. Its starting cover holds calls until the company is ready. Production admission remains closed until the ECS provider lands. Narrower sharing, shared file stores, other integrations, billing, source recovery and the remaining company lifecycle remain future work.
+Tier 2 repos publish an HTML artifact and an inspected server artifact. Dev and test instances serve them on the local executor, with patch identity for own-resource callbacks, live viewer authorization for company data and bounded settlement. The patch-repo dev loop uses that same handler engine and callback path, with live server rebinding and a non-admin colleague mount. The fleet controller supports separate local task processes for offline checks and ECS Fargate tasks for production, including spare claims, stopping and drain, crash metering and the patch breaker. Its starting cover holds calls until the company is ready. Production tier 2 admission requires `EXECUTION_PROVIDER=ecs`; a local executor is refused. Narrower sharing, shared file stores, other integrations, billing, source recovery and the remaining company lifecycle remain future work.
 
 ## Patches
 
@@ -42,7 +42,7 @@ Ownership: a patch belongs to a **user** in a company. The user holds a machine 
 
 ### Versions and publishing
 
-**Publish** creates an immutable **version** and moves the patch's served-version pointer. The working copy stays local; the cloud has no unpublished patch. File publishing sends a tier 0 manifest and one HTML bundle. Each version records its tier, release, manifest version, server-stamped wire version and schema revision. The API accepts tiers 0 and 1 with tables, stores, shared tables and resolved Postgres connections, and tier 2 on dev and test instances. Tier 0 obeys the safe-HTML policy; scripted pages run in the sandbox. Tier 2 also stores an inspected server module. Higher tiers are refused. File-mode updates to a patch with cumulative inventory are `has_primitives` and must use its repo. Rollback changes the served pointer without creating a version or changing data, as described under [Updating, retiring, deleting](#updating-retiring-deleting).
+**Publish** creates an immutable **version** and moves the patch's served-version pointer. The working copy stays local; the cloud has no unpublished patch. File publishing sends a tier 0 manifest and one HTML bundle. Each version records its tier, release, manifest version, server-stamped wire version and schema revision. The API accepts tiers 0 and 1 with tables, stores, shared tables and resolved Postgres connections, and tier 2 on dev/test instances or production hosts configured with the ECS fleet. Tier 0 obeys the safe-HTML policy; scripted pages run in the sandbox. Tier 2 also stores an inspected server module. Higher tiers are refused. File-mode updates to a patch with cumulative inventory are `has_primitives` and must use its repo. Rollback changes the served pointer without creating a version or changing data, as described under [Updating, retiring, deleting](#updating-retiring-deleting).
 
 A **publish key** identifies one attempt for its owning user. Before sending, the CLI stages the complete request and owner in a key-named file, then atomically installs the nonempty `attempt/` directory as the active recovery slot. The next publish recovers that attempt first, using a current token for the same user. Concurrent CLI processes recover the existing attempt rather than overwriting it; an account switch cannot resend another user's saved content. A killed process leaves either no active attempt or a complete recoverable one. Clearing only the matching key prevents a stale response from removing a newer attempt. Repeating the same request returns the stored response without a new version, even after the instance's release changes; reusing the key with a different payload is a conflict. New publishes require an exact-current CLI release.
 
@@ -301,7 +301,7 @@ A **tier** is where a patch's code runs, and nothing else. Tier 0 is **static**:
 
 ### What a tier changes, and what it never changes
 
-A tier changes where code runs, not patch ownership, declarations, versioning or addresses. Company patches use the same sign-in door on every tier. Public sharing is available only below tier 2. Tier 2 publication runs on dev and test instances; production requires fleet execution.
+A tier changes where code runs, not patch ownership, declarations, versioning or addresses. Company patches use the same sign-in door on every tier. Public sharing is available only below tier 2. Tier 2 publication runs on dev/test instances and production hosts configured with the ECS fleet.
 
 Tiers 0 and 1 can be **public**, open to anyone with the link. A public tier 0 patch is a static page; a public tier 1 patch can run browser code but receives no company capabilities for anyone, including signed-in members. It may still use the shell's route bridge. An authenticated company-data mode of a public patch remains deferred. **Public tier 2 is deferred**: the patch identity grants no anonymous access. `tier2_not_public` refuses public sharing of a served tier 2 version, and a tier 2 publish to a public patch requires explicit `--share company`.
 
@@ -405,8 +405,8 @@ Tier 1 runs only while the viewer has the patch open. It cannot run background w
 
 ### Tier 2 — hosted
 
-Tier 2 publication is built for dev and test instances, as defined in
-[ADR-0012](./adr/ADR-0012-credential-free-execution-service.md). The server stores
+Tier 2 publication is built for dev/test instances and production ECS fleet hosts,
+as defined in [ADR-0012](./adr/ADR-0012-credential-free-execution-service.md). The server stores
 both artifacts and inspects the server bytes before recording a version.
 Its engine, inspection, supervisor, local executor and host invocation lifetime
 are built. The host validates handler
@@ -423,8 +423,11 @@ retry after an unknown outcome recover a committed result without duplicate
 writes. Actions can transfer file bytes, call company integrations as the viewer
 and run sibling queries or mutations under their remaining deadline. The fleet
 controller binds one company task, manages spares and drains stopping bindings.
-Its local provider runs separate supervisor processes for offline acceptance;
-production still requires the ECS provider.
+Its local provider runs separate supervisor processes for offline acceptance.
+Its ECS provider runs credential-free company tasks in private subnets, with
+one workerd process per loaded version. Each task shares its half-vCPU CPU budget
+across the supervisor and all loaded processes; process separation does not
+promise unchanged sibling latency under CPU contention.
 
 Metering records calls and database-held milliseconds from the first admitted
 invocation, independently of best-effort request events. Invocation rows record

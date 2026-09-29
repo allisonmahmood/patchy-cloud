@@ -562,6 +562,241 @@ it.layer(services)("host fleet controller", (it) => {
   );
 
   it.effect(
+    "retains a quiesced task until final reports are persisted and acknowledged",
+    () =>
+      Effect.gen(function* () {
+        const { companyId, provider, left, bundle, sql } = yield* setup("quiesce");
+        const admitted = yield* left.lifecycle.acquire(companyId, bundle.patchId);
+        const loaded = yield* left.executor.bind(bundle, admitted.binding);
+        yield* left.executor.invoke(
+          request(loaded.binding, loaded.processGeneration!, "quiesce-call"),
+          admitted.binding
+        );
+        yield* admitted.release;
+        let loseAcknowledgement = true;
+        const unreliable = TaskProvider.TaskProvider.of({
+          ...provider,
+          stats: (taskId, input) =>
+            Effect.suspend(() => {
+              if (loseAcknowledgement && input.acknowledgeReports?.length) {
+                loseAcknowledgement = false;
+                return Effect.fail(
+                  new TaskProvider.TaskProviderError({
+                    operation: "stats",
+                    taskId,
+                    reason: "transport"
+                  })
+                );
+              }
+              return provider.stats(taskId, input);
+            })
+        });
+        const collector = yield* Fleet.make({
+          replicaId: "quiesce-collector",
+          deploymentRevision: "quiesce",
+          automaticHousekeeping: false
+        }).pipe(Effect.provideService(TaskProvider.TaskProvider, unreliable));
+        assert.isTrue(Exit.isFailure(yield* collector.releaseCompany(companyId).pipe(Effect.exit)));
+        assert.strictEqual(
+          (yield* provider.list).find((task) => task.taskId === admitted.binding.taskId)?.state,
+          "running"
+        );
+        const final = yield* provider.stats(admitted.binding.taskId, {
+          bindingEpoch: admitted.binding.bindingEpoch
+        });
+        assert.isTrue(final.stopped);
+        assert.strictEqual(final.processes.length, 0);
+        assert.strictEqual(final.reports[0]!.callsServed, 1);
+        const reports =
+          yield* sql`SELECT calls_served FROM execution_processes WHERE task_id = ${admitted.binding.taskId}`;
+        assert.deepStrictEqual(reports, [{ calls_served: 1 }]);
+        yield* collector.housekeeping();
+        const stopped = (yield* provider.list).find(
+          (task) => task.taskId === admitted.binding.taskId
+        )!;
+        assert.strictEqual(stopped.state, "stopped");
+        assert.strictEqual((yield* left.history(companyId))[0]!.releasedAt, stopped.stoppedAt);
+        assert.deepStrictEqual(
+          (yield* provider.stats(admitted.binding.taskId, {
+            bindingEpoch: admitted.binding.bindingEpoch
+          })).reports,
+          []
+        );
+      }).pipe(Effect.scoped),
+    30_000
+  );
+
+  it.effect(
+    "persists and acknowledges final reports before stopping after a lost quiesce response",
+    () =>
+      Effect.gen(function* () {
+        const { companyId, provider, left, bundle, sql } = yield* setup("lost-quiesce");
+        const admitted = yield* left.lifecycle.acquire(companyId, bundle.patchId);
+        const loaded = yield* left.executor.bind(bundle, admitted.binding);
+        yield* left.executor.invoke(
+          request(loaded.binding, loaded.processGeneration!, "lost-quiesce-call"),
+          admitted.binding
+        );
+        yield* admitted.release;
+        const unreliable = TaskProvider.TaskProvider.of({
+          ...provider,
+          quiesce: Effect.fn("lostQuiesceResponse")(function* (taskId, bindingEpoch) {
+            yield* provider.quiesce(taskId, bindingEpoch);
+            return yield* new TaskProvider.TaskProviderError({
+              operation: "quiesce",
+              taskId,
+              reason: "transport"
+            });
+          }),
+          stop: Effect.fn("stopAfterFinalReports")(function* (taskId) {
+            const final = yield* provider.stats(taskId, {
+              bindingEpoch: admitted.binding.bindingEpoch
+            });
+            assert.isTrue(final.stopped);
+            assert.deepStrictEqual(final.reports, []);
+            assert.deepStrictEqual(
+              yield* sql`SELECT binding_epoch, calls_served FROM execution_processes WHERE task_id = ${taskId}`,
+              [{ binding_epoch: admitted.binding.bindingEpoch, calls_served: 1 }]
+            );
+            return yield* provider.stop(taskId);
+          })
+        });
+        const controller = yield* Fleet.make({
+          replicaId: "lost-quiesce-controller",
+          deploymentRevision: "lost-quiesce",
+          automaticHousekeeping: false
+        }).pipe(Effect.provide(Layer.succeed(TaskProvider.TaskProvider, unreliable)));
+        assert.isTrue(yield* controller.releaseCompany(companyId));
+        const stopped = (yield* provider.list).find(
+          (task) => task.taskId === admitted.binding.taskId
+        )!;
+        assert.strictEqual(stopped.state, "stopped");
+        const history = (yield* left.history(companyId))[0]!;
+        assert.strictEqual(history.releaseCause, "operator");
+        assert.strictEqual(history.releasedAt, stopped.stoppedAt);
+      }).pipe(Effect.scoped),
+    30_000
+  );
+
+  it.effect(
+    "retains a fenced task when quiesce fails but its supervisor is still running",
+    () =>
+      Effect.gen(function* () {
+        const { companyId, provider, left, bundle, sql } = yield* setup("retry-quiesce");
+        const admitted = yield* left.lifecycle.acquire(companyId, bundle.patchId);
+        const loaded = yield* left.executor.bind(bundle, admitted.binding);
+        yield* left.executor.invoke(
+          request(loaded.binding, loaded.processGeneration!, "retry-quiesce-call"),
+          admitted.binding
+        );
+        yield* admitted.release;
+        let failQuiesce = true;
+        const unreliable = TaskProvider.TaskProvider.of({
+          ...provider,
+          quiesce: (taskId, bindingEpoch) =>
+            Effect.suspend(() =>
+              failQuiesce
+                ? Effect.fail(
+                    new TaskProvider.TaskProviderError({
+                      operation: "quiesce",
+                      taskId,
+                      reason: "transport"
+                    })
+                  )
+                : provider.quiesce(taskId, bindingEpoch)
+            )
+        });
+        const controller = yield* Fleet.make({
+          replicaId: "retry-quiesce-controller",
+          deploymentRevision: "retry-quiesce",
+          automaticHousekeeping: false
+        }).pipe(Effect.provide(Layer.succeed(TaskProvider.TaskProvider, unreliable)));
+        assert.isTrue(
+          Exit.isFailure(yield* controller.releaseCompany(companyId).pipe(Effect.exit))
+        );
+        assert.strictEqual(
+          (yield* provider.list).find((task) => task.taskId === admitted.binding.taskId)?.state,
+          "running"
+        );
+        assert.isFalse(
+          (yield* provider.stats(admitted.binding.taskId, {
+            bindingEpoch: admitted.binding.bindingEpoch
+          })).stopped
+        );
+        assert.deepStrictEqual(
+          yield* sql`SELECT state, release_cause FROM execution_bindings
+            WHERE task_id = ${admitted.binding.taskId}`,
+          [{ state: "stopping", release_cause: "operator" }]
+        );
+        assert.isNull((yield* left.history(companyId))[0]!.releasedAt);
+        failQuiesce = false;
+        yield* controller.housekeeping();
+        assert.strictEqual(
+          (yield* provider.list).find((task) => task.taskId === admitted.binding.taskId)?.state,
+          "stopped"
+        );
+        assert.strictEqual((yield* left.history(companyId))[0]!.releaseCause, "operator");
+        assert.deepStrictEqual(
+          yield* sql`SELECT calls_served FROM execution_processes WHERE task_id = ${admitted.binding.taskId}`,
+          [{ calls_served: 1 }]
+        );
+      }).pipe(Effect.scoped),
+    30_000
+  );
+
+  it.effect(
+    "hard-stops an unavailable supervisor without claiming final process metering",
+    () =>
+      Effect.gen(function* () {
+        const { companyId, provider, left, bundle, sql } = yield* setup("unreachable");
+        const admitted = yield* left.lifecycle.acquire(companyId, bundle.patchId);
+        const loaded = yield* left.executor.bind(bundle, admitted.binding);
+        yield* left.executor.invoke(
+          request(loaded.binding, loaded.processGeneration!, "unreachable-call"),
+          admitted.binding
+        );
+        yield* admitted.release;
+        const unreachable = TaskProvider.TaskProvider.of({
+          ...provider,
+          quiesce: (taskId) =>
+            Effect.fail(
+              new TaskProvider.TaskProviderError({
+                operation: "quiesce",
+                taskId,
+                reason: "transport"
+              })
+            ),
+          stats: (taskId) =>
+            Effect.fail(
+              new TaskProvider.TaskProviderError({
+                operation: "stats",
+                taskId,
+                reason: "transport"
+              })
+            )
+        });
+        const controller = yield* Fleet.make({
+          replicaId: "unreachable-controller",
+          deploymentRevision: "unreachable",
+          automaticHousekeeping: false
+        }).pipe(Effect.provideService(TaskProvider.TaskProvider, unreachable));
+        assert.isTrue(yield* controller.releaseCompany(companyId));
+        const stopped = (yield* provider.list).find(
+          (task) => task.taskId === admitted.binding.taskId
+        )!;
+        assert.strictEqual(stopped.state, "stopped");
+        const history = (yield* left.history(companyId))[0]!;
+        assert.strictEqual(history.releaseCause, "task_lost");
+        assert.strictEqual(history.releasedAt, stopped.stoppedAt);
+        assert.deepStrictEqual(
+          yield* sql`SELECT report_id FROM execution_processes WHERE task_id = ${admitted.binding.taskId}`,
+          []
+        );
+      }).pipe(Effect.scoped),
+    30_000
+  );
+
+  it.effect(
     "reconciles stop time and emits the original process event once when report acknowledgement is retried",
     () =>
       Effect.gen(function* () {
@@ -997,6 +1232,7 @@ it.layer(services)("host fleet controller", (it) => {
             automaticHousekeeping: false
           }).pipe(Effect.provideService(TaskProvider.TaskProvider, provider));
         yield* left.housekeeping();
+        assert.isFalse(yield* candidate.housekeeping());
         for (let index = 0; index < companies.length; index++)
           assert.strictEqual(
             (yield* candidate.ensureBinding(companies[index]!)).taskId,
@@ -1005,7 +1241,8 @@ it.layer(services)("host fleet controller", (it) => {
         assert.isFalse(yield* candidate.promoteDeployment("staged-new"));
         assert.isTrue(yield* candidate.stageDeployment("staged-new"));
         assert.isFalse(yield* candidate.promoteDeployment("staged-new"));
-        yield* left.housekeeping();
+        assert.isFalse(yield* left.housekeeping());
+        assert.isTrue(yield* candidate.housekeeping());
         assert.isTrue(yield* candidate.promoteDeployment("staged-new"));
         // Promotion changes spare admission, not every company's existing binding at once.
         for (let index = 0; index < companies.length; index++)
@@ -1013,7 +1250,7 @@ it.layer(services)("host fleet controller", (it) => {
             (yield* candidate.ensureBinding(companies[index]!)).taskId,
             original[index]!.taskId
           );
-        yield* left.housekeeping();
+        yield* candidate.housekeeping();
         const changed = yield* sql`SELECT b.company_id FROM execution_bindings b
         JOIN execution_tasks t ON t.task_id = b.task_id
         WHERE b.state = 'active' AND t.deployment_revision = 'staged-new'`;
@@ -1028,7 +1265,7 @@ it.layer(services)("host fleet controller", (it) => {
           (yield* sql`SELECT current_revision FROM execution_rollout`)[0]!.current_revision,
           "staged-new"
         );
-        for (let pass = 0; pass < companies.length; pass++) yield* left.housekeeping();
+        for (let pass = 0; pass < companies.length; pass++) yield* candidate.housekeeping();
         yield* left.retireDeployment("staged-old");
         assert.isTrue(
           (yield* sql`SELECT retired FROM execution_deployments WHERE revision = 'staged-old'`)[0]!
@@ -1039,6 +1276,7 @@ it.layer(services)("host fleet controller", (it) => {
           (yield* sql`SELECT retired FROM execution_deployments WHERE revision = 'staged-old'`)[0]!
             .retired
         );
+        assert.isFalse(yield* candidate.housekeeping());
         yield* left.housekeeping();
         assert.isTrue(yield* left.promoteDeployment("staged-old"));
         for (let pass = 0; pass < companies.length; pass++) yield* left.housekeeping();
