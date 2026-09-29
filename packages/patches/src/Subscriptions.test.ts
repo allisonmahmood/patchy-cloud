@@ -27,7 +27,14 @@ import { CompanyDatabases } from "@patchy/company-database";
 import { contentHash, newInternalId, newPatchId } from "@patchy/core";
 import { Limits, OperatingLimits } from "@patchy/limits";
 import { SubscriptionReads, TableOperations } from "@patchy/primitives";
-import { Binding, RuntimeStream, StreamAdmission, StreamLimits, Wakes } from "@patchy/runtime";
+import {
+  Binding,
+  RuntimeStream,
+  StreamAdmission,
+  StreamLimits,
+  Subscriptions,
+  Wakes
+} from "@patchy/runtime";
 import * as Companies from "../../companies/src/Companies.js";
 import * as Users from "../../companies/src/Users.js";
 import * as PortalPages from "../../portal/src/PortalPages.js";
@@ -70,6 +77,7 @@ const services = Layer.mergeAll(
 );
 const loaded = LoadedVersions.layer.pipe(Layer.provideMerge(services));
 const runtime = RuntimeStream.layer.pipe(
+  Layer.provide(Subscriptions.layer),
   Layer.provideMerge(
     Layer.mergeAll(StreamAdmission.layer, StreamLimits.layer, SubscriptionReads.layer).pipe(
       Layer.provideMerge(loaded)

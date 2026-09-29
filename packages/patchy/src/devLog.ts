@@ -32,10 +32,6 @@ export const invocation = Effect.fn("DevLog.invocation")(function* (
       lines.push(`  ${encodeJson(entry)}`);
     }
   }
-  if (event.outcomeCode === "handler_failed" && event.diagnostic !== undefined) {
-    lines.push(`  ${event.diagnostic.message}`);
-    if (event.diagnostic.stack !== undefined) lines.push(event.diagnostic.stack);
-  }
   yield* Console.log(lines.join("\n"));
 });
 

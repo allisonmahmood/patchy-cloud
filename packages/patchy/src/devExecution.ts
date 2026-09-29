@@ -1,4 +1,4 @@
-import type { GuestProtocol, Manifest } from "@patchy/api";
+import { handlerKinds, type GuestProtocol, type Manifest } from "@patchy/api";
 import { sha256 } from "@patchy/core";
 import * as Local from "@patchy/execution/local";
 import { MutationTransaction, QuerySnapshot } from "@patchy/primitives";
@@ -52,15 +52,17 @@ export const make = Effect.fn("DevExecution.make")(function* (
   options: Options,
   install: (version: LoadedVersions.LoadedVersion) => void
 ) {
-  const base = yield* Layer.build(
+  const invocationContext = yield* Layer.build(
     Layer.mergeAll(QuerySnapshot.layer, MutationTransaction.layer).pipe(
       Layer.provideMerge(InvocationCapabilities.layer),
       Layer.provideMerge(journals)
     )
   );
-  const gateway = yield* CallbackGateway.make(handlers).pipe(Effect.provideContext(base));
+  const gateway = yield* CallbackGateway.make(handlers).pipe(
+    Effect.provideContext(invocationContext)
+  );
   const listener = yield* CallbackGatewayApi.listen().pipe(
-    Effect.provideContext(base),
+    Effect.provideContext(invocationContext),
     Effect.provideService(CallbackGateway.CallbackGateway, gateway)
   );
   const executor = yield* Local.make({
@@ -73,7 +75,7 @@ export const make = Effect.fn("DevExecution.make")(function* (
     callbackUrl: listener.url,
     observe: options.observe ?? (() => Effect.void)
   }).pipe(
-    Effect.provideContext(base),
+    Effect.provideContext(invocationContext),
     Effect.provideService(Executor.Executor, executor),
     Effect.provideService(ServerBundles.ServerBundles, {
       load: (loaded) => {
@@ -84,10 +86,10 @@ export const make = Effect.fn("DevExecution.make")(function* (
       }
     })
   );
-  const subscriptions = yield* Subscriptions.make.pipe(
-    Effect.provideService(Invocation.Invocation, invocation),
-    Effect.provide(StreamLimits.layerLocal)
-  );
+  const subscriptionContext = yield* Layer.build(
+    Subscriptions.layer.pipe(Layer.provide(StreamLimits.layerLocal))
+  ).pipe(Effect.provideService(Invocation.Invocation, invocation));
+  const subscriptions = Context.get(subscriptionContext, Subscriptions.Subscriptions);
   // The watcher stages and installs serially. Only inspection overlaps this preload.
   const stage = Effect.fn("DevExecution.stage")(function* (bytes: Uint8Array) {
     const source = new TextDecoder().decode(bytes);
@@ -109,21 +111,14 @@ export const make = Effect.fn("DevExecution.make")(function* (
       // A staged process has no admitted calls until both loading and inspection succeeded.
       bundles.set(next.manifest, bundle);
       install(next);
-      yield* subscriptions.rebind(
-        version.patchId,
-        Object.fromEntries(
-          Object.entries(descriptors).map(([name, descriptor]) => [name, descriptor.kind])
-        )
-      );
+      yield* subscriptions.rebind(version.patchId, handlerKinds(descriptors));
     });
   });
   if (options.server === undefined) return yield* new Runtime.InvocationUnavailable();
   const installInitial = yield* stage(options.server.bytes);
   yield* installInitial(options.server.handlers);
   return {
-    context: Context.make(Invocation.Invocation, invocation).pipe(
-      Context.add(Subscriptions.Subscriptions, subscriptions)
-    ),
+    context: Context.add(subscriptionContext, Invocation.Invocation, invocation),
     stage
   };
 });

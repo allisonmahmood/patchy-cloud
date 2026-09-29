@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Deep comparison distinguishes repeated watcher results from new observed transitions.
+import { isDeepStrictEqual } from "node:util";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -36,13 +38,25 @@ const repo = Effect.gen(function* () {
   return { root, fs, path };
 });
 
-const inspectedBuilds = Effect.fn("test.inspectedBuilds")(function* (root: string) {
+const inspectedChanges = Effect.fn("test.inspectedChanges")(function* (root: string) {
   const next = yield* watch(root, toolchain);
-  return next.pipe(
-    Effect.flatMap((build) =>
-      build.inspect.pipe(Effect.map((handlers) => ({ ...build, handlers })))
-    )
+  const observed = next.pipe(
+    Effect.flatMap(({ inspect, ...build }) =>
+      inspect.pipe(Effect.map((handlers) => ({ ...build, handlers })))
+    ),
+    Effect.result
   );
+  let previous: Effect.Success<typeof observed> | undefined;
+  return Effect.gen(function* () {
+    while (true) {
+      const current = yield* observed;
+      // A save can cause several Vite rebuilds. Assert each distinct result, not
+      // one queue entry per save; unexpected new bundles or errors still fail.
+      if (isDeepStrictEqual(current, previous)) continue;
+      previous = current;
+      return yield* Effect.fromResult(current);
+    }
+  });
 });
 
 it.live(
@@ -50,7 +64,7 @@ it.live(
   () =>
     Effect.gen(function* () {
       const { root, fs, path } = yield* repo;
-      const next = yield* inspectedBuilds(root);
+      const next = yield* inspectedChanges(root);
       assert.deepStrictEqual((yield* next).handlers, {});
 
       yield* fs.makeDirectory(path.join(root, "server"));
@@ -92,7 +106,7 @@ it.live(
       const source = path.join(root, "server/leads.ts");
       yield* fs.makeDirectory(path.join(root, "server"));
       yield* fs.writeFileString(source, handler("text"));
-      const next = yield* inspectedBuilds(root);
+      const next = yield* inspectedChanges(root);
       const initial = yield* next;
 
       yield* fs.writeFileString(source, 'import "node:fs";\n' + handler("text"));
@@ -133,7 +147,7 @@ import { result } from "../shared/result.js";
 export const read = query({ args: {}, result, handler: () => "ready" });
 `
       );
-      const next = yield* inspectedBuilds(root);
+      const next = yield* inspectedChanges(root);
       assert.deepStrictEqual((yield* next).handlers["leads.read"]?.result, { kind: "text" });
       yield* fs.writeFileString(
         dependency,
@@ -176,7 +190,7 @@ export const read = query({ args: {}, result: t.json(), handler: () => optionalM
         path.join(sdk, "dist/server.js"),
         original + "\nexport const optionalModule = (name) => ({ import: name });"
       );
-      const next = yield* inspectedBuilds(root);
+      const next = yield* inspectedChanges(root);
       assert.deepStrictEqual((yield* next).handlers["leads.read"], {
         kind: "query",
         args: {},

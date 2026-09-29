@@ -16,7 +16,14 @@ import * as Companies from "../../companies/src/Companies.js";
 import * as Users from "../../companies/src/Users.js";
 import { contentHash, newInternalId, newPatchId } from "@patchy/core";
 import { Limits, OperatingLimits } from "@patchy/limits";
-import { RuntimeStream, Runtime, StreamAdmission, StreamLimits, me } from "@patchy/runtime";
+import {
+  RuntimeStream,
+  Runtime,
+  StreamAdmission,
+  StreamLimits,
+  Subscriptions,
+  me
+} from "@patchy/runtime";
 import { Wakes } from "@patchy/runtime/core";
 import { SubscriptionReads } from "@patchy/primitives";
 import * as LoadedVersions from "./LoadedVersions.js";
@@ -40,6 +47,7 @@ const dependencies = Layer.mergeAll(
   Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(clerkEnv())))
 );
 const layer = RuntimeStream.layer.pipe(
+  Layer.provide(Subscriptions.layer),
   Layer.provide(SubscriptionReads.layer),
   Layer.provideMerge(
     Layer.mergeAll(LoadedVersions.layer, StreamAdmission.layer, StreamLimits.layer).pipe(

@@ -45,6 +45,27 @@ it.live(
 );
 
 it.live(
+  "discards inspection globals and background work after each successful description",
+  () =>
+    Effect.gen(function* () {
+      const inspection = yield* Inspection.make({ loadTimeoutMs: 300 });
+      const background = `let calls = 0;
+        export default { fetch(request, env, ctx) {
+          if (++calls !== 1) throw new Error("Reused inspection state.");
+          ctx.waitUntil(scheduler.wait(75).then(() => { while (true) {} }));
+          return Response.json({ ok: true, handlers: ${JSON.stringify(descriptors)} });
+        } };`;
+      for (let i = 0; i < 3; i++) {
+        expect(yield* inspection.inspect(background)).toEqual(descriptors);
+        // The child owns a real platform clock; TestClock cannot advance its scheduled work.
+        yield* Effect.sleep("150 millis");
+      }
+      expect(yield* inspection.inspect(source)).toEqual(descriptors);
+    }).pipe(Effect.scoped),
+  30_000
+);
+
+it.live(
   "restarts reusable inspection after a replacement spins during initialization",
   () =>
     Effect.gen(function* () {
@@ -113,13 +134,21 @@ it.live("preserves the native cause of a malformed callback URL", () =>
 );
 
 it.live(
-  "refuses re-exports and dormant computed imports in a server artifact",
+  "refuses static imports, re-exports and dormant computed imports in a server artifact",
   () =>
     Effect.gen(function* () {
       for (const edge of [
-        'export { default as process } from "node:process";',
-        'export * from "node:process";',
-        "export function later(name) { return import(name); }"
+        'import "cloudflare:workers";',
+        'export { env } from "cloudflare:workers";',
+        'export * from "cloudflare:workers";',
+        'export * as workers from "cloudflare:workers";',
+        "export function later(name) { return import(name); }",
+        'export function later() { return import /* comment */ ("cloudflare:" + "workers"); }',
+        "export function later(name) { return `prefix${import(name)}suffix`; }",
+        "export function later(name) { return import(import(name)); }",
+        "export function later(name) { return { [import(name)]: 1 }; }",
+        "export function later(name) { return (function() {}) / import(name); }",
+        'export function later(name) { if (false) /a/.test("a"); return import(name); }'
       ]) {
         expect(yield* Inspection.inspect(`${edge}\n${source}`).pipe(Effect.result)).toMatchObject({
           _tag: "Failure",
@@ -127,6 +156,29 @@ it.live(
         });
       }
     }),
+  30_000
+);
+
+it.live(
+  "accepts import-like text and metadata but leaves syntax validation to workerd",
+  () =>
+    Effect.gen(function* () {
+      const inspection = yield* Inspection.make();
+      expect(
+        yield* inspection.inspect(`
+          // import("cloudflare:workers")
+          const text = 'export * from "cloudflare:workers"';
+          const pattern = /import\\("cloudflare:workers"\\)/;
+          const template = \`import("cloudflare:workers")\`;
+          const object = { import() { return import.meta.url; } };
+          object.import();
+          ${source}
+        `)
+      ).toEqual(descriptors);
+      expect(
+        yield* inspection.inspect(`export const = 1; ${source}`).pipe(Effect.result)
+      ).toMatchObject({ _tag: "Failure", failure: { reason: "load" } });
+    }).pipe(Effect.scoped),
   30_000
 );
 

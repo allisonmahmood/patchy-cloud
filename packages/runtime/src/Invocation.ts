@@ -190,9 +190,7 @@ export interface QueryObservation {
   readonly onSnapshot: (watermark: Readonly<Record<string, string>>) => void;
 }
 
-export interface DevSettlement extends InvocationLog.Begin, InvocationLog.Finish {
-  readonly diagnostic?: { readonly message: string; readonly stack?: string };
-}
+export type DevSettlement = InvocationLog.Begin & InvocationLog.Finish;
 
 export class Invocation extends Context.Service<
   Invocation,
@@ -385,7 +383,6 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
         let storedOutcome: MutationTransaction.StoredOutcome | undefined;
         const meter = yield* DatabaseMeter.make;
         let logs: Array<typeof Schema.Json.Type> | undefined;
-        let devDiagnostic: DevSettlement["diagnostic"];
         let observed = false;
         const begin = {
           id,
@@ -425,8 +422,7 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
             observed = true;
             yield* options.dev.observe({
               ...begin,
-              ...settled,
-              ...(devDiagnostic === undefined ? {} : { diagnostic: devDiagnostic })
+              ...settled
             });
           }
           const written = yield* awaitUntil(log.finish(settled), until);
@@ -742,11 +738,6 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
             failure.value.cause !== undefined
           ) {
             const cause = failure.value.cause;
-            if (options.dev !== undefined && cause instanceof Error)
-              devDiagnostic = {
-                message: cause.message.slice(0, 2048),
-                ...(cause.stack === undefined ? {} : { stack: cause.stack.slice(0, 4096) })
-              };
             const diagnostic = {
               message: "The host could not complete the handler.",
               details: { category: isExecutionError(cause) ? cause.reason : "host_failure" }

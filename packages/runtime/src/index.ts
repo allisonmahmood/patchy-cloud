@@ -18,6 +18,7 @@ export * as RuntimeStreamApi from "./RuntimeStreamApi.js";
 export * as Wakes from "./Wakes.js";
 export * as WakesPostgres from "./WakesPostgres.js";
 export * as SubscriptionReads from "./SubscriptionReads.js";
+export * as Subscriptions from "./Subscriptions.js";
 export * as StreamAdmission from "./StreamAdmission.js";
 export * as StreamLimits from "./StreamLimits.js";
 export { migrations } from "./migrations.js";

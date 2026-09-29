@@ -19,7 +19,7 @@ const decodeReply = Schema.decodeUnknownEffect(GuestProtocol.InspectionReply, {
   onExcessProperty: "error"
 });
 
-/** Reuses a credential-free process, but loads each bundle in a fresh isolated Worker. */
+/** Reuses a credential-free process; each uncached Worker dies with its inspection request. */
 export const make = Effect.fn("Execution.Inspection.make")(function* (
   options: { readonly loadTimeoutMs?: number } = {}
 ) {

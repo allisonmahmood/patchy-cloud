@@ -456,13 +456,12 @@ export const prepare = Effect.fn("DevResources.prepare")(function* (
       stage: execution.stage
     };
   }
-  const subscriptions = yield* Subscriptions.make.pipe(
-    Effect.provideContext(context),
-    Effect.provide(StreamLimits.layerLocal)
-  );
+  const subscriptionContext = yield* Layer.build(
+    Subscriptions.layer.pipe(Layer.provide(StreamLimits.layerLocal))
+  ).pipe(Effect.provideContext(context));
   return {
     ...preparedResources,
-    context: Context.add(context, Subscriptions.Subscriptions, subscriptions),
+    context: Context.merge(context, subscriptionContext),
     stage: () => Effect.fail(new Runtime.InvocationUnavailable())
   };
 });

@@ -15,7 +15,7 @@ import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import { Session, withCookies, sessionScripts, returnPath, pageResponse } from "@patchy/auth";
-import { WIRE_VERSION } from "@patchy/api";
+import { WIRE_VERSION, handlerKinds } from "@patchy/api";
 import { newInternalId } from "@patchy/core";
 import type { Companies, Users } from "@patchy/companies";
 import { Content, Patches, PatchesConfig } from "@patchy/patches";
@@ -177,12 +177,7 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (kind: "address" | "c
       : renderPatchWrapper({
           ...served.value,
           html,
-          handlerKinds: Object.fromEntries(
-            Object.entries(served.value.version.manifest.handlers ?? {}).map(([name, handler]) => [
-              name,
-              handler.kind
-            ])
-          ),
+          handlerKinds: handlerKinds(served.value.version.manifest.handlers),
           scope: isPublic ? "public" : "company",
           viewerId:
             !isPublic && !HttpServerResponse.isHttpServerResponse(admission)

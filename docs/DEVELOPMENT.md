@@ -33,7 +33,9 @@ the child cannot leave a runtime behind a Node launcher.
 stub callback hosts and checks the server runtime promise on the actual binary.
 Each harness scope owns its loopback port, process and temporary configuration.
 Inspection grants no callback service or company binding and kills and reaps
-non-terminating initializers under a load deadline.
+non-terminating initializers under a load deadline. Publication uses a throwaway
+process. Dev keeps the credential-free process warm while each request owns an
+uncached Worker whose code and background tasks are disposed after inspection.
 
 The engine, inspection, supervisor and local executor are available independently.
 `@patchy/execution/local` owns the production loader and watchdog without a fleet

@@ -2,7 +2,7 @@
 import { createServer } from "node:http";
 import { randomBytes } from "node:crypto";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
-import { RuntimeGroup, RuntimeStreamGroup } from "@patchy/api";
+import { RuntimeGroup, RuntimeStreamGroup, handlerKinds } from "@patchy/api";
 import type { ReleaseToolchain } from "@patchy/api";
 import {
   Binding,
@@ -113,7 +113,7 @@ export const serve = Effect.fn("Dev.serve")(function* (
           })
         ),
         Effect.tap(() => Console.log("Server binding ready; waking subscriptions.")),
-        Effect.catch((error) => Console.error(error.message))
+        Effect.catch((error) => Console.error(error))
       )
     ).pipe(Effect.forkScoped);
   }
@@ -188,12 +188,7 @@ export const serve = Effect.fn("Dev.serve")(function* (
             renderPatchWrapper({
               scope: "local",
               viewerId: identity.user.id,
-              handlerKinds: Object.fromEntries(
-                Object.entries(resources.version.manifest.handlers ?? {}).map(([name, handler]) => [
-                  name,
-                  handler.kind
-                ])
-              ),
+              handlerKinds: handlerKinds(resources.version.manifest.handlers),
               patch: { id: version.patchId, title: prepared.manifest.name ?? "Local patch" },
               version: {
                 id: version.versionId,

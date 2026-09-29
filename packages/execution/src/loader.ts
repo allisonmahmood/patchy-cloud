@@ -2,8 +2,7 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import * as GuestProtocol from "@patchy/api/guest";
 import * as Schema from "effect/Schema";
-import { parse } from "acorn";
-import { full } from "acorn-walk";
+import { parse } from "es-module-lexer/minimal/js";
 
 interface Fetcher {
   fetch(input: string | Request, init?: RequestInit): Promise<Response>;
@@ -14,7 +13,7 @@ interface Worker {
 interface Environment {
   readonly loader: {
     get(
-      name: string,
+      name: string | null,
       create: () => {
         compatibilityDate: string;
         compatibilityFlags: readonly string[];
@@ -61,7 +60,6 @@ const bound = new Map<string, BoundWorker>();
 const attempts = new Map<number, LiveAttempt>();
 const activeAttempts = new Set<string>();
 let serial = 0;
-let inspectionSerial = 0;
 
 const json = (body: unknown, status = 200) => Response.json(body, { status });
 const refusal = (
@@ -92,19 +90,12 @@ async function describe(worker: Worker): Promise<GuestProtocol.InspectionReply> 
   return decodeInspectionReply(await response.json());
 }
 
-function load(env: Environment, ctx: LoaderContext, name: string, bundle: string): Worker {
+function load(env: Environment, ctx: LoaderContext, name: string | null, bundle: string): Worker {
   return env.loader.get(name, () => {
-    // Built-in modules are not all governed by nodejs_compat. Require the closed
-    // artifact promised by wire 1, including in unreachable dynamic-import branches.
-    full(parse(bundle, { ecmaVersion: "latest", sourceType: "module" }), (node) => {
-      if (
-        node.type === "ImportDeclaration" ||
-        node.type === "ImportExpression" ||
-        node.type === "ExportAllDeclaration" ||
-        (node.type === "ExportNamedDeclaration" && "source" in node && node.source !== null)
-      )
-        throw new Error("Server bundles must be closed modules.");
-    });
+    // The lexer finds every import, including dormant/computed imports and re-exports.
+    // import.meta is local metadata; workerd validates the remaining module syntax.
+    if (parse(bundle)[0].some((entry) => entry.d !== -2))
+      throw new Error("Server bundles must be closed modules.");
     return {
       compatibilityDate: GuestProtocol.compatibilityDate,
       compatibilityFlags: GuestProtocol.compatibilityFlags,
@@ -255,9 +246,8 @@ export default {
         return json(refusal("invalid_request", "Malformed inspection request."), 400);
       }
       try {
-        return json(
-          await describe(load(env, ctx, `inspection:${++inspectionSerial}`, input.bundle))
-        );
+        // Unnamed Workers are request-owned; named entries remain cached by workerd.
+        return json(await describe(load(env, ctx, null, input.bundle)));
       } catch {
         return json(refusal("handler_failed", "The bundle could not be loaded."));
       }

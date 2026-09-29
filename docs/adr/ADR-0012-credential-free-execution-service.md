@@ -99,11 +99,15 @@ in the loader-to-host Authorization header. Redirects are not followed.
 and result validation, per-kind permission checks and settlement belong to the
 host; the guest SDK is not an authorization boundary.
 
-Inspection loads the exact bundle in a fresh throwaway workerd process, with no
-company binding, callback service or Runtime dependency. It derives descriptors
-under a five-second load deadline by default; a module-load throw, malformed
-reply or unfinished initializer fails inspection. The scope kills and reaps the
-process and removes its temporary files on success, failure or interruption.
+Publication inspection loads the exact bundle in a fresh throwaway workerd
+process, with no company binding, callback service or Runtime dependency.
+Local dev reuses that credential-free process, but each inspection uses an
+uncached, request-owned Worker. Completing the request disposes that Worker and
+its background tasks; saved bundles never accumulate in the Loader's named cache.
+Both paths derive descriptors under a five-second load deadline by default.
+A module-load throw, malformed reply or unfinished initializer fails inspection
+and reaps the process. Closing the owning scope also reaps it and removes its
+temporary files.
 Descriptor discovery is bundle self-description and an exact-byte consistency
 check, not proof that arbitrary hostile code dispatches what it describes.
 

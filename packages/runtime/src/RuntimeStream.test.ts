@@ -30,6 +30,7 @@ import * as RuntimeStream from "./RuntimeStream.js";
 import * as StreamAdmission from "./StreamAdmission.js";
 import * as StreamLimits from "./StreamLimits.js";
 import * as SubscriptionReads from "./SubscriptionReads.js";
+import * as Subscriptions from "./Subscriptions.js";
 import { me } from "./me.js";
 
 const decode = Schema.decodeUnknownSync(Schema.fromJsonString(RuntimeStreamFrame));
@@ -70,6 +71,7 @@ const open = Effect.fnUntraced(function* (
 });
 const dependencies = Fixtures.layer();
 const layer = RuntimeStream.layer.pipe(
+  Layer.provide(Subscriptions.layer),
   Layer.provide(StreamAdmission.layer),
   Layer.provide(StreamLimits.layer),
   Layer.provideMerge(Fixtures.streamPorts),
@@ -77,6 +79,7 @@ const layer = RuntimeStream.layer.pipe(
   Layer.provideMerge(dependencies)
 );
 const makeStreams = RuntimeStream.make.pipe(
+  Effect.provideServiceEffect(Subscriptions.Subscriptions, Subscriptions.make),
   Effect.provide(StreamAdmission.layer),
   Effect.provide(StreamLimits.layer)
 );
@@ -265,6 +268,7 @@ it.layer(layer)("document streams", (it) => {
       });
       const admission = yield* StreamAdmission.make.pipe(Effect.provide(externalSession));
       const streams = yield* RuntimeStream.make.pipe(
+        Effect.provideServiceEffect(Subscriptions.Subscriptions, Subscriptions.make),
         Effect.provideService(StreamAdmission.StreamAdmission, admission),
         Effect.provide(StreamLimits.layer),
         Effect.provide(WideEvents.layerNoop)

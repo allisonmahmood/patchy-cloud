@@ -1,6 +1,7 @@
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
@@ -660,3 +661,5 @@ export const make = Effect.gen(function* () {
       })
   });
 });
+
+export const layer = Layer.effect(Subscriptions, make);

@@ -16,6 +16,7 @@ import {
   RuntimeStreamFrame,
   RuntimeStreamRequest,
   RuntimeSubscriptionRequest,
+  handlerKinds,
   type HandlerKind,
   WIRE_VERSION
 } from "@patchy/api";
@@ -30,7 +31,6 @@ import * as Binding from "./Binding.js";
 import * as StreamLimits from "./StreamLimits.js";
 import * as Subscriptions from "./Subscriptions.js";
 import * as Wakes from "./Wakes.js";
-import * as SubscriptionReads from "./SubscriptionReads.js";
 
 const decodeRequest = Schema.decodeUnknownEffect(RuntimeStreamRequest);
 const decodeSubscriptionRequest = Schema.decodeUnknownEffect(RuntimeSubscriptionRequest);
@@ -118,7 +118,7 @@ type Dependencies =
   | WideEvents.WideEvents
   | StreamLimits.StreamLimits
   | Wakes.Wakes
-  | SubscriptionReads.SubscriptionReads;
+  | Subscriptions.Subscriptions;
 
 export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies | Scope.Scope> =
   Effect.gen(function* () {
@@ -129,10 +129,7 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
     const callsPerMinute = yield* ContractLimits.get("runtime.calls.perMinute");
     const documentLimit = yield* ContractLimits.get("stream.documents");
     const operatingLimits = yield* StreamLimits.StreamLimits;
-    const sharedSubscriptions = yield* Effect.serviceOption(Subscriptions.Subscriptions);
-    const subscriptions = Option.isSome(sharedSubscriptions)
-      ? sharedSubscriptions.value
-      : yield* Subscriptions.make;
+    const subscriptions = yield* Subscriptions.Subscriptions;
     const rootScope = yield* Scope.Scope;
     const context = yield* Effect.context<never>();
     const wakes = yield* Wakes.Wakes;
@@ -229,11 +226,7 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
             subscriptions.handlerKinds(patchId) ??
             (eligible.value.executionVersionId === undefined
               ? undefined
-              : Object.fromEntries(
-                  Object.entries(eligible.value.manifest.handlers ?? {}).map(
-                    ([name, descriptor]) => [name, descriptor.kind]
-                  )
-                ));
+              : handlerKinds(eligible.value.manifest.handlers));
           if (kinds !== undefined && entry.lastHandlerKinds !== kinds)
             entry.send({ type: "handlers", kinds });
         }
