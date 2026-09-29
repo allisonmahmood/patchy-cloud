@@ -67,8 +67,8 @@ export const issue = Effect.fnUntraced(function* (
     complete: (reply) => Effect.succeed(reply),
     close: () => {},
     abort: () => {},
-    conflict: false,
-    committed: false,
+    conflict: undefined,
+    committedReply: undefined,
     uncertain: false
   };
   return capability;

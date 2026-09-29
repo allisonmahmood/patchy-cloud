@@ -15,11 +15,15 @@ import type * as Binding from "./Binding.js";
 import * as InvocationCapabilities from "./InvocationCapabilities.js";
 import * as Runtime from "./Runtime.js";
 
-export class WriteConflict extends Schema.TaggedError<WriteConflict>()("WriteConflict", {}) {
+export class WriteConflict extends Schema.TaggedError<WriteConflict>()("WriteConflict", {
+  scope: Schema.Literal("viewer"),
+  limitId: Schema.Literal("tier2.mutation.attempts"),
+  value: Schema.Number
+}) {
   readonly code = "write_conflict" as const;
   readonly status = 409;
   override get message() {
-    return "The mutation could not serialize after three attempts.";
+    return `The mutation could not serialize after ${this.value} attempts.`;
   }
 }
 export class SerializationConflict extends Schema.TaggedError<SerializationConflict>()(
@@ -120,6 +124,8 @@ export interface Resource extends InvocationCapabilities.RetainedResource {
   readonly close: () => void;
   readonly abort: (cause: unknown) => void;
   readonly conflict: SerializationConflict | undefined;
+  /** The validated reply is authoritative once this owner has acknowledged COMMIT. */
+  readonly committedReply: ServerCallReply | undefined;
   readonly uncertain: boolean;
 }
 
@@ -131,6 +137,7 @@ export const make = Effect.fnUntraced(function* (
 ) {
   const storage = yield* MutationTransaction;
   const capabilities = yield* InvocationCapabilities.InvocationCapabilities;
+  const cleanup = yield* ContractLimits.get("tier2.settlement.cleanup");
   const jobs = yield* Queue.unbounded<Effect.Effect<void>>();
   const settled = yield* Deferred.make<void>();
   const ready = yield* Deferred.make<void, Failure>();
@@ -145,7 +152,7 @@ export const make = Effect.fnUntraced(function* (
   let closed = false;
   let cancelled = false;
   let conflict: SerializationConflict | undefined;
-  let committed = false;
+  let committedReply: ServerCallReply | undefined;
   let finalReply: ServerCallReply | undefined;
   const refused = () => new InvocationCapabilities.CapabilityRefused({ reason: "returned" });
   const close = () => {
@@ -166,14 +173,14 @@ export const make = Effect.fnUntraced(function* (
               if (conflict !== undefined) return yield* conflict;
               const reply = yield* session.save(mutationKey, finalReply);
               yield* session.commit;
-              committed = true;
-              yield* session.publish;
+              committedReply = reply;
               yield* Deferred.succeed(completion, reply);
             }).pipe(
               Effect.onExit((exit) =>
                 Effect.gen(function* () {
                   close();
-                  if (!committed && session !== undefined) yield* session.rollback;
+                  if (committedReply === undefined && session !== undefined)
+                    yield* session.rollback;
                   if (Exit.isFailure(exit)) {
                     yield* Deferred.failCause(ready, exit.cause);
                     yield* Deferred.failCause(completion, exit.cause);
@@ -182,6 +189,21 @@ export const make = Effect.fnUntraced(function* (
               ),
               Effect.scoped,
               Effect.ensuring(Deferred.succeed(settled, undefined)),
+              // Wakes are hints, not settlement: release the lease before starting their delivery.
+              Effect.onExit(() =>
+                Effect.gen(function* () {
+                  if (committedReply === undefined || session === undefined) return;
+                  const remaining = Math.max(
+                    0,
+                    capability.attempt.deadline + cleanup - (yield* Clock.currentTimeMillis)
+                  );
+                  yield* session.publish.pipe(
+                    Effect.timeoutOption(remaining),
+                    Effect.interruptible,
+                    Effect.forkIn(scope)
+                  );
+                })
+              ),
               Effect.interruptible,
               Effect.forkIn(scope)
             );
@@ -193,6 +215,9 @@ export const make = Effect.fnUntraced(function* (
   const resource: Resource = {
     get conflict() {
       return conflict;
+    },
+    get committedReply() {
+      return committedReply;
     },
     get uncertain() {
       return session?.uncertain ?? false;
@@ -252,7 +277,7 @@ export const make = Effect.fnUntraced(function* (
       cancelled = true;
       close();
       if (!starting) return Deferred.succeed(settled, undefined).pipe(Effect.asVoid);
-      owner?.interruptUnsafe();
+      if (committedReply === undefined) owner?.interruptUnsafe();
       return Deferred.await(settled);
     }),
     settled: Deferred.await(settled),

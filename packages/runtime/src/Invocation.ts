@@ -2,6 +2,7 @@ import {
   canonicalArgs,
   handlerArgsSchema,
   handlerValueSchema,
+  limitRefusal,
   limitRefusalFields,
   RuntimeFailure,
   ServerCall,
@@ -605,6 +606,11 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
                       )
                     )
                   );
+            const committedReply = capability?.mutation.value?.committedReply;
+            if (committedReply !== undefined) {
+              outcome = Exit.succeed(committedReply);
+              break;
+            }
             const uncertain = !settled || capability?.mutation.value?.uncertain === true;
             const keyRace = Option.isSome(failure) && MutationTransaction.isKeyRace(failure.value);
             if (mutationKey !== undefined && (uncertain || keyRace || timedOut)) {
@@ -647,7 +653,13 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
                 );
                 continue;
               }
-              outcome = Exit.fail(new MutationTransaction.WriteConflict());
+              if (parent === undefined)
+                yield* WideEvents.enrich({ limitId: "tier2.mutation.attempts" });
+              outcome = Exit.fail(
+                new MutationTransaction.WriteConflict(
+                  limitRefusal("tier2.mutation.attempts", bounds.mutationAttempts)
+                )
+              );
             } else if (Exit.isSuccess(raw)) outcome = Exit.succeed(raw.value);
             else if (Option.isSome(failure)) {
               const error = failure.value;
@@ -768,6 +780,9 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
             yield* WideEvents.operation(operation);
           const peaks = [
             [`tier2.${descriptor.kind}.deadline`, bounds[descriptor.kind], elapsed],
+            ...(descriptor.kind === "mutation"
+              ? [["tier2.mutation.attempts", bounds.mutationAttempts, attempts] as const]
+              : []),
             [
               `tier2.${descriptor.kind}.resultBytes`,
               bounds[`${descriptor.kind}Result`],

@@ -11,12 +11,14 @@ import * as Inventory from "../../company-database/src/Inventory.js";
 import * as Testing from "../../company-database/src/testing.js";
 import { ContractLimits, Limits, OperatingLimits } from "@patchy/limits";
 import { newInternalId } from "@patchy/core";
+import * as WideEvents from "@patchy/analytics/wide-events";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Random from "effect/Random";
 import * as TestClock from "effect/testing/TestClock";
 import * as Schema from "effect/Schema";
@@ -236,6 +238,122 @@ it.layer(services)("Mutation SERIALIZABLE acceptance", (it) => {
         }
         assert.strictEqual((yield* fixture.value)[0]!.value, 8 + committed);
       }).pipe(Effect.scoped, TestClock.withLive, Random.withSeed("mutation-contention"))
+  );
+  it.effect("returns committed success when wake delivery stalls and key lookup fails", () =>
+    Effect.gen(function* () {
+      const fixture = yield* setup("mutation40014");
+      const publishing = yield* Deferred.make<void>();
+      let lookups = 0;
+      const runtime = yield* host(
+        fixture,
+        increment,
+        (session) => ({
+          ...session,
+          publish: Deferred.succeed(publishing, undefined).pipe(Effect.andThen(Effect.never))
+        }),
+        (storage) => ({
+          ...storage,
+          lookup: (binding, key) =>
+            ++lookups === 1
+              ? storage.lookup(binding, key)
+              : Effect.fail(new Runtime.SourceUnavailable({ cause: "key lookup unavailable" }))
+        })
+      );
+      const call = yield* runtime.call().pipe(Effect.forkChild);
+      yield* Deferred.await(publishing);
+      yield* TestClock.adjust(yield* ContractLimits.get("tier2.mutation.deadline"));
+      const reply = yield* Fiber.join(call);
+      assert.deepInclude(reply, { ok: true, value: 1 });
+      assert.deepStrictEqual(yield* fixture.value, [{ value: 1 }]);
+    }).pipe(Effect.scoped)
+  );
+
+  it.effect("releases all company slots before delivering the commit wake", () =>
+    Effect.gen(function* () {
+      const fixture = yield* setup("mutation40015");
+      const databases = yield* CompanyDatabases.CompanyDatabases;
+      const publishing = yield* Deferred.make<void>();
+      const releaseWake = yield* Deferred.make<void>();
+      const published = yield* Deferred.make<void>();
+      yield* Effect.addFinalizer(() => Deferred.succeed(releaseWake, undefined));
+      const runtime = yield* host(fixture, increment, (session) => ({
+        ...session,
+        publish: Deferred.succeed(publishing, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseWake)),
+          Effect.andThen(session.publish),
+          Effect.andThen(Deferred.succeed(published, undefined)),
+          Effect.asVoid
+        )
+      }));
+      const call = yield* runtime.call().pipe(Effect.forkChild);
+      yield* Deferred.await(publishing);
+      const allLeased = yield* Deferred.make<void>();
+      let leased = 0;
+      yield* Effect.all(
+        Array.from({ length: 4 }, () =>
+          Effect.gen(function* () {
+            const held = yield* databases.lease(fixture.binding.companyId, false);
+            yield* held.sql`SELECT 1`;
+            if (++leased === 4) yield* Deferred.succeed(allLeased, undefined);
+            yield* Deferred.await(allLeased);
+          }).pipe(Effect.scoped)
+        ),
+        { concurrency: 4 }
+      );
+      assert.deepInclude(yield* Fiber.join(call), { ok: true, value: 1 });
+      yield* Deferred.succeed(releaseWake, undefined);
+      yield* Deferred.await(published);
+    }).pipe(Effect.scoped, TestClock.withLive)
+  );
+
+  it.effect("reports the enforced attempts bound on conflict exhaustion and its wide event", () =>
+    Effect.gen(function* () {
+      const fixture = yield* setup("mutation40016");
+      let attempts = 0;
+      const runtime = yield* host(fixture, (request, gateway) =>
+        Effect.gen(function* () {
+          const read = yield* gateway.callback(request.callback.capability, request, {
+            op: "tables.get",
+            args: { table: "counter", id: fixture.id }
+          });
+          assert.isTrue(read.ok);
+          // A separate committed writer invalidates this real SERIALIZABLE snapshot every attempt.
+          yield* fixture.handlers["tables.update"]
+            .run({
+              table: "counter",
+              id: fixture.id,
+              patch: { value: ++attempts * 10 }
+            })
+            .pipe(Effect.provideService(Binding.Binding, fixture.binding), Effect.orDie);
+          return yield* increment(request, gateway);
+        })
+      );
+      const records = yield* Queue.unbounded<WideEvents.WideEvent>();
+      const events = yield* WideEvents.make.pipe(
+        Effect.provideService(WideEvents.Sink, {
+          write: (event) => Queue.offer(records, event).pipe(Effect.asVoid)
+        })
+      );
+      const failure = yield* events
+        .withEvent({ type: "request" }, runtime.call())
+        .pipe(Effect.flip);
+      assert.deepInclude(Runtime.toFailure(failure), {
+        code: "write_conflict",
+        scope: "viewer",
+        limitId: "tier2.mutation.attempts",
+        value: 3
+      });
+      const event = yield* Queue.take(records);
+      assert.strictEqual(event.limitId, "tier2.mutation.attempts");
+      assert.deepInclude(
+        event.limits?.find((entry) => entry.limitId === "tier2.mutation.attempts"),
+        {
+          value: 3,
+          peak: 3
+        }
+      );
+      assert.deepStrictEqual(yield* fixture.value, [{ value: 30 }]);
+    }).pipe(Effect.scoped, TestClock.withLive, Random.withSeed("mutation-conflict-exhaustion"))
   );
 
   it.effect(

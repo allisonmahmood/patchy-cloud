@@ -420,8 +420,9 @@ fences the old capability, and re-invokes the complete handler with a fresh
 attempt, at most three times. Retries wait with jitter after rollback, without
 holding a connection; the base delay comes from the operating registry. The
 original five-second deadline covers queue wait, acquisition, all attempts and
-settlement. Exhaustion is `write_conflict`, which proves non-commit; pool
-contention is `busy`.
+settlement. Exhaustion is `write_conflict`, which proves non-commit and carries
+the enforced `tier2.mutation.attempts` limit, scope and value; attempts also appear
+in the request's limit peaks. Pool contention is `busy`.
 
 Each attempt sets database timeouts from its remaining budget. Commit submission
 and acknowledgement are distinct states. A known commit rejection is rollback;
@@ -429,6 +430,12 @@ a resolved `COMMIT` whose command tag says `ROLLBACK` is also rollback.
 `handler_timeout` requires confirmed non-commit. Unresolved cancellation or commit
 at the cleanup bound destroys the session and remains `unknown_outcome` until
 key reconciliation supplies evidence.
+The owner retains the committed reply as soon as the driver acknowledges it.
+That local proof wins over a later deadline or failed key lookup. Wake delivery
+starts after the company lease is released, independently of the reply, and is
+bounded by the remaining cleanup allowance. A slow wake cannot consume a company
+slot or turn committed success into a timeout; durable reconciliation covers a
+missed wake.
 
 The company inventory upgrade creates the mutation-key store idempotently.
 The key, owning patch, handler, loaded version, initiating viewer, originating

@@ -52,9 +52,9 @@ belongs to the member-directory release, not this contract.
 options?)` accepts `Uint8Array`, `ArrayBuffer` or `Blob`; `get(name)` returns
   bytes and `delete(name)` removes the object. Staged upload adoption is not
   available yet.
-- A mutation reads and writes owned tables in one atomic transaction. It can
-  inspect file metadata, but file bytes, shared data, integrations and `ctx.run`
-  belong in actions.
+- A mutation reads and writes owned tables in one atomic transaction. It cannot
+  read file metadata. Use queries for file lists and metadata, and actions for
+  file bytes, integrations and `ctx.run`.
 
 `ctx.viewer` is never null. Owned resources act as the patch, company data as
 the viewer. Handler memory is not durable state, and handlers cannot schedule
