@@ -332,7 +332,11 @@ export const makeAccess = Effect.gen(function* () {
     return yield* withCompany(
       binding.companyId,
       Effect.gen(function* () {
-        const snapshot = yield* inventory.read(declaration.patchId);
+        const retained = yield* Effect.serviceOption(ReadSnapshot.ReadSnapshot);
+        const snapshot =
+          Option.isSome(retained) && retained.value.authority !== undefined
+            ? yield* retained.value.authority(declaration.patchId)
+            : yield* inventory.read(declaration.patchId);
         if (
           snapshot === null ||
           !snapshot.tables.some((table) => table.name === declaration.table && table.shared)

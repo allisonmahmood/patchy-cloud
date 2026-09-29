@@ -294,6 +294,27 @@ describe("patch pages", () => {
     expect(html).not.toContain("window.secret");
   });
 
+  it("keeps handler-kind metadata inside its tier-two attribute, never executable markup", () => {
+    const options = {
+      patch,
+      version: { ...version, tier: 2 },
+      scope: "company" as const,
+      viewerId: "viewer-1",
+      html: "<p>Tool</p>",
+      nonce: "document-nonce",
+      base: "/acme/report",
+      handlerKinds: { ['demo."><img src=x onerror=alert(1)>']: "query" as const }
+    };
+    const html = renderPatchWrapper(options);
+    const metadata = html.match(/data-handler-kinds="([^"]*)"/)?.[1];
+    expect(metadata).toContain("&quot;");
+    expect(metadata).toContain("&lt;img src=x onerror=alert(1)&gt;");
+    expect(html).not.toContain("<img");
+    expect(renderPatchWrapper({ ...options, version: { ...version, tier: 1 } })).not.toContain(
+      "data-handler-kinds"
+    );
+  });
+
   it.each(["company", "local"] as const)(
     "requires an admitted viewer for a scripted %s shell",
     (scope) => {

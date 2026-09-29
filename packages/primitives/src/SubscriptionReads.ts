@@ -10,6 +10,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import * as TableOperations from "./TableOperations.js";
 import * as ReadSnapshot from "./ReadSnapshot.js";
+import * as ResourceRevisions from "./ResourceRevisions.js";
 
 class LifecycleChanged extends Schema.TaggedError<LifecycleChanged>()(
   "SubscriptionLifecycleChanged",
@@ -38,21 +39,6 @@ const decoders = {
 };
 type Operation = keyof typeof decoders;
 const isOperation = (op: string): op is Operation => Object.hasOwn(decoders, op);
-const RevisionRow = Schema.Struct({ key: Schema.String, revision: Schema.String });
-const resourceRevisions = SqlSchema.findAll({
-  Request: Schema.Array(Schema.String),
-  Result: RevisionRow,
-  execute: Effect.fn("SubscriptionReads.resourceRevisions")(function* (keys) {
-    const sql = yield* CompanyDatabases.CompanyConnection;
-    return yield* sql`SELECT 'table:' || patch_id || ':' || name AS key,
-        resource_revision::text AS revision FROM patchy.tables
-      WHERE ('table:' || patch_id || ':' || name) IN ${sql.in(keys)}
-      UNION ALL
-      SELECT 'store:' || patch_id || ':' || name AS key,
-        resource_revision::text AS revision FROM patchy.stores
-      WHERE ('store:' || patch_id || ':' || name) IN ${sql.in(keys)}`;
-  })
-});
 
 type Lifecycle = (
   companyId: string,
@@ -118,19 +104,6 @@ const makeReader = Effect.fn("SubscriptionReads.makeReader")(function* (lifecycl
     ).pipe(Effect.provideService(Binding.Binding, input.binding));
     return dependency.keys;
   });
-  const companyVector = Effect.fn("SubscriptionReads.companyVector")(function* (
-    keys: readonly string[]
-  ) {
-    const vector: Record<string, string> = Object.fromEntries(keys.map((key) => [key, "-1"]));
-    if (keys.length > 0) {
-      const rows = yield* resourceRevisions(keys).pipe(
-        Effect.catchTags({ SchemaError: Effect.die }),
-        Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))
-      );
-      for (const row of rows) vector[row.key] = row.revision;
-    }
-    return vector;
-  });
   const revisions = Effect.fn("SubscriptionReads.revisions")(function* (
     companyId: string,
     keys: readonly string[]
@@ -139,7 +112,9 @@ const makeReader = Effect.fn("SubscriptionReads.makeReader")(function* (lifecycl
     const resources = keys.filter((key) => !key.startsWith("patch:"));
     const patches = yield* lifecycle(companyId, patchKeys);
     const vector =
-      resources.length === 0 ? {} : yield* withCompany(companyId, companyVector(resources));
+      resources.length === 0
+        ? {}
+        : yield* withCompany(companyId, ResourceRevisions.read(resources));
     return { ...vector, ...patches };
   });
   const read = Effect.fn("SubscriptionReads.read")(function* (input: SubscriptionReads.Input) {
@@ -155,7 +130,7 @@ const makeReader = Effect.fn("SubscriptionReads.makeReader")(function* (lifecycl
         return yield* sql.withTransaction(
           Effect.gen(function* () {
             yield* sql.unsafe("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
-            const vector = yield* companyVector(resourceKeys);
+            const vector = yield* ResourceRevisions.read(resourceKeys);
             const result = yield* handlers[dependency.op].run(input.args).pipe(
               Effect.provideService(Binding.Binding, input.binding),
               Effect.provideService(ReadSnapshot.ReadSnapshot, {
@@ -195,7 +170,7 @@ export const make: Effect.Effect<
   const sql = yield* SqlClient.SqlClient;
   const find = SqlSchema.findAll({
     Request: Schema.Struct({ companyId: Schema.String, patchIds: Schema.Array(Schema.String) }),
-    Result: RevisionRow,
+    Result: ResourceRevisions.RevisionRow,
     execute: ({ companyId, patchIds }) => sql`SELECT 'patch:' || id AS key,
       lifecycle_revision::text AS revision FROM patches
       WHERE company_id = ${companyId} AND ${sql.in("id", patchIds)}`

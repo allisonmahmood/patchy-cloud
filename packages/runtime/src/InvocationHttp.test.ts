@@ -33,6 +33,8 @@ import * as Runtime from "./Runtime.js";
 import * as RuntimeApi from "./RuntimeApi.js";
 import * as RuntimeLog from "./RuntimeLog.js";
 import * as ServerBundles from "./ServerBundles.js";
+import * as QuerySnapshot from "./QuerySnapshot.js";
+import { snapshot } from "./test/callbacks.js";
 
 const viewer = {
   user: { id: "usr_dev", name: "Dev", email: "dev@patchy.local" },
@@ -66,7 +68,9 @@ const bundle: GuestProtocol.Bundle = {
 };
 const layer = Layer.unwrap(
   Effect.gen(function* () {
-    const invocation = yield* Invocation.make({ callbackUrl: "http://127.0.0.1:1/callback" });
+    const invocation = yield* Invocation.make({ callbackUrl: "http://127.0.0.1:1/callback" }).pipe(
+      Effect.provideService(QuerySnapshot.QuerySnapshot, { open: () => Effect.succeed(snapshot) })
+    );
     const runtime = yield* Runtime.make(
       {},
       {
@@ -194,6 +198,7 @@ const callbackRuntime = Layer.unwrap(
       Effect.provideService(CallbackGateway.CallbackGateway, gateway)
     );
     const invocation = yield* Invocation.make({ callbackUrl: listener.url }).pipe(
+      Effect.provideService(QuerySnapshot.QuerySnapshot, { open: () => Effect.succeed(snapshot) }),
       Effect.provideService(Executor.Executor, {
         bind: () =>
           Effect.succeed({

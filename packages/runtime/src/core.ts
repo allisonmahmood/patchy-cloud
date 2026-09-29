@@ -6,4 +6,6 @@ export * as RuntimeApi from "./RuntimeApi.js";
 export * as Wakes from "./Wakes.js";
 export * as SubscriptionReads from "./SubscriptionReads.js";
 export * as StreamAdmission from "./StreamAdmission.js";
+export * as QuerySnapshot from "./QuerySnapshot.js";
+export * as InvocationCapabilities from "./InvocationCapabilities.js";
 export { me } from "./me.js";

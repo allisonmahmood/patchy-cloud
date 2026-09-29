@@ -5,9 +5,9 @@ description: "Build tier 2 queries, mutations and actions; type helpers, handle 
 
 # Server handlers
 
-This release defines the tier 2 contract and types. Hosted execution and tier 2
-publishing are not admitted yet. These instructions describe the handler contract;
-the tier 2 init ticket installs this skill when the runtime can enforce it.
+Queries and actions run on the local executor in isolated acceptance runs.
+The `patchy dev` connection, production hosting, mutations and server subscriptions
+land separately. The builders reserve their types; types alone do not enable execution.
 
 ## Define the contract
 
@@ -41,23 +41,64 @@ belongs to the member-directory release, not this contract.
 
 ## Choose a kind
 
-- A query reads owned tables, file lists and metadata, and declared shared data.
-  It cannot write tables or read file bytes. Reads of company Postgres are not
-  subscription dependencies.
-- A mutation writes owned tables inside one host-owned transaction. It has no
-  shared data, connections, file-byte operations or `ctx.run`. Put external
-  effects in actions. A mutation can store a file reference in a row, but a file
-  write followed by a mutation is not atomic.
-- An action can read and write files, reach declared connections and shared data,
-  and call sibling queries and mutations through typed
-  `ctx.run.<module>.<handler>(args)`. It cannot call another action this way.
-  Each nested mutation has its own transaction. Split bulk work into bounded
-  batches; an action has no transaction around its external effects.
+- A query reads owned tables, file lists and metadata, and declared shared tables.
+  `ctx.tables` is read-only; `ctx.files.<store>` has `list` and `stat`, not byte
+  reads. `stat` returns metadata or null. File handles arrive separately.
+  Read only what the screen needs, using filters and bounded pages.
+- An action reads and writes owned tables, reads shared tables, reaches declared
+  connections and reads or writes file bytes. `ctx.files.<store>.put(name, bytes,
+options?)` accepts `Uint8Array`, `ArrayBuffer` or `Blob`; `get(name)` returns
+  bytes and `delete(name)` removes the object. Staged upload adoption is not
+  available yet.
+- A mutation reserves atomic owned-table writes. Its execution and safe retry
+  contract land with the mutations ticket. Keep external effects in actions.
 
 `ctx.viewer` is never null. Owned resources act as the patch, company data as
-the viewer. `ctx.log` contributes bounded invocation log lines. The log records
-attribution and outcomes, not an access audit. Handler memory is not durable
-state, and handlers cannot schedule background work.
+the viewer. Handler memory is not durable state, and handlers cannot schedule
+background work.
+
+### Query snapshots and live access
+
+Every query run uses one read-only `REPEATABLE READ` company transaction on one
+connection. All its table and file-metadata callbacks reuse that snapshot,
+including shared-table data reads. A concurrent write cannot make two reads
+within the run disagree. Patchy captures the commit watermark before the read.
+The query's 3 s deadline includes the bounded connection wait; cancellation
+starts at that deadline, and a guest still running at 4 s is killed.
+
+The data snapshot does not freeze authority. `ctx.shared.<alias>` rechecks the
+viewer's current access on every callback. An unshare or source access loss can
+refuse a later callback even if an earlier read succeeded in the same query.
+Handle that refusal rather than serving an earlier value as current data.
+Member-directory reads are outside the company snapshot; directory support
+lands separately.
+
+Queries have no `ctx.connections`. Company Postgres reads belong in actions,
+not subscribed queries. The host enforces this kind rule, even if code bypasses
+the TypeScript context.
+
+### Actions and nested queries
+
+An action has 60 s and no transaction around its callbacks or external effects.
+A guest still running at 61 s is killed. `ctx.connections.<alias>` uses the
+declared integration as the viewer and rechecks access on every callback.
+Each integration call has at most 15 s, or the action's remaining budget if
+shorter. A disconnected connection can refuse the next call after an earlier
+call succeeded.
+
+Use typed `ctx.run.<module>.<query>(args)` to call a sibling query from an action.
+Each child has its own invocation row, parent link and read snapshot. Its
+deadline is the lesser of 3 s and the parent's remaining budget, not another
+full action budget. The host refuses action targets. Nested mutations become
+available with mutation execution, each in its own transaction.
+
+Process bulk work in bounded batches. An action is never replayed, and a failure
+does not undo its completed writes. A file put followed by a table write is not
+atomic. Report partial progress rather than rerunning the whole batch blindly.
+
+`ctx.log(message, details?)` writes lines on the invocation's row, up to 32 KiB
+per invocation. Exceeding it is `limit_exceeded`, not silent truncation. The log
+records attribution and outcomes, not an access audit.
 
 ## Results and failures
 
@@ -67,18 +108,26 @@ codes. An undeclared code or an invalid result becomes `handler_failed`.
 Patchy's refusals have `source: "patchy"`; business errors have
 `source: "handler"`. Keep them separate.
 
-A mutation may run up to three times inside one call after serialization
-conflicts. Aborted attempts leave no writes. Exhaustion returns `write_conflict`,
-which means no commit and is safe to retry. Company call-rate admission returns
-`limit_exceeded`; connection or execution capacity returns `busy`. Respect the
-supplied `retryAfter` before retrying either refusal rather than spinning.
+Arguments are limited to 1 MiB of encoded JSON. Query and action results are
+limited to 8 MiB. Oversized arguments are `too_large`; an oversized result or
+result-schema violation is `handler_failed`.
 
-An `unknown_outcome` mutation offers `retry()` using the same key and arguments.
-Use that method, not a fresh call. The key makes retry safe and does not stop a
-double submit; disable the button while a submit is pending. Actions are never
-replayed. A timeout means confirmed non-commit; an unresolved commit remains
-`unknown_outcome`. These execution and retry behaviors land with the runtime
-and mutation tickets; the types reserve the contract now.
+The client retries a lost query reply once with the same arguments. It uses the
+loaded version's served handler kind, not page-side imports or handler names.
+A delivered refusal, including `unknown_outcome`, `busy`, `handler_timeout` or
+a declared business error, is not a lost reply and is not retried. Actions are
+never replayed.
+
+The reserved mutation contract permits up to three attempts inside one call
+after serialization conflicts. Aborted attempts leave no writes. Exhaustion is
+`write_conflict`, meaning no commit. An `unknown_outcome` mutation will offer
+`retry()` with the same key and arguments; a fresh call is not that retry.
+These mutation behaviors are not enabled yet.
+
+Company call-rate admission returns `limit_exceeded`; connection or execution
+capacity returns `busy`. Respect the supplied `retryAfter` before a new attempt.
+Disable submit controls while a call is pending. For an action's lost reply,
+inspect the resulting state before deciding which remaining steps to perform.
 
 ## Render from subscriptions
 

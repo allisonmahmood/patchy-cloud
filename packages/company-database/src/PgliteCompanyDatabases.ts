@@ -1,10 +1,12 @@
 import * as PgliteClient from "@effect/sql-pglite/PgliteClient";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Reactivity from "effect/unstable/reactivity/Reactivity";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import * as CompanyDatabases from "./CompanyDatabases.js";
@@ -20,6 +22,13 @@ export interface Options {
 export const make = Effect.fn("PgliteCompanyDatabases.make")(function* (options: Options) {
   const changes = yield* ResourceChanges.ResourceChanges;
   const sql = yield* SqlClient.SqlClient;
+  const native = yield* PgliteClient.PgliteClient;
+  const reactivity = yield* Reactivity.Reactivity;
+  const disposed = yield* Deferred.make<void>();
+  yield* Deferred.await(disposed).pipe(
+    Effect.andThen(Effect.promise(() => native.pglite.close())),
+    Effect.forkScoped
+  );
   const companyContext = Context.make(SqlClient.SqlClient, sql).pipe(
     Context.add(CompanyDatabases.CompanyConnection, sql)
   );
@@ -136,6 +145,8 @@ export const make = Effect.fn("PgliteCompanyDatabases.make")(function* (options:
     (companyId) => (effect) =>
       Effect.gen(function* () {
         yield* checkIdentity(companyId, options.companyId);
+        if (Deferred.isDoneUnsafe(disposed))
+          return yield* new CompanyDatabases.CompanyDatabaseNotReady({ companyId, status: null });
         const placement = yield* findPlacement(undefined).pipe(
           Effect.catchTags({ SchemaError: Effect.die }),
           Effect.mapError(
@@ -152,6 +163,36 @@ export const make = Effect.fn("PgliteCompanyDatabases.make")(function* (options:
         }
         return yield* Effect.scoped(effect.pipe(Effect.provideContext(companyContext)));
       });
+
+  const lease = Effect.fn("PgliteCompanyDatabases.lease")(function* (companyId: string) {
+    yield* withCompany(companyId)(Effect.void);
+    const connection = yield* sql.reserve.pipe(
+      Effect.mapError(
+        (cause) =>
+          new CompanyDatabases.CompanyDatabaseError({ companyId, operation: "connect", cause })
+      )
+    );
+    const retained = yield* SqlClient.make({
+      acquirer: Effect.succeed(connection),
+      compiler: PgliteClient.makeCompiler(),
+      spanAttributes: []
+    }).pipe(Effect.provideService(Reactivity.Reactivity, reactivity));
+    const context = Context.make(SqlClient.SqlClient, retained).pipe(
+      Context.add(CompanyDatabases.CompanyConnection, retained)
+    );
+    const run: CompanyDatabases.Lease["run"] = (effect) =>
+      effect.pipe(Effect.provideContext(context));
+    return {
+      sql: retained,
+      run,
+      authority: run,
+      // PGlite has no side-channel CancelRequest; callback interruption stops
+      // the owner, and destruction closes its process-local fixture database.
+      destroy: () => {
+        Deferred.doneUnsafe(disposed, Effect.void);
+      }
+    } satisfies CompanyDatabases.Lease;
+  });
 
   const listReady = Effect.gen(function* () {
     const placement = yield* findPlacement(undefined).pipe(
@@ -177,6 +218,7 @@ export const make = Effect.fn("PgliteCompanyDatabases.make")(function* (options:
     claim,
     ensureReady,
     withCompany,
+    lease,
     withPatchLock: (patchId) => (effect) =>
       CompanyDatabases.withPatchLock(patchId)(effect).pipe(
         Effect.provideService(ResourceChanges.ResourceChanges, changes)
@@ -205,5 +247,6 @@ export const layer = (options: Options) =>
           1114: (value) => DateTime.toDateUtc(DateTime.makeUnsafe(`${value.replace(" ", "T")}Z`))
         }
       })
-    )
+    ),
+    Layer.provide(Reactivity.layer)
   );

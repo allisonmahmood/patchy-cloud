@@ -25,9 +25,9 @@ release, stop, admission or transaction settlement.
 Issue #396 implements the supervisor, private management listener and supervised
 local executor. Issue #397 adds Runtime's invocation admission, host-owned
 lifetime, capability registry, private callback gateway and invocation records.
-The local executor exercises this path in isolation. Query snapshots, mutation
-transactions and keys, nested handlers, fleet wiring and tier 2 publication
-remain their own tickets. Tier 2 publish remains refused.
+Issue #398 adds query read snapshots, action file and integration callbacks, and
+nested query calls on the local executor. Mutation transactions and keys, fleet
+wiring and tier 2 publication remain their own tickets. Tier 2 publish remains refused.
 
 ## Engine, guest wire and inspection
 
@@ -330,19 +330,20 @@ mutation/integration callbacks and any abnormal fence after one has started make
 the invocation `unknown_outcome`, even if an earlier autocommit completed.
 Interrupting a callback fiber is not proof of non-commit. Interrupted callback
 operation rows are explicitly recorded as unknown when the journal is available.
-The query and mutation tickets attach their connections to this lifetime and
-provide snapshot/commit classification and key reconciliation.
+Queries attach their connection to this lifetime. Mutation transactions and keys
+will add commit classification and key reconciliation.
 
-`runtime_invocations` records actions and mutations before dispatch. Queries
-create a row only on a log line, business refusal or failure. Callback writes and
-integration calls retain their operation rows, with `invocation_id` and
+`runtime_invocations` records actions and mutations before dispatch. Top-level
+queries create a row only on a log line, business refusal or failure. Nested
+queries always have a row with their action's invocation id as `parent_id`.
+Callback writes and integration calls retain their operation rows, with `invocation_id` and
 `effective_principal`; own-resource rows have null `user_id` and principal
 `patch`. Invocation rows keep the initiating viewer separately. Declared
 `HandlerError` codes have outcome `handler_error`; undeclared codes, invalid
 results and forged platform refusals become `handler_failed` with a host
 correlation id. SDK exception messages and stacks go through the bounded private
 log callback, never the browser reply. Metering columns and query-rollup tables
-are present; exact rollup increments and database-held time arrive with metering.
+are present; exact query-rollup increments arrive with metering.
 
 The host pushes bundles on `bundle_required` or process-generation change. The
 task never pulls from content storage. It holds bundles, processes, the attempt
@@ -350,6 +351,47 @@ map, highest binding epoch and management secret. Callback results enter guest
 memory, and globals can survive calls until process eviction or task release;
 that memory is not durable or authoritative. A cache miss and zero connected
 documents say nothing about whether retained version artifacts may be deleted.
+
+## Query snapshots and action callbacks
+
+A query uses one retained company connection and one read-only `REPEATABLE READ`
+transaction across its callbacks. Acquisition uses the bounded company wait and
+consumes the query's three-second deadline. Before callback reads, the host captures
+the declared resources' revision vector as its commit watermark, including canonical
+shared-table owners. Callback jobs run serially on that snapshot; owned tables,
+shared-table rows and file metadata cannot drift between callbacks.
+`ctx.files` exposes list and stat metadata, without bytes or the future handle.
+
+Shared authority is not snapshot data. Each callback checks the viewer, the source
+patch's current liveness, and current inventory sharing before reading snapshot rows.
+Queries declaring shared tables leave headroom within the configured company pool
+for a fresh, bounded authority checkout. No extra connection bypasses that pool's
+limit. With a one-connection pool, shared queries return `busy`; own-resource queries
+can still run. Local PGlite uses fixed fixture authority, not simulated unsharing.
+
+Return rolls back the read-only transaction and releases the connection. At the
+query deadline, capability fencing starts protocol cancellation independently of
+the HTTP caller; the supervisor terminates the guest at four seconds if necessary.
+The host returns `handler_timeout` only after cleanup confirms the read transaction
+ended. Unresolved cleanup destroys the connection rather than returning it to the
+pool. The retained resource measures database-held milliseconds for invocation rows.
+
+Actions have no surrounding transaction. Their deadline is sixty seconds, with
+termination one second later. Each declared integration call rechecks access as the
+viewer and gets at most fifteen seconds or the action's remaining budget, whichever
+is less. File put accepts plain bytes; get and delete retain the existing file
+operation semantics. Put followed by another call is not atomic.
+
+`ctx.run` admits sibling queries under the action's existing admission, exact bundle
+and process generation. Each child has its own invocation id, capability, snapshot
+and row. Its deadline is the lesser of three seconds and the parent's remaining
+budget. Children share the call-tree byte allowance, not log allowances. The host
+refuses action targets; nested mutations arrive with mutation transactions.
+
+Arguments are at most one MiB. Query and action results are at most eight MiB;
+invalid result schemas are `handler_failed`. Each invocation has a thirty-two KiB
+log allowance. The client retries a lost query reply once using handler kinds from
+the loaded shell's bootstrap. Unknown kinds and actions are never replayed.
 
 ## Server runtime promise
 

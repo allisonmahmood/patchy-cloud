@@ -67,6 +67,71 @@ it.layer(Testing.layer().pipe(Layer.provideMerge(Testing.resourceChangesLayer)))
       inventoryContract("cmp_dev")
     );
 
+    it.effect("destroys a retained session instead of returning it to the company pool", () =>
+      Effect.gen(function* () {
+        const companyId = "retained-destroy";
+        yield* createCompany(companyId);
+        const databases = yield* CompanyDatabases.CompanyDatabases;
+        yield* databases.ensureReady(companyId);
+        const scope = yield* Scope.make();
+        const lease = yield* databases.lease(companyId, false).pipe(Scope.provide(scope));
+        const before = yield* lease.run(lease.sql<{ pid: number }>`SELECT pg_backend_pid() AS pid`);
+        lease.destroy();
+        yield* Scope.close(scope, Exit.void);
+        const after = yield* databases.withCompany(companyId)(
+          Effect.flatMap(
+            CompanyDatabases.CompanyConnection,
+            (sql) => sql<{ pid: number }>`SELECT pg_backend_pid() AS pid`
+          )
+        );
+        assert.notStrictEqual(after[0]!.pid, before[0]!.pid);
+      }).pipe(Effect.scoped)
+    );
+
+    it.effect("bounds shared-query authority headroom even for a one-connection company", () =>
+      Effect.gen(function* () {
+        const companyId = "snapshot-single-slot";
+        yield* createCompany(companyId);
+        const databases = yield* CompanyDatabases.CompanyDatabases;
+        const limits = yield* OperatingLimits.make;
+        yield* databases.ensureReady(companyId);
+        yield* limits.setOverride({
+          companyId,
+          limitId: "company.connections",
+          value: 1,
+          actor: "test"
+        });
+        yield* limits.setOverride({
+          companyId,
+          limitId: "company.connections.waiters",
+          value: 1,
+          actor: "test"
+        });
+        const refusals = yield* Queue.unbounded<CompanyDatabases.Busy>();
+        const attempts = yield* Effect.forEach([1, 2], () =>
+          databases.lease(companyId, true).pipe(
+            Effect.scoped,
+            Effect.tapError((error) =>
+              error._tag === "Busy" ? Queue.offer(refusals, error) : Effect.void
+            ),
+            Effect.exit,
+            Effect.forkScoped
+          )
+        );
+        assert.strictEqual((yield* Queue.take(refusals)).limitId, "company.connections.waiters");
+        yield* TestClock.adjust("1 second");
+        assert.strictEqual((yield* Queue.take(refusals)).limitId, "company.connections.wait");
+        for (const attempt of attempts) assert.isTrue(Exit.isFailure(yield* Fiber.join(attempt)));
+        const database = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const lease = yield* databases.lease(companyId, false);
+            return yield* lease.run(currentDatabase);
+          })
+        );
+        assert.strictEqual(database, (yield* databases.claim(companyId)).databaseName);
+      }).pipe(Effect.scoped)
+    );
+
     it.effect("upgrades a ready company's inventory without losing existing definitions", () =>
       Effect.gen(function* () {
         const companyId = "ready-upgrade";

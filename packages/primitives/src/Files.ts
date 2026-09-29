@@ -19,6 +19,7 @@ import { ContentStore } from "@patchy/content-store";
 import { newInternalId } from "@patchy/core";
 import { Binding, Runtime, Wakes } from "@patchy/runtime/core";
 import { boundedRows } from "./bounded-rows.js";
+import * as ReadSnapshot from "./ReadSnapshot.js";
 
 export class InvalidCursor extends Schema.TaggedError<InvalidCursor>()("FileInvalidCursor", {
   store: Schema.String,
@@ -111,27 +112,33 @@ export const make = Effect.gen(function* () {
     companyId: string,
     effect: Effect.Effect<A, Runtime.RuntimeError | SqlError, R>
   ) =>
-    databases
-      .withCompany(companyId)(effect)
-      .pipe(
-        Effect.catchTags({
-          SqlError: (cause) => Effect.fail(new Runtime.SourceUnavailable({ cause })),
-          Busy: (cause) =>
-            Effect.fail(
-              new Busy({
-                resource: cause.resource,
-                scope: cause.scope,
-                limitId: cause.limitId,
-                value: cause.value,
-                retryAfterSeconds: cause.retryAfterSeconds,
-                cause
-              })
-            ),
-          CompanyDatabaseError: (cause) => Effect.fail(new Runtime.SourceUnavailable({ cause })),
-          CompanyDatabaseNotReady: (cause) => Effect.fail(new Runtime.SourceUnavailable({ cause })),
-          CompanyIdentityMismatch: (cause) => Effect.fail(new Runtime.SourceUnavailable({ cause }))
-        })
-      );
+    Effect.gen(function* () {
+      const snapshot = yield* Effect.serviceOption(ReadSnapshot.ReadSnapshot);
+      if (Option.isSome(snapshot) && snapshot.value.companyId === companyId)
+        return yield* effect.pipe(
+          Effect.provideService(CompanyDatabases.CompanyConnection, snapshot.value.sql),
+          Effect.provideService(SqlClient.SqlClient, snapshot.value.sql)
+        );
+      return yield* databases.withCompany(companyId)(effect);
+    }).pipe(
+      Effect.catchTags({
+        SqlError: (cause) => Effect.fail(new Runtime.SourceUnavailable({ cause })),
+        Busy: (cause) =>
+          Effect.fail(
+            new Busy({
+              resource: cause.resource,
+              scope: cause.scope,
+              limitId: cause.limitId,
+              value: cause.value,
+              retryAfterSeconds: cause.retryAfterSeconds,
+              cause
+            })
+          ),
+        CompanyDatabaseError: (cause) => Effect.fail(new Runtime.SourceUnavailable({ cause })),
+        CompanyDatabaseNotReady: (cause) => Effect.fail(new Runtime.SourceUnavailable({ cause })),
+        CompanyIdentityMismatch: (cause) => Effect.fail(new Runtime.SourceUnavailable({ cause }))
+      })
+    );
   const withStore = <A>(
     store: string,
     run: (binding: Binding.Binding["Service"]) => Effect.Effect<A, Runtime.RuntimeError>
@@ -317,6 +324,28 @@ export const make = Effect.gen(function* () {
         )
       )
   );
+  const stat = Runtime.handler(
+    {
+      kind: "read",
+      input: runtimeOperations["files.stat"].request.fields.args,
+      output: runtimeOperations["files.stat"].response
+    },
+    (args) =>
+      withStore(args.store, (binding) =>
+        withCompany(
+          binding.companyId,
+          Effect.gen(function* () {
+            const sql = yield* CompanyDatabases.CompanyConnection;
+            const rows =
+              yield* sql`SELECT name, size::integer AS size, content_type AS "contentType",
+              to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "updatedAt"
+              FROM patchy.files
+              WHERE patch_id = ${binding.patchId} AND store = ${args.store} AND name = ${args.name}`;
+            return decodeFiles(rows)[0] ?? null;
+          })
+        )
+      )
+  );
   const remove = Runtime.handler(
     {
       kind: "mutation",
@@ -337,6 +366,7 @@ export const make = Effect.gen(function* () {
     "files.put": put,
     "files.get": get,
     "files.list": list,
+    "files.stat": stat,
     "files.delete": remove
   } satisfies Readonly<Record<string, Runtime.Handler>>;
 });

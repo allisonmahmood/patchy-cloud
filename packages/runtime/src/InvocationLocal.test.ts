@@ -14,6 +14,7 @@ import * as CompanyDatabases from "../../company-database/src/CompanyDatabases.j
 import * as Testing from "../../company-database/src/testing.js";
 import * as Tables from "../../primitives/src/Tables.js";
 import * as TableOperations from "../../primitives/src/TableOperations.js";
+import * as QuerySnapshot from "../../primitives/src/QuerySnapshot.js";
 import * as TestWakes from "../../primitives/src/test/wakes.js";
 import * as Local from "../../execution/src/local.js";
 import * as Binding from "./Binding.js";
@@ -52,7 +53,10 @@ const binding: Binding.Binding["Service"] = {
     handlers: {
       "demo.read": { kind: "query", args: {}, result: { kind: "json" } },
       "demo.fail": { kind: "query", args: {}, result: { kind: "json" } },
+      "demo.queryTimeout": { kind: "query", args: {}, result: { kind: "json" } },
       "demo.write": { kind: "action", args: {}, result: { kind: "json" } },
+      "demo.nested": { kind: "action", args: {}, result: { kind: "json" } },
+      "demo.forbidden": { kind: "action", args: {}, result: { kind: "json" } },
       "demo.writeThenTimeout": { kind: "action", args: {}, result: { kind: "json" } }
     }
   }
@@ -63,8 +67,9 @@ const services = Layer.mergeAll(
   RuntimeLog.layer,
   OperatingLimits.layer,
   Limits.layer,
-  InvocationCapabilities.layer
+  QuerySnapshot.layer
 ).pipe(
+  Layer.provideMerge(InvocationCapabilities.layer),
   Layer.provideMerge(Testing.layer()),
   Layer.provideMerge(TestWakes.layer),
   Layer.provideMerge(FetchHttpClient.layer),
@@ -112,6 +117,16 @@ it.live(
       const read = query({args:{},result:t.json(),handler:async ctx => { ctx.log("Reading own notes"); return {viewer:ctx.viewer.user.id, page:await ctx.tables.notes.list()}; }});
       const fail = query({args:{},result:t.json(),handler:async () => { throw new Error("private diagnostic 397"); }});
       const write = action({args:{},result:t.json(),handler:async ctx => await ctx.tables.notes.insert({title:"Attributed write"})});
+      const nested = action({args:{},result:t.json(),handler:async ctx => ctx.run.demo.read({})});
+      const forbidden = action({args:{},result:t.json(),handler:async ctx => ctx.run.demo.write({})});
+      const queryTimeout = query({args:{},result:t.json(),handler:async ctx => {
+        await ctx.tables.notes.list();
+        // The separate workerd process does not share the host's TestClock.
+        const waiting = Promise.withResolvers();
+        setTimeout(waiting.resolve, 60_000);
+        await waiting.promise;
+        return null;
+      }});
       const writeThenTimeout = action({args:{},result:t.json(),handler:async ctx => {
         await ctx.tables.notes.insert({title:"Committed before deadline"});
         // This guest runs in a separate workerd process, outside the host TestClock.
@@ -120,7 +135,7 @@ it.live(
         await waiting.promise;
         return null;
       }});
-      export default createGuest({demo:{read,fail,write,writeThenTimeout}});`,
+      export default createGuest({demo:{read,fail,write,nested,forbidden,queryTimeout,writeThenTimeout}});`,
                 resolveDir: new URL("../../execution/src", import.meta.url).pathname,
                 sourcefile: "invocation-fixture.ts"
               },
@@ -190,6 +205,23 @@ it.live(
         ["Gateway proof"]
       );
       assert.isNull(read.value.page.cursor);
+      assert.deepStrictEqual(yield* call("demo.nested"), read);
+      const tree = yield* platform<{
+        parent_handler: string;
+        child_handler: string;
+        child_outcome: string;
+      }>`SELECT parent.handler AS parent_handler, child.handler AS child_handler,
+          child.outcome AS child_outcome
+        FROM runtime_invocations child JOIN runtime_invocations parent ON child.parent_id = parent.id
+        WHERE parent.patch_id = ${binding.patchId}`;
+      assert.deepStrictEqual(tree, [
+        {
+          parent_handler: "demo.nested",
+          child_handler: "demo.read",
+          child_outcome: "success"
+        }
+      ]);
+      assert.strictEqual((yield* call("demo.forbidden").pipe(Effect.flip)).code, "access_denied");
       const written = yield* call("demo.write");
       assert.deepInclude(written, { ok: true });
       const rows = yield* platform<{
@@ -213,6 +245,9 @@ it.live(
       }>`SELECT log_lines FROM runtime_invocations WHERE correlation_id = ${failure.correlationId!}`;
       assert.include(JSON.stringify(diagnostics[0]?.log_lines), "private diagnostic 397");
       assert.include(JSON.stringify(diagnostics[0]?.log_lines), "stack");
+      const queryTimeout = yield* call("demo.queryTimeout").pipe(Effect.flip);
+      assert.strictEqual(queryTimeout.code, "handler_timeout");
+      assert.include(JSON.stringify(yield* call("demo.read")), "Attributed write");
       const uncertain = yield* call("demo.writeThenTimeout").pipe(Effect.flip);
       assert.strictEqual(uncertain.code, "unknown_outcome");
       const page = yield* handlers["tables.list"]

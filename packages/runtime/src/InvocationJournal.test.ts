@@ -19,6 +19,8 @@ import * as Invocation from "./Invocation.js";
 import * as InvocationCapabilities from "./InvocationCapabilities.js";
 import * as InvocationLog from "./InvocationLog.js";
 import * as ServerBundles from "./ServerBundles.js";
+import * as QuerySnapshot from "./QuerySnapshot.js";
+import { snapshot } from "./test/callbacks.js";
 
 const viewer = {
   user: { id: DEV_SEED.userId, email: "dev@patchy.local", name: "Dev" },
@@ -64,6 +66,7 @@ const services = Layer.mergeAll(
 ).pipe(Layer.provideMerge(Testing.layer()));
 const makeInvocation = (invoke: Executor.Executor["Service"]["invoke"]) =>
   Invocation.make({ callbackUrl: "http://127.0.0.1:1/callback" }).pipe(
+    Effect.provideService(QuerySnapshot.QuerySnapshot, { open: () => Effect.succeed(snapshot) }),
     Effect.provideService(Executor.Executor, {
       bind: () =>
         Effect.succeed({

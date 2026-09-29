@@ -1,4 +1,5 @@
 import { escapeAttribute, escapeHtml, htmlPage, shellStyles } from "@patchy/core/html";
+import type { HandlerKind } from "@patchy/api";
 
 export { brokerScript } from "./generated/broker-script.js";
 export * from "./shell-headers.js";
@@ -14,6 +15,7 @@ interface PatchPage {
   readonly html: string;
   readonly scope: "company" | "public" | "local";
   readonly viewerId?: string;
+  readonly handlerKinds?: Readonly<Record<string, HandlerKind>>;
   /** Trusted host markup; the standalone renderer has no session dependency. */
   readonly head?: string;
   readonly nonce?: string;
@@ -54,7 +56,8 @@ export function renderPatchWrapper(options: PatchPage): string {
       scripted
         ? `data-patch-id="${escapeAttribute(options.patch.id)}" data-version-id="${escapeAttribute(options.version.id)}" data-tier="${options.version.tier}" data-scope="${options.scope}"${options.scope !== "public" ? ` data-viewer-id="${escapeAttribute(options.viewerId)}"` : ""} data-wire="${options.version.wireVersion}" data-nonce="${escapeAttribute(options.nonce)}" data-base="${escapeAttribute(options.base)}" data-route="${escapeAttribute(options.route ?? "/")}" data-content-src="${escapeAttribute(content)}"`
         : `srcdoc="${escapeAttribute(options.html)}"`
-    }></iframe>
+    }
+    ${scripted && options.version.tier === 2 ? `data-handler-kinds="${escapeAttribute(JSON.stringify(options.handlerKinds ?? {}))}"` : ""}></iframe>
   <!-- patch:${escapeHtml(options.patch.id)} version:${Number(options.version.versionNumber)} -->
 </body>
 </html>`;

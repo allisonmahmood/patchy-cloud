@@ -177,6 +177,12 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (kind: "address" | "c
       : renderPatchWrapper({
           ...served.value,
           html,
+          handlerKinds: Object.fromEntries(
+            Object.entries(served.value.version.manifest.handlers ?? {}).map(([name, handler]) => [
+              name,
+              handler.kind
+            ])
+          ),
           scope: isPublic ? "public" : "company",
           viewerId:
             !isPublic && !HttpServerResponse.isHttpServerResponse(admission)

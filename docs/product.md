@@ -365,8 +365,11 @@ executor and host invocation lifetime are built. The host validates handler
 arguments and results, authorises callbacks, records invocations and settles
 admitted work independently of the browser connection. The supervisor terminates
 runaway version processes and unfinished initialisation. The local executor
-refuses production construction. Query snapshots, mutation transactions and
-keys, nested handlers, company tasks and the publish path remain separate work.
+refuses production construction. Queries retain one read-only repeatable-read
+snapshot, with live shared-table access checks. Actions can transfer file bytes,
+call company integrations as the viewer and run sibling queries under their
+remaining deadline. Mutation transactions and keys, company tasks and the publish
+path remain separate work.
 
 The decided promise: **a tier 2 patch's server code runs on Patchy's machines,
 never on yours. It holds no login and no credential and has no path to the
