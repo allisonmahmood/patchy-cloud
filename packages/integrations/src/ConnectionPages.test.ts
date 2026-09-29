@@ -238,6 +238,21 @@ it.layer(services)("company connection pages", (it) => {
           durationMs: 8,
           rowCount: 2
         });
+        yield* audit.begin({
+          ...begin,
+          userId: null,
+          effectivePrincipal: "patch</code><script>principal</script>",
+          invocationId: "inv_patch_handler",
+          correlationId: "visible-handler-error",
+          op: "postgres.getMany"
+        });
+        yield* audit.finish({
+          correlationId: "visible-handler-error",
+          outcome: "handler_error",
+          outcomeCode: "approval_required",
+          durationMs: 9,
+          rowCount: null
+        });
         yield* audit.begin({ ...begin, correlationId: "visible-pending", op: "postgres.get" });
         yield* audit.begin({
           ...begin,
@@ -275,6 +290,16 @@ it.layer(services)("company connection pages", (it) => {
         assert.include(html, "2 rows");
         assert.include(html, '<span class="pill">Unknown</span>');
         assert.include(html, "<code>visible-query</code>");
+        const handlerRow = html
+          .split('<li class="list-row">')
+          .find((row) => row.includes("<code>visible-handler-error</code>"))!;
+        assert.include(handlerRow, '<span class="pill">Failed</span>');
+        assert.include(
+          handlerRow,
+          "<dt>Effective principal</dt><dd><code>patch&lt;/code&gt;&lt;script&gt;principal&lt;/script&gt;</code></dd>"
+        );
+        assert.notInclude(handlerRow, "<script>principal</script>");
+        assert.include(handlerRow, "<code>approval_required</code>");
         for (const forbidden of [
           sql,
           "<script>patch</script>",

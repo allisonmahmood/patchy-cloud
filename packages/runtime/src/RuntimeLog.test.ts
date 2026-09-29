@@ -31,10 +31,11 @@ it.layer(RuntimeLog.layer.pipe(Layer.provideMerge(Testing.layer())))("RuntimeLog
         const companyId = DEV_SEED.companyId;
         const connectionId = "recent-connection";
         yield* sql`INSERT INTO runtime_calls
-        (id, at, company_id, user_id, credential_kind, op, connection_id, correlation_id, deadline_ms)
+        (id, at, company_id, user_id, effective_principal, credential_kind, op,
+          connection_id, correlation_id, deadline_ms)
         SELECT 'recent-' || n, to_timestamp(${NOW / 1000}) + n * interval '1 millisecond',
-          ${companyId}, ${DEV_SEED.userId}, 'session', 'postgres.list', ${connectionId},
-          'recent-correlation-' || n, 15000
+          ${companyId}, ${DEV_SEED.userId}, ${DEV_SEED.userId}, 'session', 'postgres.list',
+          ${connectionId}, 'recent-correlation-' || n, 15000
         FROM generate_series(1, 101) AS n`;
         yield* log.begin({
           ...mutation("recent-other-company"),
@@ -94,11 +95,64 @@ it.layer(RuntimeLog.layer.pipe(Layer.provideMerge(Testing.layer())))("RuntimeLog
       assert.strictEqual(pending?.outcome, "pending");
       assert.strictEqual(pending?.durationMs, null);
       assert.strictEqual(pending?.rowCount, null);
+      assert.strictEqual(pending?.effectivePrincipal, DEV_SEED.userId);
+      assert.strictEqual(pending?.invocationId, null);
       yield* log.finish({ correlationId, outcome: "success", durationMs: 12, rowCount: 1 });
       const completed = yield* restarted.find(lookup);
       assert.strictEqual(completed?.outcome, "success");
       assert.strictEqual(completed?.durationMs, 12);
       assert.strictEqual(completed?.rowCount, 1);
+    })
+  );
+
+  it.effect("retains patch and viewer callback attribution in recent connection calls", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW);
+      const log = yield* RuntimeLog.RuntimeLog;
+      const invocationId = "invocation-attribution";
+      const companyId = DEV_SEED.companyId;
+      yield* log.begin({
+        ...mutation("runtime-patch-callback"),
+        userId: null,
+        effectivePrincipal: "patch",
+        invocationId
+      });
+      yield* log.finish({
+        correlationId: "runtime-patch-callback",
+        outcome: "handler_error",
+        outcomeCode: "approval_required",
+        durationMs: 10,
+        rowCount: null
+      });
+      const own = yield* log.find({ companyId, correlationId: "runtime-patch-callback" });
+      assert.strictEqual(own?.userId, null);
+      assert.strictEqual(own?.effectivePrincipal, "patch");
+      assert.strictEqual(own?.invocationId, invocationId);
+      assert.strictEqual(own?.outcome, "handler_error");
+      assert.strictEqual(own?.outcomeCode, "approval_required");
+
+      yield* log.begin({
+        ...mutation("runtime-viewer-callback"),
+        effectivePrincipal: DEV_SEED.userId,
+        invocationId,
+        op: "postgres.query",
+        connectionId: "callback-connection",
+        sql: "SELECT 1"
+      });
+      yield* log.finish({
+        correlationId: "runtime-viewer-callback",
+        outcome: "success",
+        durationMs: 7,
+        rowCount: 1
+      });
+      const recent = yield* log.recent({ companyId, connectionId: "callback-connection" });
+      assert.strictEqual(recent.length, 1);
+      assert.strictEqual(recent[0]?.userId, DEV_SEED.userId);
+      assert.strictEqual(recent[0]?.effectivePrincipal, DEV_SEED.userId);
+      assert.strictEqual(recent[0]?.invocationId, invocationId);
+      assert.strictEqual(recent[0]?.outcome, "success");
+      assert.strictEqual(recent[0]?.sql, "SELECT 1");
+      assert.strictEqual(recent[0]?.rowCount, 1);
     })
   );
 

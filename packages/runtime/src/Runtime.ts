@@ -23,6 +23,7 @@ import { ContractLimits, Limits } from "@patchy/limits";
 import { registry, type LimitScope } from "@patchy/limits/registry";
 import * as Binding from "./Binding.js";
 import * as LoadedVersions from "./LoadedVersions.js";
+import * as Invocation from "./Invocation.js";
 
 const textEncoder = new TextEncoder();
 
@@ -98,6 +99,14 @@ export class ShellOutdated extends Schema.TaggedError<ShellOutdated>()(
     return "Runtime request refused: shell_outdated.";
   }
 }
+export class ServerRequired extends Schema.TaggedError<ServerRequired>()("ServerRequired", {}) {
+  readonly code = "server_required" as const;
+  readonly status = 403;
+  override get message() {
+    return "This document must use server handlers instead of direct primitive operations.";
+  }
+}
+
 export class Draining extends Schema.TaggedError<Draining>()("Draining", {}) {
   readonly code = "busy" as const;
   readonly status = 503;
@@ -416,6 +425,7 @@ export const make = (
 ): Effect.Effect<Runtime["Service"], never, Dependencies> =>
   Effect.gen(function* () {
     const versions = yield* LoadedVersions.LoadedVersions;
+    const invocations = yield* Effect.serviceOption(Invocation.Invocation);
     const limits = yield* Limits.Limits;
     const settings = yield* config;
     const origin = options.origin;
@@ -483,7 +493,10 @@ export const make = (
             // A constrained SELECT can invoke functions: integrations require the same
             // exact Origin as mutations, never a Sec-Fetch-Site fallback.
             if (
-              ((operation?.kind === "mutation" || integration || request.method === "PUT") &&
+              ((input.op === "server.call" ||
+                operation?.kind === "mutation" ||
+                integration ||
+                request.method === "PUT") &&
                 request.headers.origin !== origin) ||
               (request.method === "GET" && request.headers["sec-fetch-site"] !== "same-origin")
             )
@@ -548,6 +561,22 @@ export const make = (
             if (principal === null ? input.op !== "me" : principal.userId !== identity.user.id)
               return yield* new PrincipalChanged({});
           }
+          if (
+            version.manifest.tier === 2 &&
+            (input.op.startsWith("tables.") ||
+              input.op.startsWith("files.") ||
+              input.op.startsWith("shared.") ||
+              input.op.startsWith("postgres.") ||
+              input.op.startsWith("members."))
+          )
+            return yield* new ServerRequired();
+          if (input.op !== "me" && version.manifest.tier < 2) {
+            const served = yield* versions
+              .find(version.patchId)
+              .pipe(Effect.mapError((cause) => new SourceUnavailable({ cause })));
+            if (Option.isNone(served)) return yield* new AccessDenied({});
+            if (served.value.manifest.tier === 2) return yield* new ServerRequired();
+          }
           const attempt = yield* limits.consume({
             key: `runtime:${identity?.user.id ?? `anonymous:${Option.getOrElse(request.remoteAddress, () => "")}`}:${version.patchId}`,
             limit: settings.callsPerMinute,
@@ -568,6 +597,20 @@ export const make = (
         // For integrations, log the attempt before admission or input decoding can
         // refuse it. Attribution comes only from the live viewer and loaded version.
         if (!integration) yield* admit;
+        if (input.op === "server.call") {
+          if (Option.isNone(invocations)) return yield* new InvalidRequest({});
+          return yield* run({
+            kind: "read",
+            run: (args) =>
+              invocations.value.call(
+                args,
+                binding,
+                options.identity.pipe(
+                  Effect.provideService(HttpServerRequest.HttpServerRequest, request)
+                )
+              )
+          }).pipe(Effect.provideService(Binding.Binding, binding));
+        }
         if (operation === undefined) return yield* new InvalidRequest({});
         const execute = Effect.gen(function* () {
           if (integration) yield* admit;

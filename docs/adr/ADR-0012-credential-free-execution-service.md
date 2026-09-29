@@ -23,8 +23,11 @@ bytes to a company/patch/version and invokes admitted work. It owns no pool,
 release, stop, admission or transaction settlement.
 
 Issue #396 implements the supervisor, private management listener and supervised
-local executor. The host invocation path and fleet remain separate tickets.
-Tier 2 publish remains refused. Execution shares Runtime's glossary.
+local executor. Issue #397 adds Runtime's invocation admission, host-owned
+lifetime, capability registry, private callback gateway and invocation records.
+The local executor exercises this path in isolation. Query snapshots, mutation
+transactions and keys, nested handlers, fleet wiring and tier 2 publication
+remain their own tickets. Tier 2 publish remains refused.
 
 ## Engine, guest wire and inspection
 
@@ -66,8 +69,8 @@ are not transaction outcomes. Only the host can classify `handler_timeout` after
 confirmed non-commit or `unknown_outcome` after uncertain settlement.
 
 Every guest reply is untrusted, including `source: "patchy"`, limit fields and
-`correlationId`. The future host must retain the refusals it issues to each attempt
-and accept a claimed platform refusal only when it matches one of those records;
+`correlationId`. The host retains the refusals it issues to each attempt
+and accepts a claimed platform refusal only when it matches one of those records;
 otherwise it returns `handler_failed`. A guest cannot designate another operation
 row by inventing its correlation id. This loader-to-host envelope does not change
 the guest wire stored in server bundles.
@@ -272,6 +275,52 @@ the patch for its own resources, the initiating viewer for shared resources,
 connections and members with live reauthorization. Operation rows include the
 invocation id. Capabilities end on return, deadline, serialization supersession
 or process kill, independently of browser connection lifetime.
+
+`Runtime` admits `server.call` through the same live-session and loaded-version
+door as browser operations, then hands the call to `Invocation`. It validates
+arguments against the loaded version's descriptors, loads exact retained bytes
+through `ServerBundles`, and binds and invokes `Executor`. Action slots are
+counted per host, eight per company and two per viewer per patch by default,
+including calls whose HTTP waiter has disconnected. A tier 2 document's direct
+name-based table, file, shared-resource, member and connection calls are refused
+even after a rollback serves tier 1. Conversely, while tier 2 is served, an older
+tier 1 document can call only `me`. Public documents cannot call handlers.
+
+`InvocationCapabilities` assigns a fresh opaque token to every immutable attempt.
+The token is local to one host replica and binds its company, patch, version,
+viewer, kind, deadline and process generation. Ended capabilities retain only
+attempt identity and refusal reason for the five-minute replay window; they do
+not retain session resolvers or callback results after settlement.
+`CallbackGatewayApi.listen` starts a separate `/callback` listener on loopback,
+or on an explicitly permitted private literal address. It is never mounted on
+the public API. Deployment must restrict that listener to the execution security
+group. The gateway authenticates the capability and immutable attempt headers
+before reading the body. Authenticated attempts spend the callback allowance even
+when their body is malformed or too large. It queues above eight outstanding
+callbacks and accounts streamed request bytes and replies against the shared
+call-tree budget. Mutation and integration callbacks require `RuntimeLog`; a
+missing logging layer cannot silently disable attribution.
+
+The invocation owner runs in the host service scope, independently of its HTTP
+waiter. Its absolute deadline fences the capability and starts cancellation even
+when the executor never returns. Resource owners register cancellation, a settled
+signal and synchronous destruction through `InvocationCapabilities.retain`.
+Settlement waits at most five seconds for callbacks and registered resources.
+An unresolved resource is destroyed, never pooled, and the invocation records
+`unknown_outcome`. Only a later known outcome may replace that state; a late guest
+reply cannot do so. The query and mutation tickets attach their connections to
+this lifetime and provide snapshot/commit classification and key reconciliation.
+
+`runtime_invocations` records actions and mutations before dispatch. Queries
+create a row only on a log line, business refusal or failure. Callback writes and
+integration calls retain their operation rows, with `invocation_id` and
+`effective_principal`; own-resource rows have null `user_id` and principal
+`patch`. Invocation rows keep the initiating viewer separately. Declared
+`HandlerError` codes have outcome `handler_error`; undeclared codes, invalid
+results and forged platform refusals become `handler_failed` with a host
+correlation id. SDK exception messages and stacks go through the bounded private
+log callback, never the browser reply. Metering columns and query-rollup tables
+are present; exact rollup increments and database-held time arrive with metering.
 
 The host pushes bundles on `bundle_required` or process-generation change. The
 task never pulls from content storage. It holds bundles, processes, the attempt

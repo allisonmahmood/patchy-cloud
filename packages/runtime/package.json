@@ -36,6 +36,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@effect/platform-node": "catalog:",
     "@effect/sql-pg": "catalog:",
     "@patchy/analytics": "workspace:*",
     "@patchy/api": "workspace:*",

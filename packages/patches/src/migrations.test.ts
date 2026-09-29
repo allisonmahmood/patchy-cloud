@@ -15,7 +15,7 @@ const previous: Migrations = {
   ...auth,
   "0003_patches_baseline": migrations["0003_patches_baseline"]!,
   ...companyDatabase,
-  ...runtime,
+  "0006_runtime_baseline": runtime["0006_runtime_baseline"]!,
   ...integrations
 };
 

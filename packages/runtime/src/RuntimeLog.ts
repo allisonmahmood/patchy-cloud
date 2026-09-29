@@ -7,7 +7,6 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
-import { RuntimeCode } from "@patchy/api";
 import { newInternalId } from "@patchy/core";
 import { registry } from "@patchy/limits/registry";
 
@@ -19,7 +18,9 @@ export interface Begin {
   readonly companyId: string;
   readonly patchId: string | null;
   readonly versionId: string | null;
-  readonly userId: string;
+  readonly userId: string | null;
+  readonly effectivePrincipal?: string;
+  readonly invocationId?: string | null;
   readonly credentialKind: "session" | "admin";
   readonly op: string;
   readonly resource: string | null;
@@ -36,13 +37,15 @@ export class Call extends Schema.Class<Call>("RuntimeLog.Call")({
   companyId: Schema.String,
   patchId: Schema.NullOr(Schema.String),
   versionId: Schema.NullOr(Schema.String),
-  userId: Schema.String,
+  userId: Schema.NullOr(Schema.String),
+  effectivePrincipal: Schema.String,
+  invocationId: Schema.NullOr(Schema.String),
   credentialKind: Schema.Literals(["session", "admin"]),
   op: Schema.String,
   resource: Schema.NullOr(Schema.String),
   connectionId: Schema.NullOr(Schema.String),
-  outcome: Schema.Literals(["pending", "unknown", "success", "failure"]),
-  outcomeCode: Schema.NullOr(RuntimeCode),
+  outcome: Schema.Literals(["pending", "unknown", "success", "handler_error", "failure"]),
+  outcomeCode: Schema.NullOr(Schema.String),
   durationMs: Schema.NullOr(Schema.Int),
   rowCount: Schema.NullOr(Schema.Int),
   sql: Schema.NullOr(Schema.String),
@@ -56,8 +59,8 @@ export class RuntimeLog extends Context.Service<
     readonly begin: (input: Begin) => Effect.Effect<string, SqlError>;
     readonly finish: (input: {
       readonly correlationId: string;
-      readonly outcome: "success" | "failure";
-      readonly outcomeCode?: typeof RuntimeCode.Type | null;
+      readonly outcome: "success" | "handler_error" | "failure";
+      readonly outcomeCode?: string | null;
       readonly durationMs: number;
       readonly rowCount: number | null;
     }) => Effect.Effect<void, SqlError>;
@@ -77,7 +80,8 @@ export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const columns = (now: number) => sql`
     id, at, company_id AS "companyId", patch_id AS "patchId", version_id AS "versionId",
-    user_id AS "userId", credential_kind AS "credentialKind", op, resource,
+    user_id AS "userId", effective_principal AS "effectivePrincipal",
+    invocation_id AS "invocationId", credential_kind AS "credentialKind", op, resource,
     connection_id AS "connectionId",
     CASE WHEN outcome = 'pending'
       AND at + deadline_ms * interval '1 millisecond' < to_timestamp(${now / 1_000})
@@ -123,9 +127,11 @@ export const make = Effect.gen(function* () {
     }
     yield* sql`
       INSERT INTO runtime_calls (id, at, company_id, patch_id, version_id, user_id,
-        credential_kind, op, resource, connection_id, correlation_id, deadline_ms, sql)
+        effective_principal, invocation_id, credential_kind, op, resource, connection_id,
+        correlation_id, deadline_ms, sql)
       VALUES (${id}, to_timestamp(${now / 1_000}), ${input.companyId}, ${input.patchId},
-        ${input.versionId}, ${input.userId}, ${input.credentialKind}, ${input.op},
+        ${input.versionId}, ${input.userId}, ${input.effectivePrincipal ?? input.userId},
+        ${input.invocationId ?? null}, ${input.credentialKind}, ${input.op},
         ${input.resource}, ${input.connectionId}, ${input.correlationId},
         ${input.deadlineMs ?? MUTATION_DEADLINE_MS}, ${query})`;
     return id;

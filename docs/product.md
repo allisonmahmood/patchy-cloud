@@ -77,8 +77,9 @@ serializable descriptors. Generation derives the server-only client's signatures
 from type-only server imports. `useQuery` shares local subscription state and
 retains its last value through errors. The pinned workerd engine, credential-free
 SDK guest, isolated descriptor inspection, process supervisor, private management
-listener and supervised local executor are implemented. Hosted admission still
-needs the host and fleet tickets, and the local tier 2 loop is not connected;
+listener and supervised local executor are implemented. Runtime now admits and
+settles invocations through a private capability gateway in isolated execution
+tests. Hosted fleet wiring and the local tier 2 loop remain separate work;
 tier 2 publish remains refused.
 
 ### Building a patch
@@ -359,13 +360,13 @@ Tier 1 runs only while the viewer has the patch open. It cannot run background w
 ### Tier 2 — hosted
 
 Tier 2 is decided in [ADR-0012](./adr/ADR-0012-credential-free-execution-service.md),
-but is not admitted by today's hosted runtime. Its engine, inspection, supervisor
-and local executor are built. The supervisor terminates runaway version processes
-and unfinished initialization, and fails closed for a resident whose metering
-fails. The in-process local adapter counts actual host and child RSS, so its
-memory limit conservatively includes unrelated host allocations. It refuses
-production construction. The host and fleet still have to supply admission,
-settlement and company tasks.
+but tier 2 publishing remains refused. Its engine, inspection, supervisor, local
+executor and host invocation lifetime are built. The host validates handler
+arguments and results, authorises callbacks, records invocations and settles
+admitted work independently of the browser connection. The supervisor terminates
+runaway version processes and unfinished initialisation. The local executor
+refuses production construction. Query snapshots, mutation transactions and
+keys, nested handlers, company tasks and the publish path remain separate work.
 
 The decided promise: **a tier 2 patch's server code runs on Patchy's machines,
 never on yours. It holds no login and no credential and has no path to the
@@ -377,13 +378,14 @@ The patch also has server-side code, and Patchy runs it **while a viewer has the
 
 The server side is handler-shaped code Patchy runs, with a fixed layout `init` lays down — not an arbitrary app listening on a port. Bringing a whole app is a second runtime with a second set of limits, and is not promised.
 
-When hosted admission lands, server-side code will have two identities available.
-Company data and integrations will be reached **as the initiating viewer**. The
-patch's own primitives will be reached as the **patch identity**, accountable to
-its owner. The host will choose and reauthorize the principal on each callback;
-the guest will not choose credentials or identity. No login, database or
-object-store credential will enter the execution service. Nothing will leave
-guest code except through Patchy.
+Server-side calls use two identities. The **initiating viewer** is the person
+whose live session admitted the invocation. The gateway chooses the **effective
+principal** for every callback: the patch identity for its own tables and stores,
+the viewer for shared resources and company integrations. Own resources inherit
+admission; access to company resources is re-checked live. The patch identity is
+its id, not its owner's account, so owner deactivation and reassignment do not
+change its authority. Guest code cannot select a principal or receive a login,
+database credential or object-store credential.
 
 When a patch asks for data the viewer may not reach, the viewer is told plainly that this is their access, not the patch being broken.
 

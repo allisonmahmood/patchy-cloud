@@ -1,6 +1,6 @@
 # Runtime
 
-Runtime is the path by which a loaded patch asks Patchy to act as its viewer. It binds each operation to the loaded version and the viewer, without handing the patch a credential. The execution package shares this glossary.
+Runtime binds a loaded patch's operations and handler invocations to its version and initiating viewer. It chooses the effective principal without handing patch code a credential. The execution package shares this glossary.
 
 ## Language
 
@@ -11,6 +11,18 @@ _Avoid_: endpoint (the transport, not the operation), arbitrary request
 **Handler**:
 A named query, mutation or action in a patch's server code, with declared arguments, result and optional business error codes.
 _Avoid_: endpoint, function route
+
+**Invocation**:
+One admitted call to a server handler, including its attempts, callbacks and settlement. Its lifetime continues after the initiating document disconnects.
+_Avoid_: HTTP request, process, callback
+
+**Invocation admission**:
+The decision that a live viewer may start a handler on an eligible loaded version of a live company patch, within its admission limits. Dispatched work retains that admission until settlement.
+_Avoid_: callback authorisation, presence lease
+
+**Callback authorisation**:
+The decision about one operation requested by an invocation. Owned resources inherit invocation admission; company resources require the initiating viewer's current authority.
+_Avoid_: invocation admission, guest permission
 
 **Query**:
 A read-only handler whose result can be subscribed to as its viewer.
@@ -61,27 +73,31 @@ The page's typed view of its server handlers, derived from their exports so chan
 _Avoid_: server bundle, handwritten API wrapper
 
 **Binding**:
-The trusted context of one admitted operation: its company, owning patch, loaded version and manifest, acting principal, wire version and correlation id.
+The trusted context of one admitted operation: its company, owning patch, loaded version and manifest, initiating viewer, effective principal, wire version and correlation id.
 _Avoid_: Client context, payload identity
 
-**Acting identity**:
-The viewer whose authority an operation uses and whose actions it attributes. This is distinct from the owning patch and its owner.
-_Avoid_: Patch owner identity
+**Effective principal**:
+The identity whose authority a callback uses and whose effects it attributes: the patch for its own resources, the initiating viewer for company resources.
+_Avoid_: acting identity, patch owner identity
 
 **Owning patch**:
-The patch whose loaded version defines its owned resources and declares the outside resources it can reach. Ownership of a patch never makes its owner the acting identity of a colleague's operation.
-_Avoid_: Acting identity, patch owner
+The patch whose loaded version defines its owned resources and declares the outside resources it can reach. Its owner never supplies the authority for a colleague's invocation.
+_Avoid_: effective principal, patch owner
 
-**Principal**:
-The user identity bound when the shell opens a company patch. A later request must still have that user's session; a public version has no principal.
-_Avoid_: Machine token, owning patch
+**Initiating viewer**:
+The user whose live session admits an invocation or a direct browser operation. A public document has no initiating viewer with company authority.
+_Avoid_: principal, machine token, owning patch
+
+**Patch identity**:
+The patch's own id, used for its owned resources. It does not inherit the owner's access and does not change on reassignment or owner deactivation.
+_Avoid_: service account, owner's token
 
 **Wire version**:
 The stable deployed-bundle contract a runtime request speaks, distinct from the tooling release and the patch's schema revision.
 _Avoid_: Release, schema revision, transport version
 
 **Runtime log**:
-The admin-only attributed record of production mutations, integration calls and admin discovery, begun before execution; ordinary reads and local dev calls are absent. A pending outcome past its deadline is unknown, not evidence that the operation failed or is safe to replay.
+The attributed record of mutations, integration calls, admin discovery and server invocations. Mutations and actions always have invocation records; queries have them only on logging or failure. Invocation records keep the initiating viewer separate from the effective principal. A pending or unresolved outcome is not evidence that a write failed or is safe to replay.
 _Avoid_: Call log (Integrations' pointer to this record), analytics event
 
 **Request event**:
