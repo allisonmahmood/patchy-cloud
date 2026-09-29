@@ -394,6 +394,7 @@ reload script and polling endpoint added; its content remains script-free.
 | `dev`, `dev status`     | `{ ok, healthy: true, url, logPath, stop, pid, release, identity, warnings }` |
 | `dev stop`, `dev reset` | `{ ok, healthy: false, reset }`                                               |
 | `dev logs`              | `{ ok, log, text }`                                                           |
+| `dev prepare`           | `{ ok: true, prepared: true, stateDir, warnings }`                            |
 
 Start exits 0 only after the first valid single-file bundle and runtime are
 healthy. The daemon persists the checked release and full `/api/me` identity
@@ -403,6 +404,15 @@ current login or release. `stop` is the executable repo-pinned
 local exit 1, `not_running`. Missing fixtures and local provisioning failures are
 local; `not_additive` retains the provisioner's message/code. Instance refusals
 and transport failures use the ordinary ladder.
+
+`dev prepare` runs the same authenticated release, inventory, fixture-path and
+generation checks as a new start, and writes `prepared.json` under the same
+repo/instance lock. It exits 0 after preparation, without starting a daemon,
+building page/server source, provisioning a database or claiming a healthy URL.
+It refuses a live session with local exit 1 and leaves that session and its
+metadata untouched. Authentication, instance refusal and transport failures use
+the ordinary exit ladder. The source checkout's `pnpm dev:server <repo>` consumes
+this metadata for tier 2 local execution; preparation does not enable publishing.
 
 Vite builds production bundles without HMR. Successful rebuilds replace the
 bundle atomically and reload the whole shell at the current route; failures keep
@@ -414,8 +424,8 @@ only if that foreground invocation started it.
 State lives under `.patchy/dev/<instance-hash>/`, bound to canonical repo and
 instance. Nonce-authenticated health and PID birth time identify the daemon;
 stale records never signal another process. Malformed/incomplete records are
-refused and left untouched, not reconstructed from today's login. Start, stop
-and reset serialize with a key-addressed nonempty-directory owner record.
+refused and left untouched, not reconstructed from today's login. Start, prepare,
+stop and reset serialize with a key-addressed nonempty-directory owner record.
 Reset stops and wipes all disposable local state without starting again.
 The next start fetches the published inventory from the server; there is no local
 baseline fallback. Before first publish, schema changes recreate local data;

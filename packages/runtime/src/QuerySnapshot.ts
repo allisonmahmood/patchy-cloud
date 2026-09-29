@@ -3,7 +3,7 @@ import type * as Effect from "effect/Effect";
 import type * as InvocationCapabilities from "./InvocationCapabilities.js";
 import type * as Runtime from "./Runtime.js";
 
-/** One query's callbacks share this retained, read-only company transaction. */
+/** Retains and fences query callbacks; declared company resources share one read-only transaction. */
 export interface Resource extends InvocationCapabilities.RetainedResource {
   readonly watermark: Readonly<Record<string, string>>;
   readonly dbMs: number;

@@ -5,9 +5,11 @@ description: "Build tier 2 queries, mutations and actions; type helpers, handle 
 
 # Server handlers
 
-Queries and actions run on the local executor in isolated acceptance runs.
-The `patchy dev` connection, production hosting, mutations and server subscriptions
-land separately. The builders reserve their types; types alone do not enable execution.
+Queries and actions run on the local executor in tests and the source checkout's
+`pnpm dev:server <patch-repo-path>` instance. Follow the checkout's
+`docs/DEVELOPMENT.md` tier 2 server development recipe for preparation and startup.
+The packed tier 2 `patchy dev` lifecycle, server watch, production hosting,
+mutations and server subscriptions land separately.
 
 ## Define the contract
 
@@ -59,11 +61,14 @@ background work.
 
 ### Query snapshots and live access
 
-Every query run uses one read-only `REPEATABLE READ` company transaction on one
-connection. All its table and file-metadata callbacks reuse that snapshot,
-including shared-table data reads. A concurrent write cannot make two reads
-within the run disagree. Patchy captures the commit watermark before the read.
-The query's 3 s deadline includes the bounded connection wait; cancellation
+A query with declared owned tables, file stores or shared tables uses one
+read-only `REPEATABLE READ` company transaction on one connection. All its table
+and file-metadata callbacks reuse that snapshot, including shared-table data
+reads. A concurrent write cannot make two reads within the run disagree.
+Patchy captures the commit watermark before the read. A resource-free query
+uses the same fenced callback lifetime without leasing or provisioning a
+company database; its watermark is empty and database-held time is zero.
+The query's 3 s deadline includes any bounded connection wait; cancellation
 starts at that deadline, and a guest still running at 4 s is killed.
 
 The data snapshot does not freeze authority. `ctx.shared.<alias>` rechecks the
@@ -87,7 +92,8 @@ shorter. A disconnected connection can refuse the next call after an earlier
 call succeeded.
 
 Use typed `ctx.run.<module>.<query>(args)` to call a sibling query from an action.
-Each child has its own invocation row, parent link and read snapshot. Its
+Each child has its own invocation row, parent link and query resource.
+Data-bearing children retain their own snapshot. The child's
 deadline is the lesser of 3 s and the parent's remaining budget, not another
 full action budget. The host refuses action targets. Nested mutations become
 available with mutation execution, each in its own transaction.

@@ -26,8 +26,13 @@ Issue #396 implements the supervisor, private management listener and supervised
 local executor. Issue #397 adds Runtime's invocation admission, host-owned
 lifetime, capability registry, private callback gateway and invocation records.
 Issue #398 adds query read snapshots, action file and integration callbacks, and
-nested query calls on the local executor. Mutation transactions and keys, fleet
-wiring and tier 2 publication remain their own tickets. Tier 2 publish remains refused.
+nested query calls on the local executor. The source checkout's
+`pnpm dev:server <patch-repo-path>` runs these handlers through the actual local
+runtime HTTP API. It reuses authenticated dev preparation and fixture resources,
+inspects server exports in workerd, and owns the private callback listener,
+capabilities and persistent invocation journal. Full server watch and the packed
+tier 2 development lifecycle remain #404 work. Mutation transactions and keys,
+fleet wiring and tier 2 publication remain their own tickets. Tier 2 publish remains refused.
 
 ## Engine, guest wire and inspection
 
@@ -256,11 +261,16 @@ or per-invocation CPU and memory guarantees.
    closes admission and refuses queued jobs before its sentinel; running callbacks
    are joined or cancelled before settlement. Readiness resolves on acquisition
    failure too. The absolute deadline covers acquisition, callbacks, retry and
-   settlement; per-statement SQL timeouts alone are insufficient. A query owns
-   one read-only REPEATABLE READ snapshot and connection, with its commit watermark
-   captured before reading and cancellation at deadline. An action's nested
-   mutation owns its transaction. `ctx.run` permits sibling queries and mutations
-   only, under parent/child admission accounting and the parent's remaining time.
+   settlement; per-statement SQL timeouts alone are insufficient. A query with
+   owned tables, file stores or shared-table declarations owns one read-only
+   REPEATABLE READ snapshot and connection, with its commit watermark captured
+   before reading and cancellation at deadline. A resource-free query retains
+   the same fenced, serialized callback lifetime, but needs no company database
+   lease: its watermark is empty and its database-held time is zero. The snapshot
+   never freezes shared-resource authority; callbacks still check live access.
+   An action's nested mutation owns its transaction. `ctx.run` permits sibling
+   queries and mutations only, under parent/child admission accounting and the
+   parent's remaining time.
    Result validation precedes commit. The transaction owner announces touched
    resources only after commit, preserving durable subscription truth.
 8. **Rollouts fence, then drain.** Fence old admissions, bind fresh, route new

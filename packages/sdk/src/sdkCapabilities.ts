@@ -23,7 +23,7 @@ export const sdkCapabilities: readonly SdkCapability[] = [
     group: "Core",
     name: "Framework-free client, viewer identity and routing",
     entrypoints: ["patchy/_generated/client.ts"],
-    runs: "Tier 1 page through the hosted shell or patchy dev; tier 2 page in patchy dev",
+    runs: "Tier 1 page through the hosted shell or patchy dev; tier 2 page through the checkout's dev:server runtime",
     limits:
       "Import by relative path. The generated implementation uses patchy/client; app code does not import it directly. Tier 2 uses server handlers, not direct named resources. me() is null on public tier 1 patches. Routing is shell-mediated; there is no outbound fetch or client storage."
   },
@@ -71,9 +71,9 @@ export const sdkCapabilities: readonly SdkCapability[] = [
     group: "Core",
     name: "Server queries and actions",
     entrypoints: ["patchy/_generated/client.ts: patchy.server", "patchy/_generated/server.ts"],
-    runs: "Local executor in isolated acceptance runs",
+    runs: "Local executor in tests and the source checkout's pnpm dev:server instance",
     limits:
-      "Queries share one read-only snapshot with a 3-second deadline. Actions have 60 seconds, declared connections and nested queries. Shared access is checked per callback. Lost query replies retry once; actions are never replayed. Args are at most 1 MiB and results 8 MiB. The patchy dev connection, production hosting, mutations and handler subscriptions are not admitted yet."
+      "Data-bearing queries share one read-only snapshot with a 3-second deadline; resource-free queries need no company database. Actions have 60 seconds, declared connections and nested queries. Shared access is checked per callback. Lost query replies retry once; actions are never replayed. Args are at most 1 MiB and results 8 MiB. Packed tier 2 dev lifecycle, server watch, production hosting, mutations and handler subscriptions remain separate."
   },
   {
     id: "primitives.tables",

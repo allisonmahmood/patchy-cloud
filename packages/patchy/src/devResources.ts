@@ -18,6 +18,7 @@ import {
 } from "@patchy/integrations/dev";
 import { Files, TableOperations, Tables, SubscriptionReads } from "@patchy/primitives";
 import { LoadedVersions, Wakes, me } from "@patchy/runtime/core";
+import type { Runtime, SubscriptionReads as RuntimeSubscriptionReads } from "@patchy/runtime/core";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -30,6 +31,18 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { FixtureMissing, type Prepared } from "./devPreparation.js";
 import { safePath } from "./ManagedProject.js";
+
+export interface Resources {
+  readonly handlers: Readonly<Record<string, Runtime.Handler>>;
+  readonly version: LoadedVersions.LoadedVersion;
+  readonly context: Context.Context<
+    | CompanyDatabases.CompanyDatabases
+    | Inventory.Inventory
+    | LoadedVersions.LoadedVersions
+    | RuntimeSubscriptionReads.SubscriptionReads
+    | Wakes.Wakes
+  >;
+}
 
 export class StateUnavailable extends Schema.TaggedError<StateUnavailable>()(
   "DevStateUnavailable",

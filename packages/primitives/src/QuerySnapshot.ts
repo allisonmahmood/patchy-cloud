@@ -54,8 +54,8 @@ export const make = Effect.gen(function* () {
         let startedAt: number | undefined;
         let stoppedAt: number | undefined;
         let closed = false;
-        let watermark: Readonly<Record<string, string>> = {};
-        let transaction: Context.Context<never> | undefined;
+        let watermark: Readonly<Record<string, string>> = Object.freeze({});
+        let callbackContext: Context.Context<never> | undefined;
         const refused = () => new InvocationCapabilities.CapabilityRefused({ reason: "returned" });
         const resource: QuerySnapshot.Resource = {
           get watermark() {
@@ -68,7 +68,7 @@ export const make = Effect.gen(function* () {
           },
           run: (effect) =>
             Effect.gen(function* () {
-              if (closed || transaction === undefined) return yield* refused();
+              if (closed || callbackContext === undefined) return yield* refused();
               yield* capabilities.resolve(capability.token, capability.attempt);
               const caller = yield* Effect.context<Effect.Services<typeof effect>>();
               const result = yield* Deferred.make<
@@ -76,7 +76,7 @@ export const make = Effect.gen(function* () {
                 Effect.Error<typeof effect>
               >();
               const job = effect.pipe(
-                Effect.provideContext(Context.merge(caller, transaction)),
+                Effect.provideContext(Context.merge(caller, callbackContext)),
                 Effect.onExit((exit) => Deferred.done(result, exit)),
                 Effect.exit,
                 Effect.asVoid
@@ -112,6 +112,12 @@ export const make = Effect.gen(function* () {
             if (declaration.kind === "sharedTable")
               keys.add(`table:${declaration.patchId}:${declaration.table}`);
           }
+          if (keys.size === 0) {
+            callbackContext = yield* Effect.context();
+            yield* Deferred.succeed(ready, resource);
+            while (!closed) yield* Queue.take(jobs).pipe(Effect.flatten);
+            return yield* Effect.interrupt;
+          }
           const reserveAuthority = Object.values(capability.binding.manifest.uses).some(
             (declaration) => declaration.kind === "sharedTable"
           );
@@ -138,7 +144,7 @@ export const make = Effect.gen(function* () {
                         })
                       )
                   });
-                  transaction = (yield* Effect.context()).pipe(
+                  callbackContext = (yield* Effect.context()).pipe(
                     Context.add(ReadSnapshot.ReadSnapshot, snapshot)
                   );
                   yield* Deferred.succeed(ready, resource);

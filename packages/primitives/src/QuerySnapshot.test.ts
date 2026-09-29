@@ -19,6 +19,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as Files from "./Files.js";
 import * as QuerySnapshot from "./QuerySnapshot.js";
 import * as ReadSnapshot from "./ReadSnapshot.js";
+import * as ResourceRevisions from "./ResourceRevisions.js";
 import * as TableOperations from "./TableOperations.js";
 import * as Tables from "./Tables.js";
 import * as TestWakes from "./test/wakes.js";
@@ -73,6 +74,64 @@ const layer = FileFixtures.services.pipe(
 );
 
 it.layer(layer)("Invocation query snapshots", (it) => {
+  it.effect("keeps resource-free callbacks fenced without using absent or ready storage", () =>
+    Effect.gen(function* () {
+      const platform = yield* SqlClient.SqlClient;
+      const databases = yield* CompanyDatabases.CompanyDatabases;
+      const companyId = "cmp_snapshot_free";
+      yield* platform`INSERT INTO companies (id, handle, name)
+        VALUES (${companyId}, 'snapshot-free', 'Resource-free snapshots')`;
+      const binding = Binding.Binding.of({
+        companyId,
+        patchId: "snapshotfree",
+        versionId: "ver_aaaaaaaaaaaaaaaaaaaaaaaa",
+        manifest: { ...manifest, tier: 2, tables: {} },
+        wireVersion: 1,
+        scope: "company",
+        identity: null,
+        principal: null,
+        correlationId: "resource-free-snapshot"
+      });
+      for (const provisioned of [false, true]) {
+        if (provisioned) {
+          yield* databases.ensureReady(companyId);
+          assert.deepStrictEqual(
+            yield* databases.withCompany(companyId)(ResourceRevisions.read([])),
+            {}
+          );
+        }
+        const { resource, capability, capabilities } = yield* open(binding);
+        assert.deepStrictEqual(resource.watermark, {});
+        const viewer = yield* resource.run(
+          Effect.map(Binding.Binding, (current) => current.identity?.user.id).pipe(
+            Effect.provideService(Binding.Binding, capability.binding)
+          )
+        );
+        assert.strictEqual(viewer, "usr_dev");
+        const entered = yield* Deferred.make<void>();
+        const running = yield* resource
+          .run(Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)))
+          .pipe(Effect.exit, Effect.forkChild);
+        yield* Deferred.await(entered);
+        yield* TestClock.adjust(3_000);
+        assert.isTrue(yield* capabilities.settle(capability.token, "deadline"));
+        assert.isTrue(Exit.isFailure(yield* Fiber.join(running)));
+        yield* resource.settled;
+        assert.strictEqual(resource.dbMs, 0);
+        assert.propertyVal(
+          yield* resource.run(Effect.succeed("late callback")).pipe(Effect.flip),
+          "_tag",
+          "CapabilityRefused"
+        );
+        if (!provisioned)
+          assert.deepStrictEqual(
+            yield* platform`SELECT company_id FROM company_databases WHERE company_id = ${companyId}`,
+            []
+          );
+      }
+    }).pipe(Effect.scoped)
+  );
+
   it.effect("keeps count, list and file metadata on one snapshot across committed writes", () =>
     Effect.gen(function* () {
       const fixture = yield* setup("cmp_dev", "snapshotdata", {

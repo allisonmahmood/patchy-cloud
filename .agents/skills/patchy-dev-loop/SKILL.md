@@ -28,8 +28,17 @@ For `packages/execution` changes, use DEVELOPMENT's **The execution engine**
 recipe. Exercise the isolated exec entrypoint and real workerd tests without
 starting the cloud or touching Clerk. Prove that a killed generation cannot
 forward callbacks and a fresh bind recovers without replay. Local execution
-proves engine compatibility, not Fargate containment. The local executor is
-available to tests; tier 2 `patchy dev` integration remains separate.
+proves engine compatibility, not Fargate containment.
+
+For tier 2 query/action changes, follow DEVELOPMENT's **Tier 2 server development**
+recipe. Prepare a disposable patch with the source CLI's `dev prepare` command,
+then run `pnpm dev:server <patch-repo-path>` from this checkout.
+This runs inspected server sources through the actual local HTTP API, callback
+listener and supervised executor, with persistent PGlite fixture data and an
+invocation journal. Open its printed URL; prove a query, action and nested query
+through the generated page client. Stop the process you started. Server edits
+need a restart; config and fixture edits need preparation again. Packed tier 2
+dev lifecycle and server watch remain separate work, and publication stays refused.
 
 ## Patch repos and the local runtime
 

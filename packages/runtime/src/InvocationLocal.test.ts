@@ -1,7 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import { build } from "esbuild";
 import { CURRENT_RELEASE, TablePage, WIRE_VERSION, type GuestProtocol } from "@patchy/api";
-import { sha256 } from "@patchy/core";
+import { newInternalId, sha256 } from "@patchy/core";
 import { ContractLimits, Limits, OperatingLimits } from "@patchy/limits";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -264,6 +264,88 @@ it.live(
         SELECT outcome FROM runtime_invocations WHERE correlation_id = ${uncertain.correlationId!}
       `;
       assert.strictEqual(outcomes[0]?.outcome, "unknown_outcome");
+    }).pipe(Effect.scoped, Effect.provide(services)),
+  30_000
+);
+
+it.live(
+  "runs resource-free viewer queries and nested queries before and after storage exists",
+  () =>
+    Effect.gen(function* () {
+      const platform = yield* SqlClient.SqlClient;
+      const databases = yield* CompanyDatabases.CompanyDatabases;
+      const resourceFree: Binding.Binding["Service"] = {
+        ...binding,
+        patchId: "localfree001",
+        manifest: {
+          ...binding.manifest,
+          tables: {},
+          handlers: {
+            "demo.viewer": { kind: "query", args: {}, result: { kind: "json" } },
+            "demo.nested": { kind: "action", args: {}, result: { kind: "json" } }
+          }
+        }
+      };
+      yield* platform`INSERT INTO patches (id, company_id, owner_user_id, title, name)
+        VALUES (${resourceFree.patchId}, ${resourceFree.companyId}, 'usr_dev', 'Viewer', 'viewer-local')`;
+      const gateway = yield* CallbackGateway.make(yield* TableOperations.make);
+      const listener = yield* CallbackGatewayApi.listen().pipe(
+        Effect.provideService(CallbackGateway.CallbackGateway, gateway)
+      );
+      const source = yield* Effect.promise(
+        async () =>
+          (
+            await build({
+              stdin: {
+                contents: `import { query, action, createGuest, t } from "patchy/server";
+      const viewer = query({args:{},result:t.json(),handler:async ctx => ctx.viewer.user.id});
+      const nested = action({args:{},result:t.json(),handler:async ctx => ctx.run.demo.viewer({})});
+      export default createGuest({demo:{viewer,nested}});`,
+                resolveDir: new URL("../../execution/src", import.meta.url).pathname,
+                sourcefile: "resource-free-invocation-fixture.ts"
+              },
+              bundle: true,
+              write: false,
+              platform: "browser",
+              format: "esm",
+              target: "es2022",
+              conditions: ["development"]
+            })
+          ).outputFiles[0]!.text
+      );
+      const bundle: GuestProtocol.Bundle = {
+        companyId: resourceFree.companyId,
+        patchId: resourceFree.patchId,
+        versionId: resourceFree.versionId,
+        sha256: sha256(source),
+        bundle: source
+      };
+      const executor = yield* Local.make({
+        companyId: resourceFree.companyId,
+        callbackUrls: [listener.url],
+        environment: "test"
+      });
+      const invocations = yield* Invocation.make({ callbackUrl: listener.url }).pipe(
+        Effect.provideService(Executor.Executor, executor),
+        Effect.provideService(ServerBundles.ServerBundles, { load: () => Effect.succeed(bundle) })
+      );
+      for (const provisioned of [false, true]) {
+        if (provisioned) yield* databases.ensureReady(resourceFree.companyId);
+        for (const handler of ["demo.viewer", "demo.nested"])
+          assert.deepStrictEqual(
+            yield* invocations.call(
+              { handler, args: {} },
+              { ...resourceFree, correlationId: newInternalId("call") },
+              Effect.succeed(viewer)
+            ),
+            { ok: true, value: "usr_dev" }
+          );
+        if (!provisioned)
+          assert.deepStrictEqual(
+            yield* platform`SELECT company_id FROM company_databases WHERE company_id = ${resourceFree.companyId}`,
+            []
+          );
+      }
     }).pipe(Effect.scoped, Effect.provide(services)),
   30_000
 );

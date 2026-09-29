@@ -7,6 +7,7 @@ import { RuntimeGroup, RuntimeStreamGroup } from "@patchy/api";
 import type { ReleaseToolchain } from "@patchy/api";
 import {
   RuntimeDev,
+  Invocation,
   RuntimeApi,
   RuntimeStream,
   RuntimeStreamApi,
@@ -63,10 +64,20 @@ export const serve = Effect.fn("Dev.serve")(function* (
   prepared: Prepared,
   stateDir: string,
   record: Daemon,
-  toolchain: typeof ReleaseToolchain.Type
+  toolchain: typeof ReleaseToolchain.Type,
+  execution?: {
+    readonly resources: DevResources.Resources;
+    readonly invocation: Invocation.Invocation["Service"];
+  }
 ) {
-  const resources = yield* DevResources.prepare(prepared, record.root, stateDir);
-  const nextBuild = yield* watch(record.root, stateDir, toolchain);
+  const resources =
+    execution?.resources ?? (yield* DevResources.prepare(prepared, record.root, stateDir));
+  const nextBuild = yield* watch(
+    record.root,
+    stateDir,
+    toolchain,
+    execution === undefined ? "dev" : "local-server"
+  );
   let html = yield* nextBuild(prepared.manifest);
   let revision = 1;
   const origin = yield* HttpServer.addressFormattedWith(Effect.succeed);
@@ -187,7 +198,13 @@ export const serve = Effect.fn("Dev.serve")(function* (
     identity
   };
   const runtime = Layer.mergeAll(
-    RuntimeDev.layer(resources.handlers, { origin, identity }),
+    RuntimeDev.layer(resources.handlers, { origin, identity }).pipe(
+      Layer.provide(
+        execution === undefined
+          ? Layer.empty
+          : Layer.succeed(Invocation.Invocation, execution.invocation)
+      )
+    ),
     RuntimeStream.layer.pipe(
       Layer.provide([
         StreamLimits.layerLocal,

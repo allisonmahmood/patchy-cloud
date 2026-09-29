@@ -20,8 +20,9 @@ const find = SqlSchema.findAll({
   })
 });
 
-/** Even an empty key set executes a read to establish the transaction's snapshot. */
+/** Empty key sets have no storage dependencies and do not establish a SQL snapshot. */
 export const read = Effect.fn("ResourceRevisions.read")(function* (keys: readonly string[]) {
+  if (keys.length === 0) return {};
   const vector: Record<string, string> = Object.fromEntries(keys.map((key) => [key, "-1"]));
   const rows = yield* find(keys).pipe(
     Effect.catchTags({ SchemaError: Effect.die }),

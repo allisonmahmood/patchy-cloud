@@ -16,7 +16,8 @@ const isLocalError = Schema.is(LocalError);
 export const watch = Effect.fn("Dev.watch")(function* (
   root: string,
   stateDir: string,
-  toolchain: typeof ReleaseToolchain.Type
+  toolchain: typeof ReleaseToolchain.Type,
+  destination: "dev" | "local-server"
 ) {
   const builds = yield* Queue.sliding<Build>(1);
   yield* Effect.acquireRelease(
@@ -107,5 +108,5 @@ export const watch = Effect.fn("Dev.watch")(function* (
     return result.html;
   });
   return (manifest: typeof Manifest.Type) =>
-    next.pipe(Effect.tap((html) => validateRepoBundle(root, manifest, html)));
+    next.pipe(Effect.tap((html) => validateRepoBundle(root, manifest, html, destination)));
 });

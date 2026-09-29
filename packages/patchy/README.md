@@ -134,16 +134,22 @@ refusals and declared business errors retain their structured replies.
 SDK query-shape validation preserves its own `invalid_request` refusals without
 trusting arbitrary handler-created `PatchyError` objects.
 
-Queries and actions run through the pinned local executor in isolated acceptance runs.
-A query shares one read-only `REPEATABLE READ` company snapshot across its
-callbacks, with a 3-second deadline. Its shared-table authority is still checked
-live on every callback. File reads in queries are `list` and `stat`, returning
-metadata without handles. Actions have 60 seconds, plain-byte file operations,
-declared connections with a 15-second per-call limit, and typed nested queries
-under the parent's remaining deadline. Actions have no transaction of their own.
+Queries and actions run through the pinned local executor in tests and the
+checkout's persistent `pnpm dev:server <patch-repo-path>` instance. See
+[the development recipe](../../docs/DEVELOPMENT.md#tier-2-server-development)
+for authenticated preparation, source inspection and startup. A query with
+declared data resources shares one read-only `REPEATABLE READ` company snapshot
+across its callbacks, with a 3-second deadline. Resource-free queries need no
+company database lease and report an empty watermark and zero database-held time.
+Shared-table authority is still checked live on every callback. File reads in
+queries are `list` and `stat`, returning metadata without handles. Actions have
+60 seconds, plain-byte file operations, declared connections with a 15-second
+per-call limit, and typed nested queries under the parent's remaining deadline.
+Actions have no transaction of their own.
 
-The tier 2 `patchy dev` connection, production hosting, tier 2 publishing,
-mutation-key execution and `unknown_outcome.retry()` behavior land separately.
+The packed tier 2 `patchy dev` lifecycle and server watch, production hosting,
+tier 2 publishing, mutation-key execution and `unknown_outcome.retry()` behavior
+land separately.
 The `patchy-server` skill
 documents query and action behavior and embeds registry-generated limits;
 tier 2 init will install it. Authorised handles and staged upload adoption remain
@@ -484,16 +490,24 @@ by a whole-shell reload at the current route. Failed rebuilds leave the last
 successful bundle served and write the error to the log. Config and fixture
 changes need `dev stop` followed by `dev`.
 
-| command             | behaviour                                                                                      | `--json` success                                                              |
-| ------------------- | ---------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| `dev`, `dev status` | Start or inspect; status exits 1 with `not_running` unless healthy.                            | `{ ok, healthy: true, url, logPath, stop, pid, release, identity, warnings }` |
-| `dev stop`          | Stop this repo and instance, keeping local data. Stale process identities are never signalled. | `{ ok, healthy: false, reset: false }`                                        |
-| `dev logs`          | Print the dev log.                                                                             | `{ ok, log, text }`                                                           |
-| `dev reset`         | Stop and wipe disposable local state. Published resources are unchanged; run `dev` afterwards. | `{ ok, healthy: false, reset: true }`                                         |
+| command             | behaviour                                                                                                            | `--json` success                                                              |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `dev`, `dev status` | Start or inspect; status exits 1 with `not_running` unless healthy.                                                  | `{ ok, healthy: true, url, logPath, stop, pid, release, identity, warnings }` |
+| `dev stop`          | Stop this repo and instance, keeping local data. Stale process identities are never signalled.                       | `{ ok, healthy: false, reset: false }`                                        |
+| `dev logs`          | Print the dev log.                                                                                                   | `{ ok, log, text }`                                                           |
+| `dev reset`         | Stop and wipe disposable local state. Published resources are unchanged; run `dev` afterwards.                       | `{ ok, healthy: false, reset: true }`                                         |
+| `dev prepare`       | Authenticate and regenerate local metadata without starting a daemon or building sources. Refuses a running session. | `{ ok: true, prepared: true, stateDir, warnings }`                            |
 
 `--foreground` waits and streams logs; Ctrl-C stops a session it started.
 Joining an existing session leaves it running on interruption. Under `--json`
 only the readiness document is printed; use `dev logs --json` to read logs.
+
+`dev prepare` performs the same release, identity, inventory and fixture-path
+checks as a new start and stores metadata under the same repo/instance lock.
+It preserves author-written fixtures and local data. It does not provision a
+database or claim a healthy runtime. The checkout's
+[`dev:server` command](../../docs/DEVELOPMENT.md#tier-2-server-development) uses it
+to prepare tier 2 execution; ordinary `dev` and publishing still refuse tier 2.
 
 Local state lives in `.patchy/dev/<instance-hash>/`, including the daemon
 record with its release and authenticated identity, log, PGlite data and

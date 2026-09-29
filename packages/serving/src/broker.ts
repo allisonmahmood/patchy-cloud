@@ -14,6 +14,7 @@ import {
   WIRE_VERSION
 } from "@patchy/api";
 import type { RuntimeBodyLimitId, RuntimeCode, RuntimeMe, RuntimePrincipal } from "@patchy/api";
+import { serverReplyTimeoutMs } from "@patchy/api/query-config";
 import * as Schema from "effect/Schema";
 import { registry } from "@patchy/limits/registry";
 import { openDocumentStream, type DocumentStream } from "./stream.js";
@@ -312,11 +313,7 @@ function mount(frame: HTMLIFrameElement): void {
     const controller = new AbortController();
     const timeout = window.setTimeout(
       () => controller.abort(),
-      op === "server.call"
-        ? registry["tier2.action.deadline"].default +
-            registry["tier2.settlement.cleanup"].default +
-            5_000
-        : 35_000
+      op === "server.call" ? serverReplyTimeoutMs : 35_000
     );
     let responseBytes = 0;
     try {
