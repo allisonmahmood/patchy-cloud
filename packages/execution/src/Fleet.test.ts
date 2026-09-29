@@ -7,7 +7,6 @@ import * as WideEvents from "@patchy/analytics/wide-events";
 import * as GuestProtocol from "@patchy/api/guest";
 import { OperatingLimits } from "@patchy/limits";
 import * as Testing from "@patchy/sql/testing";
-import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -80,20 +79,6 @@ const liveChildren = Effect.fn("FleetTest.liveChildren")(function* (directory: s
     }
     return total;
   });
-});
-// TestClock sees SQL waits as suspended fibers; observe renewal commits between jumps.
-const advanceWithRenewals = Effect.fn("FleetTest.advanceWithRenewals")(function* (
-  milliseconds: number
-) {
-  const sql = yield* SqlClient.SqlClient;
-  for (let elapsed = 0; elapsed < milliseconds; elapsed += 5_000) {
-    yield* TestClock.adjust(Math.min(5_000, milliseconds - elapsed));
-    const renewedUntil = (yield* Clock.currentTimeMillis) + 15_000;
-    const renewal = yield* sql<{ readonly renewed: boolean }>`
-      SELECT expires_at >= ${renewedUntil} AS renewed FROM execution_housekeeping
-    `.pipe(Effect.repeat({ while: (rows) => !rows[0]?.renewed, times: 100 }));
-    assert.isTrue(renewal[0]?.renewed);
-  }
 });
 const request = (
   bundle: GuestProtocol.BundleBinding,
@@ -713,47 +698,52 @@ it.layer(services)("host fleet controller", (it) => {
     () =>
       Effect.gen(function* () {
         const { provider, resource, companyId, right, sql } = yield* setup("slow-cold", false);
-        const starting = yield* Deferred.make<void>();
-        const ids = new Set<string>();
-        const slow = TaskProvider.TaskProvider.of({
-          ...provider,
-          start: Effect.fn("slowColdStart")(function* (input) {
-            ids.add(input.taskId);
-            if (ids.size === 2) yield* Deferred.succeed(starting, undefined);
-            yield* Effect.sleep(25_000);
-            return yield* provider.start(input);
+        // Renewal uses real Postgres I/O; keep it and the lease deadline on one clock.
+        yield* TestClock.withLive(
+          Effect.gen(function* () {
+            const starting = yield* Deferred.make<void>();
+            const ids = new Set<string>();
+            const slow = TaskProvider.TaskProvider.of({
+              ...provider,
+              start: Effect.fn("slowColdStart")(function* (input) {
+                ids.add(input.taskId);
+                if (ids.size === 2) yield* Deferred.succeed(starting, undefined);
+                yield* Effect.sleep(25_000);
+                return yield* provider.start(input);
+              })
+            });
+            const owner = yield* Fleet.make({
+              replicaId: "slow-cold-owner",
+              deploymentRevision: "slow-cold",
+              automaticHousekeeping: false
+            }).pipe(Effect.provideService(TaskProvider.TaskProvider, slow));
+            let settled = false;
+            const opening = yield* owner.ensureBinding(companyId).pipe(
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  settled = true;
+                })
+              ),
+              Effect.forkChild
+            );
+            yield* Deferred.await(starting);
+            yield* Effect.sleep(20_000);
+            assert.isFalse(settled);
+            assert.isFalse(yield* right.housekeeping());
+            const lease =
+              (yield* sql`SELECT owner_id, lease_epoch FROM execution_housekeeping`)[0]!;
+            assert.strictEqual(lease.owner_id, "slow-cold-owner");
+            assert.strictEqual(lease.lease_epoch, 1);
+            const binding = yield* Fiber.join(opening);
+            assert.isAtLeast(binding.spareWaitMs, 25_000);
+            assert.isBelow(binding.spareWaitMs, 40_000);
+            assert.strictEqual((yield* right.ensureBinding(companyId)).taskId, binding.taskId);
+            const tasks = yield* provider.list;
+            assert.strictEqual(tasks.filter((task) => task.state === "running").length, 2);
+            assert.strictEqual(ids.size, 2);
+            assert.strictEqual(yield* liveChildren(resource.directory), 2);
           })
-        });
-        const owner = yield* Fleet.make({
-          replicaId: "slow-cold-owner",
-          deploymentRevision: "slow-cold",
-          automaticHousekeeping: false
-        }).pipe(Effect.provideService(TaskProvider.TaskProvider, slow));
-        let settled = false;
-        const opening = yield* owner.ensureBinding(companyId).pipe(
-          Effect.tap(() =>
-            Effect.sync(() => {
-              settled = true;
-            })
-          ),
-          Effect.forkChild
         );
-        yield* Deferred.await(starting);
-        yield* advanceWithRenewals(20_000);
-        assert.isFalse(settled);
-        assert.isFalse(yield* right.housekeeping());
-        const lease = (yield* sql`SELECT owner_id, lease_epoch FROM execution_housekeeping`)[0]!;
-        assert.strictEqual(lease.owner_id, "slow-cold-owner");
-        assert.strictEqual(lease.lease_epoch, 1);
-        yield* TestClock.adjust(5_000);
-        const binding = yield* Fiber.join(opening);
-        assert.isAtLeast(binding.spareWaitMs, 25_000);
-        assert.isBelow(binding.spareWaitMs, 40_000);
-        assert.strictEqual((yield* right.ensureBinding(companyId)).taskId, binding.taskId);
-        const tasks = yield* provider.list;
-        assert.strictEqual(tasks.filter((task) => task.state === "running").length, 2);
-        assert.strictEqual(ids.size, 2);
-        assert.strictEqual(yield* liveChildren(resource.directory), 2);
       }).pipe(
         Effect.scoped,
         Effect.provide(
@@ -764,7 +754,7 @@ it.layer(services)("host fleet controller", (it) => {
           )
         )
       ),
-    30_000
+    60_000
   );
 
   it.effect(
@@ -772,104 +762,102 @@ it.layer(services)("host fleet controller", (it) => {
     () =>
       Effect.gen(function* () {
         const { provider, companyId, left, sql } = yield* setup("isolated");
-        const secondCompany = "cmp_fleet_isolated_second";
-        const thirdCompany = "cmp_fleet_isolated_third";
-        for (const company of [secondCompany, thirdCompany])
-          yield* sql`INSERT INTO companies(id, handle, name) VALUES (${company}, ${company}, 'Fleet isolation')`;
-        const wedged = yield* left.ensureBinding(companyId);
-        const failing = yield* left.ensureBinding(secondCompany);
-        yield* sql`UPDATE execution_bindings SET state = 'claiming' WHERE task_id = ${failing.taskId}`;
-        yield* provider.start({ taskId: "isolated-stubborn", deploymentRevision: "isolated" });
-        const observed = yield* Deferred.make<void>();
-        const replenished = yield* Deferred.make<void>();
-        let launches = 0;
-        const unhealthy = TaskProvider.TaskProvider.of({
-          ...provider,
-          stats: (taskId, input) =>
-            taskId === wedged.taskId
-              ? Deferred.succeed(observed, undefined).pipe(Effect.andThen(Effect.never))
-              : provider.stats(taskId, input),
-          bind: (taskId, input) =>
-            taskId === failing.taskId
-              ? Effect.fail(
-                  new TaskProvider.TaskProviderError({
-                    operation: "bind",
-                    taskId,
-                    reason: "transport"
-                  })
-                )
-              : provider.bind(taskId, input),
-          stop: (taskId) =>
-            taskId === "isolated-stubborn"
-              ? Effect.fail(
-                  new TaskProvider.TaskProviderError({
-                    operation: "stop",
-                    taskId,
-                    reason: "transport"
-                  })
-                )
-              : provider.stop(taskId),
-          start: Effect.fn("failOneLaunch")(function* (input) {
-            const number = ++launches;
-            if (number === 1)
-              return yield* new TaskProvider.TaskProviderError({
-                operation: "start",
-                taskId: input.taskId,
-                reason: "provider"
-              });
-            const task = yield* provider.start(input);
-            if (number >= 3) yield* Deferred.succeed(replenished, undefined);
-            return task;
-          })
-        });
-        const owner = yield* Fleet.make({
-          replicaId: "isolated-owner",
-          deploymentRevision: "isolated",
-          automaticHousekeeping: false
-        }).pipe(Effect.provideService(TaskProvider.TaskProvider, unhealthy));
-        let completed = false;
-        const pass = yield* owner.housekeeping().pipe(
-          Effect.tap(() =>
-            Effect.sync(() => {
-              completed = true;
-            })
-          ),
-          Effect.forkChild
-        );
-        yield* Deferred.await(observed);
-        const healthy = yield* owner.ensureBinding(thirdCompany);
-        assert.notStrictEqual(healthy.taskId, wedged.taskId);
-        assert.notStrictEqual(healthy.taskId, failing.taskId);
-        assert.strictEqual(healthy.state, "active");
-        assert.isFalse(completed);
-        yield* advanceWithRenewals(5_000);
-        yield* Deferred.await(replenished);
-        yield* TestClock.testClockWith((clock) =>
-          clock.withLive(
-            Effect.gen(function* () {
+        yield* TestClock.withLive(
+          Effect.gen(function* () {
+            const secondCompany = "cmp_fleet_isolated_second";
+            const thirdCompany = "cmp_fleet_isolated_third";
+            for (const company of [secondCompany, thirdCompany])
+              yield* sql`INSERT INTO companies(id, handle, name) VALUES (${company}, ${company}, 'Fleet isolation')`;
+            const wedged = yield* left.ensureBinding(companyId);
+            const failing = yield* left.ensureBinding(secondCompany);
+            yield* sql`UPDATE execution_bindings SET state = 'claiming' WHERE task_id = ${failing.taskId}`;
+            yield* provider.start({ taskId: "isolated-stubborn", deploymentRevision: "isolated" });
+            const observed = yield* Deferred.make<void>();
+            const replenished = yield* Deferred.make<void>();
+            let launches = 0;
+            const unhealthy = TaskProvider.TaskProvider.of({
+              ...provider,
+              stats: (taskId, input) =>
+                taskId === wedged.taskId
+                  ? Deferred.succeed(observed, undefined).pipe(Effect.andThen(Effect.never))
+                  : provider.stats(taskId, input),
+              bind: (taskId, input) =>
+                taskId === failing.taskId
+                  ? Effect.fail(
+                      new TaskProvider.TaskProviderError({
+                        operation: "bind",
+                        taskId,
+                        reason: "transport"
+                      })
+                    )
+                  : provider.bind(taskId, input),
+              stop: (taskId) =>
+                taskId === "isolated-stubborn"
+                  ? Effect.fail(
+                      new TaskProvider.TaskProviderError({
+                        operation: "stop",
+                        taskId,
+                        reason: "transport"
+                      })
+                    )
+                  : provider.stop(taskId),
+              start: Effect.fn("failOneLaunch")(function* (input) {
+                const number = ++launches;
+                if (number === 1)
+                  return yield* new TaskProvider.TaskProviderError({
+                    operation: "start",
+                    taskId: input.taskId,
+                    reason: "provider"
+                  });
+                const task = yield* provider.start(input);
+                if (number >= 3) yield* Deferred.succeed(replenished, undefined);
+                return task;
+              })
+            });
+            const owner = yield* Fleet.make({
+              replicaId: "isolated-owner",
+              deploymentRevision: "isolated",
+              automaticHousekeeping: false
+            }).pipe(Effect.provideService(TaskProvider.TaskProvider, unhealthy));
+            let completed = false;
+            const pass = yield* owner.housekeeping().pipe(
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  completed = true;
+                })
+              ),
+              Effect.forkChild
+            );
+            yield* Deferred.await(observed);
+            const healthy = yield* owner.ensureBinding(thirdCompany);
+            assert.notStrictEqual(healthy.taskId, wedged.taskId);
+            assert.notStrictEqual(healthy.taskId, failing.taskId);
+            assert.strictEqual(healthy.state, "active");
+            assert.isFalse(completed);
+            yield* Deferred.await(replenished);
+            yield* Effect.gen(function* () {
               while (true) {
                 const rows = yield* sql`SELECT task_id FROM execution_tasks WHERE state = 'spare'`;
                 if (rows.length > 0) return;
                 yield* Effect.sleep(10);
               }
-            }).pipe(Effect.timeout("5 seconds"))
-          )
-        );
-        yield* advanceWithRenewals(35_000);
-        assert.isTrue(yield* Fiber.join(pass));
-        const rows =
-          yield* sql`SELECT state FROM execution_bindings WHERE task_id = ${failing.taskId}`;
-        assert.strictEqual(rows[0]!.state, "claiming");
-        const spares =
-          yield* sql`SELECT count(*)::integer AS total FROM execution_tasks WHERE state = 'spare'`;
-        assert.isAtLeast(spares[0]!.total, 1);
-        assert.strictEqual((yield* owner.ensureBinding(thirdCompany)).taskId, healthy.taskId);
-        assert.strictEqual(
-          (yield* provider.list).find((task) => task.taskId === "isolated-stubborn")!.state,
-          "running"
+            }).pipe(Effect.timeout("5 seconds"));
+            assert.isTrue(yield* Fiber.join(pass));
+            const rows =
+              yield* sql`SELECT state FROM execution_bindings WHERE task_id = ${failing.taskId}`;
+            assert.strictEqual(rows[0]!.state, "claiming");
+            const spares =
+              yield* sql`SELECT count(*)::integer AS total FROM execution_tasks WHERE state = 'spare'`;
+            assert.isAtLeast(spares[0]!.total, 1);
+            assert.strictEqual((yield* owner.ensureBinding(thirdCompany)).taskId, healthy.taskId);
+            assert.strictEqual(
+              (yield* provider.list).find((task) => task.taskId === "isolated-stubborn")!.state,
+              "running"
+            );
+          })
         );
       }).pipe(Effect.scoped),
-    30_000
+    60_000
   );
 
   it.effect(
