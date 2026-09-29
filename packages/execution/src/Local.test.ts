@@ -7,6 +7,7 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import * as Local from "./local.js";
+import * as Supervisor from "./supervisor.js";
 
 const callbackUrl = "http://127.0.0.1:32124/callback";
 const source = `let calls = 0;
@@ -52,6 +53,60 @@ const invocation = (
     callback: { url: callbackUrl, capability: "local-host-capability" }
   };
 };
+
+it.live(
+  "binds, calls and rebinds above the host RSS ceiling while fleet accounting still refuses",
+  () =>
+    Effect.gen(function* () {
+      const ceiling = 256 * 1024 ** 2;
+      yield* Effect.acquireRelease(
+        Effect.sync(() => [
+          Buffer.alloc(Math.max(0, ceiling - process.memoryUsage.rss()) + 16 * 1024 ** 2, 165)
+        ]),
+        (pressure) =>
+          Effect.sync(() => {
+            pressure.length = 0;
+          })
+      );
+      expect(process.memoryUsage.rss()).toBeGreaterThanOrEqual(ceiling);
+      const operatingLimits = {
+        "execution.residency.bytes": ceiling,
+        "execution.residency.processes": 1
+      } as const;
+      const fleet = yield* Supervisor.make({ callbackUrls: [callbackUrl], operatingLimits });
+      expect(
+        yield* fleet
+          .bind({ companyId: bundle.companyId, bindingEpoch: 1, bundle })
+          .pipe(Effect.result)
+      ).toMatchObject({
+        _tag: "Failure",
+        failure: {
+          reason: "busy",
+          limit: { scope: "company", limitId: "execution.residency.bytes", value: ceiling }
+        }
+      });
+      expect((yield* fleet.stats({ bindingEpoch: 1 })).aggregateRssBytes).toBeGreaterThanOrEqual(
+        ceiling
+      );
+      const local = yield* Local.make({ ...options, operatingLimits });
+      const first = yield* local.bind(bundle);
+      expect(yield* local.invoke(invocation(first, "demo.read", "host_pressure"))).toMatchObject({
+        outcome: "returned",
+        reply: { ok: true, value: 1 }
+      });
+      const replacement = yield* local.bind({ ...bundle, versionId: "ver_replacement" });
+      expect(
+        yield* local.invoke(invocation(replacement, "demo.read", "replacement"))
+      ).toMatchObject({ outcome: "returned", reply: { ok: true, value: 1 } });
+      const rebound = yield* local.bind(bundle);
+      expect(rebound.processGeneration).toBeGreaterThan(first.processGeneration!);
+      expect(yield* local.invoke(invocation(rebound, "demo.read", "rebound"))).toMatchObject({
+        outcome: "returned",
+        reply: { ok: true, value: 1 }
+      });
+    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+  20_000
+);
 
 it.live(
   "recovers a health-killed local generation only on a fresh host bind, without replay",

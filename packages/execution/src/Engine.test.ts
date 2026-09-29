@@ -12,6 +12,7 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as Engine from "./engine.js";
 import { startWorkerd } from "./process.js";
+import { networkListener, networkProbeBundle } from "./test/network.js";
 
 const viewer = {
   user: { id: "usr_test", name: "Reader", email: "reader@example.test" },
@@ -202,6 +203,48 @@ it.live(
         ])
       );
       expect(calls).toHaveLength(4);
+    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+  30_000
+);
+
+it.live(
+  "denies TCP, fetch and WebSocket network after the exact Opus import bypass during bind and invoke",
+  () =>
+    Effect.gen(function* () {
+      const target = yield* networkListener;
+      expect(yield* target.control).toBe("reachable");
+      expect(target.connections()).toBe(1);
+      const calls: unknown[] = [];
+      const host = yield* listener(async (request, response) => {
+        calls.push({
+          authorization: request.headers.authorization,
+          operation: JSON.parse((await bodyOf(request)).toString())
+        });
+        response.end(JSON.stringify({ ok: true, value: "trusted-callback" }));
+      });
+      const process = yield* startWorkerd({ callbackUrls: [host.url] });
+      const engine = yield* Engine.make({ url: process.url });
+      const { binding } = yield* engine.bind(bundle(networkProbeBundle(target.port)));
+      expect(target.connections()).toBe(1);
+      expect(
+        returnedReply(yield* engine.invoke(invocation(binding, host.url, "probe.tcp_refused")))
+      ).toEqual({
+        ok: true,
+        value: {
+          loaded: "function",
+          tcp: "refused",
+          fetch: "refused",
+          webSocket: "refused",
+          callback: { ok: true, value: "trusted-callback" }
+        }
+      });
+      expect(target.connections()).toBe(1);
+      expect(calls).toEqual([
+        {
+          authorization: "Bearer private-host-capability",
+          operation: { op: "network.probe", args: {} }
+        }
+      ]);
     }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
   30_000
 );

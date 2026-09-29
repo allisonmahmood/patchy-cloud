@@ -20,7 +20,7 @@ interface Environment {
         mainModule: string;
         modules: Record<string, string>;
         env: Record<string, never>;
-        globalOutbound: Fetcher;
+        globalOutbound: null;
       }
     ): Worker;
   };
@@ -35,7 +35,6 @@ interface LoaderContext {
     Callbacks(options: { props: AttemptReference }): {
       call(operation: GuestProtocol.Callback): Promise<GuestProtocol.CallbackReply>;
     };
-    Outbound(options: { props: object }): Fetcher;
   };
 }
 interface BoundWorker {
@@ -90,9 +89,9 @@ async function describe(worker: Worker): Promise<GuestProtocol.InspectionReply> 
   return decodeInspectionReply(await response.json());
 }
 
-function load(env: Environment, ctx: LoaderContext, name: string | null, bundle: string): Worker {
+function load(env: Environment, name: string | null, bundle: string): Worker {
   return env.loader.get(name, () => {
-    // The lexer finds every import, including dormant/computed imports and re-exports.
+    // Early bundle validation, not a security boundary: a lexer can miss imports.
     // import.meta is local metadata; workerd validates the remaining module syntax.
     if (parse(bundle)[0].some((entry) => entry.d !== -2))
       throw new Error("Server bundles must be closed modules.");
@@ -102,16 +101,13 @@ function load(env: Environment, ctx: LoaderContext, name: string | null, bundle:
       mainModule: "server.js",
       modules: { "server.js": bundle },
       env: {},
-      globalOutbound: ctx.exports.Outbound({ props: {} })
+      // Remove the runtime network capability, including TCP and WebSocket transports.
+      globalOutbound: null
     };
   });
 }
 
-async function bind(
-  request: GuestProtocol.BindRequest,
-  env: Environment,
-  ctx: LoaderContext
-): Promise<Response> {
+async function bind(request: GuestProtocol.BindRequest, env: Environment): Promise<Response> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(request.bundle));
   const sha256 = Array.from(new Uint8Array(digest), (byte) =>
     byte.toString(16).padStart(2, "0")
@@ -123,7 +119,7 @@ async function bind(
     return json({ ok: false, code: "binding_conflict" }, 409);
   if (entry === undefined) {
     try {
-      const worker = load(env, ctx, JSON.stringify([key, sha256]), request.bundle);
+      const worker = load(env, JSON.stringify([key, sha256]), request.bundle);
       entry = {
         sha256,
         bundle: request.bundle,
@@ -177,7 +173,6 @@ async function invoke(
     // Worker handles belong to one request; the loader caches the isolate, not this handle.
     const worker = load(
       env,
-      ctx,
       JSON.stringify([identity(request.binding), entry.sha256]),
       entry.bundle
     );
@@ -227,7 +222,7 @@ export default {
       } catch {
         return json({ ok: false, code: "invalid_request" }, 400);
       }
-      return bind(input, env, ctx);
+      return bind(input, env);
     }
     if (path === "/invoke") {
       let input: GuestProtocol.Invoke;
@@ -247,7 +242,7 @@ export default {
       }
       try {
         // Unnamed Workers are request-owned; named entries remain cached by workerd.
-        return json(await describe(load(env, ctx, null, input.bundle)));
+        return json(await describe(load(env, null, input.bundle)));
       } catch {
         return json(refusal("handler_failed", "The bundle could not be loaded."));
       }
@@ -360,12 +355,5 @@ export class Callbacks extends WorkerEntrypoint<Environment, AttemptReference> {
         ? refusal("timeout", "The invocation callback deadline has passed.")
         : refusal("source_unavailable", "The invocation callback could not complete.");
     }
-  }
-}
-
-/** Fetch reaches only this refusing loopback; closed bundles cannot import socket APIs. */
-export class Outbound extends WorkerEntrypoint {
-  fetch(): Response {
-    return json(refusal("access_denied", "Guest network access is refused."), 403);
   }
 }

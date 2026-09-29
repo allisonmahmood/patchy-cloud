@@ -80,6 +80,8 @@ type SupervisorLimitId = (typeof operatingLimitIds)[number];
 export interface Options {
   readonly callbackUrls: readonly string[];
   readonly operatingLimits?: Partial<Readonly<Record<SupervisorLimitId, number>>>;
+  /** Dedicated execution tasks include host RSS; local hosts budget only their workerd children. */
+  readonly residencyAccounting?: "host-and-workerd" | "workerd-only";
   readonly deploymentRevision?: string;
   readonly taskId?: string;
   readonly configRevision?: {
@@ -182,7 +184,7 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
   let stopped = false;
 
   const aggregateRss = () => {
-    let bytes = process.memoryUsage.rss();
+    let bytes = options.residencyAccounting === "workerd-only" ? 0 : process.memoryUsage.rss();
     for (const resident of residents.values()) bytes += resident.rssBytes;
     return bytes;
   };

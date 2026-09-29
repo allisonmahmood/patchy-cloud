@@ -147,6 +147,64 @@ it.live("rejects a probe interval that cannot enforce the six-second stall bound
 );
 
 it.live(
+  "counts only supervised workerd RSS locally and refuses genuine aggregate pressure",
+  () =>
+    Effect.gen(function* () {
+      const reached = Promise.withResolvers<void>();
+      const host = yield* listener(() => reached.resolve());
+      const ceiling = 256 * 1024 ** 2;
+      const supervisor = yield* Supervisor.make({
+        callbackUrls: [host.url],
+        residencyAccounting: "workerd-only",
+        operatingLimits: {
+          "execution.residency.bytes": ceiling,
+          "execution.probe.interval": 25
+        }
+      });
+      yield* supervisor.bind({ companyId: "com_supervisor", bindingEpoch: 1 });
+      expect((yield* supervisor.stats({ bindingEpoch: 1 })).aggregateRssBytes).toBe(0);
+      const loaded = yield* bind(supervisor, "ver_local_pressure");
+      yield* supervisor
+        .invoke(invocation(loaded, host.url, "growAndHold", { args: { bytes: ceiling } }))
+        .pipe(Effect.result, Effect.forkChild);
+      yield* Effect.promise(() => reached.promise);
+      const pressured = yield* statsWhen(supervisor, (stats) => stats.aggregateRssBytes >= ceiling);
+      expect(pressured.aggregateRssBytes).toBe(
+        pressured.processes.reduce((bytes, resident) => bytes + resident.rssBytes, 0)
+      );
+      expect(pressured.processes).toEqual([
+        expect.objectContaining({
+          processGeneration: loaded.processGeneration,
+          activeInvocations: 1
+        })
+      ]);
+      const refusal = {
+        _tag: "Failure",
+        failure: {
+          reason: "busy",
+          limit: { scope: "company", limitId: "execution.residency.bytes", value: ceiling }
+        }
+      };
+      expect(yield* bind(supervisor, "ver_local_overflow").pipe(Effect.result)).toMatchObject(
+        refusal
+      );
+      expect(
+        yield* supervisor
+          .invoke(invocation(loaded, host.url, "reply", { invocationId: "inv_pressure_refused" }))
+          .pipe(Effect.result)
+      ).toMatchObject(refusal);
+      yield* supervisor.stop({ bindingEpoch: 1, processGeneration: loaded.processGeneration });
+      const report = yield* reportFor(supervisor, loaded.processGeneration!);
+      expect(report.cause).toBe("stopped");
+      expect(
+        report.event.limits.find((entry) => entry.limitId === "execution.residency.bytes")!.peak
+      ).toBeGreaterThanOrEqual(ceiling);
+      expect((yield* supervisor.stats({ bindingEpoch: 1 })).aggregateRssBytes).toBe(0);
+    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+  20_000
+);
+
+it.live(
   "keeps tuple identities distinct and makes concurrent same-epoch binds idempotent",
   () =>
     Effect.gen(function* () {

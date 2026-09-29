@@ -36,6 +36,10 @@ Inspection grants no callback service or company binding and kills and reaps
 non-terminating initializers under a load deadline. Publication uses a throwaway
 process. Dev keeps the credential-free process warm while each request owns an
 uncached Worker whose code and background tasks are disposed after inspection.
+The loaded Worker has `globalOutbound: null`, so network refusal does not depend
+on static import detection. Inspection and engine regressions execute the
+`cloudflare:sockets` lexer bypass against real TCP, fetch and WebSocket targets,
+assert zero guest connections, and verify trusted callback RPC still works.
 
 The engine, inspection, supervisor and local executor are available independently.
 `@patchy/execution/local` owns the production loader and watchdog without a fleet
@@ -134,10 +138,11 @@ cause `metering_failed`; other residents remain supervised. Distinct child uids
 require a privileged supervisor. Scope shutdown kills and reaps children and
 removes their temporary configuration.
 
-The local adapter runs its supervisor in the host process. Aggregate RSS counts
-the real `process.memoryUsage.rss()` plus sampled child RSS, including unrelated
-host allocations. This is intentionally conservative compared with a dedicated
-execution task; there is no fabricated fixed allowance for the host.
+The local adapter runs its supervisor in the host process. Its aggregate RSS
+ceiling counts only supervised workerd children, not PGlite, Vite, fixtures or
+other host allocations. Dedicated fleet execution tasks include their host RSS.
+The workerd process count, aggregate and per-process ceilings, and watchdog still
+apply locally.
 
 The private management wire is documented in `docs/API.md`. The host must persist
 process reports before acknowledging them through `stats`. The supervisor has

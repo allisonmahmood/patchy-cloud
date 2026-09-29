@@ -4,6 +4,7 @@ import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Inspection from "./inspection.js";
 import { startWorkerd } from "./process.js";
+import { networkListener, networkProbeBundle } from "./test/network.js";
 
 const descriptors = { "demo.read": { kind: "query", args: {}, result: { kind: "text" } } };
 const source = `export default { fetch(request, env, ctx) {
@@ -178,6 +179,26 @@ it.live(
       expect(
         yield* inspection.inspect(`export const = 1; ${source}`).pipe(Effect.result)
       ).toMatchObject({ _tag: "Failure", failure: { reason: "load" } });
+    }).pipe(Effect.scoped),
+  30_000
+);
+
+it.live(
+  "denies TCP, fetch and WebSocket network after the exact Opus import bypass during inspection",
+  () =>
+    Effect.gen(function* () {
+      const target = yield* networkListener;
+      expect(yield* target.control).toBe("reachable");
+      expect(target.connections()).toBe(1);
+      const descriptor = { kind: "query", args: {}, result: { kind: "json" } };
+      expect(yield* Inspection.inspect(networkProbeBundle(target.port))).toEqual({
+        "probe.loaded_function": descriptor,
+        "probe.tcp_refused": descriptor,
+        "probe.fetch_refused": descriptor,
+        "probe.webSocket_refused": descriptor
+      });
+      // The control reached a real TCP listener; no guest transport may reach it.
+      expect(target.connections()).toBe(1);
     }).pipe(Effect.scoped),
   30_000
 );

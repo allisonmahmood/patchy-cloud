@@ -159,7 +159,7 @@ const config :Workerd.Config = (
       compatibilityDate = "${GuestProtocol.compatibilityDate}",
       compatibilityFlags = ${JSON.stringify([...GuestProtocol.compatibilityFlags, "experimental"])},
       bindings = [(name = "loader", workerLoader = ())${callbackBinding}],
-      globalOutbound = (name = "loader", entrypoint = "Outbound")
+      globalOutbound = "internet"
     )),
     (name = "internet", network = (allow = []))${callback}
   ],
