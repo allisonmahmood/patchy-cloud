@@ -423,6 +423,11 @@ The schemas in [`packages/api/src/management.ts`](../packages/api/src/management
 - Callback forwarding stamps `X-Patchy-Binding-Epoch`, `X-Patchy-Process-Generation`, `X-Patchy-Invocation-Id` and `X-Patchy-Attempt-Id`. The supervisor rejects ended attempts and killed generations before forwarding, independently of the host's capability checks.
 - Refusals are `{ ok: false, code }`, with `scope`, `limitId` and the enforced `value` for limit refusals (`retryAfter` only where safe). Authentication returns 401; stale epochs/generations, missing bundles, binding conflicts and stopped tasks return 409; residency pressure returns 503 `busy`; process loss returns 502 `process_killed`. Malformed requests and `load_failed` return 400. Private request bytes are bounded by `execution.management.bodyBytes`; oversized bodies return 413 `too_large` with the enforced limit.
 
+Residency `busy` refusals also carry `limits`, an array of observed
+`{ limitId, value, peak, configRevision: { deploymentRevision, overrideRevision } }`.
+The host retains these supervisor measurements in its request event rather than
+substituting the host's limit configuration.
+
 ## Shapes
 
 ### Identity

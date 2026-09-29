@@ -426,6 +426,13 @@ it.effect(
           outcome: "success"
         });
         assert.deepStrictEqual(getEvent.operations, ["files.get"]);
+        assert.deepInclude(getEvent.limits, {
+          limitId: "runtime.file.bytes",
+          value: 4,
+          peak: 3,
+          configRevision: { deploymentRevision: "contract", overrideRevision: "0" }
+        });
+        assert.strictEqual(getEvent.closestLimitId, "runtime.file.bytes");
 
         for (const method of ["putFile", "getFile"] as const) {
           const refused = yield* method === "putFile"

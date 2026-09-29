@@ -104,6 +104,14 @@ _Avoid_: Call log (Integrations' pointer to this record), analytics event
 The best-effort operational record of one runtime request, including reads and refused attempts. Its attribution is limited to the loaded version and authenticated viewer established during admission; it is not the runtime log.
 _Avoid_: Audit record, runtime-log entry
 
+**Invocation metering**:
+The unsampled settlement record of guest time, company-connection-held time, callbacks, argument and result bytes, attempts and outcome. Host elapsed time and guest time are inclusive, not tree totals. A parent action's database time includes its nested calls; connection queue wait is excluded.
+_Avoid_: request event, billing charge
+
+**Query rollup**:
+The exact totals for quiet top-level query runs by company, patch, version, handler and UTC start minute. Settlement commits the increment and its deduplicating run id together; ids expire after one hour. Logged, failed and nested queries have invocation rows instead. A client retry has a new run id.
+_Avoid_: sample, runtime log, request event
+
 **Correlation id**:
 The identifier joining an operation's failure to its runtime-log record. It is created by Patchy, never supplied by patch code.
 _Avoid_: Publish key, patch id

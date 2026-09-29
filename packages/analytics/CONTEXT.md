@@ -16,6 +16,10 @@ _Avoid_: machine (the credential is provenance, not the actor), distinct id (Pos
 One structured record of a single hop of work, emitted once at its end. It sits beside the analytics event, shares its reporting client, and carries attribution, outcome, timing and peak limit usage without sampling; it is not the billing record.
 _Avoid_: log line, metric, trace (the linkage, not the record)
 
+**Limit peak**:
+The highest observed use of a registry limit under one effective configuration revision, paired with its bound. A request event's `closestLimitId` names the greatest peak-to-bound ratio; a refusal's `limitId` names the limit that refused it. Database time and other additive measurements accumulate across callbacks, including callbacks on the private listener.
+_Avoid_: remaining capacity (a peak records use), deployment revision (the host build, not the limit configuration)
+
 **Deployment revision**:
 The host build or deployment that emitted a wide event. It is distinct from the [Limits](../limits/CONTEXT.md) deployment configuration revision, which fingerprints the effective operating-limit values rather than the running code.
 _Avoid_: configuration revision (the limits setting, not the host build)

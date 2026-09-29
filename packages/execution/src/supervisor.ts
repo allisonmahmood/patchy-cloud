@@ -28,6 +28,7 @@ export class SupervisorError extends Schema.TaggedError<SupervisorError>()("Supe
   operation: Schema.Literals(["bind", "invoke", "stop", "stats"]),
   reason: Management.Refusal.fields.code,
   limit: Schema.optionalKey(Schema.Struct(limitRefusalFields)),
+  limits: Management.Refusal.fields.limits,
   cause: Schema.optionalKey(Schema.Defect())
 }) {
   override get message() {
@@ -568,7 +569,15 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
           return yield* new SupervisorError({
             operation: "bind",
             reason: "busy",
-            limit: limitRefusal(blockedBy, limit(blockedBy))
+            limit: limitRefusal(blockedBy, limit(blockedBy)),
+            limits: [
+              {
+                limitId: blockedBy,
+                value: limit(blockedBy),
+                peak: blockedBy === "execution.residency.bytes" ? aggregateRss() : residents.size,
+                configRevision
+              }
+            ]
           });
         yield* checkEpoch(request.bindingEpoch, "bind");
         if (stopped) return yield* new SupervisorError({ operation: "bind", reason: "stopped" });
@@ -719,7 +728,15 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
             return yield* new SupervisorError({
               operation: "invoke",
               reason: "busy",
-              limit: limitRefusal(blockedBy, limit(blockedBy))
+              limit: limitRefusal(blockedBy, limit(blockedBy)),
+              limits: [
+                {
+                  limitId: blockedBy,
+                  value: limit(blockedBy),
+                  peak: blockedBy === "execution.residency.bytes" ? aggregateRss() : residents.size,
+                  configRevision
+                }
+              ]
             });
           const result = yield* Deferred.make<GuestProtocol.InvokeReply, SupervisorError>();
           const attempt: GuestProtocol.Attempt = {

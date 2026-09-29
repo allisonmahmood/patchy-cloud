@@ -3,13 +3,16 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Reactivity from "effect/unstable/reactivity/Reactivity";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import * as CompanyDatabases from "./CompanyDatabases.js";
+import * as ConnectionTiming from "./ConnectionTiming.js";
 import * as Inventory from "./Inventory.js";
 import * as ResourceChanges from "./ResourceChanges.js";
 
@@ -19,16 +22,16 @@ export interface Options {
 }
 
 /** The directory retains its company binding across clean close/reopen cycles. */
-export const make = Effect.fn("PgliteCompanyDatabases.make")(function* (options: Options) {
+export const make = Effect.fn("PgliteCompanyDatabases.make")(function* (
+  options: Options,
+  dispose: () => Effect.Effect<void>
+) {
   const changes = yield* ResourceChanges.ResourceChanges;
-  const sql = yield* SqlClient.SqlClient;
-  const native = yield* PgliteClient.PgliteClient;
+  const timed = yield* ConnectionTiming.make(PgliteClient.makeCompiler());
+  const sql = timed.sql;
   const reactivity = yield* Reactivity.Reactivity;
   const disposed = yield* Deferred.make<void>();
-  yield* Deferred.await(disposed).pipe(
-    Effect.andThen(Effect.promise(() => native.pglite.close())),
-    Effect.forkScoped
-  );
+  yield* Deferred.await(disposed).pipe(Effect.andThen(dispose), Effect.forkScoped);
   const companyContext = Context.make(SqlClient.SqlClient, sql).pipe(
     Context.add(CompanyDatabases.CompanyConnection, sql)
   );
@@ -166,7 +169,7 @@ export const make = Effect.fn("PgliteCompanyDatabases.make")(function* (options:
 
   const lease = Effect.fn("PgliteCompanyDatabases.lease")(function* (companyId: string) {
     yield* withCompany(companyId)(Effect.void);
-    const connection = yield* sql.reserve.pipe(
+    const { connection, release } = yield* timed.reserve.pipe(
       Effect.mapError(
         (cause) =>
           new CompanyDatabases.CompanyDatabaseError({ companyId, operation: "connect", cause })
@@ -189,6 +192,7 @@ export const make = Effect.fn("PgliteCompanyDatabases.make")(function* (options:
       // PGlite has no side-channel CancelRequest; callback interruption stops
       // the owner, and destruction closes its process-local fixture database.
       destroy: () => {
+        release();
         Deferred.doneUnsafe(disposed, Effect.void);
       }
     } satisfies CompanyDatabases.Lease;
@@ -230,23 +234,24 @@ export const make = Effect.fn("PgliteCompanyDatabases.make")(function* (options:
 
 /** One PGlite connection; its driver serializes transactions, not production races. */
 export const layer = (options: Options) =>
-  Layer.merge(
-    Layer.effect(CompanyDatabases.CompanyDatabases, make(options)),
-    Layer.effect(PgliteClient.PgliteClient, PgliteClient.PgliteClient)
-  ).pipe(
-    // Expose the native fixture handle, never replace an enclosing platform SqlClient.
-    Layer.provide(
-      PgliteClient.layer({
+  Layer.unwrap(
+    Effect.gen(function* () {
+      const driverScope = yield* Scope.make();
+      const dispose = () => Scope.close(driverScope, Exit.void);
+      yield* Effect.addFinalizer(dispose);
+      const client = yield* PgliteClient.make({
         dataDir: options.dataDir,
         relaxedDurability: true,
-        // Match the platform pool's row codecs (`@patchy/sql`): int8 and date
-        // as strings, a plain timestamp as UTC wall time.
+        // Match the platform pool's int8/date strings and UTC timestamp codecs.
         parsers: {
           20: (value) => value,
           1082: (value) => value,
           1114: (value) => DateTime.toDateUtc(DateTime.makeUnsafe(`${value.replace(" ", "T")}Z`))
         }
-      })
-    ),
-    Layer.provide(Reactivity.layer)
-  );
+      }).pipe(Scope.provide(driverScope));
+      return Layer.merge(
+        Layer.effect(CompanyDatabases.CompanyDatabases, make(options, dispose)),
+        Layer.succeed(PgliteClient.PgliteClient, client)
+      ).pipe(Layer.provide(Layer.succeed(SqlClient.SqlClient, client)));
+    })
+  ).pipe(Layer.provide(Reactivity.layer));

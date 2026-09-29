@@ -147,6 +147,7 @@ export const Refusal = Schema.Struct({
     "protocol",
     "production_refused"
   ]),
+  limits: ProcessEvent.fields.limits,
   ...limitRefusalFields
 });
 export type Refusal = typeof Refusal.Type;

@@ -125,7 +125,8 @@ it.live("returns the enforced residency bound when no process can be evicted", (
   Effect.gen(function* () {
     const supervisor = yield* Supervisor.make({
       callbackUrls: [callbackUrl],
-      operatingLimits: { "execution.residency.bytes": 1 }
+      operatingLimits: { "execution.residency.bytes": 1 },
+      configRevision: { deploymentRevision: "capacity-test", overrideRevision: "7" }
     });
     const { url } = yield* Management.serve({
       secret: Redacted.make(secret),
@@ -142,7 +143,15 @@ it.live("returns the enforced residency bound when no process can be evicted", (
       code: "busy",
       scope: "company",
       limitId: "execution.residency.bytes",
-      value: 1
+      value: 1,
+      limits: [
+        {
+          limitId: "execution.residency.bytes",
+          value: 1,
+          peak: expect.any(Number),
+          configRevision: { deploymentRevision: "capacity-test", overrideRevision: "7" }
+        }
+      ]
     });
   }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer))
 );

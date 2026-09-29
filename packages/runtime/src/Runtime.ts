@@ -1,4 +1,5 @@
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -481,6 +482,18 @@ export const make = (
         const boundedOp = operation !== undefined || input.op === "server.call" ? input.op : "";
         const maxBytes = bodyLimit(boundedOp);
         const limitId = runtimeBodyLimitId(boundedOp);
+        if (byteLength !== undefined)
+          yield* WideEvents.enrich({
+            requestBytes: byteLength,
+            limits: [
+              {
+                limitId,
+                value: maxBytes,
+                peak: byteLength,
+                configRevision: { deploymentRevision: "contract", overrideRevision: "0" }
+              }
+            ]
+          });
         // Only integration refusals need trusted attribution before their size check.
         // Other operations, including unknown names, reject before loading a session or version.
         if (!integration && byteLength !== undefined && byteLength > maxBytes)
@@ -494,7 +507,18 @@ export const make = (
           const argsJson = yield* encodeServerArgs(input.args.args).pipe(
             Effect.mapError((cause) => new InvalidRequest({ cause }))
           );
-          if (textEncoder.encode(argsJson).byteLength > settings.serverArgsBytes)
+          const argsBytes = textEncoder.encode(argsJson).byteLength;
+          yield* WideEvents.enrich({
+            limits: [
+              {
+                limitId: "tier2.args.bytes",
+                value: settings.serverArgsBytes,
+                peak: argsBytes,
+                configRevision: { deploymentRevision: "contract", overrideRevision: "0" }
+              }
+            ]
+          });
+          if (argsBytes > settings.serverArgsBytes)
             return yield* new TooLarge({
               maxBytes: settings.serverArgsBytes,
               limitId: "tier2.args.bytes"
@@ -604,6 +628,25 @@ export const make = (
             limit: settings.callsPerMinute,
             window: "1 minute"
           });
+          yield* WideEvents.enrich({
+            limits: [
+              {
+                limitId:
+                  !attempt.allowed && attempt.reason === "capacity"
+                    ? "rate.trackedKeys"
+                    : "runtime.calls.perMinute",
+                value:
+                  !attempt.allowed && attempt.reason === "capacity"
+                    ? Limits.MAX_TRACKED_KEYS
+                    : settings.callsPerMinute,
+                peak:
+                  !attempt.allowed && attempt.reason === "capacity"
+                    ? Limits.MAX_TRACKED_KEYS
+                    : settings.callsPerMinute - attempt.remaining,
+                configRevision: { deploymentRevision: "contract", overrideRevision: "0" }
+              }
+            ]
+          });
           if (!attempt.allowed)
             return yield* new RateLimited({
               retryAfterSeconds: attempt.retryAfterSeconds,
@@ -637,6 +680,7 @@ export const make = (
             ? settings.mutationDeadlineMs
             : settings.integrationDeadlineMs;
         // The logged deadline is the enforced one: past it the call fails with `timeout`.
+        const startedAt = yield* Clock.currentTimeMillis;
         const runWithDeadline = execute.pipe(
           Effect.timeoutOrElse({
             duration: deadlineMs,
@@ -655,6 +699,20 @@ export const make = (
         const result = yield* options.record === undefined
           ? Effect.exit(runWithDeadline)
           : options.record({ input, operation, binding, deadlineMs }, runWithDeadline);
+        yield* WideEvents.enrich({
+          attempts: 1,
+          limits: [
+            {
+              limitId:
+                operation.kind === "mutation"
+                  ? "runtime.mutation.deadline"
+                  : "integration.deadline",
+              value: deadlineMs,
+              peak: (yield* Clock.currentTimeMillis) - startedAt,
+              configRevision: { deploymentRevision: "contract", overrideRevision: "0" }
+            }
+          ]
+        });
         // Interruption includes a lost client or process shutdown: do not claim the write failed.
         if (Exit.isFailure(result) && Cause.hasInterrupts(result.cause))
           return yield* Effect.failCause(result.cause);

@@ -1,9 +1,13 @@
 import { NodeFileSystem } from "@effect/platform-node";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Scope from "effect/Scope";
+import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as DatabaseMeter from "@patchy/analytics/database-meter";
 import * as CompanyDatabases from "./CompanyDatabases.js";
 import * as Inventory from "./Inventory.js";
 import * as PgliteCompanyDatabases from "./PgliteCompanyDatabases.js";
@@ -29,6 +33,32 @@ it.layer(Layer.merge(NodeFileSystem.layer, Testing.resourceChangesLayer))(
           );
         }).pipe(Effect.scoped),
       30_000
+    );
+
+    it.effect("meters retained local authority once and stops on disposal", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const dataDir = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-pglite-meter-" });
+        yield* Effect.gen(function* () {
+          const databases = yield* CompanyDatabases.CompanyDatabases;
+          yield* databases.ensureReady("local-company");
+          const meter = yield* DatabaseMeter.make;
+          const scope = yield* Scope.make();
+          const lease = yield* databases
+            .lease("local-company", false)
+            .pipe(Scope.provide(scope), Effect.provideService(DatabaseMeter.current, meter));
+          yield* TestClock.adjust("7 millis");
+          yield* lease.authority(TestClock.adjust("3 millis"));
+          assert.strictEqual(meter.snapshot(), 10);
+          lease.destroy();
+          yield* TestClock.adjust("11 millis");
+          assert.strictEqual(meter.snapshot(), 10);
+          yield* Scope.close(scope, Exit.void);
+          assert.strictEqual(meter.snapshot(), 10);
+        }).pipe(
+          Effect.provide(PgliteCompanyDatabases.layer({ companyId: "local-company", dataDir }))
+        );
+      }).pipe(Effect.scoped)
     );
 
     it.effect("upgrades a reopened ready directory without losing its inventory", () =>

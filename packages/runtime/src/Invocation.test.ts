@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import { CURRENT_RELEASE, WIRE_VERSION, type GuestProtocol } from "@patchy/api";
+import * as WideEvents from "@patchy/analytics/wide-events";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { Limits, OperatingLimits } from "@patchy/limits";
 import { newInternalId } from "@patchy/core";
@@ -94,12 +95,26 @@ it.layer(services)("Invocation", (it) => {
       const invocations = yield* makeInvocation((request) =>
         Queue.offer(seen, request).pipe(Effect.andThen(Queue.take(replies)))
       );
+      const records = yield* Queue.unbounded<WideEvents.WideEvent>();
+      const events = yield* WideEvents.make.pipe(
+        Effect.provideService(WideEvents.Sink, {
+          write: (event) => Queue.offer(records, event).pipe(Effect.asVoid)
+        })
+      );
       assert.strictEqual(
-        (yield* invocations
-          .call({ handler: "demo.query", args: { id: "wrong" } }, binding, Effect.succeed(viewer))
+        (yield* events
+          .withEvent(
+            { type: "request" },
+            invocations.call(
+              { handler: "demo.query", args: { id: "wrong" } },
+              binding,
+              Effect.succeed(viewer)
+            )
+          )
           .pipe(Effect.flip)).code,
         "invalid_request"
       );
+      assert.include(yield* Queue.take(records), { handler: "demo.query", kind: "query" });
       assert.strictEqual(
         (yield* invocations
           .call({ handler: "other.query", args: {} }, binding, Effect.succeed(viewer))

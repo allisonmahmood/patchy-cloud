@@ -162,6 +162,8 @@ export const make = Effect.gen(function* () {
             if (failure !== undefined) return yield* new CallbackBudgetExceeded({ failure });
           }
           const length = Number(request.headers["content-length"]);
+          if (raw !== undefined && Number.isFinite(length))
+            capability.counters.peakFileBytes = Math.max(capability.counters.peakFileBytes, length);
           if (length > maxBytes) return yield* overflow(length);
           const chunks: Uint8Array[] = [];
           let size = 0;
@@ -175,6 +177,11 @@ export const make = Effect.gen(function* () {
             if (batch === undefined) break;
             for (const chunk of batch) {
               size += chunk.byteLength;
+              if (raw !== undefined)
+                capability.counters.peakFileBytes = Math.max(
+                  capability.counters.peakFileBytes,
+                  size
+                );
               if (size > maxBytes) return yield* overflow(chunk.byteLength);
               const failure = capabilities.chargeBytes(capability, chunk.byteLength);
               if (failure !== undefined) return yield* new CallbackBudgetExceeded({ failure });

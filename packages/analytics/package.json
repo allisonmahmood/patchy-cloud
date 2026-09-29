@@ -15,6 +15,11 @@
       "development": "./src/WideEvents.ts",
       "types": "./dist/WideEvents.d.ts",
       "import": "./dist/WideEvents.js"
+    },
+    "./database-meter": {
+      "development": "./src/DatabaseMeter.ts",
+      "types": "./dist/DatabaseMeter.d.ts",
+      "import": "./dist/DatabaseMeter.js"
     }
   },
   "files": [

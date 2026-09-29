@@ -12,6 +12,8 @@ import {
 } from "@patchy/api";
 import * as GuestProtocol from "@patchy/api/guest";
 import { newInternalId } from "@patchy/core";
+import * as WideEvents from "@patchy/analytics/wide-events";
+import * as DatabaseMeter from "@patchy/analytics/database-meter";
 import { ContractLimits, OperatingLimits } from "@patchy/limits";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -22,6 +24,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Schedule from "effect/Schedule";
 import * as Binding from "./Binding.js";
 import * as Executor from "./Executor.js";
 import * as InvocationCapabilities from "./InvocationCapabilities.js";
@@ -29,6 +32,7 @@ import * as InvocationLog from "./InvocationLog.js";
 import * as Runtime from "./Runtime.js";
 import * as ServerBundles from "./ServerBundles.js";
 import * as QuerySnapshot from "./QuerySnapshot.js";
+import * as QueryRollups from "./QueryRollups.js";
 
 export class HandlerFailed extends Schema.TaggedError<HandlerFailed>()("HandlerFailed", {
   correlationId: Schema.String,
@@ -199,6 +203,7 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
   const bundles = yield* ServerBundles.ServerBundles;
   const capabilities = yield* InvocationCapabilities.InvocationCapabilities;
   const log = yield* InvocationLog.InvocationLog;
+  const rollups = yield* QueryRollups.make;
   const snapshots = yield* QuerySnapshot.QuerySnapshot;
   const operating = yield* OperatingLimits.OperatingLimits;
   const bounds = yield* Effect.all({
@@ -210,7 +215,11 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
     args: ContractLimits.get("tier2.args.bytes"),
     queryResult: ContractLimits.get("tier2.query.resultBytes"),
     mutationResult: ContractLimits.get("tier2.mutation.resultBytes"),
-    actionResult: ContractLimits.get("tier2.action.resultBytes")
+    actionResult: ContractLimits.get("tier2.action.resultBytes"),
+    callbacks: ContractLimits.get("tier2.callbacks.count"),
+    outstanding: ContractLimits.get("tier2.callbacks.outstanding"),
+    callbackBytes: ContractLimits.get("tier2.callbacks.bytes"),
+    fileBytes: ContractLimits.get("tier2.callbacks.fileBytes")
   });
   const codecs = new WeakMap<typeof Manifest.Type, Map<string, CompiledHandler>>();
   const companyActions = new Map<string, number>();
@@ -232,6 +241,8 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
     const descriptor = binding.manifest.handlers?.[input.handler];
     if (descriptor === undefined || !Object.hasOwn(binding.manifest.handlers!, input.handler))
       return yield* new Runtime.InvalidRequest({});
+    if (parent === undefined)
+      yield* WideEvents.enrich({ handler: input.handler, kind: descriptor.kind });
     if (parent !== undefined) {
       yield* capabilities
         .resolve(parent.capability.token, parent.capability.attempt)
@@ -252,6 +263,16 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
       .args(input.args)
       .pipe(Effect.mapError((cause) => new Runtime.InvalidRequest({ cause })));
     const argsBytes = encoder.encode(encodeJson(input.args)).byteLength;
+    yield* WideEvents.enrich({
+      limits: [
+        {
+          limitId: "tier2.args.bytes",
+          value: bounds.args,
+          peak: argsBytes,
+          configRevision: { deploymentRevision: "contract", overrideRevision: "0" }
+        }
+      ]
+    });
     if (argsBytes > bounds.args)
       return yield* new Runtime.TooLarge({ maxBytes: bounds.args, limitId: "tier2.args.bytes" });
     const key = canonicalArgs([binding.companyId, binding.patchId, viewer.user.id]);
@@ -285,6 +306,17 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
               "viewer"
             ]
           ] as const) {
+            const effective = limitScope === "company" ? actionLimits.company : actionLimits.viewer;
+            yield* WideEvents.enrich({
+              limits: [
+                {
+                  limitId,
+                  value: limit,
+                  peak: Math.min(used + 1, limit),
+                  configRevision: effective.configRevision
+                }
+              ]
+            });
             if (used >= limit)
               return yield* new InvocationBusy({ limitId, value: limit, scope: limitScope });
           }
@@ -307,6 +339,8 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
         let logStarted = false;
         let guestMs = 0;
         let resultBytes = 0;
+        let attempts = 0;
+        const meter = yield* DatabaseMeter.make;
         let logs: Array<typeof Schema.Json.Type> | undefined;
         const begin = {
           id,
@@ -335,11 +369,11 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
               outcomeCode,
               settledAt,
               durationMs: settledAt - startedAt,
-              guestMs,
-              dbMs: capability?.snapshot.value?.dbMs ?? 0,
+              guestMs: Math.round(guestMs),
+              dbMs: Math.round(meter.snapshot()),
               callbacks: capability?.counters.callbacks ?? 0,
               resultBytes,
-              attempts: 1,
+              attempts,
               logLines: capability?.logs ?? logs ?? [],
               replyDelivered
             }),
@@ -382,6 +416,8 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
                 })
             )
               return yield* new HandlerFailed({ correlationId: binding.correlationId });
+            if (parent === undefined)
+              yield* WideEvents.enrich({ processGeneration: bound.processGeneration });
             if ((yield* Clock.currentTimeMillis) >= deadline)
               return yield* new HandlerTimeout({ correlationId: binding.correlationId });
             capability = yield* capabilities.issue({
@@ -416,6 +452,7 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
                   )
                 );
             }
+            attempts++;
             return yield* executor.invoke({
               wire: GuestProtocol.wireVersion,
               binding: bound.binding,
@@ -435,6 +472,11 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
               )
             )
           );
+          const elapsed = (yield* Clock.currentTimeMillis) - startedAt;
+          if (raced.type === "completed" && Exit.isSuccess(raced.exit)) {
+            const reported = yield* decodeReply(raced.exit.value).pipe(Effect.result);
+            if (reported._tag === "Success") guestMs = reported.success.guestMs;
+          }
           const timedOut =
             raced.type === "deadline" || (yield* Clock.currentTimeMillis) >= deadline;
           let reason: InvocationCapabilities.EndReason = timedOut ? "deadline" : "returned";
@@ -448,6 +490,7 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
               reason = "process_killed";
           }
           if (timedOut) execution.interruptUnsafe();
+          if (timedOut) yield* WideEvents.enrich({ limitId: `tier2.${descriptor.kind}.deadline` });
           const settled =
             capability === undefined
               ? true
@@ -476,6 +519,8 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
                   });
                 const failure = error.value;
                 if (isExecutionError(failure)) {
+                  if (failure.limits !== undefined)
+                    yield* WideEvents.enrich({ limits: failure.limits });
                   if (failure.reason === "busy")
                     return yield* new ExecutorBusy({ ...failure.limit, cause: failure });
                   return yield* new HandlerFailed({
@@ -552,6 +597,7 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
               logs.push(diagnostic);
           }
           if (
+            // Quiet queries meter separately from attribution rows.
             descriptor.kind !== "query" ||
             parent !== undefined ||
             Exit.isFailure(outcome) ||
@@ -581,7 +627,74 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
                 Exit.isSuccess(outcome) && !outcome.value.ok ? outcome.value.code : outcomeCode,
                 settlementDeadline
               );
+          } else {
+            // Metering settlement belongs to the host, never to reply delivery.
+            // Retrying an ambiguous write keeps the same run id.
+            yield* rollups
+              .record({
+                runId: id,
+                companyId: binding.companyId,
+                patchId: binding.patchId,
+                versionId: binding.versionId,
+                handler: input.handler,
+                startedAt,
+                reRun: false,
+                failures: 0,
+                guestMs: Math.round(guestMs),
+                dbMs: Math.round(meter.snapshot()),
+                callbacks: capability?.counters.callbacks ?? 0,
+                argsBytes,
+                resultBytes
+              })
+              .pipe(Effect.retry(Schedule.spaced("50 millis")), Effect.forkIn(scope));
           }
+          yield* WideEvents.add({
+            callbacks: capability?.counters.callbacks ?? 0,
+            attempts,
+            argsBytes,
+            resultBytes
+          });
+          for (const operation of capability?.counters.operations ?? [])
+            yield* WideEvents.operation(operation);
+          const peaks = [
+            [`tier2.${descriptor.kind}.deadline`, bounds[descriptor.kind], elapsed],
+            [
+              `tier2.${descriptor.kind}.resultBytes`,
+              bounds[`${descriptor.kind}Result`],
+              resultBytes
+            ],
+            ["tier2.callbacks.count", bounds.callbacks, capability?.counters.callbacks ?? 0],
+            [
+              "tier2.callbacks.outstanding",
+              bounds.outstanding,
+              capability?.counters.peakOutstanding ?? 0
+            ],
+            ["tier2.callbacks.bytes", bounds.callbackBytes, capability?.counters.peakBytes ?? 0],
+            ["tier2.log.bytes", bounds.log, capability?.counters.peakLogBytes ?? 0],
+            ["tier2.callbacks.fileBytes", bounds.fileBytes, capability?.counters.peakFileBytes ?? 0]
+          ] as const;
+          yield* WideEvents.enrich({
+            ...(parent === undefined
+              ? {
+                  outcome:
+                    outcomeCode === "unknown_outcome"
+                      ? ("unknown_outcome" as const)
+                      : Exit.isFailure(outcome)
+                        ? ("failure" as const)
+                        : outcome.value.ok
+                          ? ("success" as const)
+                          : ("handler_error" as const),
+                  ...(outcomeCode === null ? {} : { code: outcomeCode })
+                }
+              : {}),
+            limits: peaks.map(([limitId, value, peak]) => ({
+              limitId,
+              value,
+              peak,
+              configRevision: { deploymentRevision: "contract", overrideRevision: "0" }
+            }))
+          });
+          if (parent === undefined) yield* WideEvents.enrich({ dbMs: meter.snapshot(), guestMs });
           return yield* outcome;
         }).pipe(
           Effect.onInterrupt(() =>
@@ -618,7 +731,10 @@ export const make = Effect.fn("Invocation.make")(function* (options: {
             })
           )
         );
-        const owner = yield* Effect.forkIn(Effect.interruptible(run), scope);
+        const owner = yield* Effect.forkIn(
+          Effect.interruptible(run).pipe(Effect.provideService(DatabaseMeter.current, meter)),
+          scope
+        );
         return yield* restore(Fiber.join(owner)).pipe(
           Effect.onInterrupt(() =>
             Effect.sync(() => {

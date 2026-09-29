@@ -96,11 +96,20 @@ const privateHost = (host: string, explicit: boolean) => {
 const refusal = (
   code: Protocol.Refusal["code"],
   status: number,
-  limits: Supervisor.SupervisorError["limit"] = {}
+  limits: Supervisor.SupervisorError["limit"] = {},
+  peaks?: Supervisor.SupervisorError["limits"]
 ) =>
-  HttpServerResponse.jsonUnsafe({ ok: false, code, ...limits } satisfies Protocol.Refusal, {
-    status
-  });
+  HttpServerResponse.jsonUnsafe(
+    {
+      ok: false,
+      code,
+      ...limits,
+      ...(peaks === undefined ? {} : { limits: peaks })
+    } satisfies Protocol.Refusal,
+    {
+      status
+    }
+  );
 const failureStatus = (reason: Supervisor.SupervisorError["reason"]) => {
   switch (reason) {
     case "unauthorized":
@@ -133,7 +142,9 @@ const respond = <R>(
     Effect.catchTags({
       SchemaError: () => Effect.succeed(refusal("invalid_request", 400)),
       SupervisorError: (error) =>
-        Effect.succeed(refusal(error.reason, failureStatus(error.reason), error.limit)),
+        Effect.succeed(
+          refusal(error.reason, failureStatus(error.reason), error.limit, error.limits)
+        ),
       BodyTooLarge: (error) =>
         Effect.succeed(
           refusal("too_large", 413, limitRefusal("execution.management.bodyBytes", error.maxBytes))

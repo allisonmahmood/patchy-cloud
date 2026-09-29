@@ -147,6 +147,13 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
     if (decoded._tag === "Failure")
       return remember(refused("invalid_request", "Malformed callback."), 400);
     const request = decoded.success;
+    if (request.op === "log" || request.op === "server.call" || Object.hasOwn(handlers, request.op))
+      capability.counters.operations.add(request.op);
+    if (request.body !== undefined)
+      capability.counters.peakFileBytes = Math.max(
+        capability.counters.peakFileBytes,
+        request.body.bytes.byteLength
+      );
     const requestBytes = transportCharged
       ? 0
       : Buffer.byteLength(encodeJson({ op: request.op, args: request.args })) +
@@ -181,6 +188,10 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
           Effect.mapError((cause) => new Runtime.InvalidRequest({ cause }))
         );
         const bytes = Buffer.byteLength(encodeJson(line));
+        capability.counters.peakLogBytes = Math.max(
+          capability.counters.peakLogBytes,
+          capability.counters.logBytes + bytes
+        );
         if (capability.counters.logBytes + bytes > limits.logBytes)
           return remember(bounded("tier2.log.bytes", limits.logBytes), 429);
         capability.counters.logBytes += bytes;
@@ -240,6 +251,10 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
         if (handler.transport === "bytes-get") {
           const body = yield* perform(
             handler.run(request.args).pipe(Effect.provideService(Binding.Binding, binding))
+          );
+          capability.counters.peakFileBytes = Math.max(
+            capability.counters.peakFileBytes,
+            body.bytes.byteLength
           );
           if (body.bytes.byteLength > limits.fileBytes)
             return remember(bounded("tier2.callbacks.fileBytes", limits.fileBytes), 413);

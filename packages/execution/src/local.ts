@@ -16,6 +16,7 @@ const executionError = (cause: Supervisor.SupervisorError) =>
     operation: cause.operation === "invoke" ? "invoke" : "bind",
     reason: isExecutionReason(cause.reason) ? cause.reason : "transport",
     ...(cause.limit === undefined ? {} : { limit: cause.limit }),
+    ...(cause.limits === undefined ? {} : { limits: cause.limits }),
     cause
   });
 
