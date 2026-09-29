@@ -1882,7 +1882,7 @@ describe("patchy publish", async () => {
     expect(instance.requests[8]?.body).not.toHaveProperty("patchId");
     expect(instance.requests[8]?.body).not.toHaveProperty("manifest.name");
     expect(instance.requests[8]).toMatchObject({ authorization: "Bearer pp_env" });
-  });
+  }, 30_000); // Four real CLI processes cover token setup, cached republish and --new.
 
   it("sets sharing explicitly on create and update, reporting the returned audience", async () => {
     let version = 0;
