@@ -38,6 +38,14 @@ const repo = Effect.gen(function* () {
   return { root, fs, path };
 });
 
+// Rename complete saves into place, rather than testing a truncate followed by a write.
+const save = Effect.fnUntraced(function* (file: string, source: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const temporary = `${file}.tmp`;
+  yield* fs.writeFileString(temporary, source);
+  yield* fs.rename(temporary, file);
+});
+
 const inspectedChanges = Effect.fn("test.inspectedChanges")(function* (root: string) {
   const next = yield* watch(root, toolchain);
   const observed = next.pipe(
@@ -68,17 +76,17 @@ it.live(
       assert.deepStrictEqual((yield* next).handlers, {});
 
       yield* fs.makeDirectory(path.join(root, "server"));
-      yield* fs.writeFileString(path.join(root, "server/leads.ts"), handler("text"));
+      yield* save(path.join(root, "server/leads.ts"), handler("text"));
       const added = yield* next;
       assert.deepStrictEqual(added.modules, ["leads"]);
       assert.deepStrictEqual(added.handlers, {
         "leads.read": { kind: "query", args: {}, result: { kind: "text" } }
       });
 
-      yield* fs.writeFileString(path.join(root, "server/leads.ts"), handler("number"));
+      yield* save(path.join(root, "server/leads.ts"), handler("number"));
       assert.deepStrictEqual((yield* next).handlers["leads.read"]?.result, { kind: "number" });
 
-      yield* fs.writeFileString(path.join(root, "server/people.ts"), handler("boolean"));
+      yield* save(path.join(root, "server/people.ts"), handler("boolean"));
       assert.deepStrictEqual(Object.keys((yield* next).handlers), ["leads.read", "people.read"]);
       yield* fs.remove(path.join(root, "server/leads.ts"));
       assert.deepStrictEqual((yield* next).handlers, {
@@ -92,7 +100,7 @@ it.live(
       yield* fs.remove(path.join(root, "server"), { recursive: true });
       assert.deepStrictEqual((yield* next).handlers, {});
       yield* fs.makeDirectory(path.join(root, "server"));
-      yield* fs.writeFileString(path.join(root, "server/leads.ts"), handler("text"));
+      yield* save(path.join(root, "server/leads.ts"), handler("text"));
       assert.deepStrictEqual((yield* next).handlers, added.handlers);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   30_000
@@ -109,19 +117,19 @@ it.live(
       const next = yield* inspectedChanges(root);
       const initial = yield* next;
 
-      yield* fs.writeFileString(source, 'import "node:fs";\n' + handler("text"));
+      yield* save(source, 'import "node:fs";\n' + handler("text"));
       assert.strictEqual((yield* next.pipe(Effect.flip)).code, "import_refused");
-      yield* fs.writeFileString(source, handler("number"));
+      yield* save(source, handler("number"));
       assert.deepStrictEqual((yield* next).handlers["leads.read"]?.result, { kind: "number" });
 
-      yield* fs.writeFileString(source, "export const read = {");
+      yield* save(source, "export const read = {");
       assert.strictEqual((yield* next.pipe(Effect.flip))._tag, "LocalError");
-      yield* fs.writeFileString(source, handler("boolean"));
+      yield* save(source, handler("boolean"));
       assert.deepStrictEqual((yield* next).handlers["leads.read"]?.result, { kind: "boolean" });
 
-      yield* fs.writeFileString(source, "export const read = 42;");
+      yield* save(source, "export const read = 42;");
       assert.strictEqual((yield* next.pipe(Effect.flip)).code, "invalid_manifest");
-      yield* fs.writeFileString(source, handler("text"));
+      yield* save(source, handler("text"));
       assert.deepStrictEqual((yield* next).handlers, initial.handlers);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   30_000
@@ -149,7 +157,7 @@ export const read = query({ args: {}, result, handler: () => "ready" });
       );
       const next = yield* inspectedChanges(root);
       assert.deepStrictEqual((yield* next).handlers["leads.read"]?.result, { kind: "text" });
-      yield* fs.writeFileString(
+      yield* save(
         dependency,
         'import { t } from "patchy/server"; export const result = t.number();'
       );
