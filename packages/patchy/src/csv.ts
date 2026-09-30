@@ -60,10 +60,9 @@ const readRows = (text: string, row: (fields: string[], line: number) => void): 
   const emit = (end: number) => {
     if (rowStart === end) return;
     const result = parser.parse(text.slice(rowStart, end), 0, false) as Papa.ParseResult<string[]>;
-    const error = result.errors.find((error) => error.code === "MissingQuotes") ?? result.errors[0];
-    if (error) {
-      const code = error.code === "MissingQuotes" ? "unterminated_quote" : "invalid_quotes";
-      throw new CsvError(code, `Invalid CSV quoted field at line ${quoteLine}.`, {
+    if (result.errors.length > 0) {
+      // The framing scan already establishes that every quoted field is closed.
+      throw new CsvError("invalid_quotes", `Invalid CSV quoted field at line ${quoteLine}.`, {
         line: quoteLine
       });
     }
@@ -98,7 +97,7 @@ const readRows = (text: string, row: (fields: string[], line: number) => void): 
       quoteLine = line;
       fieldStart = false;
     } else {
-      if (afterQuote && char !== " " && char !== "\t")
+      if (afterQuote)
         throw new CsvError("invalid_quotes", `Invalid CSV quoted field at line ${quoteLine}.`, {
           line: quoteLine
         });

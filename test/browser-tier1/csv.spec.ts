@@ -101,6 +101,19 @@ const cases: { name: string; input: Json; expected: Json }[] = [
     input: { method, text: 'name,notes\n"first\nsecond","not\nclosed' },
     expected: { error: { code: "unterminated_quote", line: 3 } }
   })),
+  ...(["parse", "records"] as const).flatMap((method) =>
+    [
+      { text: 'x,"a" \r\ny', line: 1, ending: "CRLF" },
+      { text: '"a"\t\nnext', line: 1, ending: "LF" },
+      { text: '"a"  ', line: 1, ending: "EOF" },
+      { text: '"a" ,b', line: 1, ending: "comma" },
+      { text: 'name\n"first\nsecond"\t', line: 2, ending: "multiline EOF" }
+    ].map(({ text, line, ending }) => ({
+      name: `${method} rejects whitespace outside a closed quote before ${ending}`,
+      input: { method, text },
+      expected: { error: { code: "invalid_quotes", line } }
+    }))
+  ),
   {
     name: "a later BOM is cell text, not an encoding marker",
     input: { method: "parse", text: "\uFEFFname\n\uFEFFAda" },

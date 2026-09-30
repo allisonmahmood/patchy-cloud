@@ -6,10 +6,11 @@ export type Download = (name: string, data: Blob | Uint8Array | ArrayBuffer) => 
 export function createDownload(call: Call): Download {
   return async (name, data) => {
     const contentType = data instanceof Blob ? data.type : "application/octet-stream";
+    // The transport transfers its buffer; preserve the caller's bytes for reuse after dismissal.
     const bytes =
-      data instanceof Uint8Array
-        ? data
-        : new Uint8Array(data instanceof ArrayBuffer ? data : await data.arrayBuffer());
+      data instanceof Blob
+        ? new Uint8Array(await data.arrayBuffer())
+        : new Uint8Array(data instanceof Uint8Array ? data : new Uint8Array(data));
     return (await call("download.generated", { name, contentType }, bytes)) as null;
   };
 }

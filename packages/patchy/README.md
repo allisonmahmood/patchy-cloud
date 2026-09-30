@@ -113,6 +113,8 @@ conversion or padding. Both parsers accept a leading BOM, CRLF or LF and
 quoted multiline fields. They skip only empty physical lines, not
 whitespace-only, quoted-empty or delimiter-only rows. A final line terminator
 adds no extra row. Empty input returns `[]` from `parse`.
+A closing quote must be followed immediately by a comma, line break or EOF.
+Whitespace outside it throws `invalid_quotes`; intended whitespace belongs inside the quotes.
 
 `records` takes the first retained row as headers and rejects duplicate
 headers. A wrong-width row is omitted from `records` and reported in `errors`,
@@ -140,6 +142,8 @@ The generated client's `download(name, data): Promise<null>` accepts `Blob`,
 `Uint8Array` or `ArrayBuffer`. It is Core on tier 1 and 2 pages, including
 public tier 1 patches, and needs no store declaration. Stored-file downloads
 remain separate capabilities with their own access checks.
+Byte inputs are copied before transfer to the shell; the caller keeps its
+`Uint8Array` or `ArrayBuffer` intact for reuse, including after `Not now`.
 
 ```ts
 import { patchy } from "../patchy/_generated/client.js";

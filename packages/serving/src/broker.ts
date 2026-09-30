@@ -659,14 +659,14 @@ function mount(frame: HTMLIFrameElement): void {
           undefined,
           limitRefusal("frame.outstanding")
         );
-      const payload = message.bytes;
+      let payload = message.bytes;
       if (
         op === "files.put" || op === "files.stage" || op === "download.generated"
           ? !(payload instanceof ArrayBuffer)
           : payload !== undefined
       )
         throw invalid();
-      const bytes = payload as ArrayBuffer | undefined;
+      let bytes = payload as ArrayBuffer | undefined;
       const fileLimitId = op === "files.stage" ? "files.stage.bytes" : "runtime.file.bytes";
       const fileLimit = registry[fileLimitId].default;
       if (bytes && op !== "download.generated" && bytes.byteLength > fileLimit)
@@ -709,12 +709,15 @@ function mount(frame: HTMLIFrameElement): void {
           );
           throw tooLarge(registry["download.bytes"].default, limitRefusal("download.bytes"));
         }
-        const downloaded = await handleDownloads.add(
-          download.name,
-          bytes!,
-          download.contentType,
-          true
-        );
+        const offered = handleDownloads.add(download.name, bytes!, download.contentType, true);
+        // The card now owns the Blob; keep only the envelope and pending slot while
+        // awaiting approval, not the transferred buffer or its byte reservation.
+        release(bytes!.byteLength);
+        reserved -= bytes!.byteLength;
+        message.bytes = undefined;
+        payload = undefined;
+        bytes = undefined;
+        const downloaded = await offered;
         if (closed) return;
         if (!downloaded)
           throw new Refusal("invalid_request", "The download was discarded.", {

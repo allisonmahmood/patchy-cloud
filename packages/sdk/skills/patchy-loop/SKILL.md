@@ -80,6 +80,8 @@ fields. Cells stay strings, with no trimming or type conversion. Only empty
 physical lines are skipped; whitespace-only, quoted-empty and delimiter-only
 rows remain. A final line terminator adds no extra row. `parse` preserves each
 row's field count, including empty cells and uneven widths.
+A closing quote must be followed immediately by a comma, line break or EOF.
+Whitespace outside it is `invalid_quotes`; put intended whitespace inside the quotes.
 
 `records` uses the first retained row as headers. Duplicate headers throw.
 A wrong-width row is omitted from `records` and reported in `errors` with
@@ -107,6 +109,8 @@ The generated client's `patchy.download(name, data): Promise<null>` accepts
 `Blob`, `Uint8Array` or `ArrayBuffer` on tier 1 and 2 pages, including public
 tier 1 patches. It is Core, separate from stored-file downloads in
 `../patchy-files/SKILL.md`; it needs no file store.
+Byte inputs are copied before transfer to the shell, so the caller can reuse
+them after dismissal or download.
 
 ```ts
 const csv = stringify([

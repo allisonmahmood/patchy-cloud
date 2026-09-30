@@ -43,6 +43,8 @@ reports wrong-width rows by physical line without padding. Only empty physical
 lines are skipped. `stringify` writes CRLF with quoting as needed; default
 formula protection prefixes risky text cells with `'` but leaves numbers
 untouched. It can be disabled and is not lossless.
+After a closing quote, only a comma, line break or EOF is accepted; trailing
+whitespace outside the quote is `invalid_quotes`, not an unterminated field.
 
 The generated client's `download(name, data)` accepts a Blob or bytes on
 tier 1 and 2 pages, including public tier 1 patches. The shell enforces
@@ -50,6 +52,8 @@ tier 1 and 2 pages, including public tier 1 patches. The shell enforces
 A frame's claim of a click never authorizes a download. The viewer's Download
 action hands the file to the browser; success does not promise a disk save.
 `Not now` rejects the request. Reloading or closing loses pending files.
+Generated downloads preserve caller-owned byte buffers for reuse after either
+dismissal or download.
 `window.print()` works in the frame for browser print-to-PDF. The SDK does not
 yet offer PDF generation, spreadsheets beyond CSV, time-zone arithmetic,
 phone parsing, component libraries, rich text, charts or HTML sanitisation.

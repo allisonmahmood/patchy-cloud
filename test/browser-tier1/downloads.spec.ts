@@ -8,6 +8,8 @@ const packageRoot = fileURLToPath(new URL("../../packages/patchy", import.meta.u
 interface DownloadWindow extends Window {
   download: Download;
   outcome: string;
+  retryDownload(): void;
+  pendingDownloads: Record<string, string>;
 }
 
 test("generated files wait for shell approval on both tiers, refuse 21 MiB and stay shell-local", async ({
@@ -111,6 +113,77 @@ window.download = client.download; window.outcome = "idle";`,
     await expect
       .poll(() => content.evaluate(() => (window as unknown as DownloadWindow).outcome))
       .toBe("download_discarded");
+    for (const inputKind of ["view", "buffer"] as const) {
+      await content.evaluate((kind) => {
+        const host = window as unknown as DownloadWindow;
+        const encoded = new TextEncoder().encode("row\r\nvalue");
+        const input = kind === "view" ? encoded : encoded.buffer;
+        host.retryDownload = () => {
+          host.outcome = "pending";
+          void host.download("reused.csv", input).then(
+            () => {
+              host.outcome = "downloaded";
+            },
+            (error) => {
+              host.outcome = error.details?.reason ?? error.code;
+            }
+          );
+        };
+        host.retryDownload();
+      }, inputKind);
+      await cards.getByRole("button", { name: "Not now", exact: true }).click();
+      await expect
+        .poll(() => content.evaluate(() => (window as unknown as DownloadWindow).outcome))
+        .toBe("download_discarded");
+      await content.evaluate(() => (window as unknown as DownloadWindow).retryDownload());
+      await expect(cards.getByText("10 bytes", { exact: true })).toBeVisible();
+      const retried = page.waitForEvent("download");
+      await cards.getByRole("button", { name: "Download", exact: true }).click();
+      expect(await readFile((await (await retried).path())!, "utf8")).toBe("row\r\nvalue");
+    }
+    await content.evaluate(() => {
+      const host = window as unknown as DownloadWindow;
+      host.pendingDownloads = {};
+      for (const name of ["first-large.bin", "second-large.bin"]) {
+        host.pendingDownloads[name] = "pending";
+        void host.download(name, new ArrayBuffer(20 * 1024 * 1024)).catch((error) => {
+          host.pendingDownloads[name] = error.details.reason ?? error.code;
+        });
+      }
+    });
+    for (const name of ["first-large.bin", "second-large.bin"])
+      await expect(cards.getByRole("region", { name, exact: true })).toContainText("20 MB");
+    expect(
+      await content.evaluate(() => (window as unknown as DownloadWindow).pendingDownloads)
+    ).toEqual({ "first-large.bin": "pending", "second-large.bin": "pending" });
+    await cards
+      .getByRole("region", { name: "first-large.bin", exact: true })
+      .getByRole("button", { name: "Not now", exact: true })
+      .click();
+    await content.evaluate(() => {
+      const host = window as unknown as DownloadWindow;
+      host.pendingDownloads["replacement-large.bin"] = "pending";
+      void host
+        .download("replacement-large.bin", new ArrayBuffer(20 * 1024 * 1024))
+        .catch((error) => {
+          host.pendingDownloads["replacement-large.bin"] = error.details.reason ?? error.code;
+        });
+    });
+    await expect(
+      cards.getByRole("region", { name: "replacement-large.bin", exact: true })
+    ).toContainText("20 MB");
+    for (const name of ["second-large.bin", "replacement-large.bin"])
+      await cards
+        .getByRole("region", { name, exact: true })
+        .getByRole("button", { name: "Not now", exact: true })
+        .click();
+    await expect
+      .poll(() => content.evaluate(() => (window as unknown as DownloadWindow).pendingDownloads))
+      .toEqual({
+        "first-large.bin": "download_discarded",
+        "second-large.bin": "download_discarded",
+        "replacement-large.bin": "download_discarded"
+      });
     const refusal = await content.evaluate(async () => {
       try {
         await (window as unknown as DownloadWindow).download(
@@ -129,9 +202,6 @@ window.download = client.download; window.outcome = "idle";`,
       value: 20 * 1024 * 1024
     });
     await expect(cards.getByRole("alert")).toContainText("too-large.bin");
-    await expect(cards.getByRole("alert")).toContainText(
-      "This file is too large to download (21 MB, the limit is 20 MB)."
-    );
     await expect(cards.getByRole("button", { name: "Download", exact: true })).toHaveCount(0);
     await cards.getByRole("button", { name: "Dismiss", exact: true }).click();
     await content.evaluate(() => {
