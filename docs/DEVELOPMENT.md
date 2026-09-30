@@ -1121,9 +1121,10 @@ toolchain installation needs registry access; browser requests stay on loopback.
 The journey initializes a tier 2 repo, authors a query, mutation and action,
 and exercises both `patchy dev` mounts over invented shared-table and shared-store
 fixtures. It then publishes both artifacts and opens two independently signed-in
-browser contexts. Assertions cover subscribed updates, a member-valued column,
-shared reads and handle downloads, staged upload adoption, CSV import and download,
-and config-plus-refresh tier changes in both directions.
+browser contexts. Assertions cover subscribed updates, valid member assignments
+and `invalid_row` for a non-member, shared reads and handle downloads, staged
+upload adoption, CSV import and download, and config-plus-refresh tier changes
+in both directions.
 
 For mutation recovery, the browser interceptor waits for a successful real
 mutation response before discarding it. The page calls the returned `retry()`;

@@ -326,6 +326,20 @@ export default defineConfig({ name: "tier2-acceptance", tier: 2,
   await expect(lowerFrame.locator("#titles")).toHaveText(
     '["Hosted write","Lost reply","CSV, note"]'
   );
+  assert.equal(
+    await lowerFrame.evaluate(async () => {
+      try {
+        await window.probe.patchy.tables.notes.insert({
+          title: "Invalid member write",
+          owner: "usr_packed_non_member"
+        });
+        return "unexpected_success";
+      } catch (error) {
+        return error.code;
+      }
+    }),
+    "invalid_row"
+  );
   await lowerFrame.evaluate(async () => {
     const me = await window.probe.patchy.me();
     await window.probe.patchy.tables.notes.insert({ title: "Tier one write", owner: me.user.id });
