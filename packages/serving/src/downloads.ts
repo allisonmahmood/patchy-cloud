@@ -1,11 +1,18 @@
 /// <reference lib="dom" />
 // @effect-diagnostics globalTimers:off
 // Download approval belongs to the signed-in shell, never to an event reported by the frame.
+// D-1 from #385: each file is a bottom-right card, "<patch> made a file", with its name, size, Download and Not now.
 export function createDownloads(
   frame: HTMLIFrameElement,
   reserve: (size: number) => void,
   release: (size: number) => void
 ) {
+  const glyph = () => {
+    const element = document.createElement("span");
+    element.className = "glyph glyph-sm";
+    element.setAttribute("aria-hidden", "true");
+    return element;
+  };
   const root = document.createElement("section");
   root.className = "shell-corner";
   root.setAttribute("aria-label", "Files ready to download");
@@ -13,7 +20,9 @@ export function createDownloads(
   visible.className = "shell-downloads";
   const older = document.createElement("details");
   const summary = document.createElement("summary");
-  summary.className = "btn";
+  summary.className = "status-chip";
+  const summaryText = document.createElement("span");
+  summary.append(glyph(), summaryText);
   const folded = document.createElement("div");
   folded.className = "shell-downloads";
   older.append(summary, folded);
@@ -33,7 +42,7 @@ export function createDownloads(
     });
     older.hidden = files.length <= 3;
     const remaining = Math.max(0, files.length - 3);
-    summary.textContent = `${remaining} more ${remaining === 1 ? "file" : "files"}`;
+    summaryText.textContent = `${remaining} more ${remaining === 1 ? "file" : "files"}`;
     root.hidden = files.length === 0;
     if (active instanceof HTMLElement && root.contains(active)) active.focus();
   };
@@ -70,23 +79,25 @@ export function createDownloads(
       const card = document.createElement("section");
       card.className = "note note-info note-float";
       card.setAttribute("aria-label", name);
+      // Title and file line are the live region; the actions stay outside it.
+      const message = document.createElement("div");
+      message.setAttribute("role", "status");
       const title = document.createElement("div");
       title.className = "note-title";
-      title.setAttribute("role", "status");
-      const glyph = document.createElement("span");
-      glyph.className = "glyph glyph-sm";
-      glyph.setAttribute("aria-hidden", "true");
-      title.append(glyph, name);
-      const size = document.createElement("p");
+      title.append(glyph(), `${frame.title} made a file`);
+      const line = document.createElement("p");
+      const fileName = document.createElement("code");
+      fileName.textContent = name;
+      const size = document.createElement("span");
+      const kb = bytes.byteLength / 1024;
       size.textContent =
         bytes.byteLength < 1024
           ? `${bytes.byteLength} bytes`
-          : bytes.byteLength < 1024 * 1024
-            ? `${(bytes.byteLength / 1024).toFixed(1)} KB`
-            : `${(bytes.byteLength / (1024 * 1024)).toFixed(1)} MB`;
-      const detail = document.createElement("p");
-      detail.className = "supporting-text";
-      detail.textContent = "Closing or reloading this page discards this file.";
+          : kb < 1024
+            ? `${Number(kb.toFixed(1))} KB`
+            : `${Number((kb / 1024).toFixed(1))} MB`;
+      line.append(fileName, " · ", size);
+      message.append(title, line);
       const actions = document.createElement("div");
       actions.className = "actions";
       const download = document.createElement("button");
@@ -108,7 +119,7 @@ export function createDownloads(
       });
       notNow.addEventListener("click", () => discard(file, false));
       actions.append(download, notNow);
-      card.append(title, size, detail, actions);
+      card.append(message, actions);
       files.unshift(file);
       visible.prepend(card);
       layout();
